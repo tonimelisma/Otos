@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-lint:
+    name: Build, Test, Lint
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Select Xcode
+        run: |
+          candidate=""
+          for developer_dir in \
+            /Applications/Xcode_27*.app/Contents/Developer \
+            /Applications/Xcode-27*.app/Contents/Developer \
+            /Applications/Xcode-beta.app/Contents/Developer \
+            /Applications/Xcode*.app/Contents/Developer
+          do
+            if [[ -x "$developer_dir/usr/bin/xcodebuild" ]]; then
+              version_output="$("$developer_dir/usr/bin/xcodebuild" -version)"
+              version="${version_output%%$'\n'*}"
+              if [[ "$version" == Xcode\ 27* ]]; then
+                candidate="$developer_dir"
+                break
+              fi
+              echo "Skipping $developer_dir ($version)"
+            fi
+          done
+
+          if [[ -z "$candidate" ]]; then
+            echo "No usable Xcode 27 developer directory found." >&2
+            echo "Otos targets the latest macOS SDK and must not fall back to Xcode 26." >&2
+            echo "Use a runner image or self-hosted runner with Xcode 27 installed." >&2
+            find /Applications -maxdepth 4 -path "*/Contents/Developer/usr/bin/xcodebuild" -print >&2
+            exit 1
+          fi
+
+          sudo xcode-select --switch "$candidate"
+          xcodebuild -version
+          xcodebuild -showsdks | grep "macOS 27.0"
+
+      - name: Install tools
+        run: brew bundle --no-lock
+
+      - name: Verify
+        run: script/verify.sh
