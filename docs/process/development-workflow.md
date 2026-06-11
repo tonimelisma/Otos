@@ -74,7 +74,9 @@ handoff.
 
 ## Definition Of Done
 
-Before PR handoff:
+There is one Definition of Done for each increment. It covers the full path from
+ready-to-review through landing and cleanup; do not call an increment done while
+its PR is merely open.
 
 - Requirements, specs, ADRs, and docs are updated.
 - Local `script/verify.sh` passes, or the exact blocker is recorded.
@@ -84,3 +86,14 @@ Before PR handoff:
   explicitly reports exhausted Actions quota.
 - Unresolved risks and follow-ups are named.
 - `script/dod-report.sh` prints an actionable report for the branch.
+- The PR is merged into `main`.
+- Local `main` is updated to the merge commit.
+- Post-merge verification is run when the increment changed build, test,
+  workflow, dependency, project, or runtime behavior.
+- The increment branch is deleted locally and remotely after merge.
+- Any increment worktree is removed after merge.
+- Stashes created for the increment are cleared after merge.
+- Stale local branches, remote branches, and worktrees are reviewed and only
+  removed when proven to belong to the completed increment and already merged or
+  patch-equivalent to `main`.
+- The final working tree is clean and ready for the next increment.

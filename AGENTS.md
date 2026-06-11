@@ -281,13 +281,18 @@ script/verify.sh
 
 ## Definition Of Done
 
-A change is not done until the PR includes:
+There is one Definition of Done for each increment. An increment is not done
+until the work has landed on `main`, the repo is clean, and the workspace is
+ready for the next increment. An open PR can be ready for review or merge, but
+it is not done.
 
 - linked spec and ADRs when required
 - linked requirement IDs and acceptance examples
 - selected architecture with alternatives and pros/cons
 - local `script/verify.sh` output summary and Xcode version
 - tests for changed behavior at the narrowest useful boundary
+- remote CI status recorded, with quota waiver evidence only when GitHub
+  explicitly reports exhausted Actions quota
 - instrumentation added or updated for every meaningful path
 - trace/log artifact paths for performance-sensitive work
 - code smells observed and how they were addressed or intentionally accepted
@@ -297,5 +302,17 @@ A change is not done until the PR includes:
 - confirmation that no shim, legacy architecture, or effort-based compromise was
   introduced
 - unresolved risks and follow-up work
+- PR merged into `main`
+- local `main` updated to include the merge commit
+- post-merge verification run when the increment changed build, test, workflow,
+  dependency, project, or runtime behavior
+- increment branch deleted locally and remotely after merge
+- increment worktree removed after merge, if one was created
+- stashes created for the increment cleared after merge
+- stale local branches, remote branches, and worktrees reviewed; remove only
+  items proven to belong to the completed increment and already merged or
+  patch-equivalent to `main`
+- final working tree clean on the intended next-start branch
 
-If any item does not apply, state why in the PR.
+If any item does not apply, state why in the PR or final increment report. Never
+delete unrelated user stashes, branches, or worktrees as part of cleanup.

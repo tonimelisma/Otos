@@ -54,6 +54,18 @@
 - Unresolved risks:
 - Follow-up work:
 
+## Increment Closure
+
+- Merge status:
+- Local `main` updated:
+- Post-merge verification:
+- Local branch cleanup:
+- Remote branch cleanup:
+- Worktree cleanup:
+- Increment stashes cleared:
+- Stale branches/worktrees reviewed:
+- Final working tree clean:
+
 ## Foundation Checklist
 
 - [ ] No compatibility shims.
