@@ -11,8 +11,8 @@ and four user-provided media files in the repository root.
 In scope:
 
 - Move media fixtures into the test fixture tree.
-- Add AGENTS.md, setup docs, verification scripts, CI, lint configs, PR template,
-  shared Xcode scheme, and Codex run config.
+- Add AGENTS.md, setup docs, verification scripts, fast CI, lint configs, PR
+  template, shared Xcode scheme, and Codex run config.
 - Enforce full Xcode selection and Swift 6 strict concurrency settings.
 - Add a minimal instrumentation facade.
 - Create a private GitHub remote named `origin`.
@@ -60,8 +60,10 @@ Cons:
 
 Failure modes:
 
-- CI may be temporarily unable to run because this private repo can exhaust
-  GitHub Actions quota.
+- Remote CI may be temporarily unable to run because this private repo can
+  exhaust GitHub Actions quota.
+- Hosted GitHub runners may not have the required Xcode beta, so Xcode 27
+  build/test proof must remain local until a real runner exists.
 - Xcode beta path changes may require a script update.
 
 ## Selected Approach
@@ -76,7 +78,10 @@ and observability standard.
 - Local automation enters through `script/verify.sh` and
   `script/build_and_run.sh`.
 - Runtime diagnostics enter through `OtosLog` and `OtosSignpost`.
-- CI uses the shared `Otos` Xcode scheme.
+- Remote CI is a fast gate for checkout, workflow YAML, text hygiene, script
+  inventory, and lint.
+- Xcode build/test verification uses the shared `Otos` scheme locally through
+  `script/verify.sh`.
 
 ## Instrumentation
 
@@ -89,6 +94,8 @@ features must add operation-specific logs and spans through that facade.
   `OtosTests/Fixtures/Media`.
 - `.DS_Store` is ignored.
 - `script/verify.sh` fails clearly when full Xcode is not selected.
+- Remote CI does not select Xcode 27 or run Xcode build/test until a real Xcode
+  27 runner exists.
 - `xcodebuild -list -project Otos.xcodeproj` shows the shared `Otos` scheme.
 - Private GitHub remote `origin` points at `tonimelisma/Otos`.
 
@@ -99,4 +106,6 @@ features must add operation-specific logs and spans through that facade.
 - `script/test.sh`
 - `script/test-ui.sh` when the environment can enable macOS UI automation
 - `script/verify.sh`
+- `script/ci-text-hygiene.sh self-test`
+- workflow YAML parsing
 - `gh repo view tonimelisma/Otos --json name,visibility`

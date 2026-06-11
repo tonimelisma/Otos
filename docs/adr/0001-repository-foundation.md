@@ -12,8 +12,12 @@ architecture, compatibility shims, and unverifiable work from becoming normal.
 ## Decision
 
 Use a comprehensive foundation with AGENTS.md, spec and ADR templates, local
-scripts, CI, a shared Xcode scheme, fixture provenance, and instrumentation
-facade before product features are implemented.
+scripts, fast remote CI, a shared Xcode scheme, fixture provenance, and
+instrumentation facade before product features are implemented.
+
+Remote CI stays useful and runner-available: checkout sanity, workflow YAML,
+text hygiene, script inventory, and lint. Xcode 27 build/test proof is local PR
+evidence until a real hosted or self-hosted runner with Xcode 27 exists.
 
 ## Alternatives Considered
 
@@ -46,8 +50,8 @@ Cons:
 ## Consequences
 
 Every future increment has a clear path: spec, ADR when needed, implementation,
-instrumentation, local verification, and PR evidence. This raises the upfront
-bar, but it prevents drift.
+instrumentation, local Xcode verification, fast remote CI, and PR evidence. This
+raises the upfront bar, but it prevents drift.
 
 ## Reversal Plan
 
