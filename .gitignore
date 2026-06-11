@@ -1,0 +1,22 @@
+.DS_Store
+
+# Xcode user state
+xcuserdata/
+*.xcuserstate
+*.xccheckout
+
+# Build outputs
+build/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# SwiftPM and editor state
+.swiftpm/
+.vscode/
+.idea/
+
+# Logs and local diagnostics
+*.log
+*.trace

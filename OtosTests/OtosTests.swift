@@ -5,13 +5,27 @@
 //  Created by Taylor on 6/2/26.
 //
 
-import Testing
+import Foundation
 @testable import Otos
+import Testing
 
 struct OtosTests {
+    @Test func mediaFixturesArePresent() {
+        let fixtureDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .appending(path: "Fixtures", directoryHint: .isDirectory)
+            .appending(path: "Media", directoryHint: .isDirectory)
 
-    @Test func example() async throws {
-        // Write your test here and use APIs like `#expect(...)` to check expected conditions.
+        let expectedFiles = [
+            "jpeg-exif-offset-date.jpg",
+            "ios-heic-offset-date.heic",
+            "mp4-no-embedded-capture-date.mp4",
+            "mov-no-embedded-capture-date.mov",
+        ]
+
+        for expectedFile in expectedFiles {
+            let fixtureURL = fixtureDirectory.appending(path: expectedFile)
+            #expect(FileManager.default.fileExists(atPath: fixtureURL.path()), "\(expectedFile) fixture is missing")
+        }
     }
-
 }

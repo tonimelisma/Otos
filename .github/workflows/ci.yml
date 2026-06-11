@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checkout-sanity:
+    name: Checkout Sanity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Verify clean checkout
+        run: |
+          set -euo pipefail
+          git status --short
+          test -z "$(git status --short)"
+
+  workflow-yaml:
+    name: Workflow YAML
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Validate workflow YAML
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find .github -type f \( -name '*.yml' -o -name '*.yaml' \) -print0)
+          if (( ${#files[@]} == 0 )); then
+            echo "No GitHub YAML files found." >&2
+            exit 1
+          fi
+          ruby -e 'require "yaml"; ARGV.each { |path| YAML.safe_load(File.read(path), aliases: true); puts "parsed #{path}" }' "${files[@]}"
+
+  text-hygiene:
+    name: Text Hygiene
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check whitespace and conflict markers
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: script/ci-text-hygiene.sh check
+
+  script-inventory:
+    name: Script Inventory
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Check script shape
+        run: |
+          set -euo pipefail
+          mapfile -d '' scripts < <(find script -type f -print0)
+          if (( ${#scripts[@]} == 0 )); then
+            echo "No repo scripts found." >&2
+            exit 1
+          fi
+          for script in "${scripts[@]}"; do
+            if [[ ! -x "$script" ]]; then
+              echo "Script is not executable: $script" >&2
+              exit 1
+            fi
+            first_line="$(head -n 1 "$script")"
+            if [[ "$first_line" != '#!'* ]]; then
+              echo "Script is missing a shebang: $script" >&2
+              exit 1
+            fi
+            echo "script ok: $script"
+          done
+
+  lint:
+    name: SwiftFormat And SwiftLint
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      HOMEBREW_NO_INSTALL_CLEANUP: 1
+      HOMEBREW_NO_ANALYTICS: 1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install lint tools
+        run: brew bundle install
+
+      - name: Run lint
+        run: script/lint.sh
+
+  required-ci-gate:
+    name: Required CI Gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    needs:
+      - checkout-sanity
+      - workflow-yaml
+      - text-hygiene
+      - script-inventory
+      - lint
+    if: always()
+    steps:
+      - name: Check required job results
+        env:
+          CHECKOUT_RESULT: ${{ needs.checkout-sanity.result }}
+          YAML_RESULT: ${{ needs.workflow-yaml.result }}
+          TEXT_RESULT: ${{ needs.text-hygiene.result }}
+          SCRIPT_RESULT: ${{ needs.script-inventory.result }}
+          LINT_RESULT: ${{ needs.lint.result }}
+        run: |
+          set -euo pipefail
+          for result in "$CHECKOUT_RESULT" "$YAML_RESULT" "$TEXT_RESULT" "$SCRIPT_RESULT" "$LINT_RESULT"; do
+            if [[ "$result" != "success" ]]; then
+              echo "Required fast verification failed or was cancelled: $result" >&2
+              exit 1
+            fi
+          done
+          echo "Required CI gate passed."
