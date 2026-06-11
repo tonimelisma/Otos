@@ -60,7 +60,6 @@ fi
 section "Local Verification Evidence"
 value "script/verify.sh" "${DOD_VERIFY_EVIDENCE:-<paste PR summary or run script/verify.sh>}"
 value "focused-tests" "${DOD_FOCUSED_TESTS:-<not supplied>}"
-value "ui-smoke" "${DOD_UI_SMOKE:-<not applicable or not supplied>}"
 
 section "CI Evidence"
 value "github-actions" "${DOD_CI_EVIDENCE:-<paste PR check status or quota exhaustion evidence>}"

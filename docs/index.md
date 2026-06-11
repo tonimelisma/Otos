@@ -28,7 +28,6 @@ increment as the behavior change.
 
 ## Deferred Docs
 
-Product, architecture, UI automation/accessibility, and onboarding docs are
-deferred until the app has enough real product and code structure for those
-documents to be useful. Do not create placeholders that merely restate
-`AGENTS.md`.
+Product, architecture, accessibility, and onboarding docs are deferred until the
+app has enough real product and code structure for those documents to be useful.
+Do not create placeholders that merely restate `AGENTS.md`.

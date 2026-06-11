@@ -12,5 +12,4 @@ otos_require_full_xcode
   -configuration Debug \
   -destination "platform=macOS" \
   -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-  -skip-testing:OtosUITests \
   test

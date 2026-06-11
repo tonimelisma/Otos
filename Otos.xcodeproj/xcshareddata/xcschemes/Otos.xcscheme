@@ -41,17 +41,6 @@
                ReferencedContainer = "container:Otos.xcodeproj">
             </BuildableReference>
          </TestableReference>
-         <TestableReference
-            skipped = "NO"
-            parallelizable = "YES">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "3B44EB742FCEBA59007E4158"
-               BuildableName = "OtosUITests.xctest"
-               BlueprintName = "OtosUITests"
-               ReferencedContainer = "container:Otos.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

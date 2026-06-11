@@ -104,7 +104,6 @@ features must add operation-specific logs and spans through that facade.
 - `script/lint.sh`
 - `script/build.sh`
 - `script/test.sh`
-- `script/test-ui.sh` when the environment can enable macOS UI automation
 - `script/verify.sh`
 - `script/ci-text-hygiene.sh self-test`
 - workflow YAML parsing

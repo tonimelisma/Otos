@@ -71,5 +71,5 @@ For each smell found, record:
   observable result at an owner boundary.
 - Sleep-based async: fixed sleeps replace deterministic expectations,
   cooperative yielding, or controllable clocks.
-- UI-only proof: behavior that could be tested at a state owner or domain
-  boundary is covered only by slow UI automation.
+- Over-broad integration proof: behavior that could be tested at a state owner
+  or domain boundary is covered only by a slow, indirect test.

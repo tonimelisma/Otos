@@ -269,12 +269,9 @@ script/verify.sh
   build/test until a runner with Xcode 27 exists.
 - Xcode 27 build and test proof is required as local PR evidence through
   `script/verify.sh`.
-- Default local verification runs unit tests. UI smoke tests live behind
-  `script/test-ui.sh` because macOS UI automation can be blocked by local
-  automation-mode permissions or runner configuration.
-- Run `script/test-ui.sh` for UI-affecting changes whenever the environment can
-  enable XCTest UI automation. If it cannot, record the exact automation setup
-  failure in the PR.
+- Default local verification runs unit tests. Do not add screen-driving UI
+  automation without a fresh spec and ADR that justify the cost, intrusiveness,
+  and reliability tradeoffs.
 - This is a private GitHub repository. Remote CI may be waived only when GitHub
   explicitly reports exhausted Actions quota. Paste that evidence in the PR.
 - CI may not be waived for test failures, build failures, workflow syntax
@@ -291,8 +288,6 @@ A change is not done until the PR includes:
 - selected architecture with alternatives and pros/cons
 - local `script/verify.sh` output summary and Xcode version
 - tests for changed behavior at the narrowest useful boundary
-- UI smoke evidence for UI-affecting changes, or the exact environment error
-  that blocked UI automation
 - instrumentation added or updated for every meaningful path
 - trace/log artifact paths for performance-sensitive work
 - code smells observed and how they were addressed or intentionally accepted

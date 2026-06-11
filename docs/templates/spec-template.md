@@ -97,6 +97,5 @@ the implementation will avoid or address them.
 
 - Local checks:
 - Focused tests:
-- UI smoke evidence, if applicable:
 - Performance/log evidence, if applicable:
 - CI expectations:

@@ -39,12 +39,6 @@ Verify the checkout:
 script/verify.sh
 ```
 
-Run UI smoke tests when macOS UI automation is available:
-
-```sh
-script/test-ui.sh
-```
-
 Run the app:
 
 ```sh

@@ -21,7 +21,6 @@
 - Local `script/verify.sh`:
 - Xcode version:
 - Focused tests:
-- UI smoke `script/test-ui.sh` when applicable:
 - Additional tests:
 
 ## Performance And Instrumentation

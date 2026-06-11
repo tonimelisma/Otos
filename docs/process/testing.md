@@ -31,8 +31,8 @@ Sources:
 | Pure domain rule | Unit test. |
 | Workflow coordination | Store/application integration test. |
 | Filesystem behavior | Temp-directory integration test. |
-| UI command routing | State-owner test first; UI automation when visual/system routing matters. |
-| Accessibility identifiers | UI automation or identifier inspection once UI exists. |
+| UI command routing | State-owner or command-model test. |
+| Accessibility behavior | Focused manual audit or identifier inspection once UI exists. |
 | Performance or responsiveness | Structured logs, signposts, Instruments trace, or focused performance test. |
 | Concurrency and cancellation | Deterministic async test with controlled state, expectations, or clocks. |
 | Persistence/schema | Migration, unknown-schema, preservation, and failure-mode tests. |
@@ -40,23 +40,22 @@ Sources:
 
 ## macOS Guidance
 
-- Keep UI tests small and focused. They are valuable for app launch, menus,
-  windows, accessibility identifiers, pasteboard/system integration, and flows
-  that cannot be proven below the UI.
+- Do not add screen-driving tests by default. They are intrusive on macOS,
+  expensive in agent loops, and easy to overvalue before the app has real
+  workflows.
+- Reintroduce screen-driving tests only through a fresh spec and ADR that name
+  the behavior, alternatives, cost, reliability plan, and expected evidence.
 - Prefer state-owner tests for SwiftUI command routing and view model behavior.
 - Use temporary directories for filesystem tests; never touch production media
   roots or app-owned production storage from tests.
 - Use fixtures only when rights and privacy are clear.
 - Avoid fixed `sleep` calls. Use expectations, polling with deadlines,
   cooperative yielding, or injectable clocks.
-- UI automation can be blocked by local permissions. Record the exact blocker
-  and the closest automated evidence when that happens.
 
 ## Local Commands
 
 ```sh
 script/test.sh
-script/test-ui.sh
 script/verify.sh
 ```
 
