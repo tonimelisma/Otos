@@ -13,6 +13,7 @@ increment as the behavior change.
 | --- | --- | --- |
 | [AGENTS.md](../AGENTS.md) | Agent workflow, non-negotiable principles, CI/PR rules, and Definition of Done. | Development workflow, gate policy, or repo-wide engineering rules change. |
 | [requirements.md](requirements.md) | Requirement IDs, acceptance examples, status, and verification evidence. | Any non-micro behavior change, bug fix, feature, or refactor changes observable behavior. |
+| [product/roadmap.md](product/roadmap.md) | Product roadmap, accepted product vocabulary, priority order, non-goals, and research grounding. | Product scope, roadmap priority, or accepted product terminology changes. |
 | [process/development-workflow.md](process/development-workflow.md) | Work classification, Definition of Ready, worktree discipline, retirement proof, and landing expectations. | Increment workflow or PR readiness rules change. |
 | [process/code-smells.md](process/code-smells.md) | Swift/macOS code-smell review guidance and DoD reporting expectations. | Review heuristics, Swift/macOS smell categories, or source references change. |
 | [process/testing.md](process/testing.md) | AI-aware macOS testing strategy and verification layers. | Test strategy, test commands, or acceptance evidence expectations change. |
@@ -28,6 +29,6 @@ increment as the behavior change.
 
 ## Deferred Docs
 
-Product, architecture, accessibility, and onboarding docs are deferred until the
-app has enough real product and code structure for those documents to be useful.
-Do not create placeholders that merely restate `AGENTS.md`.
+Architecture, accessibility, and onboarding docs are deferred until the app has
+enough real product and code structure for those documents to be useful. Do not
+create placeholders that merely restate `AGENTS.md`.
