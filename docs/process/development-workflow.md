@@ -42,6 +42,9 @@ Before implementation starts:
   modes.
 - Identify the simplest correct alternative and justify any extra complexity
   with verified requirements, measurements, or explicit user direction.
+- For ADRs, include a MECE decision scope that names what the ADR owns, what it
+  references without owning, and which adjacent decisions need separate ADRs or
+  specs.
 - Name ownership, side effects, persistence, cancellation, errors, progress,
   privacy, instrumentation, and tests.
 - For refactors, list what is deleted, demoted, or replaced.

@@ -71,6 +71,8 @@ Definition of Ready
 - The simplest correct alternative is identified, and any additional complexity
   is justified by verified requirements, measurements, or explicit user
   direction.
+- ADRs include a MECE decision scope: what the ADR owns, what it references but
+  does not own, and which adjacent decisions require separate ADRs or specs.
 - Refactors include a retirement list and proof plan for old names, files,
   construction paths, tests, fixtures, docs, logs, accessibility identifiers, and
   persistence/schema paths.
@@ -105,6 +107,11 @@ An ADR is required for:
 - Thumbnail, preview, metadata, import, export, or render pipeline design.
 - Any reusable architecture boundary, dependency, or module split.
 - Any decision that would be expensive to reverse.
+
+Each ADR must be mutually exclusive and collectively clear with adjacent
+decisions. It must name the decision area it owns, name related decisions it
+intentionally does not own, and avoid deciding future architecture through
+placeholder fields, speculative hooks, or broad wording.
 
 Do not implement from a vague task. First convert it into a decision-complete
 spec, present to the user for feedback, and only then implement.
