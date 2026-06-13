@@ -43,6 +43,10 @@ Captured user guidance for verification:
 - Loading and retaining the whole catalog in memory may be acceptable because
   Otos is expected to manage media-library-scale data, and even millions of
   file records may be a reasonable memory tradeoff for a primary media app.
+- Everything stored in the SQLite catalog should be loaded into the in-memory
+  catalog working set until evidence or an explicit requirement proves otherwise.
+- Thumbnail bytes are not catalog database payloads. Thumbnails should live as
+  files on disk; SQLite stores thumbnail status and storage keys or paths.
 - Keep the app as simple as possible. Simplicity is an architectural
   requirement, and performance-oriented complexity should come after
   correctness, clarity, and explicit evidence.
@@ -58,10 +62,18 @@ an app-owned in-memory projection after migration. The in-memory projection is
 the app's fast working model while the app is running; SQLite remains the
 durable source after relaunch, crash recovery, and migration.
 
-The in-memory working set may include media asset rows, filesystem facts,
-derived-state status, and view-ready catalog fields. It must not grow into an
-unbounded dump of large payloads such as thumbnail image bytes, full raw metadata
-payloads, or future render artifacts unless a later spec proves that tradeoff.
+The in-memory working set includes the SQLite catalog by default: media asset
+rows, filesystem facts, derived-state status, thumbnail storage keys or paths,
+and catalog metadata columns. If a value is important enough to be modeled in
+the current SQLite catalog schema, it is presumed small and useful enough to be
+loaded into memory until evidence proves otherwise.
+
+Large derived payloads are not normal catalog columns. They mean payloads whose
+size is not predictably bounded by one media-asset row, such as thumbnail image
+bytes, rendered preview bytes, raw EXIF/XMP/QuickTime metadata dumps, embedded
+media data, generated analysis blobs, embeddings, or future render artifacts.
+Those payloads should live as files or be introduced only through a later spec
+that explicitly decides storage and memory-loading behavior.
 
 Start with a `DatabaseQueue` unless implementation evidence shows that live UI
 queries are blocked by scanner writes. Consider `DatabasePool` and WAL only
@@ -238,8 +250,9 @@ Cons:
   and the in-memory projection.
 - Full startup load can become visible launch work if the catalog grows or row
   shape expands.
-- Memory pressure becomes the app's responsibility, especially after metadata,
-  thumbnails, search facets, ratings, edits, and UI grouping state arrive.
+- Memory pressure becomes the app's responsibility as catalog columns grow,
+  especially after metadata, search facets, ratings, edits, and UI grouping
+  state arrive.
 - A full object graph can accidentally invite main-actor work, broad SwiftUI
   invalidation, or expensive sorting/filtering in view code.
 
@@ -249,8 +262,8 @@ Failure modes:
   update the in-memory projection.
 - Startup turns into a mandatory full-catalog decode before the user can use the
   app.
-- The app retains too much derived data, such as metadata payloads or thumbnail
-  details, when it only needed filesystem facts and query projections.
+- The app lets future unbounded payloads creep into SQLite and then loads them
+  into memory because the default catalog-loading rule was not revisited.
 - The in-memory model becomes treated as the catalog authority and weakens
   SQLite migration, recovery, and stale-result checks.
 
@@ -337,8 +350,9 @@ can move into dedicated tables through a future ADR or spec.
 The selected pattern constrains implementation:
 
 - no direct database calls from SwiftUI views
-- no unbounded in-memory retention of thumbnail bytes, raw metadata payloads, or
-  future render artifacts without a later spec
+- no SQLite columns for thumbnail bytes, raw metadata dumps, generated analysis
+  blobs, or future render artifacts without a later spec that revisits memory
+  loading
 - no main-actor filesystem, metadata, thumbnail, or database work
 - no derived-data write unless the source file signature still matches
 - no logging of user media paths, names, metadata payloads, or thumbnails
