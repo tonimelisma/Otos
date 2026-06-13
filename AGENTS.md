@@ -33,9 +33,11 @@ disk wherever the user chose to keep it. Originals are read-only.
 
 - Target the latest macOS and Xcode beta configured for this repo. The initial
   baseline is Xcode 27 beta with macOS deployment target 27.0.
-- Prefer Apple-native technologies: Swift, SwiftUI, AppKit only when SwiftUI is
-  insufficient, Image I/O, AVFoundation, Core Image, OSLog, Instruments, and
-  filesystem/security-scoped access APIs.
+- Prefer Apple-native technologies: Swift, SwiftUI, Image I/O, AVFoundation,
+  Core Image, OSLog, Instruments, and filesystem/security-scoped access APIs.
+  Prefer SwiftUI for UI implementation. Use AppKit only when SwiftUI cannot
+  provide the required capability or cannot meet verified responsiveness or
+  performance requirements.
 - Third-party dependencies are allowed only when the spec proves they are the
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data lives in Application Support. All overlay data is treated as
