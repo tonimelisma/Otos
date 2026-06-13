@@ -25,9 +25,13 @@ Before implementation starts:
 
 - State the goal, change type, scope, and non-goals.
 - Inspect the current repo state and summarize what was found.
-- Link or add requirement IDs in `docs/requirements.md`.
+- Restate captured user guidance as precise requirements for user verification.
+- Link current requirement IDs in `docs/requirements.md` when implemented
+  requirements already exist.
+- Keep future ideas and unimplemented requirement candidates outside
+  `docs/requirements.md`.
 - Provide acceptance examples and verification evidence.
-- Compare at least two architectural alternatives with pros, cons, and failure
+- Compare at least three architectural alternatives with pros, cons, and failure
   modes.
 - Name ownership, side effects, persistence, cancellation, errors, progress,
   privacy, instrumentation, and tests.
@@ -35,6 +39,30 @@ Before implementation starts:
 - For performance-sensitive work, name the log categories, signposted spans, and
   `script/profile.sh` templates that will be used.
 - Resolve open questions or move them explicitly out of scope.
+
+## Requirement Capture
+
+User guidance is requirement input when it affects product direction, app
+behavior, architecture, workflow, quality, regression protection, evidence, or
+future direction. Agents must not leave that guidance only in conversation.
+
+When guidance is heard:
+
+- write the captured requirements back to the user in detail
+- split bundled guidance into individual functional, non-functional, process,
+  architecture, tooling, privacy, or regression items
+- ask for correction when scope or meaning is ambiguous
+- record captured current requirements in `docs/requirements.md`
+- record unimplemented ideas, candidates, and planning guidance in
+  non-authoritative planning docs, specs, or ADRs
+- ignore roadmap, planning, and idea documents unless the user explicitly asks to
+  use them for the current task
+- include acceptance examples and evidence for current requirements
+
+`docs/requirements.md` is not a backlog. It contains implemented current
+behavior, active process requirements, current-increment changes, and retired
+requirements only. Planning docs may contain wild ideas, abandoned options, and
+concepts that are never intended for implementation.
 
 ## Worktrees And Branches
 
@@ -79,6 +107,8 @@ ready-to-review through landing and cleanup; do not call an increment done while
 its PR is merely open.
 
 - Requirements, specs, ADRs, and docs are updated.
+- Captured user guidance was restated to the user and stored in the correct
+  current or planning document.
 - Local `script/verify.sh` passes, or the exact blocker is recorded.
 - Performance-sensitive changes include trace/log artifact paths.
 - Code smells observed are listed, including `None observed` when true.
@@ -86,6 +116,8 @@ its PR is merely open.
   explicitly reports exhausted Actions quota.
 - Unresolved risks and follow-ups are named.
 - `script/dod-report.sh` prints an actionable report for the branch.
+- The increment branch and commits are pushed to the remote before handoff, or
+  the exact push blocker is recorded in the DoD report.
 - The PR is merged into `main`.
 - Local `main` is updated to the merge commit.
 - Post-merge verification is run when the increment changed build, test,

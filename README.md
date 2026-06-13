@@ -16,8 +16,9 @@ catalog data, generated previews, metadata, and editing intent.
 Read `AGENTS.md` before making changes. It is the working contract for future
 agents and contributors.
 
-The documentation map lives in `docs/index.md`. Requirements are tracked in
-`docs/requirements.md`, and process guidance lives under `docs/process/`.
+The documentation map lives in `docs/index.md`. Current requirements are tracked
+in `docs/requirements.md`, opt-in planning notes live under `docs/product/`, and
+process guidance lives under `docs/process/`.
 
 ## Setup
 

@@ -1,5 +1,13 @@
 # Spec: Product Roadmap Documentation
 
+## Supersession Note
+
+This spec is historical. `docs/specs/0003-current-requirements-authority.md`
+supersedes its requirement-authority model. Roadmap and idea documents are now
+non-authoritative and must not guide work unless the user explicitly asks to use
+them for the current task. `docs/requirements.md` no longer contains
+unimplemented `Proposed` rows.
+
 ## Classification
 
 - Work type: Process/tooling

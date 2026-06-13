@@ -3,7 +3,8 @@
 ## Classification
 
 - Work type: <Micro | Small behavior | Feature | Refactor | Bug fix | Research | Process/tooling>
-- Requirement IDs:
+- Current requirement IDs:
+- Future idea or candidate links explicitly requested by the user:
 - ADRs:
 
 ## Problem
@@ -25,13 +26,28 @@ Out of scope:
 
 - [ ] Goal, scope, and non-goals are explicit.
 - [ ] Current repo state was inspected.
-- [ ] Observable requirements and acceptance examples are listed.
+- [ ] Captured user guidance is restated as precise requirements for user
+      verification.
+- [ ] Observable current requirements and acceptance examples are listed.
+- [ ] Future ideas and unimplemented requirement candidates are separated from
+      `docs/requirements.md`.
+- [ ] Roadmap, planning, or idea documents are ignored unless explicitly
+      requested by the user for this task.
 - [ ] Ownership, side effects, persistence, cancellation, errors, progress,
       privacy, instrumentation, and tests are addressed.
-- [ ] At least two alternatives are compared.
+- [ ] At least three alternatives are compared.
 - [ ] Refactor retirement proof is defined, if applicable.
 - [ ] Performance/jank evidence is defined, if applicable.
 - [ ] Open questions are answered or out of scope.
+
+## Captured Requirements For User Verification
+
+List every requirement heard from the user before implementation relies on it.
+Split bundled guidance into precise individual items.
+
+| ID or label | Type | Captured requirement | Current or candidate | Storage location |
+| --- | --- | --- | --- | --- |
+| <label> | <Functional | Non-functional | Architecture | Process | Tooling | Privacy | Regression> | <requirement> | <Current | Candidate | Retired> | <docs/requirements.md, spec, ADR, or planning doc> |
 
 ## Architectural Alternatives
 
@@ -50,6 +66,20 @@ Failure modes:
 - <item>
 
 ### Alternative B
+
+Pros:
+
+- <item>
+
+Cons:
+
+- <item>
+
+Failure modes:
+
+- <item>
+
+### Alternative C
 
 Pros:
 

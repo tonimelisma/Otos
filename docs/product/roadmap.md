@@ -1,18 +1,26 @@
-# Otos Product Roadmap
+# Otos Roadmap And Idea Notes
 
-This roadmap is the canonical product plan for Otos' first library, browsing,
-enrichment, and curation milestones. Otos overlays an app-owned catalog on top
-of user-owned media that remains in user-configured folders.
+This is a non-authoritative planning and idea document. It may contain rough
+ideas, wild concepts, abandoned options, sequencing sketches, or notes that are
+never meant to be implemented. Do not use it to guide work unless the user
+explicitly asks to use roadmap or planning material for the current task.
 
-The accepted view vocabulary is:
+It is not proof that behavior exists, not a commitment, and not a source of
+requirements. Implemented current requirements live only in
+`docs/requirements.md`.
+
+When a planned item actually lands, add or update precise current requirements in
+`docs/requirements.md` with acceptance examples and evidence.
+
+Earlier vocabulary notes in this file include:
 
 - `Grid`: thumbnail browsing surface.
 - `Image`: film strip with one main media item.
 - `Compare`: film strip with two chosen media items.
 
-## Product Baseline
+## Non-Authoritative Baseline Ideas
 
-- Otos is a single-window app for this roadmap.
+- Otos could start as a single-window app for this idea set.
 - Originals remain read-only.
 - Libraries are recursive user-selected folder roots.
 - Library add and remove actions live only in Libraries Settings.
@@ -23,15 +31,12 @@ The accepted view vocabulary is:
 - Editing, export, and broad output workflows are out of scope.
 - Copying or moving media into a user-configured library directory is future
   work, not part of the first browsing foundation.
-- Proposed extra product ideas are intentionally outside this roadmap until
-  explicitly accepted.
+- Other product ideas may be outside this note or may be added later if the user
+  explicitly asks to work on planning.
 
-## Priority Roadmap
+## Non-Authoritative Idea Sequence
 
 ### P0. Libraries And Sidebar
-
-Requirement IDs: `SRC-001`, `SRC-002`, `SRC-003`, `SRC-004`, `CAT-001`,
-`UI-001`.
 
 - Add Libraries Settings as the only place to add or remove library roots.
 - Add Library uses a native folder picker and creates a recursive library root.
@@ -44,8 +49,6 @@ Requirement IDs: `SRC-001`, `SRC-002`, `SRC-003`, `SRC-004`, `CAT-001`,
 - Sidebar is navigation-only and shows `All Media` plus added libraries.
 
 ### P0. Fast First Browse
-
-Requirement IDs: `SCN-001`, `SCN-002`, `CAT-002`.
 
 - First scan persists library roots and filesystem-only media records.
 - Filesystem-only facts are limited to deterministic URL, resource, or
@@ -61,8 +64,6 @@ Requirement IDs: `SCN-001`, `SCN-002`, `CAT-002`.
 
 ### P0. Grid With Placeholders
 
-Requirement IDs: `UI-002`, `UI-003`.
-
 - Grid appears after libraries and filesystem records exist.
 - Grid shows placeholder tiles before thumbnails exist.
 - Default sort starts as newest-first filesystem date.
@@ -72,8 +73,6 @@ Requirement IDs: `UI-002`, `UI-003`.
   by default.
 
 ### P0. Automatic Library Reconciliation
-
-Requirement IDs: `REC-001`, `REC-002`, `REC-003`.
 
 - On launch, persisted records render immediately.
 - Background reconciliation then scans accessible libraries and streams changes
@@ -85,8 +84,6 @@ Requirement IDs: `REC-001`, `REC-002`, `REC-003`.
   recursively and uses the same subtle source status.
 
 ### P1. Lazy Metadata And Thumbnail Enrichment
-
-Requirement IDs: `ENR-001`, `ENR-002`, `THM-001`, `PERF-001`.
 
 - Apple-common media is in scope.
 - RAW is first-class media.
@@ -108,8 +105,6 @@ Requirement IDs: `ENR-001`, `ENR-002`, `THM-001`, `PERF-001`.
 
 ### P1. Image View
 
-Requirement IDs: `VIEW-001`, `PERF-002`.
-
 - Image view means film strip with one main media item.
 - Film strip mirrors the current Grid result.
 - The main media area loads original media asynchronously.
@@ -118,8 +113,6 @@ Requirement IDs: `VIEW-001`, `PERF-002`.
   instrumentation in the implementing spec.
 
 ### P1. Compare View
-
-Requirement IDs: `VIEW-002`, `PERF-002`.
 
 - Compare view means film strip with two chosen media items.
 - Film strip mirrors the current Grid result.
@@ -130,15 +123,11 @@ Requirement IDs: `VIEW-002`, `PERF-002`.
 
 ### P2. Pick, Reject, And Unpick
 
-Requirement IDs: `CUR-001`.
-
 - Pick/Reject/Unpick comes after Grid, Image, and Compare.
 - The curation state is persisted in the Otos catalog.
 - Rejected media remains visible unless a filter hides it.
 
 ### P2. Filters
-
-Requirement IDs: `FIL-001`.
 
 - Filters come after curation.
 - The first filter scope is curation state.
@@ -147,8 +136,6 @@ Requirement IDs: `FIL-001`.
 
 ### P2. Temporary Opened Files
 
-Requirement IDs: `OPEN-001`.
-
 - File > Open, Finder open, and drag/drop share one arbitrary-open path.
 - The path supports one or more files.
 - Opened files appear as an ephemeral `Opened Files` sidebar source.
@@ -156,8 +143,6 @@ Requirement IDs: `OPEN-001`.
   `All Media`.
 
 ### P2. Import Into User Libraries
-
-Requirement IDs: `IMP-001`.
 
 - Import is supported only into user-configured library directories.
 - Sources may be another folder or another Otos library.
@@ -170,8 +155,8 @@ Requirement IDs: `IMP-001`.
 - Adobe's catalog model stores references and app-owned organization/editing
   state while originals remain outside the catalog:
   [Lightroom catalog basics](https://helpx.adobe.com/lightroom-classic/help/lightroom-catalog-basics.html).
-- Lightroom's browsing and culling surfaces are useful prior art, but Otos uses
-  only the accepted `Grid`, `Image`, and `Compare` vocabulary:
+- Lightroom's browsing and culling surfaces were useful prior art for these idea
+  notes, including the `Grid`, `Image`, and `Compare` terms:
   [view photos](https://helpx.adobe.com/my_ms/lightroom-classic/help/view-photos.html),
   [flag and rate photos](https://helpx.adobe.com/lightroom-classic/help/flag-label-rate-photos.html).
 - Lightroom's missing-file workflow is useful contrast for Otos' automatic

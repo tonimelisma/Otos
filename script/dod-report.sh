@@ -16,6 +16,24 @@ git_value() {
   git -C "$ROOT_DIR" "$@" 2>/dev/null || true
 }
 
+push_status() {
+  if [[ -n "${DOD_PUSH_STATUS:-}" ]]; then
+    printf '%s\n' "$DOD_PUSH_STATUS"
+    return
+  fi
+
+  if [[ -z "$upstream_ref" ]]; then
+    printf '<no upstream configured>\n'
+    return
+  fi
+
+  if [[ -n "$head_full" && "$head_full" == "$upstream_full" ]]; then
+    printf 'pushed (%s at %s)\n' "$upstream_ref" "$head_short"
+  else
+    printf 'not pushed or upstream differs (%s at %s)\n' "$upstream_ref" "${upstream_short:-unknown}"
+  fi
+}
+
 changed_files() {
   if git -C "$ROOT_DIR" rev-parse --verify "$BASE_REF" >/dev/null 2>&1; then
     git -C "$ROOT_DIR" diff --name-only "$BASE_REF"...HEAD
@@ -24,10 +42,18 @@ changed_files() {
   fi
 }
 
+branch="$(git_value branch --show-current)"
+head_full="$(git_value rev-parse HEAD)"
+head_short="$(git_value rev-parse --short HEAD)"
+upstream_ref="$(git_value rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
+upstream_full="$(git_value rev-parse '@{u}')"
+upstream_short="$(git_value rev-parse --short '@{u}')"
+
 section "Increment"
 value "repo" "$ROOT_DIR"
-value "branch" "$(git_value branch --show-current)"
-value "head" "$(git_value rev-parse --short HEAD)"
+value "branch" "$branch"
+value "head" "$head_short"
+value "upstream" "${upstream_ref:-<none>}"
 value "base-ref" "$BASE_REF"
 value "worktree" "$(pwd)"
 
@@ -88,6 +114,7 @@ value "unresolved-risks" "${DOD_RISKS:-<none supplied>}"
 value "follow-up" "${DOD_FOLLOW_UP:-<none supplied>}"
 
 section "Increment Closure"
+value "branch-push-status" "$(push_status)"
 value "merge-status" "${DOD_MERGE_STATUS:-<not merged or not supplied>}"
 value "local-main-updated" "${DOD_LOCAL_MAIN_UPDATED:-<not supplied>}"
 value "post-merge-verification" "${DOD_POST_MERGE_VERIFY:-<not applicable or not supplied>}"
