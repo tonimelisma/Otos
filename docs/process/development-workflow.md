@@ -4,6 +4,13 @@ Otos development is spec-driven and evidence-driven. The goal is not ceremony;
 the goal is to prevent accidental architecture, hidden compatibility paths, and
 unverified AI-generated code from becoming the app.
 
+Keep the app as simple as possible. Simplicity is an architectural requirement:
+choose the smallest correct model, owner, state flow, and UI that satisfy the
+verified requirements. Performance work comes after correctness, simplicity, and
+clear ownership. Do not add performance-oriented complexity for anticipated
+scale until requirements, measurement, or explicit user direction prove the
+simple path is insufficient.
+
 ## Work Classification
 
 Classify the increment before drafting or editing:
@@ -33,6 +40,8 @@ Before implementation starts:
 - Provide acceptance examples and verification evidence.
 - Compare at least three architectural alternatives with pros, cons, and failure
   modes.
+- Identify the simplest correct alternative and justify any extra complexity
+  with verified requirements, measurements, or explicit user direction.
 - Name ownership, side effects, persistence, cancellation, errors, progress,
   privacy, instrumentation, and tests.
 - For refactors, list what is deleted, demoted, or replaced.
@@ -95,6 +104,10 @@ Do not leave compatibility bridges without a deletion target in the same spec.
 Implement the selected design directly. If implementation reveals that the spec
 is wrong, update the spec or ADR before continuing so review sees the real
 decision trail.
+
+Do not optimize by architecture preemption. A cache, pool, queue, protocol,
+split schema, or generalized pipeline must either simplify the current design or
+answer a verified need. Otherwise, defer it.
 
 Keep verification close to the changed owner. Prefer narrow tests and targeted
 log/profile evidence during development, then run the full local gate before

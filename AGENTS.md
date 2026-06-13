@@ -11,6 +11,13 @@ disk wherever the user chose to keep it. Originals are read-only.
   right structure.
 - Do not use effort as a decision criterion. Choose the correct architecture,
   even when it requires a larger refactor.
+- Keep the app as simple as possible. Simplicity is a product and architecture
+  requirement, not a shortcut. Prefer the smallest correct model, owner, schema,
+  state flow, and UI that satisfies verified requirements.
+- Performance comes after correctness, simplicity, and clear ownership. Do not
+  introduce caches, pooling, background pipelines, generalized abstractions,
+  split schemas, or other performance-oriented complexity for anticipated scale
+  before requirements or evidence prove the simple path is insufficient.
 - Do not patch around bad boundaries, stale abstractions, or accidental
   complexity. Remove the wrong abstraction and rebuild the affected path cleanly.
 - Do not guess. Inspect the repo, read the relevant APIs, and verify claims with
@@ -61,6 +68,9 @@ Definition of Ready
   instrumentation, and verification are addressed.
 - At least three architectural alternatives are compared with pros, cons, and
   failure modes.
+- The simplest correct alternative is identified, and any additional complexity
+  is justified by verified requirements, measurements, or explicit user
+  direction.
 - Refactors include a retirement list and proof plan for old names, files,
   construction paths, tests, fixtures, docs, logs, accessibility identifiers, and
   persistence/schema paths.
@@ -80,6 +90,8 @@ A spec must include:
   `docs/requirements.md`.
 - At least three architectural alternatives with pros, cons, and failure modes.
 - The selected approach and why it is right for the product, not why it is easy.
+- Why the selected approach is the simplest correct approach, or what evidence
+  justifies any extra complexity.
 - Interfaces, ownership boundaries, data flow, and persistence effects.
 - Concurrency and actor ownership.
 - Instrumentation and profiling plan.
@@ -144,6 +156,9 @@ guidance unless the user says it is itself the requirement.
   `ContentView`.
 - Keep domain models, stores, services, views, instrumentation, and support code
   in separate folders as the app grows.
+- Prefer direct, concrete designs over speculative flexibility. Add a layer,
+  cache, protocol, worker queue, normalized table, or generalized pipeline only
+  when it removes current complexity or is required by verified behavior.
 - Prefer explicit ownership over ambient global state.
 - Keep state at the narrowest correct scope:
   - view-local state with `@State`
@@ -191,6 +206,12 @@ guidance unless the user says it is itself the requirement.
 
 Instrumentation is not optional. Every meaningful path must be observable to the
 submodule level before the feature is considered complete.
+
+Performance work is evidence-driven and secondary to simple, correct product
+behavior. The app must still respect user-facing responsiveness budgets and
+MainActor constraints, but agents must not use anticipated scale or theoretical
+performance gains to justify complexity before measurement or explicit
+requirements call for it.
 
 Use `OSLog.Logger` and `OSSignposter` through the repo instrumentation facade.
 Required categories include:
