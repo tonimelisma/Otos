@@ -103,8 +103,8 @@ This ADR references, but does not own:
 
 Separate ADRs or specs must own:
 
-- Filesystem access, security-scoped bookmarks, root registration, root display
-  names, and root restoration.
+- Filesystem access, sandbox posture, root registration, root display names,
+  and root restoration.
 - Which files are eligible media assets beyond being regular files.
 - Move and rename detection.
 - Metadata extraction, metadata schema, metadata freshness, and metadata scan

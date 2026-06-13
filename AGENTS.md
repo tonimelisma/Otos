@@ -34,7 +34,7 @@ disk wherever the user chose to keep it. Originals are read-only.
 - Target the latest macOS and Xcode beta configured for this repo. The initial
   baseline is Xcode 27 beta with macOS deployment target 27.0.
 - Prefer Apple-native technologies: Swift, SwiftUI, Image I/O, AVFoundation,
-  Core Image, OSLog, Instruments, and filesystem/security-scoped access APIs.
+  Core Image, OSLog, Instruments, and filesystem APIs.
   Prefer SwiftUI for UI implementation. Use AppKit only when SwiftUI cannot
   provide the required capability or cannot meet verified responsiveness or
   performance requirements.
@@ -42,8 +42,9 @@ disk wherever the user chose to keep it. Originals are read-only.
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data lives in Application Support. All overlay data is treated as
   backed up for now. Do not introduce preview pruning or cache eviction.
-- Design file access around user-selected media roots and future
-  security-scoped bookmarks, even during developer-build-first work.
+- The initial app is unsandboxed. Design file access around user-selected media
+  roots and normal filesystem paths. Do not add sandboxing or security-scoped
+  bookmarks unless a future current requirement explicitly needs them.
 
 ## Spec-Driven Workflow
 
@@ -105,7 +106,7 @@ A spec must include:
 An ADR is required for:
 
 - Persistence or catalog data model choices.
-- Filesystem access and security-scoped bookmark policy.
+- Filesystem access, sandbox posture, or security-scoped bookmark policy.
 - Thumbnail, preview, metadata, import, export, or render pipeline design.
 - Any reusable architecture boundary, dependency, or module split.
 - Any decision that would be expensive to reverse.

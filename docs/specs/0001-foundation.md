@@ -21,7 +21,7 @@ Out of scope:
 
 - Catalog persistence implementation.
 - Real media browsing UI.
-- Distribution hardening beyond current sandbox-oriented project settings.
+- Distribution hardening beyond current project signing settings.
 - Preview pruning or cache policy.
 
 ## Architectural Alternatives
