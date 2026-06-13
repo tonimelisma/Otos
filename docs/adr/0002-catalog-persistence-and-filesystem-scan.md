@@ -1,4 +1,4 @@
-# ADR 0002: Catalog Persistence And Filesystem Scan State
+# ADR 0002: Catalog Persistence And Filesystem Reconciliation
 
 ## Status
 
@@ -10,10 +10,10 @@ Otos needs an app-owned catalog for user-selected media roots. Originals remain
 read-only on disk, while Otos stores catalog state in Application Support.
 
 This ADR decides the initial catalog persistence layer, the exact filesystem
-scan state stored in SQLite, and how scan updates reach SQLite and SwiftUI. It
-does not decide metadata extraction, thumbnail generation, thumbnail storage,
-preview storage, editing state, export state, security-scoped bookmark policy,
-or the full library-root access schema.
+facts stored in SQLite for scanned media assets, and how scan updates reach
+SQLite and SwiftUI. It does not decide metadata extraction, thumbnail
+generation, thumbnail storage, preview storage, editing state, export state,
+security-scoped bookmark policy, or the full library-root access schema.
 
 Verified repo facts:
 
@@ -38,8 +38,12 @@ Verified macOS API facts from the configured Xcode 27 beta SDK:
   traverses the mount point.
 - `URLResourceValues` exposes optional filesystem values such as
   `isRegularFile`, `isDirectory`, `isSymbolicLink`, `contentModificationDate`,
-  `fileIdentifier`, `fileContentIdentifier`, and `fileSize`.
+  and `fileSize`.
 - `NSURLContentTypeKey` returns a `UTType` for a file-system resource.
+- `NSURLFileIdentifierKey` is the file system's internal inode identifier for
+  an item and is not stable across all file systems or mounts.
+- `NSURLFileContentIdentifierKey` is a 64-bit APFS value that identifies a
+  file's content data stream.
 - `NSURLFileResourceIdentifierKey` and `NSURLVolumeIdentifierKey` are not
   persistent across system restarts, so they are not durable catalog keys.
 
@@ -65,6 +69,16 @@ Captured user guidance for verification:
 - ADRs should have clear MECE scope: each decision record owns one coherent
   decision area, names adjacent decisions, and does not decide unrelated future
   architecture.
+- The filesystem is the source of truth for current library and media
+  existence.
+- Do not generate Otos UUIDs for media assets in the initial catalog.
+- Do not store individual filesystem scan records in the initial catalog.
+- Filesystem scans are idempotent reconciliation operations.
+- If a completed scan of a library root does not observe a previously cataloged
+  file at that root-relative path, delete that media asset row.
+- Do not store first-seen, last-seen, or missing-since scan markers.
+- Do not store filesystem identifier fields in the initial media asset row
+  unless a current requirement names a use for them.
 
 ## MECE Decision Scope
 
@@ -74,17 +88,17 @@ This ADR owns:
 - GRDB as the Swift SQLite access layer.
 - `DatabaseQueue` as the initial GRDB connection owner.
 - Full in-memory loading of the current SQLite catalog working set.
-- The exact initial filesystem scan schema for scan runs and media asset rows.
+- The exact initial filesystem scan schema for media asset rows.
 - The macOS filesystem resource keys requested during the initial scan.
 - The 10 Hz time-based cadence for filesystem scan SQLite flushes.
 - The 10 Hz time-based cadence for SwiftUI-visible filesystem scan updates.
 
 This ADR references, but does not own:
 
-- `library_root_id` as an Otos-generated UUID primary key for a user-selected
-  root.
-- The existence of a library-root table that future filesystem-access work will
-  define.
+- The existence of a selected library-root record that future filesystem-access
+  work will define.
+- `library_root_id` as a reference to that selected library-root record, without
+  deciding the root identifier format or generation policy.
 - Read-only treatment of user originals, which is already owned by MED-001.
 
 Separate ADRs or specs must own:
@@ -99,6 +113,8 @@ Separate ADRs or specs must own:
   freshness, and thumbnail scan cadence.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
 - File watching or incremental change notification outside explicit scan runs.
+- Durable scan history, audit logs, resumable scans, or scan diagnostics beyond
+  privacy-safe instrumentation.
 - Any decision to make filesystem-provided identifiers durable media identity.
 
 ## Decision
@@ -124,8 +140,6 @@ resource-key set:
 - `isSymbolicLinkKey`
 - `contentModificationDateKey`
 - `fileSizeKey`
-- `fileIdentifierKey`
-- `fileContentIdentifierKey`
 - `contentTypeKey`
 
 The initial enumeration options are `[]`. This means the scanner does not skip
@@ -140,67 +154,61 @@ If a requested resource value is unavailable for an observed regular file, the
 corresponding nullable SQLite field is `NULL`. The app must not invent missing
 filesystem facts.
 
-### ID Contracts
+### Identity And Reconciliation Contracts
 
-`library_root_id` is an Otos-generated UUID string assigned when a user-selected
-root is registered with Otos. It is not a filesystem inode, bookmark identifier,
-path, URL, or Apple-provided resource value. It is the primary key of the
-library-root record defined by the filesystem-access ADR or implementation spec.
+The filesystem is the source of truth for whether a media file currently exists
+inside a selected library root.
 
-`media_asset.id` is an Otos-generated UUID string assigned when the catalog first
-creates a row for a `(library_root_id, relative_path)` pair. It remains stable
-for that row. Rename and move detection are not defined by this ADR; if a file is
-later observed at a different `relative_path`, that behavior needs its own
-requirement or ADR.
+`library_root_id` refers to the selected library-root record that owns the
+scanned root. This ADR does not define the library-root table, root identifier
+format, bookmark storage, root display name, or root restoration behavior. Those
+decisions belong to the filesystem-access ADR or implementation spec.
 
-`filesystem_scan.id` is an Otos-generated UUID string assigned to one scan run
-for one library root.
+`media_asset` identity is the pair `(library_root_id, relative_path)`. Otos does
+not generate a separate media asset UUID in the initial catalog.
+
+A filesystem scan is an idempotent reconciliation operation, not a durable
+domain entity. The initial catalog has no `filesystem_scan` table and no scan
+IDs.
+
+For a completed scan of one library root:
+
+- observed regular-file paths are inserted or updated in `media_asset`
+- existing `media_asset` rows for that root whose `relative_path` was not
+  observed are deleted
+
+The initial catalog does not retain first-seen, last-seen, missing-since, scan
+history, or tombstone state. Move and rename behavior is out of scope; in this
+ADR, a file that appears at a new root-relative path is a new row, and a file no
+longer observed at its old root-relative path is deleted.
 
 ### SQLite Schema
 
-All IDs are stored as lowercase hyphenated UUID strings in `TEXT` columns.
 All date values are stored as `REAL` seconds since the Unix epoch in UTC, using
 `Date.timeIntervalSince1970`.
-
-#### `filesystem_scan`
-
-| Column | SQLite type | Null | Definition |
-| --- | --- | --- | --- |
-| `id` | `TEXT` | no | Otos-generated UUID for one scan run. |
-| `library_root_id` | `TEXT` | no | Otos-generated UUID of the scanned library root. |
-| `started_at_unix` | `REAL` | no | Otos clock time when the scan run started. |
-| `finished_at_unix` | `REAL` | yes | Otos clock time when the scan run reached `completed`, `cancelled`, or `failed`. |
-| `status` | `TEXT` | no | One of `running`, `completed`, `cancelled`, or `failed`. |
-
-`filesystem_scan.library_root_id` references the library-root table's `id`.
 
 #### `media_asset`
 
 | Column | SQLite type | Null | Definition |
 | --- | --- | --- | --- |
-| `id` | `TEXT` | no | Otos-generated UUID for this catalog row. |
-| `library_root_id` | `TEXT` | no | Otos-generated UUID of the containing library root. |
+| `library_root_id` | `TEXT` | no | Identifier of the selected library-root record that owns the scanned root. The value format is defined by the filesystem-access ADR or implementation spec. |
 | `relative_path` | `TEXT` | no | Root-relative file-system path string from the library root to the item, with no leading slash. It is derived by removing the scanned root URL's standardized file-system path plus one path separator from the observed file URL's standardized file-system path. This is not localized display text. |
 | `content_type_identifier` | `TEXT` | yes | `UTType.identifier` from `NSURLContentTypeKey`, when available. |
 | `byte_size` | `INTEGER` | yes | File size in bytes from `URLResourceValues.fileSize`. |
 | `content_modified_at_unix` | `REAL` | yes | Content modification date from `URLResourceValues.contentModificationDate`, encoded as Unix seconds. |
-| `file_identifier` | `TEXT` | yes | Decimal string encoding of `URLResourceValues.fileIdentifier` (`UInt64`) when available. It is not globally stable and is not a primary key. |
-| `file_content_identifier` | `INTEGER` | yes | `URLResourceValues.fileContentIdentifier` (`Int64`) when available. |
-| `first_seen_scan_id` | `TEXT` | no | `filesystem_scan.id` for the scan run that first created this row. |
-| `last_seen_scan_id` | `TEXT` | no | `filesystem_scan.id` for the most recent scan run that observed this path. |
-| `missing_since_scan_id` | `TEXT` | yes | First completed scan run that did not observe this row's `relative_path`; `NULL` means not currently marked missing. |
-| `created_at_unix` | `REAL` | no | Otos clock time when this row was first inserted. |
-| `updated_at_unix` | `REAL` | no | Otos clock time when this row was last changed by a scan flush. |
 
 Constraints:
 
 - `media_asset.library_root_id` references the library-root table's `id`.
-- `media_asset.first_seen_scan_id`, `last_seen_scan_id`, and
-  `missing_since_scan_id` reference `filesystem_scan.id`.
-- `(library_root_id, relative_path)` is unique.
+- `(library_root_id, relative_path)` is the primary key.
 
 Fields deliberately not stored by this ADR:
 
+- `media_asset.id`
+- `filesystem_scan` rows or scan IDs
+- first-seen, last-seen, missing-since, or tombstone state
+- `URLResourceValues.fileIdentifier`
+- `URLResourceValues.fileContentIdentifier`
 - `URLResourceValues.fileResourceIdentifier`
 - `URLResourceValues.volumeIdentifier`
 - absolute paths in `media_asset`
@@ -226,7 +234,9 @@ changes. The catalog owner must not run overlapping SQLite writes for one
 catalog.
 
 At scan end, cancellation, or failure, the catalog owner performs one final
-flush before changing the `filesystem_scan.status` away from `running`.
+flush of pending observed-file changes. Deletion of unobserved existing rows
+happens only after a completed scan of that library root, not after a cancelled
+or failed scan.
 
 ## Alternatives Considered
 
@@ -314,6 +324,8 @@ Pros:
 
 - Could preserve identity across renames when a stable filesystem identifier is
   available.
+- Could help detect hard links, APFS clones, or content-sharing cases in a later
+  feature.
 
 Cons:
 
@@ -321,6 +333,8 @@ Cons:
   not persistent across system restarts.
 - `URLResourceValues.fileIdentifier` is not globally stable across all file
   systems or mounts.
+- `URLResourceValues.fileContentIdentifier` identifies an APFS content data
+  stream, not the file's path identity.
 - Move and rename identity is a separate product behavior, not required for the
   initial filesystem scan catalog.
 
@@ -329,21 +343,72 @@ Failure modes:
 - A filesystem-provided identifier is treated as a permanent media identity when
   Apple does not define it that way.
 
+### Generated Media UUIDs
+
+Pros:
+
+- Could provide a compact internal handle for future overlays that need stable
+  identity independent of path.
+- Could make foreign keys simple if later tables attach to media assets.
+
+Cons:
+
+- Adds app-owned identity before a current requirement needs it.
+- Makes the catalog look more authoritative than the filesystem for media
+  existence.
+- Requires behavior decisions for moves, renames, deletes, and reappearing files
+  that are outside this ADR.
+
+Failure modes:
+
+- A stale UUID row survives after the filesystem no longer contains the file.
+- Later features depend on UUID stability before the product defines what file
+  identity means across moves or renames.
+
+### Durable Scan Records
+
+Pros:
+
+- Could support audit history, resumable scans, or detailed diagnostics later.
+- Could explain when a row was first seen, last seen, or marked missing.
+
+Cons:
+
+- Treats an idempotent reconciliation operation as a durable domain entity.
+- Adds scan IDs, scan status, first-seen, last-seen, and missing-since state
+  before a current requirement needs them.
+- Preserves missing-file history when the current desired behavior is to delete
+  missing rows after a completed scan.
+
+Failure modes:
+
+- Future work reads scan history as authoritative product state.
+- A cancelled or failed scan accidentally marks files missing.
+
 ## Consequences
 
 The first catalog implementation has one durable SQLite catalog, one app-owned
-in-memory working set, and one row per scanned media asset path.
+in-memory working set, and one row per currently observed scanned media asset
+path.
 
-The schema contains only filesystem scan facts and Otos bookkeeping. Metadata
-and thumbnails cannot be implemented by filling in placeholder fields from this
-ADR; they require a later spec or ADR with exact fields.
+The schema contains only current filesystem facts for media assets. Metadata and
+thumbnails cannot be implemented by filling in placeholder fields from this ADR;
+they require a later spec or ADR with exact fields.
+
+Completed scans reconcile each selected root to the filesystem's current state.
+Rows observed during the scan are inserted or updated. Rows not observed after a
+completed scan are deleted.
 
 The selected pattern constrains implementation:
 
 - no direct database calls from SwiftUI views
+- no generated media asset UUID in the initial catalog
+- no durable `filesystem_scan` table
+- no first-seen, last-seen, missing-since, or tombstone columns
 - no metadata or thumbnail columns in the initial catalog schema
 - no absolute paths in `media_asset`
-- no durable use of `fileResourceIdentifier` or `volumeIdentifier`
+- no durable use of `fileIdentifier`, `fileContentIdentifier`,
+  `fileResourceIdentifier`, or `volumeIdentifier`
 - no main-actor filesystem traversal or database work
 - no count-based scan flush threshold
 - SQLite scan flushes at 10 Hz when pending changes exist
@@ -376,3 +441,6 @@ interaction latency before introducing paging or query-backed views.
 
 If 10 Hz scan flushing proves too frequent or too sparse, change the cadence
 through a new requirement or ADR update with measured evidence.
+
+If durable scan history or media UUIDs become necessary, add them through a new
+requirement and migration that defines the product behavior they support.
