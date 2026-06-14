@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-enum OtosLog {
+nonisolated enum OtosLog {
     static let subsystem = Bundle.main.bundleIdentifier ?? "net.melisma.Otos"
 
     static let app = Logger(subsystem: subsystem, category: Category.app.rawValue)
@@ -29,7 +29,7 @@ enum OtosLog {
     }
 }
 
-enum OtosSignpost {
+nonisolated enum OtosSignpost {
     static let app = OSSignposter(logger: OtosLog.app)
     static let ui = OSSignposter(logger: OtosLog.ui)
     static let fileAccess = OSSignposter(logger: OtosLog.fileAccess)

@@ -69,6 +69,12 @@ sandbox entitlement-driven access logic. Keep originals read-only through Otos
 behavior, tests, and review rather than relying on App Sandbox as the initial
 enforcement mechanism.
 
+The normalized filesystem path is the product and domain identity for a library
+root. SQLite may store an internal `INTEGER PRIMARY KEY` rowid for the
+`library_root` table, but that rowid is only a private foreign-key implementation
+detail for child catalog rows. It is not a generated product identifier, is not
+user-visible, and must not be treated as the filesystem source of truth.
+
 ## Alternatives Considered
 
 ### Unsandboxed Path-Based Roots

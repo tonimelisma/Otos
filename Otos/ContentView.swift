@@ -8,17 +8,37 @@
 import SwiftUI
 
 struct ContentView: View {
+    @Bindable var model: OtosAppModel
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        NavigationSplitView {
+            SidebarView(snapshot: model.snapshot, selection: $model.selection)
+        } detail: {
+            MediaTableView(title: model.selectedTitle, assets: model.visibleAssets)
         }
-        .padding()
+        .task {
+            model.start()
+        }
+        .alert("Catalog", isPresented: messageBinding) {
+            Button("OK", role: .cancel) {
+                model.dismissMessage()
+            }
+        } message: {
+            Text(model.message ?? "")
+        }
+    }
+
+    private var messageBinding: Binding<Bool> {
+        Binding {
+            model.message != nil
+        } set: { isPresented in
+            if !isPresented {
+                model.dismissMessage()
+            }
+        }
     }
 }
 
 #Preview {
-    ContentView()
+    ContentView(model: OtosAppModel())
 }
