@@ -2,20 +2,22 @@
 
 Otos is a native macOS Lightroom-style application. It overlays organization,
 metadata, previews, and editing intent on top of user-owned media that remains on
-disk wherever the user chose to keep it. Originals are read-only unless a future
-spec explicitly changes that rule.
-
-These instructions are part of the product architecture. Follow them before
-local preference, speed, or convenience.
+disk wherever the user chose to keep it. Originals are read-only.
 
 ## Non-Negotiable Principles
 
-- Treat this repository as a blank-slate architecture. Do not revive old Otos
-  Studio implementation ideas, names, shims, or migration paths.
+- Treat this repository as a blank-slate architecture.
 - Do not add compatibility shims. If a structure is wrong, replace it with the
   right structure.
 - Do not use effort as a decision criterion. Choose the correct architecture,
   even when it requires a larger refactor.
+- Keep the app as simple as possible. Simplicity is a product and architecture
+  requirement, not a shortcut. Prefer the smallest correct model, owner, schema,
+  state flow, and UI that satisfies verified requirements.
+- Performance comes after correctness, simplicity, and clear ownership. Do not
+  introduce caches, pooling, background pipelines, generalized abstractions,
+  split schemas, or other performance-oriented complexity for anticipated scale
+  before requirements or evidence prove the simple path is insufficient.
 - Do not patch around bad boundaries, stale abstractions, or accidental
   complexity. Remove the wrong abstraction and rebuild the affected path cleanly.
 - Do not guess. Inspect the repo, read the relevant APIs, and verify claims with
@@ -26,25 +28,23 @@ local preference, speed, or convenience.
 - One user action has one implementation path. Buttons, menus, keyboard
   shortcuts, gestures, automation hooks, and tests should call the same owner
   intent instead of parallel behavior paths.
-- Keep user media private. Never log raw paths, filenames, thumbnails, EXIF
-  payloads, or user content by default.
 
 ## Platform And Product Baseline
 
 - Target the latest macOS and Xcode beta configured for this repo. The initial
   baseline is Xcode 27 beta with macOS deployment target 27.0.
-- Prefer Apple-native technologies: Swift, SwiftUI, AppKit only when SwiftUI is
-  insufficient, Image I/O, AVFoundation, Core Image, OSLog, Instruments, and
-  filesystem/security-scoped access APIs.
+- Prefer Apple-native technologies: Swift, SwiftUI, Image I/O, AVFoundation,
+  Core Image, OSLog, Instruments, and filesystem APIs.
+  Prefer SwiftUI for UI implementation. Use AppKit only when SwiftUI cannot
+  provide the required capability or cannot meet verified responsiveness or
+  performance requirements.
 - Third-party dependencies are allowed only when the spec proves they are the
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data lives in Application Support. All overlay data is treated as
-  backed up for now. Do not introduce preview pruning or cache eviction until a
-  catalog-storage ADR defines that policy.
-- Design file access around user-selected media roots and future
-  security-scoped bookmarks, even during developer-build-first work.
-- Do not choose SwiftData, Core Data, SQLite, or another catalog store casually.
-  The first catalog implementation must begin with an ADR.
+  backed up for now. Do not introduce preview pruning or cache eviction.
+- The initial app is unsandboxed. Design file access around user-selected media
+  roots and normal filesystem paths. Do not add sandboxing or security-scoped
+  bookmarks unless a future current requirement explicitly needs them.
 
 ## Spec-Driven Workflow
 
@@ -53,38 +53,50 @@ ADR in `docs/adr/`. The spec must be decision-complete before implementation.
 
 Classify the work before drafting the spec:
 
-- Micro: mechanical edits that do not change behavior, architecture, or process.
-- Small behavior change: one narrow observable change with contained ownership.
 - Feature: new user-facing or system capability.
 - Refactor: ownership, boundary, naming, or structural change.
 - Bug fix: correction of an observed or reproducible failure.
 - Research: investigation with written conclusions before implementation.
 - Process/tooling: workflow, CI, scripts, or documentation guardrails.
 
-Definition of Ready for non-micro work:
+Definition of Ready
 
 - Goal, change type, scope, and non-goals are explicit.
 - Current repo state was inspected and summarized.
 - Observable requirements and acceptance examples are identified.
+- Captured user guidance has been written back to the user in detail for
+  verification, or the spec states why the guidance is already explicit enough to
+  record directly.
 - Ownership, side effects, persistence, cancellation, errors, progress, privacy,
   instrumentation, and verification are addressed.
-- At least two architectural alternatives are compared with pros, cons, and
+- At least three architectural alternatives are compared with pros, cons, and
   failure modes.
+- The simplest correct alternative is identified, and any additional complexity
+  is justified by verified requirements, measurements, or explicit user
+  direction.
+- ADRs include a MECE decision scope: what the ADR owns, what it references but
+  does not own, and which adjacent decisions require separate ADRs or specs.
 - Refactors include a retirement list and proof plan for old names, files,
   construction paths, tests, fixtures, docs, logs, accessibility identifiers, and
   persistence/schema paths.
 - Performance-sensitive work names the jank/log/profile evidence that will be
   collected.
-- Open questions are answered or explicitly moved out of scope.
 
 A spec must include:
 
 - Problem statement and user-facing goal.
 - In-scope and out-of-scope work.
 - Current repo state discovered through inspection.
-- Linked requirement IDs from `docs/requirements.md`, or new proposed IDs.
-- At least two architectural alternatives with pros, cons, and failure modes.
+- Captured requirements for user verification, split into precise functional,
+  non-functional, process, architecture, tooling, privacy, or regression items.
+- Linked current requirement IDs from `docs/requirements.md`, if they already
+  exist.
+- Separate future ideas or unimplemented requirement candidates outside
+  `docs/requirements.md`.
+- At least three architectural alternatives with pros, cons, and failure modes.
 - The selected approach and why it is right for the product, not why it is easy.
+- Why the selected approach is the simplest correct approach, or what evidence
+  justifies any extra complexity.
 - Interfaces, ownership boundaries, data flow, and persistence effects.
 - Concurrency and actor ownership.
 - Instrumentation and profiling plan.
@@ -94,13 +106,59 @@ A spec must include:
 An ADR is required for:
 
 - Persistence or catalog data model choices.
-- Filesystem access and security-scoped bookmark policy.
+- Filesystem access, sandbox posture, or security-scoped bookmark policy.
 - Thumbnail, preview, metadata, import, export, or render pipeline design.
 - Any reusable architecture boundary, dependency, or module split.
 - Any decision that would be expensive to reverse.
 
+Each ADR must be mutually exclusive and collectively clear with adjacent
+decisions. It must name the decision area it owns, name related decisions it
+intentionally does not own, and avoid deciding future architecture through
+placeholder fields, speculative hooks, or broad wording.
+
 Do not implement from a vague task. First convert it into a decision-complete
-spec, then implement.
+spec, present to the user for feedback, and only then implement.
+
+## Requirement Capture And Authority
+
+`docs/requirements.md` is current-state authority only. It contains implemented
+behavior, active process rules, requirements changed by the current increment, and
+retired requirements. It must not be used as a backlog, roadmap, idea list, or
+home for unimplemented product plans.
+
+Future ideas and unimplemented requirement candidates belong in non-authoritative
+planning documents, implementation specs, or ADRs until they are implemented.
+Planning and idea documents may contain wild ideas, abandoned options, or concepts
+that are never meant to be implemented. Do not use them to guide work unless the
+user explicitly asks to use those documents or asks for roadmap/planning input in
+the current task.
+
+Whenever the user gives guidance that affects product direction, app behavior,
+architecture, workflow, quality, regression protection, evidence, or future
+direction, agents must:
+
+- restate the captured requirements to the user in detail for verification
+- split bundled guidance into precise individual requirements
+- label each item by type, such as functional, non-functional, process,
+  architecture, tooling, privacy, or regression
+- separate current implemented requirements from future ideas or candidates
+- store captured guidance in the correct repository document during the same
+  increment, marking unverified or unimplemented guidance as non-authoritative
+  candidate material outside `docs/requirements.md`
+- update `docs/requirements.md` only for implemented current behavior, active
+  process requirements, changed requirements in the current increment, or retired
+  requirements
+- ignore roadmap, planning, or idea documents unless the user explicitly asks to
+  use them for the current task
+- include acceptance examples and verification evidence for current requirements
+
+Regression reports are requirement input. Capture the expected preserved behavior,
+the failing or risky condition, and the evidence that proves the regression is
+covered.
+
+User examples are requirement input when they carry intent. Treat a phrase such as
+"how and when we load a data structure into memory" as an example of broader
+guidance unless the user says it is itself the requirement.
 
 ## Architecture Standards
 
@@ -108,6 +166,9 @@ spec, then implement.
   `ContentView`.
 - Keep domain models, stores, services, views, instrumentation, and support code
   in separate folders as the app grows.
+- Prefer direct, concrete designs over speculative flexibility. Add a layer,
+  cache, protocol, worker queue, normalized table, or generalized pipeline only
+  when it removes current complexity or is required by verified behavior.
 - Prefer explicit ownership over ambient global state.
 - Keep state at the narrowest correct scope:
   - view-local state with `@State`
@@ -120,8 +181,7 @@ spec, then implement.
   settings scenes.
 - Do not create iOS-style push navigation for workflows that need persistent
   desktop context.
-- Do not hardcode light-only colors or custom sidebar chrome unless a design
-  spec proves it belongs.
+- Do not hardcode light-only colors or custom sidebar chrome.
 - Protocols belong at real substitution boundaries. Do not add a protocol only
   to make code feel abstract.
 - Persistence must have one current owner, explicit schema/version policy, and
@@ -156,6 +216,12 @@ spec, then implement.
 
 Instrumentation is not optional. Every meaningful path must be observable to the
 submodule level before the feature is considered complete.
+
+Performance work is evidence-driven and secondary to simple, correct product
+behavior. The app must still respect user-facing responsiveness budgets and
+MainActor constraints, but agents must not use anticipated scale or theoretical
+performance gains to justify complexity before measurement or explicit
+requirements call for it.
 
 Use `OSLog.Logger` and `OSSignposter` through the repo instrumentation facade.
 Required categories include:
@@ -231,15 +297,7 @@ Swift/macOS smell families to watch:
 
 ## Toolchain
 
-Use full Xcode, not Command Line Tools:
-
-```sh
-sudo xcode-select --switch /Applications/Xcode-beta.app/Contents/Developer
-```
-
-Local scripts must fail clearly if `xcode-select -p` points at
-`/Library/Developer/CommandLineTools` or any developer directory without
-`xcodebuild`.
+Use full Xcode, not Command Line Tools.
 
 Use Homebrew for developer tools:
 
@@ -256,7 +314,7 @@ script/verify.sh
 ## Git, CI, And Pull Requests
 
 - Work on a branch named `codex/<description>` for agent-driven increments.
-- Non-micro increments should use a dedicated git worktree when starting new
+- Increments should use a dedicated git worktree when starting new
   work. If an existing branch/worktree is already the active increment, keep the
   work there and state that in the PR.
 - Never discard user work. Do not remove stale worktrees, branches, or stashes
@@ -269,9 +327,6 @@ script/verify.sh
   build/test until a runner with Xcode 27 exists.
 - Xcode 27 build and test proof is required as local PR evidence through
   `script/verify.sh`.
-- Default local verification runs unit tests. Do not add screen-driving UI
-  automation without a fresh spec and ADR that justify the cost, intrusiveness,
-  and reliability tradeoffs.
 - This is a private GitHub repository. Remote CI may be waived only when GitHub
   explicitly reports exhausted Actions quota. Paste that evidence in the PR.
 - CI may not be waived for test failures, build failures, workflow syntax
@@ -288,6 +343,8 @@ it is not done.
 
 - linked spec and ADRs when required
 - linked requirement IDs and acceptance examples
+- captured user requirements were restated to the user and stored in the correct
+  current or planning document
 - selected architecture with alternatives and pros/cons
 - local `script/verify.sh` output summary and Xcode version
 - tests for changed behavior at the narrowest useful boundary
@@ -302,6 +359,10 @@ it is not done.
 - confirmation that no shim, legacy architecture, or effort-based compromise was
   introduced
 - unresolved risks and follow-up work
+- `script/dod-report.sh` output or equivalent final DoD report completed for the
+  increment
+- increment branch and commits pushed to the remote before handoff, or the exact
+  push blocker recorded in the DoD report
 - PR merged into `main`
 - local `main` updated to include the merge commit
 - post-merge verification run when the increment changed build, test, workflow,

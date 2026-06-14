@@ -9,6 +9,14 @@ Proposed
 What decision is needed, what repo/API facts were verified, and which
 requirements does this decision support?
 
+## MECE Decision Scope
+
+What does this ADR own?
+
+What related decisions does this ADR reference but not own?
+
+Which adjacent decisions require separate ADRs or specs?
+
 ## Decision
 
 What are we choosing?

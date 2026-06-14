@@ -5,7 +5,9 @@
 ## Spec, Requirements, And ADRs
 
 - Spec:
-- Requirement IDs:
+- Current requirement IDs:
+- Captured requirements restated to the user:
+- Planning or idea docs used only by explicit user request:
 - ADRs:
 - Definition of Ready complete:
 
@@ -56,6 +58,8 @@
 
 ## Increment Closure
 
+- DoD report:
+- Branch pushed:
 - Merge status:
 - Local `main` updated:
 - Post-merge verification:
