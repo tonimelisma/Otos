@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		3BCB10072FEAFB0000010001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 3BCB10062FEAFB0000010001 /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		3B44EB6C2FCEBA59007E4158 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -39,6 +43,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3BCB10072FEAFB0000010001 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -90,6 +95,7 @@
 			);
 			name = Otos;
 			packageProductDependencies = (
+				3BCB10062FEAFB0000010001 /* GRDB */,
 			);
 			productName = Otos;
 			productReference = 3B44EB5E2FCEBA57007E4158 /* Otos.app */;
@@ -146,6 +152,9 @@
 			);
 			mainGroup = 3B44EB552FCEBA57007E4158;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B44EB5F2FCEBA57007E4158 /* Products */;
 			projectDirPath = "";
@@ -463,6 +472,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.11.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		3BCB10062FEAFB0000010001 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 3B44EB562FCEBA57007E4158 /* Project object */;
 }

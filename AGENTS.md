@@ -328,7 +328,8 @@ script/verify.sh
 - Xcode 27 build and test proof is required as local PR evidence through
   `script/verify.sh`.
 - This is a private GitHub repository. Remote CI may be waived only when GitHub
-  explicitly reports exhausted Actions quota. Paste that evidence in the PR.
+  explicitly reports an account billing, spending-limit, or exhausted Actions
+  quota blocker that prevents jobs from starting. Paste that evidence in the PR.
 - CI may not be waived for test failures, build failures, workflow syntax
   errors, missing tools, lint failures, runner bugs, or unrelated flakiness.
 - Local `script/verify.sh` evidence is required even when remote CI quota is
@@ -341,6 +342,32 @@ until the work has landed on `main`, the repo is clean, and the workspace is
 ready for the next increment. An open PR can be ready for review or merge, but
 it is not done.
 
+There is exactly one DoD report for an increment. Do not create, post, or send a
+review handoff DoD, partial DoD, pre-merge DoD, or "ready for review" DoD. The
+first DoD report the user receives must be the final DoD report, and the final
+DoD report may only be sent after the entire DoD is complete or after a true
+external blocker prevents completion.
+
+The final DoD report must be included in the PR as a final comment and sent to
+the user. It must use green and red status emoji for every question, with clear
+textual descriptions rather than terse labels. It must answer:
+
+- what was done
+- what planned work was not done, if anything
+- which design decisions were made
+- which requirements, specs, ADRs, and docs changed
+- what verification ran, including Xcode version and local `script/verify.sh`
+  result
+- what remote CI reported, including exact billing, spending-limit, quota, or
+  failure evidence
+- what instrumentation, logging, profiling, or performance evidence exists
+- what code smells were observed, addressed, accepted, or remain
+- what privacy and media-originals review found
+- what risks or follow-up work remain
+- which merge, local `main`, post-merge verification, branch cleanup, worktree
+  cleanup, stash cleanup, stale branch/worktree review, and final clean-tree
+  steps completed
+
 - linked spec and ADRs when required
 - linked requirement IDs and acceptance examples
 - captured user requirements were restated to the user and stored in the correct
@@ -349,7 +376,8 @@ it is not done.
 - local `script/verify.sh` output summary and Xcode version
 - tests for changed behavior at the narrowest useful boundary
 - remote CI status recorded, with quota waiver evidence only when GitHub
-  explicitly reports exhausted Actions quota
+  explicitly reports an account billing, spending-limit, or exhausted Actions
+  quota blocker that prevents jobs from starting
 - instrumentation added or updated for every meaningful path
 - trace/log artifact paths for performance-sensitive work
 - code smells observed and how they were addressed or intentionally accepted
@@ -359,8 +387,8 @@ it is not done.
 - confirmation that no shim, legacy architecture, or effort-based compromise was
   introduced
 - unresolved risks and follow-up work
-- `script/dod-report.sh` output or equivalent final DoD report completed for the
-  increment
+- `script/dod-report.sh` output or equivalent final DoD report completed only
+  after the full increment is otherwise done
 - increment branch and commits pushed to the remote before handoff, or the exact
   push blocker recorded in the DoD report
 - PR merged into `main`

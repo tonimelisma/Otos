@@ -56,19 +56,15 @@
 - Unresolved risks:
 - Follow-up work:
 
-## Increment Closure
+## Final DoD Report
 
-- DoD report:
-- Branch pushed:
-- Merge status:
-- Local `main` updated:
-- Post-merge verification:
-- Local branch cleanup:
-- Remote branch cleanup:
-- Worktree cleanup:
-- Increment stashes cleared:
-- Stale branches/worktrees reviewed:
-- Final working tree clean:
+Do not fill this section before merge. Do not post a review handoff, partial,
+pre-merge, or ready-for-review DoD report.
+
+After the PR is merged, local `main` is updated, required post-merge verification
+is complete, branch/worktree cleanup is complete, increment stashes are cleared,
+stale branches/worktrees are reviewed, and the final working tree is clean, post
+the single final green/red DoD report as a PR comment and send it to the user.
 
 ## Foundation Checklist
 
