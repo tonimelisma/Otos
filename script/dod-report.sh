@@ -4,34 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_REF="${BASE_REF:-origin/main}"
 
-section() {
-  printf '\n## %s\n' "$1"
-}
-
-value() {
-  printf '%s: %s\n' "$1" "$2"
-}
-
 git_value() {
   git -C "$ROOT_DIR" "$@" 2>/dev/null || true
-}
-
-push_status() {
-  if [[ -n "${DOD_PUSH_STATUS:-}" ]]; then
-    printf '%s\n' "$DOD_PUSH_STATUS"
-    return
-  fi
-
-  if [[ -z "$upstream_ref" ]]; then
-    printf '<no upstream configured>\n'
-    return
-  fi
-
-  if [[ -n "$head_full" && "$head_full" == "$upstream_full" ]]; then
-    printf 'pushed (%s at %s)\n' "$upstream_ref" "$head_short"
-  else
-    printf 'not pushed or upstream differs (%s at %s)\n' "$upstream_ref" "${upstream_short:-unknown}"
-  fi
 }
 
 changed_files() {
@@ -42,85 +16,98 @@ changed_files() {
   fi
 }
 
+mark_for() {
+  case "${1:-red}" in
+    green|GREEN|ok|OK|pass|PASS|yes|YES)
+      printf '✅'
+      ;;
+    red|RED|fail|FAIL|no|NO|blocker|BLOCKER)
+      printf '❌'
+      ;;
+    *)
+      printf '❌'
+      ;;
+  esac
+}
+
+row() {
+  local status="$1"
+  local label="$2"
+  local text="$3"
+  printf '%s **%s:** %s\n' "$(mark_for "$status")" "$label" "$text"
+}
+
+row_env() {
+  local status_var="$1"
+  local label="$2"
+  local text_var="$3"
+  local status="${!status_var:-red}"
+  local text="${!text_var:-<missing final DoD description>}"
+  row "$status" "$label" "$text"
+}
+
+section() {
+  printf '\n## %s\n' "$1"
+}
+
 branch="$(git_value branch --show-current)"
 head_full="$(git_value rev-parse HEAD)"
 head_short="$(git_value rev-parse --short HEAD)"
 upstream_ref="$(git_value rev-parse --abbrev-ref --symbolic-full-name '@{u}')"
 upstream_full="$(git_value rev-parse '@{u}')"
-upstream_short="$(git_value rev-parse --short '@{u}')"
+worktree_status="$(git -C "$ROOT_DIR" status --short)"
 
-section "Increment"
-value "repo" "$ROOT_DIR"
-value "branch" "$branch"
-value "head" "$head_short"
-value "upstream" "${upstream_ref:-<none>}"
-value "base-ref" "$BASE_REF"
-value "worktree" "$(pwd)"
-
-section "Working Tree"
-status="$(git -C "$ROOT_DIR" status --short)"
-if [[ -z "$status" ]]; then
-  value "status" "clean"
-else
-  value "status" "dirty"
-  printf '%s\n' "$status"
+push_status="red"
+push_text="No upstream is configured for ${branch:-<unknown branch>}."
+if [[ -n "$upstream_ref" && -n "$head_full" && "$head_full" == "$upstream_full" ]]; then
+  push_status="green"
+  push_text="Branch ${branch:-<unknown branch>} is pushed to $upstream_ref at ${head_short:-<unknown>}."
+elif [[ -n "$upstream_ref" ]]; then
+  push_text="Branch ${branch:-<unknown branch>} has upstream $upstream_ref, but local HEAD differs from upstream."
 fi
+
+tree_status="red"
+tree_text="Working tree is dirty."
+if [[ -z "$worktree_status" ]]; then
+  tree_status="green"
+  tree_text="Working tree is clean."
+fi
+
+section "Final DoD Report"
+printf 'Repo: %s\n' "$ROOT_DIR"
+printf 'Branch: %s\n' "${branch:-<unknown>}"
+printf 'Head: %s\n' "${head_short:-<unknown>}"
+printf 'Base ref for changed-file evidence: %s\n' "$BASE_REF"
+if [[ -n "${DOD_PR:-}" ]]; then
+  printf 'PR: %s\n' "$DOD_PR"
+fi
+printf '\nThis is the single final DoD report for the increment. Do not use this output as a review handoff, partial, pre-merge, or ready-for-review report.\n'
+
+section "Final Questions"
+row_env DOD_DONE_STATUS "What was done" DOD_DONE
+row_env DOD_NOT_DONE_STATUS "What planned work was not done" DOD_NOT_DONE
+row_env DOD_DESIGN_STATUS "What design decisions were made" DOD_DESIGN
+row_env DOD_DOCS_STATUS "What requirements, specs, ADRs, and docs changed" DOD_DOCS
+row_env DOD_VERIFICATION_STATUS "What verification ran" DOD_VERIFICATION
+row_env DOD_CI_STATUS "What remote CI reported" DOD_CI
+row_env DOD_INSTRUMENTATION_STATUS "What instrumentation or performance evidence exists" DOD_INSTRUMENTATION
+row_env DOD_SMELLS_STATUS "What code smells remain" DOD_SMELLS
+row_env DOD_PRIVACY_STATUS "What privacy and media-originals review found" DOD_PRIVACY
+row_env DOD_RISKS_STATUS "What risks or follow-up remain" DOD_RISKS
+row "$push_status" "Branch push" "$push_text"
+row_env DOD_MERGE_STATUS "PR merge" DOD_MERGE
+row_env DOD_LOCAL_MAIN_STATUS "Local main update" DOD_LOCAL_MAIN
+row_env DOD_POST_MERGE_STATUS "Post-merge verification" DOD_POST_MERGE
+row_env DOD_BRANCH_CLEANUP_STATUS "Branch cleanup" DOD_BRANCH_CLEANUP
+row_env DOD_WORKTREE_CLEANUP_STATUS "Worktree cleanup" DOD_WORKTREE_CLEANUP
+row_env DOD_STASH_STATUS "Increment stash cleanup" DOD_STASH
+row_env DOD_STALE_STATUS "Stale branch and worktree review" DOD_STALE
+row "$tree_status" "Final working tree" "$tree_text"
 
 section "Changed Files"
 files="$(changed_files)"
 if [[ -z "$files" ]]; then
-  value "changed-files" "none"
+  printf 'No files differ from %s.\n' "$BASE_REF"
 else
   printf '%s\n' "$files"
 fi
-
-section "Toolchain"
-developer_dir="$(/usr/bin/xcode-select -p 2>/dev/null || true)"
-value "xcode-select" "${developer_dir:-<none>}"
-if [[ -n "$developer_dir" && -x "$developer_dir/usr/bin/xcodebuild" ]]; then
-  "$developer_dir/usr/bin/xcodebuild" -version | sed 's/^/xcodebuild: /'
-else
-  value "xcodebuild" "unavailable"
-fi
-
-section "Local Verification Evidence"
-value "script/verify.sh" "${DOD_VERIFY_EVIDENCE:-<paste PR summary or run script/verify.sh>}"
-value "focused-tests" "${DOD_FOCUSED_TESTS:-<not supplied>}"
-
-section "CI Evidence"
-value "github-actions" "${DOD_CI_EVIDENCE:-<paste PR check status or quota exhaustion evidence>}"
-value "quota-waiver" "${DOD_CI_QUOTA_WAIVER:-not claimed}"
-
-section "Docs And Requirements"
-value "requirements" "${DOD_REQUIREMENTS:-<list requirement IDs updated or not applicable>}"
-value "spec" "${DOD_SPEC:-<link spec or not applicable>}"
-value "adr" "${DOD_ADR:-<link ADRs or not applicable>}"
-
-section "Performance And Instrumentation"
-value "logs" "${DOD_LOG_EVIDENCE:-<not applicable or not supplied>}"
-value "profiles" "${DOD_PROFILE_EVIDENCE:-<not applicable or not supplied>}"
-value "worst-span-summary" "${DOD_PERFORMANCE_SUMMARY:-<not applicable or not supplied>}"
-
-section "Code Smells Observed"
-value "smells" "${DOD_CODE_SMELLS:-<required: list smells observed, or None observed>}"
-value "outcome" "${DOD_CODE_SMELL_OUTCOME:-<required when smells were observed>}"
-
-section "Privacy And Media"
-value "privacy-impact" "${DOD_PRIVACY_IMPACT:-<not supplied>}"
-value "media-impact" "${DOD_MEDIA_IMPACT:-<not supplied>}"
-
-section "Risks And Follow-Up"
-value "unresolved-risks" "${DOD_RISKS:-<none supplied>}"
-value "follow-up" "${DOD_FOLLOW_UP:-<none supplied>}"
-
-section "Increment Closure"
-value "branch-push-status" "$(push_status)"
-value "merge-status" "${DOD_MERGE_STATUS:-<not merged or not supplied>}"
-value "local-main-updated" "${DOD_LOCAL_MAIN_UPDATED:-<not supplied>}"
-value "post-merge-verification" "${DOD_POST_MERGE_VERIFY:-<not applicable or not supplied>}"
-value "local-branch-cleanup" "${DOD_LOCAL_BRANCH_CLEANUP:-<not complete or not supplied>}"
-value "remote-branch-cleanup" "${DOD_REMOTE_BRANCH_CLEANUP:-<not complete or not supplied>}"
-value "worktree-cleanup" "${DOD_WORKTREE_CLEANUP:-<not applicable or not supplied>}"
-value "increment-stashes-cleared" "${DOD_STASH_CLEANUP:-<not applicable or not supplied>}"
-value "stale-branches-worktrees-reviewed" "${DOD_STALE_REVIEW:-<not supplied>}"
-value "next-increment-ready" "${DOD_NEXT_INCREMENT_READY:-<not supplied>}"

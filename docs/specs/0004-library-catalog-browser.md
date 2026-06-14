@@ -3,7 +3,7 @@
 ## Classification
 
 - Work type: Feature
-- Current requirement IDs: FND-002, FND-006, FND-008, FND-014, FND-015, FND-017, FND-018, MED-001, MED-002, MED-003, APP-001
+- Current requirement IDs: FND-002, FND-006, FND-008, FND-013, FND-014, FND-015, FND-017, FND-018, FND-021, FND-022, MED-001, MED-002, MED-003, APP-001
 - Future idea or candidate links explicitly requested by the user: none
 - ADRs: ADR 0002, ADR 0003
 
@@ -76,6 +76,9 @@ Out of scope:
 | CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, in-memory state, scan lifecycle, and 10 Hz scan flush/publish cadence. | Current | `docs/requirements.md` |
 | CAT-005 | Architecture | SwiftUI views never call SQLite directly; a MainActor observable model consumes catalog snapshots. | Current | `docs/requirements.md` |
 | CAT-006 | Non-functional | SQLite scan writes and SwiftUI-visible scan updates happen at a 10 Hz time cadence when pending changes exist. | Current | `docs/requirements.md`, ADR 0002 |
+| DOD-001 | Process | There is exactly one DoD report for an increment, and no review handoff, partial, pre-merge, or ready-for-review DoD report may be sent to the user or posted to the PR. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
+| DOD-002 | Process | The final DoD report is created only after the entire DoD is complete or after a true external blocker prevents completion. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
+| DOD-003 | Process | The final DoD report uses green and red status emoji plus clear textual descriptions for every required DoD question, and it is included in the PR and sent to the user. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
 
 ## Architectural Alternatives
 
