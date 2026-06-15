@@ -1,8 +1,51 @@
 import Foundation
+import GRDB
 @testable import Otos
 import Testing
 
 struct CatalogStoreTests {
+    @Test func migratesV1DatabaseAndReloadsNewNullableFields() async throws {
+        let temp = try makeTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try Self.migrateV1Schema(dbQueue)
+        try await dbQueue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: [rootPath.rawValue])
+            let rootID = db.lastInsertedRowID
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id,
+                    relative_path,
+                    content_type_identifier,
+                    byte_size,
+                    content_modified_at_unix
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                arguments: [rootID, "legacy.jpg", "public.jpeg", 12, Date().timeIntervalSince1970]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+        let snapshot = await store.currentSnapshot()
+
+        #expect(snapshot.roots.map(\.path) == [rootPath])
+        #expect(snapshot.assets.count == 1)
+        #expect(snapshot.assets[0].relativePath.rawValue == "legacy.jpg")
+        #expect(snapshot.assets[0].name == nil)
+        #expect(snapshot.assets[0].createdAt == nil)
+    }
+
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {
         let temp = try makeTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -24,14 +67,17 @@ struct CatalogStoreTests {
             !snapshot.isScanning && snapshot.assets.count == 2
         }
         #expect(try scanned.roots.map(\.path) == [CatalogPath.normalizedDirectoryPath(for: root)])
-        #expect(scanned.assets.map(\.relativePath).sorted() == ["Nested/b.txt", "a.jpg"])
+        #expect(scanned.assets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
+        #expect(scanned.assets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
         #expect(scanned.assets.allSatisfy { $0.byteSize != nil })
+        #expect(scanned.assets.allSatisfy { $0.createdAt != nil })
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
         #expect(reloaded.roots.count == 1)
-        #expect(reloaded.assets.map(\.relativePath).sorted() == ["Nested/b.txt", "a.jpg"])
+        #expect(reloaded.assets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
+        #expect(reloaded.assets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
     }
 
     @Test func addLibraryRejectsDuplicateAncestorAndDescendantRoots() async throws {
@@ -100,7 +146,7 @@ struct CatalogStoreTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         try FileManager.default.removeItem(at: first)
@@ -109,9 +155,9 @@ struct CatalogStoreTests {
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reconciled = try await waitForSnapshot(secondStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath) == ["b.jpg"]
+            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["b.jpg"]
         }
-        #expect(reconciled.assets.map(\.relativePath) == ["b.jpg"])
+        #expect(reconciled.assets.map(\.relativePath.rawValue) == ["b.jpg"])
     }
 
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
@@ -126,16 +172,18 @@ struct CatalogStoreTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         try FileManager.default.removeItem(at: first)
-        let failingScanner = CatalogScanner { _, _, batchHandler in
+        let failingScanner = CatalogScanner { _, _, _, batchHandler in
             try await batchHandler([
                 ScannedMediaFile(
-                    relativePath: "b.jpg",
+                    relativePath: MediaRelativePath(rawValue: "b.jpg"),
+                    name: "b.jpg",
                     contentTypeIdentifier: "public.jpeg",
                     byteSize: 1,
+                    createdAt: Date(),
                     contentModifiedAt: Date()
                 ),
             ])
@@ -149,9 +197,9 @@ struct CatalogStoreTests {
         )
         try await secondStore.start()
         let failed = try await waitForSnapshot(secondStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.contains { $0.relativePath == "a.jpg" }
+            !snapshot.isScanning && snapshot.assets.contains { $0.relativePath.rawValue == "a.jpg" }
         }
-        #expect(failed.assets.contains { $0.relativePath == "a.jpg" })
+        #expect(failed.assets.contains { $0.relativePath.rawValue == "a.jpg" })
     }
 
     @Test func cancelledLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
@@ -165,10 +213,10 @@ struct CatalogStoreTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
-        let hangingScanner = CatalogScanner { _, _, _ in
+        let hangingScanner = CatalogScanner { _, _, _, _ in
             while true {
                 try Task.checkCancellation()
                 try await Task.sleep(for: .seconds(1))
@@ -188,7 +236,7 @@ struct CatalogStoreTests {
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
-        #expect(reloaded.assets.map(\.relativePath) == ["a.jpg"])
+        #expect(reloaded.assets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
 
     @Test func noManualScanControlsAreExposedInSwiftUISurfaces() throws {
@@ -216,6 +264,30 @@ struct CatalogStoreTests {
                 #expect(!content.contains(label), "\(label) should not appear in \(file)")
             }
         }
+    }
+}
+
+private extension CatalogStoreTests {
+    static func migrateV1Schema(_ dbQueue: DatabaseQueue) throws {
+        var migrator = DatabaseMigrator()
+        migrator.registerMigration("v1_library_roots_and_media_assets") { db in
+            try db.create(table: "library_root") { table in
+                table.autoIncrementedPrimaryKey("id")
+                table.column("path", .text).notNull().unique()
+            }
+
+            try db.create(table: "media_asset") { table in
+                table.column("library_root_id", .integer)
+                    .notNull()
+                    .references("library_root", onDelete: .cascade)
+                table.column("relative_path", .text).notNull()
+                table.column("content_type_identifier", .text)
+                table.column("byte_size", .integer)
+                table.column("content_modified_at_unix", .double)
+                table.primaryKey(["library_root_id", "relative_path"])
+            }
+        }
+        try migrator.migrate(dbQueue)
     }
 }
 

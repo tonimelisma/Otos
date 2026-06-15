@@ -19,8 +19,14 @@ struct MediaTableView: View {
                     }
                     .width(min: 120, ideal: 160)
 
+                    TableColumn("Name") { asset in
+                        Text(asset.name ?? "Unknown")
+                            .lineLimit(1)
+                    }
+                    .width(min: 140, ideal: 180)
+
                     TableColumn("Relative Path") { asset in
-                        Text(asset.relativePath)
+                        Text(asset.relativePath.rawValue)
                             .lineLimit(1)
                     }
                     .width(min: 240, ideal: 420)
@@ -36,6 +42,12 @@ struct MediaTableView: View {
                             .monospacedDigit()
                     }
                     .width(min: 80, ideal: 100)
+
+                    TableColumn("Created") { asset in
+                        Text(formatDate(asset.createdAt))
+                            .lineLimit(1)
+                    }
+                    .width(min: 160, ideal: 180)
 
                     TableColumn("Modified") { asset in
                         Text(formatDate(asset.contentModifiedAt))
@@ -81,11 +93,13 @@ struct MediaTableView: View {
         title: "All Media",
         assets: [
             MediaAsset(
-                libraryPath: "/Users/example/Pictures",
+                libraryRootPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
                 libraryDisplayName: "Pictures",
-                relativePath: "sample.jpg",
+                relativePath: MediaRelativePath(rawValue: "sample.jpg"),
+                name: "sample.jpg",
                 contentTypeIdentifier: "public.jpeg",
                 byteSize: 42000,
+                createdAt: Date(),
                 contentModifiedAt: Date()
             ),
         ]

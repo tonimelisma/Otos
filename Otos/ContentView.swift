@@ -8,37 +8,35 @@
 import SwiftUI
 
 struct ContentView: View {
-    @Bindable var model: OtosAppModel
+    let session: CatalogSession
+    @State private var browserState: CatalogBrowserState
 
-    var body: some View {
-        NavigationSplitView {
-            SidebarView(snapshot: model.snapshot, selection: $model.selection)
-        } detail: {
-            MediaTableView(title: model.selectedTitle, assets: model.visibleAssets)
-        }
-        .task {
-            model.start()
-        }
-        .alert("Catalog", isPresented: messageBinding) {
-            Button("OK", role: .cancel) {
-                model.dismissMessage()
-            }
-        } message: {
-            Text(model.message ?? "")
-        }
+    init(session: CatalogSession) {
+        self.session = session
+        _browserState = State(initialValue: CatalogBrowserState(catalogProjection: session.projection))
     }
 
-    private var messageBinding: Binding<Bool> {
-        Binding {
-            model.message != nil
-        } set: { isPresented in
-            if !isPresented {
-                model.dismissMessage()
-            }
+    var body: some View {
+        @Bindable var browser = browserState
+
+        NavigationSplitView {
+            SidebarView(snapshot: session.snapshot, selection: $browser.selection)
+        } detail: {
+            MediaTableView(title: browserState.title, assets: browserState.assetsForSelection)
+        }
+        .task {
+            session.start()
+            browserState.update(snapshot: session.snapshot)
+        }
+        .onChange(of: session.snapshot) { _, snapshot in
+            browserState.update(snapshot: snapshot)
+        }
+        .onChange(of: browserState.selection) { _, _ in
+            browserState.update(snapshot: session.snapshot)
         }
     }
 }
 
 #Preview {
-    ContentView(model: OtosAppModel())
+    ContentView(session: CatalogSession())
 }

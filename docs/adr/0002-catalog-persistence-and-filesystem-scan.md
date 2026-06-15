@@ -23,8 +23,8 @@ Verified repo facts:
 - `docs/requirements.md` is the current implemented-requirements registry only;
   unimplemented catalog behavior belongs in specs and ADRs until it lands.
 - Relevant current requirements include FND-001, FND-002, FND-006, FND-007,
-  FND-008, FND-009, FND-011, FND-014, FND-015, MED-001, MED-002, MED-003, and
-  APP-001.
+  FND-008, FND-009, FND-011, FND-014, FND-015, FND-019, FND-020, FND-024,
+  FND-025, FND-026, MED-001, MED-002, APP-001, and APP-006.
 
 Verified macOS API facts from the configured Xcode 27 beta SDK:
 
@@ -37,8 +37,8 @@ Verified macOS API facts from the configured Xcode 27 beta SDK:
 - If the enumerated directory contains a mount point, the URL enumerator
   traverses the mount point.
 - `URLResourceValues` exposes optional filesystem values such as
-  `isRegularFile`, `isDirectory`, `isSymbolicLink`, `contentModificationDate`,
-  and `fileSize`.
+  `name`, `isRegularFile`, `isDirectory`, `isSymbolicLink`, `creationDate`,
+  `contentModificationDate`, and `fileSize`.
 - `NSURLContentTypeKey` returns a `UTType` for a file-system resource.
 - `NSURLFileIdentifierKey` is the file system's internal inode identifier for
   an item and is not stable across all file systems or mounts.
@@ -79,6 +79,9 @@ Captured user guidance for verification:
 - Do not store first-seen, last-seen, or missing-since scan markers.
 - Do not store filesystem identifier fields in the initial media asset row
   unless a current requirement names a use for them.
+- Store the scanner's current filesystem fact set plus `name` and
+  `creationDate`; do not broaden the schema to every available URL resource
+  value.
 
 ## MECE Decision Scope
 
@@ -113,8 +116,8 @@ Separate ADRs or specs must own:
   freshness, and thumbnail scan cadence.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
 - File watching or incremental change notification outside explicit scan runs.
-- Durable scan history, audit logs, resumable scans, or scan diagnostics beyond
-  privacy-safe instrumentation.
+- Durable scan history, audit tables, resumable scans, or scan diagnostics
+  stored in SQLite as product state.
 - Any decision to make filesystem-provided identifiers durable media identity.
 
 ## Decision
@@ -138,6 +141,8 @@ resource-key set:
 - `isRegularFileKey`
 - `isDirectoryKey`
 - `isSymbolicLinkKey`
+- `nameKey`
+- `creationDateKey`
 - `contentModificationDateKey`
 - `fileSizeKey`
 - `contentTypeKey`
@@ -191,10 +196,12 @@ All date values are stored as `REAL` seconds since the Unix epoch in UTC, using
 
 | Column | SQLite type | Null | Definition |
 | --- | --- | --- | --- |
-| `library_root_id` | `TEXT` | no | Identifier of the selected library-root record that owns the scanned root. The value format is defined by the filesystem-access ADR or implementation spec. |
+| `library_root_id` | `INTEGER` | no | SQLite rowid of the selected library-root record that owns the scanned root. It is a private foreign-key implementation detail, not library-root domain identity. |
 | `relative_path` | `TEXT` | no | Root-relative file-system path string from the library root to the item, with no leading slash. It is derived by removing the scanned root URL's standardized file-system path plus one path separator from the observed file URL's standardized file-system path. This is not localized display text. |
+| `name` | `TEXT` | yes | `URLResourceValues.name` from `NSURLNameKey`, when available. This is the filesystem resource name for the item, not localized display text. |
 | `content_type_identifier` | `TEXT` | yes | `UTType.identifier` from `NSURLContentTypeKey`, when available. |
 | `byte_size` | `INTEGER` | yes | File size in bytes from `URLResourceValues.fileSize`. |
+| `created_at_unix` | `REAL` | yes | Creation date from `URLResourceValues.creationDate`, encoded as Unix seconds. |
 | `content_modified_at_unix` | `REAL` | yes | Content modification date from `URLResourceValues.contentModificationDate`, encoded as Unix seconds. |
 
 Constraints:
@@ -413,8 +420,6 @@ The selected pattern constrains implementation:
 - no count-based scan flush threshold
 - SQLite scan flushes at 10 Hz when pending changes exist
 - SwiftUI-visible scan updates publish at 10 Hz when pending changes exist
-- no logging of user media paths, filenames, thumbnails, metadata payloads, or
-  user-authored metadata
 
 ## Retirement Proof
 

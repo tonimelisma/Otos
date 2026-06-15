@@ -2,11 +2,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
-    @Bindable var model: OtosAppModel
+    let session: CatalogSession
 
     var body: some View {
         TabView {
-            LibrariesSettingsView(model: model)
+            LibrariesSettingsView(session: session)
                 .tabItem {
                     Label("Libraries", systemImage: "folder")
                 }
@@ -17,9 +17,9 @@ struct SettingsView: View {
 }
 
 private struct LibrariesSettingsView: View {
-    @Bindable var model: OtosAppModel
+    let session: CatalogSession
     @State private var showingImporter = false
-    @State private var selectedPath: String?
+    @State private var selectedPath: LibraryRootPath?
     @State private var removalCandidate: LibraryRoot?
 
     var body: some View {
@@ -41,7 +41,7 @@ private struct LibrariesSettingsView: View {
                 .disabled(selectedRoot == nil)
             }
 
-            Table(model.snapshot.roots, selection: $selectedPath) {
+            Table(session.snapshot.roots, selection: $selectedPath) {
                 TableColumn("Name") { root in
                     Text(root.displayName)
                         .lineLimit(1)
@@ -49,7 +49,7 @@ private struct LibrariesSettingsView: View {
                 .width(min: 140, ideal: 180)
 
                 TableColumn("Path") { root in
-                    Text(root.path)
+                    Text(root.path.rawValue)
                         .lineLimit(1)
                         .foregroundStyle(.secondary)
                 }
@@ -57,12 +57,12 @@ private struct LibrariesSettingsView: View {
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.folder]) { result in
             if case let .success(url) = result {
-                model.addLibrary(url: url)
+                session.addLibrary(url: url)
             }
         }
         .alert("Remove Library?", isPresented: removalAlertBinding, presenting: removalCandidate) { root in
             Button("Remove Library", role: .destructive) {
-                model.removeLibrary(root)
+                session.removeLibrary(root)
                 removalCandidate = nil
                 selectedPath = nil
             }
@@ -83,7 +83,7 @@ private struct LibrariesSettingsView: View {
         guard let selectedPath else {
             return nil
         }
-        return model.snapshot.roots.first { $0.path == selectedPath }
+        return session.snapshot.roots.first { $0.path == selectedPath }
     }
 
     private var removalAlertBinding: Binding<Bool> {
@@ -98,5 +98,5 @@ private struct LibrariesSettingsView: View {
 }
 
 #Preview {
-    SettingsView(model: OtosAppModel())
+    SettingsView(session: CatalogSession())
 }

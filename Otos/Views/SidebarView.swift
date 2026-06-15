@@ -40,7 +40,7 @@ struct SidebarView: View {
     @Previewable @State var selection = CatalogSelection.allMedia
     SidebarView(
         snapshot: CatalogSnapshot(
-            roots: [LibraryRoot(storageID: 1, path: "/Users/example/Pictures")],
+            roots: [LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))],
             assets: [],
             scanningRootPaths: []
         ),

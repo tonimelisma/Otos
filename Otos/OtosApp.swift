@@ -10,11 +10,11 @@ import SwiftUI
 
 @main
 struct OtosApp: App {
-    @State private var model = OtosAppModel()
+    @State private var catalogSession = CatalogSession()
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
+            ContentView(session: catalogSession)
                 .task {
                     let state = OtosSignpost.app.beginInterval("MainWindowContentAttached")
                     OtosLog.app.info("Main window content attached")
@@ -23,7 +23,7 @@ struct OtosApp: App {
         }
 
         Settings {
-            SettingsView(model: model)
+            SettingsView(session: catalogSession)
         }
     }
 }
