@@ -2,7 +2,7 @@
 
 Use exact Apple documentation, HIG, WWDC, or Swift-DocC sources when a decision
 depends on platform semantics, API availability, Swift concurrency behavior,
-SwiftUI/AppKit performance, signing, sandboxing, media APIs, or macOS UI
+SwiftUI/AppKit performance, signing, filesystem access, media APIs, or macOS UI
 conventions.
 
 ## Helper

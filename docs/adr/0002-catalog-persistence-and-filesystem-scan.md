@@ -13,7 +13,7 @@ This ADR decides the initial catalog persistence layer, the exact filesystem
 facts stored in SQLite for scanned media assets, and how scan updates reach
 SQLite and SwiftUI. It does not decide metadata extraction, thumbnail
 generation, thumbnail storage, preview storage, editing state, export state,
-security-scoped bookmark policy, or the full library-root access schema.
+or the full library-root access schema.
 
 Verified repo facts:
 
@@ -72,7 +72,7 @@ Captured user guidance for verification:
 - The filesystem is the source of truth for current library and media
   existence.
 - Do not generate Otos UUIDs for media assets in the initial catalog.
-- Do not store individual filesystem scan records in the initial catalog.
+- Do not store individual filesystem scan records in the catalog.
 - Filesystem scans are idempotent reconciliation operations.
 - If a completed scan of a library root does not observe a previously cataloged
   file at that root-relative path, delete that media asset row.
@@ -98,16 +98,16 @@ This ADR owns:
 
 This ADR references, but does not own:
 
-- The existence of a selected library-root record that future filesystem-access
-  work will define.
+- The existence of a selected library-root record that library-root access work
+  defines.
 - `library_root_id` as a reference to that selected library-root record, without
   deciding the root identifier format or generation policy.
 - Read-only treatment of user originals, which is already owned by MED-001.
 
 Separate ADRs or specs must own:
 
-- Filesystem access, sandbox posture, root registration, root display names,
-  and root restoration.
+- Filesystem access policy, root registration, root display names, and root
+  restoration.
 - Which files are eligible media assets beyond being regular files.
 - Move and rename detection.
 - Metadata extraction, metadata schema, metadata freshness, and metadata scan
@@ -116,8 +116,7 @@ Separate ADRs or specs must own:
   freshness, and thumbnail scan cadence.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
 - File watching or incremental change notification outside explicit scan runs.
-- Durable scan history, audit tables, resumable scans, or scan diagnostics
-  stored in SQLite as product state.
+- Scan diagnostics stored in SQLite as product state.
 - Any decision to make filesystem-provided identifiers durable media identity.
 
 ## Decision
@@ -166,15 +165,14 @@ inside a selected library root.
 
 `library_root_id` refers to the selected library-root record that owns the
 scanned root. This ADR does not define the library-root table, root identifier
-format, bookmark storage, root display name, or root restoration behavior. Those
-decisions belong to the filesystem-access ADR or implementation spec.
+format, root display name, or root restoration behavior. Those decisions belong
+to the filesystem-access ADR or implementation spec.
 
 `media_asset` identity is the pair `(library_root_id, relative_path)`. Otos does
 not generate a separate media asset UUID in the initial catalog.
 
 A filesystem scan is an idempotent reconciliation operation, not a durable
-domain entity. The initial catalog has no `filesystem_scan` table and no scan
-IDs.
+domain entity. The catalog has no `filesystem_scan` table and no scan IDs.
 
 For a completed scan of one library root:
 
@@ -182,10 +180,10 @@ For a completed scan of one library root:
 - existing `media_asset` rows for that root whose `relative_path` was not
   observed are deleted
 
-The initial catalog does not retain first-seen, last-seen, missing-since, scan
-history, or tombstone state. Move and rename behavior is out of scope; in this
-ADR, a file that appears at a new root-relative path is a new row, and a file no
-longer observed at its old root-relative path is deleted.
+The catalog does not retain first-seen, last-seen, missing-since, scan history,
+or tombstone state. Move and rename behavior is out of scope; in this ADR, a
+file that appears at a new root-relative path is a new row, and a file no longer
+observed at its old root-relative path is deleted.
 
 ### SQLite Schema
 
@@ -212,7 +210,7 @@ Constraints:
 Fields deliberately not stored by this ADR:
 
 - `media_asset.id`
-- `filesystem_scan` rows or scan IDs
+- durable `filesystem_scan` rows or scan IDs
 - first-seen, last-seen, missing-since, or tombstone state
 - `URLResourceValues.fileIdentifier`
 - `URLResourceValues.fileContentIdentifier`
@@ -376,20 +374,21 @@ Failure modes:
 
 Pros:
 
-- Could support audit history, resumable scans, or detailed diagnostics later.
-- Could explain when a row was first seen, last seen, or marked missing.
+- Would support audit history, resumable scans, or detailed diagnostics if
+  Otos treated scans as product entities.
+- Would explain when a row was first seen, last seen, or marked missing.
 
 Cons:
 
 - Treats an idempotent reconciliation operation as a durable domain entity.
 - Adds scan IDs, scan status, first-seen, last-seen, and missing-since state
-  before a current requirement needs them.
+  outside the current product model.
 - Preserves missing-file history when the current desired behavior is to delete
   missing rows after a completed scan.
 
 Failure modes:
 
-- Future work reads scan history as authoritative product state.
+- Later work reads scan history as authoritative product state.
 - A cancelled or failed scan accidentally marks files missing.
 
 ## Consequences
@@ -447,5 +446,5 @@ interaction latency before introducing paging or query-backed views.
 If 10 Hz scan flushing proves too frequent or too sparse, change the cadence
 through a new requirement or ADR update with measured evidence.
 
-If durable scan history or media UUIDs become necessary, add them through a new
-requirement and migration that defines the product behavior they support.
+Durable scan history and scan IDs are out of scope because scans are idempotent
+reconciliation operations, not product entities.

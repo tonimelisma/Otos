@@ -42,9 +42,9 @@ disk wherever the user chose to keep it. Originals are read-only.
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data lives in Application Support. All overlay data is treated as
   backed up for now. Do not introduce preview pruning or cache eviction.
-- The initial app is unsandboxed. Design file access around user-selected media
-  roots and normal filesystem paths. Do not add sandboxing or security-scoped
-  bookmarks unless a future current requirement explicitly needs them.
+- Otos is unsandboxed. Design file access around user-selected media roots and
+  normal filesystem paths. Do not add App Sandbox, security-scoped bookmarks,
+  bookmark schema, bookmark lifecycles, or sandbox-driven file access flows.
 
 ## Spec-Driven Workflow
 
@@ -106,7 +106,7 @@ A spec must include:
 An ADR is required for:
 
 - Persistence or catalog data model choices.
-- Filesystem access, sandbox posture, or security-scoped bookmark policy.
+- Filesystem access policy.
 - Thumbnail, preview, metadata, import, export, or render pipeline design.
 - Any reusable architecture boundary, dependency, or module split.
 - Any decision that would be expensive to reverse.
