@@ -58,8 +58,9 @@ For each smell found, record:
   where macOS users expect them.
 - Side effect in construction: constructing a view/store/service starts
   filesystem, database, cleanup, or media work without an explicit owner intent.
-- Privacy-hostile diagnostics: logs, errors, tests, or screenshots expose raw
-  media paths, filenames, metadata payloads, thumbnails, or user content.
+- Diagnostic payload sprawl: logs, errors, tests, or screenshots expose
+  secrets, credentials, unbounded metadata blobs, thumbnails, binary payloads,
+  or broad user-authored content without a current diagnostic requirement.
 - Framework-shaped domain truth: app domain models mirror a framework dictionary
   or callback shape instead of the facts Otos actually owns.
 

@@ -1,7 +1,8 @@
 # Performance And Jank Evidence
 
 Otos performance work uses Apple guidance and this repo's concrete tooling:
-`OtosLog`, `OtosSignpost`, `script/logs.sh`, and `script/profile.sh`.
+`OtosLog`, `OtosSignpost`, debug JSONL diagnostics,
+`script/logs.sh`, `script/catalog-diagnostics.sh`, and `script/profile.sh`.
 
 Sources:
 
@@ -27,6 +28,8 @@ Performance-sensitive specs must name:
 - the user interaction or app path being protected
 - expected budget or threshold
 - `OtosLog` categories and `OtosSignpost` spans
+- debug JSONL diagnostic events, when large operations need checkable run
+  artifacts
 - which `script/profile.sh` templates will be used
 - what artifact paths will be attached or summarized in the PR
 
@@ -39,6 +42,13 @@ script/logs.sh
 script/logs.sh UI
 script/logs.sh Performance
 script/logs.sh Thumbnails
+```
+
+Catalog diagnostics:
+
+```sh
+script/catalog-diagnostics.sh check
+script/catalog-diagnostics.sh summary
 ```
 
 Profiles:
@@ -68,6 +78,9 @@ script/profile.sh --list
 - Are log and signpost names specific enough to identify the owner/submodule?
 - Does the PR include trace/log artifact paths and summarize the worst spans or
   the exact blocker that prevented capture?
+- For catalog and projection changes, does the PR include
+  `script/catalog-diagnostics.sh check` output or the exact reason no debug
+  diagnostic file existed?
 
 ## PR Evidence
 
@@ -75,6 +88,7 @@ For performance-sensitive changes, include:
 
 - command run
 - trace or log path under `build/Profiles` or captured terminal output location
+- diagnostic summary path under `build/Diagnostics`, when applicable
 - interaction exercised
 - worst span or stall summary
 - whether the result passed the budget

@@ -248,11 +248,13 @@ Every significant operation should emit:
 Log policy:
 
 - info: high-signal operation boundaries and signpost spans
-- debug: detailed internal state that remains privacy-safe
-- error: failures and recovery paths without user content
+- debug: detailed internal state useful for diagnosis
+- error: failures and recovery paths with bounded payloads
 
-Never log raw filenames, absolute paths, folder names, thumbnails, EXIF payloads,
-or user-authored metadata by default. Use stable opaque IDs or safe counts.
+Raw media paths and filenames may be logged when they are useful diagnostics for
+developer builds or repo verification. Do not log secrets, credentials,
+unbounded binary payloads, thumbnails, or full metadata blobs unless a future
+requirement explicitly needs that diagnostic surface.
 
 Jank and responsiveness work must follow the repo tooling path:
 
@@ -292,8 +294,9 @@ Swift/macOS smell families to watch:
   units clear.
 - Test coupling: tests assert implementation details instead of observable
   behavior or public owner boundaries.
-- Privacy-hostile diagnostics: logs or errors expose media paths, names,
-  metadata payloads, thumbnails, or user content.
+- Diagnostic payload sprawl: logs or errors expose secrets, credentials,
+  unbounded metadata blobs, thumbnails, or binary payloads without a current
+  diagnostic requirement.
 
 ## Toolchain
 
@@ -362,7 +365,7 @@ textual descriptions rather than terse labels. It must answer:
   failure evidence
 - what instrumentation, logging, profiling, or performance evidence exists
 - what code smells were observed, addressed, accepted, or remain
-- what privacy and media-originals review found
+- what media-originals and diagnostics review found
 - what risks or follow-up work remain
 - which merge, local `main`, post-merge verification, branch cleanup, worktree
   cleanup, stash cleanup, stale branch/worktree review, and final clean-tree
@@ -383,7 +386,8 @@ textual descriptions rather than terse labels. It must answer:
 - code smells observed and how they were addressed or intentionally accepted
 - docs updated in the same increment when contracts, workflow, requirements, or
   behavior changed
-- privacy review for media, paths, metadata, logs, fixtures, and exports
+- media-originals and diagnostics review for media, paths, metadata, logs,
+  fixtures, and exports
 - confirmation that no shim, legacy architecture, or effort-based compromise was
   introduced
 - unresolved risks and follow-up work

@@ -133,14 +133,14 @@ the user. It must use green and red status emoji for every question, with clear
 textual descriptions rather than terse labels. It must answer what was done,
 what planned work was not done, which design decisions were made, what
 requirements/specs/ADRs/docs changed, what verification and CI proved, what code
-smells remain, what privacy review found, what risks remain, and which
+smells remain, what media-originals and diagnostics review found, what risks remain, and which
 merge/cleanup/final-clean-tree steps completed.
 
 - Requirements, specs, ADRs, and docs are updated.
 - Captured user guidance was restated to the user and stored in the correct
   current or planning document.
 - Local `script/verify.sh` passes, or the exact blocker is recorded.
-- Performance-sensitive changes include trace/log artifact paths.
+- Performance-sensitive changes include trace/log/diagnostic artifact paths.
 - Code smells observed are listed, including `None observed` when true.
 - Remote CI status is recorded, with quota waiver evidence only when GitHub
   explicitly reports an account billing, spending-limit, or exhausted Actions

@@ -3,7 +3,7 @@
 ## Classification
 
 - Work type: Feature
-- Current requirement IDs: FND-002, FND-006, FND-008, FND-013, FND-014, FND-015, FND-017, FND-018, FND-021, FND-022, MED-001, MED-002, MED-003, APP-001
+- Current requirement IDs: FND-002, FND-006, FND-008, FND-013, FND-014, FND-015, FND-017, FND-018, FND-021, FND-022, MED-001, MED-002, APP-001
 - Future idea or candidate links explicitly requested by the user: none
 - ADRs: ADR 0002, ADR 0003
 
@@ -69,7 +69,7 @@ Out of scope:
 | LIB-008 | Functional | Otos automatically scans saved libraries on launch and newly added libraries after add. | Current | `docs/requirements.md` |
 | LIB-009 | Functional | Otos shall not expose a manual scan button, command, or user-facing scan API. | Current | `docs/requirements.md` |
 | LIB-010 | Functional | The first catalog view shows regular-file rows with relative path, content type identifier, byte size, and content modified date. | Current | `docs/requirements.md` |
-| LIB-011 | Functional | Scan failures are kept out of the UI for this increment and recorded only as privacy-safe logs. | Current | `docs/requirements.md` |
+| LIB-011 | Functional | Scan failures are kept out of the UI for this increment and recorded through logs. | Current | `docs/requirements.md` |
 | CAT-001 | Architecture | The catalog owner uses GRDB with SQLite and `DatabaseQueue`, not `DatabasePool`. | Current | `docs/requirements.md`, ADR 0002 |
 | CAT-002 | Architecture | The catalog owner retains the full SQLite-backed catalog working set in memory until evidence proves that insufficient. | Current | `docs/requirements.md`, ADR 0002 |
 | CAT-003 | Architecture | The normalized root path is product identity; SQLite rowid is only a private foreign key implementation detail. | Current | `docs/requirements.md`, ADR 0003 |
@@ -156,10 +156,11 @@ Failure modes:
 
 ## Selected Approach
 
-Use a `CatalogStore` actor with a `@MainActor @Observable` app model. The actor
-opens and migrates one long-lived GRDB `DatabaseQueue`, loads roots and media
-rows into memory, serializes add/remove/scan work, and publishes snapshots. The
-SwiftUI model adapts snapshots to sidebar, Settings, and table state.
+Use a `CatalogStore` actor with `@MainActor @Observable` SwiftUI-facing state.
+The actor opens and migrates one long-lived GRDB `DatabaseQueue`, loads roots
+and media rows into memory, serializes add/remove/scan work, and publishes
+snapshots. SwiftUI-facing state adapts snapshots to sidebar, Settings, and table
+state.
 
 This is the simplest correct approach because it has one persistence owner, one
 in-memory catalog owner, no query-backed SwiftUI coupling, no parallel scan
@@ -170,8 +171,8 @@ pipeline, and no generated product IDs.
 - `CatalogStore` actor: owns GRDB, root/media memory, subscribers, pending scans,
   and scan cancellation.
 - `CatalogScanner`: Sendable scanner function wrapper used by the actor and tests.
-- `OtosAppModel`: MainActor observable state, selection, error message, and UI
-  intents for add/remove.
+- `CatalogSession`: MainActor observable shared catalog state and UI intents for
+  add/remove. Spec 0005 split per-window selection out of this shared state.
 - `CatalogSnapshot`: Sendable immutable roots/assets/scanning state delivered to
   the UI.
 - `CatalogSelection`: SwiftUI sidebar selection for `All Media` or one root path.
@@ -193,10 +194,9 @@ pipeline, and no generated product IDs.
 - `Catalog`: add/remove root, scan start, scan finish, scan cancel, scan failure.
 - `FileAccess`: filesystem enumeration start and finish.
 - `UI`: app model start and snapshot apply.
-- Logs and signposts use counts, storage rowids, and outcomes only.
-- No raw filenames, absolute paths, thumbnails, EXIF, or metadata payloads are
-  logged.
-- Responsiveness evidence is local build/test plus privacy-safe log inspection;
+- Logs and signposts use operation names, counts, storage rowids, paths when
+  useful, and outcomes.
+- Responsiveness evidence is local build/test plus log inspection;
   no trace is required unless verification shows jank.
 
 ## Code-Smell Review
@@ -208,7 +208,7 @@ pipeline, and no generated product IDs.
   task.
 - Stringly typed domain facts: paths remain strings because the filesystem path
   is the selected domain identity for this increment.
-- Privacy-hostile diagnostics: logs avoid raw paths and names.
+- Diagnostic payload sprawl: logs avoid secrets and unbounded payloads.
 
 ## Acceptance Criteria
 
@@ -229,7 +229,7 @@ pipeline, and no generated product IDs.
 - Local checks: `script/verify.sh`
 - Focused tests: catalog store add/remove/reload/reconcile/cancel/fail/overlap
   tests and source-surface check for manual scan controls.
-- Performance/log evidence: privacy-safe `Catalog`, `Persistence`, `FileAccess`,
-  and `UI` log/signpost coverage.
+- Performance/log evidence: `Catalog`, `Persistence`, `FileAccess`, and `UI`
+  log/signpost coverage.
 - CI expectations: remote fast gate must pass unless GitHub reports the known
   Actions billing/spending-limit blocker.

@@ -4,13 +4,19 @@ import UniformTypeIdentifiers
 
 nonisolated struct CatalogScanner {
     var scanRoot: @Sendable (
-        _ rootPath: String,
+        _ rootPath: LibraryRootPath,
         _ cadence: Duration,
+        _ diagnostics: CatalogDiagnostics?,
         _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
-    ) async throws -> Set<String>
+    ) async throws -> Set<MediaRelativePath>
 
-    static let live = CatalogScanner { rootPath, cadence, batchHandler in
-        try await LiveCatalogScanner.scan(rootPath: rootPath, cadence: cadence, batchHandler: batchHandler)
+    static let live = CatalogScanner { rootPath, cadence, diagnostics, batchHandler in
+        try await LiveCatalogScanner.scan(
+            rootPath: rootPath,
+            cadence: cadence,
+            diagnostics: diagnostics,
+            batchHandler: batchHandler
+        )
     }
 }
 
@@ -19,24 +25,37 @@ nonisolated enum CatalogScanError: Error {
 }
 
 private nonisolated enum LiveCatalogScanner {
+    private struct ScanIssue {
+        let kind: String
+        let path: String
+        let errorDescription: String
+    }
+
+    private struct ScanState {
+        var pending: [ScannedMediaFile] = []
+        var observedPaths = Set<MediaRelativePath>()
+        var filesystemIssues: [ScanIssue] = []
+    }
+
     private static let resourceKeys: Set<URLResourceKey> = [
         .isRegularFileKey,
         .isDirectoryKey,
         .isSymbolicLinkKey,
+        .nameKey,
+        .creationDateKey,
         .contentModificationDateKey,
         .fileSizeKey,
         .contentTypeKey,
     ]
 
     static func scan(
-        rootPath: String,
+        rootPath: LibraryRootPath,
         cadence: Duration,
+        diagnostics: CatalogDiagnostics?,
         batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
-    ) async throws -> Set<String> {
-        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
-        var pending: [ScannedMediaFile] = []
-        var observedPaths = Set<String>()
-        var filesystemErrorCount = 0
+    ) async throws -> Set<MediaRelativePath> {
+        let rootURL = rootPath.url
+        var scanState = ScanState()
         let clock = ContinuousClock()
         var lastFlush = clock.now
 
@@ -49,8 +68,14 @@ private nonisolated enum LiveCatalogScanner {
             at: rootURL,
             includingPropertiesForKeys: Array(resourceKeys),
             options: [],
-            errorHandler: { _, _ in
-                filesystemErrorCount += 1
+            errorHandler: { url, error in
+                scanState.filesystemIssues.append(
+                    ScanIssue(
+                        kind: "enumeration",
+                        path: url.path(percentEncoded: false),
+                        errorDescription: String(describing: error)
+                    )
+                )
                 return true
             }
         ) else {
@@ -59,37 +84,58 @@ private nonisolated enum LiveCatalogScanner {
 
         while let fileURL = enumerator.nextObject() as? URL {
             try Task.checkCancellation()
-
-            guard let file = try scannedFile(
-                fileURL: fileURL,
+            scanFileURL(
+                fileURL,
                 rootPath: rootPath,
                 enumerator: enumerator,
-                filesystemErrorCount: &filesystemErrorCount
-            ) else {
-                continue
-            }
-            pending.append(file)
-            observedPaths.insert(file.relativePath)
-
+                scanState: &scanState
+            )
             if lastFlush.duration(to: clock.now) >= cadence {
-                try await flush(&pending, batchHandler: batchHandler)
+                try await flush(&scanState.pending, batchHandler: batchHandler)
                 lastFlush = clock.now
             }
         }
 
-        try await flush(&pending, batchHandler: batchHandler)
+        try await flush(&scanState.pending, batchHandler: batchHandler)
+        await recordIssues(scanState.filesystemIssues, rootPath: rootPath, diagnostics: diagnostics)
 
-        if filesystemErrorCount > 0 {
-            throw CatalogScanError.filesystemErrorsEncountered(filesystemErrorCount)
+        if !scanState.filesystemIssues.isEmpty {
+            throw CatalogScanError.filesystemErrorsEncountered(scanState.filesystemIssues.count)
         }
-        return observedPaths
+        return scanState.observedPaths
+    }
+
+    private static func scanFileURL(
+        _ fileURL: URL,
+        rootPath: LibraryRootPath,
+        enumerator: FileManager.DirectoryEnumerator,
+        scanState: inout ScanState
+    ) {
+        do {
+            guard let file = try scannedFile(
+                fileURL: fileURL,
+                rootPath: rootPath,
+                enumerator: enumerator
+            ) else {
+                return
+            }
+            scanState.pending.append(file)
+            scanState.observedPaths.insert(file.relativePath)
+        } catch {
+            scanState.filesystemIssues.append(
+                ScanIssue(
+                    kind: "resource",
+                    path: fileURL.path(percentEncoded: false),
+                    errorDescription: String(describing: error)
+                )
+            )
+        }
     }
 
     private static func scannedFile(
         fileURL: URL,
-        rootPath: String,
-        enumerator: FileManager.DirectoryEnumerator,
-        filesystemErrorCount: inout Int
+        rootPath: LibraryRootPath,
+        enumerator: FileManager.DirectoryEnumerator
     ) throws -> ScannedMediaFile? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
         if values.isSymbolicLink == true {
@@ -102,13 +148,14 @@ private nonisolated enum LiveCatalogScanner {
             return nil
         }
         guard let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL) else {
-            filesystemErrorCount += 1
-            return nil
+            throw CatalogScannerIssue.relativePathUnavailable
         }
         return ScannedMediaFile(
             relativePath: relativePath,
+            name: values.name,
             contentTypeIdentifier: values.contentType?.identifier,
             byteSize: values.fileSize.map(Int64.init),
+            createdAt: values.creationDate,
             contentModifiedAt: values.contentModificationDate
         )
     }
@@ -125,4 +172,27 @@ private nonisolated enum LiveCatalogScanner {
         try await batchHandler(batch)
         await Task.yield()
     }
+
+    private static func recordIssues(
+        _ issues: [ScanIssue],
+        rootPath: LibraryRootPath,
+        diagnostics: CatalogDiagnostics?
+    ) async {
+        for issue in issues {
+            await diagnostics?.record(
+                operation: "catalog.scan.issue",
+                phase: "issue",
+                fields: [
+                    "rootPath": rootPath.rawValue,
+                    "path": issue.path,
+                    "kind": issue.kind,
+                    "error": issue.errorDescription,
+                ]
+            )
+        }
+    }
+}
+
+private nonisolated enum CatalogScannerIssue: Error {
+    case relativePathUnavailable
 }
