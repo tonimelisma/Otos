@@ -1,15 +1,23 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+/// Settings renders a narrow library-management surface from projected library
+/// rows. It can show availability without owning catalog orchestration.
 struct SettingsView: View {
-    let session: CatalogSession
+    let libraries: [CatalogLibraryState]
+    let addLibrary: (URL) -> Void
+    let removeLibrary: (LibraryRoot) -> Void
 
     var body: some View {
         TabView {
-            LibrariesSettingsView(session: session)
-                .tabItem {
-                    Label("Libraries", systemImage: "folder")
-                }
+            LibrariesSettingsView(
+                libraries: libraries,
+                addLibrary: addLibrary,
+                removeLibrary: removeLibrary
+            )
+            .tabItem {
+                Label("Libraries", systemImage: "folder")
+            }
         }
         .frame(width: 660, height: 380)
         .scenePadding()
@@ -17,7 +25,10 @@ struct SettingsView: View {
 }
 
 private struct LibrariesSettingsView: View {
-    let session: CatalogSession
+    let libraries: [CatalogLibraryState]
+    let addLibrary: (URL) -> Void
+    let removeLibrary: (LibraryRoot) -> Void
+
     @State private var showingImporter = false
     @State private var selectedPath: LibraryRootPath?
     @State private var removalCandidate: LibraryRoot?
@@ -41,28 +52,34 @@ private struct LibrariesSettingsView: View {
                 .disabled(selectedRoot == nil)
             }
 
-            Table(session.snapshot.roots, selection: $selectedPath) {
-                TableColumn("Name") { root in
-                    Text(root.displayName)
+            Table(libraries, selection: $selectedPath) {
+                TableColumn("Name") { library in
+                    Text(library.displayName)
                         .lineLimit(1)
                 }
                 .width(min: 140, ideal: 180)
 
-                TableColumn("Path") { root in
-                    Text(root.path.rawValue)
+                TableColumn("Path") { library in
+                    Text(library.path.rawValue)
                         .lineLimit(1)
                         .foregroundStyle(.secondary)
                 }
+
+                TableColumn("Availability") { library in
+                    Text(library.availability.label)
+                        .foregroundStyle(library.isAvailable ? Color.secondary : Color.orange)
+                }
+                .width(min: 100, ideal: 120)
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.folder]) { result in
             if case let .success(url) = result {
-                session.addLibrary(url: url)
+                addLibrary(url)
             }
         }
         .alert("Remove Library?", isPresented: removalAlertBinding, presenting: removalCandidate) { root in
             Button("Remove Library", role: .destructive) {
-                session.removeLibrary(root)
+                removeLibrary(root)
                 removalCandidate = nil
                 selectedPath = nil
             }
@@ -83,7 +100,7 @@ private struct LibrariesSettingsView: View {
         guard let selectedPath else {
             return nil
         }
-        return session.snapshot.roots.first { $0.path == selectedPath }
+        return libraries.first { $0.path == selectedPath }?.root
     }
 
     private var removalAlertBinding: Binding<Bool> {
@@ -98,5 +115,26 @@ private struct LibrariesSettingsView: View {
 }
 
 #Preview {
-    SettingsView(session: CatalogSession())
+    SettingsView(
+        libraries: [
+            CatalogLibraryState(
+                root: LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures")),
+                availability: .available,
+                activity: .idle
+            ),
+        ],
+        addLibrary: { _ in },
+        removeLibrary: { _ in }
+    )
+}
+
+private extension LibraryAvailability {
+    var label: String {
+        switch self {
+        case .available:
+            "Available"
+        case .unavailable:
+            "Unavailable"
+        }
+    }
 }

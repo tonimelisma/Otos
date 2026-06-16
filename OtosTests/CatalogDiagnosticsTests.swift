@@ -37,7 +37,13 @@ struct CatalogDiagnosticsTests {
         let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
         await diagnostics.record(operation: "catalog.scan", phase: "start")
         await diagnostics.record(operation: "catalog.scan.batch", phase: "finish", fields: ["count": "2"])
-        await diagnostics.record(operation: "catalog.projection.filter", phase: "finish", fields: ["assets": "2"])
+        await diagnostics.record(
+            operation: "catalog.scan.skippedPackage",
+            phase: "skip",
+            fields: ["path": "/Users/example/Pictures/Photos Library.photoslibrary"]
+        )
+        await diagnostics.record(operation: "catalog.projection.window", phase: "finish", fields: ["assets": "2"])
+        await diagnostics.record(operation: "catalog.library.availability", phase: "unavailable")
 
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -57,10 +63,12 @@ struct CatalogDiagnosticsTests {
 
         let output = try decodedUTF8(pipe.fileHandleForReading.readDataToEndOfFile())
         #expect(process.terminationStatus == 0)
-        #expect(output.contains("events: 3"))
+        #expect(output.contains("events: 5"))
         #expect(output.contains("scan starts: 1"))
         #expect(output.contains("scan batches: 1"))
-        #expect(output.contains("projection filters: 1"))
+        #expect(output.contains("skipped packages: 1"))
+        #expect(output.contains("window projections: 1"))
+        #expect(output.contains("library availability changes: 1"))
     }
 }
 

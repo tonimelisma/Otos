@@ -14,10 +14,10 @@ library, catalog, or browsing behavior. The first increment needs to let the
 user manage library roots in Settings, persist those roots, scan regular files
 from them automatically, and show the catalog in a native sidebar-detail window.
 
-Repo inspection found:
+At the time of this first catalog spec, repo inspection found:
 
-- `Otos/ContentView.swift` is still the template hello-world view.
-- `Otos/OtosApp.swift` has one `WindowGroup` and no `Settings` scene.
+- `Otos/ContentView.swift` was still the template hello-world view.
+- `Otos/OtosApp.swift` had one `WindowGroup` and no `Settings` scene.
 - `Otos/Support/Instrumentation.swift` already defines required log categories.
 - The project is unsandboxed and SwiftUI-first.
 - No GRDB package dependency exists yet.
@@ -32,8 +32,8 @@ In scope:
 - GRDB 7.11.0, SQLite in Application Support, and stable v1 migrations.
 - Full in-memory catalog working set owned by a catalog actor.
 - Automatic launch/add scans only.
-- Table rows for relative path, content type identifier, byte size, and content
-  modification date.
+- Table rows for file name, relative path, content type identifier, byte size,
+  creation date, and content modification date.
 
 Out of scope:
 
@@ -68,13 +68,13 @@ Out of scope:
 | LIB-007 | Functional | Removing a library always requires confirmation with destructive action copy that explains originals remain on disk and catalog information is deleted. | Current | `docs/requirements.md` |
 | LIB-008 | Functional | Otos automatically scans saved libraries on launch and newly added libraries after add. | Current | `docs/requirements.md` |
 | LIB-009 | Functional | Otos shall not expose a manual scan button, command, or user-facing scan API. | Current | `docs/requirements.md` |
-| LIB-010 | Functional | The first catalog view shows regular-file rows with relative path, content type identifier, byte size, and content modified date. | Current | `docs/requirements.md` |
+| LIB-010 | Functional | The first catalog view shows regular-file rows with file name, relative path, content type identifier, byte size, creation date, and content modified date. | Current | `docs/requirements.md`, Spec 0005 |
 | LIB-011 | Functional | Scan failures are kept out of the UI for this increment and recorded through logs. | Current | `docs/requirements.md` |
 | CAT-001 | Architecture | The catalog owner uses GRDB with SQLite and `DatabaseQueue`, not `DatabasePool`. | Current | `docs/requirements.md`, ADR 0002 |
 | CAT-002 | Architecture | The catalog owner retains the full SQLite-backed catalog working set in memory until evidence proves that insufficient. | Current | `docs/requirements.md`, ADR 0002 |
 | CAT-003 | Architecture | The normalized root path is product identity; SQLite rowid is only a private foreign key implementation detail. | Current | `docs/requirements.md`, ADR 0003 |
-| CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, in-memory state, scan lifecycle, and 10 Hz scan flush/publish cadence. | Current | `docs/requirements.md` |
-| CAT-005 | Architecture | SwiftUI views never call SQLite directly; a MainActor observable model consumes catalog snapshots. | Current | `docs/requirements.md` |
+| CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, in-memory state, scan lifecycle, scan persistence cadence, and cheap catalog change notifications. | Current | `docs/requirements.md`, Spec 0009 |
+| CAT-005 | Architecture | SwiftUI views never call SQLite directly; a MainActor ViewModel consumes projected catalog window state. | Current | `docs/requirements.md`, Spec 0007, Spec 0009 |
 | CAT-006 | Non-functional | SQLite scan writes and SwiftUI-visible scan updates happen at a 10 Hz time cadence when pending changes exist. | Current | `docs/requirements.md`, ADR 0002 |
 | DOD-001 | Process | There is exactly one DoD report for an increment, and no review handoff, partial, pre-merge, or ready-for-review DoD report may be sent to the user or posted to the PR. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
 | DOD-002 | Process | The final DoD report is created only after the entire DoD is complete or after a true external blocker prevents completion. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
@@ -158,9 +158,10 @@ Failure modes:
 
 Use a `CatalogStore` actor with `@MainActor @Observable` SwiftUI-facing state.
 The actor opens and migrates one long-lived GRDB `DatabaseQueue`, loads roots
-and media rows into memory, serializes add/remove/scan work, and publishes
-snapshots. SwiftUI-facing state adapts snapshots to sidebar, Settings, and table
-state.
+and media rows into memory, serializes add/remove/scan work, and emits cheap
+change notifications. Current implementation note: Spec 0009 moved UI-ready
+state publication into `CatalogProjection`, which pulls raw snapshots on demand
+and emits `CatalogWindowState` for SwiftUI.
 
 This is the simplest correct approach because it has one persistence owner, one
 in-memory catalog owner, no query-backed SwiftUI coupling, no parallel scan
@@ -168,17 +169,21 @@ pipeline, and no generated product IDs.
 
 ## Interfaces, Ownership, And Data Flow
 
-- `CatalogStore` actor: owns GRDB, root/media memory, subscribers, pending scans,
-  and scan cancellation.
+- `CatalogStore` actor: owns GRDB, root/media memory, transient availability,
+  change subscribers, pending scans, and scan cancellation.
 - `CatalogScanner`: Sendable scanner function wrapper used by the actor and tests.
-- `CatalogSession`: MainActor observable shared catalog state and UI intents for
-  add/remove. Spec 0005 split per-window selection out of this shared state.
-- `CatalogSnapshot`: Sendable immutable roots/assets/scanning state delivered to
-  the UI.
-- `CatalogSelection`: SwiftUI sidebar selection for `All Media` or one root path.
+- `CatalogProjection`: actor that publishes coalesced `CatalogWindowState` for
+  the main window.
+- `CatalogWindowViewModel`: MainActor observable state assignment and UI intents
+  for the single main window. Spec 0007 superseded the earlier shared-session and
+  browser-state split.
+- `CatalogSnapshot`: Sendable immutable raw library/assets state built by the
+  store on demand.
+- `SidebarSelection`: SwiftUI sidebar selection for `All Media` or one root path.
 - SQLite lives in Application Support under an Otos catalog directory.
 - Root identity is the normalized path. `library_root.id` is storage-only.
-- Scans write pending batches and publish snapshots no more often than 10 Hz.
+- Scans write pending batches no more often than 10 Hz; Projection publishes
+  UI-ready window state no more often than 10 Hz when dirty.
 - The app never writes, moves, deletes, or rewrites original media files.
 
 ## Retirement Proof
@@ -193,7 +198,7 @@ pipeline, and no generated product IDs.
 - `Persistence`: database open, migration, load, root writes, media batch writes.
 - `Catalog`: add/remove root, scan start, scan finish, scan cancel, scan failure.
 - `FileAccess`: filesystem enumeration start and finish.
-- `UI`: app model start and snapshot apply.
+- `UI`: ViewModel start and projected state apply.
 - Logs and signposts use operation names, counts, storage rowids, paths when
   useful, and outcomes.
 - Responsiveness evidence is local build/test plus log inspection;
@@ -206,8 +211,9 @@ pipeline, and no generated product IDs.
 - State duplication: one catalog actor owns canonical in-memory state.
 - Unsafe concurrency escape: scanner is a Sendable closure owned by a cancellable
   task.
-- Stringly typed domain facts: paths remain strings because the filesystem path
-  is the selected domain identity for this increment.
+- Stringly typed domain facts: the first implementation used filesystem paths as
+  domain identity; Spec 0005 later typed library root paths, relative paths, and
+  media asset identity at app boundaries.
 - Diagnostic payload sprawl: logs avoid secrets and unbounded payloads.
 
 ## Acceptance Criteria

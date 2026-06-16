@@ -9,8 +9,16 @@ struct SourceHygieneTests {
         let sourceFiles = try swiftFiles(under: repoRoot.appending(path: "Otos"))
         let disallowedTerms = [
             "OtosAppModel",
+            "CatalogSession",
+            "CatalogBrowserState",
+            "CatalogBrowserProjection",
+            "CatalogWindowModel",
+            "CatalogWindowProjection",
             "visibleAssets",
             "selectedAssets",
+            "assetsForSelection",
+            "scanningRootPaths",
+            "CatalogSelection",
             "dismissMessage",
             ".alert(\"Catalog\"",
         ]
@@ -21,6 +29,82 @@ struct SourceHygieneTests {
                 #expect(!content.contains(term), "\(term) should not appear in \(file.path(percentEncoded: false))")
             }
         }
+    }
+
+    @Test func contentViewDoesNotCoordinateCatalogWork() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(
+            contentsOf: repoRoot.appending(path: "Otos/ContentView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(!content.contains(".onChange"))
+        #expect(!content.contains("applyCatalogSnapshot"))
+        #expect(!content.contains("update(snapshot:"))
+        #expect(!content.contains("catalogStore"))
+        #expect(!content.contains("CatalogProjection"))
+    }
+
+    @Test func appUsesSingleMainWindowScene() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(contentsOf: repoRoot.appending(path: "Otos/OtosApp.swift"), encoding: .utf8)
+
+        #expect(!content.contains("WindowGroup"))
+        #expect(content.contains("Window(\"Otos\", id: \"main\")"))
+        #expect(content.contains("CommandGroup(replacing: .newItem)"))
+    }
+
+    @Test func sidebarDoesNotReceiveWholeCatalogSnapshot() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sidebarURL = repoRoot.appending(path: "Otos/Views/SidebarView.swift")
+        let content = try String(contentsOf: sidebarURL, encoding: .utf8)
+
+        #expect(!content.contains("CatalogSnapshot"))
+        #expect(content.contains("let libraries: [CatalogLibraryState]"))
+    }
+
+    @Test func settingsUsesProjectedLibraryRowsWithoutDisplayingScanStatus() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let settingsURL = repoRoot.appending(path: "Otos/Views/SettingsView.swift")
+        let content = try String(contentsOf: settingsURL, encoding: .utf8)
+
+        #expect(!content.contains("CatalogSession"))
+        #expect(content.contains("let libraries: [CatalogLibraryState]"))
+        #expect(!content.contains("isScanning"))
+        #expect(!content.contains(".scanning"))
+    }
+
+    @Test func storeDoesNotPublishSnapshotsToUISubscribers() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let storeURL = repoRoot.appending(path: "Otos/Stores/CatalogStore.swift")
+        let content = try String(contentsOf: storeURL, encoding: .utf8)
+
+        #expect(!content.contains("func snapshots()"))
+        #expect(!content.contains("publishSnapshot"))
+        #expect(content.contains("func changeNotifications()"))
+        #expect(content.contains("func currentSnapshot()"))
+    }
+
+    @Test func viewModelDoesNotUseGenerationBasedProjectionRejection() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let viewModelURL = repoRoot.appending(path: "Otos/ViewModels/CatalogWindowViewModel.swift")
+        let content = try String(contentsOf: viewModelURL, encoding: .utf8)
+
+        #expect(!content.contains("generation"))
+        #expect(!content.contains("projectionTask"))
+        #expect(!content.contains("applyCatalogSnapshot"))
     }
 
     @Test func sqliteRowIDDoesNotLeakOutsideStore() throws {

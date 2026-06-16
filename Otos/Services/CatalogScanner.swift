@@ -31,16 +31,23 @@ private nonisolated enum LiveCatalogScanner {
         let errorDescription: String
     }
 
+    private struct SkippedPackage {
+        let path: String
+        let contentTypeIdentifier: String?
+    }
+
     private struct ScanState {
         var pending: [ScannedMediaFile] = []
         var observedPaths = Set<MediaRelativePath>()
         var filesystemIssues: [ScanIssue] = []
+        var skippedPackages: [SkippedPackage] = []
     }
 
     private static let resourceKeys: Set<URLResourceKey> = [
         .isRegularFileKey,
         .isDirectoryKey,
         .isSymbolicLinkKey,
+        .isPackageKey,
         .nameKey,
         .creationDateKey,
         .contentModificationDateKey,
@@ -67,7 +74,13 @@ private nonisolated enum LiveCatalogScanner {
         guard let enumerator = FileManager.default.enumerator(
             at: rootURL,
             includingPropertiesForKeys: Array(resourceKeys),
-            options: [],
+            // Packages are directories that Finder presents as files. The
+            // current catalog discovers regular files only, so descending into
+            // package internals would overreach the model and can trip protected
+            // app-owned stores such as Photos libraries. Camera package support
+            // belongs in an explicit, tested media-container path rather than
+            // in the regular-file scanner.
+            options: [.skipsPackageDescendants],
             errorHandler: { url, error in
                 scanState.filesystemIssues.append(
                     ScanIssue(
@@ -97,6 +110,7 @@ private nonisolated enum LiveCatalogScanner {
         }
 
         try await flush(&scanState.pending, batchHandler: batchHandler)
+        await recordSkippedPackages(scanState.skippedPackages, rootPath: rootPath, diagnostics: diagnostics)
         await recordIssues(scanState.filesystemIssues, rootPath: rootPath, diagnostics: diagnostics)
 
         if !scanState.filesystemIssues.isEmpty {
@@ -115,7 +129,8 @@ private nonisolated enum LiveCatalogScanner {
             guard let file = try scannedFile(
                 fileURL: fileURL,
                 rootPath: rootPath,
-                enumerator: enumerator
+                enumerator: enumerator,
+                scanState: &scanState
             ) else {
                 return
             }
@@ -135,10 +150,26 @@ private nonisolated enum LiveCatalogScanner {
     private static func scannedFile(
         fileURL: URL,
         rootPath: LibraryRootPath,
-        enumerator: FileManager.DirectoryEnumerator
+        enumerator: FileManager.DirectoryEnumerator,
+        scanState: inout ScanState
     ) throws -> ScannedMediaFile? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
         if values.isSymbolicLink == true {
+            if values.isDirectory == true {
+                enumerator.skipDescendants()
+            }
+            return nil
+        }
+        if values.isPackage == true {
+            // The enumerator option already prevents package descendants from
+            // being visited. Keep this branch so diagnostics show that the
+            // package root was intentionally skipped, not silently lost.
+            scanState.skippedPackages.append(
+                SkippedPackage(
+                    path: fileURL.path(percentEncoded: false),
+                    contentTypeIdentifier: values.contentType?.identifier
+                )
+            )
             if values.isDirectory == true {
                 enumerator.skipDescendants()
             }
@@ -171,6 +202,33 @@ private nonisolated enum LiveCatalogScanner {
         pending.removeAll(keepingCapacity: true)
         try await batchHandler(batch)
         await Task.yield()
+    }
+
+    private static func recordSkippedPackages(
+        _ skippedPackages: [SkippedPackage],
+        rootPath: LibraryRootPath,
+        diagnostics: CatalogDiagnostics?
+    ) async {
+        for package in skippedPackages {
+            var fields = [
+                "rootPath": rootPath.rawValue,
+                "path": package.path,
+            ]
+            if let contentTypeIdentifier = package.contentTypeIdentifier {
+                fields["contentTypeIdentifier"] = contentTypeIdentifier
+            }
+            OtosLog.fileAccess.debug(
+                """
+                Catalog scan skipped package path=\(package.path, privacy: .public) \
+                contentType=\(package.contentTypeIdentifier ?? "unknown", privacy: .public)
+                """
+            )
+            await diagnostics?.record(
+                operation: "catalog.scan.skippedPackage",
+                phase: "skip",
+                fields: fields
+            )
+        }
     }
 
     private static func recordIssues(

@@ -3,14 +3,19 @@ import SwiftUI
 struct MediaTableView: View {
     let title: String
     let assets: [MediaAsset]
+    let emptyState: CatalogMediaEmptyState
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Divider()
             if assets.isEmpty {
-                ContentUnavailableView("No Media", systemImage: "photo.on.rectangle")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ContentUnavailableView(
+                    emptyState.title,
+                    systemImage: emptyState.systemImage,
+                    description: Text(emptyState.message)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Table(assets) {
                     TableColumn("Library") { asset in
@@ -102,6 +107,40 @@ struct MediaTableView: View {
                 createdAt: Date(),
                 contentModifiedAt: Date()
             ),
-        ]
+        ],
+        emptyState: .noMedia
     )
+}
+
+private extension CatalogMediaEmptyState {
+    var title: String {
+        switch self {
+        case .noMedia:
+            "No Media"
+        case .noAvailableMedia:
+            "No Available Media"
+        case .libraryUnavailable:
+            "Library Unavailable"
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .noMedia:
+            "Add a library with media files to begin."
+        case .noAvailableMedia:
+            "Cataloged media exists, but its libraries are not currently reachable."
+        case .libraryUnavailable:
+            "The selected library folder is not currently reachable."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .noMedia:
+            "photo.on.rectangle"
+        case .noAvailableMedia, .libraryUnavailable:
+            "externaldrive.badge.questionmark"
+        }
+    }
 }

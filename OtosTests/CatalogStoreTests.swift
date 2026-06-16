@@ -4,8 +4,29 @@ import GRDB
 import Testing
 
 struct CatalogStoreTests {
+    @Test func changeNotificationsAreCheapDirtySignals() async throws {
+        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let recorder = ChangeRecorder()
+        let stream = await store.changeNotifications()
+        let recordingTask = Task {
+            for await _ in stream {
+                await recorder.increment()
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        try await store.start(scansSavedLibraries: false)
+        try await recorder.waitForCount(1)
+
+        let snapshot = await store.currentSnapshot()
+        #expect(snapshot.libraries.isEmpty)
+        #expect(snapshot.assets.isEmpty)
+    }
+
     @Test func migratesV1DatabaseAndReloadsNewNullableFields() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -39,7 +60,7 @@ struct CatalogStoreTests {
         try await store.start(scansSavedLibraries: false)
         let snapshot = await store.currentSnapshot()
 
-        #expect(snapshot.roots.map(\.path) == [rootPath])
+        #expect(snapshot.libraries.map(\.path) == [rootPath])
         #expect(snapshot.assets.count == 1)
         #expect(snapshot.assets[0].relativePath.rawValue == "legacy.jpg")
         #expect(snapshot.assets[0].name == nil)
@@ -47,12 +68,12 @@ struct CatalogStoreTests {
     }
 
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let nested = root.appending(path: "Nested", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
-        try writeFile(root.appending(path: "a.jpg"), contents: "jpeg")
-        try writeFile(nested.appending(path: "b.txt"), contents: "text")
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(nested.appending(path: "b.txt"), contents: "text")
         try FileManager.default.createSymbolicLink(
             at: root.appending(path: "linked.jpg"),
             withDestinationURL: root.appending(path: "a.jpg")
@@ -63,10 +84,11 @@ struct CatalogStoreTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
 
-        let scanned = try await waitForSnapshot(store) { snapshot in
+        let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
             !snapshot.isScanning && snapshot.assets.count == 2
         }
-        #expect(try scanned.roots.map(\.path) == [CatalogPath.normalizedDirectoryPath(for: root)])
+        #expect(try scanned.libraries.map(\.path) == [CatalogPath.normalizedDirectoryPath(for: root)])
+        #expect(scanned.libraries.allSatisfy { !$0.isScanning })
         #expect(scanned.assets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
         #expect(scanned.assets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
         #expect(scanned.assets.allSatisfy { $0.byteSize != nil })
@@ -75,13 +97,43 @@ struct CatalogStoreTests {
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
-        #expect(reloaded.roots.count == 1)
+        #expect(reloaded.libraries.count == 1)
         #expect(reloaded.assets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
         #expect(reloaded.assets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
     }
 
+    @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let package = root.appending(path: "Photos Library.photoslibrary", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: package, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "visible.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(package.appending(path: "hidden-inside-package.jpg"), contents: "jpeg")
+
+        let diagnosticsURL = temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
+        let store = CatalogStore(
+            location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
+            scanCadence: .milliseconds(10),
+            diagnostics: diagnostics
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+
+        let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
+            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["visible.jpg"]
+        }
+        #expect(scanned.assets.map(\.relativePath.rawValue) == ["visible.jpg"])
+
+        let diagnosticsData = try Data(contentsOf: diagnosticsURL)
+        let diagnosticsText = try String.decodedUTF8(diagnosticsData)
+        #expect(diagnosticsText.contains("\"operation\":\"catalog.scan.skippedPackage\""))
+        #expect(diagnosticsText.contains("Photos Library.photoslibrary"))
+        #expect(diagnosticsText.contains("com.apple.photos.library"))
+    }
+
     @Test func addLibraryRejectsDuplicateAncestorAndDescendantRoots() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let parent = temp.appending(path: "Parent", directoryHint: .isDirectory)
         let child = parent.appending(path: "Child", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: child, withIntermediateDirectories: true)
@@ -101,21 +153,21 @@ struct CatalogStoreTests {
         }
 
         let snapshot = await store.currentSnapshot()
-        #expect(snapshot.roots.count == 1)
+        #expect(snapshot.libraries.count == 1)
     }
 
     @Test func removeLibraryDeletesCatalogRowsAndLeavesOriginalsUntouched() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let original = root.appending(path: "a.jpg")
-        try writeFile(original, contents: "jpeg")
+        try writeCatalogStoreFile(original, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForSnapshot(store) { snapshot in
+        _ = try await waitForCatalogStoreSnapshot(store) { snapshot in
             !snapshot.isScanning && snapshot.assets.count == 1
         }
 
@@ -123,55 +175,55 @@ struct CatalogStoreTests {
         try await store.removeLibrary(path: rootPath)
 
         let snapshot = await store.currentSnapshot()
-        #expect(snapshot.roots.isEmpty)
+        #expect(snapshot.libraries.isEmpty)
         #expect(snapshot.assets.isEmpty)
         #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
-        #expect(reloaded.roots.isEmpty)
+        #expect(reloaded.libraries.isEmpty)
         #expect(reloaded.assets.isEmpty)
     }
 
     @Test func completedLaunchScanDeletesRowsForMissingFiles() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let first = root.appending(path: "a.jpg")
-        try writeFile(first, contents: "jpeg")
+        try writeCatalogStoreFile(first, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         try FileManager.default.removeItem(at: first)
-        try writeFile(root.appending(path: "b.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "b.jpg"), contents: "jpeg")
 
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
-        let reconciled = try await waitForSnapshot(secondStore) { snapshot in
+        let reconciled = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["b.jpg"]
         }
         #expect(reconciled.assets.map(\.relativePath.rawValue) == ["b.jpg"])
     }
 
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let first = root.appending(path: "a.jpg")
-        try writeFile(first, contents: "jpeg")
+        try writeCatalogStoreFile(first, contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -196,23 +248,24 @@ struct CatalogStoreTests {
             scanCadence: .milliseconds(10)
         )
         try await secondStore.start()
-        let failed = try await waitForSnapshot(secondStore) { snapshot in
+        let failed = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.assets.contains { $0.relativePath.rawValue == "a.jpg" }
         }
         #expect(failed.assets.contains { $0.relativePath.rawValue == "a.jpg" })
+        #expect(failed.libraries.first?.availability == .available)
     }
 
     @Test func cancelledLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
-        let temp = try makeTemporaryDirectory()
+        let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try writeFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -228,7 +281,7 @@ struct CatalogStoreTests {
             scanCadence: .milliseconds(10)
         )
         try await secondStore.start()
-        _ = try await waitForSnapshot(secondStore) { snapshot in
+        _ = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
             snapshot.isScanning
         }
         await secondStore.shutdown()
@@ -294,6 +347,25 @@ private extension CatalogStoreTests {
 private enum CatalogStoreTestError: Error {
     case timedOut
     case expectedOverlap
+    case invalidUTF8
+}
+
+private actor ChangeRecorder {
+    private var count = 0
+
+    func increment() {
+        count += 1
+    }
+
+    func waitForCount(_ expectedCount: Int) async throws {
+        for _ in 0 ..< 100 {
+            if count >= expectedCount {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw CatalogStoreTestError.timedOut
+    }
 }
 
 private func expectOverlap(_ expression: () async throws -> Void) async throws {
@@ -308,7 +380,7 @@ private func expectOverlap(_ expression: () async throws -> Void) async throws {
     throw CatalogStoreTestError.expectedOverlap
 }
 
-private func waitForSnapshot(
+func waitForCatalogStoreSnapshot(
     _ store: CatalogStore,
     timeoutAttempts: Int = 100,
     predicate: (CatalogSnapshot) -> Bool
@@ -323,13 +395,22 @@ private func waitForSnapshot(
     throw CatalogStoreTestError.timedOut
 }
 
-private func makeTemporaryDirectory() throws -> URL {
+func makeCatalogStoreTemporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     return url
 }
 
-private func writeFile(_ url: URL, contents: String) throws {
+func writeCatalogStoreFile(_ url: URL, contents: String) throws {
     try Data(contents.utf8).write(to: url)
+}
+
+private extension String {
+    static func decodedUTF8(_ data: Data) throws -> String {
+        guard let string = String(data: data, encoding: .utf8) else {
+            throw CatalogStoreTestError.invalidUTF8
+        }
+        return string
+    }
 }

@@ -2,6 +2,11 @@ import Foundation
 import GRDB
 import OSLog
 
+// swiftlint:disable file_length
+
+/// CatalogStore owns catalog truth: SQLite, the in-memory working set, and scan
+/// mutation. It does not publish UI state. Instead it emits cheap change
+/// notifications so a projection owner can pull a raw snapshot at its own pace.
 actor CatalogStore {
     enum Location {
         case application(bundleIdentifier: String)
@@ -34,7 +39,8 @@ actor CatalogStore {
     private var rootRowIDsByPath: [LibraryRootPath: Int64] = [:]
     private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
     private var assetsByRootPath: [LibraryRootPath: [MediaRelativePath: MediaAsset]] = [:]
-    private var continuations: [UUID: AsyncStream<CatalogSnapshot>.Continuation] = [:]
+    private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
+    private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
     private var currentScanRootPath: LibraryRootPath?
     private var currentScanTask: Task<Void, Never>?
@@ -53,16 +59,15 @@ actor CatalogStore {
 }
 
 extension CatalogStore {
-    func snapshots() -> AsyncStream<CatalogSnapshot> {
-        let (stream, continuation) = AsyncStream<CatalogSnapshot>.makeStream(
+    func changeNotifications() -> AsyncStream<Void> {
+        let (stream, continuation) = AsyncStream<Void>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
         let id = UUID()
-        continuations[id] = continuation
-        continuation.yield(makeSnapshot())
+        changeContinuations[id] = continuation
         continuation.onTermination = { [weak self] _ in
             Task {
-                await self?.removeContinuation(id)
+                await self?.removeChangeContinuation(id)
             }
         }
         return stream
@@ -70,7 +75,7 @@ extension CatalogStore {
 
     func start(scansSavedLibraries: Bool = true) async throws {
         guard !started else {
-            publishSnapshot()
+            notifyCatalogChanged()
             return
         }
         let state = OtosSignpost.persistence.beginInterval("CatalogStart")
@@ -99,7 +104,7 @@ extension CatalogStore {
                 "assets": "\(loaded.assets.count)",
             ]
         )
-        publishSnapshot()
+        notifyCatalogChanged()
         if scansSavedLibraries {
             enqueueScans(Array(rootsByPath.keys))
         }
@@ -129,6 +134,7 @@ extension CatalogStore {
 
         let root = LibraryRoot(path: storedRoot.path)
         rootsByPath[root.path] = root
+        availabilityByRootPath[root.path] = .available
         rootRowIDsByPath[root.path] = storedRoot.id
         rootPathsByRowID[storedRoot.id] = root.path
         assetsByRootPath[root.path] = assetsByRootPath[root.path] ?? [:]
@@ -138,7 +144,7 @@ extension CatalogStore {
             phase: "finish",
             fields: ["rootPath": root.path.rawValue]
         )
-        publishSnapshot()
+        notifyCatalogChanged()
         enqueueScans([root.path])
     }
 
@@ -170,6 +176,7 @@ extension CatalogStore {
         OtosSignpost.persistence.endInterval("CatalogRemoveRoot", state)
 
         rootsByPath.removeValue(forKey: path)
+        availabilityByRootPath.removeValue(forKey: path)
         rootRowIDsByPath.removeValue(forKey: path)
         rootPathsByRowID.removeValue(forKey: rootRowID)
         assetsByRootPath.removeValue(forKey: path)
@@ -179,7 +186,7 @@ extension CatalogStore {
             phase: "finish",
             fields: ["rootPath": path.rawValue]
         )
-        publishSnapshot()
+        notifyCatalogChanged()
         startNextScanIfNeeded()
     }
 
@@ -188,7 +195,7 @@ extension CatalogStore {
         currentScanTask = nil
         currentScanRootPath = nil
         pendingScanPaths.removeAll()
-        publishSnapshot()
+        notifyCatalogChanged()
     }
 }
 
@@ -234,10 +241,12 @@ private extension CatalogStore {
         rootRowIDsByPath = [:]
         rootPathsByRowID = [:]
         assetsByRootPath = [:]
+        availabilityByRootPath = [:]
 
         for storedRoot in roots {
             let root = LibraryRoot(path: storedRoot.path)
             rootsByPath[root.path] = root
+            availabilityByRootPath[root.path] = .available
             rootRowIDsByPath[root.path] = storedRoot.id
             rootPathsByRowID[storedRoot.id] = root.path
             assetsByRootPath[root.path] = [:]
@@ -289,8 +298,13 @@ private extension CatalogStore {
             guard rootsByPath[nextPath] != nil else {
                 continue
             }
+            guard rootIsAvailable(nextPath) else {
+                markRootUnavailableBeforeScan(nextPath)
+                continue
+            }
+            setAvailability(.available, for: nextPath)
             currentScanRootPath = nextPath
-            publishSnapshot()
+            notifyCatalogChanged()
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
             Task {
                 await diagnostics?.record(
@@ -332,6 +346,14 @@ private extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogScanBatchWrite", state)
 
+        // The store actor can process remove/cancel messages while SQLite is
+        // writing. Recheck ownership before mirroring the batch into memory.
+        guard currentScanRootPath == rootPath,
+              rootsByPath[rootPath] != nil
+        else {
+            throw CancellationError()
+        }
+
         applyScannedBatchToMemory(batch, root: root, rootPath: rootPath)
         OtosLog.catalog.debug(
             "Catalog scan batch path=\(rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public)"
@@ -344,7 +366,7 @@ private extension CatalogStore {
                 "count": "\(batch.count)",
             ]
         )
-        publishSnapshot()
+        notifyCatalogChanged()
     }
 
     private func applyScannedBatchToMemory(
@@ -435,10 +457,21 @@ private extension CatalogStore {
     }
 
     private func scanFailed(rootPath: LibraryRootPath, error: Error) async {
-        if rootsByPath[rootPath] != nil {
+        let isStillAvailable = rootIsAvailable(rootPath)
+        if rootsByPath[rootPath] != nil, !isStillAvailable {
+            setAvailability(.unavailable, for: rootPath)
+            OtosLog.catalog.error(
+                "Catalog scan failed because root is unavailable path=\(rootPath.rawValue, privacy: .public)"
+            )
+            await diagnostics?.record(
+                operation: "catalog.library.availability",
+                phase: "unavailable",
+                fields: ["rootPath": rootPath.rawValue]
+            )
+        } else if rootsByPath[rootPath] != nil {
             OtosLog.catalog.error("Catalog scan failed path=\(rootPath.rawValue, privacy: .public)")
         } else {
-            OtosLog.catalog.error("Catalog scan failed for unavailable root")
+            OtosLog.catalog.error("Catalog scan failed for removed root")
         }
         if case let CatalogScanError.filesystemErrorsEncountered(count) = error {
             OtosLog.fileAccess.error("Filesystem scan errors count=\(count, privacy: .public)")
@@ -459,27 +492,67 @@ private extension CatalogStore {
             currentScanRootPath = nil
             currentScanTask = nil
         }
-        publishSnapshot()
+        notifyCatalogChanged()
         startNextScanIfNeeded()
     }
 
     private func makeSnapshot() -> CatalogSnapshot {
         let assets = assetsByRootPath.values.flatMap(\.values)
+        let libraries = rootsByPath.values.map { root in
+            CatalogLibraryState(
+                root: root,
+                availability: availabilityByRootPath[root.path] ?? .available,
+                activity: root.path == currentScanRootPath ? .scanning : .idle
+            )
+        }
         return CatalogSnapshot(
-            roots: Array(rootsByPath.values),
-            assets: assets,
-            scanningRootPaths: Set([currentScanRootPath].compactMap(\.self))
+            libraries: libraries,
+            assets: assets
         )
     }
 
-    private func publishSnapshot() {
-        let snapshot = makeSnapshot()
-        for continuation in continuations.values {
-            continuation.yield(snapshot)
+    private func notifyCatalogChanged() {
+        for continuation in changeContinuations.values {
+            continuation.yield(())
         }
     }
 
-    private func removeContinuation(_ id: UUID) {
-        continuations.removeValue(forKey: id)
+    private func removeChangeContinuation(_ id: UUID) {
+        changeContinuations.removeValue(forKey: id)
+    }
+
+    private func rootIsAvailable(_ path: LibraryRootPath) -> Bool {
+        do {
+            let values = try path.url.resourceValues(forKeys: [.isDirectoryKey])
+            return values.isDirectory == true
+        } catch {
+            return false
+        }
+    }
+
+    @discardableResult
+    private func setAvailability(_ availability: LibraryAvailability, for path: LibraryRootPath) -> Bool {
+        guard rootsByPath[path] != nil,
+              availabilityByRootPath[path] != availability
+        else {
+            return false
+        }
+        availabilityByRootPath[path] = availability
+        return true
+    }
+
+    private func markRootUnavailableBeforeScan(_ path: LibraryRootPath) {
+        let changed = setAvailability(.unavailable, for: path)
+        OtosLog.catalog.info("Library root unavailable before scan path=\(path.rawValue, privacy: .public)")
+        Task {
+            await diagnostics?.record(
+                operation: "catalog.library.availability",
+                phase: "unavailable",
+                fields: ["rootPath": path.rawValue]
+            )
+        }
+        if changed {
+            notifyCatalogChanged()
+        }
     }
 }

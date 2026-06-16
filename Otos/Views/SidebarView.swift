@@ -1,33 +1,35 @@
 import SwiftUI
 
+/// SidebarView renders projected library rows and writes only the selected row
+/// binding. It does not inspect assets, snapshots, or stores.
 struct SidebarView: View {
-    let snapshot: CatalogSnapshot
-    @Binding var selection: CatalogSelection
+    let libraries: [CatalogLibraryState]
+    @Binding var sidebarSelection: SidebarSelection
 
     var body: some View {
-        List(selection: $selection) {
+        List(selection: $sidebarSelection) {
             Label("All Media", systemImage: "square.grid.2x2")
-                .tag(CatalogSelection.allMedia)
+                .tag(SidebarSelection.allMedia)
 
             Section("Libraries") {
-                ForEach(snapshot.roots) { root in
+                ForEach(libraries) { library in
                     HStack(spacing: 10) {
                         Image(systemName: "folder")
                             .foregroundStyle(.secondary)
                             .frame(width: 16)
 
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(root.displayName)
+                            Text(library.displayName)
                                 .lineLimit(1)
-                            if snapshot.scanningRootPaths.contains(root.path) {
-                                Text("Scanning")
+                            if let subtitle = library.sidebarSubtitle {
+                                Text(subtitle)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
                         }
                     }
-                    .tag(CatalogSelection.library(root.path))
+                    .tag(SidebarSelection.library(library.path))
                 }
             }
         }
@@ -37,13 +39,32 @@ struct SidebarView: View {
 }
 
 #Preview {
-    @Previewable @State var selection = CatalogSelection.allMedia
+    @Previewable @State var sidebarSelection = SidebarSelection.allMedia
     SidebarView(
-        snapshot: CatalogSnapshot(
-            roots: [LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))],
-            assets: [],
-            scanningRootPaths: []
-        ),
-        selection: $selection
+        libraries: [
+            CatalogLibraryState(
+                root: LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures")),
+                availability: .available,
+                activity: .scanning
+            ),
+            CatalogLibraryState(
+                root: LibraryRoot(path: LibraryRootPath(rawValue: "/Volumes/Archive")),
+                availability: .unavailable,
+                activity: .idle
+            ),
+        ],
+        sidebarSelection: $sidebarSelection
     )
+}
+
+private extension CatalogLibraryState {
+    var sidebarSubtitle: String? {
+        if availability == .unavailable {
+            return "Unavailable"
+        }
+        if activity == .scanning {
+            return "Scanning"
+        }
+        return nil
+    }
 }
