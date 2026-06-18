@@ -2,25 +2,43 @@ import Foundation
 import Observation
 import OSLog
 
+/// MainActor adapter for SwiftUI. It owns user intents and assigns already-made
+/// window state; catalog mutation and projection work stay with their actors.
 @MainActor
 @Observable
-final class CatalogSession {
-    var snapshot: CatalogSnapshot = .empty
+final class CatalogWindowViewModel {
+    var sidebarSelection: SidebarSelection = .allMedia {
+        didSet {
+            guard sidebarSelection != oldValue,
+                  !isApplyingResolvedSidebarSelection
+            else {
+                return
+            }
+            syncSidebarSelectionToProjection()
+        }
+    }
 
-    @ObservationIgnored let projection: CatalogProjection
+    var state: CatalogWindowState = .empty
+
     @ObservationIgnored private let catalogStore: CatalogStore
-    @ObservationIgnored private var snapshotTask: Task<Void, Never>?
+    @ObservationIgnored private let catalogProjection: CatalogProjection
+
+    @ObservationIgnored private var stateTask: Task<Void, Never>?
     @ObservationIgnored private var startTask: Task<Void, Never>?
-    @ObservationIgnored private var projectionTask: Task<Void, Never>?
-    @ObservationIgnored private var projectionGeneration = 0
     @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private var isApplyingResolvedSidebarSelection = false
 
     init(
         catalogStore: CatalogStore = CatalogStore(),
-        projection: CatalogProjection = CatalogProjection()
+        catalogProjection: CatalogProjection = CatalogProjection()
     ) {
         self.catalogStore = catalogStore
-        self.projection = projection
+        self.catalogProjection = catalogProjection
+    }
+
+    deinit {
+        stateTask?.cancel()
+        startTask?.cancel()
     }
 
     func start() {
@@ -29,14 +47,17 @@ final class CatalogSession {
         }
         hasStarted = true
 
-        let state = OtosSignpost.ui.beginInterval("CatalogSessionStart")
-        OtosSignpost.ui.endInterval("CatalogSessionStart", state)
-        OtosLog.ui.info("Catalog session started")
+        let signpost = OtosSignpost.ui.beginInterval("CatalogWindowViewModelStart")
+        OtosSignpost.ui.endInterval("CatalogWindowViewModelStart", signpost)
+        OtosLog.ui.info("Catalog window view model started")
 
-        snapshotTask = Task {
-            let snapshots = await catalogStore.snapshots()
-            for await snapshot in snapshots {
-                apply(snapshot)
+        stateTask = Task {
+            let states = await catalogProjection.states(
+                store: catalogStore,
+                initialSidebarSelection: sidebarSelection
+            )
+            for await nextState in states {
+                applyState(nextState)
             }
         }
 
@@ -90,16 +111,20 @@ final class CatalogSession {
         }
     }
 
-    private func apply(_ snapshot: CatalogSnapshot) {
-        projectionGeneration += 1
-        let generation = projectionGeneration
-        projectionTask?.cancel()
-        projectionTask = Task {
-            let projectedSnapshot = await projection.sortedSnapshot(from: snapshot)
-            guard !Task.isCancelled, generation == projectionGeneration else {
-                return
-            }
-            self.snapshot = projectedSnapshot
+    private func syncSidebarSelectionToProjection() {
+        let selection = sidebarSelection
+        Task {
+            await catalogProjection.updateSidebarSelection(selection)
         }
+    }
+
+    private func applyState(_ nextState: CatalogWindowState) {
+        if sidebarSelection != nextState.resolvedSidebarSelection {
+            isApplyingResolvedSidebarSelection = true
+            sidebarSelection = nextState.resolvedSidebarSelection
+            isApplyingResolvedSidebarSelection = false
+        }
+
+        state = nextState
     }
 }

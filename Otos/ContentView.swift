@@ -7,36 +7,27 @@
 
 import SwiftUI
 
+/// ContentView composes already-projected state. Snapshot subscriptions,
+/// projection cadence, and catalog mutations stay outside the view tree.
 struct ContentView: View {
-    let session: CatalogSession
-    @State private var browserState: CatalogBrowserState
-
-    init(session: CatalogSession) {
-        self.session = session
-        _browserState = State(initialValue: CatalogBrowserState(catalogProjection: session.projection))
-    }
+    @Bindable var viewModel: CatalogWindowViewModel
 
     var body: some View {
-        @Bindable var browser = browserState
-
         NavigationSplitView {
-            SidebarView(snapshot: session.snapshot, selection: $browser.selection)
+            SidebarView(
+                libraries: viewModel.state.libraries,
+                sidebarSelection: $viewModel.sidebarSelection
+            )
         } detail: {
-            MediaTableView(title: browserState.title, assets: browserState.assetsForSelection)
-        }
-        .task {
-            session.start()
-            browserState.update(snapshot: session.snapshot)
-        }
-        .onChange(of: session.snapshot) { _, snapshot in
-            browserState.update(snapshot: snapshot)
-        }
-        .onChange(of: browserState.selection) { _, _ in
-            browserState.update(snapshot: session.snapshot)
+            MediaTableView(
+                title: viewModel.state.title,
+                assets: viewModel.state.assetsInSelectedScope,
+                emptyState: viewModel.state.mediaEmptyState
+            )
         }
     }
 }
 
 #Preview {
-    ContentView(session: CatalogSession())
+    ContentView(viewModel: CatalogWindowViewModel())
 }

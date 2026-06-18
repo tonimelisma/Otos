@@ -45,6 +45,11 @@ disk wherever the user chose to keep it. Originals are read-only.
 - Otos is unsandboxed. Design file access around user-selected media roots and
   normal filesystem paths. Do not add App Sandbox, security-scoped bookmarks,
   bookmark schema, bookmark lifecycles, or sandbox-driven file access flows.
+- Otos has exactly one main window. This is a permanent product and architecture
+  invariant, not a roadmap item, candidate future change, or open design
+  question. Use a singleton SwiftUI `Window` for the main window, do not use
+  `WindowGroup` for the main window, and do not design, document, ask about,
+  defer, leave seams for, or propose multiple main windows.
 
 ## Spec-Driven Workflow
 
@@ -164,6 +169,10 @@ guidance unless the user says it is itself the requirement.
 
 - Keep SwiftUI views small and composition-focused. Do not build a monolithic
   `ContentView`.
+- Keep SwiftUI views passive. Views render provided state, hold local control
+  state when appropriate, bind controls, and call explicit owner intents; they
+  must not subscribe to catalog snapshot streams, coordinate projection
+  invalidation, call SQLite, or orchestrate scanning.
 - Keep domain models, stores, services, views, instrumentation, and support code
   in separate folders as the app grows.
 - Prefer direct, concrete designs over speculative flexibility. Add a layer,
@@ -175,7 +184,8 @@ guidance unless the user says it is itself the requirement.
   - parent-owned mutable state with `@Binding`
   - app or scene services through explicit dependencies
   - durable preferences with `@AppStorage`
-  - per-window ephemeral state with `@SceneStorage` when appropriate
+  - auxiliary-scene ephemeral state with `@SceneStorage` when appropriate; do
+    not use this as a reason to introduce multiple main windows
 - Prefer native macOS UI structure: sidebars, detail panes, inspectors,
   toolbars, commands, menus, keyboard shortcuts, contextual menus, and proper
   settings scenes.
@@ -187,6 +197,19 @@ guidance unless the user says it is itself the requirement.
 - Persistence must have one current owner, explicit schema/version policy, and
   safe handling for unsupported or future schemas. Rebuildable cache state is
   overlay state, not a second source of media truth.
+- Catalog UI state follows the single-window ownership split: `CatalogStore`
+  owns runtime catalog truth and emits cheap change notifications,
+  `CatalogProjection` owns 10 Hz coalesced `CatalogWindowState` publication plus
+  all sorting, filtering, availability hiding, empty-state selection, and
+  selected-scope derivation off the MainActor, and `CatalogWindowViewModel` owns
+  only final SwiftUI-visible state assignment, sidebar selection, user intents,
+  and task lifetimes.
+- Architecture-boundary files should include explanatory file guides and focused
+  comments that describe how the current mechanics work and why the boundary
+  exists, especially around actor isolation, task ownership, persistence,
+  coalesced publication, availability preservation, and view passivity. Avoid
+  changelog-style comments, increment-history comments, and repeated code
+  comments for product invariants already documented in requirements or ADRs.
 
 ## Swift And Concurrency
 
@@ -204,8 +227,8 @@ guidance unless the user says it is itself the requirement.
 - SwiftUI `.task` may inherit main-actor isolation. Treat synchronous work inside
   `.task` as main-thread work unless the implementation proves otherwise.
 - Avoid unstructured `Task` ownership. Long-running work needs an owner, a
-  cancellation path, and stale completion rejection by identity, version, or
-  generation when applicable.
+  cancellation path, and stale completion rejection or coalesced dirty/in-flight
+  handling when applicable.
 - Main-actor work must remain below Apple's 100 ms hang threshold. Scrolling,
   grid, animation, and pointer-interaction paths should be substantially below
   that and define feature-specific budgets in the spec.

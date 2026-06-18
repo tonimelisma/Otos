@@ -1,5 +1,8 @@
 import Foundation
 
+/// Typed filesystem paths keep domain roles visible at call sites. A library
+/// root path and a media relative path are both text under the hood, but mixing
+/// them up would be a real catalog bug, so they are not plain Strings.
 nonisolated struct LibraryRootPath: Hashable, Codable, RawRepresentable, CustomStringConvertible {
     let rawValue: String
 
@@ -25,11 +28,17 @@ nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, Custo
     }
 }
 
+/// Media identity is the natural filesystem identity inside Otos: which library
+/// root the file belongs to plus its path inside that root. Keeping this as a
+/// pair avoids ambiguous string concatenation and avoids generated IDs.
 nonisolated struct MediaAssetID: Hashable {
     let libraryRootPath: LibraryRootPath
     let relativePath: MediaRelativePath
 }
 
+/// Durable saved library identity. This intentionally contains no scan status
+/// and no SQLite rowid: the path is the product identity, while storage keys stay
+/// private to persistence.
 nonisolated struct LibraryRoot: Identifiable, Hashable {
     let path: LibraryRootPath
 
@@ -39,6 +48,50 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
 
     var displayName: String {
         path.displayName
+    }
+}
+
+/// Availability is runtime state. It answers whether Otos can reach the saved
+/// root path right now, but it is not persisted because the filesystem can
+/// change independently of the catalog database.
+nonisolated enum LibraryAvailability: Hashable {
+    case available
+    case unavailable
+}
+
+/// Scan activity is separate from availability: an available library can be
+/// idle or scanning, while an unavailable library preserves catalog rows without
+/// pretending a scan is in progress.
+nonisolated enum CatalogLibraryActivity: Hashable {
+    case idle
+    case scanning
+}
+
+/// One projected library row. The durable root remains pure identity; this row
+/// adds transient runtime facts needed by the current UI surfaces.
+nonisolated struct CatalogLibraryState: Identifiable, Hashable {
+    let root: LibraryRoot
+    let availability: LibraryAvailability
+    let activity: CatalogLibraryActivity
+
+    var id: LibraryRootPath {
+        root.id
+    }
+
+    var path: LibraryRootPath {
+        root.path
+    }
+
+    var displayName: String {
+        root.displayName
+    }
+
+    var isScanning: Bool {
+        activity == .scanning
+    }
+
+    var isAvailable: Bool {
+        availability == .available
     }
 }
 
@@ -57,26 +110,49 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     }
 }
 
+/// Raw point-in-time catalog value made by CatalogStore on demand. "Snapshot"
+/// means an immutable copy of store truth at one instant; publication streams
+/// are owned elsewhere.
 nonisolated struct CatalogSnapshot: Equatable {
-    var roots: [LibraryRoot]
+    var libraries: [CatalogLibraryState]
     var assets: [MediaAsset]
-    var scanningRootPaths: Set<LibraryRootPath>
 
-    static let empty = CatalogSnapshot(roots: [], assets: [], scanningRootPaths: [])
+    static let empty = CatalogSnapshot(libraries: [], assets: [])
 
     var isScanning: Bool {
-        !scanningRootPaths.isEmpty
+        libraries.contains { $0.isScanning }
     }
 }
 
-nonisolated struct CatalogBrowserProjection: Equatable {
-    var title: String
-    var assetsForSelection: [MediaAsset]
-
-    static let empty = CatalogBrowserProjection(title: "All Media", assetsForSelection: [])
+/// Why an empty media table is empty. Projection chooses the reason so the view
+/// can stay declarative and avoid re-deriving catalog state in `body`.
+nonisolated enum CatalogMediaEmptyState: Equatable {
+    case noMedia
+    case noAvailableMedia
+    case libraryUnavailable
 }
 
-nonisolated enum CatalogSelection: Hashable {
+/// Final UI-ready catalog state. CatalogProjection builds this away from the
+/// MainActor; CatalogWindowViewModel assigns it to SwiftUI.
+nonisolated struct CatalogWindowState: Equatable {
+    var title: String
+    var libraries: [CatalogLibraryState]
+    var assetsInSelectedScope: [MediaAsset]
+    var resolvedSidebarSelection: SidebarSelection
+    var mediaEmptyState: CatalogMediaEmptyState
+
+    static let empty = CatalogWindowState(
+        title: "All Media",
+        libraries: [],
+        assetsInSelectedScope: [],
+        resolvedSidebarSelection: .allMedia,
+        mediaEmptyState: .noMedia
+    )
+}
+
+/// Selection of a sidebar row. Media selection will be modeled separately
+/// because it answers a different question.
+nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case library(LibraryRootPath)
 }

@@ -1,60 +1,177 @@
 import Foundation
 import OSLog
 
+/// CatalogProjection turns raw catalog snapshots into the state SwiftUI renders.
+/// It also owns the publication cadence so Store mutations, scan batches, and
+/// sidebar changes are coalesced through one backpressure point.
 actor CatalogProjection {
+    typealias WindowStateBuilder = @Sendable (CatalogSnapshot, SidebarSelection) async -> CatalogWindowState
+
+    private let cadence: Duration
     private let diagnostics: CatalogDiagnostics?
+    private let stateBuilder: WindowStateBuilder
 
-    init(diagnostics: CatalogDiagnostics? = .shared) {
+    private var sidebarSelection: SidebarSelection = .allMedia
+    private var dirty = false
+    private var continuations: [UUID: AsyncStream<CatalogWindowState>.Continuation] = [:]
+    private var changeTask: Task<Void, Never>?
+    private var publicationTask: Task<Void, Never>?
+
+    init(
+        cadence: Duration = .milliseconds(100),
+        diagnostics: CatalogDiagnostics? = .shared,
+        stateBuilder: WindowStateBuilder? = nil
+    ) {
+        self.cadence = cadence
         self.diagnostics = diagnostics
+        self.stateBuilder = stateBuilder ?? { snapshot, selection in
+            Self.windowState(snapshot: snapshot, sidebarSelection: selection)
+        }
     }
 
-    func sortedSnapshot(from snapshot: CatalogSnapshot) async -> CatalogSnapshot {
-        let state = OtosSignpost.performance.beginInterval("CatalogProjectionSort")
-        let roots = Self.sortRoots(snapshot.roots)
-        let assets = Self.sortAssets(snapshot.assets)
-        OtosSignpost.performance.endInterval("CatalogProjectionSort", state)
+    func states(
+        store: CatalogStore,
+        initialSidebarSelection: SidebarSelection
+    ) -> AsyncStream<CatalogWindowState> {
+        sidebarSelection = initialSidebarSelection
+        ensurePublicationLoop(store: store)
+        markDirty()
 
-        await diagnostics?.record(
-            operation: "catalog.projection.sort",
-            phase: "finish",
-            fields: [
-                "roots": "\(roots.count)",
-                "assets": "\(assets.count)",
-            ]
+        let (stream, continuation) = AsyncStream<CatalogWindowState>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
         )
-
-        return CatalogSnapshot(
-            roots: roots,
-            assets: assets,
-            scanningRootPaths: snapshot.scanningRootPaths
-        )
+        let id = UUID()
+        continuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task {
+                await self?.removeContinuation(id)
+            }
+        }
+        return stream
     }
 
-    func browserProjection(
+    func updateSidebarSelection(_ selection: SidebarSelection) {
+        guard sidebarSelection != selection else {
+            return
+        }
+        sidebarSelection = selection
+        markDirty()
+    }
+
+    func windowState(
         snapshot: CatalogSnapshot,
-        selection: CatalogSelection
-    ) async -> CatalogBrowserProjection {
-        let state = OtosSignpost.performance.beginInterval("CatalogProjectionFilter")
-        let title = Self.title(for: selection, snapshot: snapshot)
-        let assetsForSelection = Self.assets(for: selection, snapshot: snapshot)
-        OtosSignpost.performance.endInterval("CatalogProjectionFilter", state)
-
-        await diagnostics?.record(
-            operation: "catalog.projection.filter",
-            phase: "finish",
-            fields: [
-                "selection": selection.diagnosticDescription,
-                "assets": "\(assetsForSelection.count)",
-            ]
-        )
-
-        return CatalogBrowserProjection(title: title, assetsForSelection: assetsForSelection)
+        sidebarSelection: SidebarSelection
+    ) async -> CatalogWindowState {
+        await stateBuilder(snapshot, sidebarSelection)
     }
 }
 
 private extension CatalogProjection {
-    static func sortRoots(_ roots: [LibraryRoot]) -> [LibraryRoot] {
-        roots.sorted { left, right in
+    func ensurePublicationLoop(store: CatalogStore) {
+        guard publicationTask == nil else {
+            return
+        }
+
+        let cadence = cadence
+        changeTask = Task { [weak self] in
+            let changes = await store.changeNotifications()
+            for await _ in changes {
+                await self?.markDirty()
+            }
+        }
+
+        publicationTask = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: cadence)
+                } catch {
+                    return
+                }
+                await self?.publishIfDirty(store: store)
+            }
+        }
+    }
+
+    func markDirty() {
+        dirty = true
+    }
+
+    func publishIfDirty(store: CatalogStore) async {
+        guard dirty else {
+            return
+        }
+
+        // Clear before awaiting so changes that arrive during snapshot/projection
+        // work remain queued for the next tick instead of being lost.
+        dirty = false
+        let selectedSidebarRow = sidebarSelection
+
+        let snapshot = await store.currentSnapshot()
+        let signpost = OtosSignpost.performance.beginInterval("CatalogWindowPublication")
+        let state = await stateBuilder(snapshot, selectedSidebarRow)
+        OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
+
+        await diagnostics?.record(
+            operation: "catalog.projection.window",
+            phase: "finish",
+            fields: [
+                "libraries": "\(state.libraries.count)",
+                "assetCount": "\(snapshot.assets.count)",
+                "selectedScopeAssetCount": "\(state.assetsInSelectedScope.count)",
+                "sidebarSelection": selectedSidebarRow.diagnosticDescription,
+                "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
+                "emptyState": state.mediaEmptyState.diagnosticDescription,
+            ]
+        )
+
+        for continuation in continuations.values {
+            continuation.yield(state)
+        }
+    }
+
+    func removeContinuation(_ id: UUID) {
+        continuations.removeValue(forKey: id)
+        guard continuations.isEmpty else {
+            return
+        }
+        changeTask?.cancel()
+        changeTask = nil
+        publicationTask?.cancel()
+        publicationTask = nil
+        dirty = false
+    }
+}
+
+private extension CatalogProjection {
+    static func windowState(
+        snapshot: CatalogSnapshot,
+        sidebarSelection: SidebarSelection
+    ) -> CatalogWindowState {
+        let libraries = sortLibraries(snapshot.libraries)
+        let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
+        let sortedAssets = sortAssets(snapshot.assets)
+        let availableAssets = sortedAssets.filter { availableLibraryPaths.contains($0.libraryRootPath) }
+        let resolvedSidebarSelection = resolvedSidebarSelection(sidebarSelection, libraries: libraries)
+        let title = title(for: resolvedSidebarSelection, libraries: libraries)
+        let assetsInSelectedScope = assets(for: resolvedSidebarSelection, assets: availableAssets)
+        let mediaEmptyState = mediaEmptyState(
+            for: resolvedSidebarSelection,
+            libraries: libraries,
+            allAssets: sortedAssets,
+            assetsInSelectedScope: assetsInSelectedScope
+        )
+
+        return CatalogWindowState(
+            title: title,
+            libraries: libraries,
+            assetsInSelectedScope: assetsInSelectedScope,
+            resolvedSidebarSelection: resolvedSidebarSelection,
+            mediaEmptyState: mediaEmptyState
+        )
+    }
+
+    static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
+        libraries.sorted { left, right in
             let displayComparison = left.displayName.localizedStandardCompare(right.displayName)
             if displayComparison == .orderedSame {
                 return left.path.rawValue.localizedStandardCompare(right.path.rawValue) == .orderedAscending
@@ -79,32 +196,76 @@ private extension CatalogProjection {
         }
     }
 
-    static func assets(for selection: CatalogSelection, snapshot: CatalogSnapshot) -> [MediaAsset] {
-        switch selection {
+    static func resolvedSidebarSelection(
+        _ sidebarSelection: SidebarSelection,
+        libraries: [CatalogLibraryState]
+    ) -> SidebarSelection {
+        switch sidebarSelection {
         case .allMedia:
-            snapshot.assets
+            .allMedia
         case let .library(path):
-            snapshot.assets.filter { $0.libraryRootPath == path }
+            libraries.contains { $0.path == path } ? sidebarSelection : .allMedia
         }
     }
 
-    static func title(for selection: CatalogSelection, snapshot: CatalogSnapshot) -> String {
-        switch selection {
+    static func assets(for sidebarSelection: SidebarSelection, assets: [MediaAsset]) -> [MediaAsset] {
+        switch sidebarSelection {
+        case .allMedia:
+            assets
+        case let .library(path):
+            assets.filter { $0.libraryRootPath == path }
+        }
+    }
+
+    static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
+        switch sidebarSelection {
         case .allMedia:
             "All Media"
         case let .library(path):
-            snapshot.roots.first { $0.path == path }?.displayName ?? "Library"
+            libraries.first { $0.path == path }?.displayName ?? "Library"
+        }
+    }
+
+    static func mediaEmptyState(
+        for sidebarSelection: SidebarSelection,
+        libraries: [CatalogLibraryState],
+        allAssets: [MediaAsset],
+        assetsInSelectedScope: [MediaAsset]
+    ) -> CatalogMediaEmptyState {
+        guard assetsInSelectedScope.isEmpty else {
+            return .noMedia
+        }
+
+        switch sidebarSelection {
+        case .allMedia:
+            return allAssets.isEmpty ? .noMedia : .noAvailableMedia
+        case let .library(path):
+            let library = libraries.first { $0.path == path }
+            return library?.availability == .unavailable ? .libraryUnavailable : .noMedia
         }
     }
 }
 
-private extension CatalogSelection {
+private extension SidebarSelection {
     var diagnosticDescription: String {
         switch self {
         case .allMedia:
             "allMedia"
         case let .library(path):
             "library:\(path.rawValue)"
+        }
+    }
+}
+
+private extension CatalogMediaEmptyState {
+    var diagnosticDescription: String {
+        switch self {
+        case .noMedia:
+            "noMedia"
+        case .noAvailableMedia:
+            "noAvailableMedia"
+        case .libraryUnavailable:
+            "libraryUnavailable"
         }
     }
 }

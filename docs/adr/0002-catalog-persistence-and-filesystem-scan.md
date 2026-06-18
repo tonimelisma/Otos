@@ -114,6 +114,8 @@ Separate ADRs or specs must own:
   cadence.
 - Thumbnail generation, thumbnail storage, thumbnail schema, thumbnail
   freshness, and thumbnail scan cadence.
+- Camera package, AVCHD, XAVC, or other compound media-container import
+  workflows.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
 - File watching or incremental change notification outside explicit scan runs.
 - Scan diagnostics stored in SQLite as product state.
@@ -140,19 +142,34 @@ resource-key set:
 - `isRegularFileKey`
 - `isDirectoryKey`
 - `isSymbolicLinkKey`
+- `isPackageKey`
 - `nameKey`
 - `creationDateKey`
 - `contentModificationDateKey`
 - `fileSizeKey`
 - `contentTypeKey`
 
-The initial enumeration options are `[]`. This means the scanner does not skip
-hidden files, package descendants, subdirectory descendants, or mount points
-through `FileManager.DirectoryEnumerationOptions` in this ADR.
+The initial enumeration options are `[.skipsPackageDescendants]`. This means the
+scanner does not skip hidden files, subdirectory descendants, or mount points
+through `FileManager.DirectoryEnumerationOptions`, but it does treat macOS
+packages as file-like roots and does not descend into package contents.
 
 Only regular files become `media_asset` rows. Directories, symbolic links, and
 non-regular filesystem objects are scan traversal or filtering inputs, not media
-asset rows.
+asset rows. Package roots and package descendants are not media asset rows in
+the initial catalog scan.
+
+Skipped package roots are recorded through debug JSONL diagnostics with the
+package path and available content type identifier. A skipped package is not a
+filesystem scan failure. This prevents app-owned document packages such as
+Photos libraries from causing partial-root scan failures merely because their
+private internals are inaccessible.
+
+This ADR does not decide that all package contents are irrelevant to Otos.
+Camera packages and compound video layouts can contain media that may be relevant
+to a Lightroom-style app. Supporting those formats requires an explicit,
+tested media-container import decision instead of accidental traversal of every
+package directory.
 
 If a requested resource value is unavailable for an observed regular file, the
 corresponding nullable SQLite field is `NULL`. The app must not invent missing
