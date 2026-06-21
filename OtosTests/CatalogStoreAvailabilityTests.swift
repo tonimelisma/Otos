@@ -14,7 +14,7 @@ struct CatalogStoreAvailabilityTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         try FileManager.default.removeItem(at: root)
@@ -24,10 +24,11 @@ struct CatalogStoreAvailabilityTests {
 
         let unavailable = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
             snapshot.libraries.first?.availability == .unavailable
-                && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+                && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
         #expect(unavailable.libraries.first?.availability == .unavailable)
-        #expect(unavailable.assets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(unavailable.assetStructureRevision == 1)
     }
 
     @Test func scanFailureRechecksRootBeforeMarkingUnavailable() async throws {
@@ -41,7 +42,7 @@ struct CatalogStoreAvailabilityTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         let disappearingScanner = CatalogScanner { rootPath, _, _, _ in
@@ -57,9 +58,10 @@ struct CatalogStoreAvailabilityTests {
 
         let unavailable = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
             snapshot.libraries.first?.availability == .unavailable
-                && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+                && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
         #expect(unavailable.libraries.first?.availability == .unavailable)
-        #expect(unavailable.assets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(unavailable.assetStructureRevision == 1)
     }
 }

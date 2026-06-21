@@ -19,9 +19,9 @@ struct ContentView: View {
                 sidebarSelection: $viewModel.sidebarSelection
             )
         } detail: {
-            MediaTableView(
+            MediaGridView(
                 title: viewModel.state.title,
-                assets: viewModel.state.assetsInSelectedScope,
+                grid: viewModel.state.mediaGrid,
                 emptyState: viewModel.state.mediaEmptyState
             )
         }

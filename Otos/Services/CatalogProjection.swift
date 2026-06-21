@@ -7,15 +7,25 @@ import OSLog
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable (CatalogSnapshot, SidebarSelection) async -> CatalogWindowState
 
+    private struct BuildMetrics {
+        let orderCacheHit: Bool
+        let orderSorted: Bool
+        let orderInvariantRebuilt: Bool
+        let sortMs: Int
+    }
+
     private let cadence: Duration
     private let diagnostics: CatalogDiagnostics?
-    private let stateBuilder: WindowStateBuilder
+    private let stateBuilder: WindowStateBuilder?
 
     private var sidebarSelection: SidebarSelection = .allMedia
     private var dirty = false
     private var continuations: [UUID: AsyncStream<CatalogWindowState>.Continuation] = [:]
     private var changeTask: Task<Void, Never>?
     private var publicationTask: Task<Void, Never>?
+    private var lastPublishedState: CatalogWindowState?
+    private var cachedAssetStructureRevision: UInt64?
+    private var cachedOrderedAssetIDs: [MediaAssetID] = []
 
     init(
         cadence: Duration = .milliseconds(100),
@@ -24,9 +34,7 @@ actor CatalogProjection {
     ) {
         self.cadence = cadence
         self.diagnostics = diagnostics
-        self.stateBuilder = stateBuilder ?? { snapshot, selection in
-            Self.windowState(snapshot: snapshot, sidebarSelection: selection)
-        }
+        self.stateBuilder = stateBuilder
     }
 
     func states(
@@ -62,7 +70,11 @@ actor CatalogProjection {
         snapshot: CatalogSnapshot,
         sidebarSelection: SidebarSelection
     ) async -> CatalogWindowState {
-        await stateBuilder(snapshot, sidebarSelection)
+        let (state, _) = await buildWindowState(
+            snapshot: snapshot,
+            sidebarSelection: sidebarSelection
+        )
+        return state
     }
 }
 
@@ -106,23 +118,49 @@ private extension CatalogProjection {
         dirty = false
         let selectedSidebarRow = sidebarSelection
 
+        let publicationStart = Date()
+        let snapshotStart = Date()
         let snapshot = await store.currentSnapshot()
+        let snapshotMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
+
+        let projectionStart = Date()
         let signpost = OtosSignpost.performance.beginInterval("CatalogWindowPublication")
-        let state = await stateBuilder(snapshot, selectedSidebarRow)
+        let (state, buildMetrics) = await buildWindowState(
+            snapshot: snapshot,
+            sidebarSelection: selectedSidebarRow
+        )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
+        let projectionMs = DiagnosticsTiming.milliseconds(since: projectionStart)
+        let totalMs = DiagnosticsTiming.milliseconds(since: publicationStart)
+        let stateChanged = lastPublishedState != state
 
         await diagnostics?.record(
             operation: "catalog.projection.window",
             phase: "finish",
             fields: [
                 "libraries": "\(state.libraries.count)",
-                "assetCount": "\(snapshot.assets.count)",
-                "selectedScopeAssetCount": "\(state.assetsInSelectedScope.count)",
+                "assetCount": "\(snapshot.assetsByID.count)",
+                "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
+                "assetStructureRevision": "\(snapshot.assetStructureRevision)",
+                "assetOrderCacheHit": "\(buildMetrics.orderCacheHit)",
+                "assetOrderSorted": "\(buildMetrics.orderSorted)",
+                "assetOrderInvariantRebuilt": "\(buildMetrics.orderInvariantRebuilt)",
+                "assetSortMs": "\(buildMetrics.sortMs)",
                 "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                 "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
                 "emptyState": state.mediaEmptyState.diagnosticDescription,
+                "snapshotMs": "\(snapshotMs)",
+                "projectionMs": "\(projectionMs)",
+                "totalMs": "\(totalMs)",
+                "dirtyAfterPublication": "\(dirty)",
+                "stateChanged": "\(stateChanged)",
             ]
         )
+
+        guard stateChanged else {
+            return
+        }
+        lastPublishedState = state
 
         for continuation in continuations.values {
             continuation.yield(state)
@@ -139,34 +177,112 @@ private extension CatalogProjection {
         publicationTask?.cancel()
         publicationTask = nil
         dirty = false
+        lastPublishedState = nil
+        cachedAssetStructureRevision = nil
+        cachedOrderedAssetIDs.removeAll(keepingCapacity: false)
     }
 }
 
 private extension CatalogProjection {
-    static func windowState(
+    private func buildWindowState(
         snapshot: CatalogSnapshot,
         sidebarSelection: SidebarSelection
-    ) -> CatalogWindowState {
-        let libraries = sortLibraries(snapshot.libraries)
+    ) async -> (CatalogWindowState, BuildMetrics) {
+        if let stateBuilder {
+            let state = await stateBuilder(snapshot, sidebarSelection)
+            return (
+                state,
+                BuildMetrics(
+                    orderCacheHit: false,
+                    orderSorted: false,
+                    orderInvariantRebuilt: false,
+                    sortMs: 0
+                )
+            )
+        }
+
+        let signpost = OtosSignpost.performance.beginInterval("CatalogWindowStateBuild")
+        defer {
+            OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
+        }
+        let libraries = Self.sortLibraries(snapshot.libraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let sortedAssets = sortAssets(snapshot.assets)
+        let (sortedAssets, metrics) = orderedAssets(for: snapshot)
         let availableAssets = sortedAssets.filter { availableLibraryPaths.contains($0.libraryRootPath) }
-        let resolvedSidebarSelection = resolvedSidebarSelection(sidebarSelection, libraries: libraries)
-        let title = title(for: resolvedSidebarSelection, libraries: libraries)
-        let assetsInSelectedScope = assets(for: resolvedSidebarSelection, assets: availableAssets)
-        let mediaEmptyState = mediaEmptyState(
+        let resolvedSidebarSelection = Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
+        let title = Self.title(for: resolvedSidebarSelection, libraries: libraries)
+        let scopedAssets = Self.assets(for: resolvedSidebarSelection, assets: availableAssets)
+        let mediaEmptyState = Self.mediaEmptyState(
             for: resolvedSidebarSelection,
             libraries: libraries,
-            allAssets: sortedAssets,
-            assetsInSelectedScope: assetsInSelectedScope
+            allAssetCount: sortedAssets.count,
+            selectedAssetCount: scopedAssets.count
+        )
+        let scopedAssetsByID = Dictionary(
+            uniqueKeysWithValues: scopedAssets.map { ($0.id, $0) }
         )
 
-        return CatalogWindowState(
-            title: title,
-            libraries: libraries,
-            assetsInSelectedScope: assetsInSelectedScope,
-            resolvedSidebarSelection: resolvedSidebarSelection,
-            mediaEmptyState: mediaEmptyState
+        return (
+            CatalogWindowState(
+                title: title,
+                libraries: libraries,
+                mediaGrid: CatalogMediaGridState(
+                    scope: resolvedSidebarSelection,
+                    orderedAssetIDs: scopedAssets.map(\.id),
+                    assetsByID: scopedAssetsByID
+                ),
+                resolvedSidebarSelection: resolvedSidebarSelection,
+                mediaEmptyState: mediaEmptyState
+            ),
+            metrics
+        )
+    }
+
+    private func orderedAssets(for snapshot: CatalogSnapshot) -> ([MediaAsset], BuildMetrics) {
+        if cachedAssetStructureRevision == snapshot.assetStructureRevision {
+            let assets = cachedOrderedAssetIDs.compactMap { snapshot.assetsByID[$0] }
+            let cacheResolvedExactly = assets.count == snapshot.assetsByID.count
+                && cachedOrderedAssetIDs.count == snapshot.assetsByID.count
+            if cacheResolvedExactly {
+                return (
+                    assets,
+                    BuildMetrics(
+                        orderCacheHit: true,
+                        orderSorted: false,
+                        orderInvariantRebuilt: false,
+                        sortMs: 0
+                    )
+                )
+            }
+
+            // A missed revision increment must not produce a partial or stale
+            // browser. Rebuild immediately and leave an observable invariant
+            // failure so tests and diagnostics expose the Store bug.
+            let revision = snapshot.assetStructureRevision
+            OtosLog.catalog.error("Catalog asset order cache invariant failed revision=\(revision, privacy: .public)")
+            return rebuildOrderedAssets(snapshot: snapshot, invariantRebuilt: true)
+        }
+
+        return rebuildOrderedAssets(snapshot: snapshot, invariantRebuilt: false)
+    }
+
+    private func rebuildOrderedAssets(
+        snapshot: CatalogSnapshot,
+        invariantRebuilt: Bool
+    ) -> ([MediaAsset], BuildMetrics) {
+        let sortStart = Date()
+        let assets = Self.sortAssets(Array(snapshot.assetsByID.values))
+        let sortMs = DiagnosticsTiming.milliseconds(since: sortStart)
+        cachedAssetStructureRevision = snapshot.assetStructureRevision
+        cachedOrderedAssetIDs = assets.map(\.id)
+        return (
+            assets,
+            BuildMetrics(
+                orderCacheHit: false,
+                orderSorted: true,
+                orderInvariantRebuilt: invariantRebuilt,
+                sortMs: sortMs
+            )
         )
     }
 
@@ -229,43 +345,19 @@ private extension CatalogProjection {
     static func mediaEmptyState(
         for sidebarSelection: SidebarSelection,
         libraries: [CatalogLibraryState],
-        allAssets: [MediaAsset],
-        assetsInSelectedScope: [MediaAsset]
+        allAssetCount: Int,
+        selectedAssetCount: Int
     ) -> CatalogMediaEmptyState {
-        guard assetsInSelectedScope.isEmpty else {
+        guard selectedAssetCount == 0 else {
             return .noMedia
         }
 
         switch sidebarSelection {
         case .allMedia:
-            return allAssets.isEmpty ? .noMedia : .noAvailableMedia
+            return allAssetCount == 0 ? .noMedia : .noAvailableMedia
         case let .library(path):
             let library = libraries.first { $0.path == path }
             return library?.availability == .unavailable ? .libraryUnavailable : .noMedia
-        }
-    }
-}
-
-private extension SidebarSelection {
-    var diagnosticDescription: String {
-        switch self {
-        case .allMedia:
-            "allMedia"
-        case let .library(path):
-            "library:\(path.rawValue)"
-        }
-    }
-}
-
-private extension CatalogMediaEmptyState {
-    var diagnosticDescription: String {
-        switch self {
-        case .noMedia:
-            "noMedia"
-        case .noAvailableMedia:
-            "noAvailableMedia"
-        case .libraryUnavailable:
-            "libraryUnavailable"
         }
     }
 }

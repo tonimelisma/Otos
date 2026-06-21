@@ -39,6 +39,7 @@ actor CatalogStore {
     private var rootRowIDsByPath: [LibraryRootPath: Int64] = [:]
     private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
     private var assetsByRootPath: [LibraryRootPath: [MediaRelativePath: MediaAsset]] = [:]
+    private var assetStructureRevision: UInt64 = 0
     private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
     private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
@@ -88,7 +89,9 @@ extension CatalogStore {
         let loaded = try await dbQueue.read { db in
             try Self.fetchCatalog(db)
         }
+        let applyState = OtosSignpost.catalog.beginInterval("CatalogApplyLoadedCatalog")
         applyLoadedCatalog(roots: loaded.roots, assets: loaded.assets)
+        OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
         OtosLog.persistence.info(
             """
@@ -111,7 +114,11 @@ extension CatalogStore {
     }
 
     func currentSnapshot() -> CatalogSnapshot {
-        makeSnapshot()
+        let state = OtosSignpost.catalog.beginInterval("CatalogCurrentSnapshot")
+        defer {
+            OtosSignpost.catalog.endInterval("CatalogCurrentSnapshot", state)
+        }
+        return makeSnapshot()
     }
 
     func addLibrary(url: URL) async throws {
@@ -179,7 +186,10 @@ extension CatalogStore {
         availabilityByRootPath.removeValue(forKey: path)
         rootRowIDsByPath.removeValue(forKey: path)
         rootPathsByRowID.removeValue(forKey: rootRowID)
-        assetsByRootPath.removeValue(forKey: path)
+        let removedAssets = assetsByRootPath.removeValue(forKey: path)
+        if removedAssets?.isEmpty == false {
+            advanceAssetStructureRevision()
+        }
         OtosLog.catalog.info("Library root removed path=\(root.path.rawValue, privacy: .public)")
         await diagnostics?.record(
             operation: "catalog.library.remove",
@@ -269,6 +279,7 @@ private extension CatalogStore {
                 contentModifiedAt: asset.contentModifiedAt
             )
         }
+        advanceAssetStructureRevision()
     }
 
     private func validateNoOverlap(_ path: LibraryRootPath) throws {
@@ -354,7 +365,12 @@ private extension CatalogStore {
             throw CancellationError()
         }
 
-        applyScannedBatchToMemory(batch, root: root, rootPath: rootPath)
+        let memoryState = OtosSignpost.catalog.beginInterval("CatalogScanBatchApplyMemory")
+        let insertedAsset = applyScannedBatchToMemory(batch, root: root, rootPath: rootPath)
+        if insertedAsset {
+            advanceAssetStructureRevision()
+        }
+        OtosSignpost.catalog.endInterval("CatalogScanBatchApplyMemory", memoryState)
         OtosLog.catalog.debug(
             "Catalog scan batch path=\(rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public)"
         )
@@ -373,8 +389,12 @@ private extension CatalogStore {
         _ batch: [ScannedMediaFile],
         root: LibraryRoot,
         rootPath: LibraryRootPath
-    ) {
+    ) -> Bool {
+        var insertedAsset = false
         for file in batch {
+            if assetsByRootPath[rootPath]?[file.relativePath] == nil {
+                insertedAsset = true
+            }
             assetsByRootPath[rootPath, default: [:]][file.relativePath] = MediaAsset(
                 libraryRootPath: root.path,
                 libraryDisplayName: root.displayName,
@@ -386,6 +406,7 @@ private extension CatalogStore {
                 contentModifiedAt: file.contentModifiedAt
             )
         }
+        return insertedAsset
     }
 
     private func scanCompleted(rootPath: LibraryRootPath, observedPaths: Set<MediaRelativePath>) async {
@@ -396,26 +417,15 @@ private extension CatalogStore {
         }
 
         do {
-            let dbQueue = try database()
-            let existingPaths = Set(assetsByRootPath[rootPath, default: [:]].keys)
-            let missingPaths = existingPaths.subtracting(observedPaths)
-            let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
-            try await dbQueue.write { db in
-                for relativePath in missingPaths {
-                    try db.execute(
-                        sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                        arguments: [rootRowID, relativePath.rawValue]
-                    )
-                }
-            }
-            OtosSignpost.persistence.endInterval("CatalogScanReconcile", state)
-            for relativePath in missingPaths {
-                assetsByRootPath[rootPath]?.removeValue(forKey: relativePath)
-            }
+            let deletedCount = try await reconcileMissingAssets(
+                rootPath: rootPath,
+                rootRowID: rootRowID,
+                observedPaths: observedPaths
+            )
             OtosLog.catalog.info(
                 """
                 Catalog scan completed path=\(rootPath.rawValue, privacy: .public) \
-                observed=\(observedPaths.count, privacy: .public) deleted=\(missingPaths.count, privacy: .public)
+                observed=\(observedPaths.count, privacy: .public) deleted=\(deletedCount, privacy: .public)
                 """
             )
             await diagnostics?.record(
@@ -424,7 +434,7 @@ private extension CatalogStore {
                 fields: [
                     "rootPath": rootPath.rawValue,
                     "observed": "\(observedPaths.count)",
-                    "deleted": "\(missingPaths.count)",
+                    "deleted": "\(deletedCount)",
                 ]
             )
         } catch {
@@ -440,6 +450,37 @@ private extension CatalogStore {
         }
 
         clearCurrentScan(rootPath: rootPath)
+    }
+
+    /// Reconciliation changes both durable and in-memory membership as one
+    /// actor-owned operation. Its single revision advance invalidates ordering
+    /// once even when several identities disappear together.
+    private func reconcileMissingAssets(
+        rootPath: LibraryRootPath,
+        rootRowID: Int64,
+        observedPaths: Set<MediaRelativePath>
+    ) async throws -> Int {
+        let existingPaths = Set(assetsByRootPath[rootPath, default: [:]].keys)
+        let missingPaths = existingPaths.subtracting(observedPaths)
+        let dbQueue = try database()
+        let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
+        defer { OtosSignpost.persistence.endInterval("CatalogScanReconcile", state) }
+
+        try await dbQueue.write { db in
+            for relativePath in missingPaths {
+                try db.execute(
+                    sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [rootRowID, relativePath.rawValue]
+                )
+            }
+        }
+        for relativePath in missingPaths {
+            assetsByRootPath[rootPath]?.removeValue(forKey: relativePath)
+        }
+        if !missingPaths.isEmpty {
+            advanceAssetStructureRevision()
+        }
+        return missingPaths.count
     }
 
     private func scanCancelled(rootPath: LibraryRootPath) async {
@@ -497,7 +538,13 @@ private extension CatalogStore {
     }
 
     private func makeSnapshot() -> CatalogSnapshot {
-        let assets = assetsByRootPath.values.flatMap(\.values)
+        var assetsByID: [MediaAssetID: MediaAsset] = [:]
+        assetsByID.reserveCapacity(assetsByRootPath.values.reduce(0) { $0 + $1.count })
+        for assetsForRoot in assetsByRootPath.values {
+            for asset in assetsForRoot.values {
+                assetsByID[asset.id] = asset
+            }
+        }
         let libraries = rootsByPath.values.map { root in
             CatalogLibraryState(
                 root: root,
@@ -507,11 +554,23 @@ private extension CatalogStore {
         }
         return CatalogSnapshot(
             libraries: libraries,
-            assets: assets
+            assetsByID: assetsByID,
+            assetStructureRevision: assetStructureRevision
         )
     }
 
+    /// This revision describes membership, not presentation order. Projection
+    /// uses it to know when its identity-derived ordering can no longer be
+    /// reused; it is deliberately transient and never written to SQLite.
+    private func advanceAssetStructureRevision() {
+        assetStructureRevision &+= 1
+    }
+
     private func notifyCatalogChanged() {
+        let state = OtosSignpost.catalog.beginInterval("CatalogChangeNotify")
+        defer {
+            OtosSignpost.catalog.endInterval("CatalogChangeNotify", state)
+        }
         for continuation in changeContinuations.values {
             continuation.yield(())
         }
@@ -522,6 +581,10 @@ private extension CatalogStore {
     }
 
     private func rootIsAvailable(_ path: LibraryRootPath) -> Bool {
+        let state = OtosSignpost.fileAccess.beginInterval("CatalogRootAvailabilityCheck")
+        defer {
+            OtosSignpost.fileAccess.endInterval("CatalogRootAvailabilityCheck", state)
+        }
         do {
             let values = try path.url.resourceValues(forKeys: [.isDirectoryKey])
             return values.isDirectory == true

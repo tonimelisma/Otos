@@ -42,6 +42,10 @@ disk wherever the user chose to keep it. Originals are read-only.
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data lives in Application Support. All overlay data is treated as
   backed up for now. Do not introduce preview pruning or cache eviction.
+- Otos is an image/video product. Never add audio-specific playback, metadata,
+  thumbnails, icons, classification, or workflows. This product boundary does
+  not imply that the current all-regular-file catalog already filters unsupported
+  files; only implemented eligibility rules may make that claim.
 - Otos is unsandboxed. Design file access around user-selected media roots and
   normal filesystem paths. Do not add App Sandbox, security-scoped bookmarks,
   bookmark schema, bookmark lifecycles, or sandbox-driven file access flows.
@@ -267,6 +271,12 @@ Every significant operation should emit:
 - result count or size when safe
 - cancellation status
 - error outcome without private payloads
+
+For SwiftUI/AppKit responsiveness issues, instrument Otos-owned boundaries with
+signposts and JSONL diagnostics: catalog snapshot, projection, state assignment,
+item counts, selection, collection updates, and run-loop stalls. Use `sample` or
+Instruments to prove private Apple framework stacks. Do not pretend app code can
+signpost inside SwiftUI or AppKit internals directly.
 
 Log policy:
 

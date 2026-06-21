@@ -1,0 +1,223 @@
+# Spec: Placeholder Media Grid And Catalog Ordering
+
+## Change Type
+
+Bug fix, rendering refactor, and catalog projection refactor.
+
+## Problem Statement
+
+The media browser's SwiftUI/AppKit table path can enter a permanent main-thread
+stall after repeated All Media/library scope changes with approximately 23,000
+rows. Once stalled, memory grows continuously toward OOM. Runtime samples and
+heap evidence locate the runaway work in private table row hosting and layout,
+while Otos catalog publication is idle.
+
+## User-Facing Goal
+
+Show every currently cataloged regular file in a responsive, six-column media
+grid that remains usable while scans update and while the user repeatedly
+switches between All Media and libraries.
+
+## Current Repo State
+
+- `CatalogStore` owns keyed in-memory media grouped by library and persists the
+  same catalog to SQLite.
+- `CatalogProjection` owns the 10 Hz coalesced UI publication loop and currently
+  sorts every projected asset array.
+- `CatalogWindowViewModel` assigns final state on the MainActor.
+- The experimental media table path is implicated by the evidence recorded in
+  Spec 0010 and must be retired; the Settings table is unrelated and remains.
+- Catalog rows contain filesystem facts but no thumbnails.
+
+## In Scope
+
+- Replace only the media table with a passive SwiftUI shell around a narrow
+  AppKit `NSCollectionView` bridge.
+- Render exactly six responsive square columns with filenames and video-only
+  markers.
+- Preserve all regular cataloged files as generic tiles when they are not
+  movies.
+- Split structural identity order from detail values.
+- Add a transient Store structure revision and Projection order cache.
+- Coalesce imperative collection updates to one structural apply in flight.
+- Preserve and extend diagnostics, tests, and runtime performance evidence.
+
+## Out Of Scope
+
+Real thumbnails, decoding, preview, metadata, eligibility filtering, audio
+support, selection, activation, drag and drop, Finder actions, keyboard actions,
+zoom controls, animated updates, manual scan, sandboxing, bookmarks, durable
+scan IDs, and SQLite schema changes.
+
+## Captured Requirements
+
+### Functional
+
+- The media browser shows a square placeholder tile for every visible cataloged
+  regular file.
+- Each tile shows one middle-truncated filename at the top, falling back to the
+  final relative-path component when the stored name is unavailable.
+- A tiny `video.fill` marker and subdued system-blue background appear only when
+  the content type conforms to `UTType.movie`.
+- Images and all other non-video files have one neutral presentation and no
+  icon. Audio has no special behavior.
+- The grid has no media selection, activation, preview, Finder, drag, or keyboard
+  behavior.
+- A sidebar scope change scrolls to the first item; same-scope scan updates
+  preserve the current scroll position.
+- Existing `Library Unavailable`, `No Available Media`, and `No Media` states
+  remain visible when the projected grid is empty.
+
+### Architecture
+
+- Store truth remains keyed by library root and relative path.
+- `assetStructureRevision` describes membership only and is transient.
+- `CatalogSnapshot` exposes keyed assets and structure revision; dictionary
+  iteration order has no UI meaning.
+- `CatalogProjection` owns global asset ordering and caches ordered IDs by
+  structure revision.
+- `CatalogMediaGridState` carries scope, ordered IDs, and current values keyed by
+  ID.
+- The collection bridge applies identity changes structurally and refreshes only
+  visible items for detail-only changes.
+- Views remain passive and do not own catalog cadence or projection work.
+
+### Non-Functional
+
+- Projection's 10 Hz loop is the sole catalog-to-grid cadence.
+- Only one diffable structural apply may be in flight; intermediate pending
+  states are replaced by the newest state.
+- MainActor spans remain below 100 ms and visible cell configuration targets
+  less than 5 ms.
+- Repeated scope switching with about 24,000 assets must return the main thread
+  to idle and memory must reach a bounded plateau rather than grow linearly.
+
+### Tooling And Regression
+
+- Signposts and JSONL diagnostics cover grid receipt, structural apply, pending
+  replacement, completion, visible reload, layout creation, slow cell setup,
+  order cache hits, order sorts, and invariant rebuilds.
+- The deleted media table and per-item `NSHostingView` must not reappear.
+- The Settings table remains unchanged.
+
+## Alternatives
+
+### A. SwiftUI LazyVGrid
+
+Pros: fully SwiftUI, small bridge surface, simple declarative code.
+
+Cons: keeps large repeated view identity and AttributeGraph work in the same
+framework family implicated by the runaway table; gives less explicit control
+over one-in-flight structural updates and visible-only detail refresh.
+
+Failure mode: repeated scope changes can again retain or rebuild a large SwiftUI
+view graph without bounded reusable-cell evidence.
+
+### B. NSCollectionView With Flow Layout
+
+Pros: mature reusable cells, bounded visible lifecycle, simpler than a custom
+layout.
+
+Cons: six equal responsive columns require manual item-size recalculation during
+resizing and layout invalidation.
+
+Failure mode: width bookkeeping drifts from inset/gap requirements or triggers
+avoidable layout replacements during live resize.
+
+### C. NSCollectionView With Compositional Layout
+
+Pros: AppKit reuse, explicit six-item fractional groups, native diffable identity,
+and no per-item SwiftUI hosts. Structural and detail updates can be separated.
+
+Cons: introduces a narrow AppKit lifecycle and imperative update state machine.
+
+Failure mode: unconstrained diffable applies can queue faster than AppKit can
+finish unless pending state is coalesced.
+
+### D. Custom NSView Tiling
+
+Pros: maximum control over allocation and drawing.
+
+Cons: manually recreates virtualization, accessibility, scrolling, reuse, and
+layout behavior already provided by AppKit.
+
+Failure mode: a bespoke renderer becomes a larger and less reliable UI system
+than the product currently requires.
+
+## Selected Approach
+
+Use Alternative C. The captured table failure is verified evidence that the
+SwiftUI-first path cannot meet current responsiveness. A narrow collection view
+bridge is the smallest native boundary that supplies reusable viewport-bounded
+items, explicit identity updates, and six-column fractional layout without a
+custom rendering engine.
+
+## Ownership And Data Flow
+
+1. `CatalogStore` mutates keyed runtime truth and advances structure revision
+   only when identity membership changes.
+2. At most once per dirty 100 ms tick, `CatalogProjection` requests a keyed
+   snapshot, sorts IDs only for a changed revision, filters cached order for the
+   current scope/availability, and publishes `CatalogWindowState`.
+3. `CatalogWindowViewModel` assigns that state on the MainActor.
+4. `MediaGridView` renders title/empty state and forwards grid state to the
+   collection controller.
+5. The collection apply gate chooses no-op, visible refresh, structural apply,
+   or newest-pending replacement.
+
+## Concurrency And Cancellation
+
+Store and Projection remain actors outside the MainActor. The ViewModel and
+AppKit controller are MainActor-bound. No second timer or worker is added. The
+existing projection stream and ViewModel tasks own cancellation; a diffable
+apply already in AppKit is allowed to finish, after which only the newest pending
+state is processed.
+
+## Persistence Effects
+
+None. Structure revision and cached ordering are reconstructed in memory after
+each launch and are not stored in SQLite.
+
+## Instrumentation And Profiling
+
+- JSONL: projection revision/cache/sort counts and collection receipt/apply/
+  pending/reload outcomes.
+- Signposts: Store snapshot, Projection publication/state build, ViewModel state
+  assignment, collection layout/receipt/apply/reload, and scan boundaries.
+- Runtime: `script/catalog-diagnostics.sh check`, 1 Hz process RSS/CPU capture,
+  unified logs, and a main-thread sample if any stall appears.
+
+## Tests And Acceptance
+
+- Store tests prove every membership increment and detail/availability
+  non-increment.
+- Projection tests prove first sort, cache reuse, detail rematerialization,
+  insertion/deletion ordering, filtering, availability hiding, and invariant
+  recovery.
+- Collection state-machine tests prove one in-flight apply, newest pending,
+  detail refresh, scope reset, and same-scope preservation.
+- Content-type tests prove movies are marked while image, audio, unknown, DOCX,
+  and source files remain generic.
+- Source hygiene proves the AppKit collection/compositional layout exists and
+  the media table/`NSHostingView` path does not.
+- Repeated All Media/library switching with approximately 24,000 assets remains
+  responsive and memory plateaus.
+
+## Code-Smell Review
+
+- AppKit bridge sprawl: constrained to one controller, one apply gate, and one
+  reusable tile implementation.
+- MainActor gravity: unavoidable AppKit lifecycle only; sorting/filtering remain
+  in Projection.
+- State duplication: ordered IDs and keyed values answer different structural
+  and detail questions; the Store remains sole truth owner.
+- Cache invalidation: protected by Store membership tests and Projection's
+  resolve-count invariant recovery.
+
+## Non-Authoritative Future Ideas
+
+- User-controlled grid zoom.
+- Filtering the catalog browser to supported image/video eligibility.
+
+These are not current requirements and this increment adds no hooks or fields
+for them.

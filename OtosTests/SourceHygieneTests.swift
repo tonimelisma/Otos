@@ -131,7 +131,8 @@ struct SourceHygieneTests {
         let files = [
             "Otos/ContentView.swift",
             "Otos/OtosApp.swift",
-            "Otos/Views/MediaTableView.swift",
+            "Otos/Views/MediaGridView.swift",
+            "Otos/Views/MediaAssetCollectionView.swift",
             "Otos/Views/SettingsView.swift",
             "Otos/Views/SidebarView.swift",
         ]
@@ -149,6 +150,26 @@ struct SourceHygieneTests {
                 #expect(!content.contains(label), "\(label) should not appear in \(file)")
             }
         }
+    }
+
+    @Test func mediaBrowserUsesReusableSixColumnAppKitGrid() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(content.contains("NSViewControllerRepresentable"))
+        #expect(content.contains("NSCollectionView"))
+        #expect(content.contains("NSCollectionViewCompositionalLayout"))
+        #expect(content.contains("count: 6"))
+        #expect(!content.contains("NSTableView"))
+        #expect(!content.contains("NSHostingView"))
+        #expect(!FileManager.default.fileExists(
+            atPath: repoRoot.appending(path: "Otos/Views/MediaTableView.swift").path(percentEncoded: false)
+        ))
     }
 }
 

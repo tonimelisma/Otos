@@ -44,6 +44,16 @@ script/logs.sh Performance
 script/logs.sh Thumbnails
 ```
 
+SwiftUI/AppKit high-cardinality view jank:
+
+- Use Otos signposts and JSONL diagnostics to identify the app-owned boundary:
+  catalog snapshot, projection, state assignment, media item count, collection
+  update, and latest grid handoff.
+- Use `sample` or `script/profile.sh "Time Profiler" 10s` while the app is
+  beach balling to inspect private SwiftUI/AppKit stacks.
+- Do not claim Otos directly measures private AppKit internals. Correlate our
+  boundary evidence with Apple tooling evidence.
+
 Catalog diagnostics:
 
 ```sh

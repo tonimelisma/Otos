@@ -22,7 +22,7 @@ struct CatalogStoreTests {
 
         let snapshot = await store.currentSnapshot()
         #expect(snapshot.libraries.isEmpty)
-        #expect(snapshot.assets.isEmpty)
+        #expect(snapshot.testAssets.isEmpty)
     }
 
     @Test func migratesV1DatabaseAndReloadsNewNullableFields() async throws {
@@ -61,10 +61,10 @@ struct CatalogStoreTests {
         let snapshot = await store.currentSnapshot()
 
         #expect(snapshot.libraries.map(\.path) == [rootPath])
-        #expect(snapshot.assets.count == 1)
-        #expect(snapshot.assets[0].relativePath.rawValue == "legacy.jpg")
-        #expect(snapshot.assets[0].name == nil)
-        #expect(snapshot.assets[0].createdAt == nil)
+        #expect(snapshot.testAssets.count == 1)
+        #expect(snapshot.testAssets[0].relativePath.rawValue == "legacy.jpg")
+        #expect(snapshot.testAssets[0].name == nil)
+        #expect(snapshot.testAssets[0].createdAt == nil)
     }
 
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {
@@ -85,21 +85,21 @@ struct CatalogStoreTests {
         try await store.addLibrary(url: root)
 
         let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
-            !snapshot.isScanning && snapshot.assets.count == 2
+            !snapshot.isScanning && snapshot.testAssets.count == 2
         }
         #expect(try scanned.libraries.map(\.path) == [CatalogPath.normalizedDirectoryPath(for: root)])
         #expect(scanned.libraries.allSatisfy { !$0.isScanning })
-        #expect(scanned.assets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
-        #expect(scanned.assets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
-        #expect(scanned.assets.allSatisfy { $0.byteSize != nil })
-        #expect(scanned.assets.allSatisfy { $0.createdAt != nil })
+        #expect(scanned.testAssets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
+        #expect(scanned.testAssets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
+        #expect(scanned.testAssets.allSatisfy { $0.byteSize != nil })
+        #expect(scanned.testAssets.allSatisfy { $0.createdAt != nil })
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
         #expect(reloaded.libraries.count == 1)
-        #expect(reloaded.assets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
-        #expect(reloaded.assets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
+        #expect(reloaded.testAssets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
+        #expect(reloaded.testAssets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
     }
 
     @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
@@ -121,9 +121,9 @@ struct CatalogStoreTests {
         try await store.addLibrary(url: root)
 
         let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["visible.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"]
         }
-        #expect(scanned.assets.map(\.relativePath.rawValue) == ["visible.jpg"])
+        #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"])
 
         let diagnosticsData = try Data(contentsOf: diagnosticsURL)
         let diagnosticsText = try String.decodedUTF8(diagnosticsData)
@@ -168,7 +168,7 @@ struct CatalogStoreTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
         _ = try await waitForCatalogStoreSnapshot(store) { snapshot in
-            !snapshot.isScanning && snapshot.assets.count == 1
+            !snapshot.isScanning && snapshot.testAssets.count == 1
         }
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
@@ -176,14 +176,14 @@ struct CatalogStoreTests {
 
         let snapshot = await store.currentSnapshot()
         #expect(snapshot.libraries.isEmpty)
-        #expect(snapshot.assets.isEmpty)
+        #expect(snapshot.testAssets.isEmpty)
         #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
         #expect(reloaded.libraries.isEmpty)
-        #expect(reloaded.assets.isEmpty)
+        #expect(reloaded.testAssets.isEmpty)
     }
 
     @Test func completedLaunchScanDeletesRowsForMissingFiles() async throws {
@@ -198,7 +198,7 @@ struct CatalogStoreTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         try FileManager.default.removeItem(at: first)
@@ -207,9 +207,10 @@ struct CatalogStoreTests {
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reconciled = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["b.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["b.jpg"]
         }
-        #expect(reconciled.assets.map(\.relativePath.rawValue) == ["b.jpg"])
+        #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["b.jpg"])
+        #expect(reconciled.assetStructureRevision == 3)
     }
 
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {
@@ -224,7 +225,7 @@ struct CatalogStoreTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         try FileManager.default.removeItem(at: first)
@@ -249,9 +250,9 @@ struct CatalogStoreTests {
         )
         try await secondStore.start()
         let failed = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.contains { $0.relativePath.rawValue == "a.jpg" }
+            !snapshot.isScanning && snapshot.testAssets.contains { $0.relativePath.rawValue == "a.jpg" }
         }
-        #expect(failed.assets.contains { $0.relativePath.rawValue == "a.jpg" })
+        #expect(failed.testAssets.contains { $0.relativePath.rawValue == "a.jpg" })
         #expect(failed.libraries.first?.availability == .available)
     }
 
@@ -266,7 +267,7 @@ struct CatalogStoreTests {
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
-            !snapshot.isScanning && snapshot.assets.map(\.relativePath.rawValue) == ["a.jpg"]
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
         let hangingScanner = CatalogScanner { _, _, _, _ in
@@ -289,7 +290,7 @@ struct CatalogStoreTests {
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
-        #expect(reloaded.assets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
 
     @Test func noManualScanControlsAreExposedInSwiftUISurfaces() throws {
@@ -299,7 +300,8 @@ struct CatalogStoreTests {
         let files = [
             "Otos/ContentView.swift",
             "Otos/OtosApp.swift",
-            "Otos/Views/MediaTableView.swift",
+            "Otos/Views/MediaGridView.swift",
+            "Otos/Views/MediaAssetCollectionView.swift",
             "Otos/Views/SettingsView.swift",
             "Otos/Views/SidebarView.swift",
         ]
