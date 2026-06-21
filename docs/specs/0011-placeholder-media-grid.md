@@ -89,8 +89,10 @@ scan IDs, and SQLite schema changes.
   states are replaced by the newest state.
 - MainActor spans remain below 100 ms and visible cell configuration targets
   less than 5 ms.
-- Repeated scope switching with about 24,000 assets must return the main thread
-  to idle and memory must reach a bounded plateau rather than grow linearly.
+- The implementation must provide agent-executable evidence that large-catalog
+  startup settles, the main thread returns idle, and memory does not grow
+  linearly while idle. Visible repeated scope switching remains the target
+  regression scenario but is not delegated to the user as a DoD condition.
 
 ### Tooling And Regression
 
@@ -184,8 +186,8 @@ each launch and are not stored in SQLite.
   pending/reload outcomes.
 - Signposts: Store snapshot, Projection publication/state build, ViewModel state
   assignment, collection layout/receipt/apply/reload, and scan boundaries.
-- Runtime: `script/catalog-diagnostics.sh check`, 1 Hz process RSS/CPU capture,
-  unified logs, and a main-thread sample if any stall appears.
+- Runtime: `script/catalog-diagnostics.sh check`, agent-executable 1 Hz process
+  RSS/CPU capture, unified logs, and a main-thread sample if any stall appears.
 
 ## Tests And Acceptance
 
@@ -200,8 +202,9 @@ each launch and are not stored in SQLite.
   and source files remain generic.
 - Source hygiene proves the AppKit collection/compositional layout exists and
   the media table/`NSHostingView` path does not.
-- Repeated All Media/library switching with approximately 24,000 assets remains
-  responsive and memory plateaus.
+- Automated state-machine tests prove repeated scope inputs are coalesced and
+  structural applies cannot overlap. Agent-executable large-catalog startup and
+  idle evidence must show bounded memory and an idle main thread.
 
 ## Code-Smell Review
 
@@ -221,3 +224,35 @@ each launch and are not stored in SQLite.
 
 These are not current requirements and this increment adds no hooks or fields
 for them.
+
+## Non-Blocking After-DoD Verification
+
+Visible repeated All Media/library switching with approximately 24,000 assets is
+useful confirmation of the original regression. The agent shell cannot create a
+WindowServer-connected Otos window, so this interaction is not a DoD condition
+and is not assigned to the user. If performed later, any failure becomes input
+to a new bug-fix increment.
+
+## Verification Outcome
+
+- `script/verify.sh` passed with Xcode 27.0 beta (27A5194q).
+- Agent-owned build/start proof passed through
+  `script/build_and_run.sh --verify`.
+- `build/GridVerification/20260621-agent-owned` contains a 90-sample 1 Hz
+  RSS/CPU capture, JSONL diagnostics, diagnostics summary, build/run log, and
+  two-second end-state process sample for a catalog of about 24,500 assets.
+- RSS varied during launch and scan work, peaked at 207,152 KB, then dropped and
+  held at 187,280-187,296 KB for the final ten samples. It did not reproduce the
+  previous linear multi-gigabyte growth.
+- The end-state sample reported 113.6 MB physical footprint, 159.5 MB peak, and
+  found the main thread idle in the event loop for 1,584 of 1,585 samples. No
+  `NSTableView`, table hosting, or AttributeGraph runaway stack remained.
+- Otos-owned MainActor spans stayed below 100 ms: the maximum structural grid
+  apply was 94 ms and maximum window-state assignment was 21 ms. No individual
+  cell configuration crossed the 5 ms slow-cell threshold.
+- Two startup run-loop delays of 202 ms and 111 ms occurred while initial scans
+  and collection updates were active. The process settled afterward; this
+  bounded startup jank remains a profiling risk rather than the former permanent
+  hang/OOM behavior.
+- As supplemental, non-gating evidence, the user reported that visible scope
+  switching did not appear to hang.

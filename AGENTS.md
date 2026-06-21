@@ -378,6 +378,14 @@ until the work has landed on `main`, the repo is clean, and the workspace is
 ready for the next increment. An open PR can be ready for review or merge, but
 it is not done.
 
+Verification is agent-owned. Do not require the user to launch the app, operate
+the UI, reproduce an interaction, inspect visuals, or perform any other manual
+verification as a condition of DoD, merge, or cleanup. Run every verification
+step available to the agent. When a useful check cannot be automated or executed
+in the agent environment, record the limitation, the evidence gathered instead,
+and the remaining risk, then list that check only as a non-blocking after-DoD
+task. Do not wait for the user before completing the increment.
+
 There is exactly one DoD report for an increment. Do not create, post, or send a
 review handoff DoD, partial DoD, pre-merge DoD, or "ready for review" DoD. The
 first DoD report the user receives must be the final DoD report, and the final
@@ -424,6 +432,8 @@ textual descriptions rather than terse labels. It must answer:
 - confirmation that no shim, legacy architecture, or effort-based compromise was
   introduced
 - unresolved risks and follow-up work
+- any non-blocking after-DoD verification tasks that require user operation,
+  clearly distinguished from incomplete agent-owned DoD work
 - `script/dod-report.sh` output or equivalent final DoD report completed only
   after the full increment is otherwise done
 - increment branch and commits pushed to the remote before handoff, or the exact

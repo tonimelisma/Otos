@@ -94,6 +94,7 @@ row_env DOD_INSTRUMENTATION_STATUS "What instrumentation or performance evidence
 row_env DOD_SMELLS_STATUS "What code smells remain" DOD_SMELLS
 row_env DOD_PRIVACY_STATUS "What privacy and media-originals review found" DOD_PRIVACY
 row_env DOD_RISKS_STATUS "What risks or follow-up remain" DOD_RISKS
+row_env DOD_AFTER_DOD_STATUS "What non-blocking after-DoD user verification remains" DOD_AFTER_DOD
 row "$push_status" "Branch push" "$push_text"
 row_env DOD_MERGE_STATUS "PR merge" DOD_MERGE
 row_env DOD_LOCAL_MAIN_STATUS "Local main update" DOD_LOCAL_MAIN

@@ -55,6 +55,7 @@
 
 - Unresolved risks:
 - Follow-up work:
+- Non-blocking after-DoD user-operated verification, if any:
 
 ## Final DoD Report
 

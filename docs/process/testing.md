@@ -51,6 +51,9 @@ Sources:
 - Use fixtures only when rights and privacy are clear.
 - Avoid fixed `sleep` calls. Use expectations, polling with deadlines,
   cooperative yielding, or injectable clocks.
+- Do not delegate verification to the user as a DoD condition. Run all
+  agent-executable checks; record any UI interaction the environment cannot
+  drive as an unverified risk and optional after-DoD task.
 
 ## Local Commands
 

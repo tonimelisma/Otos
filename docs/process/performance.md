@@ -103,3 +103,8 @@ For performance-sensitive changes, include:
 - worst span or stall summary
 - whether the result passed the budget
 - follow-up risk if the budget was not met
+
+User-operated performance reproduction is not a DoD condition. When the agent
+environment cannot drive the required visible interaction, include the exact
+limitation and all substitute evidence the agent could collect, then identify
+the visible interaction as a non-blocking after-DoD task.

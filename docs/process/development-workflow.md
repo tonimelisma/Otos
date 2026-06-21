@@ -122,6 +122,13 @@ There is one Definition of Done for each increment. It covers the full path
 through landing and cleanup; do not call an increment done while its PR is merely
 open.
 
+Verification is the agent's responsibility. User-operated manual testing is
+never a DoD, merge, or cleanup prerequisite. The agent runs every available
+automated, command-line, profiling, and runtime check itself. If the environment
+cannot drive a useful interaction, the agent records that limitation, substitute
+evidence, and residual risk, and moves the interaction to a non-blocking
+after-DoD task without waiting for the user.
+
 There is exactly one DoD report for an increment. Do not create, post, or send a
 review handoff DoD, partial DoD, pre-merge DoD, or "ready for review" DoD. The
 first DoD report the user receives must be the final DoD report, and the final
@@ -146,6 +153,8 @@ merge/cleanup/final-clean-tree steps completed.
   explicitly reports an account billing, spending-limit, or exhausted Actions
   quota blocker that prevents jobs from starting.
 - Unresolved risks and follow-ups are named.
+- User-operated checks, when useful but unavailable to the agent, are listed
+  only as non-blocking after-DoD tasks.
 - `script/dod-report.sh` prints the final green/red DoD report only after the
   full increment is otherwise done.
 - The increment branch and commits are pushed to the remote before handoff, or
