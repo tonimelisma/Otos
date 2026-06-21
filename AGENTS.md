@@ -42,6 +42,10 @@ disk wherever the user chose to keep it. Originals are read-only.
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data lives in Application Support. All overlay data is treated as
   backed up for now. Do not introduce preview pruning or cache eviction.
+- Otos is an image/video product. Never add audio-specific playback, metadata,
+  thumbnails, icons, classification, or workflows. This product boundary does
+  not imply that the current all-regular-file catalog already filters unsupported
+  files; only implemented eligibility rules may make that claim.
 - Otos is unsandboxed. Design file access around user-selected media roots and
   normal filesystem paths. Do not add App Sandbox, security-scoped bookmarks,
   bookmark schema, bookmark lifecycles, or sandbox-driven file access flows.
@@ -268,6 +272,12 @@ Every significant operation should emit:
 - cancellation status
 - error outcome without private payloads
 
+For SwiftUI/AppKit responsiveness issues, instrument Otos-owned boundaries with
+signposts and JSONL diagnostics: catalog snapshot, projection, state assignment,
+item counts, selection, collection updates, and run-loop stalls. Use `sample` or
+Instruments to prove private Apple framework stacks. Do not pretend app code can
+signpost inside SwiftUI or AppKit internals directly.
+
 Log policy:
 
 - info: high-signal operation boundaries and signpost spans
@@ -368,6 +378,14 @@ until the work has landed on `main`, the repo is clean, and the workspace is
 ready for the next increment. An open PR can be ready for review or merge, but
 it is not done.
 
+Verification is agent-owned. Do not require the user to launch the app, operate
+the UI, reproduce an interaction, inspect visuals, or perform any other manual
+verification as a condition of DoD, merge, or cleanup. Run every verification
+step available to the agent. When a useful check cannot be automated or executed
+in the agent environment, record the limitation, the evidence gathered instead,
+and the remaining risk, then list that check only as a non-blocking after-DoD
+task. Do not wait for the user before completing the increment.
+
 There is exactly one DoD report for an increment. Do not create, post, or send a
 review handoff DoD, partial DoD, pre-merge DoD, or "ready for review" DoD. The
 first DoD report the user receives must be the final DoD report, and the final
@@ -414,6 +432,8 @@ textual descriptions rather than terse labels. It must answer:
 - confirmation that no shim, legacy architecture, or effort-based compromise was
   introduced
 - unresolved risks and follow-up work
+- any non-blocking after-DoD verification tasks that require user operation,
+  clearly distinguished from incomplete agent-owned DoD work
 - `script/dod-report.sh` output or equivalent final DoD report completed only
   after the full increment is otherwise done
 - increment branch and commits pushed to the remote before handoff, or the exact

@@ -115,21 +115,52 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
 /// are owned elsewhere.
 nonisolated struct CatalogSnapshot: Equatable {
     var libraries: [CatalogLibraryState]
-    var assets: [MediaAsset]
+    var assetsByID: [MediaAssetID: MediaAsset]
+    var assetStructureRevision: UInt64
 
-    static let empty = CatalogSnapshot(libraries: [], assets: [])
+    static let empty = CatalogSnapshot(
+        libraries: [],
+        assetsByID: [:],
+        assetStructureRevision: 0
+    )
 
     var isScanning: Bool {
         libraries.contains { $0.isScanning }
     }
 }
 
-/// Why an empty media table is empty. Projection chooses the reason so the view
+/// The collection view consumes identity order separately from current values.
+/// A detail-only file-fact change can therefore refresh visible tiles without
+/// pretending the collection's structure changed.
+nonisolated struct CatalogMediaGridState: Equatable {
+    var scope: SidebarSelection
+    var orderedAssetIDs: [MediaAssetID]
+    var assetsByID: [MediaAssetID: MediaAsset]
+
+    static let empty = CatalogMediaGridState(
+        scope: .allMedia,
+        orderedAssetIDs: [],
+        assetsByID: [:]
+    )
+}
+
+/// Why the media browser is empty. Projection chooses the reason so the view
 /// can stay declarative and avoid re-deriving catalog state in `body`.
 nonisolated enum CatalogMediaEmptyState: Equatable {
     case noMedia
     case noAvailableMedia
     case libraryUnavailable
+
+    var diagnosticDescription: String {
+        switch self {
+        case .noMedia:
+            "noMedia"
+        case .noAvailableMedia:
+            "noAvailableMedia"
+        case .libraryUnavailable:
+            "libraryUnavailable"
+        }
+    }
 }
 
 /// Final UI-ready catalog state. CatalogProjection builds this away from the
@@ -137,14 +168,14 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
 nonisolated struct CatalogWindowState: Equatable {
     var title: String
     var libraries: [CatalogLibraryState]
-    var assetsInSelectedScope: [MediaAsset]
+    var mediaGrid: CatalogMediaGridState
     var resolvedSidebarSelection: SidebarSelection
     var mediaEmptyState: CatalogMediaEmptyState
 
     static let empty = CatalogWindowState(
         title: "All Media",
         libraries: [],
-        assetsInSelectedScope: [],
+        mediaGrid: .empty,
         resolvedSidebarSelection: .allMedia,
         mediaEmptyState: .noMedia
     )
@@ -155,6 +186,15 @@ nonisolated struct CatalogWindowState: Equatable {
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case library(LibraryRootPath)
+
+    var diagnosticDescription: String {
+        switch self {
+        case .allMedia:
+            "allMedia"
+        case let .library(path):
+            "library:\(path.rawValue)"
+        }
+    }
 }
 
 nonisolated struct ScannedMediaFile: Hashable {

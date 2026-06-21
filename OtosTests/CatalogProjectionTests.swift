@@ -7,7 +7,7 @@ struct CatalogProjectionTests {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let projection = CatalogProjection(diagnostics: nil)
-        let snapshot = CatalogSnapshot(
+        let snapshot = makeSnapshot(
             libraries: [
                 makeLibrary(root: pictures, activity: .scanning),
                 makeLibrary(root: archive),
@@ -26,14 +26,14 @@ struct CatalogProjectionTests {
 
         #expect(state.libraries.map(\.displayName) == ["Archive", "Pictures"])
         #expect(state.libraries.map(\.activity) == [.idle, .scanning])
-        #expect(state.assetsInSelectedScope.map(\.relativePath.rawValue) == ["a.jpg", "b.jpg", "z.jpg"])
+        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["a.jpg", "b.jpg", "z.jpg"])
     }
 
     @Test func windowStateFiltersAssetsInSelectedScope() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let projection = CatalogProjection(diagnostics: nil)
-        let snapshot = CatalogSnapshot(
+        let snapshot = makeSnapshot(
             libraries: [makeLibrary(root: pictures), makeLibrary(root: archive)],
             assets: [
                 makeAsset(root: pictures, relativePath: "one.jpg"),
@@ -48,7 +48,7 @@ struct CatalogProjectionTests {
 
         #expect(state.title == "Pictures")
         #expect(state.resolvedSidebarSelection == .library(pictures.path))
-        #expect(state.assetsInSelectedScope.map(\.relativePath.rawValue) == ["one.jpg"])
+        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
@@ -57,7 +57,7 @@ struct CatalogProjectionTests {
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
 
         let state = await projection.windowState(
-            snapshot: CatalogSnapshot(
+            snapshot: makeSnapshot(
                 libraries: [makeLibrary(root: pictures)],
                 assets: [
                     makeAsset(root: pictures, relativePath: "one.jpg"),
@@ -69,14 +69,14 @@ struct CatalogProjectionTests {
 
         #expect(state.title == "All Media")
         #expect(state.resolvedSidebarSelection == .allMedia)
-        #expect(state.assetsInSelectedScope.map(\.relativePath.rawValue) == ["one.jpg"])
+        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
     @Test func windowStateHidesUnavailableLibraryAssets() async {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let snapshot = CatalogSnapshot(
+        let snapshot = makeSnapshot(
             libraries: [
                 makeLibrary(root: pictures, availability: .unavailable),
                 makeLibrary(root: archive),
@@ -93,22 +93,22 @@ struct CatalogProjectionTests {
             sidebarSelection: .library(pictures.path)
         )
 
-        #expect(allMedia.assetsInSelectedScope.map(\.relativePath.rawValue) == ["shown.jpg"])
-        #expect(selectedUnavailable.assetsInSelectedScope.isEmpty)
+        #expect(orderedAssets(in: allMedia).map(\.relativePath.rawValue) == ["shown.jpg"])
+        #expect(selectedUnavailable.mediaGrid.orderedAssetIDs.isEmpty)
         #expect(selectedUnavailable.mediaEmptyState == .libraryUnavailable)
     }
 
     @Test func allMediaEmptyStateDistinguishesUnavailableCatalogedMedia() async {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
-        let snapshot = CatalogSnapshot(
+        let snapshot = makeSnapshot(
             libraries: [makeLibrary(root: pictures, availability: .unavailable)],
             assets: [makeAsset(root: pictures, relativePath: "hidden.jpg")]
         )
 
         let state = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
 
-        #expect(state.assetsInSelectedScope.isEmpty)
+        #expect(state.mediaGrid.orderedAssetIDs.isEmpty)
         #expect(state.mediaEmptyState == .noAvailableMedia)
     }
 
@@ -170,6 +170,62 @@ struct CatalogProjectionTests {
         #expect(await probe.maximumInFlight() == 1)
         #expect(await probe.callCount() >= 2)
     }
+
+    @Test func publicationDiagnosticsIncludeTimingFields() async throws {
+        let temp = try makeTemporaryDirectory()
+        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
+        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
+        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let recordingTask = Task {
+            for await _ in stream {}
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        try await store.start(scansSavedLibraries: false)
+        let contents = try await waitForDiagnostics(outputURL) { contents in
+            contents.contains("\"operation\":\"catalog.projection.window\"")
+                && contents.contains("\"snapshotMs\"")
+                && contents.contains("\"projectionMs\"")
+                && contents.contains("\"totalMs\"")
+                && contents.contains("\"assetStructureRevision\"")
+                && contents.contains("\"assetOrderCacheHit\"")
+                && contents.contains("\"assetOrderSorted\"")
+                && contents.contains("\"assetSortMs\"")
+        }
+
+        #expect(contents.contains("\"dirtyAfterPublication\""))
+        #expect(contents.contains("\"stateChanged\""))
+    }
+
+    @Test func publicationLoopDoesNotYieldUnchangedWindowState() async throws {
+        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let projection = CatalogProjection(
+            cadence: .milliseconds(10),
+            diagnostics: nil,
+            stateBuilder: { _, _ in .empty }
+        )
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+
+        try await store.start(scansSavedLibraries: false)
+        _ = try await recorder.waitForCount(1)
+        await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
+        try await Task.sleep(for: .milliseconds(80))
+
+        #expect(await recorder.count() == 1)
+    }
 }
 
 private func makeLibrary(
@@ -198,6 +254,10 @@ private actor StateRecorder {
 
     func append(_ state: CatalogWindowState) {
         states.append(state)
+    }
+
+    func count() -> Int {
+        states.count
     }
 
     func waitForCount(
@@ -229,7 +289,11 @@ private actor ProjectionProbe {
         return CatalogWindowState(
             title: "Call \(calls)",
             libraries: snapshot.libraries,
-            assetsInSelectedScope: [],
+            mediaGrid: CatalogMediaGridState(
+                scope: sidebarSelection,
+                orderedAssetIDs: [],
+                assetsByID: [:]
+            ),
             resolvedSidebarSelection: sidebarSelection,
             mediaEmptyState: .noMedia
         )
@@ -254,8 +318,45 @@ private actor ProjectionProbe {
     }
 }
 
+private func makeSnapshot(
+    libraries: [CatalogLibraryState],
+    assets: [MediaAsset],
+    revision: UInt64 = 1
+) -> CatalogSnapshot {
+    CatalogSnapshot(
+        libraries: libraries,
+        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) }),
+        assetStructureRevision: revision
+    )
+}
+
+private func orderedAssets(in state: CatalogWindowState) -> [MediaAsset] {
+    state.mediaGrid.orderedAssetIDs.compactMap { state.mediaGrid.assetsByID[$0] }
+}
+
 private enum CatalogProjectionTestError: Error {
     case timedOut
+}
+
+private func waitForDiagnostics(
+    _ url: URL,
+    matching predicate: (String) -> Bool
+) async throws -> String {
+    for _ in 0 ..< 100 {
+        let contents = readableDiagnostics(at: url)
+        if let contents, predicate(contents) {
+            return contents
+        }
+        try await Task.sleep(for: .milliseconds(20))
+    }
+    throw CatalogProjectionTestError.timedOut
+}
+
+private func readableDiagnostics(at url: URL) -> String? {
+    guard let data = try? Data(contentsOf: url) else {
+        return nil
+    }
+    return String(data: data, encoding: .utf8)
 }
 
 private func makeTemporaryDirectory() throws -> URL {

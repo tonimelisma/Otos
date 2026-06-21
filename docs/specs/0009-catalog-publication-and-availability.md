@@ -217,9 +217,9 @@ availability rows and decides what the window should show.
   `LibraryAvailability`, and transient `CatalogLibraryActivity`.
 - `CatalogProjection`: actor; owns the publication loop and all derived
   `CatalogWindowState` work.
-- `CatalogWindowState`: UI-ready value containing library rows,
-  `assetsInSelectedScope`, title, resolved sidebar selection, and media empty
-  state.
+- `CatalogWindowState`: UI-ready value containing library rows, title, resolved
+  sidebar selection, media empty state, and the `CatalogMediaGridState` defined
+  by Spec 0011.
 - `CatalogWindowViewModel`: `@MainActor @Observable`; owns final state
   assignment, sidebar selection, add/remove/start intents, and task lifetimes.
 - `ContentView`: passive composition from `CatalogWindowViewModel.state`.
@@ -333,7 +333,7 @@ Remove comments that:
 - View tests where practical prove:
   - Sidebar and Settings render availability
   - Settings does not display scan activity
-  - Media table shows unavailable empty states
+  - Media grid shows unavailable empty states
 - `script/verify.sh` passes locally.
 - Runtime app verification and diagnostics check run before final DoD closure.
 

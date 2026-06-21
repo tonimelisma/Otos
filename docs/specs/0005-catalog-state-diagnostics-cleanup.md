@@ -63,12 +63,12 @@ Out of scope:
 | REM-003 | Architecture | Remove shared main-window selection from shared catalog truth. | Current | `docs/requirements.md`, this spec |
 | REM-004 | Architecture | Remove public exposure of SQLite row IDs from catalog models. | Current | `docs/requirements.md`, this spec |
 | REM-005 | Architecture | Remove ambiguous media asset string-concatenation identity. | Current | `docs/requirements.md`, this spec |
-| CHG-001 | Functional | Media rows show file name, relative path, content type identifier, byte size, creation date, and content modified date. | Current | `docs/requirements.md`, ADR 0002 |
+| CHG-001 | Functional | The scanner and catalog store file name, relative path, content type identifier, byte size, creation date, and content modified date. Spec 0011 later superseded the all-facts table presentation with a filename placeholder grid. | Current | `docs/requirements.md`, ADR 0002, Spec 0011 |
 | CHG-002 | Architecture | SwiftUI receives single-window catalog UI state through `CatalogWindowViewModel`; views remain passive. | Current | `docs/requirements.md`, Spec 0007 |
 | CHG-003 | Architecture | Normalized filesystem path remains library-root identity, while SQLite rowid is persistence-private. | Current | `docs/requirements.md`, ADR 0003 |
 | CHG-004 | Non-functional | Catalog sorting and selection filtering must run outside the MainActor. | Current | `docs/requirements.md`, this spec |
 | ADD-001 | Architecture | `CatalogWindowViewModel` owns catalog startup, add-library, remove-library, sidebar selection, state consumption, and task lifetimes for the single main window. | Current | `docs/requirements.md`, Spec 0007 |
-| ADD-002 | Architecture | `CatalogProjection` actor owns root sorting, asset sorting, `assetsInSelectedScope` filtering, title lookup, and selected-library validation. | Current | `docs/requirements.md`, this spec |
+| ADD-002 | Architecture | `CatalogProjection` actor owns root sorting, asset ordering, media-grid scope filtering, title lookup, and selected-library validation. | Current | `docs/requirements.md`, this spec, Spec 0011 |
 | ADD-003 | Architecture | Domain paths and media identity use typed values, not bare strings or concatenated IDs across app boundaries. | Current | `docs/requirements.md`, this spec |
 | ADD-004 | Tooling | Debug builds write JSONL diagnostics for large catalog and projection operations. | Current | `docs/requirements.md`, this spec |
 | ADD-005 | Tooling | A repo script checks and summarizes catalog diagnostics under `build/Diagnostics`. | Current | `docs/requirements.md`, this spec |
@@ -116,7 +116,7 @@ Pros:
 - Gives each owner a narrow job: Store owns persistence/scans, Projection owns
   sorting/filtering, ViewModel owns UI state assignment, diagnostics are
   observable.
-- Moves root sorting, asset sorting, and `assetsInSelectedScope` filtering off
+- Moves root sorting, asset sorting, and sidebar-scope filtering off
   the MainActor.
 - Keeps Settings state narrow and local.
 
@@ -134,7 +134,7 @@ Failure modes:
 
 Implement the selected alternative directly. `CatalogStore` remains catalog
 truth. `CatalogProjection` sorts roots and assets, resolves sidebar selection,
-computes title, and computes `assetsInSelectedScope` off the MainActor.
+computes title, and computes the selected-scope media grid off the MainActor.
 `CatalogWindowViewModel` consumes the projected state stream described by Spec
 0009 and assigns final SwiftUI state.
 
@@ -197,15 +197,17 @@ The increment must remove or prove unreachable:
 - State duplication: addressed by separating catalog truth, derived projection,
   and MainActor state assignment.
 - Stringly typed domain facts: addressed with typed path and identity values.
-- Ambiguous Swift API names: addressed by using `assetsInSelectedScope`.
+- Ambiguous Swift API names: the original scoped-array name was precise for its
+  shape; Spec 0011 replaced that shape with `CatalogMediaGridState` containing
+  explicit scope, ordered identities, and keyed values.
 - Diagnostic payload sprawl: bounded JSONL events only; no secrets, credentials,
   thumbnails, or unbounded binary payloads.
 
 ## Acceptance Criteria
 
-- Media table includes Name and Created columns backed by persisted scanner
-  facts.
-- Sorting and `assetsInSelectedScope` filtering are owned by `CatalogProjection`,
+- Scanner and persistence include Name and Created facts. Spec 0011 owns the
+  current placeholder-grid presentation.
+- Sorting and selected-scope filtering are owned by `CatalogProjection`,
   not MainActor computed properties.
 - Main-window sidebar selection is owned by `CatalogWindowViewModel`.
 - Settings state is local to Settings.

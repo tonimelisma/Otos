@@ -200,6 +200,10 @@ private nonisolated enum LiveCatalogScanner {
         }
         let batch = pending
         pending.removeAll(keepingCapacity: true)
+        let state = OtosSignpost.fileAccess.beginInterval("CatalogScanFlush")
+        defer {
+            OtosSignpost.fileAccess.endInterval("CatalogScanFlush", state)
+        }
         try await batchHandler(batch)
         await Task.yield()
     }

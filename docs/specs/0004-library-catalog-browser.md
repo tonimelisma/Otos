@@ -32,8 +32,9 @@ In scope:
 - GRDB 7.11.0, SQLite in Application Support, and stable v1 migrations.
 - Full in-memory catalog working set owned by a catalog actor.
 - Automatic launch/add scans only.
-- Table rows for file name, relative path, content type identifier, byte size,
-  creation date, and content modification date.
+- The original increment displayed persisted filesystem facts in a table. Spec
+  0011 supersedes that rendering with a filename placeholder grid while keeping
+  the persisted facts in the catalog.
 
 Out of scope:
 
@@ -68,7 +69,7 @@ Out of scope:
 | LIB-007 | Functional | Removing a library always requires confirmation with destructive action copy that explains originals remain on disk and catalog information is deleted. | Current | `docs/requirements.md` |
 | LIB-008 | Functional | Otos automatically scans saved libraries on launch and newly added libraries after add. | Current | `docs/requirements.md` |
 | LIB-009 | Functional | Otos shall not expose a manual scan button, command, or user-facing scan API. | Current | `docs/requirements.md` |
-| LIB-010 | Functional | The first catalog view shows regular-file rows with file name, relative path, content type identifier, byte size, creation date, and content modified date. | Current | `docs/requirements.md`, Spec 0005 |
+| LIB-010 | Functional | The catalog stores file name, relative path, content type identifier, byte size, creation date, and content modified date; the current browser presentation is owned by Spec 0011. | Current | `docs/requirements.md`, Spec 0005, Spec 0011 |
 | LIB-011 | Functional | Scan failures are kept out of the UI for this increment and recorded through logs. | Current | `docs/requirements.md` |
 | CAT-001 | Architecture | The catalog owner uses GRDB with SQLite and `DatabaseQueue`, not `DatabasePool`. | Current | `docs/requirements.md`, ADR 0002 |
 | CAT-002 | Architecture | The catalog owner retains the full SQLite-backed catalog working set in memory until evidence proves that insufficient. | Current | `docs/requirements.md`, ADR 0002 |

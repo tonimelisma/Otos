@@ -223,7 +223,7 @@ persistence/scanning truth, off-MainActor projection, and passive SwiftUI views.
 - `CatalogWindowViewModel`: `@MainActor @Observable`; owns one main window's
   final UI state assignment, sidebar selection, user intents, and task
   lifetimes.
-- `ContentView`: passive composition; renders sidebar and media table from
+- `ContentView`: passive composition; renders sidebar and media grid from
   `CatalogWindowViewModel`.
 - `SidebarView`: receives `[CatalogLibraryState]` and
   `Binding<SidebarSelection>`.
