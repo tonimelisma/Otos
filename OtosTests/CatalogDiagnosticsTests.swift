@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct CatalogDiagnosticsTests {
-    @Test func diagnosticsWriterWritesJSONLines() async throws {
+    @Test func diagnosticsWriterAppendsMultipleJSONLinesThroughOneOwner() async throws {
         let temp = try makeDiagnosticsTemporaryDirectory()
         let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
         let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
@@ -16,12 +16,17 @@ struct CatalogDiagnosticsTests {
                 "path": "/Users/example/Pictures/broken.jpg",
             ]
         )
+        await diagnostics.record(
+            operation: "catalog.scan",
+            phase: "finish",
+            fields: ["observed": "1"]
+        )
 
         let data = try Data(contentsOf: outputURL)
         let contents = try decodedUTF8(data)
         let lines = contents
             .split(separator: "\n")
-        #expect(lines.count == 1)
+        #expect(lines.count == 2)
 
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
@@ -29,6 +34,30 @@ struct CatalogDiagnosticsTests {
         #expect(event.operation == "catalog.scan.issue")
         #expect(event.phase == "issue")
         #expect(event.fields["path"] == "/Users/example/Pictures/broken.jpg")
+    }
+
+    @Test func diagnosticsRemovalClosesHandleAndNextRecordReopensFile() async throws {
+        let temp = try makeDiagnosticsTemporaryDirectory()
+        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
+
+        await diagnostics.record(operation: "before", phase: "finish")
+        try await diagnostics.removeExistingDiagnosticsForTesting()
+        await diagnostics.record(operation: "after", phase: "finish")
+
+        let contents = try decodedUTF8(Data(contentsOf: outputURL))
+        #expect(!contents.contains("\"operation\":\"before\""))
+        #expect(contents.contains("\"operation\":\"after\""))
+    }
+
+    @Test func disabledDiagnosticsDoesNotCreateAFile() async throws {
+        let temp = try makeDiagnosticsTemporaryDirectory()
+        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: false)
+
+        await diagnostics.record(operation: "disabled", phase: "finish")
+
+        #expect(!FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
     }
 
     @Test func diagnosticsScriptSummarizesJsonLines() async throws {
@@ -40,18 +69,14 @@ struct CatalogDiagnosticsTests {
         let result = try runDiagnosticsScript(diagnosticsFile: outputURL)
         #expect(result.status == 0)
         let output = result.output
-        #expect(output.contains("events: 11"))
+        #expect(output.contains("events: 6"))
         #expect(output.contains("scan starts: 1"))
         #expect(output.contains("scan batches: 1"))
         #expect(output.contains("skipped packages: 1"))
         #expect(output.contains("window projections: 1"))
         #expect(output.contains("asset order cache hits: 1"))
         #expect(output.contains("asset order sorts: 1"))
-        #expect(output.contains("asset order invariant rebuilds: 1"))
-        #expect(output.contains("window state applies: 1"))
-        #expect(output.contains("grid structural applies: 1"))
-        #expect(output.contains("grid coalesced states: 1"))
-        #expect(output.contains("grid visible reloads: 1"))
+        #expect(output.contains("asset membership changes: 1"))
         #expect(output.contains("main run loop stalls: 1"))
         #expect(output.contains("library availability changes: 1"))
     }
@@ -75,17 +100,7 @@ private func writeSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async 
             "totalMs": "3",
             "assetOrderCacheHit": "true",
             "assetOrderSorted": "true",
-            "assetOrderInvariantRebuilt": "true",
-        ]
-    )
-    await diagnostics.record(
-        operation: "catalog.window.state.apply",
-        phase: "finish",
-        fields: [
-            "updateID": "1",
-            "itemCount": "2",
-            "previousItemCount": "0",
-            "itemDelta": "2",
+            "assetMembershipChanged": "true",
         ]
     )
     await diagnostics.record(
@@ -98,10 +113,6 @@ private func writeSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async 
         ]
     )
     await diagnostics.record(operation: "catalog.library.availability", phase: "unavailable")
-    await diagnostics.record(operation: "ui.mediaGrid.apply", phase: "finish")
-    await diagnostics.record(operation: "ui.mediaGrid.pending", phase: "replace")
-    await diagnostics.record(operation: "ui.mediaGrid.visibleReload", phase: "finish")
-    await diagnostics.record(operation: "ui.mediaGrid.state.receive", phase: "finish")
 }
 
 private func runDiagnosticsScript(diagnosticsFile: URL) throws -> (status: Int32, output: String) {

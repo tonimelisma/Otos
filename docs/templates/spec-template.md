@@ -37,6 +37,11 @@ Out of scope:
       privacy, instrumentation, and tests are addressed.
 - [ ] At least three alternatives are compared.
 - [ ] Refactor retirement proof is defined, if applicable.
+- [ ] A repository-wide stale-document audit is defined for affected ADRs,
+      specs, requirements, process docs, indexes, templates, scripts, and
+      backlinks.
+- [ ] A code-comment accuracy audit is defined for affected architecture,
+      concurrency, persistence, diagnostics, and AppKit boundaries.
 - [ ] Performance/jank evidence is defined, if applicable.
 - [ ] Open questions are answered or out of scope.
 
@@ -109,6 +114,18 @@ If replacing existing structure, list what must be removed, demoted, or proven
 unreachable across code, tests, fixtures, docs, logs, accessibility identifiers,
 and persistence/schema paths.
 
+## Living Documentation And Comment Audit
+
+List every current ADR, spec, requirement, process document, index, template,
+script, backlink, and code-comment boundary that the change affects. State which
+items will be rewritten and which documents/comments will be deleted because
+they no longer serve a current purpose. Planning documents may remain
+non-authoritative, but must not claim to describe current implementation.
+
+Describe the substantial file guides and focused comments needed so a Swift
+newcomer can follow the landed architecture. Comments must explain current
+mechanics and rationale, not syntax, increment history, or retired behavior.
+
 ## Instrumentation And Performance
 
 List OSLog categories, signpost spans, safe counts, `script/logs.sh` checks,
@@ -128,4 +145,6 @@ the implementation will avoid or address them.
 - Local checks:
 - Focused tests:
 - Performance/log evidence, if applicable:
+- Stale-document audit:
+- Code-comment accuracy audit:
 - CI expectations:

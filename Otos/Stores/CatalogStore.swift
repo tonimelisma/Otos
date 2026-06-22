@@ -4,9 +4,20 @@ import OSLog
 
 // swiftlint:disable file_length
 
-/// CatalogStore owns catalog truth: SQLite, the in-memory working set, and scan
-/// mutation. It does not publish UI state. Instead it emits cheap change
-/// notifications so a projection owner can pull a raw snapshot at its own pace.
+/// Catalog Store guide
+///
+/// This actor is the only runtime owner of catalog truth. SQLite provides durable
+/// overlay storage, while the nested dictionaries below are the complete working
+/// set used during the process lifetime. Filesystem scans write SQLite and then
+/// mirror the same facts into memory before notifying consumers. Views never
+/// access either representation directly.
+///
+/// Store notifications are intentionally content-free. They only mark Projection
+/// dirty; Projection pulls one immutable snapshot on its 10 Hz cadence and owns
+/// presentation. Awaited GRDB calls make this actor reentrant, so scan code
+/// rechecks root and cancellation ownership after each database await before
+/// mutating memory. Completed scans reconcile missing paths; failed or cancelled
+/// scans preserve prior rows because incomplete observation cannot prove removal.
 actor CatalogStore {
     enum Location {
         case application(bundleIdentifier: String)
@@ -39,7 +50,6 @@ actor CatalogStore {
     private var rootRowIDsByPath: [LibraryRootPath: Int64] = [:]
     private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
     private var assetsByRootPath: [LibraryRootPath: [MediaRelativePath: MediaAsset]] = [:]
-    private var assetStructureRevision: UInt64 = 0
     private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
     private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
@@ -186,10 +196,7 @@ extension CatalogStore {
         availabilityByRootPath.removeValue(forKey: path)
         rootRowIDsByPath.removeValue(forKey: path)
         rootPathsByRowID.removeValue(forKey: rootRowID)
-        let removedAssets = assetsByRootPath.removeValue(forKey: path)
-        if removedAssets?.isEmpty == false {
-            advanceAssetStructureRevision()
-        }
+        assetsByRootPath.removeValue(forKey: path)
         OtosLog.catalog.info("Library root removed path=\(root.path.rawValue, privacy: .public)")
         await diagnostics?.record(
             operation: "catalog.library.remove",
@@ -256,7 +263,10 @@ private extension CatalogStore {
         for storedRoot in roots {
             let root = LibraryRoot(path: storedRoot.path)
             rootsByPath[root.path] = root
-            availabilityByRootPath[root.path] = .available
+            // SQLite proves that the root was saved, not that its volume is
+            // reachable now. The pre-scan check resolves this unknown before
+            // cached media from the root becomes visible.
+            availabilityByRootPath[root.path] = .unknown
             rootRowIDsByPath[root.path] = storedRoot.id
             rootPathsByRowID[storedRoot.id] = root.path
             assetsByRootPath[root.path] = [:]
@@ -264,13 +274,12 @@ private extension CatalogStore {
 
         for asset in assets {
             guard let rootPath = rootPathsByRowID[asset.libraryRootID],
-                  let root = rootsByPath[rootPath]
+                  rootsByPath[rootPath] != nil
             else {
                 continue
             }
             assetsByRootPath[rootPath, default: [:]][asset.relativePath] = MediaAsset(
-                libraryRootPath: root.path,
-                libraryDisplayName: root.displayName,
+                libraryRootPath: rootPath,
                 relativePath: asset.relativePath,
                 name: asset.name,
                 contentTypeIdentifier: asset.contentTypeIdentifier,
@@ -279,7 +288,6 @@ private extension CatalogStore {
                 contentModifiedAt: asset.contentModifiedAt
             )
         }
-        advanceAssetStructureRevision()
     }
 
     private func validateNoOverlap(_ path: LibraryRootPath) throws {
@@ -366,10 +374,7 @@ private extension CatalogStore {
         }
 
         let memoryState = OtosSignpost.catalog.beginInterval("CatalogScanBatchApplyMemory")
-        let insertedAsset = applyScannedBatchToMemory(batch, root: root, rootPath: rootPath)
-        if insertedAsset {
-            advanceAssetStructureRevision()
-        }
+        applyScannedBatchToMemory(batch, root: root, rootPath: rootPath)
         OtosSignpost.catalog.endInterval("CatalogScanBatchApplyMemory", memoryState)
         OtosLog.catalog.debug(
             "Catalog scan batch path=\(rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public)"
@@ -389,15 +394,10 @@ private extension CatalogStore {
         _ batch: [ScannedMediaFile],
         root: LibraryRoot,
         rootPath: LibraryRootPath
-    ) -> Bool {
-        var insertedAsset = false
+    ) {
         for file in batch {
-            if assetsByRootPath[rootPath]?[file.relativePath] == nil {
-                insertedAsset = true
-            }
             assetsByRootPath[rootPath, default: [:]][file.relativePath] = MediaAsset(
                 libraryRootPath: root.path,
-                libraryDisplayName: root.displayName,
                 relativePath: file.relativePath,
                 name: file.name,
                 contentTypeIdentifier: file.contentTypeIdentifier,
@@ -406,7 +406,6 @@ private extension CatalogStore {
                 contentModifiedAt: file.contentModifiedAt
             )
         }
-        return insertedAsset
     }
 
     private func scanCompleted(rootPath: LibraryRootPath, observedPaths: Set<MediaRelativePath>) async {
@@ -452,9 +451,9 @@ private extension CatalogStore {
         clearCurrentScan(rootPath: rootPath)
     }
 
-    /// Reconciliation changes both durable and in-memory membership as one
-    /// actor-owned operation. Its single revision advance invalidates ordering
-    /// once even when several identities disappear together.
+    /// Reconciliation changes durable and in-memory membership as one actor-owned
+    /// operation. Projection validates membership directly, so Store does not
+    /// maintain a second cache-invalidation fact alongside its source maps.
     private func reconcileMissingAssets(
         rootPath: LibraryRootPath,
         rootRowID: Int64,
@@ -476,9 +475,6 @@ private extension CatalogStore {
         }
         for relativePath in missingPaths {
             assetsByRootPath[rootPath]?.removeValue(forKey: relativePath)
-        }
-        if !missingPaths.isEmpty {
-            advanceAssetStructureRevision()
         }
         return missingPaths.count
     }
@@ -548,22 +544,16 @@ private extension CatalogStore {
         let libraries = rootsByPath.values.map { root in
             CatalogLibraryState(
                 root: root,
-                availability: availabilityByRootPath[root.path] ?? .available,
+                // Unknown is the only truthful fallback if transient state is
+                // ever missing; absence cannot prove filesystem reachability.
+                availability: availabilityByRootPath[root.path] ?? .unknown,
                 activity: root.path == currentScanRootPath ? .scanning : .idle
             )
         }
         return CatalogSnapshot(
             libraries: libraries,
-            assetsByID: assetsByID,
-            assetStructureRevision: assetStructureRevision
+            assetsByID: assetsByID
         )
-    }
-
-    /// This revision describes membership, not presentation order. Projection
-    /// uses it to know when its identity-derived ordering can no longer be
-    /// reused; it is deliberately transient and never written to SQLite.
-    private func advanceAssetStructureRevision() {
-        assetStructureRevision &+= 1
     }
 
     private func notifyCatalogChanged() {

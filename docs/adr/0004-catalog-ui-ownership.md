@@ -7,10 +7,8 @@
 ## Context
 
 Otos has one catalog browser surface and exactly one main window. The earlier
-catalog UI split used `CatalogSession` for shared catalog state and
-`CatalogBrowserState` for window-local sidebar selection and projection state.
-That split implied a multi-window architecture that Otos does not have and must
-not grow.
+catalog UI architecture is therefore intentionally centered on one window model,
+not a session/window graph for multiple browsers.
 
 The app still needs strict ownership:
 
@@ -69,9 +67,10 @@ Use a single-window catalog UI ownership model:
   publication loop described by ADR 0005.
 - `CatalogWindowViewModel` is the single main window's `@MainActor @Observable`
   adapter. It owns final SwiftUI-visible state assignment, sidebar selection,
-  user intents, and task lifetimes. It does not own SQLite, filesystem traversal,
-  scanning, sorting, filtering, availability policy, or projection cadence.
-- `ContentView`, `SidebarView`, `MediaTableView`, and `SettingsView` are passive
+  explicit selection delivery, user intents, and task lifetimes. It does not own
+  SQLite, filesystem traversal, scanning, sorting, filtering, availability
+  policy, or projection cadence.
+- `ContentView`, `SidebarView`, `MediaGridView`, and `SettingsView` are passive
   SwiftUI surfaces. They render inputs, hold local control state when
   appropriate, bind controls, and call model intents.
 - Settings receives `[CatalogLibraryState]` plus add/remove closures; it renders
@@ -120,7 +119,7 @@ Failure modes:
 
 - `CatalogStore` becomes an application model and accumulates UI concerns.
 
-### Alternative C: Keep `CatalogSession` And `CatalogBrowserState`
+### Alternative C: Split Shared Session And Browser State
 
 Keep the previous session/browser split and make views thinner.
 
@@ -169,7 +168,7 @@ Positive:
 - `ContentView` becomes passive composition.
 - MainActor work remains limited to UI state assignment and user intents.
 - Settings receives only the state it needs.
-- Retired state owners are removed instead of patched around.
+- There is one explicit MainActor adapter instead of overlapping UI-state owners.
 
 Negative:
 
@@ -185,15 +184,14 @@ current responsiveness requirement, not speculative scale work.
 
 ## Verification
 
-- Source hygiene rejects `CatalogSession`, `CatalogBrowserState`,
-  `CatalogBrowserProjection`, `CatalogWindowModel`, and main-window
-  `WindowGroup`.
+- Source hygiene rejects multiple main-window construction and retired parallel
+  UI-state owners.
 - Source hygiene proves `ContentView` does not coordinate catalog notifications,
   snapshot construction, or projection work.
 - Projection tests prove `CatalogProjection` owns sorting, filtering, title
   lookup, availability hiding, empty-state selection, and missing-library
   fallback.
 - ViewModel tests prove `CatalogWindowViewModel` owns start idempotence, state
-  stream consumption, sidebar selection routing, resolved selection application,
-  and add/remove routing.
+  stream consumption, explicit sidebar intent delivery, resolved selection
+  application without feedback, and add/remove routing.
 - Local verification runs through `script/verify.sh`.

@@ -2,6 +2,18 @@ import Foundation
 import OSLog
 import UniformTypeIdentifiers
 
+/// Catalog scanner guide
+///
+/// The scanner performs one read-only, idempotent filesystem observation. It
+/// enumerates regular files, collects only the approved URL resource values, and
+/// flushes observed facts on a time cadence through the Store-owned batch
+/// callback. It never decides persistence, deletion, UI state, or media
+/// eligibility.
+///
+/// A returned path set proves the completed observation used for reconciliation.
+/// Cancellation or any filesystem issue prevents that success return, so Store
+/// preserves earlier rows. Package descendants and symlinks are skipped before
+/// they can expand traversal beyond the regular-file catalog contract.
 nonisolated struct CatalogScanner {
     var scanRoot: @Sendable (
         _ rootPath: LibraryRootPath,

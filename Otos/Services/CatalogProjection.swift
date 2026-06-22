@@ -1,16 +1,27 @@
 import Foundation
 import OSLog
 
-/// CatalogProjection turns raw catalog snapshots into the state SwiftUI renders.
-/// It also owns the publication cadence so Store mutations, scan batches, and
-/// sidebar changes are coalesced through one backpressure point.
+/// Catalog Projection guide
+///
+/// This actor is the complete read-model boundary between catalog truth and the
+/// main window. Store snapshots have keyed but unordered assets; Projection owns
+/// library ordering, global asset ordering, reachability filtering, sidebar
+/// scope, title selection, and empty-state meaning. None of that work belongs on
+/// MainActor or inside a SwiftUI body.
+///
+/// One 10 Hz loop coalesces Store notifications and sidebar intents. `dirty` is
+/// cleared before an awaited snapshot/build so input arriving during that await
+/// survives for the next tick. Actor isolation permits only one build at a time,
+/// and equal-state suppression prevents detail views from receiving values that
+/// did not change. Ordered IDs are cached, but membership is validated directly
+/// against each immutable snapshot so Store does not maintain cache metadata.
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable (CatalogSnapshot, SidebarSelection) async -> CatalogWindowState
 
     private struct BuildMetrics {
         let orderCacheHit: Bool
         let orderSorted: Bool
-        let orderInvariantRebuilt: Bool
+        let assetMembershipChanged: Bool
         let sortMs: Int
     }
 
@@ -24,7 +35,6 @@ actor CatalogProjection {
     private var changeTask: Task<Void, Never>?
     private var publicationTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
-    private var cachedAssetStructureRevision: UInt64?
     private var cachedOrderedAssetIDs: [MediaAssetID] = []
 
     init(
@@ -141,10 +151,9 @@ private extension CatalogProjection {
                 "libraries": "\(state.libraries.count)",
                 "assetCount": "\(snapshot.assetsByID.count)",
                 "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
-                "assetStructureRevision": "\(snapshot.assetStructureRevision)",
                 "assetOrderCacheHit": "\(buildMetrics.orderCacheHit)",
                 "assetOrderSorted": "\(buildMetrics.orderSorted)",
-                "assetOrderInvariantRebuilt": "\(buildMetrics.orderInvariantRebuilt)",
+                "assetMembershipChanged": "\(buildMetrics.assetMembershipChanged)",
                 "assetSortMs": "\(buildMetrics.sortMs)",
                 "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                 "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
@@ -178,7 +187,6 @@ private extension CatalogProjection {
         publicationTask = nil
         dirty = false
         lastPublishedState = nil
-        cachedAssetStructureRevision = nil
         cachedOrderedAssetIDs.removeAll(keepingCapacity: false)
     }
 }
@@ -188,17 +196,8 @@ private extension CatalogProjection {
         snapshot: CatalogSnapshot,
         sidebarSelection: SidebarSelection
     ) async -> (CatalogWindowState, BuildMetrics) {
-        if let stateBuilder {
-            let state = await stateBuilder(snapshot, sidebarSelection)
-            return (
-                state,
-                BuildMetrics(
-                    orderCacheHit: false,
-                    orderSorted: false,
-                    orderInvariantRebuilt: false,
-                    sortMs: 0
-                )
-            )
+        if let injectedState = await injectedWindowState(snapshot, sidebarSelection: sidebarSelection) {
+            return injectedState
         }
 
         let signpost = OtosSignpost.performance.beginInterval("CatalogWindowStateBuild")
@@ -206,20 +205,35 @@ private extension CatalogProjection {
             OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
         }
         let libraries = Self.sortLibraries(snapshot.libraries)
+        let displayNamesByRootPath = Dictionary(
+            uniqueKeysWithValues: libraries.map { ($0.path, $0.displayName) }
+        )
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let (sortedAssets, metrics) = orderedAssets(for: snapshot)
-        let availableAssets = sortedAssets.filter { availableLibraryPaths.contains($0.libraryRootPath) }
+        let (orderedAssetIDs, metrics) = orderedAssetIDs(
+            for: snapshot,
+            displayNamesByRootPath: displayNamesByRootPath
+        )
         let resolvedSidebarSelection = Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
         let title = Self.title(for: resolvedSidebarSelection, libraries: libraries)
-        let scopedAssets = Self.assets(for: resolvedSidebarSelection, assets: availableAssets)
+        let scopedAssetIDs = Self.assetIDs(
+            for: resolvedSidebarSelection,
+            orderedAssetIDs: orderedAssetIDs,
+            availableLibraryPaths: availableLibraryPaths
+        )
+
+        // Preserve a scoped value map rather than passing the complete snapshot
+        // through UI state. A detail update in an unselected library then remains
+        // equal and does not trigger unrelated SwiftUI or AppKit work.
+        let scopedAssetsByID = Dictionary(
+            uniqueKeysWithValues: scopedAssetIDs.compactMap { id in
+                snapshot.assetsByID[id].map { (id, $0) }
+            }
+        )
         let mediaEmptyState = Self.mediaEmptyState(
             for: resolvedSidebarSelection,
             libraries: libraries,
-            allAssetCount: sortedAssets.count,
-            selectedAssetCount: scopedAssets.count
-        )
-        let scopedAssetsByID = Dictionary(
-            uniqueKeysWithValues: scopedAssets.map { ($0.id, $0) }
+            allAssetCount: orderedAssetIDs.count,
+            selectedAssetCount: scopedAssetIDs.count
         )
 
         return (
@@ -228,7 +242,7 @@ private extension CatalogProjection {
                 libraries: libraries,
                 mediaGrid: CatalogMediaGridState(
                     scope: resolvedSidebarSelection,
-                    orderedAssetIDs: scopedAssets.map(\.id),
+                    orderedAssetIDs: scopedAssetIDs,
                     assetsByID: scopedAssetsByID
                 ),
                 resolvedSidebarSelection: resolvedSidebarSelection,
@@ -238,49 +252,64 @@ private extension CatalogProjection {
         )
     }
 
-    private func orderedAssets(for snapshot: CatalogSnapshot) -> ([MediaAsset], BuildMetrics) {
-        if cachedAssetStructureRevision == snapshot.assetStructureRevision {
-            let assets = cachedOrderedAssetIDs.compactMap { snapshot.assetsByID[$0] }
-            let cacheResolvedExactly = assets.count == snapshot.assetsByID.count
-                && cachedOrderedAssetIDs.count == snapshot.assetsByID.count
-            if cacheResolvedExactly {
-                return (
-                    assets,
-                    BuildMetrics(
-                        orderCacheHit: true,
-                        orderSorted: false,
-                        orderInvariantRebuilt: false,
-                        sortMs: 0
-                    )
-                )
-            }
-
-            // A missed revision increment must not produce a partial or stale
-            // browser. Rebuild immediately and leave an observable invariant
-            // failure so tests and diagnostics expose the Store bug.
-            let revision = snapshot.assetStructureRevision
-            OtosLog.catalog.error("Catalog asset order cache invariant failed revision=\(revision, privacy: .public)")
-            return rebuildOrderedAssets(snapshot: snapshot, invariantRebuilt: true)
+    /// Tests can inject deliberately slow or controlled derivation without
+    /// replacing the publication loop whose dirty/in-flight behavior they need
+    /// to exercise. Injected output does not participate in the production order
+    /// cache, so its metrics remain neutral.
+    private func injectedWindowState(
+        _ snapshot: CatalogSnapshot,
+        sidebarSelection: SidebarSelection
+    ) async -> (CatalogWindowState, BuildMetrics)? {
+        guard let stateBuilder else {
+            return nil
         }
-
-        return rebuildOrderedAssets(snapshot: snapshot, invariantRebuilt: false)
+        let state = await stateBuilder(snapshot, sidebarSelection)
+        return (
+            state,
+            BuildMetrics(
+                orderCacheHit: false,
+                orderSorted: false,
+                assetMembershipChanged: false,
+                sortMs: 0
+            )
+        )
     }
 
-    private func rebuildOrderedAssets(
-        snapshot: CatalogSnapshot,
-        invariantRebuilt: Bool
-    ) -> ([MediaAsset], BuildMetrics) {
+    private func orderedAssetIDs(
+        for snapshot: CatalogSnapshot,
+        displayNamesByRootPath: [LibraryRootPath: String]
+    ) -> ([MediaAssetID], BuildMetrics) {
+        // Equal count plus successful lookup of every cached ID proves set
+        // equality because asset IDs are unique dictionary keys. This direct
+        // validation costs the same O(n) traversal detail rematerialization
+        // already required and cannot be forgotten by a Store mutation path.
+        let membershipUnchanged = cachedOrderedAssetIDs.count == snapshot.assetsByID.count
+            && cachedOrderedAssetIDs.allSatisfy { snapshot.assetsByID[$0] != nil }
+        if membershipUnchanged {
+            return (
+                cachedOrderedAssetIDs,
+                BuildMetrics(
+                    orderCacheHit: true,
+                    orderSorted: false,
+                    assetMembershipChanged: false,
+                    sortMs: 0
+                )
+            )
+        }
+
         let sortStart = Date()
-        let assets = Self.sortAssets(Array(snapshot.assetsByID.values))
+        let orderedIDs = Self.sortAssetIDs(
+            Array(snapshot.assetsByID.keys),
+            displayNamesByRootPath: displayNamesByRootPath
+        )
         let sortMs = DiagnosticsTiming.milliseconds(since: sortStart)
-        cachedAssetStructureRevision = snapshot.assetStructureRevision
-        cachedOrderedAssetIDs = assets.map(\.id)
+        cachedOrderedAssetIDs = orderedIDs
         return (
-            assets,
+            orderedIDs,
             BuildMetrics(
                 orderCacheHit: false,
                 orderSorted: true,
-                orderInvariantRebuilt: invariantRebuilt,
+                assetMembershipChanged: true,
                 sortMs: sortMs
             )
         )
@@ -296,14 +325,26 @@ private extension CatalogProjection {
         }
     }
 
-    static func sortAssets(_ assets: [MediaAsset]) -> [MediaAsset] {
-        assets.sorted { left, right in
-            let libraryComparison = left.libraryDisplayName.localizedStandardCompare(right.libraryDisplayName)
+    static func sortAssetIDs(
+        _ assetIDs: [MediaAssetID],
+        displayNamesByRootPath: [LibraryRootPath: String]
+    ) -> [MediaAssetID] {
+        assetIDs.sorted { left, right in
+            // A snapshot produced by Store always has a matching library. The
+            // path-derived fallback keeps malformed test or diagnostic snapshots
+            // deterministic without inventing unrelated display text.
+            let leftLibraryName = displayNamesByRootPath[left.libraryRootPath]
+                ?? left.libraryRootPath.displayName
+            let rightLibraryName = displayNamesByRootPath[right.libraryRootPath]
+                ?? right.libraryRootPath.displayName
+            let libraryComparison = leftLibraryName.localizedStandardCompare(rightLibraryName)
             if libraryComparison != .orderedSame {
                 return libraryComparison == .orderedAscending
             }
 
-            let pathComparison = left.libraryRootPath.rawValue.localizedStandardCompare(right.libraryRootPath.rawValue)
+            let pathComparison = left.libraryRootPath.rawValue.localizedStandardCompare(
+                right.libraryRootPath.rawValue
+            )
             if pathComparison != .orderedSame {
                 return pathComparison == .orderedAscending
             }
@@ -324,12 +365,21 @@ private extension CatalogProjection {
         }
     }
 
-    static func assets(for sidebarSelection: SidebarSelection, assets: [MediaAsset]) -> [MediaAsset] {
-        switch sidebarSelection {
-        case .allMedia:
-            assets
-        case let .library(path):
-            assets.filter { $0.libraryRootPath == path }
+    static func assetIDs(
+        for sidebarSelection: SidebarSelection,
+        orderedAssetIDs: [MediaAssetID],
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) -> [MediaAssetID] {
+        orderedAssetIDs.filter { id in
+            guard availableLibraryPaths.contains(id.libraryRootPath) else {
+                return false
+            }
+            switch sidebarSelection {
+            case .allMedia:
+                return true
+            case let .library(path):
+                return id.libraryRootPath == path
+            }
         }
     }
 
@@ -354,10 +404,20 @@ private extension CatalogProjection {
 
         switch sidebarSelection {
         case .allMedia:
+            if libraries.contains(where: { $0.availability == .unknown }) {
+                return .checkingLibraries
+            }
             return allAssetCount == 0 ? .noMedia : .noAvailableMedia
         case let .library(path):
             let library = libraries.first { $0.path == path }
-            return library?.availability == .unavailable ? .libraryUnavailable : .noMedia
+            switch library?.availability {
+            case .unknown:
+                return .libraryChecking
+            case .unavailable:
+                return .libraryUnavailable
+            case .available, .none:
+                return .noMedia
+            }
         }
     }
 }

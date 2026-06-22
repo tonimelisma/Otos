@@ -12,25 +12,21 @@
 
 ## Problem
 
-The repo currently allows unimplemented product requirements to live beside
-implemented process and behavior requirements in `docs/requirements.md` through a
-`Proposed` status. That makes the registry look like a backlog, weakens the
-difference between current truth and future thinking, and risks agents using
-roadmap material as implementation guidance without the user asking for it.
+The repository needs one unambiguous source for implemented requirements without
+turning product ideation into commitments. `docs/requirements.md` therefore
+contains only current, changed, or retired requirements; unimplemented concepts
+remain in explicitly non-authoritative planning material.
 
 Current repo state verified through inspection:
 
-- `docs/requirements.md` contains implemented foundation rows and many
-  unimplemented `Proposed` product rows.
-- `docs/product/roadmap.md` describes planning material and previously referenced
-  requirement IDs.
-- `docs/index.md` lists the roadmap in the same living-contract table as current
-  requirements.
-- `AGENTS.md` has the spec-first workflow but does not yet require all user
-  guidance to be restated and stored.
-- `docs/templates/spec-template.md` does not yet include a dedicated captured
-  requirements section.
-- `script/verify.sh` does not yet guard against reintroducing proposed rows.
+- `docs/requirements.md` rejects a `Proposed` status and unimplemented product
+  rows.
+- `docs/product/roadmap.md` is visibly non-authoritative and has no requirement-ID
+  authority blocks.
+- `docs/index.md` separates authoritative current contracts from planning.
+- `AGENTS.md` and the spec template require detailed, atomic user-guidance
+  capture and storage.
+- `script/requirements-authority-check.sh` is part of verification.
 
 ## Captured Requirements For User Verification
 
@@ -43,7 +39,7 @@ Current repo state verified through inspection:
 | FND-010 | Process | Future ideas and unimplemented product plans must remain outside the current requirements registry. | Current | `docs/requirements.md`, `docs/index.md` |
 | FND-011 | Process | Captured user guidance must be stored in repository documentation during the increment that captures it. | Current | `AGENTS.md`, `docs/process/development-workflow.md` |
 | FND-012 | Process | Roadmap, planning, and idea documents must not guide work unless the user explicitly asks to use them for the current task. | Current | `AGENTS.md`, `docs/index.md`, `docs/product/roadmap.md` |
-| FND-013 | Process | Every increment must end with a Definition of Done report that includes push status. | Current | `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
+| FND-013 | Process | Every increment has exactly one final Definition of Done report after merge, verification, and cleanup; it includes push status. | Current | `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
 | APP-001 | Functional | Otos must not claim implemented product behavior before code, tests, and evidence prove it exists. | Current | `docs/requirements.md` |
 
 ## Scope
@@ -55,12 +51,11 @@ In scope:
 - Make `docs/requirements.md` current-state authority only.
 - Add current process requirements for requirement capture, user verification,
   storage, precision, and roadmap isolation.
-- Add current process requirements for ending each increment with DoD and push
-  evidence.
+- Maintain the one-final-report DoD and push-evidence rules.
 - Mark roadmap and product planning docs as non-authoritative and opt-in only.
-- Update `AGENTS.md`, process docs, README, spec template, and docs index to
-  match the new authority model.
-- Add a local/CI guard that rejects `Proposed` rows and roadmap requirement-ID
+- Keep `AGENTS.md`, process docs, templates, and docs index aligned with the
+  authority model.
+- Keep the local/CI guard that rejects `Proposed` rows and roadmap requirement-ID
   blocks.
 
 Out of scope:

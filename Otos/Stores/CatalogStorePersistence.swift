@@ -1,7 +1,23 @@
 import Foundation
 import GRDB
 
+/// Persistence guide
+///
+/// This extension is the SQLite edge of CatalogStore. It translates between the
+/// durable relational schema and the Store's typed in-memory records, but it does
+/// not own catalog behavior or publish UI state. Keeping SQL here makes the actor
+/// methods in CatalogStore read in terms of catalog operations while preserving a
+/// single persistence owner.
+///
+/// SQLite row IDs are deliberately confined to StoredRoot/StoredAsset. The
+/// product identity of a library is its normalized LibraryRootPath, and the
+/// product identity of an asset is that root path plus MediaRelativePath. A row ID
+/// is only the compact foreign key used by SQLite; allowing it across this boundary
+/// would give the same library two competing identities.
 extension CatalogStore {
+    /// Places the rebuildable catalog beside the rest of Otos's Application
+    /// Support data. The caller supplies the bundle identifier so tests can use
+    /// isolated locations without changing the production path convention.
     static func applicationDatabaseURL(bundleIdentifier: String) throws -> URL {
         let fileManager = FileManager.default
         let appSupportURL = try fileManager.url(
@@ -19,6 +35,10 @@ extension CatalogStore {
 
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
+
+        // Migrations are append-only descriptions of durable schema evolution.
+        // Runtime models stay independent of schema version while an existing
+        // on-disk catalog migrates deterministically to the one current schema.
         migrator.registerMigration("v1_library_roots_and_media_assets") { db in
             try db.create(table: "library_root") { table in
                 table.autoIncrementedPrimaryKey("id")
@@ -69,6 +89,9 @@ extension CatalogStore {
     }
 
     static func upsertScannedFile(_ file: ScannedMediaFile, libraryRootID: Int64, db: Database) throws {
+        // The compound key makes a scan idempotent: observing the same relative
+        // path refreshes its current filesystem facts instead of creating scan
+        // history or a second asset identity.
         try db.execute(
             sql: """
             INSERT INTO media_asset (
@@ -101,6 +124,8 @@ extension CatalogStore {
     }
 }
 
+/// Converts nullable SQLite timestamps at the persistence edge so the rest of
+/// the Store works with `Date?` rather than storage-format doubles.
 private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset {
     let createdUnix: Double? = row["created_at_unix"]
     let modifiedUnix: Double? = row["content_modified_at_unix"]

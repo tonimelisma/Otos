@@ -17,6 +17,8 @@
 - Selected approach:
 - Why this is correct:
 - Retirement proof, if applicable:
+- Repository-wide stale-document audit:
+- Code-comment accuracy audit:
 
 ## Verification
 
@@ -47,7 +49,9 @@
 ## Docs And Privacy
 
 - Docs updated:
-- Logs avoid raw paths, filenames, thumbnails, EXIF payloads, and user content:
+- Obsolete docs/comments deleted:
+- Logs contain only bounded diagnostic payloads; secrets, credentials,
+  thumbnails, binary media, and unbounded metadata are absent:
 - Fixture or media impact:
 - Persistence/schema impact:
 
@@ -75,5 +79,9 @@ the single final green/red DoD report as a PR comment and send it to the user.
 - [ ] No effort-based compromise.
 - [ ] No fabricated user-visible or domain facts.
 - [ ] One user action has one implementation path.
+- [ ] Affected current docs and backlinks describe the landed design; obsolete
+      documents were deleted.
+- [ ] Affected file guides and comments explain current mechanics and rationale,
+      with no stale increment history.
 - [ ] Meaningful paths are instrumented with OSLog/signposts.
 - [ ] Main-actor work stays under the 100 ms hang threshold, with stricter review for continuous interactions.

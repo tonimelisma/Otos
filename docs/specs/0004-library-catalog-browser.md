@@ -9,19 +9,18 @@
 
 ## Problem
 
-Otos currently launches as a SwiftUI shell and does not yet expose implemented
-library, catalog, or browsing behavior. The first increment needs to let the
-user manage library roots in Settings, persist those roots, scan regular files
-from them automatically, and show the catalog in a native sidebar-detail window.
+Otos provides a persistent library catalog while leaving user originals on
+disk. Users manage roots in Settings; the app automatically scans them and
+projects the in-memory catalog into the single sidebar-detail window.
 
-At the time of this first catalog spec, repo inspection found:
+Current repo state verified through inspection:
 
-- `Otos/ContentView.swift` was still the template hello-world view.
-- `Otos/OtosApp.swift` had one `WindowGroup` and no `Settings` scene.
-- `Otos/Support/Instrumentation.swift` already defines required log categories.
-- The project is unsandboxed and SwiftUI-first.
-- No GRDB package dependency exists yet.
-- Tests currently only verify media fixtures exist.
+- `CatalogStore` owns GRDB, migrations, the in-memory catalog, and scans.
+- `CatalogProjection` publishes derived window state at the 10 Hz dirty cadence.
+- `CatalogWindowViewModel` assigns final state and routes explicit intents.
+- `ContentView` composes a library sidebar and placeholder media grid.
+- The app is unsandboxed, SwiftUI-first, and uses AppKit only for the verified
+  high-cardinality grid boundary.
 
 ## Scope
 
@@ -32,9 +31,8 @@ In scope:
 - GRDB 7.11.0, SQLite in Application Support, and stable v1 migrations.
 - Full in-memory catalog working set owned by a catalog actor.
 - Automatic launch/add scans only.
-- The original increment displayed persisted filesystem facts in a table. Spec
-  0011 supersedes that rendering with a filename placeholder grid while keeping
-  the persisted facts in the catalog.
+- Six-column filename placeholder grid while all filesystem facts remain in the
+  catalog model.
 
 Out of scope:
 
@@ -90,11 +88,11 @@ Pros:
 - One catalog authority owns persistence, in-memory state, and scan lifecycle.
 - Keeps filesystem traversal and SQLite work off the MainActor.
 - Matches the ADR decision to keep the catalog working set in memory.
-- Gives SwiftUI simple snapshots without database query coupling.
+- Gives Projection keyed snapshots without database query coupling.
 
 Cons:
 
-- Requires explicit snapshot publishing.
+- Requires explicit change notification and Projection publication plumbing.
 - Requires care to avoid per-file MainActor updates.
 
 Failure modes:
@@ -157,12 +155,11 @@ Failure modes:
 
 ## Selected Approach
 
-Use a `CatalogStore` actor with `@MainActor @Observable` SwiftUI-facing state.
-The actor opens and migrates one long-lived GRDB `DatabaseQueue`, loads roots
-and media rows into memory, serializes add/remove/scan work, and emits cheap
-change notifications. Current implementation note: Spec 0009 moved UI-ready
-state publication into `CatalogProjection`, which pulls raw snapshots on demand
-and emits `CatalogWindowState` for SwiftUI.
+Use a `CatalogStore` actor with a `CatalogProjection` actor and a
+`@MainActor @Observable CatalogWindowViewModel`. Store opens and migrates one
+long-lived GRDB `DatabaseQueue`, loads roots and media rows into memory,
+serializes add/remove/scan work, and emits cheap change notifications. Projection
+pulls raw snapshots on demand and emits `CatalogWindowState` for SwiftUI.
 
 This is the simplest correct approach because it has one persistence owner, one
 in-memory catalog owner, no query-backed SwiftUI coupling, no parallel scan
@@ -175,9 +172,9 @@ pipeline, and no generated product IDs.
 - `CatalogScanner`: Sendable scanner function wrapper used by the actor and tests.
 - `CatalogProjection`: actor that publishes coalesced `CatalogWindowState` for
   the main window.
-- `CatalogWindowViewModel`: MainActor observable state assignment and UI intents
-  for the single main window. Spec 0007 superseded the earlier shared-session and
-  browser-state split.
+- `CatalogWindowViewModel`: MainActor observable state assignment, explicit
+  selection delivery, UI intents, owned tasks, and stall-monitor lifetime for the
+  single main window.
 - `CatalogSnapshot`: Sendable immutable raw library/assets state built by the
   store on demand.
 - `SidebarSelection`: SwiftUI sidebar selection for `All Media` or one root path.
@@ -189,8 +186,8 @@ pipeline, and no generated product IDs.
 
 ## Retirement Proof
 
-- Replace the template `ContentView` with the real root layout.
-- Keep `OtosApp` as the scene owner, adding Settings.
+- `ContentView` remains the passive root layout.
+- `OtosApp` remains the scene and ViewModel owner with a Settings scene.
 - Do not add AppKit picker code, manual scan controls, sandbox/bookmark code,
   metadata fields, thumbnail fields, or direct SwiftUI database access.
 
@@ -208,13 +205,12 @@ pipeline, and no generated product IDs.
 ## Code-Smell Review
 
 - MainActor gravity: avoided by actor-owned DB and scanner work.
-- SwiftUI body work: views render precomputed snapshot values only.
+- SwiftUI body work: views render precomputed projected state only.
 - State duplication: one catalog actor owns canonical in-memory state.
 - Unsafe concurrency escape: scanner is a Sendable closure owned by a cancellable
   task.
-- Stringly typed domain facts: the first implementation used filesystem paths as
-  domain identity; Spec 0005 later typed library root paths, relative paths, and
-  media asset identity at app boundaries.
+- Stringly typed domain facts: library root paths, relative paths, and media
+  asset identity are typed at app boundaries.
 - Diagnostic payload sprawl: logs avoid secrets and unbounded payloads.
 
 ## Acceptance Criteria

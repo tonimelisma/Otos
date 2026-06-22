@@ -204,16 +204,42 @@ guidance unless the user says it is itself the requirement.
 - Catalog UI state follows the single-window ownership split: `CatalogStore`
   owns runtime catalog truth and emits cheap change notifications,
   `CatalogProjection` owns 10 Hz coalesced `CatalogWindowState` publication plus
-  all sorting, filtering, availability hiding, empty-state selection, and
+  all sorting, filtering, unknown/unavailable hiding, empty-state selection, and
   selected-scope derivation off the MainActor, and `CatalogWindowViewModel` owns
-  only final SwiftUI-visible state assignment, sidebar selection, user intents,
-  and task lifetimes.
+  only final SwiftUI-visible state assignment, explicit sidebar selection intent
+  delivery, user intents, task lifetimes, and scalar stall correlation.
 - Architecture-boundary files should include explanatory file guides and focused
-  comments that describe how the current mechanics work and why the boundary
-  exists, especially around actor isolation, task ownership, persistence,
-  coalesced publication, availability preservation, and view passivity. Avoid
-  changelog-style comments, increment-history comments, and repeated code
-  comments for product invariants already documented in requirements or ADRs.
+  comments that let a Swift newcomer follow how the current mechanics work and
+  why the boundary exists. Architecture, concurrency, persistence, diagnostics,
+  and AppKit-boundary files require substantial file guides plus focused comments
+  for non-obvious actor isolation, task ownership, cancellation, persistence,
+  coalesced publication, cache validation, availability preservation, and view
+  passivity. Do not merely narrate syntax. Avoid changelog-style comments,
+  increment-history comments, comparisons with recently removed code, and
+  repeated comments for product invariants already documented in requirements or
+  ADRs.
+
+## Living Documentation
+
+ADRs, specs, requirements, process docs, code comments, and documentation
+indexes describe current reality. They are not append-only historical records;
+Git history owns history. Whenever architecture, behavior, workflow, naming, or
+instrumentation changes, edit every affected current document and comment or
+delete it when its decision no longer has a current purpose. Do not leave stale
+claims, superseded alternatives presented as current, obsolete backlinks, or
+comments that explain a retired implementation.
+
+Non-authoritative planning documents are the only exception. They may contain
+future ideas or abandoned options, but they must be visibly labeled
+non-authoritative and must never claim to describe the current implementation.
+
+Every architecture or behavior increment must include:
+
+- a repository-wide stale-document audit covering ADRs, specs, requirements,
+  process docs, indexes, templates, scripts, and backlinks
+- a code-comment accuracy audit covering file guides and focused comments in
+  every affected architecture boundary
+- deletion of documents or comments that no longer have a current purpose
 
 ## Swift And Concurrency
 
@@ -272,11 +298,14 @@ Every significant operation should emit:
 - cancellation status
 - error outcome without private payloads
 
-For SwiftUI/AppKit responsiveness issues, instrument Otos-owned boundaries with
-signposts and JSONL diagnostics: catalog snapshot, projection, state assignment,
-item counts, selection, collection updates, and run-loop stalls. Use `sample` or
-Instruments to prove private Apple framework stacks. Do not pretend app code can
-signpost inside SwiftUI or AppKit internals directly.
+For SwiftUI/AppKit responsiveness issues, use Logger/signposts for
+high-frequency ViewModel state assignment and AppKit collection receipt,
+coalescing, apply, reload, layout, and slow-cell work. Those paths must not spawn
+per-update JSONL tasks or retain full catalog state. Keep durable JSONL for
+coarse Store/scan boundaries, Projection summaries, availability transitions,
+failures, and actual active-app run-loop stalls with scalar context. Use `sample`
+or Instruments to prove private Apple framework stacks. Do not pretend app code
+can signpost inside SwiftUI or AppKit internals directly.
 
 Log policy:
 
@@ -427,6 +456,11 @@ textual descriptions rather than terse labels. It must answer:
 - code smells observed and how they were addressed or intentionally accepted
 - docs updated in the same increment when contracts, workflow, requirements, or
   behavior changed
+- repository-wide stale-document audit completed for affected ADRs, specs,
+  requirements, process docs, indexes, templates, scripts, and backlinks, with
+  obsolete documents deleted instead of retained as misleading history
+- code-comment accuracy audit completed for affected file guides and focused
+  comments, with no syntax narration, increment history, or retired behavior
 - media-originals and diagnostics review for media, paths, metadata, logs,
   fixtures, and exports
 - confirmation that no shim, legacy architecture, or effort-based compromise was

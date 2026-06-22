@@ -49,6 +49,7 @@ struct CatalogProjectionTests {
         #expect(state.title == "Pictures")
         #expect(state.resolvedSidebarSelection == .library(pictures.path))
         #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"])
+        #expect(Set(state.mediaGrid.assetsByID.keys) == Set(state.mediaGrid.orderedAssetIDs))
     }
 
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
@@ -96,6 +97,47 @@ struct CatalogProjectionTests {
         #expect(orderedAssets(in: allMedia).map(\.relativePath.rawValue) == ["shown.jpg"])
         #expect(selectedUnavailable.mediaGrid.orderedAssetIDs.isEmpty)
         #expect(selectedUnavailable.mediaEmptyState == .libraryUnavailable)
+    }
+
+    @Test func windowStateHidesUnknownAssetsAndReportsCheckingStates() async {
+        let projection = CatalogProjection(diagnostics: nil)
+        let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        let snapshot = makeSnapshot(
+            libraries: [makeLibrary(root: pictures, availability: .unknown)],
+            assets: [makeAsset(root: pictures, relativePath: "cached.jpg")]
+        )
+
+        let allMedia = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
+        let selected = await projection.windowState(
+            snapshot: snapshot,
+            sidebarSelection: .library(pictures.path)
+        )
+
+        #expect(allMedia.mediaGrid.orderedAssetIDs.isEmpty)
+        #expect(allMedia.mediaEmptyState == .checkingLibraries)
+        #expect(selected.mediaGrid.orderedAssetIDs.isEmpty)
+        #expect(selected.mediaEmptyState == .libraryChecking)
+    }
+
+    @Test func availableAssetsRemainVisibleWhileAnotherLibraryIsUnknown() async {
+        let projection = CatalogProjection(diagnostics: nil)
+        let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
+        let snapshot = makeSnapshot(
+            libraries: [
+                makeLibrary(root: pictures),
+                makeLibrary(root: archive, availability: .unknown),
+            ],
+            assets: [
+                makeAsset(root: pictures, relativePath: "shown.jpg"),
+                makeAsset(root: archive, relativePath: "hidden.jpg"),
+            ]
+        )
+
+        let state = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
+
+        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["shown.jpg"])
+        #expect(state.mediaEmptyState == .noMedia)
     }
 
     @Test func allMediaEmptyStateDistinguishesUnavailableCatalogedMedia() async {
@@ -191,9 +233,9 @@ struct CatalogProjectionTests {
                 && contents.contains("\"snapshotMs\"")
                 && contents.contains("\"projectionMs\"")
                 && contents.contains("\"totalMs\"")
-                && contents.contains("\"assetStructureRevision\"")
                 && contents.contains("\"assetOrderCacheHit\"")
                 && contents.contains("\"assetOrderSorted\"")
+                && contents.contains("\"assetMembershipChanged\"")
                 && contents.contains("\"assetSortMs\"")
         }
 
@@ -239,7 +281,6 @@ private func makeLibrary(
 private func makeAsset(root: LibraryRoot, relativePath: String) -> MediaAsset {
     MediaAsset(
         libraryRootPath: root.path,
-        libraryDisplayName: root.displayName,
         relativePath: MediaRelativePath(rawValue: relativePath),
         name: URL(fileURLWithPath: relativePath).lastPathComponent,
         contentTypeIdentifier: "public.jpeg",
@@ -320,13 +361,11 @@ private actor ProjectionProbe {
 
 private func makeSnapshot(
     libraries: [CatalogLibraryState],
-    assets: [MediaAsset],
-    revision: UInt64 = 1
+    assets: [MediaAsset]
 ) -> CatalogSnapshot {
     CatalogSnapshot(
         libraries: libraries,
-        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) }),
-        assetStructureRevision: revision
+        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
     )
 }
 

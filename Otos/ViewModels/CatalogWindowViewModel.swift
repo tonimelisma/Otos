@@ -2,49 +2,62 @@ import Foundation
 import Observation
 import OSLog
 
-/// MainActor adapter for SwiftUI. It owns user intents and assigns already-made
-/// window state; catalog mutation and projection work stay with their actors.
+/// Catalog window ViewModel guide
+///
+/// This is the single MainActor adapter between SwiftUI controls and the catalog
+/// actors. It owns final UI state, immediate sidebar control state, user intents,
+/// and the lifetimes of tasks that feed those actors. It does not inspect
+/// snapshots, sort assets, touch SQLite, or traverse the filesystem.
+///
+/// Sidebar changes enter one buffering-newest stream rather than creating a Task
+/// per click. The one forwarding task preserves intent order and lets rapid
+/// changes coalesce before crossing to Projection. Projection may normalize a
+/// removed library back to All Media; applying that result assigns the local
+/// control value directly and therefore cannot create a feedback intent.
 @MainActor
 @Observable
 final class CatalogWindowViewModel {
-    var sidebarSelection: SidebarSelection = .allMedia {
-        didSet {
-            guard sidebarSelection != oldValue,
-                  !isApplyingResolvedSidebarSelection
-            else {
-                return
-            }
-            syncSidebarSelectionToProjection()
-        }
-    }
-
+    private(set) var sidebarSelection: SidebarSelection = .allMedia
     var state: CatalogWindowState = .empty
 
     @ObservationIgnored private let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored private let diagnostics: CatalogDiagnostics?
+    @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
+    @ObservationIgnored private let selectionStream: AsyncStream<SidebarSelection>
+    @ObservationIgnored private let selectionContinuation: AsyncStream<SidebarSelection>.Continuation
 
     @ObservationIgnored private var stateTask: Task<Void, Never>?
     @ObservationIgnored private var startTask: Task<Void, Never>?
+    @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
-    @ObservationIgnored private var isApplyingResolvedSidebarSelection = false
 
     init(
         catalogStore: CatalogStore = CatalogStore(),
         catalogProjection: CatalogProjection = CatalogProjection(),
         diagnostics: CatalogDiagnostics? = .shared,
+        stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true
     ) {
+        let (selectionStream, selectionContinuation) = AsyncStream<SidebarSelection>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         self.diagnostics = diagnostics
+        self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
+        self.selectionStream = selectionStream
+        self.selectionContinuation = selectionContinuation
     }
 
-    deinit {
+    isolated deinit {
+        selectionContinuation.finish()
         stateTask?.cancel()
         startTask?.cancel()
+        selectionTask?.cancel()
+        stallMonitor.stop()
     }
 
     func start() {
@@ -57,7 +70,16 @@ final class CatalogWindowViewModel {
         OtosSignpost.ui.endInterval("CatalogWindowViewModelStart", signpost)
         OtosLog.ui.info("Catalog window view model started")
         if startsStallMonitor {
-            MainRunLoopStallMonitor.shared.start(diagnostics: diagnostics)
+            stallMonitor.start(diagnostics: diagnostics)
+        }
+
+        // This is the sole sidebar-intent task. AsyncStream provides ordered
+        // delivery and bufferingNewest prevents obsolete clicks from building a
+        // queue while Projection is busy publishing a large state.
+        selectionTask = Task { [catalogProjection, selectionStream] in
+            for await selection in selectionStream {
+                await catalogProjection.updateSidebarSelection(selection)
+            }
         }
 
         stateTask = Task {
@@ -128,26 +150,26 @@ final class CatalogWindowViewModel {
         }
     }
 
-    private func syncSidebarSelectionToProjection() {
-        let selection = sidebarSelection
-        let signpost = OtosSignpost.ui.beginInterval("CatalogSidebarSelectionSync")
-        Task {
-            await catalogProjection.updateSidebarSelection(selection)
-            OtosSignpost.ui.endInterval("CatalogSidebarSelectionSync", signpost)
+    func selectSidebar(_ selection: SidebarSelection) {
+        guard sidebarSelection != selection else {
+            return
         }
+        sidebarSelection = selection
+        OtosLog.ui.info("Sidebar selection changed selection=\(selection.diagnosticDescription, privacy: .public)")
+        OtosSignpost.ui.emitEvent("CatalogSidebarSelectionIntent")
+        selectionContinuation.yield(selection)
     }
 
     private func applyState(_ nextState: CatalogWindowState) {
         let previousState = state
-        let updateID = CatalogUIUpdateTracker.shared.reserveUpdateID()
+        let updateID = stallMonitor.reserveUpdateID()
         let applyStart = Date()
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateApply")
 
-        if sidebarSelection != nextState.resolvedSidebarSelection {
-            isApplyingResolvedSidebarSelection = true
-            sidebarSelection = nextState.resolvedSidebarSelection
-            isApplyingResolvedSidebarSelection = false
-        }
+        // Projection is authoritative for whether the selected library still
+        // exists. Direct assignment is not a new user intent and deliberately
+        // bypasses the selection stream.
+        sidebarSelection = nextState.resolvedSidebarSelection
 
         state = nextState
         OtosSignpost.ui.endInterval("CatalogWindowStateApply", signpost)
@@ -163,25 +185,15 @@ final class CatalogWindowViewModel {
             emptyState: nextState.mediaEmptyState.diagnosticDescription,
             timestamp: Date()
         )
-        CatalogUIUpdateTracker.shared.recordGridHandoff(handoff)
+        stallMonitor.recordGridHandoff(handoff)
 
         let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
-        let diagnostics = diagnostics
-        Task {
-            await diagnostics?.record(
-                operation: "catalog.window.state.apply",
-                phase: "finish",
-                fields: [
-                    "updateID": "\(updateID)",
-                    "itemCount": "\(itemCount)",
-                    "previousItemCount": "\(previousItemCount)",
-                    "itemDelta": "\(itemCount - previousItemCount)",
-                    "libraries": "\(nextState.libraries.count)",
-                    "selection": nextState.resolvedSidebarSelection.diagnosticDescription,
-                    "emptyState": nextState.mediaEmptyState.diagnosticDescription,
-                    "applyMs": "\(applyMs)",
-                ]
-            )
-        }
+        OtosLog.ui.debug(
+            """
+            Catalog window state applied updateID=\(updateID, privacy: .public) \
+            items=\(itemCount, privacy: .public) delta=\(itemCount - previousItemCount, privacy: .public) \
+            libraries=\(nextState.libraries.count, privacy: .public) applyMs=\(applyMs, privacy: .public)
+            """
+        )
     }
 }

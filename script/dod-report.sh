@@ -88,6 +88,8 @@ row_env DOD_DONE_STATUS "What was done" DOD_DONE
 row_env DOD_NOT_DONE_STATUS "What planned work was not done" DOD_NOT_DONE
 row_env DOD_DESIGN_STATUS "What design decisions were made" DOD_DESIGN
 row_env DOD_DOCS_STATUS "What requirements, specs, ADRs, and docs changed" DOD_DOCS
+row_env DOD_DOC_AUDIT_STATUS "What the repository-wide stale-document audit found" DOD_DOC_AUDIT
+row_env DOD_COMMENT_AUDIT_STATUS "What the code-comment accuracy audit found" DOD_COMMENT_AUDIT
 row_env DOD_VERIFICATION_STATUS "What verification ran" DOD_VERIFICATION
 row_env DOD_CI_STATUS "What remote CI reported" DOD_CI
 row_env DOD_INSTRUMENTATION_STATUS "What instrumentation or performance evidence exists" DOD_INSTRUMENTATION

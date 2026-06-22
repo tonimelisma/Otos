@@ -3,6 +3,24 @@ import Foundation
 import Testing
 
 struct CatalogStoreAvailabilityTests {
+    @Test func databaseLoadedRootBeginsUnknownWhenScanningIsDisabled() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let firstStore = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        try await firstStore.start(scansSavedLibraries: false)
+        try await firstStore.addLibrary(url: root)
+        _ = try await waitForCatalogStoreSnapshot(firstStore) { !$0.isScanning }
+
+        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        try await reloadedStore.start(scansSavedLibraries: false)
+        let loaded = await reloadedStore.currentSnapshot()
+
+        #expect(loaded.libraries.first?.availability == .unknown)
+    }
+
     @Test func unavailableLaunchRootPreservesRowsAndMarksLibraryUnavailable() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -28,7 +46,6 @@ struct CatalogStoreAvailabilityTests {
         }
         #expect(unavailable.libraries.first?.availability == .unavailable)
         #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
-        #expect(unavailable.assetStructureRevision == 1)
     }
 
     @Test func scanFailureRechecksRootBeforeMarkingUnavailable() async throws {
@@ -62,6 +79,5 @@ struct CatalogStoreAvailabilityTests {
         }
         #expect(unavailable.libraries.first?.availability == .unavailable)
         #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
-        #expect(unavailable.assetStructureRevision == 1)
     }
 }
