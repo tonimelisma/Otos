@@ -259,6 +259,12 @@ Every architecture or behavior increment must include:
 - Avoid unstructured `Task` ownership. Long-running work needs an owner, a
   cancellation path, and stale completion rejection or coalesced dirty/in-flight
   handling when applicable.
+- When an actor suspends during initialization, persistence, or another stateful
+  operation, coalesce duplicate work through one explicit owner and revalidate
+  the operation's current typed ownership facts after every await before applying
+  results. Prefer existing domain and persistence-instance identity over a
+  generated token. Transient callback ownership must not become a durable scan
+  ID, scan record, or second source of truth.
 - Main-actor work must remain below Apple's 100 ms hang threshold. Scrolling,
   grid, animation, and pointer-interaction paths should be substantially below
   that and define feature-specific budgets in the spec.

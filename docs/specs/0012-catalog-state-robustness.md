@@ -153,7 +153,8 @@ During the change:
 - make the ViewModel property read-only outside the type
 - create one `.bufferingNewest(1)` `AsyncStream` and one forwarding task
 - let Sidebar construct a local control binding from value plus callback
-- apply Projection's resolved selection directly without emitting an intent
+- let Projection retain its resolved fallback when no newer intent arrived
+- apply Projection's resolved selection in ViewModel without emitting an intent
 
 After:
 
@@ -161,7 +162,9 @@ After:
 2. The ViewModel updates immediate UI selection and yields the value.
 3. The owned stream retains only the newest pending rapid input.
 4. The forwarding task serially calls Projection.
-5. Resolved state updates the property with no feedback path.
+5. Projection retains a missing-library fallback unless a newer intent arrived
+   during the build.
+6. Resolved state updates the ViewModel property with no feedback path.
 
 Impact: ordered ownership, bounded pending work, simpler cancellation, and no
 recursion guard.

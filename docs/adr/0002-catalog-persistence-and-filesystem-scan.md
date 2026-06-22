@@ -1,8 +1,11 @@
 # ADR 0002: Catalog Persistence And Filesystem Reconciliation
 
-## Status
-
-Proposed
+- Status: Accepted
+- Last updated: 2026-06-22
+- Specs: `docs/specs/0004-library-catalog-browser.md`,
+  `docs/specs/0005-catalog-state-diagnostics-cleanup.md`,
+  `docs/specs/0008-package-descendant-scan-skip.md`,
+  `docs/specs/0013-catalog-lifecycle-race-safety.md`
 
 ## Context
 
@@ -189,7 +192,8 @@ to the filesystem-access ADR or implementation spec.
 not generate a separate media asset UUID in the initial catalog.
 
 A filesystem scan is an idempotent reconciliation operation, not a durable
-domain entity. The catalog has no `filesystem_scan` table and no scan IDs.
+domain entity. The catalog has no `filesystem_scan` table and no durable scan
+IDs.
 
 For a completed scan of one library root:
 
@@ -201,6 +205,30 @@ The catalog does not retain first-seen, last-seen, missing-since, scan history,
 or tombstone state. Move and rename behavior is out of scope; in this ADR, a
 file that appears at a new root-relative path is a new row, and a file no longer
 observed at its old root-relative path is deleted.
+
+### Startup And Transient Scan Ownership
+
+Initial database loading is one actor-owned operation. The first Store caller
+creates one finite startup task; concurrent startup or mutation callers await
+that same result. Loaded catalog state is applied exactly once, so an actor
+reentrancy window cannot replace a mutation with an older database snapshot.
+
+Database-restored roots that have not received their automatic launch scan are
+tracked separately from whether loading has finished. A mutation may require the
+catalog to load without consuming those pending scan requests. The later ordinary
+app start drains the restored-root set exactly once. A root added after loading
+is not in that set because the add operation queues its own immediate scan.
+
+Each active scan has a process-local ownership lease consisting of normalized
+`LibraryRootPath` plus the private SQLite `library_root.id` for that particular
+stored root instance. Store validates both values before and after every awaited
+database write and before accepting completion, cancellation, or failure. If a
+root is removed and the same path is added again, the new row ID makes every
+callback from the cancelled predecessor stale and harmless.
+
+This lease is concurrency bookkeeping inside `CatalogStore`, not scan identity.
+It is never persisted, exposed as domain state, or retained as history. Otos
+still has no generated scan ID or durable scan entity.
 
 ### SQLite Schema
 
@@ -247,7 +275,7 @@ During a filesystem scan, discovered asset changes are accumulated by the catalo
 owner and flushed to SQLite at 10 Hz when pending changes exist. This is a
 time-based cadence: every 100 ms, not a file-count threshold.
 
-The catalog owner publishes SwiftUI-visible scan state at 10 Hz when pending
+`CatalogProjection` publishes SwiftUI-visible scan state at 10 Hz when pending
 view changes exist. This is also time-based: every 100 ms, not a scanned-file
 threshold.
 
@@ -436,6 +464,10 @@ The selected pattern constrains implementation:
 - no count-based scan flush threshold
 - SQLite scan flushes at 10 Hz when pending changes exist
 - SwiftUI-visible scan updates publish at 10 Hz when pending changes exist
+- concurrent initial-load callers share one Store-owned startup task
+- database-restored roots receive one automatic launch scan request
+- scan callbacks must still own the same root path and private root-row instance
+  before changing durable or in-memory state
 
 ## Retirement Proof
 

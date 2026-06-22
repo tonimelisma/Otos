@@ -103,6 +103,8 @@ Selected: Projection-owned publication.
 6. ViewModel assigns the final value on MainActor.
 7. If input changed during an awaited step, dirty remains true and the next tick
    derives the newest inputs.
+8. If the selected library no longer exists, Projection retains the resolved All
+   Media fallback unless a newer sidebar intent arrived during that build.
 
 Only one derivation runs at a time. Equality suppression prevents assignment
 when the resulting window state is unchanged.
@@ -159,6 +161,8 @@ current mechanics only.
 - mixed unknown/available scopes hide unchecked media.
 - checking and unavailable empty states are correct.
 - rapid selection changes resolve to the newest intent without feedback.
+- a removed selected path remains All Media if that path is later re-added
+  without a new explicit selection intent.
 - script/verify.sh passes.
 
 ## Code-Smell Review

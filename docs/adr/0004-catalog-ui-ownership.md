@@ -190,7 +190,7 @@ current responsiveness requirement, not speculative scale work.
   snapshot construction, or projection work.
 - Projection tests prove `CatalogProjection` owns sorting, filtering, title
   lookup, availability hiding, empty-state selection, and missing-library
-  fallback.
+  fallback retention with newer-intent precedence.
 - ViewModel tests prove `CatalogWindowViewModel` owns start idempotence, state
   stream consumption, explicit sidebar intent delivery, resolved selection
   application without feedback, and add/remove routing.

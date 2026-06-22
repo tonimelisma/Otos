@@ -14,7 +14,9 @@ import OSLog
 /// survives for the next tick. Actor isolation permits only one build at a time,
 /// and equal-state suppression prevents detail views from receiving values that
 /// did not change. Ordered IDs are cached, but membership is validated directly
-/// against each immutable snapshot so Store does not maintain cache metadata.
+/// against each immutable snapshot so Store does not maintain cache metadata. A
+/// missing selected library is normalized here, where selection input is owned;
+/// the fallback is retained only if no newer intent arrived during the build.
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable (CatalogSnapshot, SidebarSelection) async -> CatalogWindowState
 
@@ -140,6 +142,16 @@ private extension CatalogProjection {
             sidebarSelection: selectedSidebarRow
         )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
+
+        // The emitted state and Projection's retained input must agree after a
+        // selected root disappears. Actor reentrancy may have delivered a newer
+        // user intent during the awaited snapshot/build, so only normalize the
+        // exact input used by this completed build; newer input stays dirty and
+        // wins on the next tick.
+        let retainedResolvedSelection = retainResolvedSelection(
+            state.resolvedSidebarSelection,
+            forInput: selectedSidebarRow
+        )
         let projectionMs = DiagnosticsTiming.milliseconds(since: projectionStart)
         let totalMs = DiagnosticsTiming.milliseconds(since: publicationStart)
         let stateChanged = lastPublishedState != state
@@ -157,6 +169,7 @@ private extension CatalogProjection {
                 "assetSortMs": "\(buildMetrics.sortMs)",
                 "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                 "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
+                "retainedResolvedSelection": "\(retainedResolvedSelection)",
                 "emptyState": state.mediaEmptyState.diagnosticDescription,
                 "snapshotMs": "\(snapshotMs)",
                 "projectionMs": "\(projectionMs)",
@@ -166,11 +179,13 @@ private extension CatalogProjection {
             ]
         )
 
-        guard stateChanged else {
-            return
+        if stateChanged {
+            yield(state)
         }
-        lastPublishedState = state
+    }
 
+    private func yield(_ state: CatalogWindowState) {
+        lastPublishedState = state
         for continuation in continuations.values {
             continuation.yield(state)
         }
@@ -188,6 +203,17 @@ private extension CatalogProjection {
         dirty = false
         lastPublishedState = nil
         cachedOrderedAssetIDs.removeAll(keepingCapacity: false)
+    }
+
+    private func retainResolvedSelection(
+        _ resolvedSelection: SidebarSelection,
+        forInput inputSelection: SidebarSelection
+    ) -> Bool {
+        guard sidebarSelection == inputSelection else {
+            return false
+        }
+        sidebarSelection = resolvedSelection
+        return true
     }
 }
 

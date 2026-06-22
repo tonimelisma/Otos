@@ -100,6 +100,27 @@ struct SourceHygieneTests {
         #expect(content.contains("func currentSnapshot()"))
     }
 
+    @Test func storeUsesPersistenceInstanceScanOwnershipWithoutDurableScanIDs() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let store = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Stores/CatalogStore.swift"),
+            encoding: .utf8
+        )
+        let persistence = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Stores/CatalogStorePersistence.swift"),
+            encoding: .utf8
+        )
+
+        #expect(store.contains("private struct ActiveScan"))
+        #expect(store.contains("let rootRowID: Int64"))
+        #expect(store.contains("private func owns(_ scan: ActiveScan)"))
+        #expect(!store.contains("currentScanRootPath"))
+        #expect(!store.contains("scanUUID"))
+        #expect(!persistence.contains("filesystem_scan"))
+    }
+
     @Test func viewModelDoesNotUseGenerationBasedProjectionRejection() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

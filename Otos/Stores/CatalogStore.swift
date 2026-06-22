@@ -14,10 +14,13 @@ import OSLog
 ///
 /// Store notifications are intentionally content-free. They only mark Projection
 /// dirty; Projection pulls one immutable snapshot on its 10 Hz cadence and owns
-/// presentation. Awaited GRDB calls make this actor reentrant, so scan code
-/// rechecks root and cancellation ownership after each database await before
-/// mutating memory. Completed scans reconcile missing paths; failed or cancelled
-/// scans preserve prior rows because incomplete observation cannot prove removal.
+/// presentation. Initial loading is represented by one finite task so every
+/// concurrent caller observes the same load instead of applying competing
+/// snapshots. Awaited GRDB calls make this actor reentrant, so active scans carry
+/// the root path and private root-row instance they own and revalidate both after
+/// each database await. Completed scans reconcile missing paths; failed,
+/// cancelled, or stale scans preserve prior rows because incomplete observation
+/// cannot prove removal.
 actor CatalogStore {
     enum Location {
         case application(bundleIdentifier: String)
@@ -40,12 +43,23 @@ actor CatalogStore {
         let contentModifiedAt: Date?
     }
 
+    /// This value is a process-local ownership lease, not scan identity. The
+    /// normalized path identifies the domain root, while the private row ID
+    /// distinguishes a removed root from a later root added at the same path.
+    private struct ActiveScan: Equatable {
+        let rootPath: LibraryRootPath
+        let rootRowID: Int64
+    }
+
     private let location: Location
     private let scanner: CatalogScanner
     private let scanCadence: Duration
     private let diagnostics: CatalogDiagnostics?
+    private let initialLoadDidRead: (@Sendable () async -> Void)?
     private var dbQueue: DatabaseQueue?
     private var started = false
+    private var startupTask: Task<Void, Error>?
+    private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
     private var rootsByPath: [LibraryRootPath: LibraryRoot] = [:]
     private var rootRowIDsByPath: [LibraryRootPath: Int64] = [:]
     private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
@@ -53,19 +67,21 @@ actor CatalogStore {
     private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
     private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
-    private var currentScanRootPath: LibraryRootPath?
+    private var activeScan: ActiveScan?
     private var currentScanTask: Task<Void, Never>?
 
     init(
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
         scanner: CatalogScanner = .live,
         scanCadence: Duration = .milliseconds(100),
-        diagnostics: CatalogDiagnostics? = .shared
+        diagnostics: CatalogDiagnostics? = .shared,
+        initialLoadDidRead: (@Sendable () async -> Void)? = nil
     ) {
         self.location = location
         self.scanner = scanner
         self.scanCadence = scanCadence
         self.diagnostics = diagnostics
+        self.initialLoadDidRead = initialLoadDidRead
     }
 }
 
@@ -85,10 +101,41 @@ extension CatalogStore {
     }
 
     func start(scansSavedLibraries: Bool = true) async throws {
-        guard !started else {
-            notifyCatalogChanged()
+        try await loadIfNeeded()
+        if scansSavedLibraries {
+            requestLoadedRootScansIfNeeded()
+        }
+    }
+
+    /// Every entry point that needs catalog truth awaits the same finite load.
+    /// The task is installed before its first suspension, which closes the actor
+    /// reentrancy window where two callers could read and later apply competing
+    /// database snapshots.
+    private func loadIfNeeded() async throws {
+        if started {
             return
         }
+        if let startupTask {
+            OtosLog.persistence.debug("Catalog startup joined existing load")
+            await diagnostics?.record(operation: "catalog.start", phase: "coalesced")
+            try await startupTask.value
+            return
+        }
+
+        let task = Task {
+            try await self.performInitialLoad()
+        }
+        startupTask = task
+        do {
+            try await task.value
+            startupTask = nil
+        } catch {
+            startupTask = nil
+            throw error
+        }
+    }
+
+    private func performInitialLoad() async throws {
         let state = OtosSignpost.persistence.beginInterval("CatalogStart")
         await diagnostics?.record(operation: "catalog.start", phase: "start")
         defer {
@@ -99,8 +146,13 @@ extension CatalogStore {
         let loaded = try await dbQueue.read { db in
             try Self.fetchCatalog(db)
         }
+        // Tests pause precisely at this real suspension boundary to prove that
+        // concurrent mutation callers join this load. Production leaves the
+        // hook nil and performs no additional work.
+        await initialLoadDidRead?()
         let applyState = OtosSignpost.catalog.beginInterval("CatalogApplyLoadedCatalog")
         applyLoadedCatalog(roots: loaded.roots, assets: loaded.assets)
+        unrequestedLoadedRootPaths = loaded.roots.map(\.path)
         OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
         OtosLog.persistence.info(
@@ -118,9 +170,6 @@ extension CatalogStore {
             ]
         )
         notifyCatalogChanged()
-        if scansSavedLibraries {
-            enqueueScans(Array(rootsByPath.keys))
-        }
     }
 
     func currentSnapshot() -> CatalogSnapshot {
@@ -173,10 +222,11 @@ extension CatalogStore {
             return
         }
 
-        if currentScanRootPath == path {
+        unrequestedLoadedRootPaths.removeAll { $0 == path }
+        if activeScan?.rootPath == path {
             currentScanTask?.cancel()
             currentScanTask = nil
-            currentScanRootPath = nil
+            activeScan = nil
         }
         pendingScanPaths.removeAll { $0 == path }
 
@@ -210,7 +260,7 @@ extension CatalogStore {
     func shutdown() {
         currentScanTask?.cancel()
         currentScanTask = nil
-        currentScanRootPath = nil
+        activeScan = nil
         pendingScanPaths.removeAll()
         notifyCatalogChanged()
     }
@@ -218,9 +268,7 @@ extension CatalogStore {
 
 private extension CatalogStore {
     private func ensureStartedForMutation() async throws {
-        if !started {
-            try await start(scansSavedLibraries: false)
-        }
+        try await loadIfNeeded()
     }
 
     private func database() throws -> DatabaseQueue {
@@ -300,7 +348,7 @@ private extension CatalogStore {
 
     private func enqueueScans(_ paths: [LibraryRootPath]) {
         for path in paths where rootsByPath[path] != nil {
-            if currentScanRootPath == path || pendingScanPaths.contains(path) {
+            if activeScan?.rootPath == path || pendingScanPaths.contains(path) {
                 continue
             }
             pendingScanPaths.append(path)
@@ -314,7 +362,9 @@ private extension CatalogStore {
         }
         while let nextPath = pendingScanPaths.first {
             pendingScanPaths.removeFirst()
-            guard rootsByPath[nextPath] != nil else {
+            guard rootsByPath[nextPath] != nil,
+                  let rootRowID = rootRowIDsByPath[nextPath]
+            else {
                 continue
             }
             guard rootIsAvailable(nextPath) else {
@@ -322,7 +372,8 @@ private extension CatalogStore {
                 continue
             }
             setAvailability(.available, for: nextPath)
-            currentScanRootPath = nextPath
+            let scan = ActiveScan(rootPath: nextPath, rootRowID: rootRowID)
+            activeScan = scan
             notifyCatalogChanged()
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
             Task {
@@ -335,24 +386,22 @@ private extension CatalogStore {
             currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence, diagnostics] in
                 do {
                     let observedPaths = try await scanner.scanRoot(nextPath, scanCadence, diagnostics) { batch in
-                        try await self.recordScannedBatch(batch, rootPath: nextPath)
+                        try await self.recordScannedBatch(batch, scan: scan)
                     }
-                    await self.scanCompleted(rootPath: nextPath, observedPaths: observedPaths)
+                    await self.scanCompleted(scan: scan, observedPaths: observedPaths)
                 } catch is CancellationError {
-                    await self.scanCancelled(rootPath: nextPath)
+                    await self.scanCancelled(scan: scan)
                 } catch {
-                    await self.scanFailed(rootPath: nextPath, error: error)
+                    await self.scanFailed(scan: scan, error: error)
                 }
             }
             return
         }
     }
 
-    private func recordScannedBatch(_ batch: [ScannedMediaFile], rootPath: LibraryRootPath) async throws {
-        guard currentScanRootPath == rootPath,
-              let root = rootsByPath[rootPath],
-              let rootRowID = rootRowIDsByPath[rootPath]
-        else {
+    private func recordScannedBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
+        guard owns(scan) else {
+            await recordIgnoredStaleCallback(scan, callback: "batch.beforeWrite")
             throw CancellationError()
         }
 
@@ -360,30 +409,31 @@ private extension CatalogStore {
         let state = OtosSignpost.persistence.beginInterval("CatalogScanBatchWrite")
         try await dbQueue.write { db in
             for file in batch {
-                try Self.upsertScannedFile(file, libraryRootID: rootRowID, db: db)
+                try Self.upsertScannedFile(file, libraryRootID: scan.rootRowID, db: db)
             }
         }
         OtosSignpost.persistence.endInterval("CatalogScanBatchWrite", state)
 
         // The store actor can process remove/cancel messages while SQLite is
         // writing. Recheck ownership before mirroring the batch into memory.
-        guard currentScanRootPath == rootPath,
-              rootsByPath[rootPath] != nil
-        else {
+        guard owns(scan), let currentRoot = rootsByPath[scan.rootPath] else {
+            await recordIgnoredStaleCallback(scan, callback: "batch.afterWrite")
             throw CancellationError()
         }
 
         let memoryState = OtosSignpost.catalog.beginInterval("CatalogScanBatchApplyMemory")
-        applyScannedBatchToMemory(batch, root: root, rootPath: rootPath)
+        // Use the post-await root value. The pre-write value belongs to the same
+        // lease, but retaining it across suspension would obscure that proof.
+        applyScannedBatchToMemory(batch, root: currentRoot, rootPath: scan.rootPath)
         OtosSignpost.catalog.endInterval("CatalogScanBatchApplyMemory", memoryState)
         OtosLog.catalog.debug(
-            "Catalog scan batch path=\(rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public)"
+            "Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public)"
         )
         await diagnostics?.record(
             operation: "catalog.scan.batch",
             phase: "finish",
             fields: [
-                "rootPath": rootPath.rawValue,
+                "rootPath": scan.rootPath.rawValue,
                 "count": "\(batch.count)",
             ]
         )
@@ -408,22 +458,20 @@ private extension CatalogStore {
         }
     }
 
-    private func scanCompleted(rootPath: LibraryRootPath, observedPaths: Set<MediaRelativePath>) async {
-        guard currentScanRootPath == rootPath,
-              let rootRowID = rootRowIDsByPath[rootPath]
-        else {
+    private func scanCompleted(scan: ActiveScan, observedPaths: Set<MediaRelativePath>) async {
+        guard owns(scan) else {
+            await recordIgnoredStaleCallback(scan, callback: "completion")
             return
         }
 
         do {
             let deletedCount = try await reconcileMissingAssets(
-                rootPath: rootPath,
-                rootRowID: rootRowID,
+                scan: scan,
                 observedPaths: observedPaths
             )
             OtosLog.catalog.info(
                 """
-                Catalog scan completed path=\(rootPath.rawValue, privacy: .public) \
+                Catalog scan completed path=\(scan.rootPath.rawValue, privacy: .public) \
                 observed=\(observedPaths.count, privacy: .public) deleted=\(deletedCount, privacy: .public)
                 """
             )
@@ -431,35 +479,40 @@ private extension CatalogStore {
                 operation: "catalog.scan",
                 phase: "finish",
                 fields: [
-                    "rootPath": rootPath.rawValue,
+                    "rootPath": scan.rootPath.rawValue,
                     "observed": "\(observedPaths.count)",
                     "deleted": "\(deletedCount)",
                 ]
             )
+        } catch is CancellationError {
+            await recordIgnoredStaleCallback(scan, callback: "reconciliation")
+            return
         } catch {
-            OtosLog.catalog.error("Catalog scan reconciliation failed path=\(rootPath.rawValue, privacy: .public)")
+            OtosLog.catalog.error("Catalog scan reconciliation failed path=\(scan.rootPath.rawValue, privacy: .public)")
             await diagnostics?.record(
                 operation: "catalog.scan.reconcile",
                 phase: "error",
                 fields: [
-                    "rootPath": rootPath.rawValue,
+                    "rootPath": scan.rootPath.rawValue,
                     "error": String(describing: error),
                 ]
             )
         }
 
-        clearCurrentScan(rootPath: rootPath)
+        clearCurrentScan(scan)
     }
 
     /// Reconciliation changes durable and in-memory membership as one actor-owned
     /// operation. Projection validates membership directly, so Store does not
     /// maintain a second cache-invalidation fact alongside its source maps.
     private func reconcileMissingAssets(
-        rootPath: LibraryRootPath,
-        rootRowID: Int64,
+        scan: ActiveScan,
         observedPaths: Set<MediaRelativePath>
     ) async throws -> Int {
-        let existingPaths = Set(assetsByRootPath[rootPath, default: [:]].keys)
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        let existingPaths = Set(assetsByRootPath[scan.rootPath, default: [:]].keys)
         let missingPaths = existingPaths.subtracting(observedPaths)
         let dbQueue = try database()
         let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
@@ -469,46 +522,53 @@ private extension CatalogStore {
             for relativePath in missingPaths {
                 try db.execute(
                     sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                    arguments: [rootRowID, relativePath.rawValue]
+                    arguments: [scan.rootRowID, relativePath.rawValue]
                 )
             }
         }
+        // Removal and same-path replacement can run while GRDB owns the writer.
+        // Never mirror an old row's reconciliation into the replacement root.
+        guard owns(scan) else {
+            throw CancellationError()
+        }
         for relativePath in missingPaths {
-            assetsByRootPath[rootPath]?.removeValue(forKey: relativePath)
+            assetsByRootPath[scan.rootPath]?.removeValue(forKey: relativePath)
         }
         return missingPaths.count
     }
 
-    private func scanCancelled(rootPath: LibraryRootPath) async {
-        if rootsByPath[rootPath] != nil {
-            OtosLog.catalog.info("Catalog scan cancelled path=\(rootPath.rawValue, privacy: .public)")
-        } else {
-            OtosLog.catalog.info("Catalog scan cancelled for removed root")
+    private func scanCancelled(scan: ActiveScan) async {
+        guard owns(scan) else {
+            await recordIgnoredStaleCallback(scan, callback: "cancellation")
+            return
         }
+        OtosLog.catalog.info("Catalog scan cancelled path=\(scan.rootPath.rawValue, privacy: .public)")
         await diagnostics?.record(
             operation: "catalog.scan",
             phase: "cancel",
-            fields: ["rootPath": rootPath.rawValue]
+            fields: ["rootPath": scan.rootPath.rawValue]
         )
-        clearCurrentScan(rootPath: rootPath)
+        clearCurrentScan(scan)
     }
 
-    private func scanFailed(rootPath: LibraryRootPath, error: Error) async {
-        let isStillAvailable = rootIsAvailable(rootPath)
-        if rootsByPath[rootPath] != nil, !isStillAvailable {
-            setAvailability(.unavailable, for: rootPath)
+    private func scanFailed(scan: ActiveScan, error: Error) async {
+        guard owns(scan) else {
+            await recordIgnoredStaleCallback(scan, callback: "failure")
+            return
+        }
+        let isStillAvailable = rootIsAvailable(scan.rootPath)
+        if !isStillAvailable {
+            setAvailability(.unavailable, for: scan.rootPath)
             OtosLog.catalog.error(
-                "Catalog scan failed because root is unavailable path=\(rootPath.rawValue, privacy: .public)"
+                "Catalog scan failed because root is unavailable path=\(scan.rootPath.rawValue, privacy: .public)"
             )
             await diagnostics?.record(
                 operation: "catalog.library.availability",
                 phase: "unavailable",
-                fields: ["rootPath": rootPath.rawValue]
+                fields: ["rootPath": scan.rootPath.rawValue]
             )
-        } else if rootsByPath[rootPath] != nil {
-            OtosLog.catalog.error("Catalog scan failed path=\(rootPath.rawValue, privacy: .public)")
         } else {
-            OtosLog.catalog.error("Catalog scan failed for removed root")
+            OtosLog.catalog.error("Catalog scan failed path=\(scan.rootPath.rawValue, privacy: .public)")
         }
         if case let CatalogScanError.filesystemErrorsEncountered(count) = error {
             OtosLog.fileAccess.error("Filesystem scan errors count=\(count, privacy: .public)")
@@ -517,18 +577,19 @@ private extension CatalogStore {
             operation: "catalog.scan",
             phase: "error",
             fields: [
-                "rootPath": rootPath.rawValue,
+                "rootPath": scan.rootPath.rawValue,
                 "error": String(describing: error),
             ]
         )
-        clearCurrentScan(rootPath: rootPath)
+        clearCurrentScan(scan)
     }
 
-    private func clearCurrentScan(rootPath: LibraryRootPath) {
-        if currentScanRootPath == rootPath {
-            currentScanRootPath = nil
-            currentScanTask = nil
+    private func clearCurrentScan(_ scan: ActiveScan) {
+        guard activeScan == scan else {
+            return
         }
+        activeScan = nil
+        currentScanTask = nil
         notifyCatalogChanged()
         startNextScanIfNeeded()
     }
@@ -547,7 +608,7 @@ private extension CatalogStore {
                 // Unknown is the only truthful fallback if transient state is
                 // ever missing; absence cannot prove filesystem reachability.
                 availability: availabilityByRootPath[root.path] ?? .unknown,
-                activity: root.path == currentScanRootPath ? .scanning : .idle
+                activity: root.path == activeScan?.rootPath ? .scanning : .idle
             )
         }
         return CatalogSnapshot(
@@ -607,5 +668,42 @@ private extension CatalogStore {
         if changed {
             notifyCatalogChanged()
         }
+    }
+
+    /// Draining only the roots restored by the initial read keeps two automatic
+    /// behaviors distinct: launch scans happen once, while a newly added root is
+    /// scanned by its add intent and is never duplicated by a later `start()`.
+    private func requestLoadedRootScansIfNeeded() {
+        guard !unrequestedLoadedRootPaths.isEmpty else {
+            return
+        }
+        let paths = unrequestedLoadedRootPaths
+        unrequestedLoadedRootPaths.removeAll(keepingCapacity: false)
+        enqueueScans(paths)
+    }
+
+    private func owns(_ scan: ActiveScan) -> Bool {
+        activeScan == scan
+            && rootsByPath[scan.rootPath] != nil
+            && rootRowIDsByPath[scan.rootPath] == scan.rootRowID
+            && rootPathsByRowID[scan.rootRowID] == scan.rootPath
+    }
+
+    private func recordIgnoredStaleCallback(_ scan: ActiveScan, callback: String) async {
+        OtosLog.catalog.debug(
+            """
+            Ignoring stale scan callback path=\(scan.rootPath.rawValue, privacy: .public) \
+            callback=\(callback, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.scan.staleCallback",
+            phase: "ignored",
+            fields: [
+                "rootPath": scan.rootPath.rawValue,
+                "rootRowID": "\(scan.rootRowID)",
+                "callback": callback,
+            ]
+        )
     }
 }

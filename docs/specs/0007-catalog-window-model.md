@@ -137,13 +137,17 @@ one-window product without moving work into Views or MainActor.
 Flow:
 
 1. OtosApp constructs one ViewModel and calls start() from the main scene.
-2. ViewModel starts one state-consumer task and Store startup task.
-3. Store loads SQLite, emits cheap changes, and scans roots.
+2. ViewModel starts one state-consumer task and one caller task for Store startup.
+3. Store coalesces every caller onto one initial load, preserves exactly-once
+   launch scan requests for database-restored roots, emits cheap changes, and
+   scans roots serially.
 4. Projection's dirty loop asks Store for snapshots and emits derived state.
 5. ViewModel assigns final state and scalar stall context on MainActor.
 6. Views render state and call explicit intents.
 7. Sidebar intents pass through one newest-buffered stream and forwarding task
    to Projection.
+8. Projection retains a missing-library All Media fallback unless a newer
+   sidebar intent arrived during the state build.
 
 ## Concurrency And Cancellation
 

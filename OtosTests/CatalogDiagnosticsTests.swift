@@ -69,10 +69,12 @@ struct CatalogDiagnosticsTests {
         let result = try runDiagnosticsScript(diagnosticsFile: outputURL)
         #expect(result.status == 0)
         let output = result.output
-        #expect(output.contains("events: 6"))
+        #expect(output.contains("events: 8"))
         #expect(output.contains("scan starts: 1"))
         #expect(output.contains("scan batches: 1"))
+        #expect(output.contains("stale scan callbacks ignored: 1"))
         #expect(output.contains("skipped packages: 1"))
+        #expect(output.contains("startup callers coalesced: 1"))
         #expect(output.contains("window projections: 1"))
         #expect(output.contains("asset order cache hits: 1"))
         #expect(output.contains("asset order sorts: 1"))
@@ -85,6 +87,8 @@ struct CatalogDiagnosticsTests {
 private func writeSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async {
     await diagnostics.record(operation: "catalog.scan", phase: "start")
     await diagnostics.record(operation: "catalog.scan.batch", phase: "finish", fields: ["count": "2"])
+    await diagnostics.record(operation: "catalog.scan.staleCallback", phase: "ignored")
+    await diagnostics.record(operation: "catalog.start", phase: "coalesced")
     await diagnostics.record(
         operation: "catalog.scan.skippedPackage",
         phase: "skip",

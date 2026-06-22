@@ -168,7 +168,9 @@ pipeline, and no generated product IDs.
 ## Interfaces, Ownership, And Data Flow
 
 - `CatalogStore` actor: owns GRDB, root/media memory, transient availability,
-  change subscribers, pending scans, and scan cancellation.
+  one serialized initial load, change subscribers, pending scans, and scan
+  cancellation. Database-restored roots retain exactly-once launch-scan requests
+  even when a mutation initializes Store first.
 - `CatalogScanner`: Sendable scanner function wrapper used by the actor and tests.
 - `CatalogProjection`: actor that publishes coalesced `CatalogWindowState` for
   the main window.
@@ -180,6 +182,8 @@ pipeline, and no generated product IDs.
 - `SidebarSelection`: SwiftUI sidebar selection for `All Media` or one root path.
 - SQLite lives in Application Support under an Otos catalog directory.
 - Root identity is the normalized path. `library_root.id` is storage-only.
+- Active scanner callbacks are guarded by normalized root path plus the private
+  root-row instance so remove/re-add at the same path cannot revive old work.
 - Scans write pending batches no more often than 10 Hz; Projection publishes
   UI-ready window state no more often than 10 Hz when dirty.
 - The app never writes, moves, deletes, or rewrites original media files.

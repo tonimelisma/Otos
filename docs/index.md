@@ -51,6 +51,7 @@ implementation history.
 | [0010](specs/0010-appkit-jank-instrumentation.md) | Jank telemetry strategy and retained failure evidence. |
 | [0011](specs/0011-placeholder-media-grid.md) | Placeholder collection grid behavior and rendering regression fix. |
 | [0012](specs/0012-catalog-state-robustness.md) | Explicit intents, unknown availability, order validation, diagnostics split, and living documentation. |
+| [0013](specs/0013-catalog-lifecycle-race-safety.md) | Serialized startup, replacement-safe transient scan ownership, and retained selection normalization. |
 
 ## Planning Documents
 

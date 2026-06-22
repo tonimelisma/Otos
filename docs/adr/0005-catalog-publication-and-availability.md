@@ -2,9 +2,10 @@
 
 - Status: Accepted
 - Date: 2026-06-15
-- Last updated: 2026-06-21
+- Last updated: 2026-06-22
 - Specs: `docs/specs/0009-catalog-publication-and-availability.md`,
-  `docs/specs/0012-catalog-state-robustness.md`
+  `docs/specs/0012-catalog-state-robustness.md`,
+  `docs/specs/0013-catalog-lifecycle-race-safety.md`
 
 ## Context
 
@@ -72,9 +73,13 @@ sidebar scope. The ViewModel owns one `AsyncStream<SidebarSelection>` using
 create an unbounded task backlog; only the newest pending intent is retained.
 
 Projection may normalize a selected library that no longer exists to
-`.allMedia`. Applying that resolved selection updates the ViewModel property
-directly and does not emit another user intent, so normalization cannot feed back
-into the stream.
+`.allMedia`. After deriving state, Projection also adopts that resolved fallback
+as its retained selection when the input used for the build is still current. If
+a newer explicit selection arrived during an await, the newer input wins and is
+left untouched for the next dirty tick. Applying the resolved selection updates
+the ViewModel property directly and does not emit another user intent, so
+normalization cannot feed back into the stream or silently resurrect a removed
+selection if the same path is later added again.
 
 ### Availability
 
@@ -159,6 +164,8 @@ Failure mode: the UI states a domain fact that is not known.
   and explicit intents.
 - Sorting, filtering, and scope derivation remain off MainActor.
 - The ViewModel's owned stream and tasks have one cancellation point.
+- Projection's retained selection agrees with the fallback state it publishes,
+  while newer user input remains authoritative.
 - Startup truthfully represents unchecked roots without blocking database load.
 - Cached rows survive removable-disk and network availability changes.
 - Projection tests require controlled clocks to verify 10 Hz coalescing.
