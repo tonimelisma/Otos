@@ -76,6 +76,32 @@ behavior, active process requirements, current-increment changes, and retired
 requirements only. Planning docs may contain wild ideas, abandoned options, and
 concepts that are never intended for implementation.
 
+## Living Documentation And Comments
+
+Current ADRs, specs, requirements, process docs, indexes, templates, scripts,
+and code comments describe the implementation that exists now. Git history owns
+the implementation history. When a decision or mechanism changes, rewrite every
+affected current claim or delete the document/comment if it no longer serves a
+current purpose. Do not preserve stale names, old data flows, superseded
+diagnostic policies, or obsolete backlinks as explanatory context.
+
+Planning documents are the only exception: they may retain future ideas or
+abandoned options when visibly labeled non-authoritative, but they must not claim
+to describe current behavior or silently guide implementation.
+
+Architecture and behavior increments must include two explicit audits:
+
+- a repository-wide stale-document audit across ADRs, specs, requirements,
+  process docs, indexes, templates, scripts, and backlinks
+- a code-comment accuracy audit across affected architecture, concurrency,
+  persistence, diagnostics, and AppKit boundaries
+
+File guides and focused comments should let a Swift newcomer follow the complete
+current data flow and understand why ownership and concurrency boundaries exist.
+Comments should explain non-obvious mechanics, preservation rules, cancellation,
+coalescing, and cache validation. They must not narrate syntax, compare against a
+recently removed design, or read like an increment changelog.
+
 ## Worktrees And Branches
 
 Use `codex/<description>` branches for agent-driven increments. Non-micro
@@ -144,6 +170,12 @@ smells remain, what media-originals and diagnostics review found, what risks rem
 merge/cleanup/final-clean-tree steps completed.
 
 - Requirements, specs, ADRs, and docs are updated.
+- The stale-document audit confirms that affected current docs, indexes,
+  templates, scripts, and backlinks describe the landed design, and documents
+  without a current purpose are deleted.
+- The code-comment audit confirms that affected comments explain current
+  mechanics and rationale without syntax narration, increment history, or
+  retired behavior.
 - Captured user guidance was restated to the user and stored in the correct
   current or planning document.
 - Local `script/verify.sh` passes, or the exact blocker is recorded.

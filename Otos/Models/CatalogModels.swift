@@ -1,5 +1,18 @@
 import Foundation
 
+// Catalog model guide
+//
+// These value types are the Sendable boundary between the catalog actors and
+// MainActor UI state. Paths are domain identity, not display-only strings:
+// library roots are identified by normalized absolute paths and media assets by
+// a root plus a relative path. Runtime facts such as reachability and scanning
+// stay separate from durable root identity because the filesystem can change
+// independently of SQLite.
+//
+// `CatalogSnapshot` is raw Store truth at one instant. `CatalogWindowState` is
+// the UI-ready value built by Projection. Keeping both immutable at the handoff
+// boundary lets actors publish coherent state without sharing mutable storage.
+
 /// Typed filesystem paths keep domain roles visible at call sites. A library
 /// root path and a media relative path are both text under the hood, but mixing
 /// them up would be a real catalog bug, so they are not plain Strings.
@@ -51,10 +64,13 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
     }
 }
 
-/// Availability is runtime state. It answers whether Otos can reach the saved
-/// root path right now, but it is not persisted because the filesystem can
-/// change independently of the catalog database.
+/// Availability is the most recent reachability observation for a saved root.
+/// Loaded roots begin unknown because SQLite proves only that the path was saved;
+/// the pre-scan filesystem check is what proves available or unavailable. This
+/// state is deliberately transient because a mounted volume can disappear
+/// without any catalog mutation.
 nonisolated enum LibraryAvailability: Hashable {
+    case unknown
     case available
     case unavailable
 }
@@ -95,9 +111,12 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     }
 }
 
+/// One cataloged file and the filesystem facts persisted for it. Library display
+/// text is intentionally absent: it is derived from `LibraryRootPath`, so storing
+/// it on every asset would create a second value that could disagree with root
+/// identity.
 nonisolated struct MediaAsset: Identifiable, Hashable {
     let libraryRootPath: LibraryRootPath
-    let libraryDisplayName: String
     let relativePath: MediaRelativePath
     let name: String?
     let contentTypeIdentifier: String?
@@ -116,12 +135,10 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
 nonisolated struct CatalogSnapshot: Equatable {
     var libraries: [CatalogLibraryState]
     var assetsByID: [MediaAssetID: MediaAsset]
-    var assetStructureRevision: UInt64
 
     static let empty = CatalogSnapshot(
         libraries: [],
-        assetsByID: [:],
-        assetStructureRevision: 0
+        assetsByID: [:]
     )
 
     var isScanning: Bool {
@@ -130,8 +147,11 @@ nonisolated struct CatalogSnapshot: Equatable {
 }
 
 /// The collection view consumes identity order separately from current values.
-/// A detail-only file-fact change can therefore refresh visible tiles without
-/// pretending the collection's structure changed.
+/// `assetsByID` contains only values in the projected scope. That scoped map is
+/// important: a detail update in another library must not make the selected
+/// library appear changed to SwiftUI or AppKit. A detail-only change inside the
+/// scope can refresh visible tiles without pretending collection structure
+/// changed.
 nonisolated struct CatalogMediaGridState: Equatable {
     var scope: SidebarSelection
     var orderedAssetIDs: [MediaAssetID]
@@ -148,15 +168,21 @@ nonisolated struct CatalogMediaGridState: Equatable {
 /// can stay declarative and avoid re-deriving catalog state in `body`.
 nonisolated enum CatalogMediaEmptyState: Equatable {
     case noMedia
+    case checkingLibraries
     case noAvailableMedia
+    case libraryChecking
     case libraryUnavailable
 
     var diagnosticDescription: String {
         switch self {
         case .noMedia:
             "noMedia"
+        case .checkingLibraries:
+            "checkingLibraries"
         case .noAvailableMedia:
             "noAvailableMedia"
+        case .libraryChecking:
+            "libraryChecking"
         case .libraryUnavailable:
             "libraryUnavailable"
         }

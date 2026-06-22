@@ -21,6 +21,11 @@ struct SourceHygieneTests {
             "CatalogSelection",
             "dismissMessage",
             ".alert(\"Catalog\"",
+            "assetStructureRevision",
+            "libraryDisplayName",
+            "CatalogUIUpdateTracker",
+            "isApplyingResolvedSidebarSelection",
+            "syncSidebarSelectionToProjection",
         ]
 
         for file in sourceFiles {
@@ -105,6 +110,24 @@ struct SourceHygieneTests {
         #expect(!content.contains("generation"))
         #expect(!content.contains("projectionTask"))
         #expect(!content.contains("applyCatalogSnapshot"))
+        #expect(!content.contains("didSet"))
+        #expect(content.contains("func selectSidebar("))
+        #expect(content.contains("bufferingPolicy: .bufferingNewest(1)"))
+    }
+
+    @Test func appKitGridUsesNativeTelemetryWithoutJSONLTasks() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(!content.contains("CatalogDiagnostics"))
+        #expect(!content.contains("Task {"))
+        #expect(content.contains("OtosLog.ui"))
+        #expect(content.contains("OtosSignpost.ui"))
     }
 
     @Test func sqliteRowIDDoesNotLeakOutsideStore() throws {
@@ -171,6 +194,54 @@ struct SourceHygieneTests {
             atPath: repoRoot.appending(path: "Otos/Views/MediaTableView.swift").path(percentEncoded: false)
         ))
     }
+
+    @Test func livingDocumentationHasNoKnownRetiredCurrentStateClaims() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let docsRoot = repoRoot.appending(path: "docs")
+        let markdownFiles = try markdownFiles(under: docsRoot)
+        let retiredClaims = [
+            "CatalogWindowModel",
+            "CatalogSession",
+            "CatalogBrowserState",
+            "CatalogUIUpdateTracker",
+            "catalog.window.state.apply",
+            "assetsInSelectedScope",
+            "0007-catalog-order-invalidation",
+        ]
+
+        for file in markdownFiles {
+            let content = try String(contentsOf: file, encoding: .utf8)
+            for claim in retiredClaims {
+                #expect(
+                    !content.contains(claim),
+                    "\(claim) should not appear in current docs: \(file.path(percentEncoded: false))"
+                )
+            }
+        }
+
+        #expect(!FileManager.default.fileExists(
+            atPath: docsRoot.appending(path: "specs/0002-product-roadmap.md").path(percentEncoded: false)
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: docsRoot.appending(path: "adr/0007-catalog-order-reuse.md").path(percentEncoded: false)
+        ))
+
+        let requirements = try String(
+            contentsOf: docsRoot.appending(path: "requirements.md"),
+            encoding: .utf8
+        )
+        #expect(!requirements.contains("| Changed |"))
+
+        let agentInstructions = try String(
+            contentsOf: repoRoot.appending(path: "AGENTS.md"),
+            encoding: .utf8
+        )
+        #expect(agentInstructions.contains("## Living Documentation"))
+        #expect(agentInstructions.contains("repository-wide stale-document audit"))
+        #expect(agentInstructions.contains("code-comment accuracy audit"))
+    }
 }
 
 private func swiftFiles(under directory: URL) throws -> [URL] {
@@ -188,6 +259,27 @@ private func swiftFiles(under directory: URL) throws -> [URL] {
         }
         let values = try url.resourceValues(forKeys: [.isRegularFileKey])
         guard values.isRegularFile == true, url.pathExtension == "swift" else {
+            return nil
+        }
+        return url
+    }
+}
+
+private func markdownFiles(under directory: URL) throws -> [URL] {
+    guard let enumerator = FileManager.default.enumerator(
+        at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return []
+    }
+
+    return try enumerator.compactMap { item in
+        guard let url = item as? URL else {
+            return nil
+        }
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+        guard values.isRegularFile == true, url.pathExtension == "md" else {
             return nil
         }
         return url

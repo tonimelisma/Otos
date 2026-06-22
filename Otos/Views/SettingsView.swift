@@ -67,7 +67,9 @@ private struct LibrariesSettingsView: View {
 
                 TableColumn("Availability") { library in
                     Text(library.availability.label)
-                        .foregroundStyle(library.isAvailable ? Color.secondary : Color.orange)
+                        .foregroundStyle(
+                            library.availability == .unavailable ? Color.orange : Color.secondary
+                        )
                 }
                 .width(min: 100, ideal: 120)
             }
@@ -131,6 +133,8 @@ private struct LibrariesSettingsView: View {
 private extension LibraryAvailability {
     var label: String {
         switch self {
+        case .unknown:
+            "Checking"
         case .available:
             "Available"
         case .unavailable:

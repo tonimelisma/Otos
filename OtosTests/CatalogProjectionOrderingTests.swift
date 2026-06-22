@@ -3,13 +3,12 @@ import Foundation
 import Testing
 
 struct CatalogProjectionOrderingTests {
-    @Test func unchangedRevisionReusesOrderAndRematerializesDetailValues() async {
+    @Test func unchangedMembershipReusesOrderAndRematerializesDetailValues() async {
         let root = orderingRoot()
         let projection = CatalogProjection(diagnostics: nil)
         let original = orderingAsset(root: root, relativePath: "one.jpg")
         let changed = MediaAsset(
             libraryRootPath: original.libraryRootPath,
-            libraryDisplayName: original.libraryDisplayName,
             relativePath: original.relativePath,
             name: "renamed-detail.jpg",
             contentTypeIdentifier: original.contentTypeIdentifier,
@@ -19,11 +18,11 @@ struct CatalogProjectionOrderingTests {
         )
 
         _ = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [original], revision: 4),
+            snapshot: orderingSnapshot(root: root, assets: [original]),
             sidebarSelection: .allMedia
         )
         let updated = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [changed], revision: 4),
+            snapshot: orderingSnapshot(root: root, assets: [changed]),
             sidebarSelection: .allMedia
         )
 
@@ -32,18 +31,18 @@ struct CatalogProjectionOrderingTests {
         #expect(updated.mediaGrid.assetsByID[original.id]?.byteSize == 99)
     }
 
-    @Test func unchangedRevisionWithDifferentIdentitiesRecoversByRebuildingOrder() async {
+    @Test func sameCountIdentityReplacementRebuildsOrder() async {
         let root = orderingRoot()
         let projection = CatalogProjection(diagnostics: nil)
         let first = orderingAsset(root: root, relativePath: "z.jpg")
         let replacement = orderingAsset(root: root, relativePath: "a.jpg")
 
         _ = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [first], revision: 7),
+            snapshot: orderingSnapshot(root: root, assets: [first]),
             sidebarSelection: .allMedia
         )
         let recovered = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [replacement], revision: 7),
+            snapshot: orderingSnapshot(root: root, assets: [replacement]),
             sidebarSelection: .allMedia
         )
 
@@ -51,7 +50,7 @@ struct CatalogProjectionOrderingTests {
         #expect(recovered.mediaGrid.assetsByID[replacement.id] == replacement)
     }
 
-    @Test func changedRevisionResortsAfterInsertionAndDeletion() async {
+    @Test func changedMembershipResortsAfterInsertionAndDeletion() async {
         let root = orderingRoot()
         let projection = CatalogProjection(diagnostics: nil)
         let first = await projection.windowState(
@@ -60,8 +59,7 @@ struct CatalogProjectionOrderingTests {
                 assets: [
                     orderingAsset(root: root, relativePath: "b.jpg"),
                     orderingAsset(root: root, relativePath: "z.jpg"),
-                ],
-                revision: 1
+                ]
             ),
             sidebarSelection: .allMedia
         )
@@ -74,8 +72,7 @@ struct CatalogProjectionOrderingTests {
                     orderingAsset(root: root, relativePath: "a.jpg"),
                     orderingAsset(root: root, relativePath: "c.jpg"),
                     orderingAsset(root: root, relativePath: "z.jpg"),
-                ],
-                revision: 2
+                ]
             ),
             sidebarSelection: .allMedia
         )
@@ -107,6 +104,7 @@ struct CatalogProjectionOrderingTests {
         _ = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
                 && event.fields["assetOrderSorted"] == "true"
+                && event.fields["assetMembershipChanged"] == "true"
                 && event.fields["selectedScopeAssetCount"] == "1"
         }
 
@@ -131,7 +129,6 @@ private func orderingRoot() -> LibraryRoot {
 private func orderingAsset(root: LibraryRoot, relativePath: String) -> MediaAsset {
     MediaAsset(
         libraryRootPath: root.path,
-        libraryDisplayName: root.displayName,
         relativePath: MediaRelativePath(rawValue: relativePath),
         name: URL(fileURLWithPath: relativePath).lastPathComponent,
         contentTypeIdentifier: "public.jpeg",
@@ -143,13 +140,11 @@ private func orderingAsset(root: LibraryRoot, relativePath: String) -> MediaAsse
 
 private func orderingSnapshot(
     root: LibraryRoot,
-    assets: [MediaAsset],
-    revision: UInt64
+    assets: [MediaAsset]
 ) -> CatalogSnapshot {
     CatalogSnapshot(
         libraries: [CatalogLibraryState(root: root, availability: .available, activity: .idle)],
-        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) }),
-        assetStructureRevision: revision
+        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
     )
 }
 

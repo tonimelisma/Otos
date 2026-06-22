@@ -46,9 +46,12 @@ script/logs.sh Thumbnails
 
 SwiftUI/AppKit high-cardinality view jank:
 
-- Use Otos signposts and JSONL diagnostics to identify the app-owned boundary:
-  catalog snapshot, projection, state assignment, media item count, collection
-  update, and latest grid handoff.
+- Use Otos Logger events and signposts for high-frequency ViewModel and AppKit
+  boundaries: state assignment, media item count, collection receipt/apply/
+  coalescing/reload/layout, and slow cells. These paths must not create JSONL
+  tasks or retain full catalog state.
+- Use coarse JSONL diagnostics for Store/scan operations, Projection summaries,
+  availability transitions, failures, and actual active-app run-loop stalls.
 - Use `sample` or `script/profile.sh "Time Profiler" 10s` while the app is
   beach balling to inspect private SwiftUI/AppKit stacks.
 - Do not claim Otos directly measures private AppKit internals. Correlate our

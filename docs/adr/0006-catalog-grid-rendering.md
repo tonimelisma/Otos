@@ -10,8 +10,9 @@ This ADR owns the media browser rendering technology, layout, reusable item
 boundary, and structural/detail collection update mechanics.
 
 It references but does not own catalog truth, snapshot cadence, availability,
-and ordering. ADR 0007 owns structural revision and cached ordering. ADRs 0002,
-0004, and 0005 retain scan/persistence, UI ownership, and publication ownership.
+and ordering. ADR 0007 owns identity-based order validation and cached ordering.
+ADRs 0002, 0004, and 0005 retain scan/persistence, UI ownership, and publication
+ownership.
 Thumbnail rendering, media eligibility, selection, preview, and zoom require
 separate future specs/ADRs if implemented.
 

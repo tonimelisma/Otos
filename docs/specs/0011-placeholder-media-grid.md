@@ -6,11 +6,11 @@ Bug fix, rendering refactor, and catalog projection refactor.
 
 ## Problem Statement
 
-The media browser's SwiftUI/AppKit table path can enter a permanent main-thread
-stall after repeated All Media/library scope changes with approximately 23,000
-rows. Once stalled, memory grows continuously toward OOM. Runtime samples and
-heap evidence locate the runaway work in private table row hosting and layout,
-while Otos catalog publication is idle.
+The retired SwiftUI/AppKit table path could enter a permanent main-thread stall
+after repeated All Media/library scope changes with approximately 23,000 rows.
+Runtime samples and heap evidence located the runaway work in private table row
+hosting and layout while Otos catalog publication was idle. The implemented grid
+is the regression fix for that evidence.
 
 ## User-Facing Goal
 
@@ -22,23 +22,23 @@ switches between All Media and libraries.
 
 - `CatalogStore` owns keyed in-memory media grouped by library and persists the
   same catalog to SQLite.
-- `CatalogProjection` owns the 10 Hz coalesced UI publication loop and currently
-  sorts every projected asset array.
+- `CatalogProjection` owns the 10 Hz coalesced UI publication loop and reuses
+  ordered IDs when direct membership validation succeeds.
 - `CatalogWindowViewModel` assigns final state on the MainActor.
-- The experimental media table path is implicated by the evidence recorded in
-  Spec 0010 and must be retired; the Settings table is unrelated and remains.
+- The media browser uses `NSCollectionView`; Spec 0010 retains the failure
+  evidence that justifies that boundary. The Settings table is unrelated.
 - Catalog rows contain filesystem facts but no thumbnails.
 
 ## In Scope
 
-- Replace only the media table with a passive SwiftUI shell around a narrow
-  AppKit `NSCollectionView` bridge.
+- Keep a passive SwiftUI shell around the narrow AppKit `NSCollectionView`
+  bridge.
 - Render exactly six responsive square columns with filenames and video-only
   markers.
 - Preserve all regular cataloged files as generic tiles when they are not
   movies.
 - Split structural identity order from detail values.
-- Add a transient Store structure revision and Projection order cache.
+- Reuse Projection's ordered-ID cache only after direct identity validation.
 - Coalesce imperative collection updates to one structural apply in flight.
 - Preserve and extend diagnostics, tests, and runtime performance evidence.
 
@@ -65,17 +65,17 @@ scan IDs, and SQLite schema changes.
   behavior.
 - A sidebar scope change scrolls to the first item; same-scope scan updates
   preserve the current scroll position.
-- Existing `Library Unavailable`, `No Available Media`, and `No Media` states
-  remain visible when the projected grid is empty.
+- Existing `Checking Library`, `Checking Libraries`, `Library Unavailable`,
+  `No Available Media`, and `No Media` states remain visible when the projected
+  grid is empty.
 
 ### Architecture
 
 - Store truth remains keyed by library root and relative path.
-- `assetStructureRevision` describes membership only and is transient.
-- `CatalogSnapshot` exposes keyed assets and structure revision; dictionary
-  iteration order has no UI meaning.
-- `CatalogProjection` owns global asset ordering and caches ordered IDs by
-  structure revision.
+- `CatalogSnapshot` exposes keyed assets; dictionary iteration order has no UI
+  meaning.
+- `CatalogProjection` owns global asset ordering and reuses cached ordered IDs
+  only when cached count and direct identity membership match the snapshot.
 - `CatalogMediaGridState` carries scope, ordered IDs, and current values keyed by
   ID.
 - The collection bridge applies identity changes structurally and refreshes only
@@ -96,9 +96,9 @@ scan IDs, and SQLite schema changes.
 
 ### Tooling And Regression
 
-- Signposts and JSONL diagnostics cover grid receipt, structural apply, pending
-  replacement, completion, visible reload, layout creation, slow cell setup,
-  order cache hits, order sorts, and invariant rebuilds.
+- Logger/signposts cover grid receipt, structural apply, pending replacement,
+  completion, visible reload, layout creation, and slow cell setup. Coarse JSONL
+  Projection summaries cover order cache hits, membership changes, and sorts.
 - The deleted media table and per-item `NSHostingView` must not reappear.
 - The Settings table remains unchanged.
 
@@ -156,11 +156,11 @@ custom rendering engine.
 
 ## Ownership And Data Flow
 
-1. `CatalogStore` mutates keyed runtime truth and advances structure revision
-   only when identity membership changes.
+1. `CatalogStore` mutates keyed runtime truth and emits a cheap change signal.
 2. At most once per dirty 100 ms tick, `CatalogProjection` requests a keyed
-   snapshot, sorts IDs only for a changed revision, filters cached order for the
-   current scope/availability, and publishes `CatalogWindowState`.
+   snapshot, validates cached identity membership, sorts only on cache miss,
+   filters cached order for the current scope/availability, and publishes
+   `CatalogWindowState`.
 3. `CatalogWindowViewModel` assigns that state on the MainActor.
 4. `MediaGridView` renders title/empty state and forwards grid state to the
    collection controller.
@@ -177,13 +177,14 @@ state is processed.
 
 ## Persistence Effects
 
-None. Structure revision and cached ordering are reconstructed in memory after
-each launch and are not stored in SQLite.
+None. Cached ordering is reconstructed in Projection memory after each launch
+and is not stored in SQLite.
 
 ## Instrumentation And Profiling
 
-- JSONL: projection revision/cache/sort counts and collection receipt/apply/
-  pending/reload outcomes.
+- JSONL: coarse Projection cache/membership/sort summaries and actual run-loop
+  stalls.
+- Unified logging/signposts: collection receipt/apply/pending/reload outcomes.
 - Signposts: Store snapshot, Projection publication/state build, ViewModel state
   assignment, collection layout/receipt/apply/reload, and scan boundaries.
 - Runtime: `script/catalog-diagnostics.sh check`, agent-executable 1 Hz process
@@ -191,11 +192,10 @@ each launch and are not stored in SQLite.
 
 ## Tests And Acceptance
 
-- Store tests prove every membership increment and detail/availability
-  non-increment.
-- Projection tests prove first sort, cache reuse, detail rematerialization,
-  insertion/deletion ordering, filtering, availability hiding, and invariant
-  recovery.
+- Projection tests prove first sort, direct cache validation, detail
+  rematerialization, insertion/deletion/same-count replacement ordering,
+  filtering, unknown/unavailable hiding, orphan fallback ordering, and scoped
+  value-map isolation.
 - Collection state-machine tests prove one in-flight apply, newest pending,
   detail refresh, scope reset, and same-scope preservation.
 - Content-type tests prove movies are marked while image, audio, unknown, DOCX,
@@ -214,8 +214,8 @@ each launch and are not stored in SQLite.
   in Projection.
 - State duplication: ordered IDs and keyed values answer different structural
   and detail questions; the Store remains sole truth owner.
-- Cache invalidation: protected by Store membership tests and Projection's
-  resolve-count invariant recovery.
+- Cache validation: direct count and identity membership checks rebuild order on
+  every membership mismatch without Store-side invalidation bookkeeping.
 
 ## Non-Authoritative Future Ideas
 
@@ -225,13 +225,12 @@ each launch and are not stored in SQLite.
 These are not current requirements and this increment adds no hooks or fields
 for them.
 
-## Non-Blocking After-DoD Verification
+## User Verification
 
-Visible repeated All Media/library switching with approximately 24,000 assets is
-useful confirmation of the original regression. The agent shell cannot create a
-WindowServer-connected Otos window, so this interaction is not a DoD condition
-and is not assigned to the user. If performed later, any failure becomes input
-to a new bug-fix increment.
+User-operated verification is not a DoD condition. Agent-controlled build,
+runtime, process, log, diagnostic, and profiling evidence owns increment
+verification; any later user-reported failure becomes requirement input for a
+new bug-fix increment.
 
 ## Verification Outcome
 

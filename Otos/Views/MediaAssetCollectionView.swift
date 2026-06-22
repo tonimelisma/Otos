@@ -3,9 +3,19 @@ import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// This is the narrow AppKit boundary for the media browser. SwiftUI remains
-/// responsible for window composition, while NSCollectionView supplies the
-/// reusable, viewport-bounded item lifecycle that the large catalog requires.
+/// Media collection bridge guide
+///
+/// This is the only AppKit boundary in the media browser. SwiftUI owns window
+/// composition and supplies one ordered, scoped value. NSCollectionView owns the
+/// imperative viewport, reuse, layout, and diffable-data-source lifecycle that a
+/// high-cardinality browser requires.
+///
+/// Identity order is structural; the asset map is detail. A structural change
+/// performs one nonanimated diffable apply, while unchanged IDs replace the map
+/// and reload only visible reusable items. `MediaAssetCollectionApplyGate`
+/// prevents overlapping AppKit applies and keeps only the newest pending value.
+/// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
+/// cannot create file-writing tasks or retain grid state on MainActor.
 struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
 
@@ -76,11 +86,7 @@ final class MediaAssetCollectionViewController: NSViewController {
         scrollView.autohidesScrollers = true
         view = scrollView
 
-        record(
-            operation: "ui.mediaGrid.layout.replace",
-            phase: "finish",
-            fields: ["columns": "6"]
-        )
+        OtosLog.ui.info("Media grid layout installed columns=6")
     }
 
     /// Projection already limits incoming state to 10 Hz. This method adds only
@@ -91,14 +97,12 @@ final class MediaAssetCollectionViewController: NSViewController {
         defer { OtosSignpost.ui.endInterval("MediaGridStateReceive", signpost) }
 
         let action = applyGate.receive(grid)
-        record(
-            operation: "ui.mediaGrid.state.receive",
-            phase: "finish",
-            fields: [
-                "itemCount": "\(grid.orderedAssetIDs.count)",
-                "scope": grid.scope.diagnosticDescription,
-                "action": action.diagnosticDescription,
-            ]
+        OtosLog.ui.debug(
+            """
+            Media grid state received items=\(grid.orderedAssetIDs.count, privacy: .public) \
+            scope=\(grid.scope.diagnosticDescription, privacy: .public) \
+            action=\(action.diagnosticDescription, privacy: .public)
+            """
         )
         perform(action)
     }
@@ -135,9 +139,8 @@ private extension MediaAssetCollectionViewController {
             return
         case let .pending(replacedExisting):
             OtosSignpost.ui.emitEvent("MediaGridPendingState")
-            record(
-                operation: "ui.mediaGrid.pending",
-                phase: replacedExisting ? "replace" : "store"
+            OtosLog.ui.debug(
+                "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
             )
         case let .refreshVisible(grid, resetScroll):
             assetsByID = grid.assetsByID
@@ -163,14 +166,12 @@ private extension MediaAssetCollectionViewController {
         snapshot.appendItems(grid.orderedAssetIDs, toSection: .media)
 
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
-        record(
-            operation: "ui.mediaGrid.apply",
-            phase: "start",
-            fields: [
-                "itemCount": "\(grid.orderedAssetIDs.count)",
-                "scope": grid.scope.diagnosticDescription,
-                "resetScroll": "\(resetScroll)",
-            ]
+        OtosLog.ui.debug(
+            """
+            Media grid structural apply started items=\(grid.orderedAssetIDs.count, privacy: .public) \
+            scope=\(grid.scope.diagnosticDescription, privacy: .public) \
+            resetScroll=\(resetScroll, privacy: .public)
+            """
         )
         dataSource.apply(snapshot, animatingDifferences: false) { [weak self] in
             guard let self else { return }
@@ -185,14 +186,13 @@ private extension MediaAssetCollectionViewController {
             }
             reloadVisibleItems()
 
-            record(
-                operation: "ui.mediaGrid.apply",
-                phase: "finish",
-                fields: [
-                    "itemCount": "\(grid.orderedAssetIDs.count)",
-                    "scope": grid.scope.diagnosticDescription,
-                    "applyMs": "\(DiagnosticsTiming.milliseconds(since: applyStart))",
-                ]
+            let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
+            OtosLog.ui.info(
+                """
+                Media grid structural apply finished items=\(grid.orderedAssetIDs.count, privacy: .public) \
+                scope=\(grid.scope.diagnosticDescription, privacy: .public) \
+                applyMs=\(applyMs, privacy: .public)
+                """
             )
             perform(applyGate.complete(applied: grid))
         }
@@ -209,29 +209,18 @@ private extension MediaAssetCollectionViewController {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleReload")
         collectionView.reloadItems(at: visibleIndexPaths)
         OtosSignpost.ui.endInterval("MediaGridVisibleReload", signpost)
-        record(
-            operation: "ui.mediaGrid.visibleReload",
-            phase: "finish",
-            fields: [
-                "visibleItemCount": "\(visibleIndexPaths.count)",
-                "reloadMs": "\(DiagnosticsTiming.milliseconds(since: reloadStart))",
-            ]
+        let reloadMs = DiagnosticsTiming.milliseconds(since: reloadStart)
+        OtosLog.ui.debug(
+            """
+            Media grid visible items reloaded count=\(visibleIndexPaths.count, privacy: .public) \
+            reloadMs=\(reloadMs, privacy: .public)
+            """
         )
     }
 
     func scrollToTop() {
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
-    }
-
-    func record(operation: String, phase: String, fields: [String: String] = [:]) {
-        Task {
-            await CatalogDiagnostics.shared.record(
-                operation: operation,
-                phase: phase,
-                fields: fields
-            )
-        }
     }
 }
 
@@ -320,16 +309,12 @@ private final class MediaAssetCollectionItem: NSCollectionViewItem {
             return
         }
         OtosSignpost.ui.emitEvent("MediaGridSlowCellConfiguration")
-        Task {
-            await CatalogDiagnostics.shared.record(
-                operation: "ui.mediaGrid.cell.configureSlow",
-                phase: "finish",
-                fields: [
-                    "assetID": "\(asset.libraryRootPath.rawValue)/\(asset.relativePath.rawValue)",
-                    "configureMs": "\(elapsedMs)",
-                ]
-            )
-        }
+        OtosLog.ui.error(
+            """
+            Media grid slow cell assetID=\(asset.libraryRootPath.rawValue, privacy: .public)/\
+            \(asset.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
+            """
+        )
     }
 }
 

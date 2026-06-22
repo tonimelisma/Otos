@@ -2,6 +2,14 @@ import AppKit
 import Foundation
 import OSLog
 
+/// UI jank diagnostics guide
+///
+/// The monitor samples the active app's main run loop in debug builds. The
+/// ViewModel supplies only the latest scalar grid handoff, so a delayed timer can
+/// be correlated with catalog work without retaining a `CatalogWindowState` or
+/// its asset dictionary. Frequent state and collection activity is measured with
+/// Logger/signposts; JSONL is written only when an actual active-app stall is
+/// detected.
 nonisolated struct CatalogGridHandoff: Equatable {
     let updateID: Int
     let itemCount: Int
@@ -13,35 +21,27 @@ nonisolated struct CatalogGridHandoff: Equatable {
 }
 
 @MainActor
-final class CatalogUIUpdateTracker {
-    static let shared = CatalogUIUpdateTracker()
-
-    private var nextID = 0
+final class MainRunLoopStallMonitor {
+    private var timer: Timer?
+    private var expectedFireDate: Date?
+    private var diagnostics: CatalogDiagnostics?
+    private var nextUpdateID = 0
     private var latestHandoff: CatalogGridHandoff?
+    private let interval: TimeInterval = 0.1
+    private let stallThreshold: TimeInterval = 0.1
+
+    isolated deinit {
+        timer?.invalidate()
+    }
 
     func reserveUpdateID() -> Int {
-        nextID += 1
-        return nextID
+        nextUpdateID += 1
+        return nextUpdateID
     }
 
     func recordGridHandoff(_ handoff: CatalogGridHandoff) {
         latestHandoff = handoff
     }
-
-    func latestGridHandoff() -> CatalogGridHandoff? {
-        latestHandoff
-    }
-}
-
-@MainActor
-final class MainRunLoopStallMonitor {
-    static let shared = MainRunLoopStallMonitor()
-
-    private var timer: Timer?
-    private var expectedFireDate: Date?
-    private var diagnostics: CatalogDiagnostics?
-    private let interval: TimeInterval = 0.1
-    private let stallThreshold: TimeInterval = 0.1
 
     func start(diagnostics: CatalogDiagnostics? = .shared) {
         #if DEBUG
@@ -64,11 +64,12 @@ final class MainRunLoopStallMonitor {
         #endif
     }
 
-    func stopForTesting() {
+    func stop() {
         timer?.invalidate()
         timer = nil
         expectedFireDate = nil
         diagnostics = nil
+        latestHandoff = nil
     }
 
     private func tick(now: Date = Date()) {
@@ -92,7 +93,7 @@ final class MainRunLoopStallMonitor {
         }
 
         let stallMs = max(0, Int((lateness * 1000).rounded()))
-        let latestHandoff = CatalogUIUpdateTracker.shared.latestGridHandoff()
+        let latestHandoff = latestHandoff
         OtosLog.performance.error(
             """
             Main run loop stall detected ms=\(stallMs, privacy: .public) \
@@ -117,6 +118,9 @@ final class MainRunLoopStallMonitor {
         }
 
         let diagnostics = diagnostics
+        // Stalls are rare boundary events rather than the 10 Hz UI path. Capture
+        // only the completed scalar payload so this best-effort diagnostic task
+        // cannot retain catalog state while waiting for the JSONL actor.
         Task {
             await diagnostics?.record(
                 operation: "ui.mainRunLoop.stall",

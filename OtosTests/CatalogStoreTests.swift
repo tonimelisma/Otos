@@ -210,7 +210,6 @@ struct CatalogStoreTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["b.jpg"]
         }
         #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["b.jpg"])
-        #expect(reconciled.assetStructureRevision == 3)
     }
 
     @Test func failedLaunchScanDoesNotDeletePreviouslyCatalogedRows() async throws {

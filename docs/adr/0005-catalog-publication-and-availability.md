@@ -1,218 +1,182 @@
-# ADR 0005: Catalog Publication And Library Availability
+# ADR 0005: Catalog Publication, Selection Delivery, And Availability
 
 - Status: Accepted
 - Date: 2026-06-15
-- Spec: `docs/specs/0009-catalog-publication-and-availability.md`
+- Last updated: 2026-06-21
+- Specs: `docs/specs/0009-catalog-publication-and-availability.md`,
+  `docs/specs/0012-catalog-state-robustness.md`
 
 ## Context
 
-The catalog implementation originally let `CatalogStore` publish full
-`CatalogSnapshot` values, then the MainActor window model scheduled projection
-work and rejected stale completions with a generation counter. That worked, but
-it split one conceptual publication problem across two owners:
+Catalog mutation, UI derivation, and MainActor assignment have different owners.
+`CatalogStore` owns SQLite, the in-memory catalog, and scans. `CatalogProjection`
+owns ordering, scope filtering, availability hiding, empty-state selection, and
+the UI publication cadence. `CatalogWindowViewModel` owns the final state that
+SwiftUI observes and converts user actions into explicit intents.
 
-- `CatalogStore` decided when raw snapshots were emitted.
-- `CatalogWindowModel` decided when snapshots plus sidebar selection became UI
-  state.
-- `CatalogProjection` did the expensive derived read-model work, but not the
-  publication cadence.
+Library reachability is transient. A root loaded from SQLite has not been
+checked during the current process and therefore cannot truthfully be called
+available. A temporarily missing removable or network root must not cause Otos
+to delete catalog rows.
 
-The app also needed to represent transient library availability. If a removable
-or network-backed root disappears, Otos should not delete previously cataloged
-rows just because the filesystem is temporarily unreachable. Availability must
-affect what the UI shows while preserving SQLite and in-memory catalog truth.
-
-## Decision Area This ADR Owns
+## MECE Decision Scope
 
 This ADR owns:
 
-- Store change notifications versus Store-published UI snapshot streams.
-- Projection-owned `CatalogWindowState` publication.
-- The 10 Hz coalescing rule for catalog window state.
-- The one-in-flight publication rule and dirty-during-run behavior.
-- The `CatalogWindowViewModel.state` boundary.
-- Transient library availability and its UI projection consequences.
-
-## Related Decisions This ADR Does Not Own
+- Store change notifications versus Store-published UI snapshots
+- Projection-owned 10 Hz `CatalogWindowState` publication
+- one-in-flight publication and dirty-during-await behavior
+- explicit sidebar-selection delivery from ViewModel to Projection
+- transient `unknown`, `available`, and `unavailable` library availability
+- availability-driven filtering and empty states
 
 This ADR references but does not own:
 
-- SQLite schema, GRDB connection choice, filesystem facts, scan reconciliation,
-  and package descendant scanning. Those belong to ADR 0002.
-- Root identity, unsandboxed path access, and no sandbox/bookmark behavior. Those
-  belong to ADR 0003.
-- The permanent single-window UI ownership boundary. That belongs to ADR 0004.
-- Metadata, thumbnails, manual scan controls, FSEvents, durable scan IDs, and
-  media-container import. Those require separate specs or ADRs if ever
-  implemented.
+- SQLite schema, filesystem facts, scan reconciliation, and package traversal:
+  ADR 0002
+- normalized path identity and unsandboxed access: ADR 0003
+- permanent single-window UI ownership: ADR 0004
+- AppKit grid rendering: ADR 0006
+- ordered asset-ID reuse: ADR 0007
+
+Metadata, thumbnails, manual scans, FSEvents, sandboxing, bookmarks, durable scan
+IDs, and media-container import are outside this decision.
 
 ## Decision
 
-Use Store-owned truth with Projection-owned UI-state publication:
+### Store Truth And Change Signals
 
-- `CatalogStore` emits cheap change notifications. A notification means catalog
-  inputs changed and a consumer may need to ask for a new raw snapshot.
-- `CatalogStore.currentSnapshot()` builds a raw point-in-time `CatalogSnapshot`
-  on demand. `CatalogSnapshot` is a value, not a UI publication stream.
-- `CatalogProjection` owns a 10 Hz coalesced publication loop that emits
-  `CatalogWindowState`.
-- Store changes and sidebar-selection changes both mark projection dirty and go
-  through the same publication loop.
-- Only one `CatalogWindowState` publication may run at a time. If input changes
-  while one publication is in flight, the completed result may be yielded, the
-  dirty flag remains set, and the loop reruns on the next tick with the latest
-  inputs.
-- `CatalogWindowViewModel` consumes the `CatalogProjection` state stream, assigns
-  `state` on the MainActor, owns sidebar selection, and forwards selection
-  changes back to `CatalogProjection`.
+`CatalogStore` emits cheap change notifications. A notification says that inputs
+changed; it does not carry a UI-ready catalog. `currentSnapshot()` builds an
+immutable, keyed, point-in-time `CatalogSnapshot` only when Projection needs one.
 
-Use transient library availability:
+This keeps snapshot construction and UI cadence out of Store mutation paths.
+SQLite and the in-memory dictionaries remain Store-owned truth.
 
-- `LibraryAvailability` is in-memory state only: `.available` or
-  `.unavailable`.
-- `CatalogLibraryState` keeps availability separate from scan activity.
-- Availability is checked before a scan begins and after a scan failure by
-  testing whether the root path is currently reachable.
-- If the root is unavailable, Otos preserves SQLite and in-memory media rows,
-  does not reconcile/delete missing rows for that root, marks the library
-  unavailable, logs/diagnoses the condition, and continues.
-- If a later scan opportunity finds the root available, Otos marks it available
-  and scans normally.
-- `CatalogProjection` hides unavailable libraries' media from All Media and
-  selected-library scopes.
-- Selecting an unavailable library shows `Library Unavailable`.
-- All Media shows `No Available Media` when all cataloged media belongs to
-  unavailable libraries.
+### Projection-Owned Publication
+
+`CatalogProjection` owns one 10 Hz dirty loop. Store changes and sidebar intents
+mark the same loop dirty. On a tick with pending work, Projection asks Store for
+a snapshot, derives one `CatalogWindowState`, and yields it.
+
+Only one derivation may be in flight. Actor reentrancy allows new input to mark
+the actor dirty while awaited Store or diagnostic work is running. The completed
+state may still be yielded, but dirty remains set and the next tick derives the
+newest inputs. No second projection starts concurrently.
+
+### Explicit Selection Intents
+
+`CatalogWindowViewModel.selectSidebar(_:)` is the sole UI intent for changing
+sidebar scope. The ViewModel owns one `AsyncStream<SidebarSelection>` using
+`.bufferingNewest(1)` and one long-lived forwarding task. Rapid user input cannot
+create an unbounded task backlog; only the newest pending intent is retained.
+
+Projection may normalize a selected library that no longer exists to
+`.allMedia`. Applying that resolved selection updates the ViewModel property
+directly and does not emit another user intent, so normalization cannot feed back
+into the stream.
+
+### Availability
+
+`LibraryAvailability` is transient and has three states:
+
+- `.unknown`: the root has not yet been checked during this process
+- `.available`: the latest pre-scan reachability check succeeded, or a newly
+  added root was validated successfully
+- `.unavailable`: the latest reachability check failed
+
+Database-loaded roots begin unknown. Availability is never persisted to SQLite.
+The existing pre-scan check transitions unknown to available or unavailable. A
+scan failure rechecks the root so disappearance during traversal can be modeled
+as unavailable.
+
+Unknown and unavailable roots retain all catalog rows but contribute no assets
+to All Media or selected-library grids. Unknown is rendered as `Checking`,
+`Checking Library`, or `Checking Libraries`; unavailable is rendered as
+`Library Unavailable` or `No Available Media` where applicable. A later scan
+opportunity can mark the root available and reconcile normally.
 
 ## Alternatives Considered
 
-### Alternative A: Store Publishes Full Snapshots
-
-Keep `CatalogStore.snapshots()` as the main UI stream and let the ViewModel call
-projection for each raw snapshot.
+### Store Publishes Full Snapshots
 
 Pros:
 
-- Direct continuation of the previous implementation.
-- Store tests can observe exact snapshot values immediately.
+- direct mutation-to-snapshot observation
+- simple Store-only tests
 
 Cons:
 
-- Store owns a UI-facing cadence even though it does not own UI projection.
-- The ViewModel needs its own stale-completion or cancellation policy for
-  projection work.
-- Sidebar-selection changes need a separate publication path from store changes.
+- Store owns a UI-facing cadence without owning UI derivation
+- sidebar changes require a second path
+- Projection scheduling and stale-result handling move toward MainActor code
 
-Failure modes:
+Failure mode: Store and ViewModel grow competing publication schedulers.
 
-- Two similar schedulers grow: one in Store for snapshots and one near
-  Projection for sorting/filtering.
-
-### Alternative B: Store Publishes UI-Ready Window State
-
-Move sorting, filtering, selection validation, availability hiding, and title
-lookup into `CatalogStore`.
+### Store Publishes UI-Ready State
 
 Pros:
 
-- One actor owns both mutation and publication.
-- No raw snapshot handoff is needed for UI.
+- one actor performs mutation and publication
 
 Cons:
 
-- Mixes persistence/scanning with presentation state.
-- Makes Store depend on sidebar selection.
-- Store tests become presentation tests.
+- persistence and scanning become coupled to presentation and sidebar state
+- Store becomes a general app model
 
-Failure modes:
+Failure mode: UI rules accumulate inside catalog truth ownership.
 
-- `CatalogStore` becomes a general application model and accumulates UI-specific
-  rules.
-
-### Alternative C: ViewModel Owns Projection Scheduling
-
-Keep Store notifications cheap but let `CatalogWindowViewModel` pull snapshots,
-schedule projections, cancel tasks, and reject stale results.
+### ViewModel Starts A Task Per Selection Change
 
 Pros:
 
-- Projection can stay a pure derivation service.
-- The ViewModel has direct access to sidebar selection and can decide when to
-  update.
+- little explicit stream machinery
 
 Cons:
 
-- MainActor code becomes the scheduler for work that should remain away from UI
-  ownership.
-- The ViewModel must keep generation counters or similar stale-result machinery.
+- rapid input creates unordered unstructured tasks
+- cancellation and stale completion require additional MainActor bookkeeping
 
-Failure modes:
+Failure mode: an older selection arrives after a newer one or task count grows
+with interaction rate.
 
-- Projection orchestration drifts into MainActor-adjacent code and becomes
-  harder to reason about.
-
-### Selected: Projection-Owned Publication Loop
-
-Let `CatalogStore` emit cheap dirty signals and let `CatalogProjection` own the
-coalesced UI-state stream.
+### Optimistically Mark Loaded Roots Available
 
 Pros:
 
-- One owner handles all inputs that affect catalog window state.
-- Sorting/filtering and publication cadence stay off the MainActor.
-- The ViewModel becomes a simple state-stream consumer.
-- One dirty/in-flight rule covers scan updates, add/remove, availability changes,
-  and sidebar selection.
+- cached media appears immediately
 
 Cons:
 
-- `CatalogProjection` has a broader role than pure synchronous projection.
-- Tests need to cover cadence, coalescing, and dirty-during-run behavior.
+- fabricates reachability before the filesystem check
+- can briefly expose stale rows for an ejected root
 
-Failure modes:
-
-- If the publication loop forgets to keep the dirty flag after in-flight input,
-  the UI can temporarily miss a later state.
-- If the loop starts multiple in-flight projections, large catalogs can waste
-  CPU and increase latency.
+Failure mode: the UI states a domain fact that is not known.
 
 ## Consequences
 
-Positive:
+- Store owns truth; Projection owns derived publication; ViewModel owns UI state
+  and explicit intents.
+- Sorting, filtering, and scope derivation remain off MainActor.
+- The ViewModel's owned stream and tasks have one cancellation point.
+- Startup truthfully represents unchecked roots without blocking database load.
+- Cached rows survive removable-disk and network availability changes.
+- Projection tests require controlled clocks to verify 10 Hz coalescing.
 
-- Store ownership is clearer: it owns truth and raw snapshots, not UI stream
-  cadence.
-- Projection ownership is clearer: it owns every derived catalog window state,
-  including publication timing.
-- MainActor work is smaller: the ViewModel assigns already-derived state.
-- Availability does not endanger catalog rows when disks or network roots
-  disappear.
+## Living Documentation Impact
 
-Negative:
-
-- Projection tests need async timing controls.
-- `CatalogProjection` now owns task lifetimes for publication subscribers.
-- A briefly stale state may be yielded if input changes during an in-flight
-  projection; the next tick corrects it with the latest inputs.
-
-## Performance And Simplicity
-
-The 10 Hz loop is not a scale optimization; it is the simplest rule that keeps
-scan batches, add/remove changes, availability changes, and sidebar filtering on
-one cadence. It avoids both per-file UI churn and duplicated schedulers. The
-one-in-flight rule prevents overlapping publication work without introducing a
-general worker queue.
+Specs 0006, 0007, 0009, 0010, and 0011, requirements FND-023, FND-028,
+FND-034, FND-039, and FND-040, and comments at the Store/Projection/ViewModel
+boundaries must describe explicit selection delivery and unknown availability.
+Retired generation guards, optimistic availability claims, and ViewModel
+selection `didSet` orchestration must not remain in current docs or comments.
 
 ## Verification
 
-- Store tests prove change notifications are cheap dirty signals and
-  `currentSnapshot()` returns raw catalog state.
-- Store tests prove unavailable roots preserve rows and do not reconcile/delete.
-- Projection tests prove 10 Hz coalescing, one-in-flight publication,
-  dirty-during-run rerun behavior, availability hiding, and empty states.
-- ViewModel tests prove `CatalogWindowViewModel` assigns `state` from
-  Projection's stream and routes sidebar selection into Projection.
-- Source hygiene rejects Store `snapshots()`/`publishSnapshot()` UI stream paths,
-  `CatalogWindowModel`, `CatalogWindowProjection`, and generation-based
-  projection rejection.
-- Local verification runs through `script/verify.sh`.
+- Store tests cover unknown load state and available/unavailable transitions.
+- Projection tests cover mixed availability filtering and checking empty states.
+- ViewModel tests cover rapid intents, resolved-selection application without
+  feedback, and owned-task cancellation.
+- Source hygiene rejects retired selection guards and implicit `didSet`
+  forwarding.
+- `script/verify.sh` supplies the full local gate.

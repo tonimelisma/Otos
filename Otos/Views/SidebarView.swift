@@ -1,13 +1,15 @@
 import SwiftUI
 
-/// SidebarView renders projected library rows and writes only the selected row
-/// binding. It does not inspect assets, snapshots, or stores.
+/// SidebarView renders projected library rows and reports explicit selection
+/// intents. The local Binding exists only to adapt SwiftUI List's control API;
+/// selection ownership and asynchronous delivery remain in the ViewModel.
 struct SidebarView: View {
     let libraries: [CatalogLibraryState]
-    @Binding var sidebarSelection: SidebarSelection
+    let sidebarSelection: SidebarSelection
+    let selectSidebar: @MainActor @Sendable (SidebarSelection) -> Void
 
     var body: some View {
-        List(selection: $sidebarSelection) {
+        List(selection: selectionBinding) {
             Label("All Media", systemImage: "square.grid.2x2")
                 .tag(SidebarSelection.allMedia)
 
@@ -36,10 +38,16 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
     }
+
+    private var selectionBinding: Binding<SidebarSelection> {
+        Binding(
+            get: { sidebarSelection },
+            set: selectSidebar
+        )
+    }
 }
 
 #Preview {
-    @Previewable @State var sidebarSelection = SidebarSelection.allMedia
     SidebarView(
         libraries: [
             CatalogLibraryState(
@@ -53,12 +61,16 @@ struct SidebarView: View {
                 activity: .idle
             ),
         ],
-        sidebarSelection: $sidebarSelection
+        sidebarSelection: .allMedia,
+        selectSidebar: { _ in }
     )
 }
 
 private extension CatalogLibraryState {
     var sidebarSubtitle: String? {
+        if availability == .unknown {
+            return "Checking"
+        }
         if availability == .unavailable {
             return "Unavailable"
         }

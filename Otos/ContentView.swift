@@ -16,7 +16,8 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(
                 libraries: viewModel.state.libraries,
-                sidebarSelection: $viewModel.sidebarSelection
+                sidebarSelection: viewModel.sidebarSelection,
+                selectSidebar: viewModel.selectSidebar
             )
         } detail: {
             MediaGridView(

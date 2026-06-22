@@ -51,7 +51,6 @@ struct MediaAssetCollectionTests {
         let original = try #require(changed.assetsByID[id])
         changed.assetsByID[id] = MediaAsset(
             libraryRootPath: original.libraryRootPath,
-            libraryDisplayName: original.libraryDisplayName,
             relativePath: original.relativePath,
             name: "changed.jpg",
             contentTypeIdentifier: original.contentTypeIdentifier,
@@ -126,7 +125,6 @@ private func makeGrid(scope: SidebarSelection, paths: [String]) -> CatalogMediaG
 private func makeAsset(path: String, type: String?, name: String? = "asset") -> MediaAsset {
     MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-        libraryDisplayName: "Pictures",
         relativePath: MediaRelativePath(rawValue: path),
         name: name,
         contentTypeIdentifier: type,

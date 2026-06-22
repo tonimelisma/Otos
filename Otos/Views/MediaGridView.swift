@@ -43,7 +43,6 @@ struct MediaGridView: View {
 #Preview {
     let asset = MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
-        libraryDisplayName: "Pictures",
         relativePath: MediaRelativePath(rawValue: "sample.jpg"),
         name: "sample.jpg",
         contentTypeIdentifier: "public.jpeg",
@@ -67,8 +66,12 @@ private extension CatalogMediaEmptyState {
         switch self {
         case .noMedia:
             "No Media"
+        case .checkingLibraries:
+            "Checking Libraries"
         case .noAvailableMedia:
             "No Available Media"
+        case .libraryChecking:
+            "Checking Library"
         case .libraryUnavailable:
             "Library Unavailable"
         }
@@ -78,8 +81,12 @@ private extension CatalogMediaEmptyState {
         switch self {
         case .noMedia:
             "Add a library with media files to begin."
+        case .checkingLibraries:
+            "Otos is checking whether saved library folders are reachable."
         case .noAvailableMedia:
             "Cataloged media exists, but its libraries are not currently reachable."
+        case .libraryChecking:
+            "Otos is checking whether the selected library folder is reachable."
         case .libraryUnavailable:
             "The selected library folder is not currently reachable."
         }
@@ -89,6 +96,8 @@ private extension CatalogMediaEmptyState {
         switch self {
         case .noMedia:
             "photo.on.rectangle"
+        case .checkingLibraries, .libraryChecking:
+            "externaldrive.badge.timemachine"
         case .noAvailableMedia, .libraryUnavailable:
             "externaldrive.badge.questionmark"
         }

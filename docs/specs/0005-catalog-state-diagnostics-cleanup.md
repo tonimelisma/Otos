@@ -10,28 +10,19 @@
 
 ## Problem
 
-The first catalog implementation worked, but the first pass left several
-smells: broad app state owned main-window selection, SQLite row IDs leaked
-through public models, media IDs were ambiguous string concatenations, asset
-filtering happened through MainActor state, and scanner diagnostics were not
-available as a checkable run artifact.
+The catalog needs typed public identity, persistence-private SQLite details,
+off-MainActor projection, bounded diagnostics, and no generic user-facing error
+surface until product error behavior is specified.
 
 Repo inspection found:
 
-- `OtosAppModel` owned shared catalog state, main-window selection, user-facing
-  catalog messaging, and snapshot application.
-- `LibraryRoot.storageID` exposed the SQLite rowid outside persistence.
-- `MediaAsset.id` concatenated library path and relative path with a pipe
-  separator.
-- The scanner stored relative path, content type identifier, byte size, and
-  content modification date.
-- `script/logs.sh` streamed unified logs, but no script summarized app-owned
-  catalog diagnostics after a run.
-
-Current-state note: later specs retired the shared-session/browser-state split in
-favor of `CatalogWindowViewModel` and moved coalesced UI-state publication into
-`CatalogProjection`. The diagnostics, typed identity, scanner fact, and
-off-MainActor projection decisions from this spec remain current.
+- `CatalogWindowViewModel` owns final window state and explicit intents only.
+- typed library/relative paths form `MediaAssetID`; SQLite row IDs remain inside
+  Store persistence records.
+- the scanner stores name, relative path, content type, size, creation date, and
+  modification date.
+- `CatalogProjection` owns derived ordering/filtering and publication.
+- `script/catalog-diagnostics.sh` summarizes durable coarse JSONL evidence.
 
 ## Scope
 
@@ -63,14 +54,14 @@ Out of scope:
 | REM-003 | Architecture | Remove shared main-window selection from shared catalog truth. | Current | `docs/requirements.md`, this spec |
 | REM-004 | Architecture | Remove public exposure of SQLite row IDs from catalog models. | Current | `docs/requirements.md`, this spec |
 | REM-005 | Architecture | Remove ambiguous media asset string-concatenation identity. | Current | `docs/requirements.md`, this spec |
-| CHG-001 | Functional | The scanner and catalog store file name, relative path, content type identifier, byte size, creation date, and content modified date. Spec 0011 later superseded the all-facts table presentation with a filename placeholder grid. | Current | `docs/requirements.md`, ADR 0002, Spec 0011 |
+| CHG-001 | Functional | The scanner and catalog store file name, relative path, content type identifier, byte size, creation date, and content modified date; the browser presents the filename placeholder grid specified by Spec 0011. | Current | `docs/requirements.md`, ADR 0002, Spec 0011 |
 | CHG-002 | Architecture | SwiftUI receives single-window catalog UI state through `CatalogWindowViewModel`; views remain passive. | Current | `docs/requirements.md`, Spec 0007 |
 | CHG-003 | Architecture | Normalized filesystem path remains library-root identity, while SQLite rowid is persistence-private. | Current | `docs/requirements.md`, ADR 0003 |
 | CHG-004 | Non-functional | Catalog sorting and selection filtering must run outside the MainActor. | Current | `docs/requirements.md`, this spec |
 | ADD-001 | Architecture | `CatalogWindowViewModel` owns catalog startup, add-library, remove-library, sidebar selection, state consumption, and task lifetimes for the single main window. | Current | `docs/requirements.md`, Spec 0007 |
 | ADD-002 | Architecture | `CatalogProjection` actor owns root sorting, asset ordering, media-grid scope filtering, title lookup, and selected-library validation. | Current | `docs/requirements.md`, this spec, Spec 0011 |
 | ADD-003 | Architecture | Domain paths and media identity use typed values, not bare strings or concatenated IDs across app boundaries. | Current | `docs/requirements.md`, this spec |
-| ADD-004 | Tooling | Debug builds write JSONL diagnostics for large catalog and projection operations. | Current | `docs/requirements.md`, this spec |
+| ADD-004 | Tooling | Debug builds write JSONL for coarse catalog and Projection operations; high-frequency UI paths use Logger/signposts. | Current | `docs/requirements.md`, this spec, Spec 0012 |
 | ADD-005 | Tooling | A repo script checks and summarizes catalog diagnostics under `build/Diagnostics`. | Current | `docs/requirements.md`, this spec |
 
 ## Architectural Alternatives
@@ -158,7 +149,8 @@ through OSLog and written to debug JSONL diagnostics when applicable.
   lifetimes, and final catalog window state assignment.
 - `CatalogProjection`: actor used for sorting, filtering, and state publication
   away from the MainActor.
-- `CatalogDiagnostics`: debug-only JSONL writer under Application Support.
+- `CatalogDiagnostics`: debug-only actor-serialized JSONL writer for coarse
+  durable evidence under Application Support.
 
 SQLite migration v2 adds nullable `media_asset.name` and
 `media_asset.created_at_unix`. Missing filesystem facts remain `NULL` and show
@@ -166,7 +158,7 @@ as `Unknown`.
 
 ## Retirement Proof
 
-The increment must remove or prove unreachable:
+Current source and docs must keep these retired surfaces unreachable:
 
 - `OtosAppModel`
 - `message` and `dismissMessage`
@@ -182,9 +174,11 @@ The increment must remove or prove unreachable:
 
 - Keep OSLog categories and signposts for app, UI, catalog, file access,
   persistence, and performance.
-- Add debug JSONL diagnostics for DB open/migrate/load, add/remove, scan
-  start/tick/finish/cancel/error, enumeration/resource issues, projection work,
-  and later availability changes.
+- Keep debug JSONL diagnostics for DB open/migrate/load, add/remove, scan
+  start/tick/finish/cancel/error, enumeration/resource issues, Projection
+  summaries, availability changes, failures, and actual active-app stalls.
+- Use Logger/signposts, not per-update JSONL tasks, for ViewModel and collection
+  handoffs.
 - Use `script/catalog-diagnostics.sh check` to copy/summarize current
   diagnostics into `build/Diagnostics`.
 - No Instruments trace is required unless verification shows jank or a build/run
@@ -197,9 +191,8 @@ The increment must remove or prove unreachable:
 - State duplication: addressed by separating catalog truth, derived projection,
   and MainActor state assignment.
 - Stringly typed domain facts: addressed with typed path and identity values.
-- Ambiguous Swift API names: the original scoped-array name was precise for its
-  shape; Spec 0011 replaced that shape with `CatalogMediaGridState` containing
-  explicit scope, ordered identities, and keyed values.
+- Ambiguous Swift API names: `CatalogMediaGridState` explicitly separates scope,
+  ordered identities, and keyed current values.
 - Diagnostic payload sprawl: bounded JSONL events only; no secrets, credentials,
   thumbnails, or unbounded binary payloads.
 

@@ -56,7 +56,7 @@ struct CatalogWindowViewModelTests {
         }
 
         let picturesPath = try CatalogPath.normalizedDirectoryPath(for: picturesURL)
-        model.sidebarSelection = .library(picturesPath)
+        model.selectSidebar(.library(picturesPath))
 
         let state = try await waitForWindowState(model) { state in
             orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"]
@@ -86,7 +86,7 @@ struct CatalogWindowViewModelTests {
             state.libraries.map(\.path) == [rootPath]
         }
 
-        model.sidebarSelection = .library(rootPath)
+        model.selectSidebar(.library(rootPath))
         try await store.removeLibrary(path: rootPath)
 
         let state = try await waitForWindowState(model) { state in
@@ -130,36 +130,38 @@ struct CatalogWindowViewModelTests {
     }
 
     @MainActor
-    @Test func stateApplyWritesGridHandoffDiagnostics() async throws {
+    @Test func rapidSidebarIntentsResolveToLatestSelection() async throws {
         let temp = try makeTemporaryDirectory()
-        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
-        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
+        let picturesURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let archiveURL = temp.appending(path: "Archive", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: picturesURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: diagnostics,
+            diagnostics: nil,
             startsStallMonitor: false
         )
 
         model.start()
-        model.addLibrary(url: root)
+        model.addLibrary(url: picturesURL)
+        model.addLibrary(url: archiveURL)
+        _ = try await waitForWindowState(model) { $0.libraries.count == 2 }
 
-        _ = try await waitForWindowState(model) { state in
-            orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"]
-        }
-        let contents = try await waitForDiagnostics(outputURL) { contents in
-            contents.contains("\"operation\":\"catalog.window.state.apply\"")
-                && contents.contains("\"itemCount\":\"1\"")
+        let picturesPath = try CatalogPath.normalizedDirectoryPath(for: picturesURL)
+        let archivePath = try CatalogPath.normalizedDirectoryPath(for: archiveURL)
+        model.selectSidebar(.library(picturesPath))
+        model.selectSidebar(.allMedia)
+        model.selectSidebar(.library(archivePath))
+
+        let state = try await waitForWindowState(model) { state in
+            state.resolvedSidebarSelection == .library(archivePath)
         }
 
-        #expect(contents.contains("\"previousItemCount\""))
-        #expect(contents.contains("\"itemDelta\""))
-        #expect(contents.contains("\"applyMs\""))
+        #expect(model.sidebarSelection == .library(archivePath))
+        #expect(state.title == "Archive")
     }
 }
 
@@ -191,27 +193,6 @@ private func makeTemporaryDirectory() throws -> URL {
 
 private func writeFile(_ url: URL, contents: String) throws {
     try Data(contents.utf8).write(to: url)
-}
-
-private func waitForDiagnostics(
-    _ url: URL,
-    matching predicate: (String) -> Bool
-) async throws -> String {
-    for _ in 0 ..< 100 {
-        let contents = readableDiagnostics(at: url)
-        if let contents, predicate(contents) {
-            return contents
-        }
-        try await Task.sleep(for: .milliseconds(20))
-    }
-    throw CatalogWindowViewModelTestError.timedOut
-}
-
-private func readableDiagnostics(at url: URL) -> String? {
-    guard let data = try? Data(contentsOf: url) else {
-        return nil
-    }
-    return String(data: data, encoding: .utf8)
 }
 
 private enum CatalogWindowViewModelTestError: Error {
