@@ -4,13 +4,17 @@ import GRDB
 import Testing
 
 struct CatalogStoreTests {
-    @Test func changeNotificationsAreCheapDirtySignals() async throws {
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+    @Test func changeNotificationsAreCheapTypedSignals() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
         let recorder = ChangeRecorder()
         let stream = await store.changeNotifications()
         let recordingTask = Task {
-            for await _ in stream {
-                await recorder.increment()
+            for await change in stream {
+                await recorder.append(change)
             }
         }
         defer {
@@ -19,10 +23,16 @@ struct CatalogStoreTests {
 
         try await store.start(scansSavedLibraries: false)
         try await recorder.waitForCount(1)
+        #expect(await recorder.events.first == .catalogChanged)
 
         let snapshot = await store.currentSnapshot()
         #expect(snapshot.libraries.isEmpty)
         #expect(snapshot.testAssets.isEmpty)
+
+        try await store.addLibrary(url: root)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        try await store.removeLibrary(path: rootPath)
+        try await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
     @Test func migratesV1DatabaseAndReloadsNewNullableFields() async throws {
@@ -352,15 +362,25 @@ private enum CatalogStoreTestError: Error {
 }
 
 private actor ChangeRecorder {
-    private var count = 0
+    private(set) var events: [CatalogStoreChange] = []
 
-    func increment() {
-        count += 1
+    func append(_ event: CatalogStoreChange) {
+        events.append(event)
     }
 
     func waitForCount(_ expectedCount: Int) async throws {
         for _ in 0 ..< 100 {
-            if count >= expectedCount {
+            if events.count >= expectedCount {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw CatalogStoreTestError.timedOut
+    }
+
+    func waitForEvent(_ expectedEvent: CatalogStoreChange) async throws {
+        for _ in 0 ..< 100 {
+            if events.contains(expectedEvent) {
                 return
             }
             try await Task.sleep(for: .milliseconds(20))

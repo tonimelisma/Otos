@@ -285,7 +285,10 @@ explicit at the exact suspension boundaries where they matter.
 - stale old callbacks cannot clear, fail, reconcile, or change availability for
   the replacement scan
 - removed selected library resolves and remains All Media after the same path is
-  re-added, unless a newer explicit selection chose it
+  re-added, including remove/add coalesced inside one publication cadence, unless
+  a newer explicit selection chose it
+- normal UI add/remove commands arrive through one serial ViewModel lane, while
+  Store remains independently safe for direct concurrent callers
 - `MediaAssetID` remains an unambiguous typed pair and loaded roots remain unknown
 - no schema, durable scan ID, scan history, manual scan, or UI behavior is added
 - all seven historical review threads have factual replies and are resolved

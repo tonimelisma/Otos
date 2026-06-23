@@ -128,8 +128,8 @@ reachability knowledge.
 - Store owns database, memory, scans, availability, and change subscriptions.
 - Projection owns Store-listener, 10 Hz loop, order cache, state subscriptions,
   selection input, and dirty/in-flight state.
-- ViewModel owns explicit selection stream/task, state-consumer task, startup
-  task, and MainActor assignment.
+- ViewModel owns a newest-value selection stream/task, lossless serial mutation
+  stream/task, weak state-consumer task, startup task, and MainActor assignment.
 - Removing a root remains a Store intent that cancels its scan and deletes only
   Otos catalog state.
 
@@ -172,3 +172,7 @@ current mechanics only.
 - Availability does not duplicate durable root identity.
 - One explicit selection stream avoids property-observer side effects and
   unstructured task accumulation.
+- A separate lossless mutation stream prevents task-per-action fan-out without
+  giving destructive or constructive commands selection's dropping policy.
+- Store change events remain lightweight; root removal alone carries a typed
+  path so coalesced same-path replacement cannot preserve stale selection.

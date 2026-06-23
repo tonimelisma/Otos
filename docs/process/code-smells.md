@@ -29,6 +29,13 @@ For each smell found, record:
   caller is UI-facing.
 - Unstructured task ownership: detached or long-running tasks have no owner,
   cancellation path, or stale completion check.
+- Self-retaining long-lived task: an owner stores a task whose running closure
+  strongly retains the owner across an indefinite wait, making deinit cleanup
+  unreachable.
+- Task-per-intent fan-out: repeated synchronous UI actions create independent
+  unowned tasks without an ordering or cancellation contract.
+- Incompatible intent stream: lossy/coalescing and lossless/ordered events share
+  one queue even though no buffering policy can represent both correctly.
 - Unsafe concurrency escape: `@unchecked Sendable`, shared mutable references,
   callbacks, or captured state cross actor boundaries without proof.
 - Synchronous `.task` setup: SwiftUI `.task` starts with heavy synchronous work

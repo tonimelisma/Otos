@@ -21,7 +21,7 @@ In scope:
 - singleton SwiftUI Window("Otos", id: "main")
 - one app-owned CatalogWindowViewModel
 - passive SwiftUI composition and narrow Settings inputs
-- explicit sidebar-selection intent delivery
+- explicit sidebar-selection and ordered catalog-mutation delivery
 - Store/Projection/ViewModel task and state ownership
 - substantial current-state comments at architecture boundaries
 
@@ -45,8 +45,9 @@ Out of scope:
   empty-state selection, selection resolution, and 10 Hz UI-state publication
   outside MainActor.
 - CatalogWindowViewModel owns final state assignment, explicit selection
-  delivery, user intents, task lifetimes, and scalar stall correlation on
-  MainActor. It does no catalog work itself.
+  delivery, lossless serial add/remove delivery, weak state consumption, named
+  task lifetimes, and scalar stall correlation on MainActor. It does no catalog
+  work itself.
 - Settings receives CatalogLibraryState rows plus add/remove intents. It may show
   availability but not scan activity.
 - Sidebar row selection remains distinct from future media-asset selection.
@@ -137,7 +138,8 @@ one-window product without moving work into Views or MainActor.
 Flow:
 
 1. OtosApp constructs one ViewModel and calls start() from the main scene.
-2. ViewModel starts one state-consumer task and one caller task for Store startup.
+2. ViewModel starts weak state consumption, finite Store startup, newest-value
+   selection forwarding, and lossless serial mutation forwarding tasks.
 3. Store coalesces every caller onto one initial load, preserves exactly-once
    launch scan requests for database-restored roots, emits cheap changes, and
    scans roots serially.
@@ -146,8 +148,10 @@ Flow:
 6. Views render state and call explicit intents.
 7. Sidebar intents pass through one newest-buffered stream and forwarding task
    to Projection.
-8. Projection retains a missing-library All Media fallback unless a newer
-   sidebar intent arrived during the state build.
+8. Add/remove intents pass through a separate lossless serial stream to Store.
+9. Projection retains a removed-library All Media fallback, including coalesced
+   same-path replacement, unless a newer sidebar intent arrived during the state
+   build.
 
 ## Concurrency And Cancellation
 
@@ -155,8 +159,10 @@ Flow:
 - Store actor: persistence, runtime truth, scans, availability, snapshots
 - Projection actor: change consumption, ordering, filtering, cadence, state
   broadcast
-- ViewModel deinitialization finishes its selection stream, cancels startup,
-  state-consumer, and selection-forwarding tasks, and stops its stall monitor.
+- ViewModel deinitialization cancels state-consumption, startup,
+  selection-forwarding, and mutation-forwarding tasks before finishing both
+  intent streams, then stops its stall monitor. State consumption retains the
+  ViewModel only while applying one delivered value.
 - Projection and Store own their subscriber and scan lifecycles respectively.
 
 ## Instrumentation
@@ -178,8 +184,9 @@ ordinary code.
 
 ## Verification
 
-- ViewModel tests: idempotent start, state consumption, rapid explicit selection
-  intents, normalization without feedback, add/remove routing, and cancellation
+- ViewModel tests: idempotent start, weak state consumption and deallocation,
+  rapid explicit selection intents, normalization without feedback, ordered
+  lossless add/remove delivery, failure continuation, and cancellation
 - Projection tests: ordering/filtering, availability hiding, empty states, 10 Hz
   coalescing, one-in-flight work, and dirty-during-await rerun
 - source hygiene: no View orchestration, no main WindowGroup, no retired

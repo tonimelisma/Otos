@@ -99,8 +99,8 @@ private extension CatalogProjection {
         let cadence = cadence
         changeTask = Task { [weak self] in
             let changes = await store.changeNotifications()
-            for await _ in changes {
-                await self?.markDirty()
+            for await change in changes {
+                await self?.storeDidChange(change)
             }
         }
 
@@ -118,6 +118,20 @@ private extension CatalogProjection {
 
     func markDirty() {
         dirty = true
+    }
+
+    func storeDidChange(_ change: CatalogStoreChange) {
+        // A remove and same-path add can occur inside one 10 Hz interval. The
+        // final snapshot then contains the path again, so snapshot validation
+        // alone cannot prove that the selected root was removed. Store's typed
+        // removal signal preserves that transient fact without exposing row IDs
+        // or creating durable library-instance identity.
+        if case let .libraryRemoved(path) = change {
+            if sidebarSelection == .library(path) {
+                sidebarSelection = .allMedia
+            }
+        }
+        markDirty()
     }
 
     func publishIfDirty(store: CatalogStore) async {

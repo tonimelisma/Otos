@@ -206,8 +206,9 @@ guidance unless the user says it is itself the requirement.
   `CatalogProjection` owns 10 Hz coalesced `CatalogWindowState` publication plus
   all sorting, filtering, unknown/unavailable hiding, empty-state selection, and
   selected-scope derivation off the MainActor, and `CatalogWindowViewModel` owns
-  only final SwiftUI-visible state assignment, explicit sidebar selection intent
-  delivery, user intents, task lifetimes, and scalar stall correlation.
+  only final SwiftUI-visible state assignment, newest-value sidebar selection
+  delivery, lossless serial add/remove delivery, weak projected-state
+  consumption, named task lifetimes, and scalar stall correlation.
 - Architecture-boundary files should include explanatory file guides and focused
   comments that let a Swift newcomer follow how the current mechanics work and
   why the boundary exists. Architecture, concurrency, persistence, diagnostics,
@@ -259,6 +260,16 @@ Every architecture or behavior increment must include:
 - Avoid unstructured `Task` ownership. Long-running work needs an owner, a
   cancellation path, and stale completion rejection or coalesced dirty/in-flight
   handling when applicable.
+- Retaining a task handle is not sufficient ownership when the running task
+  strongly retains its owner. A long-lived stream consumer must capture its
+  owner weakly across indefinite waits and upgrade that reference only for the
+  smallest completed-value application scope; do not upgrade before the loop.
+- Repeated synchronous UI intents that start asynchronous work must define their
+  delivery semantics explicitly: newest-value coalescing, lossless serial
+  delivery, or intentional concurrency. Do not combine intents with incompatible
+  latency or buffering semantics merely to reduce property count. Constructive
+  or destructive commands must not use a dropping buffer without an implemented
+  rejection surface.
 - When an actor suspends during initialization, persistence, or another stateful
   operation, coalesce duplicate work through one explicit owner and revalidate
   the operation's current typed ownership facts after every await before applying

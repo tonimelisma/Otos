@@ -97,6 +97,8 @@ struct SourceHygieneTests {
         #expect(!content.contains("func snapshots()"))
         #expect(!content.contains("publishSnapshot"))
         #expect(content.contains("func changeNotifications()"))
+        #expect(content.contains("AsyncStream<CatalogStoreChange>"))
+        #expect(content.contains("case libraryRemoved(LibraryRootPath)"))
         #expect(content.contains("func currentSnapshot()"))
     }
 
@@ -134,6 +136,34 @@ struct SourceHygieneTests {
         #expect(!content.contains("didSet"))
         #expect(content.contains("func selectSidebar("))
         #expect(content.contains("bufferingPolicy: .bufferingNewest(1)"))
+    }
+
+    @Test func viewModelOwnsWeakStateConsumptionAndSerialMutationDelivery() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let viewModelURL = repoRoot.appending(path: "Otos/ViewModels/CatalogWindowViewModel.swift")
+        let content = try String(contentsOf: viewModelURL, encoding: .utf8)
+
+        #expect(content.contains("stateConsumptionTask"))
+        #expect(content.contains("catalogStartupTask"))
+        #expect(content.contains("selectionForwardingTask"))
+        #expect(content.contains("mutationForwardingTask"))
+        #expect(content.contains("bufferingPolicy: .unbounded"))
+        #expect(content.contains("Task { [weak self, projection, store, initialSelection]"))
+        #expect(!content.contains("private var stateTask:"))
+        #expect(!content.contains("private var startTask:"))
+        #expect(!content.contains("private var selectionTask:"))
+
+        let addMethod = try #require(content.range(of: "func addLibrary(url: URL)"))
+        let removeMethod = try #require(content.range(of: "func removeLibrary(_ library: LibraryRoot)"))
+        let selectMethod = try #require(content.range(of: "func selectSidebar(_ selection: SidebarSelection)"))
+        let addBody = content[addMethod.lowerBound ..< removeMethod.lowerBound]
+        let removeBody = content[removeMethod.lowerBound ..< selectMethod.lowerBound]
+        #expect(!addBody.contains("Task {"))
+        #expect(!removeBody.contains("Task {"))
+        #expect(!addBody.contains("catalogStore"))
+        #expect(!removeBody.contains("catalogStore"))
     }
 
     @Test func appKitGridUsesNativeTelemetryWithoutJSONLTasks() throws {

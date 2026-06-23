@@ -3,6 +3,43 @@ import Foundation
 import Testing
 
 struct CatalogProjectionLifecycleTests {
+    @Test func coalescedRemoveAndSamePathReaddResetsSelection() async throws {
+        let temp = try makeProjectionLifecycleTemporaryDirectory()
+        let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
+        let projection = CatalogProjection(cadence: .milliseconds(50), diagnostics: nil)
+        let recorder = LifecycleStateRecorder()
+        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recordingTask.cancel() }
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: rootURL)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
+        await projection.updateSidebarSelection(.library(rootPath))
+        _ = try await recorder.waitForLast { state in
+            state.resolvedSidebarSelection == .library(rootPath)
+        }
+
+        // Both mutations finish before Projection's next publication tick. The
+        // final snapshot contains the same path, so only the typed removal event
+        // can preserve the fact that the selected root instance disappeared.
+        try await store.removeLibrary(path: rootPath)
+        try await store.addLibrary(url: rootURL)
+
+        let readded = try await recorder.waitForLast { state in
+            state.libraries.map(\.path) == [rootPath]
+                && state.resolvedSidebarSelection == .allMedia
+        }
+        #expect(readded.mediaGrid.scope == .allMedia)
+    }
+
     @Test func removedSelectionRemainsAllMediaWhenSamePathIsReadded() async throws {
         let temp = try makeProjectionLifecycleTemporaryDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)

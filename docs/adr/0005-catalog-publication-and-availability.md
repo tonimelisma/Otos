@@ -5,7 +5,8 @@
 - Last updated: 2026-06-22
 - Specs: `docs/specs/0009-catalog-publication-and-availability.md`,
   `docs/specs/0012-catalog-state-robustness.md`,
-  `docs/specs/0013-catalog-lifecycle-race-safety.md`
+  `docs/specs/0013-catalog-lifecycle-race-safety.md`,
+  `docs/specs/0014-catalog-task-and-mutation-ownership.md`
 
 ## Context
 
@@ -37,6 +38,8 @@ This ADR references but does not own:
   ADR 0002
 - normalized path identity and unsandboxed access: ADR 0003
 - permanent single-window UI ownership: ADR 0004
+- ViewModel state-consumer lifetime and lossless serial add/remove delivery: ADR
+  0004
 - AppKit grid rendering: ADR 0006
 - ordered asset-ID reuse: ADR 0007
 
@@ -47,9 +50,13 @@ IDs, and media-container import are outside this decision.
 
 ### Store Truth And Change Signals
 
-`CatalogStore` emits cheap change notifications. A notification says that inputs
-changed; it does not carry a UI-ready catalog. `currentSnapshot()` builds an
-immutable, keyed, point-in-time `CatalogSnapshot` only when Projection needs one.
+`CatalogStore` emits cheap typed change notifications, never a UI-ready catalog.
+Ordinary events only invalidate Projection. A successful root removal also
+carries its typed path through the lossless event stream. That transient fact is
+necessary because remove and same-path add can complete inside one publication
+interval, leaving a final snapshot whose path membership looks unchanged.
+`currentSnapshot()` builds an immutable, keyed, point-in-time `CatalogSnapshot`
+only when Projection needs one.
 
 This keeps snapshot construction and UI cadence out of Store mutation paths.
 SQLite and the in-memory dictionaries remain Store-owned truth.
@@ -59,6 +66,12 @@ SQLite and the in-memory dictionaries remain Store-owned truth.
 `CatalogProjection` owns one 10 Hz dirty loop. Store changes and sidebar intents
 mark the same loop dirty. On a tick with pending work, Projection asks Store for
 a snapshot, derives one `CatalogWindowState`, and yields it.
+
+When Projection receives `.libraryRemoved(path)` for its selected root, it
+immediately retains `.allMedia` as selection input and marks itself dirty. A
+same-path replacement therefore remains unselected even when no root-absent
+snapshot was published. The path is transient context, not generated identity;
+SQLite row IDs remain Store-private.
 
 Only one derivation may be in flight. Actor reentrancy allows new input to mark
 the actor dirty while awaited Store or diagnostic work is running. The completed
@@ -80,6 +93,12 @@ left untouched for the next dirty tick. Applying the resolved selection updates
 the ViewModel property directly and does not emit another user intent, so
 normalization cannot feed back into the stream or silently resurrect a removed
 selection if the same path is later added again.
+
+The ViewModel consumes Projection state through one owned task. That consumer
+captures the ViewModel weakly while awaiting another state, so cancellation and
+stream termination remain reachable when external ViewModel ownership ends.
+Add/remove commands use a separate lossless serial stream owned by ADR 0004;
+they do not share selection's newest-value buffering.
 
 ### Availability
 
@@ -163,7 +182,8 @@ Failure mode: the UI states a domain fact that is not known.
 - Store owns truth; Projection owns derived publication; ViewModel owns UI state
   and explicit intents.
 - Sorting, filtering, and scope derivation remain off MainActor.
-- The ViewModel's owned stream and tasks have one cancellation point.
+- The ViewModel's owned selection stream and Projection consumer have one
+  cancellation point without the consumer retaining its owner indefinitely.
 - Projection's retained selection agrees with the fallback state it publishes,
   while newer user input remains authoritative.
 - Startup truthfully represents unchecked roots without blocking database load.
@@ -182,8 +202,8 @@ selection `didSet` orchestration must not remain in current docs or comments.
 
 - Store tests cover unknown load state and available/unavailable transitions.
 - Projection tests cover mixed availability filtering and checking empty states.
-- ViewModel tests cover rapid intents, resolved-selection application without
-  feedback, and owned-task cancellation.
+- ViewModel tests cover rapid selection intents, resolved-selection application
+  without feedback, weak state-consumer lifetime, and owned-task cancellation.
 - Source hygiene rejects retired selection guards and implicit `didSet`
   forwarding.
 - `script/verify.sh` supplies the full local gate.

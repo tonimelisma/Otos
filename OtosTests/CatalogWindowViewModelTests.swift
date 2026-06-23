@@ -4,6 +4,49 @@ import Testing
 
 struct CatalogWindowViewModelTests {
     @MainActor
+    @Test func activeStateSubscriptionDoesNotRetainViewModel() async throws {
+        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let buildProbe = WindowStateBuildProbe()
+        let projection = CatalogProjection(
+            cadence: .milliseconds(10),
+            diagnostics: nil,
+            stateBuilder: { snapshot, selection in
+                await buildProbe.recordBuild()
+                return CatalogWindowState(
+                    title: "Test",
+                    libraries: snapshot.libraries,
+                    mediaGrid: CatalogMediaGridState(
+                        scope: selection,
+                        orderedAssetIDs: [],
+                        assetsByID: [:]
+                    ),
+                    resolvedSidebarSelection: selection,
+                    mediaEmptyState: .noMedia
+                )
+            }
+        )
+        var model: CatalogWindowViewModel? = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: projection,
+            diagnostics: nil,
+            startsStallMonitor: false
+        )
+        weak var weakModel = model
+
+        model?.start()
+        try await buildProbe.waitForBuildCount(1)
+        model = nil
+
+        try await waitForCondition { weakModel == nil }
+        try await Task.sleep(for: .milliseconds(40))
+        let buildCountAfterTermination = await buildProbe.buildCount
+
+        await store.shutdown()
+        try await Task.sleep(for: .milliseconds(40))
+        #expect(await buildProbe.buildCount == buildCountAfterTermination)
+    }
+
+    @MainActor
     @Test func storeChangesUpdateWindowState() async throws {
         let temp = try makeTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -130,6 +173,111 @@ struct CatalogWindowViewModelTests {
     }
 
     @MainActor
+    @Test func addRemoveCommandsExecuteInSubmissionOrder() async throws {
+        let temp = try makeTemporaryDirectory()
+        let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
+        let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
+
+        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
+            diagnostics: nil,
+            startsStallMonitor: false
+        )
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
+
+        model.start()
+        model.addLibrary(url: firstURL)
+        model.removeLibrary(LibraryRoot(path: firstPath))
+        model.addLibrary(url: secondURL)
+
+        let state = try await waitForWindowState(model) { state in
+            state.libraries.map(\.path) == [secondPath]
+        }
+        #expect(state.libraries.map(\.path) == [secondPath])
+        #expect(await store.currentSnapshot().libraries.map(\.path) == [secondPath])
+    }
+
+    @MainActor
+    @Test func failedMutationDoesNotTerminateOrderedConsumer() async throws {
+        let temp = try makeTemporaryDirectory()
+        let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
+        let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
+
+        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
+            diagnostics: nil,
+            startsStallMonitor: false
+        )
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
+
+        model.start()
+        model.addLibrary(url: firstURL)
+        model.addLibrary(url: firstURL)
+        model.removeLibrary(LibraryRoot(path: firstPath))
+        model.addLibrary(url: secondURL)
+
+        let state = try await waitForWindowState(model) { state in
+            state.libraries.map(\.path) == [secondPath]
+        }
+        #expect(state.libraries.map(\.path) == [secondPath])
+    }
+
+    @MainActor
+    @Test func endingViewModelDropsQueuedMutationAfterCurrentMutation() async throws {
+        let temp = try makeTemporaryDirectory()
+        let firstURL = temp.appending(path: "First", directoryHint: .isDirectory)
+        let secondURL = temp.appending(path: "Second", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
+
+        let loadGate = ViewModelInitialLoadGate()
+        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: scanner,
+            diagnostics: nil,
+            initialLoadDidRead: {
+                await loadGate.pause()
+            }
+        )
+        var model: CatalogWindowViewModel? = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
+            diagnostics: nil,
+            startsStallMonitor: false
+        )
+        weak var weakModel = model
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
+
+        model?.start()
+        model?.addLibrary(url: firstURL)
+        model?.addLibrary(url: secondURL)
+        try await loadGate.waitUntilPaused()
+        model = nil
+        try await waitForCondition { weakModel == nil }
+
+        await loadGate.release()
+        try await store.start(scansSavedLibraries: false)
+        try await Task.sleep(for: .milliseconds(50))
+        let paths = await store.currentSnapshot().libraries.map(\.path)
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
+        #expect(!paths.contains(secondPath))
+        #expect(paths.isEmpty || paths == [firstPath])
+    }
+
+    @MainActor
     @Test func rapidSidebarIntentsResolveToLatestSelection() async throws {
         let temp = try makeTemporaryDirectory()
         let picturesURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -184,6 +332,17 @@ private func waitForWindowState(
     throw CatalogWindowViewModelTestError.timedOut
 }
 
+@MainActor
+private func waitForCondition(_ predicate: () -> Bool) async throws {
+    for _ in 0 ..< 100 {
+        if predicate() {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+    throw CatalogWindowViewModelTestError.timedOut
+}
+
 private func makeTemporaryDirectory() throws -> URL {
     let url = FileManager.default.temporaryDirectory
         .appending(path: "OtosTests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -197,4 +356,49 @@ private func writeFile(_ url: URL, contents: String) throws {
 
 private enum CatalogWindowViewModelTestError: Error {
     case timedOut
+}
+
+private actor WindowStateBuildProbe {
+    private(set) var buildCount = 0
+
+    func recordBuild() {
+        buildCount += 1
+    }
+
+    func waitForBuildCount(_ expectedCount: Int) async throws {
+        for _ in 0 ..< 100 {
+            if buildCount >= expectedCount {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw CatalogWindowViewModelTestError.timedOut
+    }
+}
+
+private actor ViewModelInitialLoadGate {
+    private var isPaused = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func pause() async {
+        isPaused = true
+        await withCheckedContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func waitUntilPaused() async throws {
+        for _ in 0 ..< 100 {
+            if isPaused {
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw CatalogWindowViewModelTestError.timedOut
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
 }

@@ -321,12 +321,14 @@ constant-time invalidation.
   derivation, diagnostics summaries, 10 Hz loop, dirty flag, and state broadcast
   continuations.
 - `CatalogWindowViewModel` runs on MainActor and owns final state assignment,
-  explicit user intents, the selection stream/forwarding task, store startup
-  task, state-consumer task, and stall monitor.
+  explicit user intents, separate newest-value selection and lossless mutation
+  streams/forwarding tasks, store startup task, weak state-consumer task, and
+  stall monitor.
 - `MediaAssetCollectionView` stays MainActor-bound because AppKit requires it;
   it owns one in-flight structural apply and newest pending collection state.
-- ViewModel deinitialization finishes the selection stream, cancels owned tasks,
-  and stops the monitor. Store scan cancellation remains Store-owned.
+- ViewModel deinitialization cancels consumers before finishing both intent
+  streams and stops the monitor. State consumption does not retain the ViewModel
+  across stream waits. Store scan cancellation remains Store-owned.
 - No SQLite, filesystem, sorting, filtering, cache validation, or scope
   materialization runs on MainActor.
 

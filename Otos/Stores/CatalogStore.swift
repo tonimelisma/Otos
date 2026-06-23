@@ -4,6 +4,15 @@ import OSLog
 
 // swiftlint:disable file_length
 
+/// Store notifications remain cheap invalidation signals. Most changes carry no
+/// payload; root removal carries its typed path because a remove followed by a
+/// same-path add can otherwise coalesce into a snapshot where Projection cannot
+/// observe that the selected library instance disappeared.
+nonisolated enum CatalogStoreChange: Equatable {
+    case catalogChanged
+    case libraryRemoved(LibraryRootPath)
+}
+
 /// Catalog Store guide
 ///
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
@@ -12,9 +21,11 @@ import OSLog
 /// mirror the same facts into memory before notifying consumers. Views never
 /// access either representation directly.
 ///
-/// Store notifications are intentionally content-free. They only mark Projection
-/// dirty; Projection pulls one immutable snapshot on its 10 Hz cadence and owns
-/// presentation. Initial loading is represented by one finite task so every
+/// Store notifications are intentionally lightweight. Ordinary events only mark
+/// Projection dirty; successful root removal additionally carries its typed path
+/// so same-path replacement cannot hide selection invalidation. Projection pulls
+/// one immutable snapshot on its 10 Hz cadence and owns presentation. Initial
+/// loading is represented by one finite task so every
 /// concurrent caller observes the same load instead of applying competing
 /// snapshots. Awaited GRDB calls make this actor reentrant, so active scans carry
 /// the root path and private root-row instance they own and revalidate both after
@@ -65,7 +76,7 @@ actor CatalogStore {
     private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
     private var assetsByRootPath: [LibraryRootPath: [MediaRelativePath: MediaAsset]] = [:]
     private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
-    private var changeContinuations: [UUID: AsyncStream<Void>.Continuation] = [:]
+    private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
     private var activeScan: ActiveScan?
     private var currentScanTask: Task<Void, Never>?
@@ -86,9 +97,12 @@ actor CatalogStore {
 }
 
 extension CatalogStore {
-    func changeNotifications() -> AsyncStream<Void> {
-        let (stream, continuation) = AsyncStream<Void>.makeStream(
-            bufferingPolicy: .bufferingNewest(1)
+    func changeNotifications() -> AsyncStream<CatalogStoreChange> {
+        let (stream, continuation) = AsyncStream<CatalogStoreChange>.makeStream(
+            // Root-removal signals cannot be dropped: a same-path add may follow
+            // before Projection gets another executor turn. Events are tiny and
+            // Projection coalesces their expensive work on its existing cadence.
+            bufferingPolicy: .unbounded
         )
         let id = UUID()
         changeContinuations[id] = continuation
@@ -253,7 +267,7 @@ extension CatalogStore {
             phase: "finish",
             fields: ["rootPath": path.rawValue]
         )
-        notifyCatalogChanged()
+        notifyCatalogChanged(.libraryRemoved(path))
         startNextScanIfNeeded()
     }
 
@@ -617,13 +631,13 @@ private extension CatalogStore {
         )
     }
 
-    private func notifyCatalogChanged() {
+    private func notifyCatalogChanged(_ change: CatalogStoreChange = .catalogChanged) {
         let state = OtosSignpost.catalog.beginInterval("CatalogChangeNotify")
         defer {
             OtosSignpost.catalog.endInterval("CatalogChangeNotify", state)
         }
         for continuation in changeContinuations.values {
-            continuation.yield(())
+            continuation.yield(change)
         }
     }
 

@@ -2,7 +2,9 @@
 
 - Status: Accepted
 - Date: 2026-06-15
-- Spec: `docs/specs/0007-catalog-window-model.md`
+- Last updated: 2026-06-22
+- Specs: `docs/specs/0007-catalog-window-model.md`,
+  `docs/specs/0014-catalog-task-and-mutation-ownership.md`
 
 ## Context
 
@@ -30,6 +32,8 @@ This ADR owns:
   `CatalogWindowViewModel` at the UI ownership level.
 - The rule that SwiftUI views are passive composition surfaces for catalog UI.
 - The rule that Settings receives narrow library-management inputs.
+- ViewModel task lifetime and delivery semantics for projected state and catalog
+  mutations.
 - The scene choice for the main window: singleton SwiftUI `Window`, not
   `WindowGroup`.
 
@@ -42,8 +46,9 @@ This ADR references but does not own:
 - Library-root identity, unsandboxed root access, and the decision not to use
   bookmarks or App Sandbox. Those belong to ADR 0003.
 - Store change notifications, projection-owned publication cadence, ViewModel
-  state stream consumption, and transient library availability. Those belong to
-  ADR 0005.
+  state publication, sidebar-selection delivery, and transient library
+  availability. Those belong to ADR 0005. This ADR owns the ViewModel consumer's
+  lifetime but not Projection's publication mechanics.
 - Future metadata, thumbnails, preview, import, export, rendering, and editing
   pipelines. Those require their own specs or ADRs if they are ever implemented.
 
@@ -67,9 +72,12 @@ Use a single-window catalog UI ownership model:
   publication loop described by ADR 0005.
 - `CatalogWindowViewModel` is the single main window's `@MainActor @Observable`
   adapter. It owns final SwiftUI-visible state assignment, sidebar selection,
-  explicit selection delivery, user intents, and task lifetimes. It does not own
-  SQLite, filesystem traversal, scanning, sorting, filtering, availability
-  policy, or projection cadence.
+  explicit selection delivery, catalog mutation delivery, user intents, and
+  task lifetimes. Projected state is consumed by a ViewModel-owned task that
+  holds the ViewModel only while applying one completed state. Sidebar selection
+  uses a newest-value stream, while add/remove commands use a separate lossless
+  serial stream. It does not own SQLite, filesystem traversal, scanning, sorting,
+  filtering, availability policy, or projection cadence.
 - `ContentView`, `SidebarView`, `MediaGridView`, and `SettingsView` are passive
   SwiftUI surfaces. They render inputs, hold local control state when
   appropriate, bind controls, and call model intents.
@@ -160,6 +168,36 @@ Failure modes:
 - Sorting/filtering, notification subscription, or snapshot construction drifts
   into view updates.
 
+### Alternative E: Independent Task Per Catalog Mutation
+
+Create an unstructured task for every add/remove action.
+
+Pros:
+
+- Minimal forwarding code.
+
+Cons:
+
+- The ViewModel cannot cancel or order the tasks.
+- Store actor reentrancy permits operations to overlap at suspension points.
+
+Failure mode: completion order differs from user submission order.
+
+### Alternative F: One Stream For Selection And Mutations
+
+Send every user intent through one stream and forwarding task.
+
+Pros:
+
+- One producer/consumer pair.
+
+Cons:
+
+- Selection and mutations require incompatible buffering semantics.
+- Database work can delay sidebar responsiveness.
+
+Failure mode: either obsolete selections accumulate or accepted mutations drop.
+
 ## Consequences
 
 Positive:
@@ -169,6 +207,8 @@ Positive:
 - MainActor work remains limited to UI state assignment and user intents.
 - Settings receives only the state it needs.
 - There is one explicit MainActor adapter instead of overlapping UI-state owners.
+- State subscription cannot indefinitely retain that adapter, and ViewModel
+  mutations reach Store serially in user order.
 
 Negative:
 
@@ -193,5 +233,7 @@ current responsiveness requirement, not speculative scale work.
   fallback retention with newer-intent precedence.
 - ViewModel tests prove `CatalogWindowViewModel` owns start idempotence, state
   stream consumption, explicit sidebar intent delivery, resolved selection
-  application without feedback, and add/remove routing.
+  application without feedback, deallocation with an active subscription,
+  lossless ordered add/remove delivery, failure continuation, and queued-command
+  cancellation.
 - Local verification runs through `script/verify.sh`.

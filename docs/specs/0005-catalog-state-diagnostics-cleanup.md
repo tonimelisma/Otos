@@ -16,7 +16,8 @@ surface until product error behavior is specified.
 
 Repo inspection found:
 
-- `CatalogWindowViewModel` owns final window state and explicit intents only.
+- `CatalogWindowViewModel` owns final window state plus explicitly separated
+  selection and catalog-mutation intent delivery only.
 - typed library/relative paths form `MediaAssetID`; SQLite row IDs remain inside
   Store persistence records.
 - the scanner stores name, relative path, content type, size, creation date, and
@@ -58,7 +59,7 @@ Out of scope:
 | CHG-002 | Architecture | SwiftUI receives single-window catalog UI state through `CatalogWindowViewModel`; views remain passive. | Current | `docs/requirements.md`, Spec 0007 |
 | CHG-003 | Architecture | Normalized filesystem path remains library-root identity, while SQLite rowid is persistence-private. | Current | `docs/requirements.md`, ADR 0003 |
 | CHG-004 | Non-functional | Catalog sorting and selection filtering must run outside the MainActor. | Current | `docs/requirements.md`, this spec |
-| ADD-001 | Architecture | `CatalogWindowViewModel` owns catalog startup, add-library, remove-library, sidebar selection, state consumption, and task lifetimes for the single main window. | Current | `docs/requirements.md`, Spec 0007 |
+| ADD-001 | Architecture | `CatalogWindowViewModel` owns catalog startup, weak state consumption, newest-value sidebar selection, and lossless serial add/remove task lifetimes for the single main window. | Current | `docs/requirements.md`, Specs 0007 and 0014 |
 | ADD-002 | Architecture | `CatalogProjection` actor owns root sorting, asset ordering, media-grid scope filtering, title lookup, and selected-library validation. | Current | `docs/requirements.md`, this spec, Spec 0011 |
 | ADD-003 | Architecture | Domain paths and media identity use typed values, not bare strings or concatenated IDs across app boundaries. | Current | `docs/requirements.md`, this spec |
 | ADD-004 | Tooling | Debug builds write JSONL for coarse catalog and Projection operations; high-frequency UI paths use Logger/signposts. | Current | `docs/requirements.md`, this spec, Spec 0012 |
@@ -126,8 +127,9 @@ Failure modes:
 Implement the selected alternative directly. `CatalogStore` remains catalog
 truth. `CatalogProjection` sorts roots and assets, resolves sidebar selection,
 computes title, and computes the selected-scope media grid off the MainActor.
-`CatalogWindowViewModel` consumes the projected state stream described by Spec
-0009 and assigns final SwiftUI state.
+`CatalogWindowViewModel` weakly consumes the projected state stream described by
+Spec 0009, assigns final SwiftUI state, and forwards add/remove commands through
+the separate lossless serial lane described by Spec 0014.
 
 Errors remain out of the UI for this increment. Catalog failures are logged
 through OSLog and written to debug JSONL diagnostics when applicable.
@@ -145,8 +147,9 @@ through OSLog and written to debug JSONL diagnostics when applicable.
 - `CatalogSnapshot`: raw, Sendable, immutable store state built by
   `CatalogStore.currentSnapshot()`.
 - `CatalogWindowViewModel`: `@MainActor @Observable`, owned by the one main
-  window; owns catalog startup, add/remove intents, sidebar selection, task
-  lifetimes, and final catalog window state assignment.
+  window; owns catalog startup, weak state consumption, newest-value sidebar
+  selection delivery, lossless serial add/remove delivery, and final catalog
+  window state assignment.
 - `CatalogProjection`: actor used for sorting, filtering, and state publication
   away from the MainActor.
 - `CatalogDiagnostics`: debug-only actor-serialized JSONL writer for coarse
