@@ -57,6 +57,7 @@ implementation history.
 | [0014](specs/0014-catalog-task-and-mutation-ownership.md) | Weak ViewModel task lifetime, lossless serial mutations, and coalesced replacement selection. |
 | [0015](specs/0015-filesystem-truth-and-review-process.md) | Filesystem-truth contract, overlay lifecycle, and the code-review process. |
 | [0016](specs/0016-cloud-materialization-detection.md) | Cloud dataless-file detection facts, the media-metadata boundary, and the dead `FileMaterialization` detector. |
+| [0017](specs/0017-catalog-publication-performance.md) | Cheap precomputed sort key and no-op-scan notification suppression, with before/after measurement. |
 
 ## Planning Documents
 

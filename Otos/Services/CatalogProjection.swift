@@ -1,6 +1,8 @@
 import Foundation
 import OSLog
 
+// swiftlint:disable file_length
+
 /// Catalog Projection guide
 ///
 /// This actor is the complete read-model boundary between catalog truth and the
@@ -25,6 +27,61 @@ actor CatalogProjection {
         let orderSorted: Bool
         let assetMembershipChanged: Bool
         let sortMs: Int
+        let membershipUs: Int
+        let scopedBuildUs: Int
+
+        func with(scopedBuildUs: Int) -> BuildMetrics {
+            BuildMetrics(
+                orderCacheHit: orderCacheHit,
+                orderSorted: orderSorted,
+                assetMembershipChanged: assetMembershipChanged,
+                sortMs: sortMs,
+                membershipUs: membershipUs,
+                scopedBuildUs: scopedBuildUs
+            )
+        }
+    }
+
+    private struct PublicationDiagnostics {
+        let state: CatalogWindowState
+        let assetCount: Int
+        let metrics: BuildMetrics
+        let selectedSidebarRow: SidebarSelection
+        let retainedResolvedSelection: Bool
+        let equalityUs: Int
+        let snapshotMs: Int
+        let projectionMs: Int
+        let totalMs: Int
+        let dirtyAfter: Bool
+        let stateChanged: Bool
+
+        func emit(to diagnostics: CatalogDiagnostics?) async {
+            await diagnostics?.record(
+                operation: "catalog.projection.window",
+                phase: "finish",
+                fields: [
+                    "libraries": "\(state.libraries.count)",
+                    "assetCount": "\(assetCount)",
+                    "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
+                    "assetOrderCacheHit": "\(metrics.orderCacheHit)",
+                    "assetOrderSorted": "\(metrics.orderSorted)",
+                    "assetMembershipChanged": "\(metrics.assetMembershipChanged)",
+                    "assetSortMs": "\(metrics.sortMs)",
+                    "membershipUs": "\(metrics.membershipUs)",
+                    "scopedBuildUs": "\(metrics.scopedBuildUs)",
+                    "equalityUs": "\(equalityUs)",
+                    "sidebarSelection": selectedSidebarRow.diagnosticDescription,
+                    "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
+                    "retainedResolvedSelection": "\(retainedResolvedSelection)",
+                    "emptyState": state.mediaEmptyState.diagnosticDescription,
+                    "snapshotMs": "\(snapshotMs)",
+                    "projectionMs": "\(projectionMs)",
+                    "totalMs": "\(totalMs)",
+                    "dirtyAfterPublication": "\(dirtyAfter)",
+                    "stateChanged": "\(stateChanged)",
+                ]
+            )
+        }
     }
 
     private let cadence: Duration
@@ -168,30 +225,23 @@ private extension CatalogProjection {
         )
         let projectionMs = DiagnosticsTiming.milliseconds(since: projectionStart)
         let totalMs = DiagnosticsTiming.milliseconds(since: publicationStart)
+        let equalityStart = Date()
         let stateChanged = lastPublishedState != state
+        let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
 
-        await diagnostics?.record(
-            operation: "catalog.projection.window",
-            phase: "finish",
-            fields: [
-                "libraries": "\(state.libraries.count)",
-                "assetCount": "\(snapshot.assetsByID.count)",
-                "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
-                "assetOrderCacheHit": "\(buildMetrics.orderCacheHit)",
-                "assetOrderSorted": "\(buildMetrics.orderSorted)",
-                "assetMembershipChanged": "\(buildMetrics.assetMembershipChanged)",
-                "assetSortMs": "\(buildMetrics.sortMs)",
-                "sidebarSelection": selectedSidebarRow.diagnosticDescription,
-                "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
-                "retainedResolvedSelection": "\(retainedResolvedSelection)",
-                "emptyState": state.mediaEmptyState.diagnosticDescription,
-                "snapshotMs": "\(snapshotMs)",
-                "projectionMs": "\(projectionMs)",
-                "totalMs": "\(totalMs)",
-                "dirtyAfterPublication": "\(dirty)",
-                "stateChanged": "\(stateChanged)",
-            ]
-        )
+        await PublicationDiagnostics(
+            state: state,
+            assetCount: snapshot.assetsByID.count,
+            metrics: buildMetrics,
+            selectedSidebarRow: selectedSidebarRow,
+            retainedResolvedSelection: retainedResolvedSelection,
+            equalityUs: equalityUs,
+            snapshotMs: snapshotMs,
+            projectionMs: projectionMs,
+            totalMs: totalMs,
+            dirtyAfter: dirty,
+            stateChanged: stateChanged
+        ).emit(to: diagnostics)
 
         if stateChanged {
             yield(state)
@@ -245,14 +295,8 @@ private extension CatalogProjection {
             OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
         }
         let libraries = Self.sortLibraries(snapshot.libraries)
-        let displayNamesByRootPath = Dictionary(
-            uniqueKeysWithValues: libraries.map { ($0.path, $0.displayName) }
-        )
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let (orderedAssetIDs, metrics) = orderedAssetIDs(
-            for: snapshot,
-            displayNamesByRootPath: displayNamesByRootPath
-        )
+        let (orderedAssetIDs, metrics) = orderedAssetIDs(for: snapshot)
         let resolvedSidebarSelection = Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
         let title = Self.title(for: resolvedSidebarSelection, libraries: libraries)
         let scopedAssetIDs = Self.assetIDs(
@@ -264,11 +308,8 @@ private extension CatalogProjection {
         // Preserve a scoped value map rather than passing the complete snapshot
         // through UI state. A detail update in an unselected library then remains
         // equal and does not trigger unrelated SwiftUI or AppKit work.
-        let scopedAssetsByID = Dictionary(
-            uniqueKeysWithValues: scopedAssetIDs.compactMap { id in
-                snapshot.assetsByID[id].map { (id, $0) }
-            }
-        )
+        let (scopedAssetsByID, scopedBuildUs) = scopedAssets(scopedAssetIDs, in: snapshot)
+        let finalMetrics = metrics.with(scopedBuildUs: scopedBuildUs)
         let mediaEmptyState = Self.mediaEmptyState(
             for: resolvedSidebarSelection,
             libraries: libraries,
@@ -288,8 +329,21 @@ private extension CatalogProjection {
                 resolvedSidebarSelection: resolvedSidebarSelection,
                 mediaEmptyState: mediaEmptyState
             ),
-            metrics
+            finalMetrics
         )
+    }
+
+    private func scopedAssets(
+        _ ids: [MediaAssetID],
+        in snapshot: CatalogSnapshot
+    ) -> ([MediaAssetID: MediaAsset], Int) {
+        let start = Date()
+        let map = Dictionary(
+            uniqueKeysWithValues: ids.compactMap { id in
+                snapshot.assetsByID[id].map { (id, $0) }
+            }
+        )
+        return (map, DiagnosticsTiming.microseconds(since: start))
     }
 
     /// Tests can inject deliberately slow or controlled derivation without
@@ -310,21 +364,21 @@ private extension CatalogProjection {
                 orderCacheHit: false,
                 orderSorted: false,
                 assetMembershipChanged: false,
-                sortMs: 0
+                sortMs: 0,
+                membershipUs: 0,
+                scopedBuildUs: 0
             )
         )
     }
 
-    private func orderedAssetIDs(
-        for snapshot: CatalogSnapshot,
-        displayNamesByRootPath: [LibraryRootPath: String]
-    ) -> ([MediaAssetID], BuildMetrics) {
+    private func orderedAssetIDs(for snapshot: CatalogSnapshot) -> ([MediaAssetID], BuildMetrics) {
         // Equal count plus successful lookup of every cached ID proves set
         // equality because asset IDs are unique dictionary keys. This direct
-        // validation costs the same O(n) traversal detail rematerialization
-        // already required and cannot be forgotten by a Store mutation path.
+        // validation cannot be forgotten by a Store mutation path.
+        let membershipStart = Date()
         let membershipUnchanged = cachedOrderedAssetIDs.count == snapshot.assetsByID.count
             && cachedOrderedAssetIDs.allSatisfy { snapshot.assetsByID[$0] != nil }
+        let membershipUs = DiagnosticsTiming.microseconds(since: membershipStart)
         if membershipUnchanged {
             return (
                 cachedOrderedAssetIDs,
@@ -332,16 +386,15 @@ private extension CatalogProjection {
                     orderCacheHit: true,
                     orderSorted: false,
                     assetMembershipChanged: false,
-                    sortMs: 0
+                    sortMs: 0,
+                    membershipUs: membershipUs,
+                    scopedBuildUs: 0
                 )
             )
         }
 
         let sortStart = Date()
-        let orderedIDs = Self.sortAssetIDs(
-            Array(snapshot.assetsByID.keys),
-            displayNamesByRootPath: displayNamesByRootPath
-        )
+        let orderedIDs = Self.sortAssetIDs(snapshot.assetsByID)
         let sortMs = DiagnosticsTiming.milliseconds(since: sortStart)
         cachedOrderedAssetIDs = orderedIDs
         return (
@@ -350,7 +403,9 @@ private extension CatalogProjection {
                 orderCacheHit: false,
                 orderSorted: true,
                 assetMembershipChanged: true,
-                sortMs: sortMs
+                sortMs: sortMs,
+                membershipUs: membershipUs,
+                scopedBuildUs: 0
             )
         )
     }
@@ -365,32 +420,22 @@ private extension CatalogProjection {
         }
     }
 
-    static func sortAssetIDs(
-        _ assetIDs: [MediaAssetID],
-        displayNamesByRootPath: [LibraryRootPath: String]
-    ) -> [MediaAssetID] {
-        assetIDs.sorted { left, right in
-            // A snapshot produced by Store always has a matching library. The
-            // path-derived fallback keeps malformed test or diagnostic snapshots
-            // deterministic without inventing unrelated display text.
-            let leftLibraryName = displayNamesByRootPath[left.libraryRootPath]
-                ?? left.libraryRootPath.displayName
-            let rightLibraryName = displayNamesByRootPath[right.libraryRootPath]
-                ?? right.libraryRootPath.displayName
-            let libraryComparison = leftLibraryName.localizedStandardCompare(rightLibraryName)
-            if libraryComparison != .orderedSame {
-                return libraryComparison == .orderedAscending
+    static func sortAssetIDs(_ assetsByID: [MediaAssetID: MediaAsset]) -> [MediaAssetID] {
+        // Sort by each asset's precomputed `sortKey` with a plain string compare
+        // rather than localized collation per comparison. Ties, which only arise
+        // for malformed test or diagnostic snapshots, fall back to the raw path so
+        // the result stays deterministic.
+        assetsByID.values
+            .sorted { left, right in
+                if left.sortKey != right.sortKey {
+                    return left.sortKey < right.sortKey
+                }
+                if left.libraryRootPath.rawValue != right.libraryRootPath.rawValue {
+                    return left.libraryRootPath.rawValue < right.libraryRootPath.rawValue
+                }
+                return left.relativePath.rawValue < right.relativePath.rawValue
             }
-
-            let pathComparison = left.libraryRootPath.rawValue.localizedStandardCompare(
-                right.libraryRootPath.rawValue
-            )
-            if pathComparison != .orderedSame {
-                return pathComparison == .orderedAscending
-            }
-
-            return left.relativePath.rawValue.localizedStandardCompare(right.relativePath.rawValue) == .orderedAscending
-        }
+            .map(\.id)
     }
 
     static func resolvedSidebarSelection(

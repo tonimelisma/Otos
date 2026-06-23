@@ -123,9 +123,76 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let byteSize: Int64?
     let createdAt: Date?
     let contentModifiedAt: Date?
+    /// Precomputed display-order key. Sorting the catalog by comparing these cheap
+    /// keys replaces a localized collation call per comparison, which a 25k-asset
+    /// sort measured at roughly 500 ms. The key is derived from identity, so it is
+    /// constant for an asset and never disagrees with it.
+    let sortKey: String
+
+    init(
+        libraryRootPath: LibraryRootPath,
+        relativePath: MediaRelativePath,
+        name: String?,
+        contentTypeIdentifier: String?,
+        byteSize: Int64?,
+        createdAt: Date?,
+        contentModifiedAt: Date?
+    ) {
+        self.libraryRootPath = libraryRootPath
+        self.relativePath = relativePath
+        self.name = name
+        self.contentTypeIdentifier = contentTypeIdentifier
+        self.byteSize = byteSize
+        self.createdAt = createdAt
+        self.contentModifiedAt = contentModifiedAt
+        sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)
+    }
 
     var id: MediaAssetID {
         MediaAssetID(libraryRootPath: libraryRootPath, relativePath: relativePath)
+    }
+}
+
+/// Builds the cheap, precomputed display-order key for a media asset. Digit runs
+/// are zero-padded so a plain string comparison still orders them numerically
+/// ("img2" before "img10") without a locale-aware comparison on every sort step.
+nonisolated enum MediaSortKey {
+    static func make(libraryRootPath: LibraryRootPath, relativePath: MediaRelativePath) -> String {
+        // The library segment groups a library's assets together; the relative
+        // path orders within it. A null separator keeps the two segments from
+        // ordering across the boundary.
+        naturalKey(libraryRootPath.rawValue) + "\u{0}" + naturalKey(relativePath.rawValue)
+    }
+
+    static func naturalKey(_ string: String) -> String {
+        var result = ""
+        result.reserveCapacity(string.count + 8)
+        var digitRun = ""
+        for character in string.lowercased() {
+            if character.isNumber {
+                digitRun.append(character)
+            } else {
+                if !digitRun.isEmpty {
+                    result += paddedDigits(digitRun)
+                    digitRun = ""
+                }
+                result.append(character)
+            }
+        }
+        if !digitRun.isEmpty {
+            result += paddedDigits(digitRun)
+        }
+        return result
+    }
+
+    private static func paddedDigits(_ digits: String) -> String {
+        // 19 digits covers any Int64-range counter or timestamp in a filename. A
+        // longer run, not expected in real media names, falls back to plain order.
+        let width = 19
+        guard digits.count < width else {
+            return digits
+        }
+        return String(repeating: "0", count: width - digits.count) + digits
     }
 }
 

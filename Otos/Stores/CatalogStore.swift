@@ -438,10 +438,13 @@ private extension CatalogStore {
         let memoryState = OtosSignpost.catalog.beginInterval("CatalogScanBatchApplyMemory")
         // Use the post-await root value. The pre-write value belongs to the same
         // lease, but retaining it across suspension would obscure that proof.
-        applyScannedBatchToMemory(batch, root: currentRoot, rootPath: scan.rootPath)
+        let memoryChanged = applyScannedBatchToMemory(batch, root: currentRoot, rootPath: scan.rootPath)
         OtosSignpost.catalog.endInterval("CatalogScanBatchApplyMemory", memoryState)
         OtosLog.catalog.debug(
-            "Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public)"
+            """
+            Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) \
+            count=\(batch.count, privacy: .public) changed=\(memoryChanged, privacy: .public)
+            """
         )
         await diagnostics?.record(
             operation: "catalog.scan.batch",
@@ -449,17 +452,39 @@ private extension CatalogStore {
             fields: [
                 "rootPath": scan.rootPath.rawValue,
                 "count": "\(batch.count)",
+                "changed": "\(memoryChanged)",
             ]
         )
-        notifyCatalogChanged()
+        // A re-scan that re-observes identical files changes nothing, so skip the
+        // notification that would otherwise wake the whole sort/scope/publish
+        // pipeline for a no-op batch.
+        if memoryChanged {
+            notifyCatalogChanged()
+        }
     }
 
+    /// Returns whether the batch changed any in-memory asset. A re-scan that
+    /// re-observes identical files returns false, which lets the caller skip the
+    /// projection-waking notification. Change detection compares the exactly
+    /// comparable filesystem facts (name, content type, size); dates round-trip
+    /// through SQLite as `Double` seconds, so comparing them risks float epsilon
+    /// that would make every re-scan look changed, and a real content change moves
+    /// the size anyway.
     private func applyScannedBatchToMemory(
         _ batch: [ScannedMediaFile],
         root: LibraryRoot,
         rootPath: LibraryRootPath
-    ) {
+    ) -> Bool {
+        var changed = false
         for file in batch {
+            let existing = assetsByRootPath[rootPath]?[file.relativePath]
+            let isNewOrChanged = existing == nil
+                || existing?.name != file.name
+                || existing?.contentTypeIdentifier != file.contentTypeIdentifier
+                || existing?.byteSize != file.byteSize
+            guard isNewOrChanged else {
+                continue
+            }
             assetsByRootPath[rootPath, default: [:]][file.relativePath] = MediaAsset(
                 libraryRootPath: root.path,
                 relativePath: file.relativePath,
@@ -469,7 +494,9 @@ private extension CatalogStore {
                 createdAt: file.createdAt,
                 contentModifiedAt: file.contentModifiedAt
             )
+            changed = true
         }
+        return changed
     }
 
     private func scanCompleted(scan: ActiveScan, observedPaths: Set<MediaRelativePath>) async {
