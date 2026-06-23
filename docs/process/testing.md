@@ -23,6 +23,9 @@ Sources:
   bug or requirement they claim to cover.
 - Do not chase coverage percentages. Add tests that protect behavior,
   architecture contracts, privacy, and regressions.
+- Prefer simple data structures and the narrowest reliable layer. Per Rob Pike's 5
+  Rules, whose canonical statement is in `AGENTS.md`, simple code organized around
+  good data structures makes behavior easy to verify.
 
 ## Evidence Matrix
 

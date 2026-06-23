@@ -11,6 +11,11 @@ clear ownership. Do not add performance-oriented complexity for anticipated
 scale until requirements, measurement, or explicit user direction prove the
 simple path is insufficient.
 
+This is Rob Pike's measure-before-optimizing discipline, whose canonical statement
+lives in `AGENTS.md`: you cannot guess where a program spends its time, so do not
+add a speed hack, fancy algorithm, or scale machinery until instrumentation proves
+the bottleneck. Prefer simple data structures and simple algorithms.
+
 ## Work Classification
 
 Classify the increment before drafting or editing:

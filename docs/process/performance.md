@@ -20,6 +20,9 @@ Sources:
   budgets than the hang threshold.
 - Measure first, change the code, then remeasure. Do not diagnose performance by
   intuition alone.
+- Follow Rob Pike's 5 Rules, whose canonical statement is in `AGENTS.md`: you
+  cannot guess where time goes, so measure before tuning; do not get fancy until n
+  is proven large; prefer simple data structures and simple algorithms.
 
 ## Required Spec Content
 

@@ -4,6 +4,11 @@ Code smells are quick indicators that often point to deeper design problems.
 They are not automatic proof that code is wrong. Investigate the smell, decide
 whether it matters, and record the outcome in the PR or DoD report.
 
+Premature optimization is itself a smell: a cache, pool, pipeline, split schema, or
+fancy algorithm added without measured evidence. Apply Rob Pike's 5 Rules, whose
+canonical statement is in `AGENTS.md`, and require a measurement before any
+speed-driven complexity.
+
 Sources:
 
 - [Martin Fowler: Code Smell](https://martinfowler.com/bliki/CodeSmell.html)

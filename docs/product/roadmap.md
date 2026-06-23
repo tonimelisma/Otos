@@ -1,9 +1,10 @@
 # Otos Roadmap And Idea Notes
 
-This is a non-authoritative planning and idea document. It may contain rough
-ideas, wild concepts, abandoned options, sequencing sketches, or notes that are
-never meant to be implemented. Do not use it to guide work unless the user
-explicitly asks to use roadmap or planning material for the current task.
+This is a non-authoritative grab bag of ideas. It may contain rough ideas, wild
+concepts, abandoned options, sequencing sketches, or notes that are never meant to
+be implemented. None of its contents are ever a basis for a decision, and it never
+guides work. It is consulted only when the user explicitly asks "what else could we
+build", and any item is implemented only after the user explicitly approves it.
 
 It is not proof that behavior exists, not a commitment, and not a source of
 requirements. Implemented current requirements live only in

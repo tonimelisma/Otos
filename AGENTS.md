@@ -1,8 +1,12 @@
 # Otos Agent Instructions
 
-Otos is a native macOS Lightroom-style application. It overlays organization,
-metadata, previews, and editing intent on top of user-owned media that remains on
-disk wherever the user chose to keep it. Originals are read-only.
+Otos is a native macOS Lightroom-style application. The user's filesystem is the
+single source of truth for what media exists and where it lives. Otos overlays
+organization, metadata, previews, and editing intent on top of user-owned media
+that stays on disk wherever the user chose to keep it, including cloud-synced
+folders. Originals are read-only, and Otos never takes the user's media hostage:
+it never relocates originals into an opaque app-owned library and never writes
+into the user's media folders.
 
 ## Non-Negotiable Principles
 
@@ -28,6 +32,52 @@ disk wherever the user chose to keep it. Originals are read-only.
 - One user action has one implementation path. Buttons, menus, keyboard
   shortcuts, gestures, automation hooks, and tests should call the same owner
   intent instead of parallel behavior paths.
+- The filesystem is the single source of truth. The catalog and every overlay
+  Otos stores are a subordinate, rebuildable projection that always defers to the
+  filesystem; when they disagree, the filesystem wins and the catalog reconciles.
+- Otos never takes media hostage. There is no opaque app-owned media vault, and
+  Otos never writes into the user's media folders, including no sidecar files. The
+  catalog itself may be made exportable if portability is ever needed.
+- Otos changes the user's files only through explicit, opt-in, user-initiated
+  actions. The default is that nothing on disk changes. The user is allowed to keep
+  their own mess; convenience features such as deduplication, renaming, or
+  reorganization are opt-in and operate on the filesystem, never on a hidden copy.
+- Overlay has one lifecycle. Every overlay Otos holds for an item, whether derived
+  by Otos or authored by the user, is kept for as long as that item exists and is
+  purged in full only when the item is proven deleted. A temporarily missing
+  original is never treated as a deletion. Asset identity is the filesystem path;
+  Otos does not invent durable IDs, content fingerprints, or sidecars to track
+  files.
+
+## Engineering Philosophy: Measure Before Optimizing
+
+Follow Rob Pike's 5 Rules of Programming. They are binding guidance for how Otos is
+built, not trivia:
+
+1. You can't tell where a program is going to spend its time. Bottlenecks occur in
+   surprising places, so don't try to second guess and put in a speed hack until
+   you've proven that's where the bottleneck is.
+2. Measure. Don't tune for speed until you've measured, and even then don't unless
+   one part of the code overwhelms the rest.
+3. Fancy algorithms are slow when n is small, and n is usually small. Fancy
+   algorithms have big constants. Until you know that n is frequently going to be
+   big, don't get fancy. (Even if n does get big, use Rule 2 first.)
+4. Fancy algorithms are buggier than simple ones, and they're much harder to
+   implement. Use simple algorithms as well as simple data structures.
+5. Data dominates. If you've chosen the right data structures and organized things
+   well, the algorithms will almost always be self-evident. Data structures, not
+   algorithms, are central to programming.
+
+Rules 1 and 2 restate Tony Hoare's maxim that premature optimization is the root of
+all evil. Ken Thompson rephrased rules 3 and 4 as "when in doubt, use brute force."
+Rules 3 and 4 are KISS. Rule 5 was stated earlier by Fred Brooks in The Mythical
+Man-Month and is often shortened to "write stupid code that uses smart objects."
+
+In Otos this means: do not add caches, pools, pipelines, fancy algorithms, split
+schemas, or scale machinery for anticipated load. Choose the simplest correct data
+structures and owners, ship them, and let instrumentation prove where a real
+bottleneck is before optimizing it. These rules are echoed from the process docs;
+this section is their canonical statement.
 
 ## Platform And Product Baseline
 
@@ -40,8 +90,25 @@ disk wherever the user chose to keep it. Originals are read-only.
   performance requirements.
 - Third-party dependencies are allowed only when the spec proves they are the
   best architecture. Add alternatives and tradeoffs before adding one.
-- Otos app data lives in Application Support. All overlay data is treated as
-  backed up for now. Do not introduce preview pruning or cache eviction.
+- Otos app data, including the catalog and all overlay Otos derives or the user
+  authors, lives in Application Support and is treated as backed up. Overlay is
+  held for as long as its originating item exists; there is no cache eviction or
+  preview pruning to reclaim space. Overlay for an item is purged in full only when
+  that item is proven deleted, that is, absent from a reachable, fully enumerated
+  root. Overlay is never purged when an original is merely temporarily missing
+  (ejected drive, offline network or cloud volume, unreachable root, dataless cloud
+  placeholder, or a user-excluded selective-sync subtree). See
+  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
+- Most user media lives in cloud-synced folders. Cloud files may be dataless
+  placeholders that still appear in directory enumeration: their filesystem facts
+  (name, size, dates, type) are readable without downloading them, but reading their
+  bytes forces materialization. Media metadata (EXIF and similar) requires reading
+  bytes; filesystem facts do not. Catalog, thumbnail, and media-metadata work must
+  not force-materialize dataless files; it checks the `FileMaterialization` detector
+  (the `SF_DATALESS` kernel flag) immediately before any byte read and defers
+  materialization to explicit, user-visible, off-main work. Materialization status is
+  transient and is never persisted. See
+  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 - Otos is an image/video product. Never add audio-specific playback, metadata,
   thumbnails, icons, classification, or workflows. This product boundary does
   not imply that the current all-regular-file catalog already filters unsupported
@@ -141,6 +208,15 @@ Planning and idea documents may contain wild ideas, abandoned options, or concep
 that are never meant to be implemented. Do not use them to guide work unless the
 user explicitly asks to use those documents or asks for roadmap/planning input in
 the current task.
+
+Do not document unbuilt features as roadmap entries or "TBD" placeholders inside
+engineering docs. Forward-looking design takes one of two clearly separated forms.
+Conditional architecture states the invariants a feature must honor "if it is ever
+built", lives in ADRs, and is allowed because it protects the foundation's
+integrity without committing to or scheduling the feature. The roadmap idea
+grab-bag in `docs/product/roadmap.md` is a non-authoritative pile of ideas that
+never guides work, is consulted only when the user explicitly asks "what else could
+we build", and whose items are implemented only after explicit user approval.
 
 Whenever the user gives guidance that affects product direction, app behavior,
 architecture, workflow, quality, regression protection, evidence, or future
@@ -404,6 +480,9 @@ script/verify.sh
   merged or patch-equivalent to `main`.
 - Use PRs for review. Do not treat direct commits to `main` as the normal
   integration path.
+- Reviews follow `docs/process/code-review.md` for the review criteria, severity
+  model, and merge gate. The same criteria apply to agent self-review before a PR
+  is opened.
 - Required remote CI is a fast gate: checkout sanity, workflow YAML parsing,
   text hygiene, script inventory, and macOS lint. Remote CI does not run Xcode 27
   build/test until a runner with Xcode 27 exists.

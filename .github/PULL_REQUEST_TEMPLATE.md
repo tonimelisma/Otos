@@ -79,6 +79,7 @@ the single final green/red DoD report as a PR comment and send it to the user.
 - [ ] No effort-based compromise.
 - [ ] No fabricated user-visible or domain facts.
 - [ ] One user action has one implementation path.
+- [ ] Reviewed against `docs/process/code-review.md`; blockers and majors resolved.
 - [ ] Affected current docs and backlinks describe the landed design; obsolete
       documents were deleted.
 - [ ] Affected file guides and comments explain current mechanics and rationale,

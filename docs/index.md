@@ -23,6 +23,7 @@ implementation history.
 | [process/testing.md](process/testing.md) | AI-aware macOS testing strategy and verification layers. | Test strategy, test commands, or acceptance evidence expectations change. |
 | [process/performance.md](process/performance.md) | Jank detection and performance evidence using the repo's OSLog/signpost and Instruments tooling. | Instrumentation categories, profile scripts, or performance budgets change. |
 | [process/apple-docs.md](process/apple-docs.md) | Apple documentation grounding workflow and citation expectations. | The Apple documentation helper or citation policy changes. |
+| [process/code-review.md](process/code-review.md) | Review lens, rubric, severity model, and merge gate for human and agent review. | Review criteria, severity model, or merge-gate policy changes. |
 
 ## Current Architecture Decisions
 
@@ -35,6 +36,7 @@ implementation history.
 | [0005](adr/0005-catalog-publication-and-availability.md) | Projection publication, explicit selection delivery, and transient availability. |
 | [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering and structural/detail update mechanics. |
 | [0007](adr/0007-catalog-order-reuse.md) | Identity-validated ordered-ID reuse and scoped value materialization. |
+| [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
 
 ## Current Implementation Specs
 
@@ -53,6 +55,8 @@ implementation history.
 | [0012](specs/0012-catalog-state-robustness.md) | Explicit intents, unknown availability, order validation, diagnostics split, and living documentation. |
 | [0013](specs/0013-catalog-lifecycle-race-safety.md) | Serialized startup, replacement-safe transient scan ownership, and retained selection normalization. |
 | [0014](specs/0014-catalog-task-and-mutation-ownership.md) | Weak ViewModel task lifetime, lossless serial mutations, and coalesced replacement selection. |
+| [0015](specs/0015-filesystem-truth-and-review-process.md) | Filesystem-truth contract, overlay lifecycle, and the code-review process. |
+| [0016](specs/0016-cloud-materialization-detection.md) | Cloud dataless-file detection facts, the media-metadata boundary, and the dead `FileMaterialization` detector. |
 
 ## Planning Documents
 
