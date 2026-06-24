@@ -76,9 +76,6 @@ struct CatalogDiagnosticsTests {
         #expect(output.contains("skipped packages: 1"))
         #expect(output.contains("startup callers coalesced: 1"))
         #expect(output.contains("window projections: 1"))
-        #expect(output.contains("asset order cache hits: 1"))
-        #expect(output.contains("asset order sorts: 1"))
-        #expect(output.contains("asset membership changes: 1"))
         #expect(output.contains("main run loop stalls: 1"))
         #expect(output.contains("library availability changes: 1"))
     }
@@ -102,9 +99,7 @@ private func writeSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async 
             "snapshotMs": "1",
             "projectionMs": "2",
             "totalMs": "3",
-            "assetOrderCacheHit": "true",
-            "assetOrderSorted": "true",
-            "assetMembershipChanged": "true",
+            "assetSortMs": "1",
         ]
     )
     await diagnostics.record(

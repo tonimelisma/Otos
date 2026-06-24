@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct CatalogProjectionOrderingTests {
-    @Test func unchangedMembershipReusesOrderAndRematerializesDetailValues() async {
+    @Test func detailChangeKeepsOrderAndUpdatesValues() async {
         let root = orderingRoot()
         let projection = CatalogProjection(diagnostics: nil)
         let original = orderingAsset(root: root, relativePath: "one.jpg")
@@ -79,7 +79,7 @@ struct CatalogProjectionOrderingTests {
         #expect(orderingAssets(in: changed).map(\.relativePath.rawValue) == ["a.jpg", "c.jpg", "z.jpg"])
     }
 
-    @Test func sidebarFilteringPublishesFromCachedOrderWithoutSorting() async throws {
+    @Test func sidebarFilteringPublishesSelectedScope() async throws {
         let temp = try orderingTemporaryDirectory()
         let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
         let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
@@ -103,8 +103,7 @@ struct CatalogProjectionOrderingTests {
         try await store.addLibrary(url: rootURL)
         _ = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
-                && event.fields["assetOrderSorted"] == "true"
-                && event.fields["assetMembershipChanged"] == "true"
+                && event.fields["sidebarSelection"] == "allMedia"
                 && event.fields["selectedScopeAssetCount"] == "1"
         }
 
@@ -113,8 +112,6 @@ struct CatalogProjectionOrderingTests {
         await projection.updateSidebarSelection(.library(rootPath))
         let filtered = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
-                && event.fields["assetOrderCacheHit"] == "true"
-                && event.fields["assetOrderSorted"] == "false"
                 && event.fields["sidebarSelection"] == "library:\(rootPath.rawValue)"
         }
 

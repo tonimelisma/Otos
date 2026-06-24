@@ -1,28 +1,36 @@
-# ADR 0007: Catalog Order Reuse
+# ADR 0007: Catalog Ordering And Value Materialization
 
 - Status: Accepted
-- Last updated: 2026-06-21
+- Last updated: 2026-06-23
 - Specs: `docs/specs/0011-placeholder-media-grid.md`,
-  `docs/specs/0012-catalog-state-robustness.md`
+  `docs/specs/0012-catalog-state-robustness.md`,
+  `docs/specs/0017-catalog-publication-performance.md`,
+  `docs/specs/0018-catalog-order-cache-and-scoped-map-removal.md`
 
 ## Context
 
 `CatalogStore` keeps media assets in dictionaries keyed by `MediaAssetID`.
-Dictionary iteration order is meaningless, while the grid needs stable ordering
-by library display name, root path, and relative path. Detail, selection,
-availability, and scan-activity changes often leave membership unchanged, so
-re-sorting every projection would repeat work without changing identity order.
+Dictionary iteration order is meaningless, while the grid needs a stable order.
 
-Any cache-validity rule must remain correct without duplicating catalog truth or
-requiring every Store mutation path to maintain separate invalidation metadata.
+This ADR originally decided to cache the globally ordered `[MediaAssetID]` in the
+projection and reuse it whenever direct identity validation proved membership was
+unchanged, and to materialize a scoped value map so changes outside the selected
+scope stayed equality-suppressed. That decision assumed re-sorting was expensive.
+
+Measurement overturned the assumption. With the precomputed per-asset sort key
+(`MediaSortKey`, FND-061), sorting 25k assets dropped from ~500 ms of localized
+collation to ~140 ms of plain key comparison, and a real-library trace showed the
+order cache's O(n) membership validation (~56 ms) and the scoped-map rebuild
+(~68 ms) cost more per publication than the cheap re-sort they were avoiding. The
+reuse machinery had become a net cost.
 
 ## MECE Decision Scope
 
 This ADR owns:
 
 - where catalog identity sorting occurs
-- how Projection validates and reuses cached identity order
-- how scoped asset values are materialized from that order
+- whether the projection caches order or re-sorts each publication
+- how the grid receives asset values (scoped copy versus shared full map)
 
 It references but does not own:
 
@@ -30,117 +38,98 @@ It references but does not own:
 - UI ownership: ADR 0004
 - 10 Hz publication and availability: ADR 0005
 - collection rendering and diffable application: ADR 0006
+- the precomputed sort key itself: spec 0017
 
-Persistent revisions, user sort modes, media eligibility, metadata ordering,
-thumbnail ordering, and selection of individual media assets are outside this
-decision.
+User sort modes, media eligibility, metadata ordering, and selection of individual
+media assets are outside this decision.
 
 ## Decision
 
-Keep Store's dictionaries as the only runtime catalog truth. `CatalogSnapshot`
-exposes keyed assets but no ordering and no invalidation counter.
+`CatalogProjection` is the sole sorting owner and **sorts the current ids on every
+publication** by comparing each asset's precomputed `sortKey`. There is no order
+cache and no membership-validation step; the snapshot exposes keyed assets and no
+ordering.
 
-`CatalogProjection` caches globally ordered `[MediaAssetID]`. Before reuse it
-directly validates membership:
-
-1. cached count must equal the snapshot asset count
-2. every cached ID must exist in the snapshot map
-
-Those two checks prove set equality because cached IDs are unique. If either
-check fails, Projection sorts all current IDs with the established comparator
-and replaces the cache. Insertions, deletions, and same-count identity
-replacements therefore become ordinary cache misses without Store-side
-bookkeeping.
-
-The comparator uses a root-path-to-display-name lookup derived once from the
-snapshot's library rows, then root path and relative path as deterministic
-tie-breakers. A malformed snapshot whose asset root lacks a library row falls
-back to `LibraryRootPath.displayName`; the fallback preserves complete output
-without inventing a second identity.
-
-After validating order, Projection filters IDs directly by availability and
-sidebar scope. It builds `CatalogMediaGridState.assetsByID` only for IDs in the
-selected scope. Changes outside that scope then remain equality-suppressed and
-do not force a window-state assignment.
+The projection passes the snapshot's **full value map by copy-on-write** as
+`CatalogMediaGridState.assetsByID` and the scoped, ordered ids as
+`orderedAssetIDs`. The grid renders `orderedAssetIDs` and looks up only the visible
+ids in the shared map, so no per-publication scoped copy is materialized.
 
 ## Alternatives Considered
 
-### Sort Every Projection
+### Cache order and validate membership (the previous decision)
 
 Pros:
 
-- no cache state or validation
+- avoids re-sorting on detail, selection, availability, and activity changes
 
 Cons:
 
-- repeats O(n log n) work for detail, selection, availability, and activity
-  changes that do not affect order
+- the O(n) `allSatisfy` membership validation measured ~56 ms at 25k, more than the
+  cheap re-sort it guarded; the cache became a net cost once the sort was cheap
 
-Failure mode: frequent scan detail updates waste projection time.
+Failure mode: spending more time validating a cache than re-sorting would take.
 
-### Maintain A Sorted Array In Store
+### Materialize a scoped value map
 
 Pros:
 
-- snapshots can expose ready order
+- a detail change in an unselected library stays equality-suppressed
 
 Cons:
 
-- dictionaries and array both answer catalog membership
-- UI ordering contaminates persistence/scanning ownership
+- a per-publication O(n) dictionary copy (~68 ms at 25k) for a property the grid
+  reads only a few visible entries from
 
-Failure mode: mutation paths update one representation but not the other.
+Failure mode: copying the whole scoped map every publication to render a screenful.
 
-### Store A Manual Transient Revision
+### Maintain an incremental sorted order
 
 Pros:
 
-- constant-time cache-validity comparison
+- avoids even the cheap full re-sort on scan growth
 
 Cons:
 
-- every membership mutation path must classify and increment correctly
-- the counter duplicates a fact already represented by keyed membership
+- more machinery than a precomputed key; at 25k the full re-sort is already
+  ~140 ms and rare after no-op-scan suppression
 
-Failure mode: a missed increment silently reuses stale order; defensive identity
-validation is still needed, making the counter redundant.
-
-### Persist Ordering Or A Revision
-
-Pros:
-
-- cache can survive launch
-
-Cons:
-
-- adds schema and synchronization for rebuildable derived state
-
-Failure mode: persisted order drifts from catalog truth.
+Failure mode: merge bugs on delete or same-path replacement. Deferred unless a
+trace at much larger scale proves the full re-sort is a bottleneck.
 
 ## Consequences
 
-- Store has no order-cache invalidation responsibility.
-- Projection remains the sole sorting owner and reuses order on detail-only,
-  selection, availability, and activity changes.
-- Same-count replacement is detected without special cases.
-- Validation is O(n), intentionally simpler and safer than manually maintained
-  invalidation metadata.
-- Scoped value maps avoid unrelated state churn.
-- Diagnostics report cache hit, membership change, sort duration, ordered count,
-  and selected-scope count.
+- The projection is simpler: no `cachedOrderedAssetIDs`, no membership validation,
+  no scoped-map construction.
+- The grid's `assetsByID` is the full snapshot map (shared, not copied). Its
+  `orderedAssetIDs` remains the scoped, ordered structure.
+- The cross-library equality isolation the scoped map provided is dropped. A real
+  detail change in an unselected library now produces one extra publication that
+  the grid resolves to a visible-only refresh with no visible change. No-op-scan
+  suppression (FND-062) removes the common source of such churn, so this is
+  acceptable for the current product.
+- Projection diagnostics report sort duration; the cache-hit, membership-change,
+  and scoped-build fields are removed.
+
+## Retirement Proof
+
+Removed in the implementing increment: `cachedOrderedAssetIDs` and its validation,
+the scoped-map helper, the `assetOrderCacheHit` / `assetOrderSorted` /
+`assetMembershipChanged` / `membershipUs` / `scopedBuildUs` diagnostic fields, the
+matching `script/catalog-diagnostics.sh` summary lines, and the tests that asserted
+cache-hit reuse. FND-043 is rewritten. Git history owns the prior cache decision.
 
 ## Living Documentation Impact
 
-Requirement FND-042 is retired. Requirement FND-043, Spec 0011, Projection
-comments, diagnostics summaries, and tests must describe identity validation,
-not a Store-maintained revision. The old ADR filename and every current backlink
-to it are removed.
+- FND-043 rewritten to the sort-every-publication, full-map contract.
+- `CatalogProjection` file guide and comments updated.
+- `CatalogMediaGridState` comment updated (full map, not scoped).
+- `docs/specs/0018-catalog-order-cache-and-scoped-map-removal.md` records the
+  increment; spec 0017 introduced the sort key this decision depends on.
 
 ## Verification
 
-- Projection tests cover first sort, detail-only reuse, insertion, deletion,
-  same-count replacement, availability/scope filtering, orphan fallback order,
-  and scoped-map isolation.
-- Store tests contain no structural invalidation bookkeeping.
-- Source hygiene rejects the retired revision symbol.
+- Projection tests cover first sort, detail change keeping order, insertion,
+  deletion, same-count replacement, availability/scope filtering, and the full-map
+  contract.
 - `script/verify.sh` supplies the full local gate.

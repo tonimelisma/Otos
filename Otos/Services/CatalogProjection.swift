@@ -1,8 +1,6 @@
 import Foundation
 import OSLog
 
-// swiftlint:disable file_length
-
 /// Catalog Projection guide
 ///
 /// This actor is the complete read-model boundary between catalog truth and the
@@ -15,31 +13,15 @@ import OSLog
 /// cleared before an awaited snapshot/build so input arriving during that await
 /// survives for the next tick. Actor isolation permits only one build at a time,
 /// and equal-state suppression prevents detail views from receiving values that
-/// did not change. Ordered IDs are cached, but membership is validated directly
-/// against each immutable snapshot so Store does not maintain cache metadata. A
-/// missing selected library is normalized here, where selection input is owned;
+/// did not change. Asset order is produced by sorting precomputed sort keys on
+/// every publication; the projection no longer caches order. A missing selected
+/// library is normalized here, where selection input is owned;
 /// the fallback is retained only if no newer intent arrived during the build.
 actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable (CatalogSnapshot, SidebarSelection) async -> CatalogWindowState
 
     private struct BuildMetrics {
-        let orderCacheHit: Bool
-        let orderSorted: Bool
-        let assetMembershipChanged: Bool
         let sortMs: Int
-        let membershipUs: Int
-        let scopedBuildUs: Int
-
-        func with(scopedBuildUs: Int) -> BuildMetrics {
-            BuildMetrics(
-                orderCacheHit: orderCacheHit,
-                orderSorted: orderSorted,
-                assetMembershipChanged: assetMembershipChanged,
-                sortMs: sortMs,
-                membershipUs: membershipUs,
-                scopedBuildUs: scopedBuildUs
-            )
-        }
     }
 
     private struct PublicationDiagnostics {
@@ -63,12 +45,7 @@ actor CatalogProjection {
                     "libraries": "\(state.libraries.count)",
                     "assetCount": "\(assetCount)",
                     "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
-                    "assetOrderCacheHit": "\(metrics.orderCacheHit)",
-                    "assetOrderSorted": "\(metrics.orderSorted)",
-                    "assetMembershipChanged": "\(metrics.assetMembershipChanged)",
                     "assetSortMs": "\(metrics.sortMs)",
-                    "membershipUs": "\(metrics.membershipUs)",
-                    "scopedBuildUs": "\(metrics.scopedBuildUs)",
                     "equalityUs": "\(equalityUs)",
                     "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                     "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
@@ -94,7 +71,6 @@ actor CatalogProjection {
     private var changeTask: Task<Void, Never>?
     private var publicationTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
-    private var cachedOrderedAssetIDs: [MediaAssetID] = []
 
     init(
         cadence: Duration = .milliseconds(100),
@@ -266,7 +242,6 @@ private extension CatalogProjection {
         publicationTask = nil
         dirty = false
         lastPublishedState = nil
-        cachedOrderedAssetIDs.removeAll(keepingCapacity: false)
     }
 
     private func retainResolvedSelection(
@@ -305,11 +280,6 @@ private extension CatalogProjection {
             availableLibraryPaths: availableLibraryPaths
         )
 
-        // Preserve a scoped value map rather than passing the complete snapshot
-        // through UI state. A detail update in an unselected library then remains
-        // equal and does not trigger unrelated SwiftUI or AppKit work.
-        let (scopedAssetsByID, scopedBuildUs) = scopedAssets(scopedAssetIDs, in: snapshot)
-        let finalMetrics = metrics.with(scopedBuildUs: scopedBuildUs)
         let mediaEmptyState = Self.mediaEmptyState(
             for: resolvedSidebarSelection,
             libraries: libraries,
@@ -317,6 +287,10 @@ private extension CatalogProjection {
             selectedAssetCount: scopedAssetIDs.count
         )
 
+        // Pass the snapshot's full value map by copy-on-write. The precomputed sort
+        // key made re-sorting every publication negligible, so the projection no
+        // longer caches order or materializes a scoped copy; the grid looks up only
+        // the visible ids from this shared map.
         return (
             CatalogWindowState(
                 title: title,
@@ -324,32 +298,18 @@ private extension CatalogProjection {
                 mediaGrid: CatalogMediaGridState(
                     scope: resolvedSidebarSelection,
                     orderedAssetIDs: scopedAssetIDs,
-                    assetsByID: scopedAssetsByID
+                    assetsByID: snapshot.assetsByID
                 ),
                 resolvedSidebarSelection: resolvedSidebarSelection,
                 mediaEmptyState: mediaEmptyState
             ),
-            finalMetrics
+            metrics
         )
-    }
-
-    private func scopedAssets(
-        _ ids: [MediaAssetID],
-        in snapshot: CatalogSnapshot
-    ) -> ([MediaAssetID: MediaAsset], Int) {
-        let start = Date()
-        let map = Dictionary(
-            uniqueKeysWithValues: ids.compactMap { id in
-                snapshot.assetsByID[id].map { (id, $0) }
-            }
-        )
-        return (map, DiagnosticsTiming.microseconds(since: start))
     }
 
     /// Tests can inject deliberately slow or controlled derivation without
     /// replacing the publication loop whose dirty/in-flight behavior they need
-    /// to exercise. Injected output does not participate in the production order
-    /// cache, so its metrics remain neutral.
+    /// to exercise. Injected output reports a zero sort duration.
     private func injectedWindowState(
         _ snapshot: CatalogSnapshot,
         sidebarSelection: SidebarSelection
@@ -358,56 +318,16 @@ private extension CatalogProjection {
             return nil
         }
         let state = await stateBuilder(snapshot, sidebarSelection)
-        return (
-            state,
-            BuildMetrics(
-                orderCacheHit: false,
-                orderSorted: false,
-                assetMembershipChanged: false,
-                sortMs: 0,
-                membershipUs: 0,
-                scopedBuildUs: 0
-            )
-        )
+        return (state, BuildMetrics(sortMs: 0))
     }
 
     private func orderedAssetIDs(for snapshot: CatalogSnapshot) -> ([MediaAssetID], BuildMetrics) {
-        // Equal count plus successful lookup of every cached ID proves set
-        // equality because asset IDs are unique dictionary keys. This direct
-        // validation cannot be forgotten by a Store mutation path.
-        let membershipStart = Date()
-        let membershipUnchanged = cachedOrderedAssetIDs.count == snapshot.assetsByID.count
-            && cachedOrderedAssetIDs.allSatisfy { snapshot.assetsByID[$0] != nil }
-        let membershipUs = DiagnosticsTiming.microseconds(since: membershipStart)
-        if membershipUnchanged {
-            return (
-                cachedOrderedAssetIDs,
-                BuildMetrics(
-                    orderCacheHit: true,
-                    orderSorted: false,
-                    assetMembershipChanged: false,
-                    sortMs: 0,
-                    membershipUs: membershipUs,
-                    scopedBuildUs: 0
-                )
-            )
-        }
-
+        // With the precomputed sort key, re-sorting every publication is cheap, so
+        // the projection no longer caches order or validates membership; it sorts
+        // the current ids directly.
         let sortStart = Date()
         let orderedIDs = Self.sortAssetIDs(snapshot.assetsByID)
-        let sortMs = DiagnosticsTiming.milliseconds(since: sortStart)
-        cachedOrderedAssetIDs = orderedIDs
-        return (
-            orderedIDs,
-            BuildMetrics(
-                orderCacheHit: false,
-                orderSorted: true,
-                assetMembershipChanged: true,
-                sortMs: sortMs,
-                membershipUs: membershipUs,
-                scopedBuildUs: 0
-            )
-        )
+        return (orderedIDs, BuildMetrics(sortMs: DiagnosticsTiming.milliseconds(since: sortStart)))
     }
 
     static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {

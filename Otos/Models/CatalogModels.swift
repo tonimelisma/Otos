@@ -214,11 +214,10 @@ nonisolated struct CatalogSnapshot: Equatable {
 }
 
 /// The collection view consumes identity order separately from current values.
-/// `assetsByID` contains only values in the projected scope. That scoped map is
-/// important: a detail update in another library must not make the selected
-/// library appear changed to SwiftUI or AppKit. A detail-only change inside the
-/// scope can refresh visible tiles without pretending collection structure
-/// changed.
+/// `orderedAssetIDs` is the scoped, ordered structure; `assetsByID` is the
+/// snapshot's full value map, shared by copy-on-write. The grid looks up only the
+/// visible ids, so passing the full map avoids materializing a per-publication
+/// scoped copy.
 nonisolated struct CatalogMediaGridState: Equatable {
     var scope: SidebarSelection
     var orderedAssetIDs: [MediaAssetID]

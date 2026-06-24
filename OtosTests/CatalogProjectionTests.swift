@@ -49,7 +49,11 @@ struct CatalogProjectionTests {
         #expect(state.title == "Pictures")
         #expect(state.resolvedSidebarSelection == .library(pictures.path))
         #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"])
-        #expect(Set(state.mediaGrid.assetsByID.keys) == Set(state.mediaGrid.orderedAssetIDs))
+        // orderedAssetIDs is the scoped structure; assetsByID is the snapshot's
+        // full value map shared by copy-on-write, so it holds both libraries'
+        // assets and every ordered id resolves in it.
+        #expect(state.mediaGrid.assetsByID.count == 2)
+        #expect(Set(state.mediaGrid.orderedAssetIDs).isSubset(of: Set(state.mediaGrid.assetsByID.keys)))
     }
 
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
@@ -233,10 +237,8 @@ struct CatalogProjectionTests {
                 && contents.contains("\"snapshotMs\"")
                 && contents.contains("\"projectionMs\"")
                 && contents.contains("\"totalMs\"")
-                && contents.contains("\"assetOrderCacheHit\"")
-                && contents.contains("\"assetOrderSorted\"")
-                && contents.contains("\"assetMembershipChanged\"")
                 && contents.contains("\"assetSortMs\"")
+                && contents.contains("\"equalityUs\"")
         }
 
         #expect(contents.contains("\"dirtyAfterPublication\""))

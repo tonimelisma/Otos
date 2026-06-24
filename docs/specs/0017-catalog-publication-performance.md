@@ -36,12 +36,10 @@ In scope:
 
 Out of scope (deferred, with rationale):
 
-- Removing the projection order cache. With the cheap sort it is now largely
-  redundant, but deleting it retires ADR 0007 / FND-043 and rewrites the order-reuse
-  tests and diagnostics; that belongs in a focused follow-up.
-- Eliminating the scoped value-map rebuild (pass the full map by copy-on-write).
-  After no-op suppression it is paid only on real-change builds; deferred to avoid
-  changing the documented cross-library equality-isolation in a perf increment.
+- Removing the projection order cache and the scoped value-map rebuild. Now done in
+  `docs/specs/0018-catalog-order-cache-and-scoped-map-removal.md`, which the cheap
+  sort key here made worthwhile (the cache validation and scoped copy cost more than
+  the cheap re-sort).
 - The one-time large structural apply on first fill. macOS
   `NSCollectionViewDiffableDataSource` has no `applySnapshotUsingReloadData`, so the
   empty-to-N apply cost needs chunked application or windowing — a separate change.
