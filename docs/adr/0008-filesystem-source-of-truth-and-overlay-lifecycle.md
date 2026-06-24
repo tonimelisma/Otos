@@ -112,10 +112,16 @@ subordinate, rebuildable overlay.
    separately purged overlay classes.
 4. Proven deletion means a file that was previously cataloged at a root-relative
    path is absent from a completed enumeration of a reachable root. Temporary
-   absence, an ejected or offline volume, an unreachable root, a dataless cloud
-   placeholder, or a user-excluded selective-sync subtree, is not a deletion and
-   must not purge overlay. This preserves and extends ADR 0002's rule that deletion
-   happens only after a completed scan, never after a cancelled or failed scan.
+   absence — an ejected or offline volume, an unreachable root, or a dataless cloud
+   placeholder that still enumerates — is not a deletion and must not purge overlay.
+   This preserves and extends ADR 0002's rule that deletion happens only after a
+   completed scan, never after a cancelled or failed scan. One case is deliberately
+   outside this current guarantee: a user-excluded selective-sync subtree inside an
+   otherwise reachable root enumerates without its paths, so `reconcileMissingAssets`
+   cannot today distinguish it from a real deletion and will purge it. That is
+   acceptable only while overlay is derived-only and rebuildable; preserving such a
+   subtree is a forward invariant a detector must satisfy before user-authored
+   overlay ships, not a guarantee the current implementation makes.
 5. Asset identity is the filesystem path, the `(library_root_id, relative_path)`
    pair from ADR 0002. Otos does not store durable filesystem identifiers, content
    fingerprints, or generated UUIDs, and does not write sidecars to track files. An

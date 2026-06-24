@@ -446,12 +446,12 @@ private extension CatalogStore {
         let memoryState = OtosSignpost.catalog.beginInterval("CatalogScanBatchApplyMemory")
         // Use the post-await root value. The pre-write value belongs to the same
         // lease, but retaining it across suspension would obscure that proof.
-        let memoryChanged = applyScannedBatchToMemory(batch, root: currentRoot, rootPath: scan.rootPath)
+        let visibleChange = applyScannedBatchToMemory(batch, root: currentRoot, rootPath: scan.rootPath)
         OtosSignpost.catalog.endInterval("CatalogScanBatchApplyMemory", memoryState)
         OtosLog.catalog.debug(
             """
             Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) \
-            count=\(batch.count, privacy: .public) changed=\(memoryChanged, privacy: .public)
+            count=\(batch.count, privacy: .public) changed=\(visibleChange, privacy: .public)
             """
         )
         await diagnostics?.record(
@@ -460,38 +460,47 @@ private extension CatalogStore {
             fields: [
                 "rootPath": scan.rootPath.rawValue,
                 "count": "\(batch.count)",
-                "changed": "\(memoryChanged)",
+                "changed": "\(visibleChange)",
             ]
         )
-        // A re-scan that re-observes identical files changes nothing, so skip the
-        // notification that would otherwise wake the whole sort/scope/publish
-        // pipeline for a no-op batch.
-        if memoryChanged {
+        // Memory was refreshed above regardless. Only a user-visible change (a new
+        // file or a name/type/size change) wakes the sort/scope/publish pipeline; a
+        // re-scan that re-observes identical files publishes nothing, and a
+        // date-only change refreshes memory without a publication because dates are
+        // not a current sort, scope, or display input.
+        if visibleChange {
             notifyCatalogChanged()
         }
     }
 
-    /// Returns whether the batch changed any in-memory asset. A re-scan that
-    /// re-observes identical files returns false, which lets the caller skip the
-    /// projection-waking notification. Change detection compares the exactly
-    /// comparable filesystem facts (name, content type, size); dates round-trip
-    /// through SQLite as `Double` seconds, so comparing them risks float epsilon
-    /// that would make every re-scan look changed, and a real content change moves
-    /// the size anyway.
+    /// Mirrors the freshly scanned filesystem facts into the in-memory catalog and
+    /// returns whether the batch carried a user-visible change. The in-memory asset
+    /// is always replaced with the latest scanned values, so `currentSnapshot()`
+    /// never serves stale facts: a same-size content edit or a timestamp-only touch
+    /// changes only `createdAt`/`contentModifiedAt`, which `recordScannedBatch`
+    /// already upserted into SQLite, and the in-memory copy must match the
+    /// filesystem truth rather than wait for the next launch reload.
+    ///
+    /// The returned flag drives the projection-waking notification and is computed
+    /// from the exactly comparable facts only (name, content type, size). Dates are
+    /// deliberately excluded from this comparison: they round-trip through SQLite as
+    /// `Double` seconds, so comparing a fresh `Date` against a reloaded one risks
+    /// float epsilon that would make every re-scan look changed and defeat no-op
+    /// suppression, and dates are not a current sort, scope, or display input.
     private func applyScannedBatchToMemory(
         _ batch: [ScannedMediaFile],
         root: LibraryRoot,
         rootPath: LibraryRootPath
     ) -> Bool {
-        var changed = false
+        var visibleChange = false
         for file in batch {
             let existing = assetsByRootPath[rootPath]?[file.relativePath]
-            let isNewOrChanged = existing == nil
+            let isVisibleChange = existing == nil
                 || existing?.name != file.name
                 || existing?.contentTypeIdentifier != file.contentTypeIdentifier
                 || existing?.byteSize != file.byteSize
-            guard isNewOrChanged else {
-                continue
+            if isVisibleChange {
+                visibleChange = true
             }
             assetsByRootPath[rootPath, default: [:]][file.relativePath] = MediaAsset(
                 libraryRootPath: root.path,
@@ -502,9 +511,8 @@ private extension CatalogStore {
                 createdAt: file.createdAt,
                 contentModifiedAt: file.contentModifiedAt
             )
-            changed = true
         }
-        return changed
+        return visibleChange
     }
 
     private func scanCompleted(scan: ActiveScan, observedPaths: Set<MediaRelativePath>) async {

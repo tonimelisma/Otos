@@ -96,9 +96,12 @@ this section is their canonical statement.
   preview pruning to reclaim space. Overlay for an item is purged in full only when
   that item is proven deleted, that is, absent from a reachable, fully enumerated
   root. Overlay is never purged when an original is merely temporarily missing
-  (ejected drive, offline network or cloud volume, unreachable root, dataless cloud
-  placeholder, or a user-excluded selective-sync subtree). See
-  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
+  (ejected drive, offline network or cloud volume, unreachable root, or a dataless
+  cloud placeholder that still enumerates). A user-excluded selective-sync subtree
+  inside a reachable root enumerates without its paths, so reconciliation cannot yet
+  tell it apart from a deletion and will purge it; preserving that case is a forward
+  invariant to satisfy before user-authored overlay ships, not a current guarantee.
+  See `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 - Most user media lives in cloud-synced folders. Cloud files may be dataless
   placeholders that still appear in directory enumeration: their filesystem facts
   (name, size, dates, type) are readable without downloading them, but reading their
@@ -484,6 +487,15 @@ script/verify.sh
 - Reviews follow `docs/process/code-review.md` for the review criteria, severity
   model, and merge gate. The same criteria apply to agent self-review before a PR
   is opened.
+- Each increment handles outstanding PR review comments as part of its work.
+  Before opening the increment's PR, review the unresolved review comments on
+  recent merged and open PRs. Reply to claim every actionable finding the
+  increment will fix, land the fix through the increment's normal owner-intent,
+  spec, test, and verification path, and then reply again on each claimed thread
+  describing how it was fixed and linking the fixing commit or PR. Reply to a
+  finding that is not applicable or intentionally deferred with the reason instead
+  of silently skipping it. Do not open a parallel quick-patch that bypasses the
+  spec, tests, or verification, and do not delete or hide a thread to "resolve" it.
 - Required remote CI is a fast gate: checkout sanity, workflow YAML parsing,
   text hygiene, script inventory, and macOS lint. Remote CI does not run Xcode 27
   build/test until a runner with Xcode 27 exists.
@@ -533,6 +545,8 @@ textual descriptions rather than terse labels. It must answer:
 - what instrumentation, logging, profiling, or performance evidence exists
 - what code smells were observed, addressed, accepted, or remain
 - what media-originals and diagnostics review found
+- which outstanding PR review comments were claimed, how each was fixed, or why a
+  finding was not applicable
 - what risks or follow-up work remain
 - which merge, local `main`, post-merge verification, branch cleanup, worktree
   cleanup, stash cleanup, stale branch/worktree review, and final clean-tree
@@ -551,6 +565,10 @@ textual descriptions rather than terse labels. It must answer:
 - instrumentation added or updated for every meaningful path
 - trace/log artifact paths for performance-sensitive work
 - code smells observed and how they were addressed or intentionally accepted
+- outstanding PR review comments on recent merged and open PRs reviewed; actionable
+  in-scope findings claimed by reply, fixed, and answered with how they were fixed,
+  linking the fixing commit or PR; inapplicable or deferred findings answered with
+  the reason
 - docs updated in the same increment when contracts, workflow, requirements, or
   behavior changed
 - repository-wide stale-document audit completed for affected ADRs, specs,
