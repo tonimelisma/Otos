@@ -10,6 +10,11 @@ import UniformTypeIdentifiers
 /// callback. It never decides persistence, deletion, UI state, or media
 /// eligibility.
 ///
+/// Why metadata only and never file bytes: most media lives in cloud-synced folders
+/// as dataless placeholders. Reading a file's resource values (name, size, dates,
+/// type) is free, but reading its bytes would force the provider to download it,
+/// potentially gigabytes. The scanner reads facts, never content.
+///
 /// A returned path set proves the completed observation used for reconciliation.
 /// Cancellation or any filesystem issue prevents that success return, so Store
 /// preserves earlier rows. Package descendants and symlinks are skipped before

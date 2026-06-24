@@ -298,7 +298,8 @@ guidance unless the user says it is itself the requirement.
 
 ## Living Documentation
 
-ADRs, specs, requirements, process docs, code comments, and documentation
+ADRs, specs, requirements, process docs, the onboarding walkthrough
+(`docs/onboarding.md`), code comments, and documentation
 indexes describe current reality. They are not append-only historical records;
 Git history owns history. Whenever architecture, behavior, workflow, naming, or
 instrumentation changes, edit every affected current document and comment or

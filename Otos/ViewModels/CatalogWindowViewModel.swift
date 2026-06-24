@@ -9,12 +9,21 @@ import OSLog
 /// and the lifetimes of tasks that connect those inputs and outputs. It does not
 /// inspect snapshots, sort assets, touch SQLite, or traverse the filesystem.
 ///
+/// Why MainActor: it assigns the `@Observable` state SwiftUI renders, and all UI
+/// must run on the main thread. It is deliberately a thin bridge — if heavy work
+/// ever lands here it belongs down in the Store or Projection instead.
+///
 /// The three asynchronous lanes deliberately have different delivery semantics:
 /// Projection states are consumed losslessly, sidebar changes keep only the
-/// newest pending value, and add/remove mutations are lossless and serial. A
-/// long-lived task must not keep this ViewModel alive merely because it is
-/// waiting for another value, so the state consumer holds `self` only while one
-/// completed state is being applied. Projection may normalize a removed library
+/// newest pending value, and add/remove mutations are lossless and serial.
+///
+/// Why `weak self` in the state consumer: that task loops forever over the
+/// Projection's state stream, and a task strongly retains whatever it captures. If
+/// it held `self` strongly it would keep this ViewModel alive even after the window
+/// is gone — a retain cycle (task keeps ViewModel, ViewModel keeps task) — and
+/// `deinit`, which cancels the task, could never run. So the consumer captures
+/// `self` weakly and upgrades to a strong reference only for the moment it applies
+/// one completed state, then lets go before the next wait. Projection may normalize a removed library
 /// back to All Media; applying that result assigns the local control value
 /// directly and therefore cannot create a feedback intent.
 @MainActor

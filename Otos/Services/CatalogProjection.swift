@@ -9,6 +9,13 @@ import OSLog
 /// scope, title selection, and empty-state meaning. None of that work belongs on
 /// MainActor or inside a SwiftUI body.
 ///
+/// Why a separate actor from the Store: sorting and filtering tens of thousands of
+/// assets is real CPU work that must not run on the main thread (main-thread work
+/// is what makes a UI hang). Being its own actor moves that work off the main
+/// thread automatically. Keeping it separate from the Store means "what media
+/// exists" and "how this window shows it" stay independent — sorting can change
+/// without touching persistence, and the Store stays testable without UI concerns.
+///
 /// One 10 Hz loop coalesces Store notifications and sidebar intents. `dirty` is
 /// cleared before an awaited snapshot/build so input arriving during that await
 /// survives for the next tick. Actor isolation permits only one build at a time,

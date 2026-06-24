@@ -7,8 +7,12 @@
 
 import SwiftUI
 
-/// ContentView composes already-projected state. Snapshot subscriptions,
-/// projection cadence, and catalog mutations stay outside the view tree.
+/// ContentView composes already-projected state and is deliberately passive: it
+/// renders `viewModel.state` and forwards intents, but never subscribes to catalog
+/// notifications, sorts, or derives catalog state in `body`. Why: a SwiftUI `body`
+/// can run many times per second, so doing real work there — or re-deriving catalog
+/// state — would be both slow and a second source of truth that could drift from
+/// the model. The model decides; the view renders.
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
 

@@ -21,6 +21,14 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// mirror the same facts into memory before notifying consumers. Views never
 /// access either representation directly.
 ///
+/// Why an actor: the database, the in-memory catalog, and background scans all
+/// touch the same state, and a scan streams in thousands of files concurrently with
+/// user actions. Actor isolation serializes every access to that state
+/// automatically, so the catalog cannot be corrupted by two operations at once and
+/// we never reach for a lock. The cost is that `await` is a yield point — the actor
+/// can run another message mid-operation — which is exactly why scans carry the
+/// ownership lease described below.
+///
 /// Store notifications are intentionally lightweight. Ordinary events only mark
 /// Projection dirty; successful root removal additionally carries its typed path
 /// so same-path replacement cannot hide selection invalidation. Projection pulls

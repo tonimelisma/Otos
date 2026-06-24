@@ -24,6 +24,7 @@ implementation history.
 | [process/performance.md](process/performance.md) | Jank detection and performance evidence using the repo's OSLog/signpost and Instruments tooling. | Instrumentation categories, profile scripts, or performance budgets change. |
 | [process/apple-docs.md](process/apple-docs.md) | Apple documentation grounding workflow and citation expectations. | The Apple documentation helper or citation policy changes. |
 | [process/code-review.md](process/code-review.md) | Review lens, rubric, severity model, and merge gate for human and agent review. | Review criteria, severity model, or merge-gate policy changes. |
+| [onboarding.md](onboarding.md) | A logical-order walkthrough of the codebase and the rationale for its key design decisions, for newcomers. | The architecture, data flow, or a core design decision changes. |
 
 ## Current Architecture Decisions
 
@@ -59,6 +60,7 @@ implementation history.
 | [0016](specs/0016-cloud-materialization-detection.md) | Cloud dataless-file detection facts, the media-metadata boundary, and the dead `FileMaterialization` detector. |
 | [0017](specs/0017-catalog-publication-performance.md) | Cheap precomputed sort key and no-op-scan notification suppression, with before/after measurement. |
 | [0018](specs/0018-catalog-order-cache-and-scoped-map-removal.md) | Remove the projection order cache and scoped value map now that the sort is cheap. |
+| [0019](specs/0019-onboarding-walkthrough-and-why-comments.md) | Onboarding walkthrough and architecture why-comments. |
 
 ## Planning Documents
 
@@ -80,6 +82,6 @@ user explicitly asks to use them for the current task.
 
 ## Deferred Docs
 
-Architecture, accessibility, and onboarding docs are deferred until the app has
-enough real product and code structure for those documents to be useful. Do not
-create placeholders that merely restate `AGENTS.md`.
+Accessibility docs are deferred until the app has enough real product and code
+structure for them to be useful. Do not create placeholders that merely restate
+`AGENTS.md`. The onboarding walkthrough now lives at [onboarding.md](onboarding.md).
