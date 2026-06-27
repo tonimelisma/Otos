@@ -393,12 +393,11 @@ private final class MediaAssetTileView: NSView {
 /// view state so the exact tile classification can be tested directly.
 enum MediaAssetTilePresentation {
     static func isVideo(_ asset: MediaAsset) -> Bool {
-        guard let identifier = asset.contentTypeIdentifier,
-              let contentType = UTType(identifier)
-        else {
-            return false
-        }
-        return contentType.conforms(to: .movie)
+        MediaEligibility.isVideo(contentTypeIdentifier: asset.contentTypeIdentifier)
+    }
+
+    static func isCatalogMedia(_ asset: MediaAsset) -> Bool {
+        MediaEligibility.isCatalogMedia(contentTypeIdentifier: asset.contentTypeIdentifier)
     }
 
     static func title(_ asset: MediaAsset) -> String {

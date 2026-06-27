@@ -48,7 +48,6 @@ This ADR references, but does not own:
 Separate ADRs or specs must own:
 
 - Persistent root restoration beyond stored filesystem paths.
-- Media eligibility beyond regular files.
 - File watching or incremental filesystem notifications.
 - Metadata, thumbnail, preview, render, edit, export, analysis, embedding, or
   search storage.

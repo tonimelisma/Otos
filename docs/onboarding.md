@@ -135,13 +135,16 @@ the database is an implementation detail you could swap out.
 
 ### `Otos/Services/CatalogScanner.swift` — read-only filesystem observation
 
-Walks a library folder and reports the files it finds. Whys:
+Walks a library folder and reports the image and video files it finds. Whys:
 
 - It reads only **metadata** (name, size, dates, type) and never file *bytes*. This
   matters because most media is in the cloud as "dataless" placeholders; reading
   bytes would force gigabytes of downloads. Metadata is free.
 - It **skips packages and symlinks** so it never descends into something like a
   `.photoslibrary` bundle or follows a link out of the library.
+- It **skips non-media regular files** whose `contentTypeKey` is nil or does not
+  conform to image or movie (`MediaEligibility`). Scan membership is decided here,
+  not in Projection or the grid.
 - It is a pure, idempotent *observation* — it makes no decisions about deletion or
   UI. The Store decides what to do with what the scanner saw.
 

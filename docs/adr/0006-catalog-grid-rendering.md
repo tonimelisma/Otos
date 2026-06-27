@@ -13,8 +13,9 @@ It references but does not own catalog truth, snapshot cadence, availability,
 and ordering. ADR 0007 owns identity-based order validation and cached ordering.
 ADRs 0002, 0004, and 0005 retain scan/persistence, UI ownership, and publication
 ownership.
-Thumbnail rendering, media eligibility, selection, preview, and zoom require
-separate future specs/ADRs if implemented.
+Thumbnail rendering, selection, preview, and zoom require separate future
+specs/ADRs if implemented. Scan-time media eligibility (UTType image or movie) is
+owned by ADR 0002; the grid displays every cataloged eligible asset.
 
 ## Context
 

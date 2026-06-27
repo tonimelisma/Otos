@@ -5,10 +5,15 @@ import UniformTypeIdentifiers
 /// Catalog scanner guide
 ///
 /// The scanner performs one read-only, idempotent filesystem observation. It
-/// enumerates regular files, collects only the approved URL resource values, and
-/// flushes observed facts on a time cadence through the Store-owned batch
-/// callback. It never decides persistence, deletion, UI state, or media
-/// eligibility.
+/// enumerates regular files, applies structural and media-eligibility filters,
+/// collects only the approved URL resource values, and flushes observed facts on a
+/// time cadence through the Store-owned batch callback. It never decides
+/// persistence, deletion, or UI state.
+///
+/// Media eligibility: after structural guards, only regular files whose
+/// `contentTypeKey` conforms to `UTType.image` or `UTType.movie` become observed
+/// scan results. Nil or other types are skipped without failing the scan. See ADR
+/// 0002 and `MediaEligibility`.
 ///
 /// Why metadata only and never file bytes: most media lives in cloud-synced folders
 /// as dataless placeholders. Reading a file's resource values (name, size, dates,
@@ -58,6 +63,7 @@ private nonisolated enum LiveCatalogScanner {
         var observedPaths = Set<MediaRelativePath>()
         var filesystemIssues: [ScanIssue] = []
         var skippedPackages: [SkippedPackage] = []
+        var skippedNonMediaCount = 0
     }
 
     private static let resourceKeys: Set<URLResourceKey> = [
@@ -128,6 +134,11 @@ private nonisolated enum LiveCatalogScanner {
 
         try await flush(&scanState.pending, batchHandler: batchHandler)
         await recordSkippedPackages(scanState.skippedPackages, rootPath: rootPath, diagnostics: diagnostics)
+        await recordSkippedNonMedia(
+            count: scanState.skippedNonMediaCount,
+            rootPath: rootPath,
+            diagnostics: diagnostics
+        )
         await recordIssues(scanState.filesystemIssues, rootPath: rootPath, diagnostics: diagnostics)
 
         if !scanState.filesystemIssues.isEmpty {
@@ -195,6 +206,10 @@ private nonisolated enum LiveCatalogScanner {
         guard values.isRegularFile == true else {
             return nil
         }
+        guard MediaEligibility.isCatalogMedia(contentType: values.contentType) else {
+            scanState.skippedNonMediaCount += 1
+            return nil
+        }
         guard let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL) else {
             throw CatalogScannerIssue.relativePathUnavailable
         }
@@ -250,6 +265,30 @@ private nonisolated enum LiveCatalogScanner {
                 fields: fields
             )
         }
+    }
+
+    private static func recordSkippedNonMedia(
+        count: Int,
+        rootPath: LibraryRootPath,
+        diagnostics: CatalogDiagnostics?
+    ) async {
+        guard count > 0 else {
+            return
+        }
+        OtosLog.fileAccess.debug(
+            """
+            Catalog scan skipped non-media root=\(rootPath.rawValue, privacy: .public) \
+            count=\(count, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.scan.skippedNonMedia",
+            phase: "skip",
+            fields: [
+                "rootPath": rootPath.rawValue,
+                "count": "\(count)",
+            ]
+        )
     }
 
     private static func recordIssues(

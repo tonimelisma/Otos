@@ -220,7 +220,7 @@ pipeline, and no generated product IDs.
 ## Acceptance Criteria
 
 - Adding a folder in Settings persists a library root, scans it automatically,
-  and shows regular files in `All Media` and that library.
+  and shows eligible image and video files in `All Media` and that library.
 - Adding an exact duplicate, ancestor, or descendant root fails without changing
   catalog state.
 - Removing a library requires confirmation, deletes root/media catalog rows, and

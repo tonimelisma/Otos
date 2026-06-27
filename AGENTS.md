@@ -122,8 +122,8 @@ this section is their canonical statement.
   `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`.
 - Otos is an image/video product. Never add audio-specific playback, metadata,
   thumbnails, icons, classification, or workflows. This product boundary does
-  not imply that the current all-regular-file catalog already filters unsupported
-  files; only implemented eligibility rules may make that claim.
+  not imply that the current catalog already filters unsupported files at scan
+  time; only implemented eligibility rules may make that claim.
 - Otos is unsandboxed. Design file access around user-selected media roots and
   normal filesystem paths. Do not add App Sandbox, security-scoped bookmarks,
   bookmark schema, bookmark lifecycles, or sandbox-driven file access flows.

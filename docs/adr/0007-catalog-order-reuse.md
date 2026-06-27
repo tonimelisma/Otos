@@ -40,8 +40,8 @@ It references but does not own:
 - collection rendering and diffable application: ADR 0006
 - the precomputed sort key itself: spec 0017
 
-User sort modes, media eligibility, metadata ordering, and selection of individual
-media assets are outside this decision.
+User sort modes, metadata ordering, and selection of individual media assets are
+outside this decision. Scan-time media eligibility is owned by ADR 0002.
 
 ## Decision
 
