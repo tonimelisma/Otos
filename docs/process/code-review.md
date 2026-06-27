@@ -64,8 +64,10 @@ For each domain: what the reviewer checks, and the standard it is held to.
   cloud placeholder, user-excluded subtree).
 - Asset identity stays the filesystem path. No durable identifiers, content
   fingerprints, generated UUIDs, or sidecars are introduced.
-- Cloud safety: no code path force-materializes a dataless file for cataloging,
-  thumbnailing, or metadata; byte access is deferred to user-visible, off-main work.
+- Cloud safety: no code path *accidentally* materializes a dataless file by faulting
+  on a read; byte-reading work gates on the `FileMaterialization` detector first.
+  Deliberate background materialization for enrichment is permitted (ADR 0008) but must
+  be non-blocking and bounded, since Otos cannot reclaim the downloaded bytes.
 - Scans stay read-only, idempotent reconciliation with no durable scan identity or
   history.
 
@@ -98,8 +100,9 @@ For each domain: what the reviewer checks, and the standard it is held to.
 - Prefer embedded previews where present; prioritize visible and selected media,
   then backfill, with bounded in-flight work and viewport cancellation.
 - Thumbnails are durable backed-up overlay with the ADR 0008 lifecycle, not an
-  evictable cache. Generation differs by media type and never force-materializes
-  dataless cloud files.
+  evictable cache. Generation differs by media type; it gates on the detector so it
+  never blocks on an accidental fault, and any deliberate materialization is
+  non-blocking and bounded (ADR 0008).
 
 ### SwiftUI and AppKit boundary
 
@@ -143,7 +146,7 @@ For each domain: what the reviewer checks, and the standard it is held to.
 
 | Severity | Definition | Action |
 | --- | --- | --- |
-| Blocker | Originals at write-risk; data race or unsafe `Sendable`; new duplicate source of truth; MainActor doing IO, decode, or DB; overlay purged on temporary absence or force-materialized dataless read; persistence or schema change with no ADR; fabricated domain fact; missing spec for non-micro work. | Cannot merge. |
+| Blocker | Originals at write-risk; data race or unsafe `Sendable`; new duplicate source of truth; MainActor doing IO, decode, or DB; overlay purged on temporary absence or a dataless file force-materialized by an accidental blocking read; persistence or schema change with no ADR; fabricated domain fact; missing spec for non-micro work. | Cannot merge. |
 | Major | Ownership leak (view orchestrating catalog, bridge owning domain state); perf-sensitive path with no evidence; unbounded or uncancellable task; an architectural invariant guarded only by a grep test. | Fix before merge, or an ADR'd, recorded exception. |
 | Minor | Naming or units clarity, comment accuracy, test at the wrong altitude, missing log-category usage. | Fix, or file a tracked follow-up. |
 | Nit | Style within lint rules. | Optional. |

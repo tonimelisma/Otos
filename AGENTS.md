@@ -106,12 +106,20 @@ this section is their canonical statement.
   placeholders that still appear in directory enumeration: their filesystem facts
   (name, size, dates, type) are readable without downloading them, but reading their
   bytes forces materialization. Media metadata (EXIF and similar) requires reading
-  bytes; filesystem facts do not. Catalog, thumbnail, and media-metadata work must
-  not force-materialize dataless files; it checks the `FileMaterialization` detector
-  (the `SF_DATALESS` kernel flag) immediately before any byte read and defers
-  materialization to explicit, user-visible, off-main work. Materialization status is
-  transient and is never persisted. See
-  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
+  bytes; filesystem facts do not. Byte-reading work must never *accidentally*
+  materialize a dataless file by faulting on a read: it checks the
+  `FileMaterialization` detector (the `SF_DATALESS` kernel flag, the only viable bulk
+  signal) immediately before any byte read. Beyond that gate, deliberate, non-blocking,
+  bounded background materialization is permitted for enrichment: an owner may download
+  a file it has chosen to enrich through the non-blocking ubiquitous trigger and await
+  `SF_DATALESS` off-thread, never blocking a worker on a read-fault. It must stay
+  bounded because Otos cannot reclaim downloaded bytes (a consumer app cannot evict
+  another provider's files). Materialization status is transient and is never
+  persisted. The current catalog/scanner reads only filesystem facts and materializes
+  nothing; the background-download policy is the forward guideline for byte-reading
+  enrichment. See
+  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md` and
+  `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`.
 - Otos is an image/video product. Never add audio-specific playback, metadata,
   thumbnails, icons, classification, or workflows. This product boundary does
   not imply that the current all-regular-file catalog already filters unsupported

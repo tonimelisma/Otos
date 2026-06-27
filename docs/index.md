@@ -62,6 +62,7 @@ implementation history.
 | [0018](specs/0018-catalog-order-cache-and-scoped-map-removal.md) | Remove the projection order cache and scoped value map now that the sort is cheap. |
 | [0019](specs/0019-onboarding-walkthrough-and-why-comments.md) | Onboarding walkthrough and architecture why-comments. |
 | [0020](specs/0020-scan-date-freshness-and-selective-sync-contract.md) | In-memory scan-date freshness, selective-sync contract correction, and the PR-review-comment increment process. |
+| [0021](specs/0021-cloud-materialization-triggering-and-eviction-poc.md) | Cloud materialization triggering POC, the background-download contract change, the eviction constraint, and the retained non-blocking materialization helpers. |
 
 ## Planning Documents
 

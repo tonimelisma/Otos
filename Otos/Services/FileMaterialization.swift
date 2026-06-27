@@ -13,7 +13,11 @@ import Foundation
 /// placeholder right now? Cheap filesystem-fact work (the catalog scanner) never
 /// needs it because it never reads bytes. Expensive byte-reading work — thumbnail
 /// generation and media-metadata (EXIF and similar) extraction — must consult it
-/// first and skip or defer dataless files instead of silently triggering downloads.
+/// first so it never *accidentally* triggers a blocking download by faulting on a
+/// read. Under the materialization policy (ADR 0008) such work may still
+/// *deliberately* download a dataless file it has chosen to enrich, through the
+/// non-blocking trigger below, but it must never block a worker on an accidental
+/// fault.
 ///
 /// Materialization is transient: a provider can evict a materialized file back to
 /// dataless, or download a dataless one, at any time. The status is therefore a
@@ -54,6 +58,98 @@ nonisolated enum FileMaterialization {
         }
         return (info.st_flags & datalessFlag) != 0 ? .dataless : .materialized
     }
+}
+
+/// Materialization (download) helpers.
+///
+/// `status(of:)` above answers "is this dataless right now?" without reading bytes.
+/// These helpers answer the next question a future download pool will ask: "make it
+/// local." They are the deliberate, non-blocking counterpart to faulting bytes in.
+///
+/// Triggering a download has three mechanisms (see the increment notes): faulting on
+/// a byte read (universal but blocks the calling thread for the whole transfer),
+/// `FileManager.startDownloadingUbiquitousItem(at:)` (returns immediately, download
+/// proceeds asynchronously — documented for iCloud, empirically being validated for
+/// third-party File Providers such as OneDrive), and the lower-level
+/// `NSFileProviderManager` (identifier-keyed, provider-specific). These helpers wrap
+/// the non-blocking ubiquitous trigger plus status polling so a worker never blocks
+/// on a transfer; `status(of:)` (SF_DATALESS) is the completion signal because it is
+/// the most direct "are the bytes local now?" fact and matches the detector the rest
+/// of the app gates on.
+///
+/// NOT WIRED UP: nothing in the current app calls these. They exist ahead of the
+/// background download / enrichment pools so those increments inherit one tested
+/// owner of materialization instead of rediscovering the cloud-download mechanics.
+extension FileMaterialization {
+    /// The provider's view of whether `url`'s bytes are present, without reading
+    /// bytes. iCloud-flavored but populated by OneDrive in the spec 0016 POC. Used as
+    /// a cross-check and progress signal alongside the SF_DATALESS `status(of:)`.
+    static func downloadingStatus(of url: URL) -> URLUbiquitousItemDownloadingStatus? {
+        (try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]))?
+            .ubiquitousItemDownloadingStatus
+    }
+
+    /// Asks the provider to download `url` and returns immediately. Non-blocking: the
+    /// transfer proceeds in the background and is observed via `status(of:)` or
+    /// `downloadingStatus(of:)`. Throws if the provider rejects the request.
+    static func requestMaterialization(of url: URL) throws {
+        try FileManager.default.startDownloadingUbiquitousItem(at: url)
+    }
+
+    /// Requests a download and waits, off the calling thread, until the file is
+    /// materialized or `timeout` elapses, polling SF_DATALESS every `pollInterval`.
+    /// Never reads bytes itself, so a worker awaiting this is never blocked on a
+    /// transfer the way a faulting read would block a thread. Honors cancellation
+    /// between polls.
+    static func materialize(
+        _ url: URL,
+        pollInterval: Duration = .milliseconds(250),
+        timeout: Duration = .seconds(120)
+    ) async -> MaterializationOutcome {
+        if status(of: url) == .materialized {
+            return .alreadyMaterialized
+        }
+        do {
+            try requestMaterialization(of: url)
+        } catch {
+            return .requestFailed
+        }
+
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: timeout)
+        while clock.now < deadline {
+            do {
+                try await Task.sleep(for: pollInterval)
+            } catch {
+                return .cancelled
+            }
+            switch status(of: url) {
+            case .materialized:
+                return .materialized
+            case .dataless:
+                continue
+            case .unknown:
+                return .statusUnavailable
+            }
+        }
+        return .timedOut
+    }
+}
+
+/// Result of an awaited `materialize(_:)`. Transient like the status it reports.
+nonisolated enum MaterializationOutcome: Equatable {
+    /// The file was already local; no download was requested.
+    case alreadyMaterialized
+    /// A download was requested and the file became local within the timeout.
+    case materialized
+    /// The provider rejected the download request.
+    case requestFailed
+    /// The file did not become local before the timeout elapsed.
+    case timedOut
+    /// The awaiting task was cancelled before completion.
+    case cancelled
+    /// The file's status could not be read (for example it disappeared).
+    case statusUnavailable
 }
 
 /// Point-in-time materialization status of a file. Transient and never persisted: a

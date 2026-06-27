@@ -1,5 +1,12 @@
 # Spec: Cloud Materialization Detection And The Media-Metadata Boundary
 
+> Superseded in part: the materialization *policy* this spec references ("never
+> force-materialize; defer to explicit user action") was revised by
+> `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`, which permits
+> deliberate, non-blocking, bounded background materialization for enrichment. The
+> detection primitive this spec adds (`FileMaterialization.status(of:)`) and the
+> media-metadata boundary are unchanged.
+
 ## Classification
 
 - Work type: Feature (detection primitive added as dead code) plus architecture
