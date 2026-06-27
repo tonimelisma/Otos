@@ -21,7 +21,9 @@ Repo inspection found:
   into package directories.
 - The denied Photos library reports top-level resource values before descent,
   including `isPackage = true` and `contentType = com.apple.photos.library`.
-- Current catalog behavior stores regular files only.
+- Current catalog behavior stores image- and video-eligible regular files only.
+  Structural skips (packages, symlinks, non-regular files) and non-media regular
+  files are unchanged from ADR 0002.
 - Debug JSONL diagnostics already support bounded scan issue records.
 
 ## Scope
@@ -41,7 +43,6 @@ In scope:
 Out of scope:
 
 - AVCHD, XAVC, Blu-ray, camera-card, or other compound media-container import.
-- Media eligibility beyond regular files.
 - User-facing scan warnings or skipped-package UI.
 - Photos library integration, PhotoKit, Full Disk Access prompts, sandboxing, or
   security-scoped bookmarks.
@@ -68,7 +69,7 @@ Acceptance examples:
   `catalog.scan.skippedPackage` with `com.apple.photos.library` when macOS
   provides that content type.
 - Given a package is skipped, the root scan can still complete and reconcile
-  observed regular files.
+  observed eligible regular files.
 
 ## Architectural Alternatives
 

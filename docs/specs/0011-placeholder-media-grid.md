@@ -14,7 +14,7 @@ is the regression fix for that evidence.
 
 ## User-Facing Goal
 
-Show every currently cataloged regular file in a responsive, six-column media
+Show every currently cataloged image or video asset in a responsive, six-column media
 grid that remains usable while scans update and while the user repeatedly
 switches between All Media and libraries.
 
@@ -35,8 +35,7 @@ switches between All Media and libraries.
   bridge.
 - Render exactly six responsive square columns with filenames and video-only
   markers.
-- Preserve all regular cataloged files as generic tiles when they are not
-  movies.
+- Preserve all cataloged non-video image assets as generic tiles.
 - Split structural identity order from detail values.
 - Reuse Projection's ordered-ID cache only after direct identity validation.
 - Coalesce imperative collection updates to one structural apply in flight.
@@ -44,17 +43,16 @@ switches between All Media and libraries.
 
 ## Out Of Scope
 
-Real thumbnails, decoding, preview, metadata, eligibility filtering, audio
-support, selection, activation, drag and drop, Finder actions, keyboard actions,
-zoom controls, animated updates, manual scan, sandboxing, bookmarks, durable
-scan IDs, and SQLite schema changes.
+Real thumbnails, decoding, preview, metadata, audio support, selection, activation,
+drag and drop, Finder actions, keyboard actions, zoom controls, animated updates,
+manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
 
 ## Captured Requirements
 
 ### Functional
 
 - The media browser shows a square placeholder tile for every visible cataloged
-  regular file.
+  image or video asset.
 - Each tile shows one middle-truncated filename at the top, falling back to the
   final relative-path component when the stored name is unavailable.
 - A tiny `video.fill` marker and subdued system-blue background appear only when
@@ -220,7 +218,8 @@ and is not stored in SQLite.
 ## Non-Authoritative Future Ideas
 
 - User-controlled grid zoom.
-- Filtering the catalog browser to supported image/video eligibility.
+- User-controlled browser filters beyond scan-time eligibility (for example
+  curation or metadata filters).
 
 These are not current requirements and this increment adds no hooks or fields
 for them.

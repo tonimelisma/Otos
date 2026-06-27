@@ -1,7 +1,7 @@
 # ADR 0002: Catalog Persistence And Filesystem Reconciliation
 
 - Status: Accepted
-- Last updated: 2026-06-22
+- Last updated: 2026-06-27
 - Specs: `docs/specs/0004-library-catalog-browser.md`,
   `docs/specs/0005-catalog-state-diagnostics-cleanup.md`,
   `docs/specs/0008-package-descendant-scan-skip.md`,
@@ -98,6 +98,8 @@ This ADR owns:
 - The macOS filesystem resource keys requested during the initial scan.
 - The 10 Hz time-based cadence for filesystem scan SQLite flushes.
 - The 10 Hz time-based cadence for SwiftUI-visible filesystem scan updates.
+- Scan-time media eligibility: which regular files become `media_asset` rows based on
+  `NSURLContentTypeKey` and `UTType` conformance.
 
 This ADR references, but does not own:
 
@@ -111,7 +113,6 @@ Separate ADRs or specs must own:
 
 - Filesystem access policy, root registration, root display names, and root
   restoration.
-- Which files are eligible media assets beyond being regular files.
 - Move and rename detection.
 - Metadata extraction, metadata schema, metadata freshness, and metadata scan
   cadence.
@@ -157,10 +158,19 @@ scanner does not skip hidden files, subdirectory descendants, or mount points
 through `FileManager.DirectoryEnumerationOptions`, but it does treat macOS
 packages as file-like roots and does not descend into package contents.
 
-Only regular files become `media_asset` rows. Directories, symbolic links, and
-non-regular filesystem objects are scan traversal or filtering inputs, not media
-asset rows. Package roots and package descendants are not media asset rows in
-the initial catalog scan.
+Only regular files whose `contentTypeKey` conforms to `UTType.image` or
+`UTType.movie` become `media_asset` rows. Other regular files are skipped during
+scan observation and are not reconciliation failures. Nil `contentTypeKey` is
+excluded. The scanner reads no bytes to decide eligibility; decodability and
+enrichment unsupported outcomes are owned by later enrichment work.
+
+Directories, symbolic links, and non-regular filesystem objects are scan traversal
+or filtering inputs, not media asset rows. Package roots and package descendants are
+not media asset rows in the catalog scan.
+
+Skipped non-media regular files are summarized through debug JSONL diagnostics with
+a per-scan count (`catalog.scan.skippedNonMedia`). A skipped non-media file is not a
+filesystem scan failure.
 
 Skipped package roots are recorded through debug JSONL diagnostics with the
 package path and available content type identifier. A skipped package is not a
@@ -197,7 +207,7 @@ IDs.
 
 For a completed scan of one library root:
 
-- observed regular-file paths are inserted or updated in `media_asset`
+- observed eligible regular-file paths are inserted or updated in `media_asset`
 - existing `media_asset` rows for that root whose `relative_path` was not
   observed are deleted
 
@@ -287,6 +297,27 @@ At scan end, cancellation, or failure, the catalog owner performs one final
 flush of pending observed-file changes. Deletion of unobserved existing rows
 happens only after a completed scan of that library root, not after a cancelled
 or failed scan.
+
+### Media Eligibility At Scan
+
+A regular file is eligible when `URLResourceValues.contentType` conforms to
+`UTType.image` or `UTType.movie`. Shared policy lives in `MediaEligibility`.
+
+Verified POC on a 21,922-file OneDrive library (`~/Desktop/OneDrive/Pictures`):
+every extension mapped to one UTType; nil `contentTypeKey` was absent; 11 of
+21,922 files (PDF and extensionless dynamic types) would be excluded by this rule.
+
+Alternatives rejected for scan membership:
+
+- Extension allowlist: duplicate policy surface and misses mis-typed files.
+- UTType plus extension fallback: rejected; nil and unknown types are excluded.
+- Byte sniffing or ImageIO/AVFoundation at scan: violates the no-byte-read scan
+  contract for dataless cloud placeholders.
+- Projection or UI-only filtering: leaves non-media rows in SQLite until manually
+  reconciled away.
+
+Decodability remains enrichment's job. A file with a correct UTType that cannot be
+decoded is still cataloged until enrichment records an unsupported outcome.
 
 ## Alternatives Considered
 

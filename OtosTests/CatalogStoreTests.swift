@@ -95,12 +95,12 @@ struct CatalogStoreTests {
         try await store.addLibrary(url: root)
 
         let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
-            !snapshot.isScanning && snapshot.testAssets.count == 2
+            !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         #expect(try scanned.libraries.map(\.path) == [CatalogPath.normalizedDirectoryPath(for: root)])
         #expect(scanned.libraries.allSatisfy { !$0.isScanning })
-        #expect(scanned.testAssets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
-        #expect(scanned.testAssets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
+        #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(scanned.testAssets.map(\.name) == ["a.jpg"])
         #expect(scanned.testAssets.allSatisfy { $0.byteSize != nil })
         #expect(scanned.testAssets.allSatisfy { $0.createdAt != nil })
 
@@ -108,8 +108,8 @@ struct CatalogStoreTests {
         try await reloadedStore.start(scansSavedLibraries: false)
         let reloaded = await reloadedStore.currentSnapshot()
         #expect(reloaded.libraries.count == 1)
-        #expect(reloaded.testAssets.map(\.relativePath.rawValue).sorted() == ["Nested/b.txt", "a.jpg"])
-        #expect(reloaded.testAssets.map(\.name).sorted { ($0 ?? "") < ($1 ?? "") } == ["a.jpg", "b.txt"])
+        #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(reloaded.testAssets.map(\.name) == ["a.jpg"])
     }
 
     @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
