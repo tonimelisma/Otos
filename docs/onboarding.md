@@ -227,6 +227,19 @@ instead of guessing.
    re-renders; the grid fills.
 6. Meanwhile the Store re-scans the libraries in the background to reconcile with
    the current filesystem. If nothing changed, it stays silent (no needless work).
+7. After load, `CatalogFilesystemWatcher` subscribes to macOS FSEvents for each
+   saved root. Changes under a root debounce (500 ms quiet period) and schedule a
+   full-root rescan for **that root only** through the same scan pipeline.
+
+**Filesystem changes while the app is running:**
+
+1. macOS delivers file-level FSEvents under a saved library root.
+2. `CatalogFilesystemWatcher` forwards the event to `CatalogStore` (never SQLite).
+3. The Store ignores events until that root's first scan has completed, then
+   resets a per-root debounce timer on each burst.
+4. When the quiet period elapses, Store calls `enqueueScans([root])` — or defers
+   until the current scan for that root finishes (`rescanAfterCurrentScan`).
+5. The existing scan → batch → reconcile → notify → Projection path updates the grid.
 
 **Adding a library:**
 

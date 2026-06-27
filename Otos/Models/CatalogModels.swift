@@ -337,6 +337,22 @@ nonisolated enum CatalogPath {
         }
         return MediaRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
     }
+
+    /// Maps an absolute filesystem event path to the saved root that owns it.
+    static func owningRoot(for eventPath: String, among roots: some Sequence<LibraryRootPath>) -> LibraryRootPath? {
+        var match: LibraryRootPath?
+        var matchLength = 0
+        for root in roots {
+            let raw = root.rawValue
+            if eventPath == raw || eventPath.hasPrefix(raw + "/") {
+                if raw.count > matchLength {
+                    match = root
+                    matchLength = raw.count
+                }
+            }
+        }
+        return match
+    }
 }
 
 nonisolated enum LibraryRootRelationship: Equatable {

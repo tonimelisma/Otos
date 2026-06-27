@@ -5,7 +5,8 @@
 - Specs: `docs/specs/0004-library-catalog-browser.md`,
   `docs/specs/0005-catalog-state-diagnostics-cleanup.md`,
   `docs/specs/0008-package-descendant-scan-skip.md`,
-  `docs/specs/0013-catalog-lifecycle-race-safety.md`
+  `docs/specs/0013-catalog-lifecycle-race-safety.md`,
+  `docs/specs/0023-filesystem-event-rescan-v1.md`
 
 ## Context
 
@@ -100,6 +101,8 @@ This ADR owns:
 - The 10 Hz time-based cadence for SwiftUI-visible filesystem scan updates.
 - Scan-time media eligibility: which regular files become `media_asset` rows based on
   `NSURLContentTypeKey` and `UTType` conformance.
+- Running-app filesystem watching (V1): coarse macOS FSEvents that schedule
+  debounced full-root rescans through the existing scan pipeline.
 
 This ADR references, but does not own:
 
@@ -121,7 +124,7 @@ Separate ADRs or specs must own:
 - Camera package, AVCHD, XAVC, or other compound media-container import
   workflows.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
-- File watching or incremental change notification outside explicit scan runs.
+- Per-path incremental filesystem-event catalog updates (V2; see spec 0023).
 - Scan diagnostics stored in SQLite as product state.
 - Any decision to make filesystem-provided identifiers durable media identity.
 
@@ -297,6 +300,31 @@ At scan end, cancellation, or failure, the catalog owner performs one final
 flush of pending observed-file changes. Deletion of unobserved existing rows
 happens only after a completed scan of that library root, not after a cancelled
 or failed scan.
+
+### Running-App Filesystem Watching (V1)
+
+While the app is running, `CatalogFilesystemWatcher` subscribes to macOS File
+System Events for each saved library root using file-level events
+(`kFSEventStreamCreateFlagFileEvents`). The watcher translates callbacks into
+`Sendable` events and forwards them to `CatalogStore`; it never writes SQLite or
+catalog memory.
+
+`CatalogStore` maps each event path to exactly one library root, ignores events
+until that root's first scan has completed ("arming"), and coalesces bursts with a
+per-root quiet-period debounce (500 ms default). When the debounce fires, Store
+schedules a **full-root rescan for that root only** via `enqueueScans([root])`.
+If a debounced rescan is requested while that root is already scanning, Store
+records `rescanAfterCurrentScan` and enqueues one follow-up scan when the active
+scan clears. `kFSEventStreamEventFlagMustScanSubDirs` uses the same debounced
+full-rescan path.
+
+This V1 policy deliberately does not upsert or delete individual rows from event
+paths. Per-path incremental updates belong in a future spec if measurement proves
+full-root rescans are insufficient.
+
+Watcher lifecycle is tied to saved roots: start after catalog load, add on
+`addLibrary`, remove on `removeLibrary`, stop on `shutdown`. Availability
+re-probing and offline-root watching policy are unchanged from ADR 0005.
 
 ### Media Eligibility At Scan
 

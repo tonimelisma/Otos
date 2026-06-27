@@ -18,8 +18,10 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
 /// overlay storage, while the nested dictionaries below are the complete working
 /// set used during the process lifetime. Filesystem scans write SQLite and then
-/// mirror the same facts into memory before notifying consumers. Views never
-/// access either representation directly.
+/// mirror the same facts into memory before notifying consumers. While the app
+/// runs, `CatalogFilesystemWatcher` forwards macOS events to per-root debounced
+/// full-root rescans through the same scan pipeline. Views never access either
+/// representation directly.
 ///
 /// Why an actor: the database, the in-memory catalog, and background scans all
 /// touch the same state, and a scan streams in thousands of files concurrently with
@@ -72,7 +74,9 @@ actor CatalogStore {
 
     private let location: Location
     private let scanner: CatalogScanner
+    private let filesystemWatcher: CatalogFilesystemWatcher
     private let scanCadence: Duration
+    private let filesystemEventDebounce: Duration
     private let diagnostics: CatalogDiagnostics?
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private var dbQueue: DatabaseQueue?
@@ -88,17 +92,25 @@ actor CatalogStore {
     private var pendingScanPaths: [LibraryRootPath] = []
     private var activeScan: ActiveScan?
     private var currentScanTask: Task<Void, Never>?
+    private var filesystemWatchingStarted = false
+    private var filesystemWatchingArmed: Set<LibraryRootPath> = []
+    private var rescanAfterCurrentScan: Set<LibraryRootPath> = []
+    private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
 
     init(
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
         scanner: CatalogScanner = .live,
+        filesystemWatcher: CatalogFilesystemWatcher = .live,
         scanCadence: Duration = .milliseconds(100),
+        filesystemEventDebounce: Duration = .milliseconds(500),
         diagnostics: CatalogDiagnostics? = .shared,
         initialLoadDidRead: (@Sendable () async -> Void)? = nil
     ) {
         self.location = location
         self.scanner = scanner
+        self.filesystemWatcher = filesystemWatcher
         self.scanCadence = scanCadence
+        self.filesystemEventDebounce = filesystemEventDebounce
         self.diagnostics = diagnostics
         self.initialLoadDidRead = initialLoadDidRead
     }
@@ -127,6 +139,7 @@ extension CatalogStore {
         if scansSavedLibraries {
             requestLoadedRootScansIfNeeded()
         }
+        startFilesystemWatchingIfNeeded()
     }
 
     /// Every entry point that needs catalog truth awaits the same finite load.
@@ -233,6 +246,7 @@ extension CatalogStore {
             fields: ["rootPath": root.path.rawValue]
         )
         notifyCatalogChanged()
+        filesystemWatcher.addRoot(root.path)
         enqueueScans([root.path])
     }
 
@@ -245,6 +259,10 @@ extension CatalogStore {
         }
 
         unrequestedLoadedRootPaths.removeAll { $0 == path }
+        cancelFilesystemDebounce(for: path)
+        filesystemWatcher.removeRoot(path)
+        rescanAfterCurrentScan.remove(path)
+        filesystemWatchingArmed.remove(path)
         if activeScan?.rootPath == path {
             currentScanTask?.cancel()
             currentScanTask = nil
@@ -284,6 +302,11 @@ extension CatalogStore {
         currentScanTask = nil
         activeScan = nil
         pendingScanPaths.removeAll()
+        cancelAllFilesystemDebounces()
+        filesystemWatcher.stop()
+        filesystemWatchingStarted = false
+        filesystemWatchingArmed.removeAll()
+        rescanAfterCurrentScan.removeAll()
         notifyCatalogChanged()
     }
 }
@@ -556,7 +579,7 @@ private extension CatalogStore {
             )
         }
 
-        clearCurrentScan(scan)
+        clearCurrentScan(scan, armFilesystemWatching: true)
     }
 
     /// Reconciliation changes durable and in-memory membership as one actor-owned
@@ -605,7 +628,7 @@ private extension CatalogStore {
             phase: "cancel",
             fields: ["rootPath": scan.rootPath.rawValue]
         )
-        clearCurrentScan(scan)
+        clearCurrentScan(scan, armFilesystemWatching: false)
     }
 
     private func scanFailed(scan: ActiveScan, error: Error) async {
@@ -638,15 +661,25 @@ private extension CatalogStore {
                 "error": String(describing: error),
             ]
         )
-        clearCurrentScan(scan)
+        clearCurrentScan(scan, armFilesystemWatching: true)
     }
 
-    private func clearCurrentScan(_ scan: ActiveScan) {
+    private func clearCurrentScan(_ scan: ActiveScan, armFilesystemWatching: Bool) {
         guard activeScan == scan else {
             return
         }
+        let rootPath = scan.rootPath
         activeScan = nil
         currentScanTask = nil
+
+        if armFilesystemWatching, rootsByPath[rootPath] != nil {
+            filesystemWatchingArmed.insert(rootPath)
+        }
+
+        if rescanAfterCurrentScan.remove(rootPath) != nil {
+            enqueueScans([rootPath])
+        }
+
         notifyCatalogChanged()
         startNextScanIfNeeded()
     }
@@ -737,6 +770,173 @@ private extension CatalogStore {
         let paths = unrequestedLoadedRootPaths
         unrequestedLoadedRootPaths.removeAll(keepingCapacity: false)
         enqueueScans(paths)
+    }
+
+    private func startFilesystemWatchingIfNeeded() {
+        guard !filesystemWatchingStarted else {
+            return
+        }
+        filesystemWatchingStarted = true
+        let roots = Array(rootsByPath.keys)
+        filesystemWatcher.start(roots) { [weak self] event in
+            Task {
+                await self?.handleFilesystemEvent(event)
+            }
+        }
+    }
+
+    private func handleFilesystemEvent(_ event: FilesystemEvent) {
+        let signpost = OtosSignpost.catalog.beginInterval("FilesystemEventDebounce")
+        defer {
+            OtosSignpost.catalog.endInterval("FilesystemEventDebounce", signpost)
+        }
+
+        guard let root = CatalogPath.owningRoot(for: event.path, among: rootsByPath.keys) else {
+            recordFilesystemEventDrop(path: event.path, root: nil, reason: "outsideRoots")
+            return
+        }
+
+        guard filesystemWatchingArmed.contains(root) else {
+            recordFilesystemEventDrop(path: event.path, root: root, reason: "unarmed")
+            return
+        }
+
+        OtosLog.catalog.debug(
+            "Filesystem event received path=\(event.path, privacy: .public) root=\(root.rawValue, privacy: .public)"
+        )
+        Task {
+            await diagnostics?.record(
+                operation: "catalog.filesystemEvent",
+                phase: "receive",
+                fields: [
+                    "rootPath": root.rawValue,
+                    "path": event.path,
+                    "flags": "\(event.flags)",
+                ]
+            )
+        }
+        debounceFilesystemRescan(for: root)
+    }
+
+    private func recordFilesystemEventDrop(path: String, root: LibraryRootPath?, reason: String) {
+        if let root {
+            OtosLog.catalog.debug(
+                """
+                Filesystem event ignored path=\(path, privacy: .public) \
+                root=\(root.rawValue, privacy: .public) reason=\(reason, privacy: .public)
+                """
+            )
+        } else {
+            OtosLog.fileAccess.debug(
+                "Filesystem event ignored outside library roots path=\(path, privacy: .public)"
+            )
+        }
+        Task {
+            var fields: [String: String] = [
+                "path": path,
+                "reason": reason,
+            ]
+            if let root {
+                fields["rootPath"] = root.rawValue
+            }
+            await diagnostics?.record(
+                operation: "catalog.filesystemEvent",
+                phase: "drop",
+                fields: fields
+            )
+        }
+    }
+
+    private func debounceFilesystemRescan(for root: LibraryRootPath) {
+        filesystemDebounceTasks[root]?.cancel()
+        let debounce = filesystemEventDebounce
+        filesystemDebounceTasks[root] = Task { [root] in
+            try? await Task.sleep(for: debounce)
+            guard !Task.isCancelled else {
+                return
+            }
+            await scheduleFilesystemRescan(root)
+        }
+        Task {
+            await diagnostics?.record(
+                operation: "catalog.filesystemEvent",
+                phase: "debounce",
+                fields: ["rootPath": root.rawValue]
+            )
+        }
+    }
+
+    private func scheduleFilesystemRescan(_ root: LibraryRootPath) async {
+        let signpost = OtosSignpost.catalog.beginInterval("FilesystemRescanScheduled")
+        defer {
+            OtosSignpost.catalog.endInterval("FilesystemRescanScheduled", signpost)
+        }
+
+        guard rootsByPath[root] != nil else {
+            await recordFilesystemEventDrop(root: root, reason: "removed")
+            return
+        }
+        guard filesystemWatchingArmed.contains(root) else {
+            await recordFilesystemEventDrop(root: root, reason: "unarmed")
+            return
+        }
+        guard rootIsAvailable(root) else {
+            await recordFilesystemEventDrop(root: root, reason: "unavailable")
+            return
+        }
+
+        if activeScan?.rootPath == root {
+            rescanAfterCurrentScan.insert(root)
+            OtosLog.catalog.debug(
+                "Filesystem rescan deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
+            )
+            await diagnostics?.record(
+                operation: "catalog.filesystemEvent",
+                phase: "schedule",
+                fields: [
+                    "rootPath": root.rawValue,
+                    "deferred": "true",
+                ]
+            )
+            return
+        }
+
+        enqueueScans([root])
+        OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
+        await diagnostics?.record(
+            operation: "catalog.filesystemEvent",
+            phase: "schedule",
+            fields: [
+                "rootPath": root.rawValue,
+                "deferred": "false",
+            ]
+        )
+    }
+
+    private func recordFilesystemEventDrop(root: LibraryRootPath, reason: String) async {
+        OtosLog.catalog.debug(
+            "Filesystem rescan dropped path=\(root.rawValue, privacy: .public) reason=\(reason, privacy: .public)"
+        )
+        await diagnostics?.record(
+            operation: "catalog.filesystemEvent",
+            phase: "drop",
+            fields: [
+                "rootPath": root.rawValue,
+                "reason": reason,
+            ]
+        )
+    }
+
+    private func cancelFilesystemDebounce(for root: LibraryRootPath) {
+        filesystemDebounceTasks[root]?.cancel()
+        filesystemDebounceTasks.removeValue(forKey: root)
+    }
+
+    private func cancelAllFilesystemDebounces() {
+        for task in filesystemDebounceTasks.values {
+            task.cancel()
+        }
+        filesystemDebounceTasks.removeAll()
     }
 
     private func owns(_ scan: ActiveScan) -> Bool {

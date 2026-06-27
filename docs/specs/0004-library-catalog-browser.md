@@ -37,7 +37,16 @@ In scope:
 Out of scope:
 
 - Manual scan buttons, commands, or user-facing rescan controls.
-- FSEvents, live filesystem watching, metadata, thumbnails, previews, editing,
+
+In scope (filesystem watching):
+
+- macOS FSEvents under saved library roots schedule debounced full-root rescans
+  for the affected root only (spec 0023).
+
+Out of scope:
+
+- Per-path incremental FSEvents catalog updates.
+- Metadata, thumbnails, previews, editing,
   import/export, sandboxing, bookmarks, AppKit root picker, and parallel scans.
 
 ## Definition Of Ready
@@ -65,7 +74,7 @@ Out of scope:
 | LIB-005 | Functional | Exact duplicate, ancestor, and descendant library roots are rejected. | Current | `docs/requirements.md` |
 | LIB-006 | Functional | Removing a library deletes Otos catalog rows for that root and leaves original files untouched. | Current | `docs/requirements.md` |
 | LIB-007 | Functional | Removing a library always requires confirmation with destructive action copy that explains originals remain on disk and catalog information is deleted. | Current | `docs/requirements.md` |
-| LIB-008 | Functional | Otos automatically scans saved libraries on launch and newly added libraries after add. | Current | `docs/requirements.md` |
+| LIB-008 | Functional | Otos automatically scans saved libraries on launch, newly added libraries after add, and debounced filesystem-event rescans while running. | Current | `docs/requirements.md` |
 | LIB-009 | Functional | Otos shall not expose a manual scan button, command, or user-facing scan API. | Current | `docs/requirements.md` |
 | LIB-010 | Functional | The catalog stores file name, relative path, content type identifier, byte size, creation date, and content modified date; the current browser presentation is owned by Spec 0011. | Current | `docs/requirements.md`, Spec 0005, Spec 0011 |
 | LIB-011 | Functional | Scan failures are kept out of the UI for this increment and recorded through logs. | Current | `docs/requirements.md` |

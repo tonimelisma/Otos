@@ -28,7 +28,8 @@ In scope:
 
 Out of scope:
 
-- periodic availability probing, filesystem watching, or manual scanning
+- periodic availability probing or manual scanning
+- filesystem watching (coarse per-root rescans: spec 0023 / ADR 0002)
 - persistence of availability
 - schema changes
 - metadata, thumbnails, sandboxing, bookmarks, or durable scan IDs

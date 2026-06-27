@@ -43,8 +43,9 @@ This ADR references but does not own:
 - AppKit grid rendering: ADR 0006
 - ordered asset-ID reuse: ADR 0007
 
-Metadata, thumbnails, manual scans, FSEvents, sandboxing, bookmarks, durable scan
-IDs, and media-container import are outside this decision.
+Metadata, thumbnails, manual scans, sandboxing, bookmarks, durable scan IDs, and
+media-container import are outside this decision. Coarse running-app FSEvents→rescan
+policy is owned by ADR 0002 and spec 0023.
 
 ## Decision
 
