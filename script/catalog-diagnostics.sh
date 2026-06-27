@@ -38,6 +38,8 @@ write_summary() {
     echo "stale scan callbacks ignored: $(diagnostic_count '\"operation\":\"catalog.scan.staleCallback\"')"
     echo "skipped packages: $(diagnostic_count '\"operation\":\"catalog.scan.skippedPackage\"')"
     echo "skipped non-media summaries: $(diagnostic_count '\"operation\":\"catalog.scan.skippedNonMedia\"')"
+    echo "filesystem event schedules: $(diagnostic_count '\"operation\":\"catalog.filesystemEvent\".*\"phase\":\"schedule\"')"
+    echo "filesystem event drops: $(diagnostic_count '\"operation\":\"catalog.filesystemEvent\".*\"phase\":\"drop\"')"
     echo "startup callers coalesced: $(diagnostic_count '\"operation\":\"catalog.start\".*\"phase\":\"coalesced\"')"
     echo "window projections: $(diagnostic_count '\"operation\":\"catalog.projection.window\"')"
     echo "main run loop stalls: $(diagnostic_count '\"operation\":\"ui.mainRunLoop.stall\"')"

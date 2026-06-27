@@ -70,7 +70,8 @@ Out of scope:
 
 - durable scan IDs, scan-history tables, scan records, resumable scans, or
   first/last-seen state
-- parallel scans, manual scans, filesystem watching, or periodic availability
+- parallel scans, manual scans, or periodic availability (coarse FSEvents rescans:
+  spec 0023)
   probing
 - SQLite schema changes
 - grid, media eligibility, metadata, thumbnail, or filesystem-fact changes
