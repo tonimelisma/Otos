@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		3BCB10072FEAFB0000010001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 3BCB10062FEAFB0000010001 /* GRDB */; };
+		3BCB100A2FEAFB0000010001 /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = 3BCB10092FEAFB0000010001 /* MediaMetadata */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +45,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3BCB10072FEAFB0000010001 /* GRDB in Frameworks */,
+				3BCB100A2FEAFB0000010001 /* MediaMetadata in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -96,6 +98,7 @@
 			name = Otos;
 			packageProductDependencies = (
 				3BCB10062FEAFB0000010001 /* GRDB */,
+				3BCB10092FEAFB0000010001 /* MediaMetadata */,
 			);
 			productName = Otos;
 			productReference = 3B44EB5E2FCEBA57007E4158 /* Otos.app */;
@@ -154,6 +157,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+				3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 3B44EB5F2FCEBA57007E4158 /* Products */;
@@ -482,6 +486,14 @@
 				minimumVersion = 7.11.0;
 			};
 		};
+		3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/tonimelisma/MediaMetadata.git";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -489,6 +501,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
+		};
+		3BCB10092FEAFB0000010001 /* MediaMetadata */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */;
+			productName = MediaMetadata;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
