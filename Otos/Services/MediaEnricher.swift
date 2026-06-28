@@ -40,6 +40,12 @@ nonisolated struct MediaEnricher {
             guard !result.outcome.shouldRetry else {
                 return .transient
             }
+            // ADR 0008 safety gate, again: the metadata read may have spanned a provider
+            // eviction, so re-check before QuickLook's byte read. A regressed-to-dataless
+            // file routes back to download instead of faulting itself materialized.
+            guard FileMaterialization.status(of: url) == .materialized else {
+                return .notMaterialized
+            }
             let thumbnailPath = await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
             return .complete(
                 EnrichmentResult(
@@ -47,8 +53,11 @@ nonisolated struct MediaEnricher {
                     metadata: Self.map(result),
                     captureDate: Self.resolveCaptureDate(result.timestamps),
                     thumbnailPath: thumbnailPath,
-                    sourceSize: sourceSize,
-                    sourceMTimeSeconds: sourceMTimeSeconds
+                    // Normalize unknown facts to the same -1 signature `needsEnrichment`
+                    // compares against, so a definitive result with no scanner-provided
+                    // size/mtime still stamps complete instead of looping forever.
+                    sourceSize: sourceSize ?? -1,
+                    sourceMTimeSeconds: sourceMTimeSeconds ?? -1
                 )
             )
         }
@@ -136,8 +145,9 @@ nonisolated struct MediaEnricher {
         add(timestamps.quickTimeLocation, "quickTimeLocation")
         add(timestamps.quickTimeContentCreate, "quickTimeContentCreate")
         add(timestamps.containerCreation, "containerCreation")
-        add(timestamps.id3Recording, "id3Recording")
-        add(timestamps.waveOrigination, "waveOrigination")
+        // MED-004: Otos is image/video only. ID3 (MP3) and WAVE/BWF are audio-only
+        // containers Otos never catalogs, so their timestamp roles are not persisted.
+        // RIFF is kept: it also carries AVI, which is a cataloged video format.
         add(timestamps.riffRecording, "riffRecording")
         return records
     }

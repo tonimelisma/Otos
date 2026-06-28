@@ -495,15 +495,21 @@ script/verify.sh
 - Reviews follow `docs/process/code-review.md` for the review criteria, severity
   model, and merge gate. The same criteria apply to agent self-review before a PR
   is opened.
-- Each increment handles outstanding PR review comments as part of its work.
-  Before opening the increment's PR, review the unresolved review comments on
-  recent merged and open PRs. Reply to claim every actionable finding the
-  increment will fix, land the fix through the increment's normal owner-intent,
-  spec, test, and verification path, and then reply again on each claimed thread
-  describing how it was fixed and linking the fixing commit or PR. Reply to a
-  finding that is not applicable or intentionally deferred with the reason instead
-  of silently skipping it. Do not open a parallel quick-patch that bypasses the
-  spec, tests, or verification, and do not delete or hide a thread to "resolve" it.
+- Each increment handles outstanding PR review comments as part of its work, so
+  every prior PR's comments get resolved sooner or later. Before opening the
+  increment's PR, scan the last five PRs (merged or open, human or bot reviewer)
+  for review comments. For every comment that has not already been claimed:
+  - Reply on the thread to claim it, stating the increment will address it.
+  - Analyze it properly: decide whether it is a real, actionable, in-scope
+    finding, and if so land the fix through the increment's normal owner-intent,
+    spec, test, and verification path — even when the comment targets a file the
+    increment did not otherwise touch.
+  - After fixing, reply again on the same thread describing how it was fixed and
+    where, linking the fixing commit or PR.
+  - If a finding is not applicable, already resolved, or intentionally deferred,
+    reply with that reason instead of silently skipping it.
+  Do not open a parallel quick-patch that bypasses the spec, tests, or
+  verification, and do not delete or hide a thread to "resolve" it.
 - Required remote CI is a fast gate: checkout sanity, workflow YAML parsing,
   text hygiene, script inventory, and macOS lint. Remote CI does not run Xcode 27
   build/test until a runner with Xcode 27 exists.
@@ -573,10 +579,10 @@ textual descriptions rather than terse labels. It must answer:
 - instrumentation added or updated for every meaningful path
 - trace/log artifact paths for performance-sensitive work
 - code smells observed and how they were addressed or intentionally accepted
-- outstanding PR review comments on recent merged and open PRs reviewed; actionable
-  in-scope findings claimed by reply, fixed, and answered with how they were fixed,
-  linking the fixing commit or PR; inapplicable or deferred findings answered with
-  the reason
+- review comments on the last five PRs (merged or open, human or bot) scanned;
+  actionable in-scope findings claimed by reply, fixed, and answered with how they
+  were fixed and where, linking the fixing commit or PR; inapplicable or deferred
+  findings answered with the reason
 - docs updated in the same increment when contracts, workflow, requirements, or
   behavior changed
 - repository-wide stale-document audit completed for affected ADRs, specs,
