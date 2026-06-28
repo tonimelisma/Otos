@@ -129,6 +129,23 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// constant for an asset and never disagrees with it.
     let sortKey: String
 
+    // Enrichment overlay. These are the only enrichment data that stays resident and
+    // flows through the catalog publication: a thumbnail file path, a resolved capture
+    // date, and the staleness stamps. The full parsed metadata is NOT here — it is a
+    // persisted, on-demand binary blob (see `AssetMetadata`), because holding ~30 mostly
+    // nil fields per asset would cost ~480 B each (nil optionals reserve their space) and
+    // would ride the Projection per-tick snapshot rebuild and equality check.
+    //
+    // Filesystem facts (scan) and enrichment overlay have disjoint writers: the scan
+    // refreshes facts and preserves these fields (the in-memory merge), enrichment writes
+    // these and preserves facts. Staleness is derived, never stored: an asset needs
+    // enrichment when its current `(byteSize, contentModifiedAt-seconds)` no longer match
+    // the `(enrichedSourceSize, enrichedSourceMTimeSeconds)` the last enrichment recorded.
+    let thumbnailPath: String?
+    let captureDate: Date?
+    let enrichedSourceSize: Int64?
+    let enrichedSourceMTimeSeconds: Int?
+
     init(
         libraryRootPath: LibraryRootPath,
         relativePath: MediaRelativePath,
@@ -136,7 +153,11 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         contentTypeIdentifier: String?,
         byteSize: Int64?,
         createdAt: Date?,
-        contentModifiedAt: Date?
+        contentModifiedAt: Date?,
+        thumbnailPath: String? = nil,
+        captureDate: Date? = nil,
+        enrichedSourceSize: Int64? = nil,
+        enrichedSourceMTimeSeconds: Int? = nil
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
@@ -145,11 +166,88 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.byteSize = byteSize
         self.createdAt = createdAt
         self.contentModifiedAt = contentModifiedAt
+        self.thumbnailPath = thumbnailPath
+        self.captureDate = captureDate
+        self.enrichedSourceSize = enrichedSourceSize
+        self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
         sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)
     }
 
     var id: MediaAssetID {
         MediaAssetID(libraryRootPath: libraryRootPath, relativePath: relativePath)
+    }
+
+    /// Whole-seconds form of a filesystem date for the staleness signature. Whole
+    /// seconds avoid the `Double` epsilon that would otherwise make a reloaded date
+    /// look different from a freshly scanned one (see FND-062/FND-064).
+    static func mtimeSeconds(_ date: Date?) -> Int {
+        date.map { Int($0.timeIntervalSince1970.rounded(.down)) } ?? -1
+    }
+
+    /// True when the file's current bytes have not been definitively enriched. Depends
+    /// only on the `(size, mtime)` signature, never on whether products exist, so a file
+    /// whose metadata is genuinely empty (unsupported, no thumbnail) is not retried.
+    var needsEnrichment: Bool {
+        guard let enrichedSourceSize, let enrichedSourceMTimeSeconds else {
+            return true
+        }
+        return enrichedSourceSize != (byteSize ?? -1)
+            || enrichedSourceMTimeSeconds != Self.mtimeSeconds(contentModifiedAt)
+    }
+
+    /// Truest available capture date, never fabricated (MED-002): the metadata-resolved
+    /// date, then the filesystem creation date, then the modification date. `nil` only
+    /// when nothing is known. Filesystem dates are real dates, surfaced like any other.
+    var bestCaptureDate: Date? {
+        captureDate ?? createdAt ?? contentModifiedAt
+    }
+
+    /// Returns a copy with refreshed filesystem facts and the existing enrichment
+    /// overlay preserved. This is the in-memory side of disjoint ownership: a re-scan
+    /// updates facts without ever clobbering metadata or the thumbnail.
+    func mergingFacts(
+        name: String?,
+        contentTypeIdentifier: String?,
+        byteSize: Int64?,
+        createdAt: Date?,
+        contentModifiedAt: Date?
+    ) -> MediaAsset {
+        MediaAsset(
+            libraryRootPath: libraryRootPath,
+            relativePath: relativePath,
+            name: name,
+            contentTypeIdentifier: contentTypeIdentifier,
+            byteSize: byteSize,
+            createdAt: createdAt,
+            contentModifiedAt: contentModifiedAt,
+            thumbnailPath: thumbnailPath,
+            captureDate: captureDate,
+            enrichedSourceSize: enrichedSourceSize,
+            enrichedSourceMTimeSeconds: enrichedSourceMTimeSeconds
+        )
+    }
+
+    /// Returns a copy with refreshed enrichment overlay and the existing filesystem
+    /// facts preserved (the other half of disjoint ownership).
+    func applyingEnrichment(
+        thumbnailPath: String?,
+        captureDate: Date?,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?
+    ) -> MediaAsset {
+        MediaAsset(
+            libraryRootPath: libraryRootPath,
+            relativePath: relativePath,
+            name: name,
+            contentTypeIdentifier: contentTypeIdentifier,
+            byteSize: byteSize,
+            createdAt: createdAt,
+            contentModifiedAt: contentModifiedAt,
+            thumbnailPath: thumbnailPath,
+            captureDate: captureDate,
+            enrichedSourceSize: sourceSize,
+            enrichedSourceMTimeSeconds: sourceMTimeSeconds
+        )
     }
 }
 

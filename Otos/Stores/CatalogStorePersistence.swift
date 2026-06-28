@@ -33,6 +33,20 @@ extension CatalogStore {
         return directoryURL.appending(path: "catalog.sqlite")
     }
 
+    /// Thumbnail files live beside the catalog in Application Support. Created lazily by
+    /// `ThumbnailStore.write`; computed here so the location convention has one owner.
+    static func applicationThumbnailDirectory(bundleIdentifier: String) throws -> URL {
+        let appSupportURL = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        return appSupportURL
+            .appending(path: bundleIdentifier, directoryHint: .isDirectory)
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+    }
+
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
 
@@ -62,6 +76,21 @@ extension CatalogStore {
                 table.add(column: "created_at_unix", .double)
             }
         }
+        // Enrichment overlay columns, written only by enrichment (the scan upsert keeps
+        // listing only fact columns, so a re-scan never clears these). The stamps drive
+        // derived staleness; the blob is the on-demand full metadata, never loaded at
+        // launch. When the AssetMetadata blob shape changes, a future migration nulls
+        // every `metadata_blob` and the stamps so each asset re-enriches into the new
+        // shape — that is the DB-wide blob version, not a per-row tag.
+        migrator.registerMigration("v3_media_asset_enrichment") { db in
+            try db.alter(table: "media_asset") { table in
+                table.add(column: "enriched_source_size", .integer)
+                table.add(column: "enriched_source_mtime", .integer)
+                table.add(column: "thumbnail_path", .text)
+                table.add(column: "capture_date_unix", .double)
+                table.add(column: "metadata_blob", .blob)
+            }
+        }
         return migrator
     }
 
@@ -73,11 +102,15 @@ extension CatalogStore {
             StoredRoot(id: row["id"], path: LibraryRootPath(rawValue: row["path"]))
         }
 
+        // The cheap enrichment columns load into the resident asset; `metadata_blob` is
+        // deliberately not selected here (no 1M-blob decode at launch) — it is read on
+        // demand by `metadataBlob(...)`.
         let assets = try Row.fetchAll(
             db,
             sql: """
             SELECT library_root_id, relative_path, name, content_type_identifier, byte_size, \
-            created_at_unix, content_modified_at_unix
+            created_at_unix, content_modified_at_unix, \
+            enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
             FROM media_asset
             ORDER BY library_root_id, relative_path COLLATE NOCASE, relative_path
             """
@@ -86,6 +119,58 @@ extension CatalogStore {
         }
 
         return (roots, assets)
+    }
+
+    /// Writes one asset's enrichment overlay, touching only enrichment columns (disjoint
+    /// from the scan's fact columns). Called per row inside one batched transaction.
+    static func updateEnrichment(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                thumbnail_path = ?,
+                capture_date_unix = ?,
+                enriched_source_size = ?,
+                enriched_source_mtime = ?,
+                metadata_blob = ?
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [
+                result.thumbnailPath,
+                result.captureDate?.timeIntervalSince1970,
+                result.sourceSize,
+                result.sourceMTimeSeconds,
+                encodeMetadata(result.metadata),
+                libraryRootID,
+                result.id.relativePath.rawValue,
+            ]
+        )
+    }
+
+    /// Reads one asset's full metadata blob on demand (a future inspector), decoding it
+    /// from the binary plist. `nil` if absent or undecodable.
+    static func metadataBlob(
+        libraryRootID: Int64,
+        relativePath: MediaRelativePath,
+        db: Database
+    ) throws -> AssetMetadata? {
+        let data: Data? = try Row.fetchOne(
+            db,
+            sql: "SELECT metadata_blob FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [libraryRootID, relativePath.rawValue]
+        )?["metadata_blob"]
+        return data.flatMap(decodeMetadata)
+    }
+
+    /// Binary-plist (not JSON) encoding of the typed metadata. `nil` only if encoding
+    /// fails, which the caller stores as a null blob.
+    static func encodeMetadata(_ metadata: AssetMetadata) -> Data? {
+        let encoder = PropertyListEncoder()
+        encoder.outputFormat = .binary
+        return try? encoder.encode(metadata)
+    }
+
+    static func decodeMetadata(_ data: Data) -> AssetMetadata? {
+        try? PropertyListDecoder().decode(AssetMetadata.self, from: data)
     }
 
     static func upsertScannedFile(_ file: ScannedMediaFile, libraryRootID: Int64, db: Database) throws {
@@ -129,6 +214,7 @@ extension CatalogStore {
 private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset {
     let createdUnix: Double? = row["created_at_unix"]
     let modifiedUnix: Double? = row["content_modified_at_unix"]
+    let captureUnix: Double? = row["capture_date_unix"]
     return CatalogStore.StoredAsset(
         libraryRootID: row["library_root_id"],
         relativePath: MediaRelativePath(rawValue: row["relative_path"]),
@@ -136,6 +222,10 @@ private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset 
         contentTypeIdentifier: row["content_type_identifier"],
         byteSize: row["byte_size"],
         createdAt: createdUnix.map(Date.init(timeIntervalSince1970:)),
-        contentModifiedAt: modifiedUnix.map(Date.init(timeIntervalSince1970:))
+        contentModifiedAt: modifiedUnix.map(Date.init(timeIntervalSince1970:)),
+        thumbnailPath: row["thumbnail_path"],
+        captureDate: captureUnix.map(Date.init(timeIntervalSince1970:)),
+        enrichedSourceSize: row["enriched_source_size"],
+        enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
     )
 }

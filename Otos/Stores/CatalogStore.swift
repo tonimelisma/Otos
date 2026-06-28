@@ -62,6 +62,10 @@ actor CatalogStore {
         let byteSize: Int64?
         let createdAt: Date?
         let contentModifiedAt: Date?
+        var thumbnailPath: String?
+        var captureDate: Date?
+        var enrichedSourceSize: Int64?
+        var enrichedSourceMTimeSeconds: Int?
     }
 
     /// This value is a process-local ownership lease, not scan identity. The
@@ -215,6 +219,98 @@ extension CatalogStore {
         return makeSnapshot()
     }
 
+    /// Applies a batch of completed enrichments in one transaction and one notification.
+    /// Batching mirrors `recordScannedBatch`: a per-asset transaction across a whole
+    /// library would crawl, and a notification per asset would re-sort the catalog in
+    /// Projection per completion. Enrichment writes only enrichment columns/fields,
+    /// disjoint from facts; a row that was proven-deleted between extraction and this
+    /// write is skipped (the lease), so a removed asset is never resurrected.
+    func applyEnrichmentBatch(_ results: [EnrichmentResult]) async {
+        guard !results.isEmpty else {
+            return
+        }
+        let writable = currentlyWritableEnrichments(results)
+        guard !writable.isEmpty else {
+            return
+        }
+
+        let state = OtosSignpost.persistence.beginInterval("CatalogEnrichmentBatchWrite")
+        do {
+            let dbQueue = try database()
+            try await dbQueue.write { db in
+                for item in writable {
+                    try Self.updateEnrichment(item.result, libraryRootID: item.rootRowID, db: db)
+                }
+            }
+        } catch {
+            OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
+            await recordEnrichmentBatchError(error, count: writable.count)
+            return
+        }
+        OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
+
+        let appliedCount = mergeEnrichmentIntoMemory(writable)
+        await diagnostics?.record(
+            operation: "catalog.enrichment.batch",
+            phase: "finish",
+            fields: ["count": "\(appliedCount)"]
+        )
+        if appliedCount > 0 {
+            notifyCatalogChanged()
+        }
+    }
+
+    /// The subset of results whose asset still exists right now (the lease): a row that
+    /// was proven-deleted between extraction and this call is dropped, never resurrected.
+    private func currentlyWritableEnrichments(
+        _ results: [EnrichmentResult]
+    ) -> [(rootRowID: Int64, result: EnrichmentResult)] {
+        var writable: [(rootRowID: Int64, result: EnrichmentResult)] = []
+        for result in results {
+            let rootPath = result.id.libraryRootPath
+            guard let rootRowID = rootRowIDsByPath[rootPath],
+                  assetsByRootPath[rootPath]?[result.id.relativePath] != nil
+            else {
+                continue
+            }
+            writable.append((rootRowID, result))
+        }
+        return writable
+    }
+
+    /// Mirrors the cheap enrichment fields into the resident assets after the write,
+    /// preserving filesystem facts. Re-validates existence (a row removed during the
+    /// write is skipped); the metadata blob is never held resident.
+    private func mergeEnrichmentIntoMemory(
+        _ writable: [(rootRowID: Int64, result: EnrichmentResult)]
+    ) -> Int {
+        var appliedCount = 0
+        for item in writable {
+            let rootPath = item.result.id.libraryRootPath
+            guard let existing = assetsByRootPath[rootPath]?[item.result.id.relativePath] else {
+                continue
+            }
+            assetsByRootPath[rootPath]?[item.result.id.relativePath] = existing.applyingEnrichment(
+                thumbnailPath: item.result.thumbnailPath,
+                captureDate: item.result.captureDate,
+                sourceSize: item.result.sourceSize,
+                sourceMTimeSeconds: item.result.sourceMTimeSeconds
+            )
+            appliedCount += 1
+        }
+        OtosLog.metadata.debug("Enrichment batch applied count=\(appliedCount, privacy: .public)")
+        return appliedCount
+    }
+
+    private func recordEnrichmentBatchError(_ error: Error, count: Int) async {
+        OtosLog.metadata.error("Enrichment batch persist failed count=\(count, privacy: .public)")
+        await diagnostics?.record(
+            operation: "catalog.enrichment.batch",
+            phase: "error",
+            fields: ["count": "\(count)", "error": String(describing: error)]
+        )
+    }
+
     func addLibrary(url: URL) async throws {
         let path = try CatalogPath.normalizedExistingDirectoryPath(for: url)
         try await ensureStartedForMutation()
@@ -316,6 +412,20 @@ private extension CatalogStore {
         try await loadIfNeeded()
     }
 
+    /// Where thumbnail files live, derived from the catalog location: beside the
+    /// catalog in Application Support, or beside an explicit database file. In-memory
+    /// catalogs have no thumbnail directory (nothing to purge).
+    private var thumbnailDirectory: URL? {
+        switch location {
+        case let .application(bundleIdentifier):
+            try? Self.applicationThumbnailDirectory(bundleIdentifier: bundleIdentifier)
+        case let .databaseFile(url):
+            url.deletingLastPathComponent().appending(path: "Thumbnails", directoryHint: .isDirectory)
+        case .inMemory:
+            nil
+        }
+    }
+
     private func database() throws -> DatabaseQueue {
         if let dbQueue {
             return dbQueue
@@ -378,7 +488,11 @@ private extension CatalogStore {
                 contentTypeIdentifier: asset.contentTypeIdentifier,
                 byteSize: asset.byteSize,
                 createdAt: asset.createdAt,
-                contentModifiedAt: asset.contentModifiedAt
+                contentModifiedAt: asset.contentModifiedAt,
+                thumbnailPath: asset.thumbnailPath,
+                captureDate: asset.captureDate,
+                enrichedSourceSize: asset.enrichedSourceSize,
+                enrichedSourceMTimeSeconds: asset.enrichedSourceMTimeSeconds
             )
         }
     }
@@ -525,7 +639,17 @@ private extension CatalogStore {
             if isVisibleChange {
                 visibleChange = true
             }
-            assetsByRootPath[rootPath, default: [:]][file.relativePath] = MediaAsset(
+            // Disjoint ownership: the scan refreshes facts and preserves the enrichment
+            // overlay. A new file is built fresh (no overlay yet); a re-observed file
+            // merges so metadata and the thumbnail survive the re-scan, while a changed
+            // `(size, mtime)` makes the merged asset report `needsEnrichment` again.
+            let merged = existing?.mergingFacts(
+                name: file.name,
+                contentTypeIdentifier: file.contentTypeIdentifier,
+                byteSize: file.byteSize,
+                createdAt: file.createdAt,
+                contentModifiedAt: file.contentModifiedAt
+            ) ?? MediaAsset(
                 libraryRootPath: root.path,
                 relativePath: file.relativePath,
                 name: file.name,
@@ -534,6 +658,7 @@ private extension CatalogStore {
                 createdAt: file.createdAt,
                 contentModifiedAt: file.contentModifiedAt
             )
+            assetsByRootPath[rootPath, default: [:]][file.relativePath] = merged
         }
         return visibleChange
     }
@@ -594,6 +719,12 @@ private extension CatalogStore {
         }
         let existingPaths = Set(assetsByRootPath[scan.rootPath, default: [:]].keys)
         let missingPaths = existingPaths.subtracting(observedPaths)
+        // Capture the thumbnail files of soon-to-be-purged assets before their rows are
+        // removed, so overlay is purged with the item (ADR 0008): the row, its blob, and
+        // the thumbnail file all go together on proven deletion.
+        let purgedThumbnails: [String] = missingPaths.compactMap {
+            assetsByRootPath[scan.rootPath]?[$0]?.thumbnailPath
+        }
         let dbQueue = try database()
         let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
         defer { OtosSignpost.persistence.endInterval("CatalogScanReconcile", state) }
@@ -613,6 +744,11 @@ private extension CatalogStore {
         }
         for relativePath in missingPaths {
             assetsByRootPath[scan.rootPath]?.removeValue(forKey: relativePath)
+        }
+        if let thumbnailDirectory {
+            for name in purgedThumbnails {
+                ThumbnailStore.delete(name, in: thumbnailDirectory)
+            }
         }
         return missingPaths.count
     }
