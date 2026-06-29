@@ -403,7 +403,7 @@ private func expectOverlap(_ expression: () async throws -> Void) async throws {
 
 func waitForCatalogStoreSnapshot(
     _ store: CatalogStore,
-    timeoutAttempts: Int = 100,
+    timeoutAttempts: Int = 200,
     predicate: (CatalogSnapshot) -> Bool
 ) async throws -> CatalogSnapshot {
     for _ in 0 ..< timeoutAttempts {

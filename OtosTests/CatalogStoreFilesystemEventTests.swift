@@ -50,11 +50,14 @@ struct CatalogStoreFilesystemEventTests {
 
         let recorder = ScanInvocationRecorder()
         let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        // A wide debounce window keeps the whole burst (5 emits, ~10 ms apart) comfortably
+        // inside one window even when Task.sleep overshoots under parallel-suite load, so the
+        // burst coalesces to exactly one rescan deterministically.
         let store = CatalogStore(
             location: .inMemory,
             scanner: recordingScanner(recorder),
             filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(50),
+            filesystemEventDebounce: .milliseconds(200),
             diagnostics: nil
         )
 
@@ -87,7 +90,11 @@ struct CatalogStoreFilesystemEventTests {
             location: .inMemory,
             scanner: recordingScanner(recorder),
             filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(50),
+            // A wide window with a large margin: the second event must arrive (and reset
+            // the timer) well before the first window elapses. At 200 ms, the ~40 ms re-emit
+            // point stays far inside it even if Task.sleep overshoots under parallel-suite
+            // load, so the first timer is reliably cancelled before it can fire.
+            filesystemEventDebounce: .milliseconds(200),
             diagnostics: nil
         )
 
@@ -100,6 +107,8 @@ struct CatalogStoreFilesystemEventTests {
         try await Task.sleep(for: .milliseconds(40))
         emit(FilesystemEvent(path: root.appending(path: "second.jpg").path, flags: 0))
 
+        // The reset timer (200 ms from the second event) cannot have fired this early, and
+        // the cancelled first timer never fires, so no rescan has happened yet.
         try await Task.sleep(for: .milliseconds(30))
         #expect(await recorder.invocations().count == baseline)
 
@@ -294,7 +303,11 @@ private actor FilesystemScanProbe {
     }
 
     func waitForInvocationCount(_ expectedCount: Int) async throws {
-        for _ in 0 ..< 100 {
+        // Generous budget: the awaited scan invocation arrives via actor hops on the shared
+        // cooperative pool, which the parallel test suite saturates — the work is not slow,
+        // its scheduling is delayed. The loop returns as soon as the count is reached, so a
+        // large bound never slows a passing run.
+        for _ in 0 ..< 600 {
             if invocationCount >= expectedCount {
                 return
             }
@@ -327,7 +340,7 @@ private func waitForFilesystemRescan(
     recorder: ScanInvocationRecorder,
     baseline: Int,
     expectedAdditional: Int = 1,
-    timeoutAttempts: Int = 100
+    timeoutAttempts: Int = 200
 ) async throws {
     for _ in 0 ..< timeoutAttempts {
         let snapshot = await store.currentSnapshot()

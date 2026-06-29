@@ -61,8 +61,11 @@ actor EnrichmentCoordinator {
     private var pendingApplyIDs: Set<MediaAssetID> = []
     private var eagerMode = false
 
+    private let writeFailureBackoff: Duration
+
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
+    private var writeRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -73,6 +76,7 @@ actor EnrichmentCoordinator {
         enrichConcurrency: Int = 4,
         downloadConcurrency: Int = 4,
         applyBatchSize: Int = 64,
+        writeFailureBackoff: Duration = .seconds(5),
         diagnostics: CatalogDiagnostics? = .shared
     ) {
         self.store = store
@@ -81,6 +85,7 @@ actor EnrichmentCoordinator {
         self.enrichConcurrency = enrichConcurrency
         self.downloadConcurrency = downloadConcurrency
         self.applyBatchSize = applyBatchSize
+        self.writeFailureBackoff = writeFailureBackoff
         self.diagnostics = diagnostics
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signalStream = stream
@@ -120,6 +125,8 @@ extension EnrichmentCoordinator {
         supervisor = nil
         changeConsumer?.cancel()
         changeConsumer = nil
+        writeRetryTask?.cancel()
+        writeRetryTask = nil
         signalContinuation.finish()
     }
 
@@ -302,15 +309,45 @@ private extension EnrichmentCoordinator {
             phase: "flush",
             fields: ["count": "\(batch.count)", "outcome": "\(outcome)"]
         )
-        // A *validated* drop (stale because a scan observed newer bytes, or proven-deleted)
-        // leaves its asset `needsEnrichment`, but its scan notification was already consumed
-        // while the id was in flight/pending. Re-wake against fresh truth so a still-stale
-        // asset is re-dispatched immediately instead of waiting for an unrelated catalog
-        // event; a proven-deleted one simply drops out of the snapshot. A write failure is
-        // not re-woken: re-dispatching would tight-loop the read/generate/fail cycle, so the
-        // recorded error is left to back it off until the next natural signal.
-        if case let .applied(count) = outcome, count < batch.count {
+        switch outcome {
+        case let .applied(count) where count < batch.count:
+            // A *validated* drop (stale because a scan observed newer bytes, or
+            // proven-deleted) leaves its asset `needsEnrichment`, but its scan notification
+            // was already consumed while the id was in flight/pending. Re-wake against fresh
+            // truth so a still-stale asset is re-dispatched immediately; a proven-deleted one
+            // simply drops out of the snapshot.
             markDirtyAndSignal()
+        case .applied:
+            break
+        case .writeFailed:
+            // Don't re-wake immediately (that would tight-loop the read/generate/fail cycle),
+            // but don't drop the only wake either: if this failure was the last in-flight
+            // work, nothing else would ever re-dispatch the still-`needsEnrichment` assets.
+            // Schedule one coalesced delayed retry so they are re-attempted once storage may
+            // have recovered.
+            scheduleWriteFailureRetry()
         }
+    }
+
+    /// One pending backoff retry at a time. After the delay it re-wakes the loop, which
+    /// re-dispatches any asset still `needsEnrichment` (including those a failed write left
+    /// unstamped); a persistent failure simply reschedules, pacing the retries.
+    private func scheduleWriteFailureRetry() {
+        guard writeRetryTask == nil else {
+            return
+        }
+        let backoff = writeFailureBackoff
+        writeRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: backoff)
+            await self?.fireWriteFailureRetry()
+        }
+    }
+
+    private func fireWriteFailureRetry() {
+        writeRetryTask = nil
+        guard !Task.isCancelled else {
+            return
+        }
+        markDirtyAndSignal()
     }
 }

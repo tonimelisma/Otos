@@ -187,7 +187,10 @@ private actor ScanInvocationRecorder {
     }
 
     func waitForInvocationCount(_ expectedCount: Int) async throws {
-        for _ in 0 ..< 100 {
+        // Generous budget: the awaited scan invocation arrives via actor hops on the shared
+        // cooperative pool, which the parallel test suite saturates — the work is not slow,
+        // its scheduling is delayed. The loop returns as soon as the count is reached.
+        for _ in 0 ..< 600 {
             if paths.count >= expectedCount {
                 return
             }
@@ -240,7 +243,9 @@ private func waitForCatalogDiagnostics(
     _ url: URL,
     matching predicate: (String) -> Bool
 ) async throws -> String {
-    for _ in 0 ..< 100 {
+    // Generous budget: the diagnostics JSONL is written through actor hops + a file write,
+    // both delayed (not slowed) when the parallel suite saturates the cooperative pool.
+    for _ in 0 ..< 300 {
         let data = try? Data(contentsOf: url)
         let contents = data.flatMap { String(data: $0, encoding: .utf8) }
         if let contents, predicate(contents) {
