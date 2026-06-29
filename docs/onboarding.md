@@ -6,8 +6,9 @@ way it is — why there are actors, why we capture `weak self`, why work is spli
 across types, and why the data flows in one direction. Read it top to bottom once;
 after that it is a map you can jump around in.
 
-It describes the code as it exists now. If you change the architecture, update this
-document in the same change (see the living-documentation rule in `AGENTS.md`).
+It describes the code as it exists now. If you change architecture or behavior,
+update this document in the same change (see the living-documentation rule in
+`AGENTS.md`). Treat it as the current reader's map, not optional intro text.
 
 ---
 
@@ -17,10 +18,10 @@ document in the same change (see the living-documentation rule in `AGENTS.md`).
 
 The user's photos and videos live wherever they put them — usually a cloud-synced
 folder like OneDrive. Otos never moves them, never imports them into a hidden
-library, and never writes into those folders. Everything Otos stores (the catalog,
-and later thumbnails and edits) lives in its own Application Support directory and
-is a *subordinate, rebuildable projection* of what is on disk. When the catalog and
-the filesystem disagree, the filesystem wins.
+library, and never writes into those folders. Everything Otos stores (the catalog
+and thumbnail/metadata overlay, and later any edits) lives in its own Application
+Support directory and is a *subordinate, rebuildable projection* of what is on
+disk. When the catalog and the filesystem disagree, the filesystem wins.
 
 Everything else in the architecture follows from this. The full set of rules is in
 `AGENTS.md` under "Non-Negotiable Principles"; the deeper reasoning is in
@@ -135,6 +136,16 @@ This is the heart. Read its file guide at the top first. Key whys:
   id it owns, and the Store re-checks "do I still own this scan?" after every
   `await`. This is why a removed-then-re-added library can never have a stale scan
   write into its replacement.
+- **The enrichment write lease.** Enrichment is allowed to lag behind scans: a tile
+  may keep showing the best-known old thumbnail or date while newer bytes are being
+  processed. What must not happen is a stale completion stamping the newer source
+  as current. So `applyEnrichmentBatch` re-checks both existence and the source
+  `(size, mtime)` signature before writing memory or SQLite. If the file changed,
+  the completion is ignored and the asset stays eligible for a fresh enrichment.
+- **Removing a library purges its overlay.** A library removal deletes the catalog
+  rows for that root and then deletes the thumbnail files those rows referenced.
+  That is the same overlay lifecycle as proven deletion: when Otos no longer holds
+  a row, it does not keep the row's private thumbnail file.
 - **Notify only on real change.** When a re-scan re-observes identical files, the
   Store does *not* fire its change notification. Why: otherwise every routine re-scan
   would wake the whole sort/filter/render pipeline for nothing. (Measured: this
@@ -236,10 +247,11 @@ in batches. See `docs/adr/0009-enrichment-storage-and-staleness.md` and
 `MediaEnricher` does the work for one asset: it parses the file's metadata (the
 `MediaMetadata` library) and renders a 256 px thumbnail (QuickLook). It is an
 injectable value (like `CatalogScanner`), so tests substitute a fake. `ThumbnailStore`
-owns the thumbnail files on disk — the directory, the naming, and an *atomic* write
+owns the thumbnail files on disk — the directory, the naming, an *atomic* write
 (temp file then rename) so a tile never reads a half-written image during a
-re-enrichment. Thumbnails are files referenced by path; the catalog never stores the
-bytes.
+re-enrichment, loading via Image I/O into an already-decoded `CGImage`, and deletion
+when the owning catalog row is purged by proven deletion or library removal.
+Thumbnails are files referenced by path; the catalog never stores the bytes.
 
 ### `Otos/Services/FileMaterialization.swift` — the cloud guard
 

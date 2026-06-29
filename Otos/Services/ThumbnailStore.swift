@@ -1,4 +1,4 @@
-import AppKit
+import CoreGraphics
 import CryptoKit
 import Foundation
 import ImageIO
@@ -18,9 +18,10 @@ import UniformTypeIdentifiers
 /// same reason a SQLite row id is: it is a private storage detail.
 ///
 /// `write` is atomic (temp file then replace) so a tile can never read a half-written
-/// file while a re-enrichment overwrites it. `load` decodes off the main actor; the
-/// caller assigns the image on the main actor. `delete` is the purge side: reconciliation
-/// removes the file when the asset row is proven deleted.
+/// file while a re-enrichment overwrites it. `load` decodes off the main actor and
+/// returns an immutable `CGImage`; the caller only assigns that already-decoded bitmap
+/// on the main actor. `delete` is the purge side: reconciliation or library removal
+/// removes the file when the asset row is purged.
 nonisolated enum ThumbnailStore {
     /// 256 px long edge keeps a true grid thumbnail (max zoom loads originals, separately).
     static let maxPixelSize = 256
@@ -75,8 +76,15 @@ nonisolated enum ThumbnailStore {
 
     /// Loads and decodes a thumbnail off the main actor. `nil` if the file is missing or
     /// unreadable (the tile then shows its placeholder).
-    static func load(_ relativeName: String, in directory: URL) -> NSImage? {
-        NSImage(contentsOf: url(for: relativeName, in: directory))
+    static func load(_ relativeName: String, in directory: URL) -> CGImage? {
+        let options = [
+            kCGImageSourceShouldCache: true,
+            kCGImageSourceShouldCacheImmediately: true,
+        ] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url(for: relativeName, in: directory) as CFURL, options) else {
+            return nil
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, options)
     }
 
     /// Deletes a thumbnail file. No-op if it is already absent.

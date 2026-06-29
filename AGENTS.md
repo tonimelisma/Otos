@@ -92,15 +92,17 @@ this section is their canonical statement.
   best architecture. Add alternatives and tradeoffs before adding one.
 - Otos app data, including the catalog and all overlay Otos derives or the user
   authors, lives in Application Support and is treated as backed up. Overlay is
-  held for as long as its originating item exists; there is no cache eviction or
-  preview pruning to reclaim space. Overlay for an item is purged in full only when
-  that item is proven deleted, that is, absent from a reachable, fully enumerated
-  root. Overlay is never purged when an original is merely temporarily missing
-  (ejected drive, offline network or cloud volume, unreachable root, or a dataless
-  cloud placeholder that still enumerates). A user-excluded selective-sync subtree
-  inside a reachable root enumerates without its paths, so reconciliation cannot yet
-  tell it apart from a deletion and will purge it; preserving that case is a forward
-  invariant to satisfy before user-authored overlay ships, not a current guarantee.
+  held for as long as its originating item exists inside a tracked library root;
+  there is no cache eviction or preview pruning to reclaim space. Overlay for an
+  item is purged in full only when that item is proven deleted, that is, absent
+  from a reachable, fully enumerated root, or when the user explicitly removes the
+  containing library root from Otos. Overlay is never purged when an original is
+  merely temporarily missing (ejected drive, offline network or cloud volume,
+  unreachable root, or a dataless cloud placeholder that still enumerates). A
+  user-excluded selective-sync subtree inside a reachable root enumerates without
+  its paths, so reconciliation cannot yet tell it apart from a deletion and will
+  purge it; preserving that case is a forward invariant to satisfy before
+  user-authored overlay ships, not a current guarantee.
   See `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 - Most user media lives in cloud-synced folders. Cloud files may be dataless
   placeholders that still appear in directory enumeration: their filesystem facts
@@ -322,6 +324,13 @@ delete it when its decision no longer has a current purpose. Do not leave stale
 claims, superseded alternatives presented as current, obsolete backlinks, or
 comments that explain a retired implementation.
 
+The onboarding walkthrough is a required current-state map, not optional
+introductory prose. Every architecture or behavior increment must check
+`docs/onboarding.md` and update it in the same change whenever the codebase
+reading order, data flow, ownership, concurrency, persistence, diagnostics, UI
+boundary, or core rationale changes. If the onboarding walkthrough is unaffected,
+the stale-document audit must say that explicitly.
+
 Non-authoritative planning documents are the only exception. They may contain
 future ideas or abandoned options, but they must be visibly labeled
 non-authoritative and must never claim to describe the current implementation.
@@ -329,7 +338,8 @@ non-authoritative and must never claim to describe the current implementation.
 Every architecture or behavior increment must include:
 
 - a repository-wide stale-document audit covering ADRs, specs, requirements,
-  process docs, indexes, templates, scripts, and backlinks
+  process docs, the onboarding walkthrough, indexes, templates, scripts, and
+  backlinks
 - a code-comment accuracy audit covering file guides and focused comments in
   every affected architecture boundary
 - deletion of documents or comments that no longer have a current purpose

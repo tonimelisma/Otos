@@ -29,8 +29,8 @@ In scope:
 - `EnrichmentCoordinator`: the cursorless two-pool scheduler.
 - The viewport channel (grid → ViewModel → coordinator) and tile rendering of the
   thumbnail and capture date.
-- Integration with `CatalogStore` (batched apply, rescan merge, thumbnail purge),
-  `CatalogProjection`, and the grid.
+- Integration with `CatalogStore` (batched apply, stale-completion rejection,
+  rescan merge, thumbnail purge), `CatalogProjection`, and the grid.
 
 Out of scope (named so they are not built): sort/filter by metadata and any grid
 reordering (data plus a computed best-date only); a film-strip / single-image /
@@ -65,8 +65,9 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
 - Architecture: thumbnails are files referenced by path (256 px HEIC, QuickLook);
   the full metadata is an on-demand binary blob, never resident; disjoint
   scan/enrichment column ownership with a merging rescan; `(size, mtime)`
-  staleness; a single coordinator actor owning two fixed worker pools by
-  cursorless scheduling; enrichment writes batched through `CatalogStore`.
+  staleness; stale in-flight completions are rejected before they can stamp newer
+  source facts current; a single coordinator actor owning two fixed worker pools
+  by cursorless scheduling; enrichment writes batched through `CatalogStore`.
 - Non-functional: no media I/O, decode, or formatting on the MainActor; the tile
   loads its thumbnail and formats its date off-main and only assigns on Main.
 
@@ -153,9 +154,10 @@ for why each choice is the simplest correct one.
 Modules (isolation — owns):
 
 - `CatalogStore` (actor, extended) — the `v3` schema; `applyEnrichmentBatch` (one
-  transaction, per-row lease revalidation, one notification); the rescan merge
-  (`mergingFacts`); thumbnail delete on proven-deletion purge; on-demand
-  `metadataBlob` decode; the `nonisolated thumbnailDirectory`.
+  transaction, per-row existence and source-signature revalidation, one
+  notification); the rescan merge (`mergingFacts`); thumbnail delete when rows are
+  purged by proven deletion or explicit library removal; on-demand `metadataBlob`
+  decode; the `nonisolated thumbnailDirectory`.
 - `MediaAsset` (nonisolated value, extended) — the cheap resident fields
   (`thumbnailPath`, `captureDate`, `enrichedSourceSize`,
   `enrichedSourceMTimeSeconds`), `needsEnrichment`, `bestCaptureDate`,
@@ -188,7 +190,7 @@ scan / FSEvents → Store notifies → Coordinator refreshes snapshot → dispat
 Projection republishes (thumbnailPath / captureDate now set; cheap)
   → grid refreshVisible → tile: if content key changed, ThumbnailStore.load
     off-main → image + best-date assigned on Main
-asset removed (proven deletion) → reconciliation deletes row → ThumbnailStore.delete
+asset row purged (proven deletion or library removal) → ThumbnailStore.delete
 ```
 
 Only the cheap fields flow through the 10 Hz pipeline — no bytes and no full
@@ -277,10 +279,12 @@ Implementation sequence (each landed and verified on its own):
 
 The ENR-001…ENR-010 acceptance examples in `docs/requirements.md`, plus: a rescan
 that changes only mtime makes `needsEnrichment` true and the asset re-enriches
-after the scan-completion wake; a definitive-but-empty outcome stamps and is not
-retried; the full enrich → download → re-enrich pipeline brings every asset to
-enriched; the tile shows the thumbnail when the path is set and the best date with
-the filesystem fallback.
+after the scan-completion wake; a stale completion whose `(size, mtime)` no longer
+matches the current source facts leaves old best-known overlay visible but does not
+stamp the row current; a definitive-but-empty outcome stamps and is not retried;
+the full enrich → download → re-enrich pipeline brings every asset to enriched;
+removing a library purges its thumbnail files; the tile shows the thumbnail when
+the path is set and the best date with the filesystem fallback.
 
 ## Verification
 

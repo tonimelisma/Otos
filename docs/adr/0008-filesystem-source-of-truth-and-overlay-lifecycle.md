@@ -49,7 +49,9 @@ Captured owner guidance for verification:
   folders. Detecting or fixing those is an optional, opt-in convenience, never
   default behavior, and it operates on the filesystem rather than hiding files.
 - Do not split overlay into separately purged classes. Hold every overlay for an
-  item for as long as the item exists, and purge it all when the item is deleted.
+  item for as long as the item exists inside a tracked library root, and purge it
+  all when the item is deleted or when the user explicitly removes that root from
+  Otos.
 - A temporarily missing original is not a deletion. Do not nuke catalog state for
   an ejected drive, a disconnected network or cloud volume, an unreachable root, or
   a dataless cloud item.
@@ -71,8 +73,9 @@ This ADR owns:
   catalog plus all overlay is a subordinate, rebuildable projection.
 - The no-hostage rule: no opaque app-owned media vault, no writes into the user's
   media folders, and no sidecar files. Catalog export is the portability answer.
-- The single overlay lifecycle: overlay is held while its item exists, purged in
-  full only on proven deletion, and never purged on temporary absence.
+- The single overlay lifecycle: overlay is held while its item exists inside a
+  tracked library root, purged in full only on proven deletion or explicit
+  library-root removal, and never purged on temporary absence.
 - The definition of proven deletion versus temporary absence.
 - Pure filesystem-path asset identity and the rejection of durable identifiers,
   content fingerprints, generated UUIDs, and sidecars as identity mechanisms.
@@ -113,9 +116,10 @@ subordinate, rebuildable overlay.
 2. Otos mutates the user's files only through explicit, opt-in, user-initiated
    actions. Absent such an action, nothing on disk changes.
 3. Every overlay for an item shares one lifecycle. It is held for as long as the
-   item exists and is purged in full, including the catalog row, the thumbnail, and
-   any derived values, only when the item is proven deleted. There are no
-   separately purged overlay classes.
+   item exists inside a tracked library root and is purged in full, including the
+   catalog row, the thumbnail, and any derived values, only when the item is proven
+   deleted or when the user explicitly removes that library root from Otos. There
+   are no separately purged overlay classes.
 4. Proven deletion means a file that was previously cataloged at a root-relative
    path is absent from a completed enumeration of a reachable root. Temporary
    absence — an ejected or offline volume, an unreachable root, or a dataless cloud
@@ -127,7 +131,10 @@ subordinate, rebuildable overlay.
    cannot today distinguish it from a real deletion and will purge it. That is
    acceptable only while overlay is derived-only and rebuildable; preserving such a
    subtree is a forward invariant a detector must satisfy before user-authored
-   overlay ships, not a guarantee the current implementation makes.
+   overlay ships, not a guarantee the current implementation makes. Explicit
+   library-root removal is different from temporary absence: the user chose to stop
+   tracking that root in Otos, so Otos drops the root's catalog rows and derived
+   overlay without changing originals on disk.
 5. Asset identity is the filesystem path, the `(library_root_id, relative_path)`
    pair from ADR 0002. Otos does not store durable filesystem identifiers, content
    fingerprints, or generated UUIDs, and does not write sidecars to track files. An
@@ -169,10 +176,10 @@ subordinate, rebuildable overlay.
    check above. The word "metadata" and the Metadata instrumentation category mean
    media metadata.
 
-Because no user-authored overlay exists yet, the purge-on-proven-deletion rule is
-currently lossless: everything purged is rebuildable by re-observing the
-filesystem. The rule is stated now so that future authored overlay inherits a
-single, predictable lifecycle.
+Because no user-authored overlay exists yet, the purge-on-proven-deletion or
+library-removal rule is currently lossless: everything purged is rebuildable by
+re-observing the filesystem after the root is re-added. The rule is stated now so
+that future authored overlay inherits a single, predictable lifecycle.
 
 ## Alternatives Considered
 
@@ -281,10 +288,11 @@ Rejected. Purge requires proven deletion from a reachable, completed enumeration
   remains a known edge case to revisit when authored overlay exists.
 - Persisted thumbnails are durable backed-up overlay, not an evictable cache,
   because regenerating them depends on expensive cloud materialization.
-- Background enrichment may silently materialize dataless originals, which grows local
-  disk use that Otos cannot reclaim (a consumer app has no eviction path), so an
-  enrichment owner must bound what it downloads rather than fetch a whole library. This
-  is the forward guideline; the current app materializes nothing.
+- Background enrichment may silently materialize dataless originals, which grows
+  local disk use that Otos cannot reclaim (a consumer app has no eviction path).
+  ADR 0009 deliberately spends that cost for complete enrichment coverage, up to
+  eager full-library materialization by the enrichment owner; the scanner itself
+  still materializes nothing.
 
 ## Retirement Proof
 

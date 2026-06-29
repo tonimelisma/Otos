@@ -38,8 +38,8 @@ Out of scope:
 - [ ] At least three alternatives are compared.
 - [ ] Refactor retirement proof is defined, if applicable.
 - [ ] A repository-wide stale-document audit is defined for affected ADRs,
-      specs, requirements, process docs, indexes, templates, scripts, and
-      backlinks.
+      specs, requirements, process docs, onboarding walkthrough, indexes,
+      templates, scripts, and backlinks.
 - [ ] A code-comment accuracy audit is defined for affected architecture,
       concurrency, persistence, diagnostics, and AppKit boundaries.
 - [ ] Performance/jank evidence is defined, if applicable.
@@ -116,11 +116,11 @@ and persistence/schema paths.
 
 ## Living Documentation And Comment Audit
 
-List every current ADR, spec, requirement, process document, index, template,
-script, backlink, and code-comment boundary that the change affects. State which
-items will be rewritten and which documents/comments will be deleted because
-they no longer serve a current purpose. Planning documents may remain
-non-authoritative, but must not claim to describe current implementation.
+List every current ADR, spec, requirement, process document, onboarding section,
+index, template, script, backlink, and code-comment boundary that the change
+affects. State which items will be rewritten and which documents/comments will be
+deleted because they no longer serve a current purpose. Planning documents may
+remain non-authoritative, but must not claim to describe current implementation.
 
 Describe the substantial file guides and focused comments needed so a Swift
 newcomer can follow the landed architecture. Comments must explain current

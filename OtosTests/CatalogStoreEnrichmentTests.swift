@@ -148,6 +148,63 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.needsEnrichment == false)
     }
 
+    @Test func staleEnrichmentCompletionDoesNotStampChangedSourceCurrent() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let rel = MediaRelativePath(rawValue: "a.jpg")
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
+
+        let mtime = MutableSeconds(1000)
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let store = CatalogStore(
+            location: .databaseFile(databaseURL),
+            scanner: singleFileScanner(rel, mtime: mtime),
+            filesystemWatcher: watcher,
+            filesystemEventDebounce: .milliseconds(20),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        await mtime.set(2000)
+        emit(FilesystemEvent(path: root.appending(path: "a.jpg").path(percentEncoded: false), flags: 0))
+        _ = try await waitForCatalogStoreSnapshot(store) { snapshot in
+            guard let asset = snapshot.testAssets.first(where: { $0.id == id }) else { return false }
+            return !snapshot.isScanning && MediaAsset.mtimeSeconds(asset.contentModifiedAt) == 2000
+        }
+
+        await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: id,
+                metadata: AssetMetadata(cameraModel: "OldCam"),
+                captureDate: Date(timeIntervalSince1970: 700),
+                thumbnailPath: "old.heic",
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000
+            ),
+        ])
+
+        let current = try #require(await store.currentSnapshot().testAssets.first { $0.id == id })
+        #expect(current.thumbnailPath == nil)
+        #expect(current.captureDate == nil)
+        #expect(current.enrichedSourceSize == nil)
+        #expect(current.enrichedSourceMTimeSeconds == nil)
+        #expect(current.needsEnrichment)
+
+        let reloaded = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        try await reloaded.start(scansSavedLibraries: false)
+        let persisted = try #require(await reloaded.currentSnapshot().testAssets.first { $0.id == id })
+        #expect(persisted.thumbnailPath == nil)
+        #expect(persisted.captureDate == nil)
+        #expect(persisted.enrichedSourceSize == nil)
+        #expect(persisted.enrichedSourceMTimeSeconds == nil)
+        #expect(persisted.needsEnrichment)
+    }
+
     @Test func provenDeletionPurgesThumbnailFile() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -199,6 +256,48 @@ struct CatalogStoreEnrichmentTests {
         emit(FilesystemEvent(path: root.appending(path: "a.jpg").path(percentEncoded: false), flags: 0))
         _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.isEmpty }
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
+    }
+
+    @Test func removeLibraryPurgesThumbnailFiles() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let rel = MediaRelativePath(rawValue: "a.jpg")
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
+
+        let store = CatalogStore(
+            location: .databaseFile(databaseURL),
+            scanner: singleFileScanner(rel, mtime: MutableSeconds(1000)),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        let thumbnailName = "thumb.heic"
+        let thumbnailURL = thumbnailDirectory.appending(path: thumbnailName, directoryHint: .notDirectory)
+        try Data("thumb".utf8).write(to: thumbnailURL)
+        await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: id,
+                metadata: AssetMetadata(),
+                captureDate: nil,
+                thumbnailPath: thumbnailName,
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000
+            ),
+        ])
+        #expect(FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
+
+        try await store.removeLibrary(path: rootPath)
+        #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
+        let snapshot = await store.currentSnapshot()
+        #expect(snapshot.testAssets.isEmpty)
     }
 }
 

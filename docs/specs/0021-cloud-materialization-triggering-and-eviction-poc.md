@@ -127,11 +127,11 @@ Findings:
 
 | ID or label | Type | Captured requirement | Current or candidate | Storage location |
 | --- | --- | --- | --- | --- |
-| FND-057 (revised) | Non-functional | Byte-reading work consults `FileMaterialization` before any byte access so it never blocks on an accidental read-fault; the current catalog/scanner reads only filesystem facts and triggers no download. The materialization policy that governs future byte-reading enrichment is owned by ADR 0008. | Current | docs/requirements.md, ADR 0008, AGENTS.md |
-| MAT-CONTRACT | Architecture | The cloud materialization policy is changed: Otos enrichment may deliberately materialize dataless files via non-blocking background download (it must not block a worker on a read-fault), as the forward architectural guideline. This is not implemented yet; the current app materializes nothing. | Current (as forward guideline in ADR 0008) | ADR 0008, AGENTS.md, this spec |
-| MAT-BOUNDED | Architecture | Because a consumer app cannot programmatically reclaim downloaded bytes (POC: `ProviderNotFound`), background materialization must be bounded and treat local disk growth as a real, non-reversible-by-Otos cost. | Current (as forward guideline in ADR 0008) | ADR 0008, this spec |
+| FND-057 (revised) | Non-functional | Byte-reading work consults `FileMaterialization` before any byte access so it never blocks on an accidental read-fault; the catalog/scanner reads only filesystem facts and triggers no download. The materialization policy that governs byte-reading enrichment is owned by ADR 0008 and ADR 0009. | Current | docs/requirements.md, ADR 0008, ADR 0009, AGENTS.md |
+| MAT-CONTRACT | Architecture | Otos enrichment may deliberately materialize dataless files via non-blocking background download, including eager full-library enrichment as owned by ADR 0009; it must not block a worker on a read-fault, and the catalog/scanner still reads only filesystem facts and triggers no download. | Current | ADR 0008, ADR 0009, AGENTS.md, this spec |
+| MAT-BOUNDED | Architecture | Because a consumer app cannot programmatically reclaim downloaded bytes (POC: `ProviderNotFound`), background materialization must bound its concurrent work and treat local disk growth as a real, non-reversible-by-Otos cost; ADR 0009 accepts that total enrichment coverage may materialize the whole media library. | Current | ADR 0008, ADR 0009, this spec |
 | MAT-DETECT | Non-functional | Bulk materialization classification uses SF_DATALESS (`status(of:)`); `ubiquitousItemDownloadingStatus` is ~317× slower and stale after a fault and must not be used in the bulk/hot path. | Current | this spec, ADR 0008 |
-| MAT-HELPERS | Architecture | The non-blocking trigger/observe primitives are retained as dead code with one owner; nothing calls them until the enrichment work ships. | Current | this spec, `Otos/Services/FileMaterialization.swift` |
+| MAT-HELPERS | Architecture | The non-blocking trigger/observe primitives are retained with one owner and called by the enrichment materialization pool; they read no bytes and persist no materialization status. | Current | this spec, `Otos/Services/FileMaterialization.swift`, `Otos/Services/EnrichmentCoordinator.swift` |
 
 ## Architectural Alternatives
 
@@ -228,8 +228,8 @@ architectural guideline in ADR 0008; the current app still materializes nothing.
     `requestFailed`, `timedOut`, `cancelled`, `statusUnavailable`.
 - No actor isolation, no shared mutable state, `Sendable` by construction. No
   persistence: results are computed on demand and discarded.
-- No live caller in this increment. A future enrichment owner will call these from its
-  own background context, bounded, off the main actor.
+- The live caller is `EnrichmentCoordinator`, from its background materialization
+  pool. The scanner remains fact-only and never calls these helpers.
 
 ## Retirement Proof
 
@@ -237,24 +237,22 @@ A prototype `evict(_:)` helper, its private `EvictFailure`, the `EvictionOutcome
 enum, and the `import FileProvider` it required were written during the POC and are
 removed in this increment. The POC proved eviction is unavailable to a consumer app
 (`ProviderNotFound`), so a non-working helper would be a wrong abstraction; the finding
-is recorded here and in ADR 0008 instead. No other structure is retired. The catalog
-schema, scanner, and runtime behavior are unchanged.
+is recorded here and in ADR 0008 instead. No other structure is retired. The scanner
+and catalog fact-read path remain unchanged; ADR 0009 later made
+`EnrichmentCoordinator` the live caller for deliberate materialization.
 
 ## Living Documentation And Comment Audit
 
 - Added: this spec; registered in `docs/index.md`.
 - Updated: `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`
   (decision 6 and its alternatives/consequences: the materialization policy now
-  permits deliberate non-blocking bounded background materialization, records the
-  eviction constraint, and cites this spec); `AGENTS.md` (the dataless baseline
-  paragraph); `docs/requirements.md` (FND-057 revised, marked Changed).
+  permits deliberate non-blocking background materialization, records the eviction
+  constraint, and cites this spec); `AGENTS.md` (the dataless baseline paragraph);
+  `docs/requirements.md` (FND-057 revised, marked Changed). ADR 0009 later owns the
+  eager full-library enrichment application of this policy.
 - `Otos/Services/FileMaterialization.swift`: the materialization-helpers file guide
-  states the three mechanisms, why the non-blocking trigger is chosen, that the
-  helpers are dead, and that the status is transient. The eviction comment block is
-  removed with the helper.
-- No claim in any updated document asserts that background materialization ships
-  today; each states it as the forward guideline while the current app materializes
-  nothing.
+  states the three mechanisms, why the non-blocking trigger is chosen, and that
+  status is transient. The eviction comment block is removed with the helper.
 
 ## Instrumentation And Performance
 

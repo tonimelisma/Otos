@@ -48,10 +48,10 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
 }
 
 /// Ferries a freshly loaded thumbnail and its capture-date label from the background
-/// loader to the main actor. `@unchecked Sendable` is sound here: the `NSImage` is
-/// created inside the loader, never mutated, and handed across exactly once.
+/// loader to the main actor. The thumbnail file has already been decoded by Image I/O;
+/// the main actor only assigns the immutable bitmap to the layer.
 private struct LoadedTile: @unchecked Sendable {
-    let image: NSImage?
+    let image: CGImage?
     let dateText: String
 }
 
@@ -82,6 +82,8 @@ private final class MediaAssetTileView: NSView {
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.imageAlignment = .alignCenter
+        imageView.wantsLayer = true
+        imageView.layer?.contentsGravity = .resizeAspect
         addSubview(imageView)
 
         titleField.font = .systemFont(ofSize: 12, weight: .medium)
@@ -142,7 +144,8 @@ private final class MediaAssetTileView: NSView {
                 guard let self, self.loadGeneration == generation else {
                     return
                 }
-                self.imageView.image = loaded.image
+                self.imageView.image = nil
+                self.imageView.layer?.contents = loaded.image
                 self.dateField.stringValue = loaded.dateText
             }
         }
@@ -155,6 +158,7 @@ private final class MediaAssetTileView: NSView {
         loadGeneration += 1
         currentContentKey = nil
         imageView.image = nil
+        imageView.layer?.contents = nil
         titleField.stringValue = ""
         dateField.stringValue = ""
         videoIconView.isHidden = true

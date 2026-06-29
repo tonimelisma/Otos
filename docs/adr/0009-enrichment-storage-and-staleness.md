@@ -46,7 +46,9 @@ This ADR owns:
   the thumbnail path, a resolved capture date, and the `(size, mtime)` source
   stamps.
 - Disjoint column ownership: the scan writes only fact columns, enrichment writes
-  only enrichment columns, and an in-memory rescan merges rather than replaces.
+  only enrichment columns, an in-memory rescan merges rather than replaces, and a
+  stale in-flight enrichment completion must revalidate the source signature before
+  it can stamp a row current.
 - Staleness is the `(size, mtime)` source signature; `needsEnrichment` derives
   from it. mtime-only changes count.
 - The resolved `captureDate` is stored; `bestCaptureDate` is computed at display
@@ -121,7 +123,10 @@ Adjacent decisions requiring separate ADRs or specs:
    `thumbnail_path`, and the `(size, mtime)` stamps. The in-memory rescan
    (`applyScannedBatchToMemory`) merges new facts onto the existing record's
    enrichment overlay instead of replacing it, so a re-scan never clobbers metadata
-   or the thumbnail within one record — without a second table or map.
+   or the thumbnail within one record — without a second table or map. An
+   enrichment completion also revalidates its source `(size, mtime)` against the
+   current row before writing memory or SQLite; stale overlay may remain visible as
+   the best-known data, but stale work cannot mark a changed source current.
 
 6. **Staleness is the `(size, mtime)` source signature.** `needsEnrichment` is
    true when the stamps are absent or differ from the asset's current
@@ -249,8 +254,8 @@ at a real large library.
 - A future metadata-driven feature (sort, filter, inspector) must decode the blob
   on demand or propose its own resident structure in a new spec; it cannot assume
   metadata is resident.
-- Thumbnail files are owned overlay: they are deleted exactly when their row is
-  purged on proven deletion (ADR 0008 lifecycle).
+- Thumbnail files are owned overlay: they are deleted when their row is purged by
+  proven deletion or explicit library removal (ADR 0008 lifecycle).
 
 ## Retirement Proof
 

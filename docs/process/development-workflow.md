@@ -83,12 +83,19 @@ concepts that are never intended for implementation.
 
 ## Living Documentation And Comments
 
-Current ADRs, specs, requirements, process docs, indexes, templates, scripts,
-and code comments describe the implementation that exists now. Git history owns
-the implementation history. When a decision or mechanism changes, rewrite every
-affected current claim or delete the document/comment if it no longer serves a
-current purpose. Do not preserve stale names, old data flows, superseded
-diagnostic policies, or obsolete backlinks as explanatory context.
+Current ADRs, specs, requirements, process docs, the onboarding walkthrough,
+indexes, templates, scripts, and code comments describe the implementation that
+exists now. Git history owns the implementation history. When a decision or
+mechanism changes, rewrite every affected current claim or delete the document/
+comment if it no longer serves a current purpose. Do not preserve stale names,
+old data flows, superseded diagnostic policies, or obsolete backlinks as
+explanatory context.
+
+`docs/onboarding.md` is the required current-state reading map for newcomers.
+Every architecture or behavior increment must check it and update it when the
+codebase reading order, data flow, ownership, concurrency, persistence,
+diagnostics, UI boundary, or core rationale changes; if it is unaffected, the
+stale-document audit states that explicitly.
 
 Planning documents are the only exception: they may retain future ideas or
 abandoned options when visibly labeled non-authoritative, but they must not claim
@@ -97,7 +104,8 @@ to describe current behavior or silently guide implementation.
 Architecture and behavior increments must include two explicit audits:
 
 - a repository-wide stale-document audit across ADRs, specs, requirements,
-  process docs, indexes, templates, scripts, and backlinks
+  process docs, the onboarding walkthrough, indexes, templates, scripts, and
+  backlinks
 - a code-comment accuracy audit across affected architecture, concurrency,
   persistence, diagnostics, and AppKit boundaries
 

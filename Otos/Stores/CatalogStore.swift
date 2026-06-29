@@ -223,8 +223,9 @@ extension CatalogStore {
     /// Batching mirrors `recordScannedBatch`: a per-asset transaction across a whole
     /// library would crawl, and a notification per asset would re-sort the catalog in
     /// Projection per completion. Enrichment writes only enrichment columns/fields,
-    /// disjoint from facts; a row that was proven-deleted between extraction and this
-    /// write is skipped (the lease), so a removed asset is never resurrected.
+    /// disjoint from facts; a row that was proven-deleted or whose source facts changed
+    /// between extraction and this write is skipped, so a removed or edited asset is never
+    /// stamped current by stale work.
     func applyEnrichmentBatch(_ results: [EnrichmentResult]) async {
         guard !results.isEmpty else {
             return
@@ -260,8 +261,9 @@ extension CatalogStore {
         }
     }
 
-    /// The subset of results whose asset still exists right now (the lease): a row that
-    /// was proven-deleted between extraction and this call is dropped, never resurrected.
+    /// The subset of results whose asset still exists and still has the source facts the
+    /// worker read. Old overlay may remain visible as best-known data, but stale work must
+    /// not stamp itself current after a scan has observed newer bytes.
     private func currentlyWritableEnrichments(
         _ results: [EnrichmentResult]
     ) -> [(rootRowID: Int64, result: EnrichmentResult)] {
@@ -269,7 +271,8 @@ extension CatalogStore {
         for result in results {
             let rootPath = result.id.libraryRootPath
             guard let rootRowID = rootRowIDsByPath[rootPath],
-                  assetsByRootPath[rootPath]?[result.id.relativePath] != nil
+                  let asset = assetsByRootPath[rootPath]?[result.id.relativePath],
+                  enrichmentSourceMatches(result, asset: asset)
             else {
                 continue
             }
@@ -287,7 +290,9 @@ extension CatalogStore {
         var appliedCount = 0
         for item in writable {
             let rootPath = item.result.id.libraryRootPath
-            guard let existing = assetsByRootPath[rootPath]?[item.result.id.relativePath] else {
+            guard let existing = assetsByRootPath[rootPath]?[item.result.id.relativePath],
+                  enrichmentSourceMatches(item.result, asset: existing)
+            else {
                 continue
             }
             assetsByRootPath[rootPath]?[item.result.id.relativePath] = existing.applyingEnrichment(
@@ -300,6 +305,11 @@ extension CatalogStore {
         }
         OtosLog.metadata.debug("Enrichment batch applied count=\(appliedCount, privacy: .public)")
         return appliedCount
+    }
+
+    private func enrichmentSourceMatches(_ result: EnrichmentResult, asset: MediaAsset) -> Bool {
+        (result.sourceSize ?? -1) == (asset.byteSize ?? -1)
+            && (result.sourceMTimeSeconds ?? -1) == MediaAsset.mtimeSeconds(asset.contentModifiedAt)
     }
 
     private func recordEnrichmentBatchError(_ error: Error, count: Int) async {
@@ -366,6 +376,7 @@ extension CatalogStore {
         }
         pendingScanPaths.removeAll { $0 == path }
 
+        let purgedThumbnails = assetsByRootPath[path]?.values.compactMap(\.thumbnailPath) ?? []
         let dbQueue = try database()
         let state = OtosSignpost.persistence.beginInterval("CatalogRemoveRoot")
         await diagnostics?.record(
@@ -383,6 +394,11 @@ extension CatalogStore {
         rootRowIDsByPath.removeValue(forKey: path)
         rootPathsByRowID.removeValue(forKey: rootRowID)
         assetsByRootPath.removeValue(forKey: path)
+        if let thumbnailDirectory {
+            for name in purgedThumbnails {
+                ThumbnailStore.delete(name, in: thumbnailDirectory)
+            }
+        }
         OtosLog.catalog.info("Library root removed path=\(root.path.rawValue, privacy: .public)")
         await diagnostics?.record(
             operation: "catalog.library.remove",

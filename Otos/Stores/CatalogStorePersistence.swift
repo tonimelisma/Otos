@@ -122,8 +122,11 @@ extension CatalogStore {
     }
 
     /// Writes one asset's enrichment overlay, touching only enrichment columns (disjoint
-    /// from the scan's fact columns). Called per row inside one batched transaction.
+    /// from the scan's fact columns). The source signature in the `WHERE` clause keeps
+    /// an in-flight stale result from overwriting a row after a scan has already refreshed
+    /// the file facts in SQLite.
     static func updateEnrichment(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
+        let sourceMTimeSeconds = result.sourceMTimeSeconds ?? -1
         try db.execute(
             sql: """
             UPDATE media_asset SET
@@ -132,7 +135,13 @@ extension CatalogStore {
                 enriched_source_size = ?,
                 enriched_source_mtime = ?,
                 metadata_blob = ?
-            WHERE library_root_id = ? AND relative_path = ?
+            WHERE library_root_id = ?
+                AND relative_path = ?
+                AND COALESCE(byte_size, -1) = ?
+                AND (
+                    (content_modified_at_unix IS NULL AND ? = -1)
+                    OR (content_modified_at_unix >= ? AND content_modified_at_unix < ?)
+                )
             """,
             arguments: [
                 result.thumbnailPath,
@@ -142,6 +151,10 @@ extension CatalogStore {
                 encodeMetadata(result.metadata),
                 libraryRootID,
                 result.id.relativePath.rawValue,
+                result.sourceSize ?? -1,
+                sourceMTimeSeconds,
+                sourceMTimeSeconds,
+                sourceMTimeSeconds + 1,
             ]
         )
     }

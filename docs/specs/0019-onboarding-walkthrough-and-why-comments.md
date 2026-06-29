@@ -50,7 +50,7 @@ Out of scope:
 
 | ID | Type | Captured requirement | Current or candidate | Storage location |
 | --- | --- | --- | --- | --- |
-| FND-063 | Process | An onboarding walkthrough (`docs/onboarding.md`) shall exist as living documentation, walking the codebase in logical reading order and explaining the rationale for its key design decisions; architecture-boundary files shall state the *why* of their core choices (actor isolation, task/`weak self` lifetimes, layer boundaries) where a reader first meets them. | Current | docs/onboarding.md, this spec, AGENTS.md |
+| FND-063 | Process | An onboarding walkthrough (`docs/onboarding.md`) shall exist as mandatory living documentation, walking the codebase in logical reading order and explaining the rationale for its key design decisions; every architecture or behavior increment shall keep it current; architecture-boundary files shall state the *why* of their core choices (actor isolation, task/`weak self` lifetimes, layer boundaries) where a reader first meets them. | Current | docs/onboarding.md, this spec, AGENTS.md |
 
 ## Architectural Alternatives
 
@@ -63,7 +63,9 @@ inline whys stay short and close to the code.
 Cons: adds a document and several comments to keep current.
 
 Failure mode: the walkthrough drifts from the code. Mitigated by the
-living-documentation audit, which now covers `docs/onboarding.md`.
+living-documentation audit, which treats `docs/onboarding.md` as a required
+current-state surface that is updated in the same increment whenever architecture
+or behavior changes affect the reader's map.
 
 ### Alternative B: Only inline comments, no walkthrough
 
