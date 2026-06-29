@@ -29,7 +29,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: projection,
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
         weak var weakModel = model
 
@@ -58,7 +59,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
 
         model.start()
@@ -88,7 +90,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
 
         model.start()
@@ -119,7 +122,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
 
         model.start()
@@ -151,7 +155,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
 
         model.start()
@@ -186,7 +191,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -217,7 +223,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -256,7 +263,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
         weak var weakModel = model
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -290,7 +298,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
             diagnostics: nil,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsEnrichment: false
         )
 
         model.start()
@@ -310,6 +319,61 @@ struct CatalogWindowViewModelTests {
 
         #expect(model.sidebarSelection == .library(archivePath))
         #expect(state.title == "Archive")
+    }
+}
+
+struct CatalogWindowViewModelEnrichmentTests {
+    @MainActor
+    @Test func startStartsInjectedCoordinatorAndViewportIsAccepted() async throws {
+        let temp = try makeTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let captureDate = Date(timeIntervalSince1970: 900)
+        let enricher = MediaEnricher { id, _, size, mtime in
+            .complete(
+                EnrichmentResult(
+                    id: id,
+                    metadata: AssetMetadata(),
+                    captureDate: captureDate,
+                    thumbnailPath: "t.heic",
+                    sourceSize: size,
+                    sourceMTimeSeconds: mtime
+                )
+            )
+        }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: enricher,
+            materialize: { _ in true },
+            applyBatchSize: 1,
+            diagnostics: nil
+        )
+        let model = CatalogWindowViewModel(
+            catalogStore: store,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
+            enrichmentCoordinator: coordinator,
+            diagnostics: nil,
+            startsStallMonitor: false
+            // startsEnrichment defaults true: start() must start the injected coordinator.
+        )
+
+        model.start()
+        model.addLibrary(url: root)
+
+        // The coordinator the view model started enriches the asset, and the enriched
+        // capture date and thumbnail path surface in the projected window state.
+        let state = try await waitForWindowState(model) { state in
+            orderedAssets(in: state).first?.captureDate == captureDate
+        }
+        let asset = try #require(orderedAssets(in: state).first)
+        #expect(asset.thumbnailPath == "t.heic")
+
+        // The viewport priority hint is accepted without disrupting the enrichment result.
+        model.viewportChanged([asset.id])
+        #expect(asset.bestCaptureDate == captureDate)
     }
 }
 

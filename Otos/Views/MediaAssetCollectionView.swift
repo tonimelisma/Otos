@@ -18,6 +18,8 @@ import UniformTypeIdentifiers
 /// cannot create file-writing tasks or retain grid state on MainActor.
 struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
+    var thumbnailDirectory: URL?
+    var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     func makeNSViewController(context _: Context) -> MediaAssetCollectionViewController {
         MediaAssetCollectionViewController()
@@ -27,6 +29,8 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
         _ controller: MediaAssetCollectionViewController,
         context _: Context
     ) {
+        controller.thumbnailDirectory = thumbnailDirectory
+        controller.onViewportChanged = onViewportChanged
         controller.receive(grid)
     }
 }
@@ -47,6 +51,11 @@ final class MediaAssetCollectionViewController: NSViewController {
     /// diffable data source. Replacing it does not itself change collection
     /// structure, which is why detail updates can stay viewport-bounded.
     private var assetsByID: [MediaAssetID: MediaAsset] = [:]
+
+    /// Set by the representable each SwiftUI update. Tiles resolve `thumbnailPath`
+    /// against this directory; the scroll observer reports visible identities here.
+    var thumbnailDirectory: URL?
+    var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     override func loadView() {
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
@@ -75,7 +84,7 @@ final class MediaAssetCollectionViewController: NSViewController {
             else {
                 return nil
             }
-            item.configure(asset: asset)
+            item.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
             return item
         }
 
@@ -86,7 +95,35 @@ final class MediaAssetCollectionViewController: NSViewController {
         scrollView.autohidesScrollers = true
         view = scrollView
 
+        // The clip view posts bounds changes as the user scrolls; each is a chance to
+        // re-report the visible identities as the enrichment priority hint. The newest
+        // -value stream upstream coalesces the bursts, so reporting per tick is cheap.
+        let clipView = scrollView.contentView
+        clipView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scrollBoundsChanged),
+            name: NSView.boundsDidChangeNotification,
+            object: clipView
+        )
+
         OtosLog.ui.info("Media grid layout installed columns=6")
+    }
+
+    @objc private func scrollBoundsChanged() {
+        reportViewport()
+    }
+
+    /// Maps the currently visible items to their ordered identities and forwards them as
+    /// the enrichment priority hint. Visible-only (no look-ahead): the coordinator already
+    /// eagerly enriches the rest of the library, so the viewport just reprioritizes.
+    private func reportViewport() {
+        let visible = collectionView.indexPathsForVisibleItems().sorted()
+        guard !visible.isEmpty else {
+            return
+        }
+        let ids = visible.compactMap { dataSource.itemIdentifier(for: $0) }
+        onViewportChanged(ids)
     }
 
     /// Projection already limits incoming state to 10 Hz. This method adds only
@@ -148,6 +185,7 @@ private extension MediaAssetCollectionViewController {
             if resetScroll {
                 scrollToTop()
             }
+            reportViewport()
         case let .apply(grid, resetScroll):
             applyStructure(grid, resetScroll: resetScroll)
         }
@@ -185,6 +223,7 @@ private extension MediaAssetCollectionViewController {
                 scrollView.reflectScrolledClipView(scrollView.contentView)
             }
             reloadVisibleItems()
+            reportViewport()
 
             let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
             OtosLog.ui.info(
@@ -281,129 +320,5 @@ final class MediaAssetCollectionApplyGate {
         }
         self.pendingGrid = nil
         return receive(pendingGrid)
-    }
-}
-
-private final class MediaAssetCollectionItem: NSCollectionViewItem {
-    private var tileView: MediaAssetTileView? {
-        view as? MediaAssetTileView
-    }
-
-    override func loadView() {
-        view = MediaAssetTileView()
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        tileView?.prepareForReuse()
-    }
-
-    func configure(asset: MediaAsset) {
-        guard let tileView else {
-            return
-        }
-        let start = Date()
-        tileView.configure(asset: asset)
-        let elapsedMs = DiagnosticsTiming.milliseconds(since: start)
-        guard elapsedMs >= 5 else {
-            return
-        }
-        OtosSignpost.ui.emitEvent("MediaGridSlowCellConfiguration")
-        OtosLog.ui.error(
-            """
-            Media grid slow cell assetID=\(asset.libraryRootPath.rawValue, privacy: .public)/\
-            \(asset.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
-            """
-        )
-    }
-}
-
-private final class MediaAssetTileView: NSView {
-    private let titleField = NSTextField(labelWithString: "")
-    private let videoIconView = NSImageView()
-
-    override var isFlipped: Bool {
-        true
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.masksToBounds = true
-
-        titleField.font = .systemFont(ofSize: 12, weight: .medium)
-        titleField.textColor = .labelColor
-        titleField.usesSingleLineMode = true
-        titleField.lineBreakMode = .byTruncatingMiddle
-        titleField.cell?.truncatesLastVisibleLine = true
-        addSubview(titleField)
-
-        videoIconView.image = NSImage(systemSymbolName: "video.fill", accessibilityDescription: "Video")
-        videoIconView.imageScaling = .scaleProportionallyDown
-        videoIconView.contentTintColor = .secondaryLabelColor
-        addSubview(videoIconView)
-    }
-
-    @available(*, unavailable)
-    required init?(coder _: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func configure(asset: MediaAsset) {
-        let isVideo = MediaAssetTilePresentation.isVideo(asset)
-        titleField.stringValue = MediaAssetTilePresentation.title(asset)
-        videoIconView.isHidden = !isVideo
-        layer?.backgroundColor = isVideo
-            ? NSColor.systemBlue.withAlphaComponent(0.20).cgColor
-            : NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
-        setAccessibilityLabel(titleField.stringValue)
-        needsLayout = true
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        titleField.stringValue = ""
-        videoIconView.isHidden = true
-        setAccessibilityLabel(nil)
-    }
-
-    override func layout() {
-        super.layout()
-        let inset: CGFloat = 8
-        let iconSize: CGFloat = 13
-        let iconVisible = !videoIconView.isHidden
-        videoIconView.frame = NSRect(
-            x: max(bounds.width - inset - iconSize, inset),
-            y: inset,
-            width: iconSize,
-            height: iconSize
-        )
-        let iconAllowance = iconVisible ? iconSize + 6 : 0
-        titleField.frame = NSRect(
-            x: inset,
-            y: inset - 1,
-            width: max(bounds.width - inset * 2 - iconAllowance, 0),
-            height: 17
-        )
-    }
-}
-
-/// Keeps content-type and fallback-title policy independent from reusable AppKit
-/// view state so the exact tile classification can be tested directly.
-enum MediaAssetTilePresentation {
-    static func isVideo(_ asset: MediaAsset) -> Bool {
-        MediaEligibility.isVideo(contentTypeIdentifier: asset.contentTypeIdentifier)
-    }
-
-    static func isCatalogMedia(_ asset: MediaAsset) -> Bool {
-        MediaEligibility.isCatalogMedia(contentTypeIdentifier: asset.contentTypeIdentifier)
-    }
-
-    static func title(_ asset: MediaAsset) -> String {
-        if let name = asset.name {
-            return name
-        }
-        return URL(fileURLWithPath: asset.relativePath.rawValue).lastPathComponent
     }
 }

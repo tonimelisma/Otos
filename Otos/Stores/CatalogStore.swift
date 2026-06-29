@@ -407,15 +407,15 @@ extension CatalogStore {
     }
 }
 
-private extension CatalogStore {
-    private func ensureStartedForMutation() async throws {
-        try await loadIfNeeded()
-    }
-
+extension CatalogStore {
     /// Where thumbnail files live, derived from the catalog location: beside the
     /// catalog in Application Support, or beside an explicit database file. In-memory
     /// catalogs have no thumbnail directory (nothing to purge).
-    private var thumbnailDirectory: URL? {
+    ///
+    /// `nonisolated` because it reads only the immutable `location`: the ViewModel needs
+    /// it synchronously to build the enricher, and tiles need it to resolve thumbnails.
+    /// It lives in an internal (not `private`) extension so those owners can read it.
+    nonisolated var thumbnailDirectory: URL? {
         switch location {
         case let .application(bundleIdentifier):
             try? Self.applicationThumbnailDirectory(bundleIdentifier: bundleIdentifier)
@@ -424,6 +424,12 @@ private extension CatalogStore {
         case .inMemory:
             nil
         }
+    }
+}
+
+private extension CatalogStore {
+    private func ensureStartedForMutation() async throws {
+        try await loadIfNeeded()
     }
 
     private func database() throws -> DatabaseQueue {

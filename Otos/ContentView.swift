@@ -27,7 +27,9 @@ struct ContentView: View {
             MediaGridView(
                 title: viewModel.state.title,
                 grid: viewModel.state.mediaGrid,
-                emptyState: viewModel.state.mediaEmptyState
+                emptyState: viewModel.state.mediaEmptyState,
+                thumbnailDirectory: viewModel.thumbnailDirectory,
+                onViewportChanged: viewModel.viewportChanged
             )
         }
     }

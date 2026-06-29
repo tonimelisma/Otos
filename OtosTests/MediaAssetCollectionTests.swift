@@ -109,6 +109,82 @@ struct MediaAssetCollectionTests {
         let asset = makeAsset(path: "Nested/fallback.jpg", type: UTType.jpeg.identifier, name: nil)
         #expect(MediaAssetTilePresentation.title(asset) == "fallback.jpg")
     }
+
+    @Test func captureDateTextUsesBestDateAndIsEmptyWhenUnknown() {
+        let captured = Date(timeIntervalSince1970: 1000)
+        let created = Date(timeIntervalSince1970: 2000)
+
+        let enriched = makeDatedAsset(captureDate: captured, createdAt: created)
+        #expect(MediaAssetTilePresentation.captureDateText(enriched)
+            == captured.formatted(date: .abbreviated, time: .omitted))
+
+        // Falls back to the filesystem date when no metadata date exists.
+        let filesystemOnly = makeDatedAsset(captureDate: nil, createdAt: created)
+        #expect(MediaAssetTilePresentation.captureDateText(filesystemOnly)
+            == created.formatted(date: .abbreviated, time: .omitted))
+
+        // Empty, never fabricated, when nothing is known.
+        let undated = makeDatedAsset(captureDate: nil, createdAt: nil)
+        #expect(MediaAssetTilePresentation.captureDateText(undated).isEmpty)
+    }
+
+    @Test func contentKeyDistinguishesThumbnailStampAndDate() {
+        let base = makeDatedAsset(
+            captureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "t.heic",
+            enrichedMTime: 10
+        )
+        let sameAgain = makeDatedAsset(
+            captureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "t.heic",
+            enrichedMTime: 10
+        )
+        #expect(MediaAssetTilePresentation.contentKey(base) == MediaAssetTilePresentation.contentKey(sameAgain))
+
+        let newThumbnail = makeDatedAsset(
+            captureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "u.heic",
+            enrichedMTime: 10
+        )
+        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newThumbnail))
+
+        // A re-thumbnailed file keeps the same name but a newer stamp; the key must change.
+        let newStamp = makeDatedAsset(
+            captureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "t.heic",
+            enrichedMTime: 11
+        )
+        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newStamp))
+
+        let newDate = makeDatedAsset(
+            captureDate: Date(timeIntervalSince1970: 2000),
+            thumbnailPath: "t.heic",
+            enrichedMTime: 10
+        )
+        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newDate))
+    }
+}
+
+@MainActor
+private func makeDatedAsset(
+    captureDate: Date?,
+    createdAt: Date? = nil,
+    thumbnailPath: String? = nil,
+    enrichedMTime: Int? = nil
+) -> MediaAsset {
+    MediaAsset(
+        libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+        relativePath: MediaRelativePath(rawValue: "a.jpg"),
+        name: "a.jpg",
+        contentTypeIdentifier: UTType.jpeg.identifier,
+        byteSize: 1,
+        createdAt: createdAt,
+        contentModifiedAt: nil,
+        thumbnailPath: thumbnailPath,
+        captureDate: captureDate,
+        enrichedSourceSize: 1,
+        enrichedSourceMTimeSeconds: enrichedMTime
+    )
 }
 
 @MainActor

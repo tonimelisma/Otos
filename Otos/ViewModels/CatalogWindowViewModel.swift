@@ -37,28 +37,44 @@ final class CatalogWindowViewModel {
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     var state: CatalogWindowState = .empty
 
+    /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
+    /// store's `nonisolated` directory so the view layer needs no store access.
+    var thumbnailDirectory: URL? {
+        catalogStore.thumbnailDirectory
+    }
+
     @ObservationIgnored private let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
+    @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator
     @ObservationIgnored private let diagnostics: CatalogDiagnostics?
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
+    @ObservationIgnored private let startsEnrichment: Bool
     @ObservationIgnored private let selectionStream: AsyncStream<SidebarSelection>
     @ObservationIgnored private let selectionContinuation: AsyncStream<SidebarSelection>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
     @ObservationIgnored private let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
+    // Newest-value: only the latest viewport is a useful priority hint; an obsolete
+    // scroll position carries no value, so an intermediate one is dropped.
+    @ObservationIgnored private let viewportStream: AsyncStream<[MediaAssetID]>
+    @ObservationIgnored private let viewportContinuation: AsyncStream<[MediaAssetID]>.Continuation
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
     @ObservationIgnored private var selectionForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
+    @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
+    @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
 
     init(
         catalogStore: CatalogStore = CatalogStore(),
         catalogProjection: CatalogProjection = CatalogProjection(),
+        enrichmentCoordinator: EnrichmentCoordinator? = nil,
         diagnostics: CatalogDiagnostics? = .shared,
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
-        startsStallMonitor: Bool = true
+        startsStallMonitor: Bool = true,
+        startsEnrichment: Bool = true
     ) {
         let (selectionStream, selectionContinuation) = AsyncStream<SidebarSelection>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
@@ -68,15 +84,29 @@ final class CatalogWindowViewModel {
         let (mutationStream, mutationContinuation) = AsyncStream<CatalogMutationIntent>.makeStream(
             bufferingPolicy: .unbounded
         )
+        let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
+            bufferingPolicy: .bufferingNewest(1)
+        )
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
+        self.enrichmentCoordinator = enrichmentCoordinator
+            ?? EnrichmentCoordinator(
+                store: catalogStore,
+                enricher: .live(
+                    thumbnailDirectory: catalogStore.thumbnailDirectory
+                        ?? FileManager.default.temporaryDirectory
+                )
+            )
         self.diagnostics = diagnostics
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
+        self.startsEnrichment = startsEnrichment
         self.selectionStream = selectionStream
         self.selectionContinuation = selectionContinuation
         self.mutationStream = mutationStream
         self.mutationContinuation = mutationContinuation
+        self.viewportStream = viewportStream
+        self.viewportContinuation = viewportContinuation
     }
 
     isolated deinit {
@@ -87,8 +117,16 @@ final class CatalogWindowViewModel {
         catalogStartupTask?.cancel()
         selectionForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
+        viewportForwardingTask?.cancel()
+        enrichmentStartTask?.cancel()
         selectionContinuation.finish()
         mutationContinuation.finish()
+        viewportContinuation.finish()
+        // The coordinator's supervisor strongly retains the coordinator, so it must be
+        // told to stop or it (and the store) would outlive this window. shutdown() is
+        // async and deinit cannot await, so hand it off; this owner is already gone.
+        let coordinator = enrichmentCoordinator
+        Task { await coordinator.shutdown() }
         stallMonitor.stop()
     }
 
@@ -121,6 +159,9 @@ final class CatalogWindowViewModel {
             initialSelection: initialSelection
         )
         startCatalog(store: store, diagnostics: diagnostics)
+        if startsEnrichment {
+            startEnrichment()
+        }
     }
 
     func addLibrary(url: URL) {
@@ -139,6 +180,26 @@ final class CatalogWindowViewModel {
         OtosLog.ui.info("Sidebar selection changed selection=\(selection.diagnosticDescription, privacy: .public)")
         OtosSignpost.ui.emitEvent("CatalogSidebarSelectionIntent")
         selectionContinuation.yield(selection)
+    }
+
+    /// The AppKit grid reports its visible identities here as the user scrolls. This is a
+    /// pure priority hint for enrichment, so only the newest viewport is kept.
+    func viewportChanged(_ orderedAssetIDs: [MediaAssetID]) {
+        viewportContinuation.yield(orderedAssetIDs)
+    }
+
+    private func startEnrichment() {
+        let coordinator = enrichmentCoordinator
+        // updateViewport is delivered newest-value; the coordinator is the single owner of
+        // the priority hint, so this forwards verbatim with no main-actor work.
+        viewportForwardingTask = Task { [coordinator, viewportStream] in
+            for await ids in viewportStream {
+                await coordinator.updateViewport(ids)
+            }
+        }
+        enrichmentStartTask = Task { [coordinator] in
+            await coordinator.start()
+        }
     }
 
     private func startSelectionForwarding(projection: CatalogProjection) {

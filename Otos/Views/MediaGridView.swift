@@ -7,6 +7,8 @@ struct MediaGridView: View {
     let title: String
     let grid: CatalogMediaGridState
     let emptyState: CatalogMediaEmptyState
+    var thumbnailDirectory: URL?
+    var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -20,7 +22,11 @@ struct MediaGridView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                MediaAssetCollectionView(grid: grid)
+                MediaAssetCollectionView(
+                    grid: grid,
+                    thumbnailDirectory: thumbnailDirectory,
+                    onViewportChanged: onViewportChanged
+                )
             }
         }
         .navigationTitle(title)
