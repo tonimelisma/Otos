@@ -62,10 +62,11 @@ Out of scope:
 
 Acceptance examples:
 
-- Given one saved library is scanning, the sidebar row for that library shows
-  scan activity from the library state row.
-- Given one saved library is unavailable, Sidebar and Settings can show
-  availability from the library state row without loading media assets.
+- Given one saved library is scanning, the sidebar row still shows only the
+  library display name and no transient scan-status text.
+- Given one saved library is unavailable, Settings can show availability from the
+  library state row without loading media assets; Sidebar still shows only the
+  library display name.
 - Given the sidebar renders, its initializer receives `[CatalogLibraryState]`
   plus selection value/callback, not `CatalogSnapshot`.
 - Given Settings renders the Libraries tab, its initializer receives
@@ -146,7 +147,8 @@ states and decides which library assets are visible.
 
 `SidebarView` takes `libraries: [CatalogLibraryState]` and a
 selection value/callback pair, constructs the control binding locally, and
-renders availability and scan activity.
+renders folder icons plus library display names only. It does not render
+transient availability or scan-activity subtitles.
 
 `SettingsView` takes `libraries: [CatalogLibraryState]`, `addLibrary`, and
 `removeLibrary`. It renders name/path/availability and intentionally does not

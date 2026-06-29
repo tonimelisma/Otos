@@ -12,7 +12,7 @@ import UniformTypeIdentifiers
 ///
 /// Identity order is structural; the asset map is detail. A structural change
 /// performs one nonanimated diffable apply, while unchanged IDs replace the map
-/// and reload only visible reusable items. `MediaAssetCollectionApplyGate`
+/// and reconfigure existing visible reusable items in place. `MediaAssetCollectionApplyGate`
 /// prevents overlapping AppKit applies and keeps only the newest pending value.
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
 /// cannot create file-writing tasks or retain grid state on MainActor.
@@ -181,10 +181,10 @@ private extension MediaAssetCollectionViewController {
             )
         case let .refreshVisible(grid, resetScroll):
             assetsByID = grid.assetsByID
-            reloadVisibleItems()
             if resetScroll {
                 scrollToTop()
             }
+            reconfigureVisibleItems(reason: "detailRefresh")
             reportViewport()
         case let .apply(grid, resetScroll):
             applyStructure(grid, resetScroll: resetScroll)
@@ -222,7 +222,7 @@ private extension MediaAssetCollectionViewController {
                 scrollView.contentView.scroll(to: preservedOrigin)
                 scrollView.reflectScrolledClipView(scrollView.contentView)
             }
-            reloadVisibleItems()
+            reconfigureVisibleItems(reason: "structuralApply")
             reportViewport()
 
             let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
@@ -237,22 +237,45 @@ private extension MediaAssetCollectionViewController {
         }
     }
 
-    func reloadVisibleItems() {
-        // AppKit may recreate these few visible reusable items. Offscreen items
-        // are intentionally untouched and will read the latest map on demand.
-        let visibleIndexPaths = collectionView.indexPathsForVisibleItems()
+    func reconfigureVisibleItems(reason: String) {
+        // Reconfiguring the existing AppKit items preserves their layer contents when the
+        // tile content key is unchanged. Offscreen items are intentionally untouched and
+        // will read the latest map when AppKit asks for them.
+        let visibleIndexPaths = collectionView.indexPathsForVisibleItems().sorted()
         guard !visibleIndexPaths.isEmpty else {
             return
         }
-        let reloadStart = Date()
-        let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleReload")
-        collectionView.reloadItems(at: visibleIndexPaths)
-        OtosSignpost.ui.endInterval("MediaGridVisibleReload", signpost)
-        let reloadMs = DiagnosticsTiming.milliseconds(since: reloadStart)
+        let reconfigureStart = Date()
+        let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleReconfigure")
+        var configuredCount = 0
+        var missingAssetCount = 0
+        var missingItemCount = 0
+
+        for indexPath in visibleIndexPaths {
+            guard let assetID = dataSource.itemIdentifier(for: indexPath),
+                  let asset = assetsByID[assetID]
+            else {
+                missingAssetCount += 1
+                continue
+            }
+            guard let item = collectionView.item(at: indexPath) as? MediaAssetCollectionItem else {
+                missingItemCount += 1
+                continue
+            }
+            item.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
+            configuredCount += 1
+        }
+
+        OtosSignpost.ui.endInterval("MediaGridVisibleReconfigure", signpost)
+        let reconfigureMs = DiagnosticsTiming.milliseconds(since: reconfigureStart)
         OtosLog.ui.debug(
             """
-            Media grid visible items reloaded count=\(visibleIndexPaths.count, privacy: .public) \
-            reloadMs=\(reloadMs, privacy: .public)
+            Media grid visible items reconfigured count=\(configuredCount, privacy: .public) \
+            requested=\(visibleIndexPaths.count, privacy: .public) \
+            missingAssets=\(missingAssetCount, privacy: .public) \
+            missingItems=\(missingItemCount, privacy: .public) \
+            reason=\(reason, privacy: .public) \
+            reconfigureMs=\(reconfigureMs, privacy: .public)
             """
         )
     }

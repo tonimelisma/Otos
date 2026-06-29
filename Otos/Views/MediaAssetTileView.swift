@@ -65,6 +65,7 @@ private final class MediaAssetTileView: NSView {
     /// stamp + the displayed date). Equal keys mean nothing visible changed, so a 10 Hz
     /// detail refresh of an unchanged tile does not re-decode or re-format anything.
     private var currentContentKey: String?
+    private var currentDiagnosticID: String?
     /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
     /// the tile was handed to another asset is discarded instead of painting stale data.
     private var loadGeneration = 0
@@ -111,6 +112,7 @@ private final class MediaAssetTileView: NSView {
     }
 
     func configure(asset: MediaAsset, thumbnailDirectory: URL?) {
+        currentDiagnosticID = MediaAssetTilePresentation.diagnosticID(asset)
         let isVideo = MediaAssetTilePresentation.isVideo(asset)
         titleField.stringValue = MediaAssetTilePresentation.title(asset)
         videoIconView.isHidden = !isVideo
@@ -122,6 +124,11 @@ private final class MediaAssetTileView: NSView {
 
         let key = MediaAssetTilePresentation.contentKey(asset)
         guard key != currentContentKey else {
+            OtosSignpost.ui.emitEvent("MediaTileContentUnchanged")
+            let diagnosticID = currentDiagnosticID ?? "unknown"
+            OtosLog.ui.debug(
+                "Media tile content unchanged assetID=\(diagnosticID, privacy: .public)"
+            )
             return
         }
         currentContentKey = key
@@ -134,29 +141,58 @@ private final class MediaAssetTileView: NSView {
     private func loadThumbnailAndDate(asset: MediaAsset, thumbnailDirectory: URL?) {
         loadGeneration += 1
         let generation = loadGeneration
+        let diagnosticID = MediaAssetTilePresentation.diagnosticID(asset)
+        let thumbnailPath = asset.thumbnailPath ?? "none"
         loadTask?.cancel()
+        OtosSignpost.ui.emitEvent("MediaTileLoadStarted")
+        OtosLog.ui.debug(
+            """
+            Media tile load started assetID=\(diagnosticID, privacy: .public) \
+            thumbnailPath=\(thumbnailPath, privacy: .public)
+            """
+        )
         loadTask = Task.detached(priority: .utility) { [weak self] in
             let loaded = MediaAssetTilePresentation.load(asset: asset, thumbnailDirectory: thumbnailDirectory)
             if Task.isCancelled {
                 return
             }
             await MainActor.run {
-                guard let self, self.loadGeneration == generation else {
+                guard let self else {
+                    return
+                }
+                guard self.loadGeneration == generation else {
+                    OtosSignpost.ui.emitEvent("MediaTileLoadDropped")
+                    OtosLog.ui.debug(
+                        "Media tile load dropped assetID=\(diagnosticID, privacy: .public)"
+                    )
                     return
                 }
                 self.imageView.image = nil
                 self.imageView.layer?.contents = loaded.image
                 self.dateField.stringValue = loaded.dateText
+                OtosSignpost.ui.emitEvent("MediaTileLoadApplied")
+                OtosLog.ui.debug(
+                    """
+                    Media tile load applied assetID=\(diagnosticID, privacy: .public) \
+                    hasImage=\(loaded.image != nil, privacy: .public)
+                    """
+                )
             }
         }
     }
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        OtosSignpost.ui.emitEvent("MediaTilePrepareForReuse")
+        let diagnosticID = currentDiagnosticID ?? "unknown"
+        OtosLog.ui.debug(
+            "Media tile prepared for reuse assetID=\(diagnosticID, privacy: .public)"
+        )
         loadTask?.cancel()
         loadTask = nil
         loadGeneration += 1
         currentContentKey = nil
+        currentDiagnosticID = nil
         imageView.image = nil
         imageView.layer?.contents = nil
         titleField.stringValue = ""
@@ -209,6 +245,10 @@ enum MediaAssetTilePresentation {
             return name
         }
         return URL(fileURLWithPath: asset.relativePath.rawValue).lastPathComponent
+    }
+
+    nonisolated static func diagnosticID(_ asset: MediaAsset) -> String {
+        asset.libraryRootPath.rawValue + "/" + asset.relativePath.rawValue
     }
 
     /// The capture date shown on the tile, formatted with a value-type style (Sendable,

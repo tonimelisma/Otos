@@ -76,8 +76,8 @@ manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
   only when cached count and direct identity membership match the snapshot.
 - `CatalogMediaGridState` carries scope, ordered IDs, and current values keyed by
   ID.
-- The collection bridge applies identity changes structurally and refreshes only
-  visible items for detail-only changes.
+- The collection bridge applies identity changes structurally and reconfigures
+  existing visible items in place for detail-only changes.
 - Views remain passive and do not own catalog cadence or projection work.
 
 ### Non-Functional
@@ -95,8 +95,9 @@ manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
 ### Tooling And Regression
 
 - Logger/signposts cover grid receipt, structural apply, pending replacement,
-  completion, visible reload, layout creation, and slow cell setup. Coarse JSONL
-  Projection summaries cover order cache hits, membership changes, and sorts.
+  completion, visible in-place reconfiguration, layout creation, and slow cell
+  setup. Coarse JSONL Projection summaries cover
+  publication cause, membership changes, and sorts.
 - The deleted media table and per-item `NSHostingView` must not reappear.
 - The Settings table remains unchanged.
 
@@ -162,8 +163,8 @@ custom rendering engine.
 3. `CatalogWindowViewModel` assigns that state on the MainActor.
 4. `MediaGridView` renders title/empty state and forwards grid state to the
    collection controller.
-5. The collection apply gate chooses no-op, visible refresh, structural apply,
-   or newest-pending replacement.
+5. The collection apply gate chooses no-op, visible in-place refresh, structural
+   apply, or newest-pending replacement.
 
 ## Concurrency And Cancellation
 
@@ -180,9 +181,10 @@ and is not stored in SQLite.
 
 ## Instrumentation And Profiling
 
-- JSONL: coarse Projection cache/membership/sort summaries and actual run-loop
-  stalls.
-- Unified logging/signposts: collection receipt/apply/pending/reload outcomes.
+- JSONL: coarse Projection membership/detail-change/sort summaries and actual
+  run-loop stalls.
+- Unified logging/signposts: collection receipt/apply/pending/reconfigure/reload
+  outcomes.
 - Signposts: Store snapshot, Projection publication/state build, ViewModel state
   assignment, collection layout/receipt/apply/reload, and scan boundaries.
 - Runtime: `script/catalog-diagnostics.sh check`, agent-executable 1 Hz process
@@ -195,7 +197,7 @@ and is not stored in SQLite.
   filtering, unknown/unavailable hiding, orphan fallback ordering, and scoped
   value-map isolation.
 - Collection state-machine tests prove one in-flight apply, newest pending,
-  detail refresh, scope reset, and same-scope preservation.
+  detail refresh classification, scope reset, and same-scope preservation.
 - Content-type tests prove movies are marked while image, audio, unknown, DOCX,
   and source files remain generic.
 - Source hygiene proves the AppKit collection/compositional layout exists and
@@ -247,7 +249,9 @@ new bug-fix increment.
   `NSTableView`, table hosting, or AttributeGraph runaway stack remained.
 - Otos-owned MainActor spans stayed below 100 ms: the maximum structural grid
   apply was 94 ms and maximum window-state assignment was 21 ms. No individual
-  cell configuration crossed the 5 ms slow-cell threshold.
+  cell configuration crossed the 5 ms slow-cell threshold. Spec 0024 later
+  removed the explicit visible reload path and uses in-place reconfiguration
+  after enrichment made reload reuse visibly blank thumbnails.
 - Two startup run-loop delays of 202 ms and 111 ms occurred while initial scans
   and collection updates were active. The process settled afterward; this
   bounded startup jank remains a profiling risk rather than the former permanent

@@ -34,7 +34,7 @@ struct EnrichmentCoordinatorTests {
                     id: id,
                     metadata: AssetMetadata(cameraModel: "Cam"),
                     captureDate: captureDate,
-                    thumbnailPath: "t.heic",
+                    thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime
                 )
@@ -57,7 +57,7 @@ struct EnrichmentCoordinatorTests {
         }
         await coordinator.shutdown()
 
-        #expect(enriched.testAssets.allSatisfy { $0.thumbnailPath == "t.heic" })
+        #expect(enriched.testAssets.allSatisfy { $0.thumbnailPath == "t.jpg" })
         #expect(enriched.testAssets.allSatisfy { $0.captureDate == captureDate })
         #expect(enriched.testAssets.allSatisfy { $0.bestCaptureDate == captureDate })
     }
@@ -83,7 +83,7 @@ struct EnrichmentCoordinatorTests {
                     id: id,
                     metadata: AssetMetadata(),
                     captureDate: nil,
-                    thumbnailPath: "t.heic",
+                    thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime
                 )
@@ -102,7 +102,7 @@ struct EnrichmentCoordinatorTests {
             snapshot.testAssets.first?.needsEnrichment == false
         }
         await coordinator.shutdown()
-        #expect(enriched.testAssets.first?.thumbnailPath == "t.heic")
+        #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
         #expect(await attempts.total >= 3)
     }
 
@@ -128,7 +128,7 @@ struct EnrichmentCoordinatorTests {
                     id: id,
                     metadata: AssetMetadata(),
                     captureDate: nil,
-                    thumbnailPath: "t.heic",
+                    thumbnailPath: "t.jpg",
                     sourceSize: reportedSize,
                     sourceMTimeSeconds: mtime
                 )
@@ -147,7 +147,7 @@ struct EnrichmentCoordinatorTests {
             snapshot.testAssets.first?.needsEnrichment == false
         }
         await coordinator.shutdown()
-        #expect(enriched.testAssets.first?.thumbnailPath == "t.heic")
+        #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
         #expect(await attempts.total >= 2)
     }
 }

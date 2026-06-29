@@ -25,7 +25,8 @@ In scope:
 - The enrichment data model (SQLite `v3` columns, the resident `MediaAsset`
   fields, the on-demand `AssetMetadata` blob, the `(size, mtime)` staleness
   signature, the computed `bestCaptureDate`).
-- `MediaEnricher` (metadata read + QuickLook thumbnail) and `ThumbnailStore`.
+- `MediaEnricher` (metadata read + QuickLook thumbnail) and `ThumbnailStore`
+  (JPEG thumbnail files).
 - `EnrichmentCoordinator`: the cursorless two-pool scheduler.
 - The viewport channel (grid → ViewModel → coordinator) and tile rendering of the
   thumbnail and capture date.
@@ -62,7 +63,8 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
   the grid shows the thumbnail and a capture date; eager full-library
   materialization; the viewport is prioritized; the capture date is the best
   available real date and is never fabricated.
-- Architecture: thumbnails are files referenced by path (256 px HEIC, QuickLook);
+- Architecture: thumbnails are files referenced by path (256 px JPEG generated
+  from QuickLook);
   the full metadata is an on-demand binary blob, never resident; disjoint
   scan/enrichment column ownership with a merging rescan; `(size, mtime)`
   staleness; stale in-flight completions are rejected before they can stamp newer
@@ -74,8 +76,9 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
 ## Architectural Alternatives
 
 The substantive storage and scheduling alternatives (metadata inline-and-resident
-vs. blob; thumbnails as BLOBs vs. files; a maintained backlog vs. cursorless) are
-compared in [ADR 0009](../adr/0009-enrichment-storage-and-staleness.md). The
+vs. blob; thumbnails as BLOBs vs. files; JPEG vs. HEIC vs. PNG; a maintained
+backlog vs. cursorless) are compared in
+[ADR 0009](../adr/0009-enrichment-storage-and-staleness.md). The
 implementation-level alternatives this spec weighed:
 
 ### Alternative A — One pool that gates, downloads, and extracts each unit
@@ -144,7 +147,7 @@ the coordinator maintains only the runtime state it cannot derive. Materializati
 status is checked off-actor at exactly one site — the enrichment pull, immediately
 before the read — serving as both router and ADR 0008 safety gate. Results are
 applied in batches (one transaction, one notification) by `CatalogStore`. The
-products are a 256 px HEIC thumbnail file and an on-demand metadata blob; only the
+products are a 256 px JPEG thumbnail file and an on-demand metadata blob; only the
 thumbnail path, a resolved capture date, and the `(size, mtime)` stamps are
 resident. The tile loads its thumbnail and formats its date off-main. See ADR 0009
 for why each choice is the simplest correct one.
@@ -167,7 +170,8 @@ Modules (isolation — owns):
 - `EnrichmentCoordinator` (actor, new) — the cursorless scheduler, the two pools,
   the transient state, the batched-apply buffer.
 - `MediaEnricher` (nonisolated value, new) — one async unit:
-  `MediaMetadataReader.read` plus a QuickLook 256 px thumbnail → `EnrichmentOutcome`;
+  `MediaMetadataReader.read` plus a QuickLook 256 px JPEG thumbnail →
+  `EnrichmentOutcome`;
   injectable like `CatalogScanner`.
 - `ThumbnailStore` (nonisolated enum, new) — the thumbnails directory, naming,
   atomic write, load, delete.
@@ -188,8 +192,9 @@ scan / FSEvents → Store notifies → Coordinator refreshes snapshot → dispat
   enrich slot: status .notMaterialized → datalessPending → download pool
   download slot: materialize → freshly (LIFO) → signal → enrich slot pulls it
 Projection republishes (thumbnailPath / captureDate now set; cheap)
-  → grid refreshVisible → tile: if content key changed, ThumbnailStore.load
-    off-main → image + best-date assigned on Main
+  → grid refreshVisible → existing visible tiles reconfigure in place
+    → tile: if content key changed, ThumbnailStore.load off-main
+    → image + best-date assigned on Main
 asset row purged (proven deletion or library removal) → ThumbnailStore.delete
 ```
 
@@ -251,13 +256,14 @@ Implementation sequence (each landed and verified on its own):
 ## Instrumentation And Performance
 
 - `OtosLog.metadata` / `OtosLog.thumbnails` and the diagnostics facade record
-  coordinator batch flushes (`catalog.enrichment.coordinator`, phase `flush`) and
-  thumbnail-generation failures (path allowed, no metadata payload) at batch and
-  boundary scope — never per-file JSONL, never media payloads.
-- The grid reuses its existing signposts (state receive, structural apply, visible
-  reload, slow-cell). The tile's thumbnail read/decode and date formatting run off
-  the main actor; Main only assigns, keeping the configure path below the slow-cell
-  threshold.
+  coordinator batch flushes (`catalog.enrichment.coordinator`, phase `flush`),
+  thumbnail-generation failures, and bounded thumbnail write/load events (path
+  allowed, no metadata payload) at batch and boundary scope — never per-file JSONL,
+  never media payloads.
+- The grid uses signposts for state receive, structural apply, visible in-place
+  reconfiguration, structural reload, and slow-cell setup. The tile's thumbnail
+  read/decode and date formatting run off the main actor; Main only assigns,
+  keeping the configure path below the slow-cell threshold.
 - Performance budgets: MainActor under 100 ms; the full metadata is not resident
   (ADR 0009 §2), so the Projection per-tick snapshot and `==` grow only by
   `captureDate` + `thumbnailPath`. Measure-before-optimize gates: no thumbnail
@@ -284,7 +290,9 @@ matches the current source facts leaves old best-known overlay visible but does 
 stamp the row current; a definitive-but-empty outcome stamps and is not retried;
 the full enrich → download → re-enrich pipeline brings every asset to enriched;
 removing a library purges its thumbnail files; the tile shows the thumbnail when
-the path is set and the best date with the filesystem fallback.
+the path is set and the best date with the filesystem fallback; same-identity
+enrichment refreshes reconfigure visible items in place instead of entering AppKit
+reuse.
 
 ## Verification
 

@@ -31,10 +31,60 @@ actor CatalogProjection {
         let sortMs: Int
     }
 
+    private struct PublicationChangeSummary {
+        let previousSelectedScopeAssetCount: Int
+        let mediaIdentityChanged: Bool
+        let mediaDetailsChanged: Bool
+        let librariesChanged: Bool
+        let emptyStateChanged: Bool
+        let resolvedSelectionChanged: Bool
+        let mediaIdentityEqualityUs: Int
+        let mediaDetailsEqualityUs: Int
+
+        static func compare(
+            previous: CatalogWindowState?,
+            current: CatalogWindowState
+        ) -> PublicationChangeSummary {
+            guard let previous else {
+                return PublicationChangeSummary(
+                    previousSelectedScopeAssetCount: -1,
+                    mediaIdentityChanged: true,
+                    mediaDetailsChanged: true,
+                    librariesChanged: true,
+                    emptyStateChanged: true,
+                    resolvedSelectionChanged: true,
+                    mediaIdentityEqualityUs: 0,
+                    mediaDetailsEqualityUs: 0
+                )
+            }
+
+            let identityStart = Date()
+            let mediaIdentityChanged = previous.mediaGrid.scope != current.mediaGrid.scope
+                || previous.mediaGrid.orderedAssetIDs != current.mediaGrid.orderedAssetIDs
+            let identityUs = DiagnosticsTiming.microseconds(since: identityStart)
+
+            let detailsStart = Date()
+            let mediaDetailsChanged = previous.mediaGrid.assetsByID != current.mediaGrid.assetsByID
+            let detailsUs = DiagnosticsTiming.microseconds(since: detailsStart)
+
+            return PublicationChangeSummary(
+                previousSelectedScopeAssetCount: previous.mediaGrid.orderedAssetIDs.count,
+                mediaIdentityChanged: mediaIdentityChanged,
+                mediaDetailsChanged: mediaDetailsChanged,
+                librariesChanged: previous.libraries != current.libraries,
+                emptyStateChanged: previous.mediaEmptyState != current.mediaEmptyState,
+                resolvedSelectionChanged: previous.resolvedSidebarSelection != current.resolvedSidebarSelection,
+                mediaIdentityEqualityUs: identityUs,
+                mediaDetailsEqualityUs: detailsUs
+            )
+        }
+    }
+
     private struct PublicationDiagnostics {
         let state: CatalogWindowState
         let assetCount: Int
         let metrics: BuildMetrics
+        let changeSummary: PublicationChangeSummary
         let selectedSidebarRow: SidebarSelection
         let retainedResolvedSelection: Bool
         let equalityUs: Int
@@ -51,8 +101,16 @@ actor CatalogProjection {
                 fields: [
                     "libraries": "\(state.libraries.count)",
                     "assetCount": "\(assetCount)",
+                    "previousSelectedScopeAssetCount": "\(changeSummary.previousSelectedScopeAssetCount)",
                     "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
                     "assetSortMs": "\(metrics.sortMs)",
+                    "mediaIdentityChanged": "\(changeSummary.mediaIdentityChanged)",
+                    "mediaDetailsChanged": "\(changeSummary.mediaDetailsChanged)",
+                    "librariesChanged": "\(changeSummary.librariesChanged)",
+                    "emptyStateChanged": "\(changeSummary.emptyStateChanged)",
+                    "resolvedSelectionChanged": "\(changeSummary.resolvedSelectionChanged)",
+                    "mediaIdentityEqualityUs": "\(changeSummary.mediaIdentityEqualityUs)",
+                    "mediaDetailsEqualityUs": "\(changeSummary.mediaDetailsEqualityUs)",
                     "equalityUs": "\(equalityUs)",
                     "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                     "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
@@ -211,11 +269,16 @@ private extension CatalogProjection {
         let equalityStart = Date()
         let stateChanged = lastPublishedState != state
         let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
+        let changeSummary = PublicationChangeSummary.compare(
+            previous: lastPublishedState,
+            current: state
+        )
 
         await PublicationDiagnostics(
             state: state,
             assetCount: snapshot.assetsByID.count,
             metrics: buildMetrics,
+            changeSummary: changeSummary,
             selectedSidebarRow: selectedSidebarRow,
             retainedResolvedSelection: retainedResolvedSelection,
             equalityUs: equalityUs,

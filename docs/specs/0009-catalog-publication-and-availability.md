@@ -46,7 +46,7 @@ Out of scope:
 | AVA-002 | Functional | Database-loaded roots begin unknown; new validated roots begin available. |
 | AVA-003 | Regression | Unavailable or failed roots preserve catalog rows and skip reconciliation deletion. |
 | AVA-004 | Functional | Unknown and unavailable roots contribute no media to visible scopes. |
-| AVA-005 | Functional | Unknown UI uses Checking labels; unavailable UI uses unavailable/no-available-media labels. |
+| AVA-005 | Functional | Grid empty states use Checking labels for unknown roots; sidebar library rows omit transient status text; unavailable grid/settings UI uses unavailable/no-available-media labels. |
 
 ## Alternatives
 

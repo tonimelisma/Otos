@@ -74,6 +74,19 @@ struct SourceHygieneTests {
         #expect(content.contains("let libraries: [CatalogLibraryState]"))
     }
 
+    @Test func sidebarDoesNotRenderLibraryStatusText() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sidebarURL = repoRoot.appending(path: "Otos/Views/SidebarView.swift")
+        let content = try String(contentsOf: sidebarURL, encoding: .utf8)
+
+        #expect(!content.contains("sidebarSubtitle"))
+        #expect(!content.contains("\"Checking\""))
+        #expect(!content.contains("\"Scanning\""))
+        #expect(!content.contains("\"Unavailable\""))
+    }
+
     @Test func settingsUsesProjectedLibraryRowsWithoutDisplayingScanStatus() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -179,6 +192,21 @@ struct SourceHygieneTests {
         #expect(!content.contains("Task {"))
         #expect(content.contains("OtosLog.ui"))
         #expect(content.contains("OtosSignpost.ui"))
+    }
+
+    @Test func appKitGridDoesNotReloadItemsForDetailRefresh() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let content = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
+            encoding: .utf8
+        )
+
+        #expect(content.contains("case let .refreshVisible(grid, resetScroll):"))
+        #expect(content.contains("reconfigureVisibleItems(reason: \"detailRefresh\")"))
+        #expect(content.contains("collectionView.item(at: indexPath)"))
+        #expect(!content.contains("reloadItems(at:"))
     }
 
     @Test func sqliteRowIDDoesNotLeakOutsideStore() throws {

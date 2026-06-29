@@ -94,7 +94,8 @@ During the change:
 - remove JSONL calls and task creation from ViewModel state assignment and the
   collection bridge
 - add Logger events and signposted spans for state receipt, structural apply,
-  pending replacement, completion, visible reload, layout, and slow cells
+  pending replacement, completion, visible reconfiguration, structural reload,
+  layout, and slow cells
 - retain JSONL for Store/scan boundaries, Projection summaries, availability
   transitions, failures, and actual run-loop stalls
 
@@ -347,7 +348,8 @@ High-frequency native telemetry:
 
 - ViewModel state assignment
 - collection state receipt, structural apply, pending replacement, completion,
-  visible reload, layout replacement, and slow cell configuration
+  visible reconfiguration, structural reload, layout replacement, and slow cell
+  configuration
 
 `CatalogDiagnostics` lazily opens one append handle, serializes writes through
 its actor, and closes/resets for deletion, test reset, error recovery, or actor

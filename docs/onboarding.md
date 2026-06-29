@@ -217,19 +217,25 @@ delivery rules would be wrong for at least one of them.
 
 `SidebarView`, `MediaGridView`, and `SettingsView` are small SwiftUI views that
 render the state they are handed and call back with intents (`selectSidebar`,
-`addLibrary`). They hold no catalog logic.
+`addLibrary`). They hold no catalog logic. The sidebar uses projected library
+rows for identity and selection, but renders only folder icons and library names;
+transient availability and scan activity stay out of sidebar row text.
 
 `MediaAssetCollectionView` is the exception and the one place we drop to **AppKit**.
 Why: a media library can have tens of thousands of tiles, and `NSCollectionView`
 reuses cells (it only creates views for what is on screen), which SwiftUI's grids do
 not do as well at that scale. The small `MediaAssetCollectionApplyGate` exists so
 that only one structural update runs at a time and only the newest pending update
-survives — backpressure for a high-volume surface. It also reports the visible
-identities upward (the **viewport**) so enrichment can prioritize what you are
-looking at. `MediaAssetTileView` is one reusable tile: it shows the thumbnail and
-capture date, loading and decoding the thumbnail *off the main thread* and only
-assigning the finished image on Main, with a generation token so a load that
-finishes after the tile has been reused for another asset is discarded.
+survives — backpressure for a high-volume surface. Identity/order changes go
+through the diffable data source; detail-only changes for the same ordered IDs
+reconfigure the existing visible AppKit items in place, so a thumbnail does not
+blink just because metadata for an item changed. The bridge also reports the
+visible identities upward (the **viewport**) so enrichment can prioritize what
+you are looking at. `MediaAssetTileView` is one reusable tile: it shows the
+thumbnail and capture date, loading and decoding the thumbnail *off the main
+thread* and only assigning the finished image on Main, with a generation token so
+a load that finishes after the tile has been reused for another asset is
+discarded.
 
 ### `Otos/Services/EnrichmentCoordinator.swift` — the thumbnail + metadata scheduler
 
@@ -247,11 +253,12 @@ in batches. See `docs/adr/0009-enrichment-storage-and-staleness.md` and
 `MediaEnricher` does the work for one asset: it parses the file's metadata (the
 `MediaMetadata` library) and renders a 256 px thumbnail (QuickLook). It is an
 injectable value (like `CatalogScanner`), so tests substitute a fake. `ThumbnailStore`
-owns the thumbnail files on disk — the directory, the naming, an *atomic* write
-(temp file then rename) so a tile never reads a half-written image during a
-re-enrichment, loading via Image I/O into an already-decoded `CGImage`, and deletion
-when the owning catalog row is purged by proven deletion or library removal.
-Thumbnails are files referenced by path; the catalog never stores the bytes.
+owns the thumbnail files on disk — the directory, deterministic `.jpg` names, the
+opaque 8-bit sRGB JPEG encode, an *atomic* write (temp file then rename) so a
+tile never reads a half-written image during a re-enrichment, loading via Image
+I/O into an already-decoded `CGImage`, and deletion when the owning catalog row
+is purged by proven deletion or library removal. Thumbnails are files referenced
+by path; the catalog never stores the bytes.
 
 ### `Otos/Services/FileMaterialization.swift` — the cloud guard
 

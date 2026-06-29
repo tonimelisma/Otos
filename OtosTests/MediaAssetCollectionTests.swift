@@ -131,19 +131,19 @@ struct MediaAssetCollectionTests {
     @Test func contentKeyDistinguishesThumbnailStampAndDate() {
         let base = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 1000),
-            thumbnailPath: "t.heic",
+            thumbnailPath: "t.jpg",
             enrichedMTime: 10
         )
         let sameAgain = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 1000),
-            thumbnailPath: "t.heic",
+            thumbnailPath: "t.jpg",
             enrichedMTime: 10
         )
         #expect(MediaAssetTilePresentation.contentKey(base) == MediaAssetTilePresentation.contentKey(sameAgain))
 
         let newThumbnail = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 1000),
-            thumbnailPath: "u.heic",
+            thumbnailPath: "u.jpg",
             enrichedMTime: 10
         )
         #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newThumbnail))
@@ -151,7 +151,7 @@ struct MediaAssetCollectionTests {
         // A re-thumbnailed file keeps the same name but a newer stamp; the key must change.
         let newStamp = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 1000),
-            thumbnailPath: "t.heic",
+            thumbnailPath: "t.jpg",
             enrichedMTime: 11
         )
         #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newStamp))
@@ -159,7 +159,7 @@ struct MediaAssetCollectionTests {
         // Bytes can change while mtime seconds stay equal; the size must be in the key.
         let newSize = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 1000),
-            thumbnailPath: "t.heic",
+            thumbnailPath: "t.jpg",
             enrichedMTime: 10,
             enrichedSize: 999
         )
@@ -167,7 +167,7 @@ struct MediaAssetCollectionTests {
 
         let newDate = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 2000),
-            thumbnailPath: "t.heic",
+            thumbnailPath: "t.jpg",
             enrichedMTime: 10
         )
         #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newDate))

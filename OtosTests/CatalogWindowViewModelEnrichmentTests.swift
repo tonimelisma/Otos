@@ -41,7 +41,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             orderedAssets(in: state).first?.captureDate == captureDate
         }
         let asset = try #require(orderedAssets(in: state).first)
-        #expect(asset.thumbnailPath == "t.heic")
+        #expect(asset.thumbnailPath == "t.jpg")
 
         // The viewport priority hint is accepted without disrupting the enrichment result.
         model.viewportChanged([asset.id])
@@ -113,7 +113,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let state = try await waitForWindowState(model, attempts: 400) { state in
             orderedAssets(in: state).first?.captureDate == captureDate
         }
-        #expect(orderedAssets(in: state).first?.thumbnailPath == "t.heic")
+        #expect(orderedAssets(in: state).first?.thumbnailPath == "t.jpg")
         await coordinator.shutdown()
     }
 }
@@ -138,7 +138,7 @@ private func fixedOneFileScanner(_ name: String) -> CatalogScanner {
     }
 }
 
-private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.heic") -> MediaEnricher {
+private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg") -> MediaEnricher {
     MediaEnricher { id, _, size, mtime in
         .complete(
             EnrichmentResult(

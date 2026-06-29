@@ -67,6 +67,12 @@ nonisolated struct MediaEnricher {
     /// QuickLook's icon fallback (a generic tile beats none); a generation failure returns
     /// `nil` and is not fatal — the definitive metadata is still recorded.
     static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> String? {
+        let generationStart = Date()
+        let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailGenerate")
+        defer {
+            OtosSignpost.thumbnails.endInterval("ThumbnailGenerate", signpost)
+        }
+
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
             size: CGSize(width: ThumbnailStore.maxPixelSize, height: ThumbnailStore.maxPixelSize),
@@ -75,11 +81,21 @@ nonisolated struct MediaEnricher {
         )
         do {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
-            return try ThumbnailStore.write(
+            let thumbnailPath = try ThumbnailStore.write(
                 representation.cgImage,
                 named: ThumbnailStore.relativeName(for: id),
                 in: directory
             )
+            let generationMs = DiagnosticsTiming.milliseconds(since: generationStart)
+            OtosLog.thumbnails.info(
+                """
+                Thumbnail generation finished path=\(url.path(percentEncoded: false), privacy: .public) \
+                thumbnailPath=\(thumbnailPath, privacy: .public) \
+                representation=\(String(describing: representation.type), privacy: .public) \
+                generationMs=\(generationMs, privacy: .public)
+                """
+            )
+            return thumbnailPath
         } catch {
             OtosLog.thumbnails.error(
                 "Thumbnail generation failed path=\(url.path(percentEncoded: false), privacy: .public)"

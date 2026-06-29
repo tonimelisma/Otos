@@ -80,14 +80,14 @@ struct CatalogStoreEnrichmentTests {
                 id: id,
                 metadata: AssetMetadata(cameraModel: "Cam"),
                 captureDate: captureDate,
-                thumbnailPath: "thumb.heic",
+                thumbnailPath: "thumb.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000
             ),
         ])
 
         let enriched = try #require(await store.currentSnapshot().testAssets.first { $0.id == id })
-        #expect(enriched.thumbnailPath == "thumb.heic")
+        #expect(enriched.thumbnailPath == "thumb.jpg")
         #expect(enriched.captureDate == captureDate)
         #expect(enriched.bestCaptureDate == captureDate)
         #expect(enriched.needsEnrichment == false)
@@ -101,7 +101,7 @@ struct CatalogStoreEnrichmentTests {
             return !snapshot.isScanning && asset.contentModifiedAt == Date(timeIntervalSince1970: 2000)
         }
         let asset = try #require(restaled.testAssets.first { $0.id == id })
-        #expect(asset.thumbnailPath == "thumb.heic")
+        #expect(asset.thumbnailPath == "thumb.jpg")
         #expect(asset.captureDate == captureDate)
         #expect(asset.enrichedSourceSize == 100)
         #expect(asset.needsEnrichment == true)
@@ -132,7 +132,7 @@ struct CatalogStoreEnrichmentTests {
                 id: id,
                 metadata: AssetMetadata(cameraModel: "Cam", pixelWidth: 4000, pixelHeight: 3000),
                 captureDate: captureDate,
-                thumbnailPath: "thumb.heic",
+                thumbnailPath: "thumb.jpg",
                 sourceSize: scannedSize,
                 sourceMTimeSeconds: scannedMTime
             ),
@@ -141,7 +141,7 @@ struct CatalogStoreEnrichmentTests {
         let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
         let asset = try #require(await reloaded.currentSnapshot().testAssets.first { $0.id == id })
-        #expect(asset.thumbnailPath == "thumb.heic")
+        #expect(asset.thumbnailPath == "thumb.jpg")
         #expect(asset.captureDate == captureDate)
         #expect(asset.enrichedSourceSize == scannedSize)
         #expect(asset.enrichedSourceMTimeSeconds == scannedMTime)
@@ -182,7 +182,7 @@ struct CatalogStoreEnrichmentTests {
                 id: id,
                 metadata: AssetMetadata(cameraModel: "OldCam"),
                 captureDate: Date(timeIntervalSince1970: 700),
-                thumbnailPath: "old.heic",
+                thumbnailPath: "old.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000
             ),
@@ -235,7 +235,7 @@ struct CatalogStoreEnrichmentTests {
         let thumbnailDirectory = databaseURL.deletingLastPathComponent()
             .appending(path: "Thumbnails", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
-        let thumbnailName = "thumb.heic"
+        let thumbnailName = "thumb.jpg"
         let thumbnailURL = thumbnailDirectory.appending(path: thumbnailName, directoryHint: .notDirectory)
         try Data("thumb".utf8).write(to: thumbnailURL)
         await store.applyEnrichmentBatch([
@@ -279,7 +279,7 @@ struct CatalogStoreEnrichmentTests {
         let thumbnailDirectory = databaseURL.deletingLastPathComponent()
             .appending(path: "Thumbnails", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
-        let thumbnailName = "thumb.heic"
+        let thumbnailName = "thumb.jpg"
         let thumbnailURL = thumbnailDirectory.appending(path: thumbnailName, directoryHint: .notDirectory)
         try Data("thumb".utf8).write(to: thumbnailURL)
         await store.applyEnrichmentBatch([

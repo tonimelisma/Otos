@@ -13,9 +13,11 @@ It references but does not own catalog truth, snapshot cadence, availability,
 and ordering. ADR 0007 owns identity-based order validation and cached ordering.
 ADRs 0002, 0004, and 0005 retain scan/persistence, UI ownership, and publication
 ownership.
-Thumbnail rendering, selection, preview, and zoom require separate future
-specs/ADRs if implemented. Scan-time media eligibility (UTType image or movie) is
-owned by ADR 0002; the grid displays every cataloged eligible asset.
+Selection, preview, and zoom require separate future specs/ADRs if implemented.
+Thumbnail storage is owned by ADR 0009; this ADR owns only how the visible grid
+renders and refreshes those thumbnail-backed values. Scan-time media eligibility
+(UTType image or movie) is owned by ADR 0002; the grid displays every cataloged
+eligible asset.
 
 ## Context
 
@@ -47,9 +49,11 @@ Auto Layout trees. They display a one-line filename. Only content conforming to
 `UTType.movie` gets a small video symbol and blue tint.
 
 Apply a diffable snapshot without animation only when ordered IDs change. For
-unchanged IDs, replace the value map and reload visible items. Permit one
-structural apply at a time and retain only the latest pending grid state. Reset
-scroll only when sidebar scope changes.
+unchanged IDs, replace the value map and reconfigure the existing visible items
+in place. Do not call AppKit item reload for a detail-only refresh: reload enters
+the reuse lifecycle, and reusable tile cleanup clears the thumbnail before the
+async loader repaints it. Permit one structural apply at a time and retain only
+the latest pending grid state. Reset scroll only when sidebar scope changes.
 
 ## Why This Is Simplest Correct
 
@@ -63,6 +67,9 @@ responsive columns and removes flow-layout width bookkeeping.
 - Media rendering has one narrow MainActor AppKit boundary.
 - SwiftUI remains responsible for window composition and empty-state shell.
 - Collection updates are imperative but isolated and state-machine tested.
+- Same-identity background enrichment or fact-detail updates do not recycle
+  visible cells, so thumbnails remain painted while unchanged content is skipped
+  by the tile content key.
 - The current grid intentionally has no interaction behavior.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
   high-cardinality media browser.
@@ -72,3 +79,4 @@ responsive columns and removes flow-layout width bookkeeping.
 - Apple, [NSCollectionView](https://developer.apple.com/documentation/appkit/nscollectionview)
 - Apple, [NSCollectionView layout ownership](https://developer.apple.com/documentation/appkit/nscollectionview/collectionviewlayout)
 - Apple, [UTType.movie](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/movie)
+- `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md`

@@ -37,8 +37,8 @@ This decision supports requirements ENR-001 through ENR-010.
 This ADR owns:
 
 - Thumbnails are files on disk; the catalog stores only the relative path. Size,
-  format, and generator (256 px long edge, HEIC, QuickLook with icon fallback
-  accepted). No in-memory thumbnail cache.
+  format, and generator (256 px long edge, JPEG generated from QuickLook with
+  icon fallback accepted). No in-memory thumbnail cache.
 - The full parsed metadata is persisted as one typed binary-plist blob
   (`AssetMetadata` via `Codable`), decoded on demand, and is **never resident**.
   The blob format is versioned DB-wide by the GRDB migrator, never per row.
@@ -79,7 +79,7 @@ Adjacent decisions requiring separate ADRs or specs:
 ## Decision
 
 1. **Thumbnails are files; the catalog stores the path.** `ThumbnailStore` writes
-   a 256 px long-edge HEIC under `Application Support/<bundleID>/Thumbnails/`,
+   a 256 px long-edge JPEG under `Application Support/<bundleID>/Thumbnails/`,
    named from a hash of `(library_root_id, relative_path)` — an opaque storage
    key, not asset identity. Writes are atomic (temp file, then `rename`) so a tile
    never reads a half-written file during a re-enrichment overwrite. QuickLook
@@ -215,6 +215,71 @@ Failure modes:
 Rejected in favor of files-by-path, which keeps bytes entirely out of the catalog
 and the publication.
 
+### HEIC thumbnail files
+
+Write thumbnail files as HEIC.
+
+Pros:
+
+- Compact files.
+- Native Image I/O support on macOS.
+
+Cons:
+
+- The observed `bike_to_farmers_market.mp4` failure produced a valid-looking HEIC
+  thumbnail that decoded as static after writing a 10-bit/HDR video-derived
+  `CGImage` through Image I/O.
+- Correctness would require a careful 8-bit sRGB normalization step before every
+  encode, keeping the app on the same format path that already failed.
+
+Failure modes:
+
+- Another high-bit-depth, HDR, or unusual color-layout input silently stores a
+  corrupt thumbnail.
+
+Rejected in favor of JPEG for the grid thumbnail product.
+
+### PNG thumbnail files
+
+Write thumbnail files as PNG.
+
+Pros:
+
+- Lossless and robust for unusual input bit depth and color.
+
+Cons:
+
+- Larger than needed for 256 px grid thumbnails. The sampled Quick Look PNG for
+  the failing MP4 was 182 KB, versus 14 KB for a JPEG quality-85 derivative.
+
+Failure modes:
+
+- The durable overlay directory becomes much larger for no visible grid benefit.
+
+Rejected in favor of JPEG.
+
+### JPEG thumbnail files
+
+Write thumbnail files as JPEG.
+
+Pros:
+
+- Opaque, 8-bit, broadly supported photo/video thumbnail format.
+- Avoids the HEIC Main 10/static failure path seen in the latest run.
+- Compact enough for durable backed-up overlay; the sampled failing MP4 thumbnail
+  was 14 KB at quality 85.
+
+Cons:
+
+- Lossy and not alpha-preserving.
+
+Failure modes:
+
+- Transparent source images flatten to an opaque thumbnail. The current grid
+  thumbnail is not an alpha-fidelity product.
+
+Selected for `ThumbnailStore`.
+
 ### A maintained work backlog (partition sets or a cursor)
 
 Keep an explicit `extractionPending`/`downloadPending` partition, or a cursor into
@@ -256,6 +321,9 @@ at a real large library.
   metadata is resident.
 - Thumbnail files are owned overlay: they are deleted when their row is purged by
   proven deletion or explicit library removal (ADR 0008 lifecycle).
+- Existing generated thumbnails from an older private format may be deleted
+  manually during a development increment; the app does not carry a compatibility
+  loader or migration path for generated thumbnail overlay.
 
 ## Retirement Proof
 
@@ -276,8 +344,10 @@ that lands these docs.
 - `AGENTS.md` — the cloud-materialization baseline paragraph amended the same way.
 - `docs/requirements.md` — add ENR-001…ENR-010 (Current); update APP-001, APP-006,
   APP-009, APP-010, and FND-057.
-- `docs/specs/0022-metadata-and-thumbnail-enrichment.md` — the implementation spec
-  this ADR is the decision record for.
+- `docs/specs/0022-metadata-and-thumbnail-enrichment.md` — the enrichment
+  implementation spec this ADR is the decision record for.
+- `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md` — changes the thumbnail
+  private file format to JPEG and documents manual old-thumbnail deletion.
 - `docs/index.md` — register this ADR and spec 0022.
 - `docs/onboarding.md` — add the enrichment data flow and the coordinator's role.
 - `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here, in

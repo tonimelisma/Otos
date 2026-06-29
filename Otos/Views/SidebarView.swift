@@ -20,16 +20,8 @@ struct SidebarView: View {
                             .foregroundStyle(.secondary)
                             .frame(width: 16)
 
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(library.displayName)
-                                .lineLimit(1)
-                            if let subtitle = library.sidebarSubtitle {
-                                Text(subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                        }
+                        Text(library.displayName)
+                            .lineLimit(1)
                     }
                     .tag(SidebarSelection.library(library.path))
                 }
@@ -64,19 +56,4 @@ struct SidebarView: View {
         sidebarSelection: .allMedia,
         selectSidebar: { _ in }
     )
-}
-
-private extension CatalogLibraryState {
-    var sidebarSubtitle: String? {
-        if availability == .unknown {
-            return "Checking"
-        }
-        if availability == .unavailable {
-            return "Unavailable"
-        }
-        if activity == .scanning {
-            return "Scanning"
-        }
-        return nil
-    }
 }
