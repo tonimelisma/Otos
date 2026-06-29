@@ -54,21 +54,22 @@ struct CatalogWindowViewModelEnrichmentTests {
         // A persistent catalog whose launch rescan is a no-op (identical facts → no
         // notification) is the case start-after-load must cover: the coordinator must
         // enrich from the post-load snapshot, since no scan notification will wake it.
+        //
+        // Everything is kept light and deterministic so this test adds no real filesystem
+        // load to the parallel suite: a fixed in-memory scanner (no directory enumeration),
+        // inert filesystem watchers (no real FSEvents), and fixed facts. Only SQLite is
+        // real, which is what makes it a genuine relaunch across two store instances.
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        try writeCatalogStoreFile(root.appending(path: "one.jpg"), contents: "jpeg")
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-
-        // Inject inert filesystem watchers: this test exercises the launch/load path, not
-        // FSEvents, and a real watcher per store adds system-wide FSEvents contention that
-        // destabilizes the timing-sensitive watcher tests under parallel-suite load.
         let (firstWatcher, _) = CatalogFilesystemWatcher.testing()
         let (secondWatcher, _) = CatalogFilesystemWatcher.testing()
 
         // First launch: persist the cataloged asset with no enrichment (no coordinator).
         let firstStore = CatalogStore(
             location: .databaseFile(databaseURL),
+            scanner: fixedOneFileScanner("one.jpg"),
             filesystemWatcher: firstWatcher,
             scanCadence: .milliseconds(10),
             diagnostics: nil
@@ -81,9 +82,11 @@ struct CatalogWindowViewModelEnrichmentTests {
         #expect(firstScan.testAssets.first?.needsEnrichment == true)
         await firstStore.shutdown()
 
-        // Relaunch: a fresh store reloads the persisted, un-enriched asset from SQLite.
+        // Relaunch: a fresh store reloads the persisted, un-enriched asset from SQLite; its
+        // launch rescan re-observes identical facts and fires no notification.
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),
+            scanner: fixedOneFileScanner("one.jpg"),
             filesystemWatcher: secondWatcher,
             scanCadence: .milliseconds(10),
             diagnostics: nil
@@ -106,10 +109,8 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         model.start()
 
-        // The persisted asset enriches purely from the post-load snapshot. This relaunch
-        // path does heavy two-store SQLite work, so it gets a generous tolerance under
-        // parallel-suite load.
-        let state = try await waitForWindowState(model, attempts: 600) { state in
+        // The persisted asset enriches purely from the post-load snapshot.
+        let state = try await waitForWindowState(model, attempts: 400) { state in
             orderedAssets(in: state).first?.captureDate == captureDate
         }
         #expect(orderedAssets(in: state).first?.thumbnailPath == "t.heic")
@@ -118,6 +119,24 @@ struct CatalogWindowViewModelEnrichmentTests {
 }
 
 // MARK: - Helpers
+
+/// A scanner that reports one media file with fixed facts and reads no real directory, so
+/// the test persists/loads deterministically without filesystem-enumeration load.
+private func fixedOneFileScanner(_ name: String) -> CatalogScanner {
+    CatalogScanner { _, _, _, batchHandler in
+        try await batchHandler([
+            ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: name),
+                name: name,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 100,
+                createdAt: nil,
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ])
+        return [MediaRelativePath(rawValue: name)]
+    }
+}
 
 private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.heic") -> MediaEnricher {
     MediaEnricher { id, _, size, mtime in

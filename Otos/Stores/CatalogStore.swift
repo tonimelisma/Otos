@@ -226,17 +226,20 @@ extension CatalogStore {
     /// disjoint from facts; a row that was proven-deleted or whose source facts changed
     /// between extraction and this write is skipped, so a removed or edited asset is never
     /// stamped current by stale work.
-    /// Returns the number of results actually applied. Fewer than `results.count` means
-    /// some were dropped — proven-deleted, or stale because a scan observed newer bytes
-    /// — so the coordinator must re-wake to retry the still-`needsEnrichment` ones.
+    /// Applies a batch and reports the outcome so the coordinator can react correctly.
+    /// `.applied(count:)` with `count < results.count` means some results were *validated*
+    /// drops — proven-deleted, or stale because a scan observed newer bytes — which the
+    /// coordinator should re-wake to retry. `.writeFailed` means the SQLite write itself
+    /// failed (disk full, corruption, permissions); the coordinator must *not* re-wake into
+    /// a tight read/generate/fail loop and instead lets the recorded error back it off.
     @discardableResult
-    func applyEnrichmentBatch(_ results: [EnrichmentResult]) async -> Int {
+    func applyEnrichmentBatch(_ results: [EnrichmentResult]) async -> EnrichmentApplyOutcome {
         guard !results.isEmpty else {
-            return 0
+            return .applied(count: 0)
         }
         let writable = currentlyWritableEnrichments(results)
         guard !writable.isEmpty else {
-            return 0
+            return .applied(count: 0)
         }
 
         let state = OtosSignpost.persistence.beginInterval("CatalogEnrichmentBatchWrite")
@@ -250,7 +253,7 @@ extension CatalogStore {
         } catch {
             OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
             await recordEnrichmentBatchError(error, count: writable.count)
-            return 0
+            return .writeFailed
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
 
@@ -263,7 +266,7 @@ extension CatalogStore {
         if appliedCount > 0 {
             notifyCatalogChanged()
         }
-        return appliedCount
+        return .applied(count: appliedCount)
     }
 
     /// The subset of results whose asset still exists and still has the source facts the

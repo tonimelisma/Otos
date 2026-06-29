@@ -100,3 +100,15 @@ nonisolated struct EnrichmentResult: Equatable {
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
 }
+
+/// The result of applying an enrichment batch, so the coordinator reacts correctly:
+/// re-wake to retry validated stale/deleted drops, but never re-wake on a write failure
+/// (which would tight-loop the read/generate/fail cycle instead of backing off).
+nonisolated enum EnrichmentApplyOutcome: Equatable {
+    /// Persisted successfully; `count` is how many results applied. `count` below the
+    /// submitted total means the rest were proven-deleted or stale (a scan saw newer
+    /// bytes) — the coordinator re-wakes to retry those against fresh truth.
+    case applied(count: Int)
+    /// The SQLite write failed; the error is recorded. The coordinator must not re-wake.
+    case writeFailed
+}

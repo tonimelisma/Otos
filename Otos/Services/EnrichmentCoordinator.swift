@@ -296,18 +296,20 @@ private extension EnrichmentCoordinator {
         let batch = pendingApply
         pendingApply.removeAll(keepingCapacity: true)
         pendingApplyIDs.removeAll(keepingCapacity: true)
-        let applied = await store.applyEnrichmentBatch(batch)
+        let outcome = await store.applyEnrichmentBatch(batch)
         await diagnostics?.record(
             operation: "catalog.enrichment.coordinator",
             phase: "flush",
-            fields: ["count": "\(batch.count)", "applied": "\(applied)"]
+            fields: ["count": "\(batch.count)", "outcome": "\(outcome)"]
         )
-        // A dropped result (stale because a scan observed newer bytes, or proven-deleted)
-        // leaves its asset `needsEnrichment`, but its scan notification was already
-        // consumed while the id was in flight/pending. Re-wake against fresh truth so a
-        // still-stale asset is re-dispatched immediately instead of waiting for an
-        // unrelated catalog event; a proven-deleted one simply drops out of the snapshot.
-        if applied < batch.count {
+        // A *validated* drop (stale because a scan observed newer bytes, or proven-deleted)
+        // leaves its asset `needsEnrichment`, but its scan notification was already consumed
+        // while the id was in flight/pending. Re-wake against fresh truth so a still-stale
+        // asset is re-dispatched immediately instead of waiting for an unrelated catalog
+        // event; a proven-deleted one simply drops out of the snapshot. A write failure is
+        // not re-woken: re-dispatching would tight-loop the read/generate/fail cycle, so the
+        // recorded error is left to back it off until the next natural signal.
+        if case let .applied(count) = outcome, count < batch.count {
             markDirtyAndSignal()
         }
     }
