@@ -38,6 +38,7 @@ implementation history.
 | [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering and structural/detail update mechanics. |
 | [0007](adr/0007-catalog-order-reuse.md) | Sort every publication by precomputed key (no order cache) and share the full value map by copy-on-write. |
 | [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
+| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (thumbnails as files, metadata as an on-demand blob), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
 
 ## Current Implementation Specs
 
@@ -63,6 +64,7 @@ implementation history.
 | [0019](specs/0019-onboarding-walkthrough-and-why-comments.md) | Onboarding walkthrough and architecture why-comments. |
 | [0020](specs/0020-scan-date-freshness-and-selective-sync-contract.md) | In-memory scan-date freshness, selective-sync contract correction, and the PR-review-comment increment process. |
 | [0021](specs/0021-cloud-materialization-triggering-and-eviction-poc.md) | Cloud materialization triggering POC, the background-download contract change, the eviction constraint, and the retained non-blocking materialization helpers. |
+| [0022](specs/0022-metadata-and-thumbnail-enrichment.md) | Background thumbnail and metadata enrichment: the data model, the cursorless two-pool coordinator, the viewport channel, and tile rendering. |
 | [0023](specs/0023-filesystem-event-rescan-v1.md) | Running-app FSEvents: debounced per-root full rescans through the existing scan pipeline. |
 
 ## Planning Documents

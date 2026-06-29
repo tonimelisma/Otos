@@ -197,7 +197,14 @@ final class CatalogWindowViewModel {
                 await coordinator.updateViewport(ids)
             }
         }
-        enrichmentStartTask = Task { [coordinator] in
+        // Start the coordinator only after the shared initial load has completed, so its
+        // first snapshot is the persisted catalog rather than an empty pre-load one. A
+        // no-op launch rescan of an unchanged library fires no notification, so a
+        // coordinator that cached the empty snapshot would never refresh and would leave
+        // persisted assets un-enriched until some unrelated change. `store.start()` is
+        // idempotent and shared, so this awaits the same load `startCatalog` runs.
+        enrichmentStartTask = Task { [coordinator, store = catalogStore] in
+            try? await store.start()
             await coordinator.start()
         }
     }

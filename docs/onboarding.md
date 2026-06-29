@@ -40,6 +40,8 @@ thing to internalize:
         ▼
   CatalogStore        ← the only owner of "what media exists" at runtime (an actor)
         │  cheap "something changed" signal  +  on-demand immutable snapshot
+        ├──────────────▶ EnrichmentCoordinator  ← reads the same snapshots, produces a
+        │   writes back     thumbnail + metadata for each asset, writes them to the Store
         ▼
   CatalogProjection   ← turns raw truth into a UI-ready view (a second actor, off the main thread)
         │  CatalogWindowState, published at most 10×/second
@@ -53,8 +55,12 @@ thing to internalize:
 Nobody reads "upward." A view never calls the database; the database never knows a
 view exists. Each layer only hands a value to the next. This is what keeps the app
 understandable: to answer "where does X happen?" you find the one layer that owns X.
+The **`EnrichmentCoordinator`** is the one write-side branch: it is the mirror of the
+Projection — where the Projection reads Store truth *into UI state*, the coordinator
+reads the same truth *into derived products* (thumbnails, metadata) and writes them
+back through the Store, which then flows out to the views like any other change.
 
-## 3. Why there are two actors (the concurrency model)
+## 3. Why there are three actors (the concurrency model)
 
 An **actor** in Swift is a type that protects its own mutable state by letting only
 one task touch its insides at a time. You already know what they are; here is *why
@@ -71,10 +77,17 @@ Otos uses them*:
   off the main thread automatically. It is separate from the Store so that
   "what media exists" (Store) and "how this window shows it" (Projection) stay
   independent — you can change sorting without touching persistence.
+- **`EnrichmentCoordinator` is a third actor** because producing thumbnails and
+  metadata means reading bytes (and downloading cloud files), scheduling two worker
+  pools, and tracking what is in flight — shared mutable state that must not race and
+  must not run on the main thread. It is an actor for the same reason the Store is:
+  to serialize that state for free. The heavy work itself (decoding, parsing,
+  downloading) runs *inside its worker tasks*, off the actor; only the fast
+  scheduling and result hand-off run on it.
 - **`CatalogWindowViewModel` is `@MainActor`** because it touches SwiftUI state, and
   all UI must run on the main thread. It does *only* the bridging: it never sorts,
   queries the database, or scans. If you ever find heavy work creeping into it, that
-  is a bug — push it down into the Store or Projection.
+  is a bug — push it down into the Store, Projection, or coordinator.
 
 The rule of thumb: **the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.**
@@ -137,9 +150,12 @@ the database is an implementation detail you could swap out.
 
 Walks a library folder and reports the image and video files it finds. Whys:
 
-- It reads only **metadata** (name, size, dates, type) and never file *bytes*. This
-  matters because most media is in the cloud as "dataless" placeholders; reading
-  bytes would force gigabytes of downloads. Metadata is free.
+- It reads only **filesystem facts** (name, size, dates, type) and never file
+  *bytes*. This matters because most media is in the cloud as "dataless" placeholders;
+  reading bytes would force gigabytes of downloads. Filesystem facts are free; media
+  *metadata* (EXIF and the like) is not, which is why it is the enrichment
+  coordinator's job, not the scanner's. (Throughout Otos, "metadata" means media
+  metadata, never filesystem facts — FND-059.)
 - It **skips packages and symlinks** so it never descends into something like a
   `.photoslibrary` bundle or follows a link out of the library.
 - It **skips non-media regular files** whose `contentTypeKey` is nil or does not
@@ -197,14 +213,42 @@ Why: a media library can have tens of thousands of tiles, and `NSCollectionView`
 reuses cells (it only creates views for what is on screen), which SwiftUI's grids do
 not do as well at that scale. The small `MediaAssetCollectionApplyGate` exists so
 that only one structural update runs at a time and only the newest pending update
-survives — backpressure for a high-volume surface.
+survives — backpressure for a high-volume surface. It also reports the visible
+identities upward (the **viewport**) so enrichment can prioritize what you are
+looking at. `MediaAssetTileView` is one reusable tile: it shows the thumbnail and
+capture date, loading and decoding the thumbnail *off the main thread* and only
+assigning the finished image on Main, with a generation token so a load that
+finishes after the tile has been reused for another asset is discarded.
 
-### `Otos/Services/FileMaterialization.swift` — the cloud guard (not wired up yet)
+### `Otos/Services/EnrichmentCoordinator.swift` — the thumbnail + metadata scheduler
 
-A small helper that reports whether a file is a dataless cloud placeholder, *without*
-reading its bytes. It is deliberately unused for now; the future thumbnail and
-media-metadata code will call it before reading a file so it never triggers a
-surprise download. See `docs/specs/0016-cloud-materialization-detection.md`.
+The write-side satellite from §2. Read its file guide first. It runs two worker
+pools — one that enriches already-local files, one that downloads (materializes)
+dataless cloud files — and decides what to work on next by scanning the resident
+catalog for anything `needsEnrichment`, prioritizing the viewport. It keeps almost
+no state of its own: the work is *derived* from the Store snapshot, not maintained
+in a backlog. Its products are written back through `CatalogStore.applyEnrichmentBatch`
+in batches. See `docs/adr/0009-enrichment-storage-and-staleness.md` and
+`docs/specs/0022-metadata-and-thumbnail-enrichment.md`.
+
+### `Otos/Services/MediaEnricher.swift` and `Otos/Services/ThumbnailStore.swift`
+
+`MediaEnricher` does the work for one asset: it parses the file's metadata (the
+`MediaMetadata` library) and renders a 256 px thumbnail (QuickLook). It is an
+injectable value (like `CatalogScanner`), so tests substitute a fake. `ThumbnailStore`
+owns the thumbnail files on disk — the directory, the naming, and an *atomic* write
+(temp file then rename) so a tile never reads a half-written image during a
+re-enrichment. Thumbnails are files referenced by path; the catalog never stores the
+bytes.
+
+### `Otos/Services/FileMaterialization.swift` — the cloud guard
+
+A small helper that reports whether a file is a dataless cloud placeholder *without*
+reading its bytes, and that can trigger a non-blocking download. The enricher checks
+it immediately before any read so it never triggers a *surprise* download, and the
+coordinator uses it to deliberately materialize the library in the background. See
+`docs/specs/0016-cloud-materialization-detection.md` and
+`docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 
 ### `Otos/Support/*` — observability
 
@@ -256,8 +300,10 @@ instead of guessing.
   (final assignment), never a view.
 - **Changing what is stored** → `CatalogStore` + a SQLite migration in
   `CatalogStorePersistence.swift`, and an ADR (see `AGENTS.md`).
-- **Adding heavy work** (thumbnails, metadata) → a new actor/service off the main
-  thread that consults `FileMaterialization` before reading bytes.
+- **Adding heavy work** (more enrichment, future decode/export) → a new actor or
+  service off the main thread that consults `FileMaterialization` before reading
+  bytes, following `EnrichmentCoordinator`'s pattern (derive work from the snapshot,
+  do the heavy work in worker tasks, write results back through the Store in batches).
 - **Never** violate the non-negotiables: the filesystem is the truth, originals are
   read-only, nothing is written into the user's folders, and the main thread stays
   free of database/scan/sort/decode work.

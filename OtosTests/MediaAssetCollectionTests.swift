@@ -156,6 +156,15 @@ struct MediaAssetCollectionTests {
         )
         #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newStamp))
 
+        // Bytes can change while mtime seconds stay equal; the size must be in the key.
+        let newSize = makeDatedAsset(
+            captureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "t.heic",
+            enrichedMTime: 10,
+            enrichedSize: 999
+        )
+        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newSize))
+
         let newDate = makeDatedAsset(
             captureDate: Date(timeIntervalSince1970: 2000),
             thumbnailPath: "t.heic",
@@ -170,7 +179,8 @@ private func makeDatedAsset(
     captureDate: Date?,
     createdAt: Date? = nil,
     thumbnailPath: String? = nil,
-    enrichedMTime: Int? = nil
+    enrichedMTime: Int? = nil,
+    enrichedSize: Int64 = 1
 ) -> MediaAsset {
     MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
@@ -182,7 +192,7 @@ private func makeDatedAsset(
         contentModifiedAt: nil,
         thumbnailPath: thumbnailPath,
         captureDate: captureDate,
-        enrichedSourceSize: 1,
+        enrichedSourceSize: enrichedSize,
         enrichedSourceMTimeSeconds: enrichedMTime
     )
 }

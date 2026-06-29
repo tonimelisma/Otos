@@ -636,12 +636,20 @@ private extension CatalogStore {
         rootPath: LibraryRootPath
     ) -> Bool {
         var visibleChange = false
+        // The tile now shows `bestCaptureDate`, which falls back to the filesystem
+        // createdAt/contentModifiedAt, so a date change is a visible change that must
+        // republish. Compared at whole-second resolution (via `mtimeSeconds`) so the
+        // SQLite `Double` round-trip epsilon — the reason spec 0017 rejected a date
+        // comparison — cannot make every unchanged re-scan look changed.
+        let seconds = MediaAsset.mtimeSeconds
         for file in batch {
             let existing = assetsByRootPath[rootPath]?[file.relativePath]
             let isVisibleChange = existing == nil
                 || existing?.name != file.name
                 || existing?.contentTypeIdentifier != file.contentTypeIdentifier
                 || existing?.byteSize != file.byteSize
+                || seconds(existing?.createdAt) != seconds(file.createdAt)
+                || seconds(existing?.contentModifiedAt) != seconds(file.contentModifiedAt)
             if isVisibleChange {
                 visibleChange = true
             }

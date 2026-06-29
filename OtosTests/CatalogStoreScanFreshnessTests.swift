@@ -2,9 +2,11 @@ import Foundation
 @testable import Otos
 import Testing
 
-/// The in-memory catalog must always mirror the latest scanned filesystem facts so
-/// `currentSnapshot()` never serves stale values, even when the no-op-scan
-/// notification suppression (FND-062) decides the change is not worth publishing.
+/// The in-memory catalog must always mirror the latest scanned filesystem facts via the
+/// rescan merge so `currentSnapshot()` never serves stale values (FND-064). A whole-second
+/// date change is itself a visible change now that the tile shows the capture date, so it
+/// also republishes (FND-062); this test asserts the in-memory freshness, which holds
+/// regardless of the notification.
 struct CatalogStoreScanFreshnessTests {
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
@@ -33,8 +35,8 @@ struct CatalogStoreScanFreshnessTests {
         )
 
         // A fresh store reloads the stale date from SQLite, then the launch scan
-        // re-observes the file. The scan suppresses its projection notification
-        // (name/type/size unchanged) but must still refresh the in-memory value.
+        // re-observes the file and must refresh the in-memory value (and, since the
+        // changed second is now a visible change, also republish).
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reScanned = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in

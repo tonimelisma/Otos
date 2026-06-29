@@ -109,16 +109,20 @@ this section is their canonical statement.
   bytes; filesystem facts do not. Byte-reading work must never *accidentally*
   materialize a dataless file by faulting on a read: it checks the
   `FileMaterialization` detector (the `SF_DATALESS` kernel flag, the only viable bulk
-  signal) immediately before any byte read. Beyond that gate, deliberate, non-blocking,
-  bounded background materialization is permitted for enrichment: an owner may download
-  a file it has chosen to enrich through the non-blocking ubiquitous trigger and await
-  `SF_DATALESS` off-thread, never blocking a worker on a read-fault. It must stay
-  bounded because Otos cannot reclaim downloaded bytes (a consumer app cannot evict
-  another provider's files). Materialization status is transient and is never
-  persisted. The current catalog/scanner reads only filesystem facts and materializes
-  nothing; the background-download policy is the forward guideline for byte-reading
-  enrichment. See
-  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md` and
+  signal) immediately before any byte read. Beyond that gate, deliberate, non-blocking
+  background materialization is permitted for enrichment, up to and including eagerly
+  materializing the whole media library: an owner may download a file it has chosen to
+  enrich through the non-blocking ubiquitous trigger and await `SF_DATALESS` off-thread,
+  never blocking a worker on a read-fault. Otos cannot reclaim downloaded bytes (a
+  consumer app cannot evict another provider's files), so the local disk growth from
+  eager materialization is a real, unreclaimable, deliberately accepted cost of complete
+  enrichment coverage. Materialization status is transient and is never persisted. The
+  current catalog/scanner reads only filesystem facts and materializes nothing; the
+  `EnrichmentCoordinator` is the byte-reading enrichment owner that materializes. The
+  eager-enrichment choice and where the derived products are stored are owned by ADR
+  0009. See
+  `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`,
+  `docs/adr/0009-enrichment-storage-and-staleness.md`, and
   `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`.
 - Otos is an image/video product. Never add audio-specific playback, metadata,
   thumbnails, icons, classification, or workflows. This product boundary does

@@ -217,12 +217,15 @@ enum MediaAssetTilePresentation {
     }
 
     /// Distinguishes everything the async tile load produces: the thumbnail file, the
-    /// enrichment stamp that changes when the file is re-thumbnailed, and the date.
+    /// full `(size, mtime)` enrichment stamp that changes when the file is re-thumbnailed
+    /// (size is included because bytes can change while mtime seconds stay equal), and the
+    /// displayed date.
     nonisolated static func contentKey(_ asset: MediaAsset) -> String {
         let thumbnail = asset.thumbnailPath ?? ""
+        let size = asset.enrichedSourceSize ?? -1
         let stamp = asset.enrichedSourceMTimeSeconds ?? -1
         let date = asset.bestCaptureDate?.timeIntervalSince1970 ?? -1
-        return "\(thumbnail)#\(stamp)#\(date)"
+        return "\(thumbnail)#\(size)#\(stamp)#\(date)"
     }
 
     /// Loads the thumbnail (if enriched and a directory exists) and formats the date.

@@ -121,12 +121,17 @@ Pros:
 
 Cons:
 
-- Dates round-trip through SQLite as `Double` seconds, so float epsilon would make
-  every re-scan look changed and defeat the suppression.
+- Comparing the raw `Double` dates round-tripped through SQLite would let float
+  epsilon make every re-scan look changed and defeat the suppression.
 
 Failure modes:
 
 - Silent defeat of the optimization.
+
+(Update: once the tile began showing the capture date, spec 0022 did add the
+`createdAt`/`contentModifiedAt` dates to the suppression key — but compared at
+whole-second resolution via `MediaAsset.mtimeSeconds`, which sidesteps the float-
+epsilon objection above. Comparing full *enriched* asset values is still rejected.)
 
 ## Selected Approach
 

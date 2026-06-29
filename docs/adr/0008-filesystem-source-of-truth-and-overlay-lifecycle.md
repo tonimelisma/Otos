@@ -77,9 +77,11 @@ This ADR owns:
 - Pure filesystem-path asset identity and the rejection of durable identifiers,
   content fingerprints, generated UUIDs, and sidecars as identity mechanisms.
 - The cloud materialization policy: a detector gate prevents accidental blocking
-  materialization, while deliberate, non-blocking, bounded background materialization
-  is permitted for enrichment, knowing the downloaded bytes cannot be reclaimed by
-  Otos.
+  materialization, while deliberate, non-blocking background materialization is
+  permitted for enrichment — up to eagerly materializing the whole media library —
+  knowing the downloaded bytes cannot be reclaimed by Otos. The enrichment owner that
+  exercises this permission, and where it stores the derived products, are owned by
+  ADR 0009.
 
 This ADR references, but does not own:
 
@@ -89,11 +91,12 @@ This ADR references, but does not own:
   owned by ADR 0003.
 - Transient library availability and the publication/projection model, owned by
   ADR 0005.
+- Thumbnail and metadata storage, the staleness signature, and eager full-library
+  materialization for enrichment (the application of this materialization policy),
+  owned by ADR 0009.
 
 Separate ADRs or specs must own:
 
-- Thumbnail generation, storage layout, and freshness, honoring this lifecycle.
-- Metadata extraction and storage, honoring this materialization policy.
 - The editing model and any optional on-disk export of edited renders.
 - Any out-of-app move or rename detection convenience, including a thumbnail-match
   relink, if it is ever built.
@@ -139,21 +142,25 @@ subordinate, rebuildable overlay.
    kernel flag (proof-of-concept measured at ~7 µs/file across a 22k-file library;
    `ubiquitousItemDownloadingStatus` agrees but is ~317× slower and reports stale state
    right after a fault, so it is never used for bulk classification). The policy:
-   deliberate, non-blocking, bounded background materialization is permitted for
-   enrichment. An owner may download a dataless file it has chosen to enrich through
-   the non-blocking ubiquitous trigger (`startDownloadingUbiquitousItem`,
-   proof-of-concept verified to fire for the third-party OneDrive provider) and await
-   `SF_DATALESS` clearing off-thread, instead of blocking a worker on a read-fault.
-   This reverses the earlier "defer materialization to explicit user action" rule. It
-   stays bounded because Otos cannot reclaim the bytes it downloads — a consumer app
-   cannot evict another provider's files (the proof of concept got
-   `NSFileProviderErrorProviderNotFound`), so local disk growth is a real cost that an
-   enrichment owner must not incur by eagerly downloading a whole library.
-   Materialization status stays transient and is never persisted. The current
-   catalog/scanner still reads only filesystem facts and materializes nothing; this is
-   the forward guideline for the enrichment work that will read bytes. See
-   `docs/specs/0016-cloud-materialization-detection.md` and
-   `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`.
+   deliberate, non-blocking background materialization is permitted for enrichment, up
+   to and including eagerly materializing the whole media library. An owner may download
+   a dataless file it has chosen to enrich through the non-blocking ubiquitous trigger
+   (`startDownloadingUbiquitousItem`, proof-of-concept verified to fire for the
+   third-party OneDrive provider) and await `SF_DATALESS` clearing off-thread, instead
+   of blocking a worker on a read-fault. This reverses the earlier "defer materialization
+   to explicit user action" rule. Otos cannot reclaim the bytes it downloads — a consumer
+   app cannot evict another provider's files (the proof of concept got
+   `NSFileProviderErrorProviderNotFound`) — so local disk growth is a real, unreclaimable
+   cost. Eagerly materializing the whole media library to enrich it is nonetheless a
+   permitted, deliberate product choice that accepts that growth as the price of complete
+   coverage; that enrichment choice, how it prioritizes the viewport, and where the
+   derived products are stored are owned by ADR 0009. Materialization status stays
+   transient and is never persisted. The current catalog/scanner still reads only
+   filesystem facts and materializes nothing; byte-reading materialization is the
+   enrichment owner's job (ADR 0009). See
+   `docs/specs/0016-cloud-materialization-detection.md`,
+   `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`, and
+   `docs/adr/0009-enrichment-storage-and-staleness.md`.
 7. Media metadata and filesystem facts are distinct. Filesystem facts are URL
    resource values (name, size, dates, type, and the dataless flag) readable without
    materialization, and are all the catalog stores today. Media metadata (EXIF and
