@@ -105,6 +105,51 @@ struct EnrichmentCoordinatorTests {
         #expect(enriched.testAssets.first?.thumbnailPath == "t.heic")
         #expect(await attempts.total >= 3)
     }
+
+    @Test func droppedStaleResultReWakesAndReEnriches() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]), diagnostics: nil)
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        // The first completion reports a stale source size (the scanner's asset is 100
+        // bytes), so the store drops it. Without a re-wake the asset would stay
+        // needsEnrichment forever; with it, the coordinator retries with a matching result.
+        let attempts = AttemptCounter()
+        let enricher = MediaEnricher { id, _, size, mtime in
+            let attempt = await attempts.next()
+            let reportedSize: Int64 = attempt == 0 ? (size ?? 0) + 1000 : (size ?? -1)
+            return .complete(
+                EnrichmentResult(
+                    id: id,
+                    metadata: AssetMetadata(),
+                    captureDate: nil,
+                    thumbnailPath: "t.heic",
+                    sourceSize: reportedSize,
+                    sourceMTimeSeconds: mtime
+                )
+            )
+        }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: enricher,
+            materialize: { _ in true },
+            applyBatchSize: 1,
+            diagnostics: nil
+        )
+        await coordinator.start()
+
+        let enriched = try await waitForCatalogStoreSnapshot(store) { snapshot in
+            snapshot.testAssets.first?.needsEnrichment == false
+        }
+        await coordinator.shutdown()
+        #expect(enriched.testAssets.first?.thumbnailPath == "t.heic")
+        #expect(await attempts.total >= 2)
+    }
 }
 
 // MARK: - Helpers

@@ -60,9 +60,16 @@ struct CatalogWindowViewModelEnrichmentTests {
         try writeCatalogStoreFile(root.appending(path: "one.jpg"), contents: "jpeg")
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
 
+        // Inject inert filesystem watchers: this test exercises the launch/load path, not
+        // FSEvents, and a real watcher per store adds system-wide FSEvents contention that
+        // destabilizes the timing-sensitive watcher tests under parallel-suite load.
+        let (firstWatcher, _) = CatalogFilesystemWatcher.testing()
+        let (secondWatcher, _) = CatalogFilesystemWatcher.testing()
+
         // First launch: persist the cataloged asset with no enrichment (no coordinator).
         let firstStore = CatalogStore(
             location: .databaseFile(databaseURL),
+            filesystemWatcher: firstWatcher,
             scanCadence: .milliseconds(10),
             diagnostics: nil
         )
@@ -77,6 +84,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         // Relaunch: a fresh store reloads the persisted, un-enriched asset from SQLite.
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),
+            filesystemWatcher: secondWatcher,
             scanCadence: .milliseconds(10),
             diagnostics: nil
         )
@@ -98,8 +106,10 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         model.start()
 
-        // The persisted asset enriches purely from the post-load snapshot.
-        let state = try await waitForWindowState(model) { state in
+        // The persisted asset enriches purely from the post-load snapshot. This relaunch
+        // path does heavy two-store SQLite work, so it gets a generous tolerance under
+        // parallel-suite load.
+        let state = try await waitForWindowState(model, attempts: 600) { state in
             orderedAssets(in: state).first?.captureDate == captureDate
         }
         #expect(orderedAssets(in: state).first?.thumbnailPath == "t.heic")
@@ -127,15 +137,21 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.heic
 @MainActor
 private func waitForWindowState(
     _ model: CatalogWindowViewModel,
+    attempts: Int = 200,
     predicate: (CatalogWindowState) -> Bool
 ) async throws -> CatalogWindowState {
-    for _ in 0 ..< 200 {
+    for _ in 0 ..< attempts {
         let state = model.state
         if predicate(state) {
             return state
         }
         try await Task.sleep(for: .milliseconds(20))
     }
+    let asset = model.state.mediaGrid.orderedAssetIDs.first.flatMap { model.state.mediaGrid.assetsByID[$0] }
+    let need = String(describing: asset?.needsEnrichment)
+    let cap = String(describing: asset?.captureDate)
+    let size = String(describing: asset?.byteSize)
+    Issue.record("waitForWindowState timed out: needsEnrichment=\(need) captureDate=\(cap) byteSize=\(size)")
     throw EnrichmentWiringTestError.timedOut
 }
 

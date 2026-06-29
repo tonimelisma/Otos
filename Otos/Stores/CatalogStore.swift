@@ -226,13 +226,17 @@ extension CatalogStore {
     /// disjoint from facts; a row that was proven-deleted or whose source facts changed
     /// between extraction and this write is skipped, so a removed or edited asset is never
     /// stamped current by stale work.
-    func applyEnrichmentBatch(_ results: [EnrichmentResult]) async {
+    /// Returns the number of results actually applied. Fewer than `results.count` means
+    /// some were dropped — proven-deleted, or stale because a scan observed newer bytes
+    /// — so the coordinator must re-wake to retry the still-`needsEnrichment` ones.
+    @discardableResult
+    func applyEnrichmentBatch(_ results: [EnrichmentResult]) async -> Int {
         guard !results.isEmpty else {
-            return
+            return 0
         }
         let writable = currentlyWritableEnrichments(results)
         guard !writable.isEmpty else {
-            return
+            return 0
         }
 
         let state = OtosSignpost.persistence.beginInterval("CatalogEnrichmentBatchWrite")
@@ -246,7 +250,7 @@ extension CatalogStore {
         } catch {
             OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
             await recordEnrichmentBatchError(error, count: writable.count)
-            return
+            return 0
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
 
@@ -259,6 +263,7 @@ extension CatalogStore {
         if appliedCount > 0 {
             notifyCatalogChanged()
         }
+        return appliedCount
     }
 
     /// The subset of results whose asset still exists and still has the source facts the
