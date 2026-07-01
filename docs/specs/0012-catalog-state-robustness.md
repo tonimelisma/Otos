@@ -234,14 +234,14 @@ Before:
 During the change:
 
 - filter cached IDs first by available roots and sidebar scope
-- build `assetsByID` only for the resulting IDs
+- fetch visible details separately by ID through the Store-backed detail reader
 
 After:
 
-1. Projection retains global ordered identity cache.
+1. Store returns ordered IDs from persisted sort keys.
 2. Availability and scope produce ordered visible IDs.
-3. Only those IDs are materialized into current values.
-4. Out-of-scope detail changes remain equality-suppressed.
+3. Projection publishes ordered IDs plus a scalar detail-refresh generation.
+4. Only visible IDs are queried as current detail values by the grid reader.
 
 Impact: less copied state, narrower publication, and fewer irrelevant UI
 assignments while preserving complete Store truth.

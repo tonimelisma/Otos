@@ -2,6 +2,8 @@ import Foundation
 @testable import Otos
 import Testing
 
+// swiftlint:disable file_length
+
 struct CatalogProjectionTests {
     @Test func windowStateSortsLibrariesAndAssets() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
@@ -26,7 +28,7 @@ struct CatalogProjectionTests {
 
         #expect(state.libraries.map(\.displayName) == ["Archive", "Pictures"])
         #expect(state.libraries.map(\.activity) == [.idle, .scanning])
-        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["a.jpg", "b.jpg", "z.jpg"])
+        #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["a.jpg", "b.jpg", "z.jpg"])
     }
 
     @Test func windowStateFiltersAssetsInSelectedScope() async {
@@ -48,12 +50,7 @@ struct CatalogProjectionTests {
 
         #expect(state.title == "Pictures")
         #expect(state.resolvedSidebarSelection == .library(pictures.path))
-        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"])
-        // orderedAssetIDs is the scoped structure; assetsByID is the snapshot's
-        // full value map shared by copy-on-write, so it holds both libraries'
-        // assets and every ordered id resolves in it.
-        #expect(state.mediaGrid.assetsByID.count == 2)
-        #expect(Set(state.mediaGrid.orderedAssetIDs).isSubset(of: Set(state.mediaGrid.assetsByID.keys)))
+        #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
@@ -74,7 +71,7 @@ struct CatalogProjectionTests {
 
         #expect(state.title == "All Media")
         #expect(state.resolvedSidebarSelection == .allMedia)
-        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"])
+        #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
     @Test func windowStateHidesUnavailableLibraryAssets() async {
@@ -98,7 +95,7 @@ struct CatalogProjectionTests {
             sidebarSelection: .library(pictures.path)
         )
 
-        #expect(orderedAssets(in: allMedia).map(\.relativePath.rawValue) == ["shown.jpg"])
+        #expect(allMedia.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["shown.jpg"])
         #expect(selectedUnavailable.mediaGrid.orderedAssetIDs.isEmpty)
         #expect(selectedUnavailable.mediaEmptyState == .libraryUnavailable)
     }
@@ -140,7 +137,7 @@ struct CatalogProjectionTests {
 
         let state = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
 
-        #expect(orderedAssets(in: state).map(\.relativePath.rawValue) == ["shown.jpg"])
+        #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["shown.jpg"])
         #expect(state.mediaEmptyState == .noMedia)
     }
 
@@ -194,8 +191,12 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { snapshot, sidebarSelection in
-                await probe.build(snapshot: snapshot, sidebarSelection: sidebarSelection)
+            stateBuilder: { libraries, orderedAssetIDs, sidebarSelection in
+                await probe.build(
+                    libraries: libraries,
+                    orderedAssetIDs: orderedAssetIDs,
+                    sidebarSelection: sidebarSelection
+                )
             }
         )
         let recorder = StateRecorder()
@@ -234,15 +235,54 @@ struct CatalogProjectionTests {
         try await store.start(scansSavedLibraries: false)
         let contents = try await waitForDiagnostics(outputURL) { contents in
             contents.contains("\"operation\":\"catalog.projection.window\"")
-                && contents.contains("\"snapshotMs\"")
+                && contents.contains("\"storeReadMs\"")
                 && contents.contains("\"projectionMs\"")
                 && contents.contains("\"totalMs\"")
-                && contents.contains("\"assetSortMs\"")
+                && contents.contains("\"assetOrderQueryMs\"")
                 && contents.contains("\"equalityUs\"")
+                && contents.contains("\"detailRefreshGeneration\"")
+                && contents.contains("\"detailRefreshChanged\"")
         }
 
         #expect(contents.contains("\"dirtyAfterPublication\""))
         #expect(contents.contains("\"stateChanged\""))
+    }
+
+    @Test func detailOnlyStoreChangePublishesGridRefreshGeneration() async throws {
+        let fixture = try await makeDetailRefreshFixture()
+        defer {
+            fixture.recordingTask.cancel()
+        }
+
+        let asset = try #require(try await fixture.store.mediaAssets(for: [fixture.id])[fixture.id])
+        let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
+        let outcome = await fixture.store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: fixture.id,
+                metadata: AssetMetadata(cameraModel: "Cam"),
+                captureDate: Date(timeIntervalSince1970: 700),
+                thumbnailPath: "thumb.jpg",
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: sourceMTime
+            ),
+        ])
+        #expect(outcome == .applied(count: 1))
+
+        let refreshedStates = try await fixture.recorder.waitForCount(
+            fixture.startingCount + 1,
+            attempts: 100
+        ) { states in
+            states.contains { state in
+                state.mediaGrid.orderedAssetIDs == [fixture.id]
+                    && state.mediaGrid.detailRefreshGeneration > fixture.startingGeneration
+            }
+        }
+        let refreshedState = try #require(refreshedStates.last { state in
+            state.mediaGrid.orderedAssetIDs == [fixture.id]
+                && state.mediaGrid.detailRefreshGeneration > fixture.startingGeneration
+        })
+
+        #expect(refreshedState.mediaGrid.orderedAssetIDs == fixture.initialState.mediaGrid.orderedAssetIDs)
     }
 
     @Test func publicationLoopDoesNotYieldUnchangedWindowState() async throws {
@@ -250,7 +290,7 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { _, _ in .empty }
+            stateBuilder: { _, _, _ in .empty }
         )
         let recorder = StateRecorder()
         let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
@@ -305,9 +345,10 @@ private actor StateRecorder {
 
     func waitForCount(
         _ count: Int,
+        attempts: Int = 100,
         matching predicate: ([CatalogWindowState]) -> Bool = { _ in true }
     ) async throws -> [CatalogWindowState] {
-        for _ in 0 ..< 100 {
+        for _ in 0 ..< attempts {
             if states.count >= count, predicate(states) {
                 return states
             }
@@ -322,7 +363,11 @@ private actor ProjectionProbe {
     private var maximumInFlightValue = 0
     private var calls = 0
 
-    func build(snapshot: CatalogSnapshot, sidebarSelection: SidebarSelection) async -> CatalogWindowState {
+    func build(
+        libraries: [CatalogLibraryState],
+        orderedAssetIDs: [MediaAssetID],
+        sidebarSelection: SidebarSelection
+    ) async -> CatalogWindowState {
         calls += 1
         currentInFlight += 1
         maximumInFlightValue = max(maximumInFlightValue, currentInFlight)
@@ -331,11 +376,10 @@ private actor ProjectionProbe {
 
         return CatalogWindowState(
             title: "Call \(calls)",
-            libraries: snapshot.libraries,
+            libraries: libraries,
             mediaGrid: CatalogMediaGridState(
                 scope: sidebarSelection,
-                orderedAssetIDs: [],
-                assetsByID: [:]
+                orderedAssetIDs: orderedAssetIDs
             ),
             resolvedSidebarSelection: sidebarSelection,
             mediaEmptyState: .noMedia
@@ -361,18 +405,92 @@ private actor ProjectionProbe {
     }
 }
 
+private struct DetailRefreshFixture {
+    let store: CatalogStore
+    let projection: CatalogProjection
+    let recorder: StateRecorder
+    let recordingTask: Task<Void, Never>
+    let id: MediaAssetID
+    let initialState: CatalogWindowState
+    let startingCount: Int
+    let startingGeneration: UInt64
+}
+
+private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
+    let temp = try makeTemporaryDirectory()
+    let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
+
+    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+    let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
+    let recorder = StateRecorder()
+    let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+    let recordingTask = Task {
+        for await state in stream {
+            await recorder.append(state)
+        }
+    }
+
+    try await store.start(scansSavedLibraries: false)
+    try await store.addLibrary(url: root)
+    let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+    let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "one.jpg"))
+    let initialStates = try await recorder.waitForCount(1) { states in
+        states.contains { state in
+            state.libraries.first?.activity == .idle && state.mediaGrid.orderedAssetIDs == [id]
+        }
+    }
+    let initialState = try #require(initialStates.last { state in
+        state.libraries.first?.activity == .idle && state.mediaGrid.orderedAssetIDs == [id]
+    })
+    return DetailRefreshFixture(
+        store: store,
+        projection: projection,
+        recorder: recorder,
+        recordingTask: recordingTask,
+        id: id,
+        initialState: initialState,
+        startingCount: initialStates.count,
+        startingGeneration: initialState.mediaGrid.detailRefreshGeneration
+    )
+}
+
 private func makeSnapshot(
     libraries: [CatalogLibraryState],
     assets: [MediaAsset]
-) -> CatalogSnapshot {
-    CatalogSnapshot(
+) -> ProjectionTestState {
+    ProjectionTestState(
         libraries: libraries,
         assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
     )
 }
 
-private func orderedAssets(in state: CatalogWindowState) -> [MediaAsset] {
-    state.mediaGrid.orderedAssetIDs.compactMap { state.mediaGrid.assetsByID[$0] }
+extension CatalogProjection {
+    func windowState(
+        snapshot: ProjectionTestState,
+        sidebarSelection: SidebarSelection
+    ) async -> CatalogWindowState {
+        await windowState(
+            libraries: snapshot.libraries,
+            orderedAssetIDs: orderedAssetIDs(in: snapshot),
+            sidebarSelection: sidebarSelection
+        )
+    }
+}
+
+private func orderedAssetIDs(in snapshot: ProjectionTestState) -> [MediaAssetID] {
+    snapshot.assetsByID.values
+        .sorted { left, right in
+            if left.sortKey != right.sortKey {
+                return left.sortKey < right.sortKey
+            }
+            if left.libraryRootPath.rawValue != right.libraryRootPath.rawValue {
+                return left.libraryRootPath.rawValue < right.libraryRootPath.rawValue
+            }
+            return left.relativePath.rawValue < right.relativePath.rawValue
+        }
+        .map(\.id)
 }
 
 private enum CatalogProjectionTestError: Error {

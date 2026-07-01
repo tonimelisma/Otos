@@ -9,9 +9,8 @@ import Foundation
 // stay separate from durable root identity because the filesystem can change
 // independently of SQLite.
 //
-// `CatalogSnapshot` is raw Store truth at one instant. `CatalogWindowState` is
-// the UI-ready value built by Projection. Keeping both immutable at the handoff
-// boundary lets actors publish coherent state without sharing mutable storage.
+// Store owns durable truth in SQLite and exposes small immutable values at query
+// boundaries. `CatalogWindowState` is the UI-ready value built by Projection.
 
 /// Typed filesystem paths keep domain roles visible at call sites. A library
 /// root path and a media relative path are both text under the hood, but mixing
@@ -129,16 +128,14 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// constant for an asset and never disagrees with it.
     let sortKey: String
 
-    // Enrichment overlay. These are the only enrichment data that stays resident and
-    // flows through the catalog publication: a thumbnail file path, a resolved capture
-    // date, and the staleness stamps. The full parsed metadata is NOT here — it is a
-    // persisted, on-demand binary blob (see `AssetMetadata`), because holding ~30 mostly
-    // nil fields per asset would cost ~480 B each (nil optionals reserve their space) and
-    // would ride the Projection per-tick snapshot rebuild and equality check.
+    // Enrichment overlay. These are the only enrichment fields fetched with hot asset
+    // rows: a thumbnail file path, a resolved capture date, and the staleness stamps.
+    // Full parsed metadata lives in the `asset_metadata` companion table as queryable
+    // scalar columns plus JSON for long-tail fields, and is not loaded by the grid.
     //
     // Filesystem facts (scan) and enrichment overlay have disjoint writers: the scan
-    // refreshes facts and preserves these fields (the in-memory merge), enrichment writes
-    // these and preserves facts. Staleness is derived, never stored: an asset needs
+    // refreshes facts and preserves these fields, while enrichment writes these and
+    // preserves facts. Staleness is derived, never stored: an asset needs
     // enrichment when its current `(byteSize, contentModifiedAt-seconds)` no longer match
     // the `(enrichedSourceSize, enrichedSourceMTimeSeconds)` the last enrichment recorded.
     let thumbnailPath: String?
@@ -294,37 +291,18 @@ nonisolated enum MediaSortKey {
     }
 }
 
-/// Raw point-in-time catalog value made by CatalogStore on demand. "Snapshot"
-/// means an immutable copy of store truth at one instant; publication streams
-/// are owned elsewhere.
-nonisolated struct CatalogSnapshot: Equatable {
-    var libraries: [CatalogLibraryState]
-    var assetsByID: [MediaAssetID: MediaAsset]
-
-    static let empty = CatalogSnapshot(
-        libraries: [],
-        assetsByID: [:]
-    )
-
-    var isScanning: Bool {
-        libraries.contains { $0.isScanning }
-    }
-}
-
-/// The collection view consumes identity order separately from current values.
-/// `orderedAssetIDs` is the scoped, ordered structure; `assetsByID` is the
-/// snapshot's full value map, shared by copy-on-write. The grid looks up only the
-/// visible ids, so passing the full map avoids materializing a per-publication
-/// scoped copy.
+/// The collection view consumes identity order plus a scalar detail-refresh
+/// generation. Visible cell details are faulted through the Store-backed detail
+/// reader owned by the AppKit grid boundary, so publishing a window state never
+/// copies every asset value.
 nonisolated struct CatalogMediaGridState: Equatable {
     var scope: SidebarSelection
     var orderedAssetIDs: [MediaAssetID]
-    var assetsByID: [MediaAssetID: MediaAsset]
+    var detailRefreshGeneration: UInt64 = 0
 
     static let empty = CatalogMediaGridState(
         scope: .allMedia,
-        orderedAssetIDs: [],
-        assetsByID: [:]
+        orderedAssetIDs: []
     )
 }
 

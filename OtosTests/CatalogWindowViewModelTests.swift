@@ -10,15 +10,14 @@ struct CatalogWindowViewModelTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { snapshot, selection in
+            stateBuilder: { libraries, _, selection in
                 await buildProbe.recordBuild()
                 return CatalogWindowState(
                     title: "Test",
-                    libraries: snapshot.libraries,
+                    libraries: libraries,
                     mediaGrid: CatalogMediaGridState(
                         scope: selection,
-                        orderedAssetIDs: [],
-                        assetsByID: [:]
+                        orderedAssetIDs: []
                     ),
                     resolvedSidebarSelection: selection,
                     mediaEmptyState: .noMedia
@@ -69,7 +68,7 @@ struct CatalogWindowViewModelTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let state = try await waitForWindowState(model) { state in
             state.libraries.map(\.path) == [rootPath]
-                && orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"]
+                && state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"]
         }
 
         #expect(state.libraries.first?.availability == .available)
@@ -105,7 +104,7 @@ struct CatalogWindowViewModelTests {
         model.selectSidebar(.library(picturesPath))
 
         let state = try await waitForWindowState(model) { state in
-            orderedAssets(in: state).map(\.relativePath.rawValue) == ["one.jpg"]
+            state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"]
         }
         #expect(state.title == "Pictures")
         #expect(state.resolvedSidebarSelection == .library(picturesPath))
@@ -206,7 +205,7 @@ struct CatalogWindowViewModelTests {
             state.libraries.map(\.path) == [secondPath]
         }
         #expect(state.libraries.map(\.path) == [secondPath])
-        #expect(await store.currentSnapshot().libraries.map(\.path) == [secondPath])
+        #expect(try await catalogStoreTestState(store).libraries.map(\.path) == [secondPath])
     }
 
     @MainActor
@@ -279,7 +278,7 @@ struct CatalogWindowViewModelTests {
         await loadGate.release()
         try await store.start(scansSavedLibraries: false)
         try await Task.sleep(for: .milliseconds(50))
-        let paths = await store.currentSnapshot().libraries.map(\.path)
+        let paths = try await catalogStoreTestState(store).libraries.map(\.path)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
         #expect(!paths.contains(secondPath))
         #expect(paths.isEmpty || paths == [firstPath])
@@ -320,10 +319,6 @@ struct CatalogWindowViewModelTests {
         #expect(model.sidebarSelection == .library(archivePath))
         #expect(state.title == "Archive")
     }
-}
-
-private func orderedAssets(in state: CatalogWindowState) -> [MediaAsset] {
-    state.mediaGrid.orderedAssetIDs.compactMap { state.mediaGrid.assetsByID[$0] }
 }
 
 @MainActor

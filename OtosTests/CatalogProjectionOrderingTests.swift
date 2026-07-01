@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 struct CatalogProjectionOrderingTests {
-    @Test func detailChangeKeepsOrderAndUpdatesValues() async {
+    @Test func detailChangeKeepsOrder() async {
         let root = orderingRoot()
         let projection = CatalogProjection(diagnostics: nil)
         let original = orderingAsset(root: root, relativePath: "one.jpg")
@@ -27,8 +27,6 @@ struct CatalogProjectionOrderingTests {
         )
 
         #expect(updated.mediaGrid.orderedAssetIDs == [original.id])
-        #expect(updated.mediaGrid.assetsByID[original.id]?.name == "renamed-detail.jpg")
-        #expect(updated.mediaGrid.assetsByID[original.id]?.byteSize == 99)
     }
 
     @Test func sameCountIdentityReplacementRebuildsOrder() async {
@@ -47,7 +45,6 @@ struct CatalogProjectionOrderingTests {
         )
 
         #expect(recovered.mediaGrid.orderedAssetIDs == [replacement.id])
-        #expect(recovered.mediaGrid.assetsByID[replacement.id] == replacement)
     }
 
     @Test func changedMembershipResortsAfterInsertionAndDeletion() async {
@@ -63,7 +60,7 @@ struct CatalogProjectionOrderingTests {
             ),
             sidebarSelection: .allMedia
         )
-        #expect(orderingAssets(in: first).map(\.relativePath.rawValue) == ["b.jpg", "z.jpg"])
+        #expect(first.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["b.jpg", "z.jpg"])
 
         let changed = await projection.windowState(
             snapshot: orderingSnapshot(
@@ -76,7 +73,7 @@ struct CatalogProjectionOrderingTests {
             ),
             sidebarSelection: .allMedia
         )
-        #expect(orderingAssets(in: changed).map(\.relativePath.rawValue) == ["a.jpg", "c.jpg", "z.jpg"])
+        #expect(changed.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["a.jpg", "c.jpg", "z.jpg"])
     }
 
     @Test func sidebarFilteringPublishesSelectedScope() async throws {
@@ -138,15 +135,11 @@ private func orderingAsset(root: LibraryRoot, relativePath: String) -> MediaAsse
 private func orderingSnapshot(
     root: LibraryRoot,
     assets: [MediaAsset]
-) -> CatalogSnapshot {
-    CatalogSnapshot(
+) -> ProjectionTestState {
+    ProjectionTestState(
         libraries: [CatalogLibraryState(root: root, availability: .available, activity: .idle)],
         assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
     )
-}
-
-private func orderingAssets(in state: CatalogWindowState) -> [MediaAsset] {
-    state.mediaGrid.orderedAssetIDs.compactMap { state.mediaGrid.assetsByID[$0] }
 }
 
 private func waitForOrderingDiagnostic(

@@ -135,23 +135,27 @@ epsilon objection above. Comparing full *enriched* asset values is still rejecte
 
 ## Selected Approach
 
-Alternative A. `MediaAsset` gains a precomputed `sortKey` (library segment then
-relative path, with digit runs zero-padded for numeric order); `CatalogProjection`
-sorts by it with a plain comparison. `CatalogStore.applyScannedBatchToMemory`
-returns whether memory changed by comparing name, content type, and size, and
-`recordScannedBatch` notifies only when it did.
+Alternative A. `MediaAsset` gained a precomputed `sortKey` (library segment then
+relative path, with digit runs zero-padded for numeric order). ADR 0010 later
+moved order execution from Projection into Store-owned SQLite: the sort key is now
+persisted as `media_asset.sort_key` and ordered by SQL. Scan writes still suppress
+no-op notifications by letting SQLite report whether any visible filesystem facts
+changed.
 
 ## Interfaces, Ownership, And Data Flow
 
-- `MediaAsset.sortKey: String` computed in its initializer (`MediaSortKey`).
-- `CatalogProjection.sortAssetIDs(_ assetsByID:)` sorts values by `sortKey`.
-- `CatalogStore.applyScannedBatchToMemory(...) -> Bool`; `recordScannedBatch` gates
-  `notifyCatalogChanged()` on the result.
-- No actor, persistence, or schema changes. Reconciliation deletes still notify.
+- `MediaAsset.sortKey: String` computed in its initializer (`MediaSortKey`) and
+  persisted to `media_asset.sort_key`.
+- `CatalogStore.orderedAssetIDs(...)` returns SQLite-ordered IDs by `sort_key`.
+- `CatalogStorePersistence.upsertScannedFile(...) -> Bool`; `recordScannedBatch`
+  gates `notifyCatalogChanged()` on whether SQLite inserted or updated rows.
+- Reconciliation deletes still notify.
 
 ## Retirement Proof
 
-Nothing retired. The order cache (ADR 0007 / FND-043), the scoped value map, and the
+This spec originally retired nothing. ADR 0010 later retired the projection sort,
+resident per-asset map, and current snapshot path. The order cache (ADR 0007 /
+FND-043), the scoped value map, and the
 structural apply path are intentionally preserved; their further optimization is
 deferred and named above.
 
@@ -159,9 +163,9 @@ deferred and named above.
 
 - Updated: `docs/requirements.md` (FND-061, FND-062), `docs/index.md`.
 - Added: this spec, `OtosTests/MediaSortKeyTests.swift`.
-- Code comments added on `MediaAsset.sortKey`, `MediaSortKey`, the cheap
-  `sortAssetIDs`, and the no-op-suppression path explain the mechanics and the
-  float-epsilon hazard.
+- Code comments added on `MediaAsset.sortKey`, `MediaSortKey`, sort-key
+  persistence/querying, and the no-op-suppression path explain the mechanics and
+  the float-epsilon hazard.
 
 ## Instrumentation And Performance
 

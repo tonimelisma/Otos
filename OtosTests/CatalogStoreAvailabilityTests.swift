@@ -12,11 +12,11 @@ struct CatalogStoreAvailabilityTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning }
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
         try await reloadedStore.start(scansSavedLibraries: false)
-        let loaded = await reloadedStore.currentSnapshot()
+        let loaded = try await catalogStoreTestState(reloadedStore)
 
         #expect(loaded.libraries.first?.availability == .unknown)
     }
@@ -31,7 +31,7 @@ struct CatalogStoreAvailabilityTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -40,7 +40,7 @@ struct CatalogStoreAvailabilityTests {
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
 
-        let unavailable = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        let unavailable = try await waitForCatalogStoreState(secondStore) { snapshot in
             snapshot.libraries.first?.availability == .unavailable
                 && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
@@ -58,7 +58,7 @@ struct CatalogStoreAvailabilityTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -73,7 +73,7 @@ struct CatalogStoreAvailabilityTests {
         )
         try await secondStore.start()
 
-        let unavailable = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        let unavailable = try await waitForCatalogStoreState(secondStore) { snapshot in
             snapshot.libraries.first?.availability == .unavailable
                 && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }

@@ -19,7 +19,7 @@ ejected or disconnected library never causes catalog-row deletion.
 In scope:
 
 - cheap Store change notifications
-- on-demand keyed CatalogSnapshot values
+- Store-owned query APIs for current libraries and ordered media IDs
 - Projection-owned 10 Hz dirty publication loop
 - one projection publication in flight
 - explicit sidebar intent delivery
@@ -98,9 +98,11 @@ Selected: Projection-owned publication.
 2. Projection's Store listener marks the actor dirty.
 3. Explicit selection intents arrive through the ViewModel-owned newest-buffered
    stream and also mark Projection dirty.
-4. On the next 100 ms tick, Projection requests currentSnapshot().
-5. Projection validates/rebuilds order, filters availability and scope, selects
-   title/empty state, and emits CatalogWindowState.
+4. On the next 100 ms tick, Projection requests current library rows and scoped
+   ordered IDs from Store.
+5. Projection filters availability and scope, selects title/empty state, advances
+   the grid detail-refresh generation for Store invalidations, and emits
+   `CatalogWindowState`.
 6. ViewModel assigns the final value on MainActor.
 7. If input changed during an awaited step, dirty remains true and the next tick
    derives the newest inputs.
@@ -153,7 +155,7 @@ current mechanics only.
 ## Acceptance And Tests
 
 - Store notifications carry no full UI snapshot.
-- currentSnapshot() returns keyed current truth.
+- Store query APIs return current libraries and ordered IDs without a UI snapshot.
 - publication coalesces Store/selection changes at 10 Hz.
 - dirty-during-await yields then reruns without overlap.
 - database-loaded roots remain unknown when scanning is disabled.

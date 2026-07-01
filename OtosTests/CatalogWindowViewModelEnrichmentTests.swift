@@ -37,10 +37,9 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         // The coordinator the view model started enriches the asset, and the enriched
         // capture date and thumbnail path surface in the projected window state.
-        let state = try await waitForWindowState(model) { state in
-            orderedAssets(in: state).first?.captureDate == captureDate
+        let asset = try await waitForFirstAsset(store: store, model: model) { asset in
+            asset.captureDate == captureDate
         }
-        let asset = try #require(orderedAssets(in: state).first)
         #expect(asset.thumbnailPath == "t.jpg")
 
         // The viewport priority hint is accepted without disrupting the enrichment result.
@@ -53,7 +52,7 @@ struct CatalogWindowViewModelEnrichmentTests {
     @Test func persistedAssetsEnrichOnRelaunchAfterNoOpLaunchScan() async throws {
         // A persistent catalog whose launch rescan is a no-op (identical facts → no
         // notification) is the case start-after-load must cover: the coordinator must
-        // enrich from the post-load snapshot, since no scan notification will wake it.
+        // enrich from post-load Store queries, since no scan notification will wake it.
         //
         // Everything is kept light and deterministic so this test adds no real filesystem
         // load to the parallel suite: a fixed in-memory scanner (no directory enumeration),
@@ -76,7 +75,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         )
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        let firstScan = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        let firstScan = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         #expect(firstScan.testAssets.first?.needsEnrichment == true)
@@ -109,11 +108,11 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         model.start()
 
-        // The persisted asset enriches purely from the post-load snapshot.
-        let state = try await waitForWindowState(model, attempts: 400) { state in
-            orderedAssets(in: state).first?.captureDate == captureDate
+        // The persisted asset enriches purely from the post-load Store query.
+        let asset = try await waitForFirstAsset(store: secondStore, model: model, attempts: 400) { asset in
+            asset.captureDate == captureDate
         }
-        #expect(orderedAssets(in: state).first?.thumbnailPath == "t.jpg")
+        #expect(asset.thumbnailPath == "t.jpg")
         await coordinator.shutdown()
     }
 }
@@ -154,28 +153,32 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg"
 }
 
 @MainActor
-private func waitForWindowState(
-    _ model: CatalogWindowViewModel,
+private func waitForFirstAsset(
+    store: CatalogStore,
+    model: CatalogWindowViewModel,
     attempts: Int = 200,
-    predicate: (CatalogWindowState) -> Bool
-) async throws -> CatalogWindowState {
+    predicate: (MediaAsset) -> Bool
+) async throws -> MediaAsset {
+    var lastAsset: MediaAsset?
     for _ in 0 ..< attempts {
-        let state = model.state
-        if predicate(state) {
-            return state
+        if let id = model.state.mediaGrid.orderedAssetIDs.first {
+            let asset = try await store.mediaAssets(for: [id])[id]
+            guard let asset else {
+                try await Task.sleep(for: .milliseconds(20))
+                continue
+            }
+            lastAsset = asset
+            if predicate(asset) {
+                return asset
+            }
         }
         try await Task.sleep(for: .milliseconds(20))
     }
-    let asset = model.state.mediaGrid.orderedAssetIDs.first.flatMap { model.state.mediaGrid.assetsByID[$0] }
-    let need = String(describing: asset?.needsEnrichment)
-    let cap = String(describing: asset?.captureDate)
-    let size = String(describing: asset?.byteSize)
-    Issue.record("waitForWindowState timed out: needsEnrichment=\(need) captureDate=\(cap) byteSize=\(size)")
+    let need = String(describing: lastAsset?.needsEnrichment)
+    let cap = String(describing: lastAsset?.captureDate)
+    let size = String(describing: lastAsset?.byteSize)
+    Issue.record("waitForFirstAsset timed out: needsEnrichment=\(need) captureDate=\(cap) byteSize=\(size)")
     throw EnrichmentWiringTestError.timedOut
-}
-
-private func orderedAssets(in state: CatalogWindowState) -> [MediaAsset] {
-    state.mediaGrid.orderedAssetIDs.compactMap { state.mediaGrid.assetsByID[$0] }
 }
 
 private enum EnrichmentWiringTestError: Error {

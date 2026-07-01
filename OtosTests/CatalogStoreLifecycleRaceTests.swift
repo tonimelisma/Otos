@@ -36,7 +36,7 @@ struct CatalogStoreLifecycleRaceTests {
         try await startup.value
         try await mutation.value
 
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         #expect(snapshot.libraries.map(\.path) == [rootPath])
     }
@@ -57,7 +57,7 @@ struct CatalogStoreLifecycleRaceTests {
         )
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: savedRoot)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning }
 
         let recorder = ScanInvocationRecorder()
         let recordingScanner = CatalogScanner { rootPath, _, _, _ in
@@ -75,7 +75,7 @@ struct CatalogStoreLifecycleRaceTests {
         try await secondStore.addLibrary(url: addedRoot)
         try await secondStore.start()
         try await recorder.waitForInvocationCount(2)
-        _ = try await waitForCatalogStoreSnapshot(secondStore) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(secondStore) { !$0.isScanning }
 
         let savedPath = try CatalogPath.normalizedDirectoryPath(for: savedRoot)
         let addedPath = try CatalogPath.normalizedDirectoryPath(for: addedRoot)
@@ -129,12 +129,12 @@ struct CatalogStoreLifecycleRaceTests {
             contents.contains("\"operation\":\"catalog.scan.staleCallback\"")
                 && contents.contains("\"callback\":\"completion\"")
         }
-        let replacementStillActive = await store.currentSnapshot()
+        let replacementStillActive = try await catalogStoreTestState(store)
         #expect(replacementStillActive.isScanning)
         #expect(replacementStillActive.testAssets.isEmpty)
 
         await probe.release(2)
-        let completed = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let completed = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         #expect(completed.testAssets.map(\.relativePath.rawValue) == ["replacement.jpg"])

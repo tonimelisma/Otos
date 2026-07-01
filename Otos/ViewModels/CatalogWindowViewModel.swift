@@ -43,9 +43,14 @@ final class CatalogWindowViewModel {
         catalogStore.thumbnailDirectory
     }
 
+    var tileDetailReader: MediaTileDetailReader {
+        mediaTileDetailReader
+    }
+
     @ObservationIgnored private let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator
+    @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let diagnostics: CatalogDiagnostics?
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
@@ -89,6 +94,7 @@ final class CatalogWindowViewModel {
         )
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
+        mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
         self.enrichmentCoordinator = enrichmentCoordinator
             ?? EnrichmentCoordinator(
                 store: catalogStore,
@@ -198,11 +204,11 @@ final class CatalogWindowViewModel {
             }
         }
         // Start the coordinator only after the shared initial load has completed, so its
-        // first snapshot is the persisted catalog rather than an empty pre-load one. A
-        // no-op launch rescan of an unchanged library fires no notification, so a
-        // coordinator that cached the empty snapshot would never refresh and would leave
-        // persisted assets un-enriched until some unrelated change. `store.start()` is
-        // idempotent and shared, so this awaits the same load `startCatalog` runs.
+        // first candidate query sees persisted catalog rows rather than an empty pre-load
+        // database. A no-op launch rescan of an unchanged library fires no notification,
+        // so a coordinator started too early could stay idle until some unrelated change.
+        // `store.start()` is idempotent and shared, so this awaits the same load
+        // `startCatalog` runs.
         enrichmentStartTask = Task { [coordinator, store = catalogStore] in
             try? await store.start()
             await coordinator.start()

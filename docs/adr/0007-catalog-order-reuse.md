@@ -1,7 +1,7 @@
 # ADR 0007: Catalog Ordering And Value Materialization
 
-- Status: Accepted
-- Last updated: 2026-06-23
+- Status: Superseded by ADR 0010 for current order execution and value materialization
+- Last updated: 2026-06-30
 - Specs: `docs/specs/0011-placeholder-media-grid.md`,
   `docs/specs/0012-catalog-state-robustness.md`,
   `docs/specs/0017-catalog-publication-performance.md`,
@@ -9,8 +9,10 @@
 
 ## Context
 
-`CatalogStore` keeps media assets in dictionaries keyed by `MediaAssetID`.
-Dictionary iteration order is meaningless, while the grid needs a stable order.
+This ADR records the pre-ADR-0010 ordering decision and the evidence that removed
+the projection order cache. ADR 0010 now owns current order execution and value
+materialization: `CatalogStore` persists `sort_key` and returns ordered IDs from
+SQLite, while Projection and the UI no longer receive a full asset value map.
 
 This ADR originally decided to cache the globally ordered `[MediaAssetID]` in the
 projection and reuse it whenever direct identity validation proved membership was
@@ -43,17 +45,16 @@ It references but does not own:
 User sort modes, metadata ordering, and selection of individual media assets are
 outside this decision. Scan-time media eligibility is owned by ADR 0002.
 
-## Decision
+## Superseded Decision
 
-`CatalogProjection` is the sole sorting owner and **sorts the current ids on every
-publication** by comparing each asset's precomputed `sortKey`. There is no order
-cache and no membership-validation step; the snapshot exposes keyed assets and no
-ordering.
+Before ADR 0010, `CatalogProjection` was the sorting owner and sorted current ids
+on every publication by comparing each asset's precomputed `sortKey`. There was no
+order cache and no membership-validation step.
 
-The projection passes the snapshot's **full value map by copy-on-write** as
-`CatalogMediaGridState.assetsByID` and the scoped, ordered ids as
-`orderedAssetIDs`. The grid renders `orderedAssetIDs` and looks up only the visible
-ids in the shared map, so no per-publication scoped copy is materialized.
+ADR 0010 supersedes the materialization half of that decision. The current grid
+receives ordered IDs and a scalar detail-refresh generation only. It faults visible
+details through the Store-backed detail reader instead of receiving
+`CatalogMediaGridState.assetsByID`.
 
 ## Alternatives Considered
 
@@ -99,17 +100,10 @@ trace at much larger scale proves the full re-sort is a bottleneck.
 
 ## Consequences
 
-- The projection is simpler: no `cachedOrderedAssetIDs`, no membership validation,
-  no scoped-map construction.
-- The grid's `assetsByID` is the full snapshot map (shared, not copied). Its
-  `orderedAssetIDs` remains the scoped, ordered structure.
-- The cross-library equality isolation the scoped map provided is dropped. A real
-  detail change in an unselected library now produces one extra publication that
-  the grid resolves to a visible-only refresh with no visible change. No-op-scan
-  suppression (FND-062) removes the common source of such churn, so this is
-  acceptable for the current product.
-- Projection diagnostics report sort duration; the cache-hit, membership-change,
-  and scoped-build fields are removed.
+- ADR 0010 keeps the useful part: persisted precomputed sort keys.
+- Projection no longer performs full asset sorting or carries a full value map.
+- Projection diagnostics now report Store ordered-ID query timing and scalar
+  detail-refresh generation changes.
 
 ## Retirement Proof
 

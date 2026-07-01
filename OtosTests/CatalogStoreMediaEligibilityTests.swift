@@ -23,7 +23,7 @@ struct CatalogStoreMediaEligibilityTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
 
-        let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let scanned = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 2
         }
         #expect(
@@ -47,7 +47,7 @@ struct CatalogStoreMediaEligibilityTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["photo.jpg"]
         }
 
@@ -60,7 +60,7 @@ struct CatalogStoreMediaEligibilityTests {
 
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
-        let reconciled = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        let reconciled = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["photo.jpg"]
         }
         #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["photo.jpg"])
@@ -89,17 +89,22 @@ private func insertLegacyNonMediaRow(
             INSERT OR REPLACE INTO media_asset (
                 library_root_id,
                 relative_path,
+                sort_key,
                 name,
                 content_type_identifier,
                 byte_size,
                 created_at_unix,
                 content_modified_at_unix
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 rootID,
                 relativePath,
+                MediaSortKey.make(
+                    libraryRootPath: rootPath,
+                    relativePath: MediaRelativePath(rawValue: relativePath)
+                ),
                 relativePath,
                 "public.plain-text",
                 4,

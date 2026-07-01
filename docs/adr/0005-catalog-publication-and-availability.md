@@ -55,23 +55,25 @@ policy is owned by ADR 0002 and spec 0023.
 Ordinary events only invalidate Projection. A successful root removal also
 carries its typed path through the lossless event stream. That transient fact is
 necessary because remove and same-path add can complete inside one publication
-interval, leaving a final snapshot whose path membership looks unchanged.
-`currentSnapshot()` builds an immutable, keyed, point-in-time `CatalogSnapshot`
-only when Projection needs one.
+interval, leaving a final queried state whose path membership looks unchanged.
+ADR 0010 supersedes the old raw snapshot read: Projection now asks Store for
+current library rows and ordered asset IDs, and visible grid cells fault detail by
+ID through Store queries.
 
-This keeps snapshot construction and UI cadence out of Store mutation paths.
-SQLite and the in-memory dictionaries remain Store-owned truth.
+This keeps UI cadence out of Store mutation paths. SQLite and Store-owned root
+runtime state remain catalog truth.
 
 ### Projection-Owned Publication
 
 `CatalogProjection` owns one 10 Hz dirty loop. Store changes and sidebar intents
 mark the same loop dirty. On a tick with pending work, Projection asks Store for
-a snapshot, derives one `CatalogWindowState`, and yields it.
+current library rows plus ordered asset IDs, derives one `CatalogWindowState`, and
+yields it.
 
 When Projection receives `.libraryRemoved(path)` for its selected root, it
 immediately retains `.allMedia` as selection input and marks itself dirty. A
 same-path replacement therefore remains unselected even when no root-absent
-snapshot was published. The path is transient context, not generated identity;
+state was published. The path is transient context, not generated identity;
 SQLite row IDs remain Store-private.
 
 Only one derivation may be in flight. Actor reentrancy allows new input to mark

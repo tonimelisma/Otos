@@ -8,6 +8,7 @@ struct MediaGridView: View {
     let grid: CatalogMediaGridState
     let emptyState: CatalogMediaEmptyState
     var thumbnailDirectory: URL?
+    var detailReader: MediaTileDetailReader?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     var body: some View {
@@ -25,6 +26,7 @@ struct MediaGridView: View {
                 MediaAssetCollectionView(
                     grid: grid,
                     thumbnailDirectory: thumbnailDirectory,
+                    detailReader: detailReader,
                     onViewportChanged: onViewportChanged
                 )
             }
@@ -60,8 +62,7 @@ struct MediaGridView: View {
         title: "All Media",
         grid: CatalogMediaGridState(
             scope: .allMedia,
-            orderedAssetIDs: [asset.id],
-            assetsByID: [asset.id: asset]
+            orderedAssetIDs: [asset.id]
         ),
         emptyState: .noMedia
     )

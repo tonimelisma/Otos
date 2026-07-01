@@ -71,9 +71,11 @@ Out of scope:
 
 ### Store And Projection
 
-- currentSnapshot begin/end signposts include library and asset counts
-- Projection publication spans include snapshot, derivation, ordering-cache hit,
-  membership change, sort duration, selected scope, and equality suppression
+- Store query signposts include ordered-ID, visible-detail, metadata, and
+  enrichment-candidate reads with bounded counts and query timings.
+- Projection publication spans include Store read time, ordered-ID query time,
+  selected scope, media identity change, detail-refresh generation change, and
+  equality suppression.
 - coarse Projection summaries are written to JSONL for post-run checks
 
 ### ViewModel

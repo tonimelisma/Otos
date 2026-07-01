@@ -144,8 +144,9 @@ through OSLog and written to debug JSONL diagnostics when applicable.
 - `MediaAsset`: typed library path, typed relative path, optional name, optional
   content type identifier, optional byte size, optional creation date, optional
   content modification date.
-- `CatalogSnapshot`: raw, Sendable, immutable store state built by
-  `CatalogStore.currentSnapshot()`.
+- Store query APIs: raw catalog values are read through current library rows,
+  ordered media IDs, visible media detail, metadata detail, and enrichment
+  candidate queries.
 - `CatalogWindowViewModel`: `@MainActor @Observable`, owned by the one main
   window; owns catalog startup, weak state consumption, newest-value sidebar
   selection delivery, lossless serial add/remove delivery, and final catalog
@@ -195,7 +196,7 @@ Current source and docs must keep these retired surfaces unreachable:
   and MainActor state assignment.
 - Stringly typed domain facts: addressed with typed path and identity values.
 - Ambiguous Swift API names: `CatalogMediaGridState` explicitly separates scope,
-  ordered identities, and keyed current values.
+  ordered identities, and detail-refresh invalidation.
 - Diagnostic payload sprawl: bounded JSONL events only; no secrets, credentials,
   thumbnails, or unbounded binary payloads.
 

@@ -2,11 +2,9 @@ import Foundation
 @testable import Otos
 import Testing
 
-/// The in-memory catalog must always mirror the latest scanned filesystem facts via the
-/// rescan merge so `currentSnapshot()` never serves stale values (FND-064). A whole-second
-/// date change is itself a visible change now that the tile shows the capture date, so it
-/// also republishes (FND-062); this test asserts the in-memory freshness, which holds
-/// regardless of the notification.
+/// The catalog database must always store the latest scanned filesystem facts. A
+/// whole-second date change is itself a visible change now that the tile shows the
+/// capture date, so it also republishes (FND-062).
 struct CatalogStoreScanFreshnessTests {
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
@@ -19,7 +17,7 @@ struct CatalogStoreScanFreshnessTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        let firstScan = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        let firstScan = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         let originalSize = try #require(firstScan.testAssets.first?.byteSize)
@@ -35,11 +33,11 @@ struct CatalogStoreScanFreshnessTests {
         )
 
         // A fresh store reloads the stale date from SQLite, then the launch scan
-        // re-observes the file and must refresh the in-memory value (and, since the
-        // changed second is now a visible change, also republish).
+        // re-observes the file and must refresh the row (and, since the changed
+        // second is now a visible change, also republish).
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
-        let reScanned = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        let reScanned = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         let refreshed = try #require(reScanned.testAssets.first)

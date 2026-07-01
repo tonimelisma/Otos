@@ -128,12 +128,13 @@ one-window product without moving work into Views or MainActor.
 
 ## Interfaces And Data Flow
 
-- CatalogSnapshot: raw keyed Store value built on demand
+- Store query APIs: current libraries, ordered media IDs, visible media details,
+  metadata detail, and enrichment candidates
 - CatalogWindowState: UI-ready value emitted by Projection
 - CatalogWindowViewModel.state: final value observed by SwiftUI
 - SidebarSelection: selected All Media or library sidebar row
-- CatalogMediaGridState: selected scope, ordered asset IDs, and scoped current
-  asset values
+- CatalogMediaGridState: selected scope, ordered asset IDs, and scalar
+  detail-refresh generation
 
 Flow:
 

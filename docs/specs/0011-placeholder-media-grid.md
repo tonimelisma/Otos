@@ -70,12 +70,12 @@ manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
 ### Architecture
 
 - Store truth remains keyed by library root and relative path.
-- `CatalogSnapshot` exposes keyed assets; dictionary iteration order has no UI
-  meaning.
-- `CatalogProjection` owns global asset ordering and reuses cached ordered IDs
-  only when cached count and direct identity membership match the snapshot.
-- `CatalogMediaGridState` carries scope, ordered IDs, and current values keyed by
-  ID.
+- `CatalogStore` exposes ordered media IDs through Store-owned queries; dictionary
+  iteration order has no UI meaning.
+- `CatalogProjection` owns scope, availability, title, empty-state, and
+  detail-refresh generation, while Store executes ordering.
+- `CatalogMediaGridState` carries scope, ordered IDs, and the scalar
+  detail-refresh generation. Visible values are fetched separately by ID.
 - The collection bridge applies identity changes structurally and reconfigures
   existing visible items in place for detail-only changes.
 - Views remain passive and do not own catalog cadence or projection work.
@@ -212,8 +212,9 @@ and is not stored in SQLite.
   reusable tile implementation.
 - MainActor gravity: unavoidable AppKit lifecycle only; sorting/filtering remain
   in Projection.
-- State duplication: ordered IDs and keyed values answer different structural
-  and detail questions; the Store remains sole truth owner.
+- State duplication: ordered IDs and the scalar detail-refresh generation answer
+  different structural and invalidation questions; visible values are fetched by
+  ID and the Store remains sole truth owner.
 - Cache validation: direct count and identity membership checks rebuild order on
   every membership mismatch without Store-side invalidation bookkeeping.
 

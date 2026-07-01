@@ -23,7 +23,7 @@ struct CatalogStoreFilesystemEventTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootA)
         try await store.addLibrary(url: rootB)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
         let pathA = try CatalogPath.normalizedDirectoryPath(for: rootA)
         let pathB = try CatalogPath.normalizedDirectoryPath(for: rootB)
@@ -63,7 +63,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         let baseline = await recorder.invocations().count
 
         for index in 0 ..< 5 {
@@ -100,7 +100,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         let baseline = await recorder.invocations().count
 
         emit(FilesystemEvent(path: root.appending(path: "first.jpg").path, flags: 0))
@@ -138,7 +138,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
         emit(FilesystemEvent(path: root.appending(path: "trigger-second.jpg").path, flags: 0))
         try await probe.waitForInvocationCount(2)
@@ -148,7 +148,7 @@ struct CatalogStoreFilesystemEventTests {
 
         await probe.release(2)
         try await probe.waitForInvocationCount(3)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
     }
 
     @Test func eventsIgnoredBeforeFirstScanCompletes() async throws {
@@ -176,11 +176,11 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == 1)
 
         await probe.release(1)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
         emit(FilesystemEvent(path: root.appending(path: "late.jpg").path, flags: 0))
         try await probe.waitForInvocationCount(2)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
     }
 
     @Test func removeLibraryStopsScheduling() async throws {
@@ -200,7 +200,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let baseline = await recorder.invocations().count
 
@@ -228,7 +228,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        let initial = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let initial = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         #expect(initial.testAssets.map(\.relativePath.rawValue) == ["first.jpg"])
@@ -237,7 +237,7 @@ struct CatalogStoreFilesystemEventTests {
         try writeCatalogStoreFile(second, contents: "jpeg")
         emit(FilesystemEvent(path: second.path, flags: 0))
 
-        let reconciled = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let reconciled = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 2
         }
         let names = Set(reconciled.testAssets.map(\.relativePath.rawValue))
@@ -343,7 +343,7 @@ private func waitForFilesystemRescan(
     timeoutAttempts: Int = 200
 ) async throws {
     for _ in 0 ..< timeoutAttempts {
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         let count = await recorder.invocations().count
         if !snapshot.isScanning, count == baseline + expectedAdditional {
             return

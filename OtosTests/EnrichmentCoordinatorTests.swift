@@ -17,7 +17,7 @@ struct EnrichmentCoordinatorTests {
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 3 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
 
         // "b.jpg" begins dataless; the others materialized. The enricher discovers dataless
         // via the fake status; the materializer flips it to materialized.
@@ -52,7 +52,7 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
 
-        let enriched = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let enriched = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment }
         }
         await coordinator.shutdown()
@@ -70,7 +70,7 @@ struct EnrichmentCoordinatorTests {
         let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]), diagnostics: nil)
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         // Fail transiently the first two attempts, then succeed.
         let attempts = AttemptCounter()
@@ -98,7 +98,7 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
 
-        let enriched = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let enriched = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.testAssets.first?.needsEnrichment == false
         }
         await coordinator.shutdown()
@@ -114,7 +114,7 @@ struct EnrichmentCoordinatorTests {
         let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]), diagnostics: nil)
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         // The first completion reports a stale source size (the scanner's asset is 100
         // bytes), so the store drops it. Without a re-wake the asset would stay
@@ -143,7 +143,7 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
 
-        let enriched = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let enriched = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.testAssets.first?.needsEnrichment == false
         }
         await coordinator.shutdown()

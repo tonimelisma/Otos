@@ -1,7 +1,8 @@
 import Foundation
 
-/// The full parsed media metadata, persisted as a single binary blob and decoded only
-/// on demand (a future per-asset inspector) — never held resident across the catalog.
+/// The full parsed media metadata, preserved as JSON in the cold metadata row and
+/// decoded only on demand for future per-asset detail surfaces — never held
+/// resident across the catalog.
 ///
 /// This is Otos's own `Codable` mirror of the `MediaMetadata` library's result, kept
 /// independent so the catalog model does not depend on the library and so the persisted
@@ -9,10 +10,9 @@ import Foundation
 /// current increment produces it except tests. "Persist everything" lives here: every
 /// timestamp role, location, and camera/video field round-trips.
 ///
-/// Blob format is versioned DB-wide, not per row: a change to this shape is a future
-/// schema migration that nulls every `metadata_blob` and the enrichment stamps so each
-/// asset re-enriches into the new shape. There is therefore no per-row version and no
-/// decode-time version branching — an undecodable blob cannot occur.
+/// Metadata format is versioned by the current catalog schema, not per row: a future
+/// incompatible shape change resets the rebuildable catalog/enrichment overlay instead
+/// of carrying decode-time version branches.
 nonisolated struct AssetMetadata: Codable, Equatable {
     var family: String?
     var fileExtension: String?
@@ -65,9 +65,10 @@ nonisolated struct AssetMetadata: Codable, Equatable {
     }
 }
 
-/// One capture-time candidate preserved in the metadata blob, by role (EXIF original,
-/// QuickTime creation, GPS, …). The resolved `instant` plus the raw components keep the
-/// "local time, unknown offset" case representable without inventing a UTC instant.
+/// One capture-time candidate preserved in the metadata detail JSON, by role (EXIF
+/// original, QuickTime creation, GPS, …). The resolved `instant` plus the raw
+/// components keep the "local time, unknown offset" case representable without
+/// inventing a UTC instant.
 nonisolated struct CaptureTimestampRecord: Codable, Equatable {
     var role: String
     var instant: Date?
@@ -81,7 +82,7 @@ nonisolated struct CaptureTimestampRecord: Codable, Equatable {
     var second: Int?
 }
 
-/// One location candidate preserved in the metadata blob.
+/// One location candidate preserved in the metadata detail JSON.
 nonisolated struct GeoRecord: Codable, Equatable {
     var source: String
     var latitude: Double

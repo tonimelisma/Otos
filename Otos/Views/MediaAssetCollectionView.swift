@@ -10,15 +10,17 @@ import UniformTypeIdentifiers
 /// imperative viewport, reuse, layout, and diffable-data-source lifecycle that a
 /// high-cardinality browser requires.
 ///
-/// Identity order is structural; the asset map is detail. A structural change
-/// performs one nonanimated diffable apply, while unchanged IDs replace the map
-/// and reconfigure existing visible reusable items in place. `MediaAssetCollectionApplyGate`
-/// prevents overlapping AppKit applies and keeps only the newest pending value.
+/// Identity order is structural; tile detail is read only for the visible window.
+/// A structural change performs one nonanimated diffable apply, while unchanged
+/// IDs re-read visible details and reconfigure existing reusable items in place.
+/// `MediaAssetCollectionApplyGate` prevents overlapping AppKit applies and keeps
+/// only the newest pending value.
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
 /// cannot create file-writing tasks or retain grid state on MainActor.
 struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
+    var detailReader: MediaTileDetailReader?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     func makeNSViewController(context _: Context) -> MediaAssetCollectionViewController {
@@ -30,8 +32,26 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
         context _: Context
     ) {
         controller.thumbnailDirectory = thumbnailDirectory
+        controller.detailReader = detailReader
         controller.onViewportChanged = onViewportChanged
         controller.receive(grid)
+    }
+}
+
+final class MediaTileDetailReader: @unchecked Sendable {
+    private let store: CatalogStore
+
+    init(store: CatalogStore) {
+        self.store = store
+    }
+
+    func assets(for ids: [MediaAssetID]) async -> [MediaAssetID: MediaAsset] {
+        do {
+            return try await store.mediaAssets(for: ids)
+        } catch {
+            OtosLog.catalog.error("Media tile detail query failed")
+            return [:]
+        }
     }
 }
 
@@ -47,14 +67,16 @@ final class MediaAssetCollectionViewController: NSViewController {
     private let collectionView = NSCollectionView()
     private let applyGate = MediaAssetCollectionApplyGate()
     private var dataSource: NSCollectionViewDiffableDataSource<Section, MediaAssetID>!
-    /// This map is the latest detail payload for the identities owned by the
-    /// diffable data source. Replacing it does not itself change collection
-    /// structure, which is why detail updates can stay viewport-bounded.
-    private var assetsByID: [MediaAssetID: MediaAsset] = [:]
+    /// Details for the current visible window only. Identity order lives in the
+    /// diffable data source; values are faulted after AppKit tells us what is visible.
+    private var tileDetailsByID: [MediaAssetID: MediaAsset] = [:]
+    private var detailQueryTask: Task<Void, Never>?
+    private var detailQueryGeneration = 0
 
     /// Set by the representable each SwiftUI update. Tiles resolve `thumbnailPath`
     /// against this directory; the scroll observer reports visible identities here.
     var thumbnailDirectory: URL?
+    var detailReader: MediaTileDetailReader?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     override func loadView() {
@@ -76,7 +98,6 @@ final class MediaAssetCollectionViewController: NSViewController {
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, assetID in
             guard let self,
-                  let asset = assetsByID[assetID],
                   let item = collectionView.makeItem(
                       withIdentifier: Self.itemIdentifier,
                       for: indexPath
@@ -84,7 +105,7 @@ final class MediaAssetCollectionViewController: NSViewController {
             else {
                 return nil
             }
-            item.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
+            item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory)
             return item
         }
 
@@ -112,6 +133,7 @@ final class MediaAssetCollectionViewController: NSViewController {
 
     @objc private func scrollBoundsChanged() {
         reportViewport()
+        requestVisibleDetails(reason: "scroll")
     }
 
     /// Maps the currently visible items to their ordered identities and forwards them as
@@ -179,12 +201,11 @@ private extension MediaAssetCollectionViewController {
             OtosLog.ui.debug(
                 "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
             )
-        case let .refreshVisible(grid, resetScroll):
-            assetsByID = grid.assetsByID
+        case let .refreshVisible(_, resetScroll):
             if resetScroll {
                 scrollToTop()
             }
-            reconfigureVisibleItems(reason: "detailRefresh")
+            requestVisibleDetails(reason: "detailRefresh")
             reportViewport()
         case let .apply(grid, resetScroll):
             applyStructure(grid, resetScroll: resetScroll)
@@ -194,11 +215,11 @@ private extension MediaAssetCollectionViewController {
     func applyStructure(_ grid: CatalogMediaGridState, resetScroll: Bool) {
         let applyStart = Date()
         let preservedOrigin = resetScroll ? nil : scrollView.contentView.bounds.origin
-        assetsByID = grid.assetsByID
+        tileDetailsByID = tileDetailsByID.filter { grid.orderedAssetIDs.contains($0.key) }
 
-        // Identity order is the complete structural contract. Details remain in
-        // assetsByID, so a filename or content-type change never requires this
-        // O(n) diffable snapshot path.
+        // Identity order is the complete structural contract. Details are read
+        // for visible identities after the structural apply, so a filename or
+        // thumbnail change never requires this O(n) diffable snapshot path.
         var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
         snapshot.appendSections([.media])
         snapshot.appendItems(grid.orderedAssetIDs, toSection: .media)
@@ -222,7 +243,7 @@ private extension MediaAssetCollectionViewController {
                 scrollView.contentView.scroll(to: preservedOrigin)
                 scrollView.reflectScrolledClipView(scrollView.contentView)
             }
-            reconfigureVisibleItems(reason: "structuralApply")
+            requestVisibleDetails(reason: "structuralApply")
             reportViewport()
 
             let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
@@ -234,6 +255,55 @@ private extension MediaAssetCollectionViewController {
                 """
             )
             perform(applyGate.complete(applied: grid))
+        }
+    }
+
+    func requestVisibleDetails(reason: String) {
+        let visibleIDs = visibleAssetIDs()
+        guard !visibleIDs.isEmpty else {
+            return
+        }
+        detailQueryGeneration += 1
+        let generation = detailQueryGeneration
+        detailQueryTask?.cancel()
+
+        guard let detailReader else {
+            reconfigureVisibleItems(reason: reason)
+            return
+        }
+
+        let queryStart = Date()
+        let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleDetailQuery")
+        OtosLog.ui.debug(
+            """
+            Media grid visible detail query started count=\(visibleIDs.count, privacy: .public) \
+            reason=\(reason, privacy: .public)
+            """
+        )
+        detailQueryTask = Task { [weak self, detailReader, visibleIDs] in
+            let assets = await detailReader.assets(for: visibleIDs)
+            if Task.isCancelled {
+                OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                return
+            }
+            await MainActor.run {
+                guard let self, self.detailQueryGeneration == generation else {
+                    OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                    OtosSignpost.ui.emitEvent("MediaGridVisibleDetailQueryDropped")
+                    return
+                }
+                self.tileDetailsByID = assets
+                OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+                OtosLog.ui.debug(
+                    """
+                    Media grid visible detail query finished requested=\(visibleIDs.count, privacy: .public) \
+                    returned=\(assets.count, privacy: .public) reason=\(reason, privacy: .public) \
+                    queryMs=\(queryMs, privacy: .public)
+                    """
+                )
+                self.reconfigureVisibleItems(reason: "detailQuery")
+            }
         }
     }
 
@@ -252,9 +322,7 @@ private extension MediaAssetCollectionViewController {
         var missingItemCount = 0
 
         for indexPath in visibleIndexPaths {
-            guard let assetID = dataSource.itemIdentifier(for: indexPath),
-                  let asset = assetsByID[assetID]
-            else {
+            guard let assetID = dataSource.itemIdentifier(for: indexPath) else {
                 missingAssetCount += 1
                 continue
             }
@@ -262,7 +330,7 @@ private extension MediaAssetCollectionViewController {
                 missingItemCount += 1
                 continue
             }
-            item.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
+            item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory)
             configuredCount += 1
         }
 
@@ -283,6 +351,24 @@ private extension MediaAssetCollectionViewController {
     func scrollToTop() {
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    func visibleAssetIDs() -> [MediaAssetID] {
+        collectionView.indexPathsForVisibleItems()
+            .sorted()
+            .compactMap { dataSource.itemIdentifier(for: $0) }
+    }
+
+    func assetForTile(_ id: MediaAssetID) -> MediaAsset {
+        tileDetailsByID[id] ?? MediaAsset(
+            libraryRootPath: id.libraryRootPath,
+            relativePath: id.relativePath,
+            name: nil,
+            contentTypeIdentifier: nil,
+            byteSize: nil,
+            createdAt: nil,
+            contentModifiedAt: nil
+        )
     }
 }
 

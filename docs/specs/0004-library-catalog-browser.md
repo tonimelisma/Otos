@@ -11,11 +11,12 @@
 
 Otos provides a persistent library catalog while leaving user originals on
 disk. Users manage roots in Settings; the app automatically scans them and
-projects the in-memory catalog into the single sidebar-detail window.
+projects Store-owned catalog queries into the single sidebar-detail window.
 
 Current repo state verified through inspection:
 
-- `CatalogStore` owns GRDB, migrations, the in-memory catalog, and scans.
+- `CatalogStore` owns GRDB, the clean current schema, root runtime state, scans,
+  and catalog query APIs.
 - `CatalogProjection` publishes derived window state at the 10 Hz dirty cadence.
 - `CatalogWindowViewModel` assigns final state and routes explicit intents.
 - `ContentView` composes a library sidebar and placeholder media grid.
@@ -29,7 +30,7 @@ In scope:
 - SwiftUI sidebar with `All Media` and saved libraries.
 - SwiftUI Settings scene with a `Libraries` tab for add/remove.
 - GRDB 7.11.0, SQLite in Application Support, and stable v1 migrations.
-- Full in-memory catalog working set owned by a catalog actor.
+- SQLite-backed per-asset catalog working set owned by a catalog actor.
 - Automatic launch/add scans only.
 - Six-column filename placeholder grid while all filesystem facts remain in the
   catalog model.
@@ -186,8 +187,8 @@ pipeline, and no generated product IDs.
 - `CatalogWindowViewModel`: MainActor observable state assignment, explicit
   selection delivery, UI intents, owned tasks, and stall-monitor lifetime for the
   single main window.
-- `CatalogSnapshot`: Sendable immutable raw library/assets state built by the
-  store on demand.
+- Store query APIs: current library rows, scoped ordered media IDs, visible media
+  details, metadata detail, and enrichment candidates.
 - `SidebarSelection`: SwiftUI sidebar selection for `All Media` or one root path.
 - SQLite lives in Application Support under an Otos catalog directory.
 - Root identity is the normalized path. `library_root.id` is storage-only.

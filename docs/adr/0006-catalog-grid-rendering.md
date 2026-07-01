@@ -9,10 +9,10 @@ Accepted.
 This ADR owns the media browser rendering technology, layout, reusable item
 boundary, and structural/detail collection update mechanics.
 
-It references but does not own catalog truth, snapshot cadence, availability,
-and ordering. ADR 0007 owns identity-based order validation and cached ordering.
-ADRs 0002, 0004, and 0005 retain scan/persistence, UI ownership, and publication
-ownership.
+It references but does not own catalog truth, publication cadence, availability,
+and ordering. ADR 0010 owns Store-executed ordering, identity-plus-generation grid
+publication, and visible detail reads. ADRs 0002, 0004, and 0005 retain
+scan/persistence, UI ownership, and publication ownership.
 Selection, preview, and zoom require separate future specs/ADRs if implemented.
 Thumbnail storage is owned by ADR 0009; this ADR owns only how the visible grid
 renders and refreshes those thumbnail-backed values. Scan-time media eligibility
@@ -49,11 +49,12 @@ Auto Layout trees. They display a one-line filename. Only content conforming to
 `UTType.movie` gets a small video symbol and blue tint.
 
 Apply a diffable snapshot without animation only when ordered IDs change. For
-unchanged IDs, replace the value map and reconfigure the existing visible items
-in place. Do not call AppKit item reload for a detail-only refresh: reload enters
-the reuse lifecycle, and reusable tile cleanup clears the thumbnail before the
-async loader repaints it. Permit one structural apply at a time and retain only
-the latest pending grid state. Reset scroll only when sidebar scope changes.
+unchanged IDs, re-read visible details through the Store-backed detail reader and
+reconfigure the existing visible items in place. Do not call AppKit item reload for
+a detail-only refresh: reload enters the reuse lifecycle, and reusable tile cleanup
+clears the thumbnail before the async loader repaints it. Permit one structural
+apply at a time and retain only the latest pending grid state. Reset scroll only
+when sidebar scope changes.
 
 ## Why This Is Simplest Correct
 

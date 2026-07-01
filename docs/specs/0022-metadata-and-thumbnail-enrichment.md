@@ -22,9 +22,9 @@ accidentally materializing a file by faulting on a read.
 
 In scope:
 
-- The enrichment data model (SQLite `v3` columns, the resident `MediaAsset`
-  fields, the on-demand `AssetMetadata` blob, the `(size, mtime)` staleness
-  signature, the computed `bestCaptureDate`).
+- The enrichment data model (SQLite enrichment columns, hot `MediaAsset` detail
+  fields, on-demand `AssetMetadata` scalar/detail JSON, the `(size, mtime)`
+  staleness signature, the computed `bestCaptureDate`).
 - `MediaEnricher` (metadata read + QuickLook thumbnail) and `ThumbnailStore`
   (JPEG thumbnail files).
 - `EnrichmentCoordinator`: the cursorless two-pool scheduler.
@@ -43,10 +43,12 @@ serve up to their native size, beyond which a future increment loads originals).
 ## Definition Of Ready
 
 - Goal, change type, scope, and non-goals are explicit (above).
-- Current repo state inspected: the catalog is fully resident and media-only
-  (`MediaEligibility`); `CatalogMediaGridState` is deliberately cheap (ADR 0007);
-  `FileMaterialization` provides the dataless gate and non-blocking download
-  helpers (spec 0021); FSEvents drive debounced full rescans (spec 0023).
+- Current repo state inspected at the time of this spec: the catalog was fully
+  resident and media-only (`MediaEligibility`). The current implementation after
+  ADR 0010 keeps `CatalogMediaGridState` cheap by carrying ordered IDs plus a
+  scalar detail-refresh generation; `FileMaterialization` provides the dataless
+  gate and non-blocking download helpers (spec 0021); FSEvents drive debounced
+  full rescans (spec 0023).
 - Observable requirements and acceptance examples identified (ENR-001…ENR-010).
 - Ownership, side effects, persistence, cancellation, errors, progress, privacy,
   instrumentation, and verification addressed (below and in ADR 0009).
@@ -65,8 +67,8 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
   available real date and is never fabricated.
 - Architecture: thumbnails are files referenced by path (256 px JPEG generated
   from QuickLook);
-  the full metadata is an on-demand binary blob, never resident; disjoint
-  scan/enrichment column ownership with a merging rescan; `(size, mtime)`
+  the full metadata is on-demand scalar/detail JSON, never in grid publication;
+  disjoint scan/enrichment column ownership with preserving scan upserts; `(size, mtime)`
   staleness; stale in-flight completions are rejected before they can stamp newer
   source facts current; a single coordinator actor owning two fixed worker pools
   by cursorless scheduling; enrichment writes batched through `CatalogStore`.
@@ -76,7 +78,7 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
 ## Architectural Alternatives
 
 The substantive storage and scheduling alternatives (metadata inline-and-resident
-vs. blob; thumbnails as BLOBs vs. files; JPEG vs. HEIC vs. PNG; a maintained
+vs. on-demand persisted detail; thumbnails as BLOBs vs. files; JPEG vs. HEIC vs. PNG; a maintained
 backlog vs. cursorless) are compared in
 [ADR 0009](../adr/0009-enrichment-storage-and-staleness.md). The
 implementation-level alternatives this spec weighed:
@@ -119,8 +121,8 @@ Failure modes:
 
 - The partition drifts from `needsEnrichment` truth after a rescan.
 
-Rejected: derive work from the resident snapshot via `needsEnrichment` (the scan
-is sub-millisecond). Selected.
+Rejected by ADR 0010: derive work from the resident snapshot via `needsEnrichment`.
+The current coordinator asks Store for bounded enrichment candidates instead.
 
 ### Alternative C — Per-item cancellation on scroll and staleness
 
@@ -142,15 +144,16 @@ Rejected: cancellation only at teardown. Selected.
 A single `EnrichmentCoordinator` actor (the write-side satellite of the catalog,
 mirror of `CatalogProjection`) runs two fixed worker pools over a
 `withDiscardingTaskGroup`, woken by a coalescing `bufferingNewest(1)` signal
-stream. Work is derived from the resident catalog snapshot via `needsEnrichment`;
-the coordinator maintains only the runtime state it cannot derive. Materialization
+stream. Work is queried from Store through bounded enrichment-candidate reads; the
+coordinator maintains only the runtime state it cannot derive. Materialization
 status is checked off-actor at exactly one site — the enrichment pull, immediately
 before the read — serving as both router and ADR 0008 safety gate. Results are
 applied in batches (one transaction, one notification) by `CatalogStore`. The
-products are a 256 px JPEG thumbnail file and an on-demand metadata blob; only the
-thumbnail path, a resolved capture date, and the `(size, mtime)` stamps are
-resident. The tile loads its thumbnail and formats its date off-main. See ADR 0009
-for why each choice is the simplest correct one.
+products are a 256 px JPEG thumbnail file and on-demand metadata scalar/detail
+rows; only the thumbnail path, a resolved capture date, and the `(size, mtime)`
+stamps are fetched with hot asset detail rows. The tile loads its thumbnail and
+formats its date off-main. See ADR 0009 for why each choice is the simplest
+correct one.
 
 ## Interfaces, Ownership, And Data Flow
 
@@ -161,12 +164,12 @@ Modules (isolation — owns):
   notification); the rescan merge (`mergingFacts`); thumbnail delete when rows are
   purged by proven deletion or explicit library removal; on-demand `metadataBlob`
   decode; the `nonisolated thumbnailDirectory`.
-- `MediaAsset` (nonisolated value, extended) — the cheap resident fields
+- `MediaAsset` (nonisolated value, extended) — the cheap hot detail fields
   (`thumbnailPath`, `captureDate`, `enrichedSourceSize`,
   `enrichedSourceMTimeSeconds`), `needsEnrichment`, `bestCaptureDate`,
   `mergingFacts`, `applyingEnrichment`.
-- `AssetMetadata` (nonisolated value, new) — the blob's `Codable` shape (the full
-  `MediaMetadataResult` mapped to Otos types), never resident.
+- `AssetMetadata` (nonisolated value, new) — the full `MediaMetadataResult`
+  mapped to Otos types and persisted on demand, never in grid publication.
 - `EnrichmentCoordinator` (actor, new) — the cursorless scheduler, the two pools,
   the transient state, the batched-apply buffer.
 - `MediaEnricher` (nonisolated value, new) — one async unit:
@@ -185,7 +188,7 @@ Modules (isolation — owns):
 Data flow:
 
 ```
-scan / FSEvents → Store notifies → Coordinator refreshes snapshot → dispatch
+scan / FSEvents → Store notifies → Coordinator queries Store candidates → dispatch
   enrich slot: status .materialized → MediaEnricher (read + QuickLook)
        → pendingApply buffer → store.applyEnrichmentBatch (merge cheap fields,
          stamp, one notification)
@@ -198,9 +201,10 @@ Projection republishes (thumbnailPath / captureDate now set; cheap)
 asset row purged (proven deletion or library removal) → ThumbnailStore.delete
 ```
 
-Only the cheap fields flow through the 10 Hz pipeline — no bytes and no full
-metadata. The `metadata_blob` is never resident; it is decoded on demand for a
-future single-asset inspector.
+Only ordered IDs plus a scalar detail-refresh generation flow through the 10 Hz
+grid publication — no bytes and no full metadata. Hot tile details are faulted by
+visible ID, and full metadata lives in `asset_metadata` scalar columns plus
+`metadata_extra_json` for on-demand reads.
 
 Concurrency and cancellation: the coordinator owns one supervising task (started
 by the ViewModel), captured weakly; `MediaEnricher`/`ThumbnailStore` run inside the
@@ -265,10 +269,10 @@ Implementation sequence (each landed and verified on its own):
   read/decode and date formatting run off the main actor; Main only assigns,
   keeping the configure path below the slow-cell threshold.
 - Performance budgets: MainActor under 100 ms; the full metadata is not resident
-  (ADR 0009 §2), so the Projection per-tick snapshot and `==` grow only by
-  `captureDate` + `thumbnailPath`. Measure-before-optimize gates: no thumbnail
-  cache until a scroll profile demands one; no maintained work partition until the
-  cursorless scan is proven too costly at a real large library.
+  (ADR 0009 §2), and Projection publications carry only ordered IDs plus a scalar
+  detail-refresh generation. Measure-before-optimize gates: no thumbnail cache
+  until a scroll profile demands one; no maintained work partition until Store
+  candidate queries are proven too costly at a real large library.
 
 ## Code-Smell Review
 

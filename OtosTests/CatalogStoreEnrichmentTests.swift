@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 @testable import Otos
 import Testing
 
@@ -24,7 +25,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(makeAsset(captureDate: nil, createdAt: nil, modifiedAt: nil).bestCaptureDate == nil)
     }
 
-    @Test func metadataBlobRoundTrips() throws {
+    @Test func metadataExtraJSONRoundTrips() throws {
         let meta = AssetMetadata(
             family: "image",
             fileExtension: "jpg",
@@ -47,8 +48,8 @@ struct CatalogStoreEnrichmentTests {
             pixelHeight: 3000,
             durationSeconds: nil
         )
-        let data = try #require(CatalogStore.encodeMetadata(meta))
-        #expect(CatalogStore.decodeMetadata(data) == meta)
+        let json = try #require(CatalogStore.encodeMetadataExtraJSON(meta))
+        #expect(CatalogStore.decodeMetadataExtraJSON(json) == meta)
     }
 
     // MARK: - Store: rescan merge, persistence, and purge
@@ -72,7 +73,7 @@ struct CatalogStoreEnrichmentTests {
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         let captureDate = Date(timeIntervalSince1970: 700)
         await store.applyEnrichmentBatch([
@@ -86,7 +87,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
-        let enriched = try #require(await store.currentSnapshot().testAssets.first { $0.id == id })
+        let enriched = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(enriched.thumbnailPath == "thumb.jpg")
         #expect(enriched.captureDate == captureDate)
         #expect(enriched.bestCaptureDate == captureDate)
@@ -96,7 +97,7 @@ struct CatalogStoreEnrichmentTests {
         // and the changed (size, mtime) signature makes the asset stale again.
         await mtime.set(2000)
         emit(FilesystemEvent(path: root.appending(path: "a.jpg").path(percentEncoded: false), flags: 0))
-        let restaled = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let restaled = try await waitForCatalogStoreState(store) { snapshot in
             guard let asset = snapshot.testAssets.first(where: { $0.id == id }) else { return false }
             return !snapshot.isScanning && asset.contentModifiedAt == Date(timeIntervalSince1970: 2000)
         }
@@ -120,8 +121,8 @@ struct CatalogStoreEnrichmentTests {
         let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
-        let scanned = await store.currentSnapshot()
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let scanned = try await catalogStoreTestState(store)
         let scannedAsset = try #require(scanned.testAssets.first { $0.id == id })
         let scannedSize = try #require(scannedAsset.byteSize)
         let scannedMTime = MediaAsset.mtimeSeconds(scannedAsset.contentModifiedAt)
@@ -138,9 +139,22 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
+        let persistedMetadata = try await persistedMetadataRow(
+            databaseURL: databaseURL,
+            rootPath: rootPath,
+            relativePath: rel
+        )
+        #expect(persistedMetadata.cameraModel == "Cam")
+        #expect(persistedMetadata.pixelWidth == 4000)
+        #expect(persistedMetadata.metadata?.cameraModel == "Cam")
+        #expect(persistedMetadata.metadata?.pixelWidth == 4000)
+        let queriedMetadata = try #require(try await store.metadata(for: id))
+        #expect(queriedMetadata.cameraModel == "Cam")
+        #expect(queriedMetadata.pixelWidth == 4000)
+
         let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
-        let asset = try #require(await reloaded.currentSnapshot().testAssets.first { $0.id == id })
+        let asset = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
         #expect(asset.captureDate == captureDate)
         #expect(asset.enrichedSourceSize == scannedSize)
@@ -168,11 +182,11 @@ struct CatalogStoreEnrichmentTests {
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         await mtime.set(2000)
         emit(FilesystemEvent(path: root.appending(path: "a.jpg").path(percentEncoded: false), flags: 0))
-        _ = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        _ = try await waitForCatalogStoreState(store) { snapshot in
             guard let asset = snapshot.testAssets.first(where: { $0.id == id }) else { return false }
             return !snapshot.isScanning && MediaAsset.mtimeSeconds(asset.contentModifiedAt) == 2000
         }
@@ -188,7 +202,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
-        let current = try #require(await store.currentSnapshot().testAssets.first { $0.id == id })
+        let current = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(current.thumbnailPath == nil)
         #expect(current.captureDate == nil)
         #expect(current.enrichedSourceSize == nil)
@@ -197,7 +211,7 @@ struct CatalogStoreEnrichmentTests {
 
         let reloaded = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
         try await reloaded.start(scansSavedLibraries: false)
-        let persisted = try #require(await reloaded.currentSnapshot().testAssets.first { $0.id == id })
+        let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(persisted.thumbnailPath == nil)
         #expect(persisted.captureDate == nil)
         #expect(persisted.enrichedSourceSize == nil)
@@ -229,7 +243,7 @@ struct CatalogStoreEnrichmentTests {
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         // Create the real thumbnail file the catalog will reference, then enrich.
         let thumbnailDirectory = databaseURL.deletingLastPathComponent()
@@ -254,7 +268,7 @@ struct CatalogStoreEnrichmentTests {
         // its thumbnail file.
         await present.set(false)
         emit(FilesystemEvent(path: root.appending(path: "a.jpg").path(percentEncoded: false), flags: 0))
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.isEmpty }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.isEmpty }
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
     }
 
@@ -274,7 +288,7 @@ struct CatalogStoreEnrichmentTests {
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         let thumbnailDirectory = databaseURL.deletingLastPathComponent()
             .appending(path: "Thumbnails", directoryHint: .isDirectory)
@@ -296,7 +310,7 @@ struct CatalogStoreEnrichmentTests {
 
         try await store.removeLibrary(path: rootPath)
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.testAssets.isEmpty)
     }
 }
@@ -324,6 +338,42 @@ private func makeAsset(
         enrichedSourceSize: stampSize,
         enrichedSourceMTimeSeconds: stampMtime
     )
+}
+
+private func persistedMetadataRow(
+    databaseURL: URL,
+    rootPath: LibraryRootPath,
+    relativePath: MediaRelativePath
+) async throws -> PersistedMetadataRow {
+    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        let fetchedRootID = try Int64.fetchOne(
+            db,
+            sql: "SELECT id FROM library_root WHERE path = ?",
+            arguments: [rootPath.rawValue]
+        )
+        let rootID = try #require(fetchedRootID)
+        let fetchedRow = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT camera_model, pixel_width, metadata_extra_json
+            FROM asset_metadata
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootID, relativePath.rawValue]
+        )
+        let row = try #require(fetchedRow)
+        return try PersistedMetadataRow(
+            cameraModel: row["camera_model"] as String?,
+            pixelWidth: row["pixel_width"] as Int?,
+            metadata: CatalogStore.metadataExtra(libraryRootID: rootID, relativePath: relativePath, db: db)
+        )
+    }
+}
+
+private struct PersistedMetadataRow {
+    let cameraModel: String?
+    let pixelWidth: Int?
+    let metadata: AssetMetadata?
 }
 
 /// Holds a mutable mtime so a scanner closure can return changing facts across scans.

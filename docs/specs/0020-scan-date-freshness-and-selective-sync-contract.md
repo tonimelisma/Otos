@@ -2,7 +2,7 @@
 
 ## Classification
 
-- Work type: Bug fix (in-memory staleness) + documentation/contract correction +
+- Work type: Bug fix (catalog date staleness) + documentation/contract correction +
   process/tooling (PR-review-comment handling)
 - Current requirement IDs: amends FND-056, FND-062; adds FND-064, FND-065
 - Future idea or candidate links explicitly requested by the user: none
@@ -14,15 +14,13 @@
 Two unaddressed reviewer findings on recently merged PRs, plus a standing-process
 gap the user asked to close:
 
-1. **Stale in-memory dates (PR #14, `CatalogStore.swift`).** The no-op-scan
+1. **Stale catalog dates (PR #14, `CatalogStore.swift`).** The no-op-scan
    notification suppression added in spec 0017 gated the in-memory upsert in
    `applyScannedBatchToMemory` on name/type/size. When a re-scan re-observes a file
    whose name, content type, and size are unchanged but whose `createdAt` or
    `contentModifiedAt` changed (a timestamp-only touch, or a same-size content
-   edit), the new dates were upserted into SQLite by `recordScannedBatch` but the
-   in-memory `MediaAsset` was not replaced. `currentSnapshot()` reads the in-memory
-   map, so it served stale date facts until the next launch reload. The filesystem
-   is the source of truth, so the in-memory projection must reflect it.
+   edit), the row must update and notify so visible date fallback can repaint. The
+   filesystem is the source of truth, so the catalog row must reflect it.
 
 2. **Selective-sync over-claim (PR #13, ADR 0008).** ADR 0008's Decision clause 4
    listed a user-excluded selective-sync subtree as a current never-purge case.
@@ -42,9 +40,9 @@ gap the user asked to close:
 
 In scope:
 
-- Always mirror the freshly scanned filesystem facts (including dates) into the
-  in-memory catalog, so `currentSnapshot()` is never stale, while keeping the
-  FND-062 notification suppression gated on the exactly comparable facts.
+- Always mirror the freshly scanned filesystem facts (including whole-second dates)
+  into SQLite rows, while keeping FND-062 notification suppression for identical
+  facts.
 - Correct the selective-sync over-claim in ADR 0008, AGENTS.md, and the FND-056
   acceptance so the authoritative contract matches the implementation, reframing
   selective-sync preservation as a forward invariant for the future authored-overlay
@@ -85,14 +83,14 @@ Out of scope (deferred, with rationale):
 
 | ID | Type | Captured requirement | Current or candidate | Storage location |
 | --- | --- | --- | --- | --- |
-| FND-064 | Architecture | The in-memory catalog always mirrors the latest scanned filesystem facts, including dates, so `currentSnapshot()` never serves stale facts after a completed re-observation, independent of FND-062 notification suppression. | Current | docs/requirements.md, this spec |
+| FND-064 | Architecture | The catalog database always mirrors the latest scanned filesystem facts, including dates, after a completed re-observation, independent of FND-062 notification suppression. | Current | docs/requirements.md, this spec |
 | FND-065 | Process | Each increment reviews unresolved review comments on recent PRs, claims by reply the actionable findings it will fix, fixes them in the increment, and replies with how each was fixed (or why not applicable). | Current | docs/requirements.md, AGENTS.md, this spec |
 | FND-056 (amended) | Architecture | The overlay-lifecycle acceptance now states which absences are actually protected and marks a user-excluded selective-sync subtree as a documented forward edge case, not a current guarantee. | Current | docs/requirements.md, ADR 0008, AGENTS.md |
-| FND-062 (amended) | Non-functional | The suppression requirement now notes the in-memory catalog is still refreshed (cross-links FND-064). | Current | docs/requirements.md |
+| FND-062 (amended) | Non-functional | The suppression requirement now notes that identical whole-second facts produce no notification, while changed date seconds update the row and notify (cross-links FND-064). | Current | docs/requirements.md |
 
-## Architectural Alternatives (in-memory date refresh)
+## Architectural Alternatives (catalog date refresh)
 
-### Alternative A (selected): Always refresh memory; gate notification on comparable facts
+### Alternative A (selected for the original increment): Always refresh memory; gate notification on comparable facts
 
 `applyScannedBatchToMemory` unconditionally replaces the in-memory `MediaAsset` with
 the freshly scanned values and returns whether a user-visible change (new file, or
@@ -144,27 +142,25 @@ Cons:
 
 ## Selected Approach
 
-Alternative A. `applyScannedBatchToMemory` always writes the scanned values into
-`assetsByRootPath` and returns `visibleChange` computed from name, content type, and
-size; `recordScannedBatch` gates `notifyCatalogChanged()` on `visibleChange`. The
+Current implementation after ADR 0010: scan upserts write filesystem facts into
+SQLite and return whether SQLite inserted or changed a row. `recordScannedBatch`
+gates `notifyCatalogChanged()` on that SQL-backed `visibleChange`. The
 selective-sync contract is corrected in docs only (no detector). The PR-comment
 process is added to AGENTS.md and FND-065.
 
 ## Interfaces, Ownership, And Data Flow
 
-- `CatalogStore.applyScannedBatchToMemory(...) -> Bool` now means "did a user-visible
-  change occur" (drives notification); memory is refreshed for every observed file.
-- No actor, persistence, schema, model, or projection changes. Reconciliation
-  deletes still notify. The `catalog.scan.batch` diagnostics `changed` field now
-  reports the visible-change flag.
+- `CatalogStorePersistence.upsertScannedFile(...) -> Bool` means "did SQLite insert
+  or change this observed row" (drives notification).
+- Reconciliation deletes still notify. The `catalog.scan.batch` diagnostics
+  `changed` field reports the SQL-backed visible-change flag.
 
 ## Retirement Proof
 
-Nothing is retired. ADR 0008's Decision clause 4 over-claim is corrected to match
-its existing Consequences and Alternatives; no ADR, schema, test, or construction
-path is removed. The `applyScannedBatchToMemory` return-value meaning shifts from
-"memory changed" to "visible change"; its one call site and the local diagnostics
-field are updated in the same change.
+ADR 0010 later retired `applyScannedBatchToMemory` and the resident per-asset map.
+The surviving contract from this spec is FND-064/FND-062: scan rows stay fresh and
+identical rescans stay quiet. ADR 0008's Decision clause 4 over-claim is corrected
+to match its existing Consequences and Alternatives.
 
 ## Living Documentation And Comment Audit
 
@@ -174,20 +170,19 @@ field are updated in the same change.
   workflow rule; DoD answer + checklist), `docs/index.md` (this spec).
 - Added: this spec, `OtosTests/CatalogStoreScanFreshnessTests.swift` (the
   `reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged` test).
-- Code comments on `applyScannedBatchToMemory` and the `recordScannedBatch` notify
-  gate explain the always-refresh invariant and why dates are excluded from the
-  notification comparison (round-trip epsilon, not a current UI input).
+- Code comments on the scan upsert and `recordScannedBatch` notify gate explain the
+  row-freshness invariant and whole-second date comparison.
 
 ## Instrumentation And Performance
 
-No new signposts. The existing `CatalogScanBatchApplyMemory` signpost and the
-`catalog.scan.batch` JSONL summary still bound the memory apply; the `changed` field
-now reports the visible-change flag. The off-main reconstruction cost in Alternative
-A is acknowledged and intentionally not optimized without measurement.
+No new signposts. The `CatalogScanBatchWrite` signpost and the `catalog.scan.batch`
+JSONL summary bound the scan write; the `changed` field reports the SQL-backed
+visible-change flag.
 
 ## Code-Smell Review
 
-- State duplication: none added; the fix removes a divergence (SQLite vs memory).
+- State duplication: ADR 0010 later removed the resident per-asset map; the current
+  path uses SQLite as the per-asset working set.
 - Premature optimization: avoided; the simplest correct refresh is chosen and the
   reconstruction cost is left unoptimized pending evidence.
 - Stringly/ambiguous naming: the return value is renamed in intent (`visibleChange`)
@@ -196,7 +191,7 @@ A is acknowledged and intentionally not optimized without measurement.
 ## Acceptance Criteria
 
 - A re-scan that re-observes a file with unchanged name/type/size but a changed
-  modification date leaves `currentSnapshot()` reporting the new date;
+  modification date leaves Store detail queries reporting the new date;
   `reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged` proves it.
 - Existing no-op suppression behavior is unchanged (notification still gated on
   name/type/size); the existing scan tests still pass.

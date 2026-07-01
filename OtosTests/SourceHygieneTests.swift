@@ -112,7 +112,8 @@ struct SourceHygieneTests {
         #expect(content.contains("func changeNotifications()"))
         #expect(content.contains("AsyncStream<CatalogStoreChange>"))
         #expect(content.contains("case libraryRemoved(LibraryRootPath)"))
-        #expect(content.contains("func currentSnapshot()"))
+        #expect(!content.contains("func currentSnapshot()"))
+        #expect(!content.contains("func makeSnapshot()"))
     }
 
     @Test func storeUsesPersistenceInstanceScanOwnershipWithoutDurableScanIDs() throws {
@@ -189,7 +190,8 @@ struct SourceHygieneTests {
         )
 
         #expect(!content.contains("CatalogDiagnostics"))
-        #expect(!content.contains("Task {"))
+        #expect(!content.contains("diagnostics?.record"))
+        #expect(content.contains("Task { [weak self, detailReader, visibleIDs]"))
         #expect(content.contains("OtosLog.ui"))
         #expect(content.contains("OtosSignpost.ui"))
     }
@@ -203,8 +205,9 @@ struct SourceHygieneTests {
             encoding: .utf8
         )
 
-        #expect(content.contains("case let .refreshVisible(grid, resetScroll):"))
-        #expect(content.contains("reconfigureVisibleItems(reason: \"detailRefresh\")"))
+        #expect(content.contains("case let .refreshVisible(_, resetScroll):"))
+        #expect(content.contains("requestVisibleDetails(reason: \"detailRefresh\")"))
+        #expect(content.contains("reconfigureVisibleItems(reason: \"detailQuery\")"))
         #expect(content.contains("collectionView.item(at: indexPath)"))
         #expect(!content.contains("reloadItems(at:"))
     }

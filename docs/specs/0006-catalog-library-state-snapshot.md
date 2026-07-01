@@ -31,7 +31,8 @@ In scope:
 - Add a catalog read model that pairs each durable library root with current
   transient library state.
 - Keep `LibraryRoot` pure as durable library-root identity.
-- `CatalogSnapshot` exposes `libraries: [CatalogLibraryState]` and keyed assets.
+- Store exposes `libraries: [CatalogLibraryState]` through its current library-row
+  query; asset values are read through separate Store queries.
 - Change `SidebarView` to receive `[CatalogLibraryState]`, not the whole
   snapshot.
 - Allow Settings library management to receive `[CatalogLibraryState]`,
@@ -54,11 +55,11 @@ Out of scope:
 | --- | --- | --- | --- | --- |
 | ADD-001 | Architecture | The catalog snapshot shall expose one current-state row per library that combines durable root identity with transient library state. | Current | `docs/requirements.md`, this spec |
 | ADD-002 | Architecture | `LibraryRoot` shall remain durable library-root identity and shall not store transient availability or scan activity. | Current | `docs/requirements.md`, this spec |
-| ADD-003 | Architecture | `SidebarView` shall receive only library state rows, the current selection value, and one explicit selection callback, not the whole `CatalogSnapshot`. | Current | `docs/requirements.md`, this spec |
+| ADD-003 | Architecture | `SidebarView` shall receive only library state rows, the current selection value, and one explicit selection callback, not raw catalog state. | Current | `docs/requirements.md`, this spec |
 | ADD-004 | Architecture | Consumers shall not manually join roots to separate scanning or availability collections; transient state belongs on the library state row. | Current | `docs/requirements.md`, this spec |
 | ADD-005 | Architecture | Settings library management shall consume library state rows and catalog add/remove intents only; it shall not consume scan activity UI, media assets, browser state, raw snapshots, or the whole window ViewModel. | Current | `docs/requirements.md`, this spec |
 | ADD-006 | Architecture | Sidebar row selection shall be named and modeled as `SidebarSelection`, separate from future media-asset selection. | Current | `docs/requirements.md`, this spec |
-| ADD-007 | Architecture | Main-window state shall use `sidebarSelection` for the selected sidebar row and `mediaGrid` for ordered identities plus current values in that scope. | Current | `docs/requirements.md`, this spec |
+| ADD-007 | Architecture | Main-window state shall use `sidebarSelection` for the selected sidebar row and `mediaGrid` for ordered identities plus a detail-refresh generation in that scope. | Current | `docs/requirements.md`, this spec |
 
 Acceptance examples:
 
@@ -68,14 +69,15 @@ Acceptance examples:
   library state row without loading media assets; Sidebar still shows only the
   library display name.
 - Given the sidebar renders, its initializer receives `[CatalogLibraryState]`
-  plus selection value/callback, not `CatalogSnapshot`.
+  plus selection value/callback, not raw catalog state.
 - Given Settings renders the Libraries tab, its initializer receives
   `[CatalogLibraryState]` and add/remove closures, not
-  `CatalogWindowViewModel`, `CatalogSnapshot`, media assets, or sidebar state.
+  `CatalogWindowViewModel`, media assets, or sidebar state.
 - Given code stores the selected All Media or library row from the sidebar, it
   uses `SidebarSelection`, not `CatalogSelection`.
 - Given code exposes current media for the selected sidebar scope, it uses
-  `CatalogMediaGridState` with explicit scope, ordered IDs, and keyed values.
+  `CatalogMediaGridState` with explicit scope, ordered IDs, and a detail-refresh
+  generation; visible values are fetched separately by ID.
 
 ## Architectural Alternatives
 
@@ -139,11 +141,10 @@ Use:
 - `CatalogLibraryState`: read model containing `root`, `availability`, and
   `activity`, plus convenience identity and display accessors.
 
-`CatalogSnapshot` stores `libraries: [CatalogLibraryState]` and
-`assetsByID: [MediaAssetID: MediaAsset]`. `CatalogStore.currentSnapshot()`
-creates one library state per saved root, attaches transient availability, and
-marks the current scan root as `.scanning`. `CatalogProjection` sorts library
-states and decides which library assets are visible.
+`CatalogStore.currentLibraries()` creates one library state per saved root,
+attaches transient availability, and marks the current scan root as `.scanning`.
+`CatalogProjection` sorts library states and decides which library assets are
+visible using Store-owned ordered-ID queries.
 
 `SidebarView` takes `libraries: [CatalogLibraryState]` and a
 selection value/callback pair, constructs the control binding locally, and
@@ -158,11 +159,10 @@ display scan activity.
 
 - `CatalogStore` remains the owner of persisted roots, media assets, transient
   availability, and the current scan task.
-- `CatalogStore.currentSnapshot()` is the single place that combines stored
+- `CatalogStore.currentLibraries()` is the single place that combines stored
   `LibraryRoot` values with transient library state.
-- `CatalogSnapshot` exposes `libraries` and keyed assets; it does not expose raw
-  root arrays or separate transient-state collections.
-- `CatalogProjection` turns raw snapshots into `CatalogWindowState`.
+- Asset identity order and asset detail are separate Store queries.
+- `CatalogProjection` turns Store query results into `CatalogWindowState`.
 - `CatalogWindowViewModel` consumes `CatalogWindowState` and exposes it to
   SwiftUI.
 - `ContentView` passes only `model.state.libraries` into `SidebarView`.
@@ -190,7 +190,7 @@ paths.
   scan activity.
 - Store tests prove snapshots expose library state rows and transient state.
 - Source hygiene tests reject the retired separate transient-state join pattern.
-- Source hygiene tests prove `SidebarView` does not accept `CatalogSnapshot`.
+- Source hygiene tests prove `SidebarView` does not accept raw catalog state.
 - Source hygiene tests prove Settings does not consume `CatalogWindowViewModel`
   or scan activity UI.
 - Source hygiene tests reject ambiguous selection and scoped-array app-source

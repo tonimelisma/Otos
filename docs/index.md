@@ -31,14 +31,15 @@ implementation history.
 | ADR | Owns |
 | --- | --- |
 | [0001](adr/0001-repository-foundation.md) | Repository and toolchain foundation. |
-| [0002](adr/0002-catalog-persistence-and-filesystem-scan.md) | GRDB/SQLite catalog persistence, in-memory retention, filesystem facts, and idempotent scan reconciliation. |
+| [0002](adr/0002-catalog-persistence-and-filesystem-scan.md) | GRDB/SQLite catalog persistence, filesystem facts, and idempotent scan reconciliation. |
 | [0003](adr/0003-library-root-selection-and-access.md) | Unsandboxed folder selection, normalized path identity, and overlap rules. |
 | [0004](adr/0004-catalog-ui-ownership.md) | Permanent single-window Store/Projection/ViewModel/View ownership. |
 | [0005](adr/0005-catalog-publication-and-availability.md) | Projection publication, explicit selection delivery, and transient availability. |
 | [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering and structural/detail update mechanics. |
-| [0007](adr/0007-catalog-order-reuse.md) | Sort every publication by precomputed key (no order cache) and share the full value map by copy-on-write. |
+| [0007](adr/0007-catalog-order-reuse.md) | Superseded ordering/materialization decision retained for precomputed sort-key and order-cache-removal evidence. |
 | [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
-| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files, metadata as an on-demand blob), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
+| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files, metadata as scalar columns plus JSON), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
+| [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, and clean destructive catalog reset. |
 
 ## Current Implementation Specs
 
@@ -62,11 +63,12 @@ implementation history.
 | [0017](specs/0017-catalog-publication-performance.md) | Cheap precomputed sort key and no-op-scan notification suppression, with before/after measurement. |
 | [0018](specs/0018-catalog-order-cache-and-scoped-map-removal.md) | Remove the projection order cache and scoped value map now that the sort is cheap. |
 | [0019](specs/0019-onboarding-walkthrough-and-why-comments.md) | Onboarding walkthrough and architecture why-comments. |
-| [0020](specs/0020-scan-date-freshness-and-selective-sync-contract.md) | In-memory scan-date freshness, selective-sync contract correction, and the PR-review-comment increment process. |
+| [0020](specs/0020-scan-date-freshness-and-selective-sync-contract.md) | Scan-date freshness, selective-sync contract correction, and the PR-review-comment increment process. |
 | [0021](specs/0021-cloud-materialization-triggering-and-eviction-poc.md) | Cloud materialization triggering POC, the background-download contract change, the eviction constraint, and the retained non-blocking materialization helpers. |
 | [0022](specs/0022-metadata-and-thumbnail-enrichment.md) | Background metadata and JPEG thumbnail enrichment: the data model, the cursorless two-pool coordinator, the viewport channel, and tile rendering. |
 | [0023](specs/0023-filesystem-event-rescan-v1.md) | Running-app FSEvents: debounced per-root full rescans through the existing scan pipeline. |
 | [0024](specs/0024-grid-flicker-and-thumbnail-jpeg.md) | Sidebar status, grid flicker, and static thumbnail bug fix: name-only sidebar rows, in-place same-identity tile reconfiguration, JPEG thumbnail storage, and projection/grid/thumbnail instrumentation. |
+| [0025](specs/0025-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, clean schema/reset, identity-plus-generation grid state, visible detail reading, and query-based enrichment selection. |
 
 ## Planning Documents
 
@@ -78,6 +80,9 @@ user explicitly asks to use them for the current task.
 | Document | Owns | Update when |
 | --- | --- | --- |
 | [product/roadmap.md](product/roadmap.md) | Non-authoritative idea and planning notes that may include concepts never meant to be implemented. | The user explicitly asks to record, revise, or use roadmap/planning material. |
+| [research/media-grid-best-practices.md](research/media-grid-best-practices.md) | Non-authoritative platform research for large media-grid identity, detail loading, prefetching, and responsiveness design. | New platform guidance or architecture research changes the media-grid design basis. |
+| [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md) | Non-authoritative storage/query research for database-backed media catalog design. | New storage/query research changes the catalog architecture design basis. |
+| [../catalog-grid-state-architecture.md](../catalog-grid-state-architecture.md) | Non-authoritative chosen design direction for the Store-owned query catalog and identity grid. | The selected catalog/grid architecture direction changes before implementation. |
 
 ## Templates
 

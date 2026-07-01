@@ -89,7 +89,7 @@ struct CatalogProjectionLifecycleTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { _, selection in
+            stateBuilder: { _, _, selection in
                 await gate.pauseIfNeeded(selection)
                 let resolved = selection == missing ? SidebarSelection.allMedia : selection
                 return CatalogWindowState(
@@ -97,8 +97,7 @@ struct CatalogProjectionLifecycleTests {
                     libraries: [],
                     mediaGrid: CatalogMediaGridState(
                         scope: resolved,
-                        orderedAssetIDs: [],
-                        assetsByID: [:]
+                        orderedAssetIDs: []
                     ),
                     resolvedSidebarSelection: resolved,
                     mediaEmptyState: .noMedia

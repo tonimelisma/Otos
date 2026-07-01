@@ -37,7 +37,7 @@ struct MediaAssetCollectionTests {
         #expect(nextResetScroll == false)
     }
 
-    @Test func identicalIDsRefreshDetailsWithoutStructuralApply() throws {
+    @Test func identicalIDsRefreshVisibleWithoutStructuralApply() {
         let gate = MediaAssetCollectionApplyGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
         guard case .apply = gate.receive(first) else {
@@ -46,24 +46,11 @@ struct MediaAssetCollectionTests {
         }
         #expect(isNone(gate.complete(applied: first)))
 
-        var changed = first
-        let id = try #require(changed.orderedAssetIDs.first)
-        let original = try #require(changed.assetsByID[id])
-        changed.assetsByID[id] = MediaAsset(
-            libraryRootPath: original.libraryRootPath,
-            relativePath: original.relativePath,
-            name: "changed.jpg",
-            contentTypeIdentifier: original.contentTypeIdentifier,
-            byteSize: 2,
-            createdAt: original.createdAt,
-            contentModifiedAt: original.contentModifiedAt
-        )
-
-        guard case let .refreshVisible(refreshed, resetScroll) = gate.receive(changed) else {
+        guard case let .refreshVisible(refreshed, resetScroll) = gate.receive(first) else {
             Issue.record("Unchanged identities should refresh visible item details")
             return
         }
-        #expect(refreshed == changed)
+        #expect(refreshed == first)
         #expect(resetScroll == false)
     }
 
@@ -202,8 +189,7 @@ private func makeGrid(scope: SidebarSelection, paths: [String]) -> CatalogMediaG
     let assets = paths.map { makeAsset(path: $0, type: UTType.jpeg.identifier) }
     return CatalogMediaGridState(
         scope: scope,
-        orderedAssetIDs: assets.map(\.id),
-        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+        orderedAssetIDs: assets.map(\.id)
     )
 }
 

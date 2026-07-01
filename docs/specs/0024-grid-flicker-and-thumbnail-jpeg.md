@@ -152,7 +152,7 @@ Cons:
 Failure modes:
 
 - Every enrichment batch can blank the viewport, including offscreen-only
-  enrichment that happens to change the full value map.
+  enrichment that happens to trigger a detail refresh.
 
 Rejected because the failure is already observed.
 
@@ -318,8 +318,9 @@ data-structure change from after-fix measurements.
   selection but renders no status subtitle from `availability` or `activity`.
 - `MediaAssetCollectionApplyGate` continues to classify same ordered IDs as
   `refreshVisible`.
-- `MediaAssetCollectionViewController.refreshVisible` now updates the `assetsByID`
-  map and calls an in-place visible reconfigure helper.
+- `MediaAssetCollectionViewController.refreshVisible` now re-queries visible
+  details through the Store-backed detail reader and calls an in-place visible
+  reconfigure helper.
 - `MediaAssetTileView.configure` still handles title/badge/background and only
   reloads thumbnail/date when `contentKey` changes.
 - `ThumbnailStore.relativeName` now returns `.jpg`; `write` encodes JPEG;

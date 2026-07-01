@@ -4,10 +4,9 @@ import OSLog
 /// Catalog Projection guide
 ///
 /// This actor is the complete read-model boundary between catalog truth and the
-/// main window. Store snapshots have keyed but unordered assets; Projection owns
-/// library ordering, global asset ordering, reachability filtering, sidebar
-/// scope, title selection, and empty-state meaning. None of that work belongs on
-/// MainActor or inside a SwiftUI body.
+/// main window. Store exposes root rows and ordered asset IDs; Projection owns library
+/// ordering, reachability filtering, sidebar scope, title selection, and empty-state
+/// meaning. None of that work belongs on MainActor or inside a SwiftUI body.
 ///
 /// Why a separate actor from the Store: sorting and filtering tens of thousands of
 /// assets is real CPU work that must not run on the main thread (main-thread work
@@ -16,30 +15,32 @@ import OSLog
 /// exists" and "how this window shows it" stay independent — sorting can change
 /// without touching persistence, and the Store stays testable without UI concerns.
 ///
-/// One 10 Hz loop coalesces Store notifications and sidebar intents. `dirty` is
-/// cleared before an awaited snapshot/build so input arriving during that await
-/// survives for the next tick. Actor isolation permits only one build at a time,
-/// and equal-state suppression prevents detail views from receiving values that
-/// did not change. Asset order is produced by sorting precomputed sort keys on
-/// every publication; the projection no longer caches order. A missing selected
-/// library is normalized here, where selection input is owned;
-/// the fallback is retained only if no newer intent arrived during the build.
+/// One 10 Hz loop coalesces Store notifications and sidebar intents. Store's
+/// notification stream is registered before the loop starts so detail-only writes
+/// that arrive right after startup cannot be missed. `dirty` is cleared before
+/// awaited Store reads/build work so input arriving during that await survives for
+/// the next tick. Actor isolation permits only one build at a time.
+/// Store invalidations bump a scalar grid detail generation, so detail-only
+/// thumbnail/date/name changes still reach the visible cell detail reader without
+/// reintroducing whole-asset UI state. Asset order is produced by Store-owned SQL
+/// ordering; the projection no longer caches order. Missing selected libraries are
+/// normalized here, and fallback is retained only if no newer intent arrived.
 actor CatalogProjection {
-    typealias WindowStateBuilder = @Sendable (CatalogSnapshot, SidebarSelection) async -> CatalogWindowState
+    // swiftlint:disable:next line_length
+    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], SidebarSelection) async -> CatalogWindowState
 
     private struct BuildMetrics {
-        let sortMs: Int
+        let orderQueryMs: Int
     }
 
     private struct PublicationChangeSummary {
         let previousSelectedScopeAssetCount: Int
         let mediaIdentityChanged: Bool
-        let mediaDetailsChanged: Bool
         let librariesChanged: Bool
         let emptyStateChanged: Bool
         let resolvedSelectionChanged: Bool
+        let detailRefreshChanged: Bool
         let mediaIdentityEqualityUs: Int
-        let mediaDetailsEqualityUs: Int
 
         static func compare(
             previous: CatalogWindowState?,
@@ -49,12 +50,11 @@ actor CatalogProjection {
                 return PublicationChangeSummary(
                     previousSelectedScopeAssetCount: -1,
                     mediaIdentityChanged: true,
-                    mediaDetailsChanged: true,
                     librariesChanged: true,
                     emptyStateChanged: true,
                     resolvedSelectionChanged: true,
-                    mediaIdentityEqualityUs: 0,
-                    mediaDetailsEqualityUs: 0
+                    detailRefreshChanged: true,
+                    mediaIdentityEqualityUs: 0
                 )
             }
 
@@ -63,19 +63,15 @@ actor CatalogProjection {
                 || previous.mediaGrid.orderedAssetIDs != current.mediaGrid.orderedAssetIDs
             let identityUs = DiagnosticsTiming.microseconds(since: identityStart)
 
-            let detailsStart = Date()
-            let mediaDetailsChanged = previous.mediaGrid.assetsByID != current.mediaGrid.assetsByID
-            let detailsUs = DiagnosticsTiming.microseconds(since: detailsStart)
-
             return PublicationChangeSummary(
                 previousSelectedScopeAssetCount: previous.mediaGrid.orderedAssetIDs.count,
                 mediaIdentityChanged: mediaIdentityChanged,
-                mediaDetailsChanged: mediaDetailsChanged,
                 librariesChanged: previous.libraries != current.libraries,
                 emptyStateChanged: previous.mediaEmptyState != current.mediaEmptyState,
                 resolvedSelectionChanged: previous.resolvedSidebarSelection != current.resolvedSidebarSelection,
-                mediaIdentityEqualityUs: identityUs,
-                mediaDetailsEqualityUs: detailsUs
+                detailRefreshChanged: previous.mediaGrid.detailRefreshGeneration
+                    != current.mediaGrid.detailRefreshGeneration,
+                mediaIdentityEqualityUs: identityUs
             )
         }
     }
@@ -88,7 +84,7 @@ actor CatalogProjection {
         let selectedSidebarRow: SidebarSelection
         let retainedResolvedSelection: Bool
         let equalityUs: Int
-        let snapshotMs: Int
+        let storeReadMs: Int
         let projectionMs: Int
         let totalMs: Int
         let dirtyAfter: Bool
@@ -103,20 +99,20 @@ actor CatalogProjection {
                     "assetCount": "\(assetCount)",
                     "previousSelectedScopeAssetCount": "\(changeSummary.previousSelectedScopeAssetCount)",
                     "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
-                    "assetSortMs": "\(metrics.sortMs)",
+                    "assetOrderQueryMs": "\(metrics.orderQueryMs)",
                     "mediaIdentityChanged": "\(changeSummary.mediaIdentityChanged)",
-                    "mediaDetailsChanged": "\(changeSummary.mediaDetailsChanged)",
                     "librariesChanged": "\(changeSummary.librariesChanged)",
                     "emptyStateChanged": "\(changeSummary.emptyStateChanged)",
                     "resolvedSelectionChanged": "\(changeSummary.resolvedSelectionChanged)",
+                    "detailRefreshChanged": "\(changeSummary.detailRefreshChanged)",
+                    "detailRefreshGeneration": "\(state.mediaGrid.detailRefreshGeneration)",
                     "mediaIdentityEqualityUs": "\(changeSummary.mediaIdentityEqualityUs)",
-                    "mediaDetailsEqualityUs": "\(changeSummary.mediaDetailsEqualityUs)",
                     "equalityUs": "\(equalityUs)",
                     "sidebarSelection": selectedSidebarRow.diagnosticDescription,
                     "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
                     "retainedResolvedSelection": "\(retainedResolvedSelection)",
                     "emptyState": state.mediaEmptyState.diagnosticDescription,
-                    "snapshotMs": "\(snapshotMs)",
+                    "storeReadMs": "\(storeReadMs)",
                     "projectionMs": "\(projectionMs)",
                     "totalMs": "\(totalMs)",
                     "dirtyAfterPublication": "\(dirtyAfter)",
@@ -136,6 +132,7 @@ actor CatalogProjection {
     private var changeTask: Task<Void, Never>?
     private var publicationTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
+    private var detailRefreshGeneration: UInt64 = 0
 
     init(
         cadence: Duration = .milliseconds(100),
@@ -150,9 +147,10 @@ actor CatalogProjection {
     func states(
         store: CatalogStore,
         initialSidebarSelection: SidebarSelection
-    ) -> AsyncStream<CatalogWindowState> {
+    ) async -> AsyncStream<CatalogWindowState> {
         sidebarSelection = initialSidebarSelection
-        ensurePublicationLoop(store: store)
+        let changes = changeTask == nil ? await store.changeNotifications() : nil
+        ensurePublicationLoop(store: store, changes: changes)
         markDirty()
 
         let (stream, continuation) = AsyncStream<CatalogWindowState>.makeStream(
@@ -177,11 +175,13 @@ actor CatalogProjection {
     }
 
     func windowState(
-        snapshot: CatalogSnapshot,
+        libraries: [CatalogLibraryState],
+        orderedAssetIDs: [MediaAssetID],
         sidebarSelection: SidebarSelection
     ) async -> CatalogWindowState {
         let (state, _) = await buildWindowState(
-            snapshot: snapshot,
+            libraries: libraries,
+            orderedAssetIDs: orderedAssetIDs,
             sidebarSelection: sidebarSelection
         )
         return state
@@ -189,14 +189,16 @@ actor CatalogProjection {
 }
 
 private extension CatalogProjection {
-    func ensurePublicationLoop(store: CatalogStore) {
+    func ensurePublicationLoop(store: CatalogStore, changes: AsyncStream<CatalogStoreChange>?) {
         guard publicationTask == nil else {
             return
         }
 
         let cadence = cadence
-        changeTask = Task { [weak self] in
-            let changes = await store.changeNotifications()
+        changeTask = Task { [weak self, changes] in
+            guard let changes else {
+                return
+            }
             for await change in changes {
                 await self?.storeDidChange(change)
             }
@@ -220,7 +222,7 @@ private extension CatalogProjection {
 
     func storeDidChange(_ change: CatalogStoreChange) {
         // A remove and same-path add can occur inside one 10 Hz interval. The
-        // final snapshot then contains the path again, so snapshot validation
+        // final queried state then contains the path again, so state validation
         // alone cannot prove that the selected root was removed. Store's typed
         // removal signal preserves that transient fact without exposing row IDs
         // or creating durable library-instance identity.
@@ -229,6 +231,7 @@ private extension CatalogProjection {
                 sidebarSelection = .allMedia
             }
         }
+        detailRefreshGeneration &+= 1
         markDirty()
     }
 
@@ -237,27 +240,28 @@ private extension CatalogProjection {
             return
         }
 
-        // Clear before awaiting so changes that arrive during snapshot/projection
+        // Clear before awaiting so changes that arrive during Store reads/projection
         // work remain queued for the next tick instead of being lost.
         dirty = false
         let selectedSidebarRow = sidebarSelection
 
         let publicationStart = Date()
-        let snapshotStart = Date()
-        let snapshot = await store.currentSnapshot()
-        let snapshotMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
+        let storeReadStart = Date()
+        let libraries = await store.currentLibraries()
+        let storeReadMs = DiagnosticsTiming.milliseconds(since: storeReadStart)
 
         let projectionStart = Date()
         let signpost = OtosSignpost.performance.beginInterval("CatalogWindowPublication")
         let (state, buildMetrics) = await buildWindowState(
-            snapshot: snapshot,
+            store: store,
+            libraries: libraries,
             sidebarSelection: selectedSidebarRow
         )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
 
         // The emitted state and Projection's retained input must agree after a
         // selected root disappears. Actor reentrancy may have delivered a newer
-        // user intent during the awaited snapshot/build, so only normalize the
+        // user intent during the awaited reads/build, so only normalize the
         // exact input used by this completed build; newer input stays dirty and
         // wins on the next tick.
         let retainedResolvedSelection = retainResolvedSelection(
@@ -276,13 +280,13 @@ private extension CatalogProjection {
 
         await PublicationDiagnostics(
             state: state,
-            assetCount: snapshot.assetsByID.count,
+            assetCount: state.mediaGrid.orderedAssetIDs.count,
             metrics: buildMetrics,
             changeSummary: changeSummary,
             selectedSidebarRow: selectedSidebarRow,
             retainedResolvedSelection: retainedResolvedSelection,
             equalityUs: equalityUs,
-            snapshotMs: snapshotMs,
+            storeReadMs: storeReadMs,
             projectionMs: projectionMs,
             totalMs: totalMs,
             dirtyAfter: dirty,
@@ -328,10 +332,42 @@ private extension CatalogProjection {
 
 private extension CatalogProjection {
     private func buildWindowState(
-        snapshot: CatalogSnapshot,
+        store: CatalogStore,
+        libraries unsortedLibraries: [CatalogLibraryState],
         sidebarSelection: SidebarSelection
     ) async -> (CatalogWindowState, BuildMetrics) {
-        if let injectedState = await injectedWindowState(snapshot, sidebarSelection: sidebarSelection) {
+        let libraries = Self.sortLibraries(unsortedLibraries)
+        let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
+        let orderStart = Date()
+        let orderedAssetIDs: [MediaAssetID]
+        do {
+            orderedAssetIDs = try await store.orderedAssetIDs(
+                for: sidebarSelection,
+                availableLibraryPaths: availableLibraryPaths
+            )
+        } catch {
+            OtosLog.catalog.error("Catalog ordered asset query failed")
+            orderedAssetIDs = []
+        }
+        return await buildWindowState(
+            libraries: libraries,
+            orderedAssetIDs: orderedAssetIDs,
+            sidebarSelection: sidebarSelection,
+            orderQueryMs: DiagnosticsTiming.milliseconds(since: orderStart)
+        )
+    }
+
+    private func buildWindowState(
+        libraries unsortedLibraries: [CatalogLibraryState],
+        orderedAssetIDs: [MediaAssetID],
+        sidebarSelection: SidebarSelection,
+        orderQueryMs: Int = 0
+    ) async -> (CatalogWindowState, BuildMetrics) {
+        if let injectedState = await injectedWindowState(
+            unsortedLibraries,
+            orderedAssetIDs: orderedAssetIDs,
+            sidebarSelection: sidebarSelection
+        ) {
             return injectedState
         }
 
@@ -339,9 +375,8 @@ private extension CatalogProjection {
         defer {
             OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
         }
-        let libraries = Self.sortLibraries(snapshot.libraries)
+        let libraries = Self.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let (orderedAssetIDs, metrics) = orderedAssetIDs(for: snapshot)
         let resolvedSidebarSelection = Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
         let title = Self.title(for: resolvedSidebarSelection, libraries: libraries)
         let scopedAssetIDs = Self.assetIDs(
@@ -357,10 +392,6 @@ private extension CatalogProjection {
             selectedAssetCount: scopedAssetIDs.count
         )
 
-        // Pass the snapshot's full value map by copy-on-write. The precomputed sort
-        // key made re-sorting every publication negligible, so the projection no
-        // longer caches order or materializes a scoped copy; the grid looks up only
-        // the visible ids from this shared map.
         return (
             CatalogWindowState(
                 title: title,
@@ -368,12 +399,12 @@ private extension CatalogProjection {
                 mediaGrid: CatalogMediaGridState(
                     scope: resolvedSidebarSelection,
                     orderedAssetIDs: scopedAssetIDs,
-                    assetsByID: snapshot.assetsByID
+                    detailRefreshGeneration: detailRefreshGeneration
                 ),
                 resolvedSidebarSelection: resolvedSidebarSelection,
                 mediaEmptyState: mediaEmptyState
             ),
-            metrics
+            BuildMetrics(orderQueryMs: orderQueryMs)
         )
     }
 
@@ -381,23 +412,15 @@ private extension CatalogProjection {
     /// replacing the publication loop whose dirty/in-flight behavior they need
     /// to exercise. Injected output reports a zero sort duration.
     private func injectedWindowState(
-        _ snapshot: CatalogSnapshot,
+        _ libraries: [CatalogLibraryState],
+        orderedAssetIDs: [MediaAssetID],
         sidebarSelection: SidebarSelection
     ) async -> (CatalogWindowState, BuildMetrics)? {
         guard let stateBuilder else {
             return nil
         }
-        let state = await stateBuilder(snapshot, sidebarSelection)
-        return (state, BuildMetrics(sortMs: 0))
-    }
-
-    private func orderedAssetIDs(for snapshot: CatalogSnapshot) -> ([MediaAssetID], BuildMetrics) {
-        // With the precomputed sort key, re-sorting every publication is cheap, so
-        // the projection no longer caches order or validates membership; it sorts
-        // the current ids directly.
-        let sortStart = Date()
-        let orderedIDs = Self.sortAssetIDs(snapshot.assetsByID)
-        return (orderedIDs, BuildMetrics(sortMs: DiagnosticsTiming.milliseconds(since: sortStart)))
+        let state = await stateBuilder(libraries, orderedAssetIDs, sidebarSelection)
+        return (state, BuildMetrics(orderQueryMs: 0))
     }
 
     static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
@@ -408,24 +431,6 @@ private extension CatalogProjection {
             }
             return displayComparison == .orderedAscending
         }
-    }
-
-    static func sortAssetIDs(_ assetsByID: [MediaAssetID: MediaAsset]) -> [MediaAssetID] {
-        // Sort by each asset's precomputed `sortKey` with a plain string compare
-        // rather than localized collation per comparison. Ties, which only arise
-        // for malformed test or diagnostic snapshots, fall back to the raw path so
-        // the result stays deterministic.
-        assetsByID.values
-            .sorted { left, right in
-                if left.sortKey != right.sortKey {
-                    return left.sortKey < right.sortKey
-                }
-                if left.libraryRootPath.rawValue != right.libraryRootPath.rawValue {
-                    return left.libraryRootPath.rawValue < right.libraryRootPath.rawValue
-                }
-                return left.relativePath.rawValue < right.relativePath.rawValue
-            }
-            .map(\.id)
     }
 
     static func resolvedSidebarSelection(
@@ -473,10 +478,7 @@ private extension CatalogProjection {
         allAssetCount: Int,
         selectedAssetCount: Int
     ) -> CatalogMediaEmptyState {
-        guard selectedAssetCount == 0 else {
-            return .noMedia
-        }
-
+        guard selectedAssetCount == 0 else { return .noMedia }
         switch sidebarSelection {
         case .allMedia:
             if libraries.contains(where: { $0.availability == .unknown }) {

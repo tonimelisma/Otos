@@ -15,14 +15,19 @@ cheap sort key, a real-library trace showed the cache's O(n) membership validati
 cheap re-sort they avoided. The reuse machinery had become a net cost and dead
 weight. This increment removes it.
 
+Current update: ADR 0010 supersedes this spec's full-value-map publication path.
+The retained outcome is the removal of the projection order cache; current order
+execution is Store-owned SQLite, and the grid receives ordered IDs plus a scalar
+detail-refresh generation rather than `CatalogMediaGridState.assetsByID`.
+
 ## Scope
 
 In scope:
 
 - Remove `cachedOrderedAssetIDs` and the membership-validation path; the projection
   sorts the current IDs on every publication.
-- Pass the snapshot's full value map by copy-on-write as
-  `CatalogMediaGridState.assetsByID`; the grid looks up only the visible IDs.
+- Superseded by ADR 0010: pass no full value map through grid state. The grid
+  faults visible details by ID through the Store-backed reader.
 - Remove the now-meaningless diagnostic fields (`assetOrderCacheHit`,
   `assetOrderSorted`, `assetMembershipChanged`, `membershipUs`, `scopedBuildUs`) and
   the matching `script/catalog-diagnostics.sh` summary lines.
@@ -39,7 +44,7 @@ Out of scope:
 
 | ID | Type | Captured requirement | Current or candidate | Storage location |
 | --- | --- | --- | --- | --- |
-| FND-043 (rewritten) | Architecture | Projection sorts by precomputed key every publication with no order cache, and passes the full value map by copy-on-write. | Current | docs/requirements.md, ADR 0007, this spec |
+| FND-043 (rewritten) | Architecture | Store-owned SQLite queries produce display order by persisted precomputed sort key; Projection publishes scoped ordered IDs without a full value map. | Current | docs/requirements.md, ADR 0010, this spec |
 
 ## Architectural Alternatives
 
@@ -72,9 +77,9 @@ Failure mode: per-publication cost stays higher than re-sorting.
 
 ## Selected Approach
 
-Alternative A. The projection sorts every publication (cheap), holds no order cache,
-and shares the snapshot's full value map by copy-on-write. ADR 0007 is rewritten;
-FND-043 is rewritten; diagnostics and tests are updated.
+Alternative A removed the projection order cache. ADR 0010 later moved order
+execution to Store-owned SQLite and retired the full value-map publication path.
+FND-043 now points at that current contract.
 
 ## Retirement Proof
 
@@ -86,14 +91,15 @@ rewritten. Git history owns the prior cache decision.
 
 ## Living Documentation And Comment Audit
 
-Updated: ADR 0007, FND-043, `docs/index.md`, `CatalogProjection` file guide and
-comments, `CatalogMediaGridState` comment, `script/catalog-diagnostics.sh`. Tests
-updated to assert the full-map contract and the renamed behaviors.
+Updated at the time: ADR 0007, FND-043, `docs/index.md`, `CatalogProjection` file
+guide and comments, `CatalogMediaGridState` comment, `script/catalog-diagnostics.sh`.
+ADR 0010 later rewrote the current full-map contract to Store-owned queries and
+identity-plus-generation grid state.
 
 ## Acceptance Criteria
 
-- `CatalogProjection` has no order cache and builds `assetsByID` from the full
-  snapshot map; tests prove scoped order plus full-map resolution.
+- `CatalogProjection` has no order cache. Current tests prove Store-ordered IDs
+  and visible-detail resolution through the grid detail reader.
 - Diagnostics no longer emit the removed fields; the summarizer no longer counts
   them.
 - `script/verify.sh` passes.

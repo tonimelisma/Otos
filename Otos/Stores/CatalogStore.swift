@@ -6,7 +6,7 @@ import OSLog
 
 /// Store notifications remain cheap invalidation signals. Most changes carry no
 /// payload; root removal carries its typed path because a remove followed by a
-/// same-path add can otherwise coalesce into a snapshot where Projection cannot
+/// same-path add can otherwise coalesce into a queried state where Projection cannot
 /// observe that the selected library instance disappeared.
 nonisolated enum CatalogStoreChange: Equatable {
     case catalogChanged
@@ -16,12 +16,12 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// Catalog Store guide
 ///
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
-/// overlay storage, while the nested dictionaries below are the complete working
-/// set used during the process lifetime. Filesystem scans write SQLite and then
-/// mirror the same facts into memory before notifying consumers. While the app
-/// runs, `CatalogFilesystemWatcher` forwards macOS events to per-root debounced
-/// full-root rescans through the same scan pipeline. Views never access either
-/// representation directly.
+/// overlay storage and the per-asset working set; the actor keeps only root identity,
+/// root availability, scan lifecycle, and notification state resident. Filesystem scans
+/// write SQLite and notify consumers only when those writes actually inserted, updated,
+/// or deleted rows. While the app runs, `CatalogFilesystemWatcher` forwards macOS events
+/// to per-root debounced full-root rescans through the same scan pipeline. Views never
+/// access persistence directly.
 ///
 /// Why an actor: the database, the in-memory catalog, and background scans all
 /// touch the same state, and a scan streams in thousands of files concurrently with
@@ -34,14 +34,13 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// Store notifications are intentionally lightweight. Ordinary events only mark
 /// Projection dirty; successful root removal additionally carries its typed path
 /// so same-path replacement cannot hide selection invalidation. Projection pulls
-/// one immutable snapshot on its 10 Hz cadence and owns presentation. Initial
-/// loading is represented by one finite task so every
-/// concurrent caller observes the same load instead of applying competing
-/// snapshots. Awaited GRDB calls make this actor reentrant, so active scans carry
-/// the root path and private root-row instance they own and revalidate both after
-/// each database await. Completed scans reconcile missing paths; failed,
-/// cancelled, or stale scans preserve prior rows because incomplete observation
-/// cannot prove removal.
+/// cheap root state and ordered asset IDs on its 10 Hz cadence and owns presentation.
+/// Initial loading is represented by one finite task so every concurrent caller
+/// observes the same load instead of applying competing root sets. Awaited GRDB calls
+/// make this actor reentrant, so active scans carry the root path and private root-row
+/// instance they own and revalidate both after each database await. Completed scans
+/// reconcile missing paths; failed, cancelled, or stale scans preserve prior rows because
+/// incomplete observation cannot prove removal.
 actor CatalogStore {
     enum Location {
         case application(bundleIdentifier: String)
@@ -83,14 +82,13 @@ actor CatalogStore {
     private let filesystemEventDebounce: Duration
     private let diagnostics: CatalogDiagnostics?
     private let initialLoadDidRead: (@Sendable () async -> Void)?
-    private var dbQueue: DatabaseQueue?
+    private var dbWriter: (any DatabaseWriter)?
     private var started = false
     private var startupTask: Task<Void, Error>?
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
     private var rootsByPath: [LibraryRootPath: LibraryRoot] = [:]
     private var rootRowIDsByPath: [LibraryRootPath: Int64] = [:]
     private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
-    private var assetsByRootPath: [LibraryRootPath: [MediaRelativePath: MediaAsset]] = [:]
     private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
@@ -138,6 +136,263 @@ extension CatalogStore {
         return stream
     }
 
+    func currentLibraries() -> [CatalogLibraryState] {
+        rootsByPath.values.map { root in
+            CatalogLibraryState(
+                root: root,
+                availability: availabilityByRootPath[root.path] ?? .unknown,
+                activity: root.path == activeScan?.rootPath ? .scanning : .idle
+            )
+        }
+    }
+
+    func orderedAssetIDs(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> [MediaAssetID] {
+        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        guard !rootIDs.isEmpty else {
+            return []
+        }
+
+        let queryStart = Date()
+        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
+        let dbWriter = try database()
+        let rows = try await dbWriter.read { db in
+            try Self.fetchOrderedAssetIDRows(rootIDs: rootIDs, db: db)
+        }
+        OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
+
+        let validRootPathsByRowID = rootPathsByRowID.filter { rowID, path in
+            rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
+        }
+        let ids = rows.compactMap { rootRowID, relativePath -> MediaAssetID? in
+            guard let rootPath = validRootPathsByRowID[rootRowID] else {
+                return nil
+            }
+            return MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
+        }
+        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        OtosLog.catalog.debug(
+            """
+            Catalog ordered asset IDs queried selection=\(selection.diagnosticDescription, privacy: .public) \
+            roots=\(rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
+            queryMs=\(queryMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.store.query.order",
+            phase: "finish",
+            fields: [
+                "selection": selection.diagnosticDescription,
+                "rootCount": "\(rootIDs.count)",
+                "count": "\(ids.count)",
+                "queryMs": "\(queryMs)",
+            ]
+        )
+        return ids
+    }
+
+    func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset] {
+        guard !ids.isEmpty else {
+            return [:]
+        }
+
+        let queryStart = Date()
+        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
+        let rootIDsBeforeRead = rootRowIDsByPath
+        let dbWriter = try database()
+        let storedAssets = try await dbWriter.read { db in
+            try Self.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
+        }
+        OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
+
+        var assetsByID: [MediaAssetID: MediaAsset] = [:]
+        assetsByID.reserveCapacity(storedAssets.count)
+        for storedAsset in storedAssets {
+            guard let rootPath = rootPathsByRowID[storedAsset.libraryRootID],
+                  rootRowIDsByPath[rootPath] == storedAsset.libraryRootID
+            else {
+                continue
+            }
+            let asset = mediaAsset(from: storedAsset, rootPath: rootPath)
+            assetsByID[asset.id] = asset
+        }
+
+        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        OtosLog.catalog.debug(
+            """
+            Catalog tile details queried requested=\(ids.count, privacy: .public) \
+            returned=\(assetsByID.count, privacy: .public) queryMs=\(queryMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.store.query.tileDetail",
+            phase: "finish",
+            fields: [
+                "requested": "\(ids.count)",
+                "returned": "\(assetsByID.count)",
+                "queryMs": "\(queryMs)",
+            ]
+        )
+        return assetsByID
+    }
+
+    func metadata(for id: MediaAssetID) async throws -> AssetMetadata? {
+        guard let rootID = rootRowIDsByPath[id.libraryRootPath] else {
+            return nil
+        }
+
+        let queryStart = Date()
+        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreMetadataQuery")
+        let dbWriter = try database()
+        let metadata = try await dbWriter.read { db in
+            try Self.metadataExtra(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+        }
+        OtosSignpost.persistence.endInterval("CatalogStoreMetadataQuery", signpost)
+
+        guard rootRowIDsByPath[id.libraryRootPath] == rootID else {
+            return nil
+        }
+        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        OtosLog.catalog.debug(
+            """
+            Catalog metadata queried returned=\(metadata == nil ? 0 : 1, privacy: .public) \
+            queryMs=\(queryMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.store.query.metadata",
+            phase: "finish",
+            fields: [
+                "returned": metadata == nil ? "0" : "1",
+                "queryMs": "\(queryMs)",
+            ]
+        )
+        return metadata
+    }
+
+    func enrichmentCandidates(
+        prioritizing priorityIDs: [MediaAssetID],
+        excluding excludedIDs: Set<MediaAssetID>,
+        limit: Int
+    ) async throws -> [MediaAsset] {
+        guard limit > 0 else {
+            return []
+        }
+
+        let queryStart = Date()
+        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreEnrichmentCandidateQuery")
+        defer {
+            OtosSignpost.persistence.endInterval("CatalogStoreEnrichmentCandidateQuery", signpost)
+        }
+
+        var candidates: [MediaAsset] = []
+        candidates.reserveCapacity(limit)
+        var claimedIDs = excludedIDs
+        let uniquePriorityIDs = unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
+
+        if !uniquePriorityIDs.isEmpty {
+            try await candidates.append(contentsOf: priorityEnrichmentCandidates(
+                ids: uniquePriorityIDs,
+                limit: limit
+            ))
+        }
+
+        if candidates.count < limit {
+            let remaining = limit - candidates.count
+            let queriedCandidates = try await queriedEnrichmentCandidates(
+                excluding: claimedIDs,
+                limit: remaining
+            )
+            for asset in queriedCandidates where candidates.count < limit {
+                claimedIDs.insert(asset.id)
+                candidates.append(asset)
+            }
+        }
+
+        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        OtosLog.catalog.debug(
+            """
+            Catalog enrichment candidates queried priority=\(priorityIDs.count, privacy: .public) \
+            excluded=\(excludedIDs.count, privacy: .public) returned=\(candidates.count, privacy: .public) \
+            queryMs=\(queryMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.store.query.enrichment",
+            phase: "finish",
+            fields: [
+                "priority": "\(priorityIDs.count)",
+                "excluded": "\(excludedIDs.count)",
+                "returned": "\(candidates.count)",
+                "queryMs": "\(queryMs)",
+            ]
+        )
+        return candidates
+    }
+
+    private func unclaimedPriorityIDs(
+        _ priorityIDs: [MediaAssetID],
+        claimedIDs: inout Set<MediaAssetID>
+    ) -> [MediaAssetID] {
+        priorityIDs.reduce(into: [MediaAssetID]()) { result, id in
+            guard !claimedIDs.contains(id) else {
+                return
+            }
+            claimedIDs.insert(id)
+            result.append(id)
+        }
+    }
+
+    private func priorityEnrichmentCandidates(ids: [MediaAssetID], limit: Int) async throws -> [MediaAsset] {
+        let priorityAssetsByID = try await mediaAssets(for: ids)
+        var candidates: [MediaAsset] = []
+        candidates.reserveCapacity(limit)
+        for id in ids {
+            guard candidates.count < limit else {
+                break
+            }
+            guard let asset = priorityAssetsByID[id],
+                  asset.needsEnrichment,
+                  availabilityByRootPath[asset.libraryRootPath] == .available
+            else {
+                continue
+            }
+            candidates.append(asset)
+        }
+        return candidates
+    }
+
+    private func queriedEnrichmentCandidates(
+        excluding claimedIDs: Set<MediaAssetID>,
+        limit: Int
+    ) async throws -> [MediaAsset] {
+        let rootIDsByPathBeforeRead = rootRowIDsByPath
+        let availableRootIDs = availableLibraryRootIDs()
+        let excludedIDsBeforeRead = Array(claimedIDs)
+        let dbWriter = try database()
+        let storedAssets = try await dbWriter.read { db in
+            try Self.fetchStoredAssetsNeedingEnrichment(
+                rootIDs: availableRootIDs,
+                excludedIDs: excludedIDsBeforeRead,
+                rootIDsByPath: rootIDsByPathBeforeRead,
+                limit: limit,
+                db: db
+            )
+        }
+        return storedAssets.compactMap { storedAsset in
+            guard let rootPath = rootPathsByRowID[storedAsset.libraryRootID],
+                  rootRowIDsByPath[rootPath] == storedAsset.libraryRootID,
+                  availabilityByRootPath[rootPath] == .available
+            else {
+                return nil
+            }
+            let asset = mediaAsset(from: storedAsset, rootPath: rootPath)
+            return asset.needsEnrichment && !claimedIDs.contains(asset.id) ? asset : nil
+        }
+    }
+
     func start(scansSavedLibraries: Bool = true) async throws {
         try await loadIfNeeded()
         if scansSavedLibraries {
@@ -149,7 +404,7 @@ extension CatalogStore {
     /// Every entry point that needs catalog truth awaits the same finite load.
     /// The task is installed before its first suspension, which closes the actor
     /// reentrancy window where two callers could read and later apply competing
-    /// database snapshots.
+    /// database loads.
     private func loadIfNeeded() async throws {
         if started {
             return
@@ -190,14 +445,14 @@ extension CatalogStore {
         // hook nil and performs no additional work.
         await initialLoadDidRead?()
         let applyState = OtosSignpost.catalog.beginInterval("CatalogApplyLoadedCatalog")
-        applyLoadedCatalog(roots: loaded.roots, assets: loaded.assets)
+        applyLoadedCatalog(roots: loaded.roots)
         unrequestedLoadedRootPaths = loaded.roots.map(\.path)
         OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
         OtosLog.persistence.info(
             """
             Catalog loaded roots=\(loaded.roots.count, privacy: .public) \
-            assets=\(loaded.assets.count, privacy: .public)
+            assets=\(loaded.assetCount, privacy: .public)
             """
         )
         await diagnostics?.record(
@@ -205,18 +460,10 @@ extension CatalogStore {
             phase: "finish",
             fields: [
                 "roots": "\(loaded.roots.count)",
-                "assets": "\(loaded.assets.count)",
+                "assets": "\(loaded.assetCount)",
             ]
         )
         notifyCatalogChanged()
-    }
-
-    func currentSnapshot() -> CatalogSnapshot {
-        let state = OtosSignpost.catalog.beginInterval("CatalogCurrentSnapshot")
-        defer {
-            OtosSignpost.catalog.endInterval("CatalogCurrentSnapshot", state)
-        }
-        return makeSnapshot()
     }
 
     /// Applies a batch of completed enrichments in one transaction and one notification.
@@ -237,27 +484,34 @@ extension CatalogStore {
         guard !results.isEmpty else {
             return .applied(count: 0)
         }
-        let writable = currentlyWritableEnrichments(results)
-        guard !writable.isEmpty else {
+        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        guard results.contains(where: { rootIDsByPathBeforeWrite[$0.id.libraryRootPath] != nil }) else {
             return .applied(count: 0)
         }
 
         let state = OtosSignpost.persistence.beginInterval("CatalogEnrichmentBatchWrite")
+        let appliedCount: Int
         do {
             let dbQueue = try database()
-            try await dbQueue.write { db in
-                for item in writable {
-                    try Self.updateEnrichment(item.result, libraryRootID: item.rootRowID, db: db)
+            appliedCount = try await dbQueue.write { db in
+                var count = 0
+                for result in results {
+                    guard let rootID = rootIDsByPathBeforeWrite[result.id.libraryRootPath] else {
+                        continue
+                    }
+                    if try Self.updateEnrichment(result, libraryRootID: rootID, db: db) {
+                        count += 1
+                    }
                 }
+                return count
             }
         } catch {
             OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
-            await recordEnrichmentBatchError(error, count: writable.count)
+            await recordEnrichmentBatchError(error, count: results.count)
             return .writeFailed
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
 
-        let appliedCount = mergeEnrichmentIntoMemory(writable)
         await diagnostics?.record(
             operation: "catalog.enrichment.batch",
             phase: "finish",
@@ -267,57 +521,6 @@ extension CatalogStore {
             notifyCatalogChanged()
         }
         return .applied(count: appliedCount)
-    }
-
-    /// The subset of results whose asset still exists and still has the source facts the
-    /// worker read. Old overlay may remain visible as best-known data, but stale work must
-    /// not stamp itself current after a scan has observed newer bytes.
-    private func currentlyWritableEnrichments(
-        _ results: [EnrichmentResult]
-    ) -> [(rootRowID: Int64, result: EnrichmentResult)] {
-        var writable: [(rootRowID: Int64, result: EnrichmentResult)] = []
-        for result in results {
-            let rootPath = result.id.libraryRootPath
-            guard let rootRowID = rootRowIDsByPath[rootPath],
-                  let asset = assetsByRootPath[rootPath]?[result.id.relativePath],
-                  enrichmentSourceMatches(result, asset: asset)
-            else {
-                continue
-            }
-            writable.append((rootRowID, result))
-        }
-        return writable
-    }
-
-    /// Mirrors the cheap enrichment fields into the resident assets after the write,
-    /// preserving filesystem facts. Re-validates existence (a row removed during the
-    /// write is skipped); the metadata blob is never held resident.
-    private func mergeEnrichmentIntoMemory(
-        _ writable: [(rootRowID: Int64, result: EnrichmentResult)]
-    ) -> Int {
-        var appliedCount = 0
-        for item in writable {
-            let rootPath = item.result.id.libraryRootPath
-            guard let existing = assetsByRootPath[rootPath]?[item.result.id.relativePath],
-                  enrichmentSourceMatches(item.result, asset: existing)
-            else {
-                continue
-            }
-            assetsByRootPath[rootPath]?[item.result.id.relativePath] = existing.applyingEnrichment(
-                thumbnailPath: item.result.thumbnailPath,
-                captureDate: item.result.captureDate,
-                sourceSize: item.result.sourceSize,
-                sourceMTimeSeconds: item.result.sourceMTimeSeconds
-            )
-            appliedCount += 1
-        }
-        OtosLog.metadata.debug("Enrichment batch applied count=\(appliedCount, privacy: .public)")
-        return appliedCount
-    }
-
-    private func enrichmentSourceMatches(_ result: EnrichmentResult, asset: MediaAsset) -> Bool {
-        (result.sourceSize ?? -1) == (asset.byteSize ?? -1)
-            && (result.sourceMTimeSeconds ?? -1) == MediaAsset.mtimeSeconds(asset.contentModifiedAt)
     }
 
     private func recordEnrichmentBatchError(_ error: Error, count: Int) async {
@@ -352,7 +555,6 @@ extension CatalogStore {
         availabilityByRootPath[root.path] = .available
         rootRowIDsByPath[root.path] = storedRoot.id
         rootPathsByRowID[storedRoot.id] = root.path
-        assetsByRootPath[root.path] = assetsByRootPath[root.path] ?? [:]
         OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
         await diagnostics?.record(
             operation: "catalog.library.add",
@@ -384,8 +586,16 @@ extension CatalogStore {
         }
         pendingScanPaths.removeAll { $0 == path }
 
-        let purgedThumbnails = assetsByRootPath[path]?.values.compactMap(\.thumbnailPath) ?? []
         let dbQueue = try database()
+        guard let purgedThumbnails = try await thumbnailPathsForLibraryRemoval(
+            path: path,
+            root: root,
+            rootRowID: rootRowID,
+            dbWriter: dbQueue
+        ) else {
+            return
+        }
+
         let state = OtosSignpost.persistence.beginInterval("CatalogRemoveRoot")
         await diagnostics?.record(
             operation: "catalog.library.remove",
@@ -397,11 +607,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogRemoveRoot", state)
 
-        rootsByPath.removeValue(forKey: path)
-        availabilityByRootPath.removeValue(forKey: path)
-        rootRowIDsByPath.removeValue(forKey: path)
-        rootPathsByRowID.removeValue(forKey: rootRowID)
-        assetsByRootPath.removeValue(forKey: path)
+        removeRootRuntimeState(path: path, rootRowID: rootRowID)
         if let thumbnailDirectory {
             for name in purgedThumbnails {
                 ThumbnailStore.delete(name, in: thumbnailDirectory)
@@ -415,6 +621,35 @@ extension CatalogStore {
         )
         notifyCatalogChanged(.libraryRemoved(path))
         startNextScanIfNeeded()
+    }
+
+    private func thumbnailPathsForLibraryRemoval(
+        path: LibraryRootPath,
+        root: LibraryRoot,
+        rootRowID: Int64,
+        dbWriter: any DatabaseWriter
+    ) async throws -> [String]? {
+        do {
+            let deletionFacts = try await dbWriter.read { db in
+                try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
+            }
+            guard rootsByPath[path] == root,
+                  rootRowIDsByPath[path] == rootRowID
+            else {
+                return nil
+            }
+            return deletionFacts.compactMap(\.thumbnailPath)
+        } catch {
+            OtosLog.persistence.error("Catalog remove root thumbnail lookup failed")
+            throw error
+        }
+    }
+
+    private func removeRootRuntimeState(path: LibraryRootPath, rootRowID: Int64) {
+        rootsByPath.removeValue(forKey: path)
+        availabilityByRootPath.removeValue(forKey: path)
+        rootRowIDsByPath.removeValue(forKey: path)
+        rootPathsByRowID.removeValue(forKey: rootRowID)
     }
 
     func shutdown() {
@@ -456,9 +691,9 @@ private extension CatalogStore {
         try await loadIfNeeded()
     }
 
-    private func database() throws -> DatabaseQueue {
-        if let dbQueue {
-            return dbQueue
+    private func database() throws -> any DatabaseWriter {
+        if let dbWriter {
+            return dbWriter
         }
 
         let state = OtosSignpost.persistence.beginInterval("CatalogOpenDatabase")
@@ -466,31 +701,42 @@ private extension CatalogStore {
             OtosSignpost.persistence.endInterval("CatalogOpenDatabase", state)
         }
 
-        let dbQueue: DatabaseQueue
+        let dbWriter: any DatabaseWriter
+        var storageKind = "memory"
         switch location {
         case let .application(bundleIdentifier):
             let databaseURL = try Self.applicationDatabaseURL(bundleIdentifier: bundleIdentifier)
-            dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+            dbWriter = try DatabasePool(
+                path: databaseURL.path(percentEncoded: false),
+                configuration: Self.fileBackedDatabaseConfiguration()
+            )
+            storageKind = "application"
         case let .databaseFile(url):
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            dbQueue = try DatabaseQueue(path: url.path(percentEncoded: false))
+            dbWriter = try DatabasePool(
+                path: url.path(percentEncoded: false),
+                configuration: Self.fileBackedDatabaseConfiguration()
+            )
+            storageKind = "file"
         case .inMemory:
-            dbQueue = try DatabaseQueue()
+            dbWriter = try DatabaseQueue()
         }
 
-        try Self.migrator.migrate(dbQueue)
-        self.dbQueue = dbQueue
-        return dbQueue
+        try Self.migrator.migrate(dbWriter)
+        self.dbWriter = dbWriter
+        OtosLog.persistence.info(
+            "Catalog database opened storage=\(storageKind, privacy: .public)"
+        )
+        return dbWriter
     }
 
-    private func applyLoadedCatalog(roots: [StoredRoot], assets: [StoredAsset]) {
+    private func applyLoadedCatalog(roots: [StoredRoot]) {
         rootsByPath = [:]
         rootRowIDsByPath = [:]
         rootPathsByRowID = [:]
-        assetsByRootPath = [:]
         availabilityByRootPath = [:]
 
         for storedRoot in roots {
@@ -502,29 +748,49 @@ private extension CatalogStore {
             availabilityByRootPath[root.path] = .unknown
             rootRowIDsByPath[root.path] = storedRoot.id
             rootPathsByRowID[storedRoot.id] = root.path
-            assetsByRootPath[root.path] = [:]
         }
+    }
 
-        for asset in assets {
-            guard let rootPath = rootPathsByRowID[asset.libraryRootID],
-                  rootsByPath[rootPath] != nil
+    private func mediaAsset(from storedAsset: StoredAsset, rootPath: LibraryRootPath) -> MediaAsset {
+        MediaAsset(
+            libraryRootPath: rootPath,
+            relativePath: storedAsset.relativePath,
+            name: storedAsset.name,
+            contentTypeIdentifier: storedAsset.contentTypeIdentifier,
+            byteSize: storedAsset.byteSize,
+            createdAt: storedAsset.createdAt,
+            contentModifiedAt: storedAsset.contentModifiedAt,
+            thumbnailPath: storedAsset.thumbnailPath,
+            captureDate: storedAsset.captureDate,
+            enrichedSourceSize: storedAsset.enrichedSourceSize,
+            enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds
+        )
+    }
+
+    private func rootIDsForQuery(
+        selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) -> [Int64] {
+        switch selection {
+        case .allMedia:
+            return availableLibraryPaths.compactMap { rootRowIDsByPath[$0] }.sorted()
+        case let .library(path):
+            guard availableLibraryPaths.contains(path),
+                  let rootID = rootRowIDsByPath[path]
             else {
-                continue
+                return []
             }
-            assetsByRootPath[rootPath, default: [:]][asset.relativePath] = MediaAsset(
-                libraryRootPath: rootPath,
-                relativePath: asset.relativePath,
-                name: asset.name,
-                contentTypeIdentifier: asset.contentTypeIdentifier,
-                byteSize: asset.byteSize,
-                createdAt: asset.createdAt,
-                contentModifiedAt: asset.contentModifiedAt,
-                thumbnailPath: asset.thumbnailPath,
-                captureDate: asset.captureDate,
-                enrichedSourceSize: asset.enrichedSourceSize,
-                enrichedSourceMTimeSeconds: asset.enrichedSourceMTimeSeconds
-            )
+            return [rootID]
         }
+    }
+
+    private func availableLibraryRootIDs() -> [Int64] {
+        rootsByPath.keys.compactMap { path in
+            guard availabilityByRootPath[path] == .available else {
+                return nil
+            }
+            return rootRowIDsByPath[path]
+        }.sorted()
     }
 
     private func validateNoOverlap(_ path: LibraryRootPath) throws {
@@ -596,25 +862,31 @@ private extension CatalogStore {
 
         let dbQueue = try database()
         let state = OtosSignpost.persistence.beginInterval("CatalogScanBatchWrite")
-        try await dbQueue.write { db in
+        let changedCount = try await dbQueue.write { db in
+            var count = 0
             for file in batch {
-                try Self.upsertScannedFile(file, libraryRootID: scan.rootRowID, db: db)
+                let changed = try Self.upsertScannedFile(
+                    file,
+                    libraryRootPath: scan.rootPath,
+                    libraryRootID: scan.rootRowID,
+                    db: db
+                )
+                if changed {
+                    count += 1
+                }
             }
+            return count
         }
         OtosSignpost.persistence.endInterval("CatalogScanBatchWrite", state)
 
         // The store actor can process remove/cancel messages while SQLite is
-        // writing. Recheck ownership before mirroring the batch into memory.
-        guard owns(scan), let currentRoot = rootsByPath[scan.rootPath] else {
+        // writing. Recheck ownership before notifying from this batch.
+        guard owns(scan) else {
             await recordIgnoredStaleCallback(scan, callback: "batch.afterWrite")
             throw CancellationError()
         }
 
-        let memoryState = OtosSignpost.catalog.beginInterval("CatalogScanBatchApplyMemory")
-        // Use the post-await root value. The pre-write value belongs to the same
-        // lease, but retaining it across suspension would obscure that proof.
-        let visibleChange = applyScannedBatchToMemory(batch, root: currentRoot, rootPath: scan.rootPath)
-        OtosSignpost.catalog.endInterval("CatalogScanBatchApplyMemory", memoryState)
+        let visibleChange = changedCount > 0
         OtosLog.catalog.debug(
             """
             Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) \
@@ -630,75 +902,12 @@ private extension CatalogStore {
                 "changed": "\(visibleChange)",
             ]
         )
-        // Memory was refreshed above regardless. Only a user-visible change (a new
-        // file or a name/type/size change) wakes the sort/scope/publish pipeline; a
-        // re-scan that re-observes identical files publishes nothing, and a
-        // date-only change refreshes memory without a publication because dates are
-        // not a current sort, scope, or display input.
+        // SQLite reported whether this batch inserted a new row or changed existing
+        // filesystem facts. Identical rescans publish nothing; changed dates now count
+        // because tile detail exposes the best filesystem date when metadata is absent.
         if visibleChange {
             notifyCatalogChanged()
         }
-    }
-
-    /// Mirrors the freshly scanned filesystem facts into the in-memory catalog and
-    /// returns whether the batch carried a user-visible change. The in-memory asset
-    /// is always replaced with the latest scanned values, so `currentSnapshot()`
-    /// never serves stale facts: a same-size content edit or a timestamp-only touch
-    /// changes only `createdAt`/`contentModifiedAt`, which `recordScannedBatch`
-    /// already upserted into SQLite, and the in-memory copy must match the
-    /// filesystem truth rather than wait for the next launch reload.
-    ///
-    /// The returned flag drives the projection-waking notification and is computed
-    /// from the exactly comparable facts only (name, content type, size). Dates are
-    /// deliberately excluded from this comparison: they round-trip through SQLite as
-    /// `Double` seconds, so comparing a fresh `Date` against a reloaded one risks
-    /// float epsilon that would make every re-scan look changed and defeat no-op
-    /// suppression, and dates are not a current sort, scope, or display input.
-    private func applyScannedBatchToMemory(
-        _ batch: [ScannedMediaFile],
-        root: LibraryRoot,
-        rootPath: LibraryRootPath
-    ) -> Bool {
-        var visibleChange = false
-        // The tile now shows `bestCaptureDate`, which falls back to the filesystem
-        // createdAt/contentModifiedAt, so a date change is a visible change that must
-        // republish. Compared at whole-second resolution (via `mtimeSeconds`) so the
-        // SQLite `Double` round-trip epsilon — the reason spec 0017 rejected a date
-        // comparison — cannot make every unchanged re-scan look changed.
-        let seconds = MediaAsset.mtimeSeconds
-        for file in batch {
-            let existing = assetsByRootPath[rootPath]?[file.relativePath]
-            let isVisibleChange = existing == nil
-                || existing?.name != file.name
-                || existing?.contentTypeIdentifier != file.contentTypeIdentifier
-                || existing?.byteSize != file.byteSize
-                || seconds(existing?.createdAt) != seconds(file.createdAt)
-                || seconds(existing?.contentModifiedAt) != seconds(file.contentModifiedAt)
-            if isVisibleChange {
-                visibleChange = true
-            }
-            // Disjoint ownership: the scan refreshes facts and preserves the enrichment
-            // overlay. A new file is built fresh (no overlay yet); a re-observed file
-            // merges so metadata and the thumbnail survive the re-scan, while a changed
-            // `(size, mtime)` makes the merged asset report `needsEnrichment` again.
-            let merged = existing?.mergingFacts(
-                name: file.name,
-                contentTypeIdentifier: file.contentTypeIdentifier,
-                byteSize: file.byteSize,
-                createdAt: file.createdAt,
-                contentModifiedAt: file.contentModifiedAt
-            ) ?? MediaAsset(
-                libraryRootPath: root.path,
-                relativePath: file.relativePath,
-                name: file.name,
-                contentTypeIdentifier: file.contentTypeIdentifier,
-                byteSize: file.byteSize,
-                createdAt: file.createdAt,
-                contentModifiedAt: file.contentModifiedAt
-            )
-            assetsByRootPath[rootPath, default: [:]][file.relativePath] = merged
-        }
-        return visibleChange
     }
 
     private func scanCompleted(scan: ActiveScan, observedPaths: Set<MediaRelativePath>) async {
@@ -745,9 +954,9 @@ private extension CatalogStore {
         clearCurrentScan(scan, armFilesystemWatching: true)
     }
 
-    /// Reconciliation changes durable and in-memory membership as one actor-owned
-    /// operation. Projection validates membership directly, so Store does not
-    /// maintain a second cache-invalidation fact alongside its source maps.
+    /// Reconciliation changes durable membership as one actor-owned operation.
+    /// Projection validates membership directly through Store queries, so Store does not
+    /// maintain a second per-asset cache-invalidation fact alongside SQLite.
     private func reconcileMissingAssets(
         scan: ActiveScan,
         observedPaths: Set<MediaRelativePath>
@@ -755,40 +964,43 @@ private extension CatalogStore {
         guard owns(scan) else {
             throw CancellationError()
         }
-        let existingPaths = Set(assetsByRootPath[scan.rootPath, default: [:]].keys)
-        let missingPaths = existingPaths.subtracting(observedPaths)
-        // Capture the thumbnail files of soon-to-be-purged assets before their rows are
-        // removed, so overlay is purged with the item (ADR 0008): the row, its blob, and
-        // the thumbnail file all go together on proven deletion.
-        let purgedThumbnails: [String] = missingPaths.compactMap {
-            assetsByRootPath[scan.rootPath]?[$0]?.thumbnailPath
-        }
         let dbQueue = try database()
+        let existingRows = try await dbQueue.read { db in
+            try Self.fetchExistingAssetRows(libraryRootID: scan.rootRowID, db: db)
+        }
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        let missingRows = existingRows.filter { !observedPaths.contains($0.relativePath) }
+        guard !missingRows.isEmpty else {
+            return 0
+        }
+        // Capture the thumbnail files of soon-to-be-purged assets before their rows are
+        // removed, so overlay is purged with the item (ADR 0008): the catalog rows and
+        // thumbnail file all go together on proven deletion.
+        let purgedThumbnails: [String] = missingRows.compactMap(\.thumbnailPath)
         let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
         defer { OtosSignpost.persistence.endInterval("CatalogScanReconcile", state) }
 
         try await dbQueue.write { db in
-            for relativePath in missingPaths {
+            for row in missingRows {
                 try db.execute(
                     sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                    arguments: [scan.rootRowID, relativePath.rawValue]
+                    arguments: [scan.rootRowID, row.relativePath.rawValue]
                 )
             }
         }
         // Removal and same-path replacement can run while GRDB owns the writer.
-        // Never mirror an old row's reconciliation into the replacement root.
+        // Never treat an old row's reconciliation as proof about the replacement root.
         guard owns(scan) else {
             throw CancellationError()
-        }
-        for relativePath in missingPaths {
-            assetsByRootPath[scan.rootPath]?.removeValue(forKey: relativePath)
         }
         if let thumbnailDirectory {
             for name in purgedThumbnails {
                 ThumbnailStore.delete(name, in: thumbnailDirectory)
             }
         }
-        return missingPaths.count
+        return missingRows.count
     }
 
     private func scanCancelled(scan: ActiveScan) async {
@@ -856,29 +1068,6 @@ private extension CatalogStore {
 
         notifyCatalogChanged()
         startNextScanIfNeeded()
-    }
-
-    private func makeSnapshot() -> CatalogSnapshot {
-        var assetsByID: [MediaAssetID: MediaAsset] = [:]
-        assetsByID.reserveCapacity(assetsByRootPath.values.reduce(0) { $0 + $1.count })
-        for assetsForRoot in assetsByRootPath.values {
-            for asset in assetsForRoot.values {
-                assetsByID[asset.id] = asset
-            }
-        }
-        let libraries = rootsByPath.values.map { root in
-            CatalogLibraryState(
-                root: root,
-                // Unknown is the only truthful fallback if transient state is
-                // ever missing; absence cannot prove filesystem reachability.
-                availability: availabilityByRootPath[root.path] ?? .unknown,
-                activity: root.path == activeScan?.rootPath ? .scanning : .idle
-            )
-        }
-        return CatalogSnapshot(
-            libraries: libraries,
-            assetsByID: assetsByID
-        )
     }
 
     private func notifyCatalogChanged(_ change: CatalogStoreChange = .catalogChanged) {

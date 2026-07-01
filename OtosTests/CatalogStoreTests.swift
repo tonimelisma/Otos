@@ -25,7 +25,7 @@ struct CatalogStoreTests {
         try await recorder.waitForCount(1)
         #expect(await recorder.events.first == .catalogChanged)
 
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.isEmpty)
         #expect(snapshot.testAssets.isEmpty)
 
@@ -35,7 +35,7 @@ struct CatalogStoreTests {
         try await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
-    @Test func migratesV1DatabaseAndReloadsNewNullableFields() async throws {
+    @Test func incompatibleLegacyDatabaseIsResetInsteadOfMigrated() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -47,7 +47,7 @@ struct CatalogStoreTests {
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
-        try Self.migrateV1Schema(dbQueue)
+        try Self.createLegacyV1Schema(dbQueue)
         try await dbQueue.write { db in
             try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: [rootPath.rawValue])
             let rootID = db.lastInsertedRowID
@@ -68,13 +68,16 @@ struct CatalogStoreTests {
 
         let store = CatalogStore(location: .databaseFile(databaseURL))
         try await store.start(scansSavedLibraries: false)
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
 
-        #expect(snapshot.libraries.map(\.path) == [rootPath])
-        #expect(snapshot.testAssets.count == 1)
-        #expect(snapshot.testAssets[0].relativePath.rawValue == "legacy.jpg")
-        #expect(snapshot.testAssets[0].name == nil)
-        #expect(snapshot.testAssets[0].createdAt == nil)
+        #expect(snapshot.libraries.isEmpty)
+        #expect(snapshot.testAssets.isEmpty)
+
+        let newSchema = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')"))
+        }
+        #expect(newSchema.contains("sort_key"))
+        #expect(!newSchema.contains("metadata_blob"))
     }
 
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {
@@ -94,7 +97,7 @@ struct CatalogStoreTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
 
-        let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let scanned = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
         #expect(try scanned.libraries.map(\.path) == [CatalogPath.normalizedDirectoryPath(for: root)])
@@ -106,7 +109,7 @@ struct CatalogStoreTests {
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
-        let reloaded = await reloadedStore.currentSnapshot()
+        let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.libraries.count == 1)
         #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
         #expect(reloaded.testAssets.map(\.name) == ["a.jpg"])
@@ -130,7 +133,7 @@ struct CatalogStoreTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
 
-        let scanned = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        let scanned = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"]
         }
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"])
@@ -162,7 +165,7 @@ struct CatalogStoreTests {
             try await store.addLibrary(url: temp)
         }
 
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.count == 1)
     }
 
@@ -177,21 +180,21 @@ struct CatalogStoreTests {
         let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(store) { snapshot in
+        _ = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         try await store.removeLibrary(path: rootPath)
 
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.isEmpty)
         #expect(snapshot.testAssets.isEmpty)
         #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
-        let reloaded = await reloadedStore.currentSnapshot()
+        let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.libraries.isEmpty)
         #expect(reloaded.testAssets.isEmpty)
     }
@@ -207,7 +210,7 @@ struct CatalogStoreTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -216,7 +219,7 @@ struct CatalogStoreTests {
 
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
-        let reconciled = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        let reconciled = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["b.jpg"]
         }
         #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["b.jpg"])
@@ -233,7 +236,7 @@ struct CatalogStoreTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -258,7 +261,7 @@ struct CatalogStoreTests {
             scanCadence: .milliseconds(10)
         )
         try await secondStore.start()
-        let failed = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        let failed = try await waitForCatalogStoreState(secondStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.contains { $0.relativePath.rawValue == "a.jpg" }
         }
         #expect(failed.testAssets.contains { $0.relativePath.rawValue == "a.jpg" })
@@ -275,7 +278,7 @@ struct CatalogStoreTests {
         let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
-        _ = try await waitForCatalogStoreSnapshot(firstStore) { snapshot in
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
@@ -291,14 +294,14 @@ struct CatalogStoreTests {
             scanCadence: .milliseconds(10)
         )
         try await secondStore.start()
-        _ = try await waitForCatalogStoreSnapshot(secondStore) { snapshot in
+        _ = try await waitForCatalogStoreState(secondStore) { snapshot in
             snapshot.isScanning
         }
         await secondStore.shutdown()
 
         let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
-        let reloaded = await reloadedStore.currentSnapshot()
+        let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
 
@@ -332,7 +335,7 @@ struct CatalogStoreTests {
 }
 
 private extension CatalogStoreTests {
-    static func migrateV1Schema(_ dbQueue: DatabaseQueue) throws {
+    static func createLegacyV1Schema(_ dbQueue: DatabaseQueue) throws {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1_library_roots_and_media_assets") { db in
             try db.create(table: "library_root") { table in
@@ -401,13 +404,13 @@ private func expectOverlap(_ expression: () async throws -> Void) async throws {
     throw CatalogStoreTestError.expectedOverlap
 }
 
-func waitForCatalogStoreSnapshot(
+func waitForCatalogStoreState(
     _ store: CatalogStore,
     timeoutAttempts: Int = 200,
-    predicate: (CatalogSnapshot) -> Bool
-) async throws -> CatalogSnapshot {
+    predicate: (CatalogStoreTestState) -> Bool
+) async throws -> CatalogStoreTestState {
     for _ in 0 ..< timeoutAttempts {
-        let snapshot = await store.currentSnapshot()
+        let snapshot = try await catalogStoreTestState(store)
         if predicate(snapshot) {
             return snapshot
         }
