@@ -9,8 +9,8 @@
 
 ## Classification
 
-- Work type: Feature (detection primitive added as dead code) plus architecture
-  documentation
+- Work type: Feature (detection primitive, now wired into enrichment byte reads)
+  plus architecture documentation
 - Current requirement IDs: FND-053, FND-057; adds FND-059, FND-060; sharpens FND-057
 - Future idea or candidate links explicitly requested by the user: none
 - ADRs: `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`
@@ -35,8 +35,12 @@ Two gaps block those future increments from being built correctly:
    "metadata" also means EXIF and similar media metadata that requires reading bytes.
    Conflating them invites a future developer to read bytes thinking it is cheap.
 
-This increment closes both gaps with documentation and one dead function, without
-wiring anything into a live path and without persisting any materialization state.
+This increment originally closed both gaps with documentation and one function
+before byte-reading enrichment existed. The detector is now live: `MediaEnricher`
+checks it immediately before metadata and thumbnail reads, and
+`EnrichmentCoordinator` deliberately uses the materialization helpers before
+retrying enrichment for dataless files. Materialization state is still never
+persisted.
 
 ## Scope
 
@@ -45,16 +49,16 @@ In scope:
 - Record verified, provider-aware facts about detecting dataless files.
 - Define the media-metadata versus filesystem-facts distinction and make "metadata"
   mean media metadata from now on.
-- Add `FileMaterialization.status(of:)` as dead code: a point-in-time, no-byte-read
-  detector that future byte-reading work calls before materializing a file.
+- Add `FileMaterialization.status(of:)` as a point-in-time, no-byte-read detector
+  used by byte-reading work before materializing a file.
 - Add tests for the reproducible states and cite the proof of concept for the
   dataless state.
 - Update ADR 0008, `AGENTS.md`, and `docs/requirements.md` accordingly.
 
 Out of scope:
 
-- Wiring the detector into any live path. It stays dead until the thumbnail or
-  media-metadata pipeline is built.
+- Catalog scanner use of the detector. The scanner reads only filesystem facts
+  and has no materialization concern.
 - The thumbnail and media-metadata pipelines themselves.
 - Persisting materialization status anywhere. It is transient and never stored.
 - Further proofs of concept on other providers.
@@ -175,10 +179,11 @@ Failure modes:
 
 Alternative A. `FileMaterialization.status(of:)` reads the `SF_DATALESS` flag via
 `lstat` and returns `materialized`, `dataless`, or `unknown`. It is the single owner
-of materialization detection, reads no bytes, and is never persisted. It is added as
-dead code: nothing calls it yet, and the catalog scanner does not need it because it
-reads only filesystem facts. The thumbnail and media-metadata pipelines will call it
-at their byte-read boundary and skip or defer dataless files.
+of materialization detection, reads no bytes, and is never persisted.
+`MediaEnricher` calls it at the metadata and thumbnail byte-read boundary;
+`EnrichmentCoordinator` calls the materialization helpers when it deliberately
+downloads dataless files for enrichment. The catalog scanner does not call it
+because it reads only filesystem facts.
 
 ## Interfaces, Ownership, And Data Flow
 
@@ -187,12 +192,13 @@ at their byte-read boundary and skip or defer dataless files.
   `nonisolated enum FileMaterializationStatus { materialized, dataless, unknown }`.
 - No actor isolation, no shared mutable state, `Sendable` by construction.
 - No persistence. The result is computed on demand and discarded by the caller.
-- No live caller in this increment.
+- Live callers: `MediaEnricher` gates byte reads; `EnrichmentCoordinator`
+  deliberately materializes dataless files for enrichment.
 
 ## Retirement Proof
 
-Nothing is retired. The increment adds one file and three documentation updates. The
-catalog schema, scanner, and runtime behavior are unchanged.
+The original "dead detector" description is retired. The catalog schema and
+scanner behavior remain unchanged.
 
 ## Living Documentation And Comment Audit
 
@@ -200,26 +206,30 @@ catalog schema, scanner, and runtime behavior are unchanged.
   `OtosTests/FileMaterializationTests.swift`, this spec.
 - Updated: `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`,
   `docs/requirements.md`, `AGENTS.md`, `docs/index.md`.
-- The new file carries a substantial file guide explaining the cloud hazard, the
-  transient non-persisted nature, the chosen signal, and that it is not wired up.
+- The file carries a substantial file guide explaining the cloud hazard, the
+  transient non-persisted nature, the chosen signal, and the current live
+  enrichment callers.
 
 ## Instrumentation And Performance
 
-None in this increment. The detector reads no bytes and is not on any live path. When
-a future pipeline wires it in, that pipeline instruments materialization checks at its
-batch boundary under `FileAccess` or `MediaIO`, not per file inside this function.
+The detector reads no bytes. Live enrichment instrumentation belongs at the
+coordinator/enricher batch boundary under `FileAccess`, `MediaIO`, `Metadata`, or
+`Thumbnails`, not per file inside this function.
 
 ## Code-Smell Review
 
 - Stringly typed facts: avoided by returning a typed `FileMaterializationStatus`.
 - Diagnostic payload sprawl: not applicable; no logging of media content.
-- Dead code: intentional and documented; tests keep it compiled and verified so it
-  cannot silently rot before it is wired in.
+- Dead code: none in the materialization boundary. The detector and helpers are
+  live in enrichment, while the scanner intentionally remains filesystem-fact only.
 
 ## Acceptance Criteria
 
 - `FileMaterialization.status(of:)` exists, reads no bytes, and returns the typed
   status; a local file is `materialized` and a missing path is `unknown` in tests.
+- `MediaEnricher` checks `FileMaterialization.status(of:)` before byte reads, and
+  `EnrichmentCoordinator` calls `FileMaterialization.materialize(_:)` for
+  deliberate background materialization.
 - No code path persists materialization status.
 - ADR 0008 records the detection mechanism and the media-metadata versus
   filesystem-facts distinction; `docs/requirements.md` has FND-059 and FND-060 and a

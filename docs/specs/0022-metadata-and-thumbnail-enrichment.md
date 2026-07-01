@@ -283,9 +283,8 @@ Implementation sequence (each landed and verified on its own):
   decodes/formats off-main.
 - State duplication: avoided — work is derived from `needsEnrichment`, not a second
   backlog; staleness is the `(size, mtime)` signature, not a stored flag.
-- Unsafe concurrency escape: one documented `@unchecked Sendable` tile-image ferry
-  (`LoadedTile`), sound because the image is created in the loader, never mutated,
-  and handed across once.
+- Unsafe concurrency escape: none. The tile-image ferry is an ordinary `Sendable`
+  value because `CGImage` is immutable and Sendable in the current SDK.
 - Otherwise none observed.
 
 ## Acceptance Criteria

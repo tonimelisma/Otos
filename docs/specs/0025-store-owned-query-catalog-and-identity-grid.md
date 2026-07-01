@@ -8,7 +8,6 @@
   FND-058, FND-061, FND-062, FND-064, APP-006, APP-010, ENR-001, ENR-002,
   ENR-004, ENR-005, ENR-006, ENR-007, ENR-009, ENR-010
 - Future idea or candidate links explicitly requested by the user:
-  `catalog-grid-state-architecture.md`,
   `docs/research/catalog-storage-and-query-models.md`,
   `docs/research/media-grid-best-practices.md`
 - ADRs: ADR 0010

@@ -80,8 +80,8 @@ Out of scope:
 | LIB-009 | Functional | Otos shall not expose a manual scan button, command, or user-facing scan API. | Current | `docs/requirements.md` |
 | LIB-010 | Functional | The catalog stores file name, relative path, content type identifier, byte size, creation date, and content modified date; the current browser presentation is owned by Spec 0011. | Current | `docs/requirements.md`, Spec 0005, Spec 0011 |
 | LIB-011 | Functional | Scan failures are kept out of the UI for this increment and recorded through logs. | Current | `docs/requirements.md` |
-| CAT-001 | Architecture | The catalog owner uses GRDB with SQLite and `DatabaseQueue`, not `DatabasePool`. | Current | `docs/requirements.md`, ADR 0002 |
-| CAT-002 | Architecture | The catalog owner retains the full SQLite-backed catalog working set in memory until evidence proves that insufficient. | Current | `docs/requirements.md`, ADR 0002 |
+| CAT-001 | Architecture | The catalog owner uses GRDB with SQLite: `DatabasePool` for file-backed locations and `DatabaseQueue` for `.inMemory` tests. | Current | `docs/requirements.md`, ADR 0002, ADR 0010 |
+| CAT-002 | Architecture | SQLite is the per-asset working set; Store keeps root runtime state resident and exposes Store-owned query APIs instead of retaining a resident per-asset map. | Current | `docs/requirements.md`, ADR 0002, ADR 0010 |
 | CAT-003 | Architecture | The normalized root path is product identity; SQLite rowid is only a private foreign key implementation detail. | Current | `docs/requirements.md`, ADR 0003 |
 | CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, in-memory state, scan lifecycle, scan persistence cadence, and cheap catalog change notifications. | Current | `docs/requirements.md`, Spec 0009 |
 | CAT-005 | Architecture | SwiftUI views never call SQLite directly; a MainActor ViewModel consumes projected catalog window state. | Current | `docs/requirements.md`, Spec 0007, Spec 0009 |
@@ -98,7 +98,8 @@ Pros:
 
 - One catalog authority owns persistence, in-memory state, and scan lifecycle.
 - Keeps filesystem traversal and SQLite work off the MainActor.
-- Matches the ADR decision to keep the catalog working set in memory.
+- Matches the current ADR decision to keep SQLite as the per-asset working set
+  behind one Store actor.
 - Gives Projection keyed snapshots without database query coupling.
 
 Cons:
@@ -127,7 +128,7 @@ Cons:
 
 Failure modes:
 
-- The app drifts away from the selected full in-memory catalog model.
+- The app drifts away from the selected Store-owned catalog query model.
 - View-level observations become a second owner of catalog freshness.
 
 ### MainActor Catalog With Background Helpers
@@ -167,21 +168,22 @@ Failure modes:
 ## Selected Approach
 
 Use a `CatalogStore` actor with a `CatalogProjection` actor and a
-`@MainActor @Observable CatalogWindowViewModel`. Store opens and migrates one
-long-lived GRDB `DatabaseQueue`, loads roots and media rows into memory,
-serializes add/remove/scan work, and emits cheap change notifications. Projection
-pulls raw snapshots on demand and emits `CatalogWindowState` for SwiftUI.
+`@MainActor @Observable CatalogWindowViewModel`. Store opens and initializes one
+long-lived GRDB writer, uses `DatabasePool` for file-backed locations, keeps only
+root runtime state resident, serializes add/remove/scan work, and emits cheap
+change notifications. Projection asks Store for current library rows and scoped
+ordered asset IDs, then emits `CatalogWindowState` for SwiftUI.
 
 This is the simplest correct approach because it has one persistence owner, one
-in-memory catalog owner, no query-backed SwiftUI coupling, no parallel scan
-pipeline, and no generated product IDs.
+catalog query owner, no query-backed SwiftUI coupling, no parallel scan pipeline,
+and no generated product IDs.
 
 ## Interfaces, Ownership, And Data Flow
 
-- `CatalogStore` actor: owns GRDB, root/media memory, transient availability,
-  one serialized initial load, change subscribers, pending scans, and scan
-  cancellation. Database-restored roots retain exactly-once launch-scan requests
-  even when a mutation initializes Store first.
+- `CatalogStore` actor: owns GRDB, root runtime state, transient availability,
+  Store-owned catalog queries, one serialized initial load, change subscribers,
+  pending scans, and scan cancellation. Database-restored roots retain
+  exactly-once launch-scan requests even when a mutation initializes Store first.
 - `CatalogScanner`: Sendable scanner function wrapper used by the actor and tests.
 - `CatalogProjection`: actor that publishes coalesced `CatalogWindowState` for
   the main window.

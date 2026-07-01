@@ -51,10 +51,10 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
     }
 }
 
-/// Ferries a freshly loaded thumbnail and its capture-date label from the background
-/// loader to the main actor. The thumbnail file has already been decoded by Image I/O;
-/// the main actor only assigns the immutable bitmap to the layer.
-private struct LoadedTile: @unchecked Sendable {
+/// Ferries a freshly loaded thumbnail and its capture-date label from the
+/// background loader to the main actor. `CGImage` is immutable and Sendable, so
+/// no unchecked wrapper is needed; the main actor only assigns it to the layer.
+private struct LoadedTile {
     let image: CGImage?
     let dateText: String
 }

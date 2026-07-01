@@ -210,7 +210,12 @@ final class CatalogWindowViewModel {
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
         enrichmentStartTask = Task { [coordinator, store = catalogStore] in
-            try? await store.start()
+            do {
+                try await store.start()
+            } catch {
+                OtosLog.persistence.error("Enrichment startup skipped because catalog start failed")
+                return
+            }
             await coordinator.start()
         }
     }

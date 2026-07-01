@@ -38,11 +38,11 @@ struct CatalogWindowViewModelTests {
         model = nil
 
         try await waitForCondition { weakModel == nil }
-        try await Task.sleep(for: .milliseconds(40))
+        try await waitForNoAdditionalBuilds(buildProbe, duration: .milliseconds(40))
         let buildCountAfterTermination = await buildProbe.buildCount
 
         await store.shutdown()
-        try await Task.sleep(for: .milliseconds(40))
+        try await waitForNoAdditionalBuilds(buildProbe, duration: .milliseconds(40))
         #expect(await buildProbe.buildCount == buildCountAfterTermination)
     }
 
@@ -324,25 +324,22 @@ struct CatalogWindowViewModelTests {
 @MainActor
 private func waitForWindowState(
     _ model: CatalogWindowViewModel,
-    predicate: (CatalogWindowState) -> Bool
+    predicate: @escaping @MainActor @Sendable (CatalogWindowState) -> Bool
 ) async throws -> CatalogWindowState {
-    for _ in 0 ..< 150 {
-        let state = model.state
-        if predicate(state) {
-            return state
-        }
-        try await Task.sleep(for: .milliseconds(20))
+    let stream = windowStateStream(model, timeout: .seconds(10))
+    for await state in stream where predicate(state) {
+        return state
     }
-    throw CatalogWindowViewModelTestError.timedOut
+    throw AsyncTestTimeoutError.timedOut("window state")
 }
 
 @MainActor
 private func waitForCondition(_ predicate: () -> Bool) async throws {
-    for _ in 0 ..< 100 {
+    for _ in 0 ..< 1000 {
         if predicate() {
             return
         }
-        try await Task.sleep(for: .milliseconds(10))
+        await Task.yield()
     }
     throw CatalogWindowViewModelTestError.timedOut
 }
@@ -364,45 +361,93 @@ private enum CatalogWindowViewModelTestError: Error {
 
 private actor WindowStateBuildProbe {
     private(set) var buildCount = 0
+    private var buildWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func recordBuild() {
         buildCount += 1
+        resumeBuildWaiters()
     }
 
     func waitForBuildCount(_ expectedCount: Int) async throws {
-        for _ in 0 ..< 100 {
-            if buildCount >= expectedCount {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("window state build count") {
+            await self.waitForBuildCountUnbounded(expectedCount)
         }
-        throw CatalogWindowViewModelTestError.timedOut
+    }
+
+    private func waitForBuildCountUnbounded(_ expectedCount: Int) async {
+        if buildCount >= expectedCount {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            buildWaiters.append((expectedCount, continuation))
+            resumeBuildWaiters()
+        }
+    }
+
+    private func resumeBuildWaiters() {
+        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+        for waiter in buildWaiters {
+            if buildCount >= waiter.0 {
+                waiter.1.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        buildWaiters = remaining
     }
 }
 
 private actor ViewModelInitialLoadGate {
     private var isPaused = false
     private var continuation: CheckedContinuation<Void, Never>?
+    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
 
     func pause() async {
         isPaused = true
+        resumePauseWaiters()
         await withCheckedContinuation { continuation in
             self.continuation = continuation
         }
     }
 
     func waitUntilPaused() async throws {
-        for _ in 0 ..< 100 {
-            if isPaused {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("view model initial load pause") {
+            await self.waitUntilPausedUnbounded()
         }
-        throw CatalogWindowViewModelTestError.timedOut
+    }
+
+    private func waitUntilPausedUnbounded() async {
+        if isPaused {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pauseWaiters.append(continuation)
+            resumePauseWaiters()
+        }
     }
 
     func release() {
         continuation?.resume()
         continuation = nil
     }
+
+    private func resumePauseWaiters() {
+        guard isPaused else {
+            return
+        }
+        let waiters = pauseWaiters
+        pauseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
+private func waitForNoAdditionalBuilds(
+    _ probe: WindowStateBuildProbe,
+    duration: Duration
+) async throws {
+    let baseline = await probe.buildCount
+    try await Task.sleep(for: duration)
+    #expect(await probe.buildCount == baseline)
 }

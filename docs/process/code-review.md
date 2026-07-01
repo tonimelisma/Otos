@@ -88,7 +88,9 @@ For each domain: what the reviewer checks, and the standard it is held to.
   rejection. Ownership is revalidated after each await, following the existing
   `ActiveScan` lease pattern.
 - `.task` synchronous setup is treated as main-thread work; heavy setup is flagged.
-- `Sendable` boundaries are explicit; no `@unchecked Sendable` without proof. Public
+- `Sendable` boundaries are explicit. Current source should have zero
+  `@unchecked Sendable`; any future exception needs a spec-level justification,
+  the narrowest possible wrapper, and focused source-hygiene coverage. Public
   types state their actor isolation explicitly rather than relying on target-level
   default isolation.
 

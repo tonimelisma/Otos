@@ -23,7 +23,7 @@ struct CatalogStoreTests {
 
         try await store.start(scansSavedLibraries: false)
         try await recorder.waitForCount(1)
-        #expect(await recorder.events.first == .catalogChanged)
+        #expect(await recorder.snapshot().first == .catalogChanged)
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.isEmpty)
@@ -364,31 +364,23 @@ private enum CatalogStoreTestError: Error {
     case invalidUTF8
 }
 
-private actor ChangeRecorder {
-    private(set) var events: [CatalogStoreChange] = []
+private typealias ChangeRecorder = AsyncValueRecorder<CatalogStoreChange>
 
-    func append(_ event: CatalogStoreChange) {
-        events.append(event)
-    }
-
+private extension AsyncValueRecorder where Value == CatalogStoreChange {
     func waitForCount(_ expectedCount: Int) async throws {
-        for _ in 0 ..< 100 {
-            if events.count >= expectedCount {
-                return
+        _ = try await withTestTimeout("catalog change count") {
+            await self.waitForValues { values in
+                values.count >= expectedCount
             }
-            try await Task.sleep(for: .milliseconds(20))
         }
-        throw CatalogStoreTestError.timedOut
     }
 
     func waitForEvent(_ expectedEvent: CatalogStoreChange) async throws {
-        for _ in 0 ..< 100 {
-            if events.contains(expectedEvent) {
-                return
+        _ = try await withTestTimeout("catalog change event") {
+            await self.waitForValues { values in
+                values.contains(expectedEvent)
             }
-            try await Task.sleep(for: .milliseconds(20))
         }
-        throw CatalogStoreTestError.timedOut
     }
 }
 
@@ -406,17 +398,24 @@ private func expectOverlap(_ expression: () async throws -> Void) async throws {
 
 func waitForCatalogStoreState(
     _ store: CatalogStore,
-    timeoutAttempts: Int = 200,
-    predicate: (CatalogStoreTestState) -> Bool
+    timeout: Duration = .seconds(10),
+    predicate: @escaping @Sendable (CatalogStoreTestState) -> Bool
 ) async throws -> CatalogStoreTestState {
-    for _ in 0 ..< timeoutAttempts {
-        let snapshot = try await catalogStoreTestState(store)
-        if predicate(snapshot) {
-            return snapshot
-        }
-        try await Task.sleep(for: .milliseconds(50))
+    let changes = await store.changeNotifications()
+    let initial = try await catalogStoreTestState(store)
+    if predicate(initial) {
+        return initial
     }
-    throw CatalogStoreTestError.timedOut
+
+    return try await withTestTimeout("catalog store state", timeout: timeout) {
+        for await _ in changes {
+            let snapshot = try await catalogStoreTestState(store)
+            if predicate(snapshot) {
+                return snapshot
+            }
+        }
+        throw AsyncTestTimeoutError.streamEnded("catalog store changes")
+    }
 }
 
 func makeCatalogStoreTemporaryDirectory() throws -> URL {

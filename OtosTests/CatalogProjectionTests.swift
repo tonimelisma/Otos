@@ -212,6 +212,7 @@ struct CatalogProjectionTests {
 
         try await probe.waitUntilInFlight()
         await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
+        await probe.releaseBuilds()
 
         _ = try await recorder.waitForCount(2)
         #expect(await probe.maximumInFlight() == 1)
@@ -306,7 +307,7 @@ struct CatalogProjectionTests {
         try await store.start(scansSavedLibraries: false)
         _ = try await recorder.waitForCount(1)
         await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
-        try await Task.sleep(for: .milliseconds(80))
+        try await assertStateCountStays(recorder, expectedCount: 1, duration: .milliseconds(80))
 
         #expect(await recorder.count() == 1)
     }
@@ -332,29 +333,20 @@ private func makeAsset(root: LibraryRoot, relativePath: String) -> MediaAsset {
     )
 }
 
-private actor StateRecorder {
-    private var states: [CatalogWindowState] = []
+private typealias StateRecorder = AsyncValueRecorder<CatalogWindowState>
 
-    func append(_ state: CatalogWindowState) {
-        states.append(state)
-    }
-
-    func count() -> Int {
-        states.count
-    }
-
+private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForCount(
         _ count: Int,
         attempts: Int = 100,
-        matching predicate: ([CatalogWindowState]) -> Bool = { _ in true }
+        matching predicate: @escaping @Sendable ([CatalogWindowState]) -> Bool = { _ in true }
     ) async throws -> [CatalogWindowState] {
-        for _ in 0 ..< attempts {
-            if states.count >= count, predicate(states) {
-                return states
+        let timeout = attempts > 100 ? Duration.seconds(20) : .seconds(10)
+        return try await withTestTimeout("projection state count", timeout: timeout) {
+            await self.waitForValues { states in
+                states.count >= count && predicate(states)
             }
-            try await Task.sleep(for: .milliseconds(20))
         }
-        throw CatalogProjectionTestError.timedOut
     }
 }
 
@@ -362,6 +354,9 @@ private actor ProjectionProbe {
     private var currentInFlight = 0
     private var maximumInFlightValue = 0
     private var calls = 0
+    private var inFlightWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var isReleased = false
 
     func build(
         libraries: [CatalogLibraryState],
@@ -371,7 +366,12 @@ private actor ProjectionProbe {
         calls += 1
         currentInFlight += 1
         maximumInFlightValue = max(maximumInFlightValue, currentInFlight)
-        try? await Task.sleep(for: .milliseconds(60))
+        resumeInFlightWaiters()
+        if calls == 1, !isReleased {
+            await withCheckedContinuation { continuation in
+                releaseWaiters.append(continuation)
+            }
+        }
         currentInFlight -= 1
 
         return CatalogWindowState(
@@ -395,13 +395,39 @@ private actor ProjectionProbe {
     }
 
     func waitUntilInFlight() async throws {
-        for _ in 0 ..< 100 {
-            if currentInFlight > 0 {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("projection in-flight build") {
+            await self.waitUntilInFlightUnbounded()
         }
-        throw CatalogProjectionTestError.timedOut
+    }
+
+    private func waitUntilInFlightUnbounded() async {
+        if currentInFlight > 0 {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            inFlightWaiters.append(continuation)
+            resumeInFlightWaiters()
+        }
+    }
+
+    func releaseBuilds() {
+        isReleased = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func resumeInFlightWaiters() {
+        guard currentInFlight > 0 else {
+            return
+        }
+        let waiters = inFlightWaiters
+        inFlightWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }
 
@@ -509,6 +535,15 @@ private func waitForDiagnostics(
         try await Task.sleep(for: .milliseconds(20))
     }
     throw CatalogProjectionTestError.timedOut
+}
+
+private func assertStateCountStays(
+    _ recorder: StateRecorder,
+    expectedCount: Int,
+    duration: Duration
+) async throws {
+    try await Task.sleep(for: duration)
+    #expect(await recorder.count() == expectedCount)
 }
 
 private func readableDiagnostics(at url: URL) -> String? {

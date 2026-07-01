@@ -35,11 +35,11 @@ import Foundation
 /// populated by every provider. Reading the flag via `lstat` is pure inode metadata
 /// and never materializes the file.
 ///
-/// NOT WIRED UP: nothing in the current app calls this. The current catalog stores
-/// only filesystem facts and reads no bytes, so it has no materialization concern.
-/// This is deliberately present ahead of the thumbnail and media-metadata pipelines
-/// so those increments wire it in at their byte-read boundary instead of
-/// rediscovering the cloud hazard. Tests keep it verified.
+/// This is wired into the current byte-reading boundary. `MediaEnricher` checks
+/// `status(of:)` immediately before Quick Look thumbnail generation and metadata
+/// extraction, and `EnrichmentCoordinator` is the owner that may deliberately
+/// materialize dataless files before retrying that byte-reading enrichment work.
+/// The catalog scanner still reads only filesystem facts and does not call this.
 nonisolated enum FileMaterialization {
     /// SF_DATALESS from `<sys/stat.h>` (macOS 10.15+). When this bit is set in a
     /// file's `st_flags`, reading the file's content triggers the File Provider to
@@ -77,9 +77,9 @@ nonisolated enum FileMaterialization {
 /// the most direct "are the bytes local now?" fact and matches the detector the rest
 /// of the app gates on.
 ///
-/// NOT WIRED UP: nothing in the current app calls these. They exist ahead of the
-/// background download / enrichment pools so those increments inherit one tested
-/// owner of materialization instead of rediscovering the cloud-download mechanics.
+/// `EnrichmentCoordinator` calls these helpers from its materialization pool when
+/// it has deliberately chosen to download a dataless file for enrichment. They are
+/// not scanner helpers and must stay out of filesystem-fact catalog reads.
 extension FileMaterialization {
     /// The provider's view of whether `url`'s bytes are present, without reading
     /// bytes. iCloud-flavored but populated by OneDrive in the spec 0016 POC. Used as

@@ -52,8 +52,11 @@ Sources:
 - Use temporary directories for filesystem tests; never touch production media
   roots or app-owned production storage from tests.
 - Use fixtures only when rights and privacy are clear.
-- Avoid fixed `sleep` calls. Use expectations, polling with deadlines,
-  cooperative yielding, or injectable clocks.
+- Avoid fixed `sleep` calls for ordinary state observation. Prefer owner events,
+  continuations, Observation-backed streams, explicit gates, or injectable
+  clocks/delay closures. Harness timeouts, negative/absence assertions, diagnostic
+  file polling, and production cadence tests may still use bounded sleeps when the
+  passage of time is the behavior being tested.
 - Do not delegate verification to the user as a DoD condition. Run all
   agent-executable checks; record any UI interaction the environment cannot
   drive as an unverified risk and optional after-DoD task.

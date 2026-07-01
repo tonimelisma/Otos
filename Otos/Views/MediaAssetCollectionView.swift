@@ -38,7 +38,7 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     }
 }
 
-final class MediaTileDetailReader: @unchecked Sendable {
+struct MediaTileDetailReader {
     private let store: CatalogStore
 
     init(store: CatalogStore) {

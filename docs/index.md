@@ -59,7 +59,7 @@ implementation history.
 | [0013](specs/0013-catalog-lifecycle-race-safety.md) | Serialized startup, replacement-safe transient scan ownership, and retained selection normalization. |
 | [0014](specs/0014-catalog-task-and-mutation-ownership.md) | Weak ViewModel task lifetime, lossless serial mutations, and coalesced replacement selection. |
 | [0015](specs/0015-filesystem-truth-and-review-process.md) | Filesystem-truth contract, overlay lifecycle, and the code-review process. |
-| [0016](specs/0016-cloud-materialization-detection.md) | Cloud dataless-file detection facts, the media-metadata boundary, and the dead `FileMaterialization` detector. |
+| [0016](specs/0016-cloud-materialization-detection.md) | Cloud dataless-file detection facts, the media-metadata boundary, and the live `FileMaterialization` detector used by enrichment byte-read work. |
 | [0017](specs/0017-catalog-publication-performance.md) | Cheap precomputed sort key and no-op-scan notification suppression, with before/after measurement. |
 | [0018](specs/0018-catalog-order-cache-and-scoped-map-removal.md) | Remove the projection order cache and scoped value map now that the sort is cheap. |
 | [0019](specs/0019-onboarding-walkthrough-and-why-comments.md) | Onboarding walkthrough and architecture why-comments. |
@@ -71,6 +71,7 @@ implementation history.
 | [0025](specs/0025-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, clean schema/reset, identity-plus-generation grid state, visible detail reading, and query-based enrichment selection. |
 | [0026](specs/0026-telemetry-observability-increment.md) | Minimal telemetry capture and diagnostics test isolation. |
 | [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
+| [0028](specs/0028-code-quality-maintainability-audit.md) | Documentation truth, zero unchecked Sendables, named diagnostics task escapes, enrichment startup failure handling, and deterministic async test helpers. |
 
 ## Planning Documents
 
@@ -84,7 +85,6 @@ user explicitly asks to use them for the current task.
 | [product/roadmap.md](product/roadmap.md) | Non-authoritative idea and planning notes that may include concepts never meant to be implemented. | The user explicitly asks to record, revise, or use roadmap/planning material. |
 | [research/media-grid-best-practices.md](research/media-grid-best-practices.md) | Non-authoritative platform research for large media-grid identity, detail loading, prefetching, and responsiveness design. | New platform guidance or architecture research changes the media-grid design basis. |
 | [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md) | Non-authoritative storage/query research for database-backed media catalog design. | New storage/query research changes the catalog architecture design basis. |
-| [../catalog-grid-state-architecture.md](../catalog-grid-state-architecture.md) | Non-authoritative chosen design direction for the Store-owned query catalog and identity grid. | The selected catalog/grid architecture direction changes before implementation. |
 
 ## Templates
 

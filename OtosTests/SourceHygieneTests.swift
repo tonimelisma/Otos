@@ -326,6 +326,82 @@ struct SourceHygieneTests {
     }
 }
 
+struct QualityIncrementSourceHygieneTests {
+    @Test func sourceContainsNoUncheckedSendableConformances() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceFiles = try swiftFiles(under: repoRoot.appending(path: "Otos"))
+            + swiftFiles(under: repoRoot.appending(path: "OtosTests"))
+        let forbidden = "@unchecked" + " Sendable"
+
+        for file in sourceFiles {
+            let content = try String(contentsOf: file, encoding: .utf8)
+            #expect(
+                !content.contains(forbidden),
+                "unchecked Sendable should not appear in source: \(file.path(percentEncoded: false))"
+            )
+        }
+    }
+
+    @Test func rootMarkdownIsLimitedToEntryPoints() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let allowed = Set(["AGENTS.md", "README.md"])
+        let rootMarkdown = try rootMarkdownFiles(under: repoRoot).map(\.lastPathComponent)
+
+        #expect(Set(rootMarkdown).isSubset(of: allowed))
+    }
+
+    @Test func currentDocsAndSourceDoNotCallMaterializationDeadOrUnwired() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let files = try markdownFiles(under: repoRoot.appending(path: "docs"))
+            + swiftFiles(under: repoRoot.appending(path: "Otos"))
+        let disallowed = [
+            "NOT WIRED" + " UP",
+            "dead `FileMaterialization`" + " detector",
+            "dead File" + "Materialization detector",
+        ]
+
+        for file in files {
+            let content = try String(contentsOf: file, encoding: .utf8)
+            for term in disallowed {
+                #expect(
+                    !content.contains(term),
+                    "\(term) should not appear in current docs/source: \(file.path(percentEncoded: false))"
+                )
+            }
+        }
+    }
+
+    @Test func deterministicAsyncTestHelpersGuardTopTimingHeavyTests() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let support = try String(
+            contentsOf: repoRoot.appending(path: "OtosTests/AsyncTestSupport.swift"),
+            encoding: .utf8
+        )
+        #expect(support.contains("actor AsyncValueRecorder"))
+        #expect(support.contains("actor ManualSleepGate"))
+
+        let checkedFiles = [
+            "OtosTests/CatalogStoreTests.swift",
+            "OtosTests/CatalogStoreFilesystemEventTests.swift",
+            "OtosTests/CatalogStoreLifecycleRaceTests.swift",
+            "OtosTests/CatalogProjectionTests.swift",
+            "OtosTests/CatalogWindowViewModelTests.swift",
+        ]
+        for file in checkedFiles {
+            let content = try String(contentsOf: repoRoot.appending(path: file), encoding: .utf8)
+            #expect(!content.contains("timeoutAttempts"), "timeoutAttempts should not appear in \(file)")
+        }
+    }
+}
+
 private func swiftFiles(under directory: URL) throws -> [URL] {
     guard let enumerator = FileManager.default.enumerator(
         at: directory,
@@ -365,5 +441,17 @@ private func markdownFiles(under directory: URL) throws -> [URL] {
             return nil
         }
         return url
+    }
+}
+
+private func rootMarkdownFiles(under directory: URL) throws -> [URL] {
+    let contents = try FileManager.default.contentsOfDirectory(
+        at: directory,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    )
+    return try contents.filter { url in
+        let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+        return values.isRegularFile == true && url.pathExtension == "md"
     }
 }

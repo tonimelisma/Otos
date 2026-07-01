@@ -1,6 +1,7 @@
 import CoreServices
 import Foundation
 import OSLog
+import Synchronization
 
 /// Filesystem watcher guide
 ///
@@ -71,49 +72,60 @@ private nonisolated enum LiveCatalogFilesystemWatcher {
     }
 }
 
-private final nonisolated class WatcherState: @unchecked Sendable {
+private nonisolated struct WatcherStorage {
+    var roots: [LibraryRootPath] = []
+    var handler: (@Sendable (FilesystemEvent) -> Void)?
+    var stream: FSEventStreamRef?
+}
+
+private final nonisolated class WatcherState: Sendable {
     private let queue = DispatchQueue(label: "net.melisma.Otos.filesystem-events")
-    private let lock = NSLock()
-    private var roots: [LibraryRootPath] = []
-    private var handler: (@Sendable (FilesystemEvent) -> Void)?
-    private var stream: FSEventStreamRef?
+    private let storage = Mutex(WatcherStorage())
 
     func start(roots: [LibraryRootPath], handler: @escaping @Sendable (FilesystemEvent) -> Void) {
         queue.sync {
-            self.roots = roots
-            self.handler = handler
-            recreateStreamLocked()
+            storage.withLock { storage in
+                storage.roots = roots
+                storage.handler = handler
+                recreateStreamLocked(storage: &storage)
+            }
         }
     }
 
     func addRoot(_ root: LibraryRootPath) {
         queue.sync {
-            guard !roots.contains(root) else {
-                return
+            storage.withLock { storage in
+                guard !storage.roots.contains(root) else {
+                    return
+                }
+                storage.roots.append(root)
+                recreateStreamLocked(storage: &storage)
             }
-            roots.append(root)
-            recreateStreamLocked()
         }
     }
 
     func removeRoot(_ root: LibraryRootPath) {
         queue.sync {
-            roots.removeAll { $0 == root }
-            recreateStreamLocked()
+            storage.withLock { storage in
+                storage.roots.removeAll { $0 == root }
+                recreateStreamLocked(storage: &storage)
+            }
         }
     }
 
     func stop() {
         queue.sync {
-            invalidateStreamLocked()
-            roots = []
-            handler = nil
+            storage.withLock { storage in
+                invalidateStreamLocked(storage: &storage)
+                storage.roots = []
+                storage.handler = nil
+            }
         }
     }
 
-    private func recreateStreamLocked() {
-        invalidateStreamLocked()
-        guard !roots.isEmpty else {
+    private func recreateStreamLocked(storage: inout WatcherStorage) {
+        invalidateStreamLocked(storage: &storage)
+        guard !storage.roots.isEmpty else {
             return
         }
 
@@ -122,7 +134,7 @@ private final nonisolated class WatcherState: @unchecked Sendable {
             OtosSignpost.fileAccess.endInterval("FilesystemWatcherStart", state)
         }
 
-        let paths = roots.map(\.rawValue) as CFArray
+        let paths = storage.roots.map(\.rawValue) as CFArray
         var context = FSEventStreamContext(
             version: 0,
             info: Unmanaged.passUnretained(self).toOpaque(),
@@ -151,15 +163,15 @@ private final nonisolated class WatcherState: @unchecked Sendable {
             return
         }
 
-        self.stream = stream
+        storage.stream = stream
         FSEventStreamSetDispatchQueue(stream, queue)
         FSEventStreamStart(stream)
-        let rootCount = roots.count
+        let rootCount = storage.roots.count
         OtosLog.fileAccess.info("Filesystem watcher started roots=\(rootCount, privacy: .public)")
     }
 
-    private func invalidateStreamLocked() {
-        guard let stream else {
+    private func invalidateStreamLocked(storage: inout WatcherStorage) {
+        guard let stream = storage.stream else {
             return
         }
         let signpostState = OtosSignpost.fileAccess.beginInterval("FilesystemWatcherStop")
@@ -167,14 +179,14 @@ private final nonisolated class WatcherState: @unchecked Sendable {
         FSEventStreamInvalidate(stream)
         FSEventStreamRelease(stream)
         OtosSignpost.fileAccess.endInterval("FilesystemWatcherStop", signpostState)
-        self.stream = nil
+        storage.stream = nil
         OtosLog.fileAccess.info("Filesystem watcher stopped")
     }
 
     fileprivate func deliver(events: [FilesystemEvent]) {
-        lock.lock()
-        let handler = handler
-        lock.unlock()
+        let handler = storage.withLock { storage in
+            storage.handler
+        }
         guard let handler else {
             return
         }
@@ -224,9 +236,12 @@ private nonisolated func filesystemEventStreamCallback(
 
 // MARK: - Testing
 
-private final nonisolated class TestingCatalogFilesystemWatcher: @unchecked Sendable {
-    private let lock = NSLock()
-    private var handler: (@Sendable (FilesystemEvent) -> Void)?
+private nonisolated struct TestingWatcherStorage {
+    var handler: (@Sendable (FilesystemEvent) -> Void)?
+}
+
+private final nonisolated class TestingCatalogFilesystemWatcher: Sendable {
+    private let storage = Mutex(TestingWatcherStorage())
 
     static func make() -> (watcher: CatalogFilesystemWatcher, emit: @Sendable (FilesystemEvent) -> Void) {
         let harness = TestingCatalogFilesystemWatcher()
@@ -244,15 +259,15 @@ private final nonisolated class TestingCatalogFilesystemWatcher: @unchecked Send
     }
 
     func emit(_ event: FilesystemEvent) {
-        lock.lock()
-        let handler = handler
-        lock.unlock()
+        let handler = storage.withLock { storage in
+            storage.handler
+        }
         handler?(event)
     }
 
     private func setHandler(_ handler: (@Sendable (FilesystemEvent) -> Void)?) {
-        lock.lock()
-        self.handler = handler
-        lock.unlock()
+        storage.withLock { storage in
+            storage.handler = handler
+        }
     }
 }

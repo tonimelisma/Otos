@@ -29,7 +29,7 @@ struct CatalogStoreLifecycleRaceTests {
         // The mutation enters while the first load is deliberately suspended.
         // One arrival proves it joined that load rather than starting a second
         // database read that could later replace the mutation's memory state.
-        try await Task.sleep(for: .milliseconds(50))
+        try await assertArrivalCountStays(gate, expectedCount: 1, duration: .milliseconds(50))
         let arrivalCount = await gate.arrivalCount()
         #expect(arrivalCount == 1)
         await gate.releaseAll()
@@ -144,9 +144,11 @@ struct CatalogStoreLifecycleRaceTests {
 private actor InitialLoadGate {
     private var arrivals = 0
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivalWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func pause() async {
         arrivals += 1
+        resumeArrivalWaiters()
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
         }
@@ -157,13 +159,19 @@ private actor InitialLoadGate {
     }
 
     func waitForArrivalCount(_ expectedCount: Int) async throws {
-        for _ in 0 ..< 100 {
-            if arrivals >= expectedCount {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("initial load arrival count") {
+            await self.waitForArrivalCountUnbounded(expectedCount)
         }
-        throw CatalogLifecycleTestError.timedOut
+    }
+
+    private func waitForArrivalCountUnbounded(_ expectedCount: Int) async {
+        if arrivals >= expectedCount {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            arrivalWaiters.append((expectedCount, continuation))
+            resumeArrivalWaiters()
+        }
     }
 
     func releaseAll() {
@@ -173,30 +181,37 @@ private actor InitialLoadGate {
             waiter.resume()
         }
     }
+
+    private func resumeArrivalWaiters() {
+        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+        for waiter in arrivalWaiters {
+            if arrivals >= waiter.0 {
+                waiter.1.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        arrivalWaiters = remaining
+    }
 }
 
-private actor ScanInvocationRecorder {
-    private var paths: [LibraryRootPath] = []
+private typealias ScanInvocationRecorder = AsyncValueRecorder<LibraryRootPath>
 
+private extension AsyncValueRecorder where Value == LibraryRootPath {
     func record(_ path: LibraryRootPath) {
-        paths.append(path)
+        append(path)
     }
 
     func invocations() -> [LibraryRootPath] {
-        paths
+        snapshot()
     }
 
     func waitForInvocationCount(_ expectedCount: Int) async throws {
-        // Generous budget: the awaited scan invocation arrives via actor hops on the shared
-        // cooperative pool, which the parallel test suite saturates — the work is not slow,
-        // its scheduling is delayed. The loop returns as soon as the count is reached.
-        for _ in 0 ..< 600 {
-            if paths.count >= expectedCount {
-                return
+        _ = try await withTestTimeout("scan invocation count") {
+            await self.waitForValues { paths in
+                paths.count >= expectedCount
             }
-            try await Task.sleep(for: .milliseconds(10))
         }
-        throw CatalogLifecycleTestError.timedOut
     }
 }
 
@@ -204,20 +219,28 @@ private actor ControlledScanProbe {
     private var invocationCount = 0
     private var releasedInvocations = Set<Int>()
     private var releaseWaiters: [Int: CheckedContinuation<Void, Never>] = [:]
+    private var invocationWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
 
     func beginInvocation() -> Int {
         invocationCount += 1
+        resumeInvocationWaiters()
         return invocationCount
     }
 
     func waitForInvocationCount(_ expectedCount: Int) async throws {
-        for _ in 0 ..< 100 {
-            if invocationCount >= expectedCount {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("controlled scan invocation count") {
+            await self.waitForInvocationCountUnbounded(expectedCount)
         }
-        throw CatalogLifecycleTestError.timedOut
+    }
+
+    private func waitForInvocationCountUnbounded(_ expectedCount: Int) async {
+        if invocationCount >= expectedCount {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            invocationWaiters.append((expectedCount, continuation))
+            resumeInvocationWaiters()
+        }
     }
 
     func waitForRelease(_ invocation: Int) async {
@@ -233,10 +256,31 @@ private actor ControlledScanProbe {
         releasedInvocations.insert(invocation)
         releaseWaiters.removeValue(forKey: invocation)?.resume()
     }
+
+    private func resumeInvocationWaiters() {
+        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+        for waiter in invocationWaiters {
+            if invocationCount >= waiter.0 {
+                waiter.1.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        invocationWaiters = remaining
+    }
 }
 
 private enum CatalogLifecycleTestError: Error {
     case timedOut
+}
+
+private func assertArrivalCountStays(
+    _ gate: InitialLoadGate,
+    expectedCount: Int,
+    duration: Duration
+) async throws {
+    try await Task.sleep(for: duration)
+    #expect(await gate.arrivalCount() == expectedCount)
 }
 
 private func waitForCatalogDiagnostics(

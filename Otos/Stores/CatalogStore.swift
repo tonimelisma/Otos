@@ -84,6 +84,7 @@ actor CatalogStore {
     private let filesystemWatcher: CatalogFilesystemWatcher
     private let scanCadence: Duration
     private let filesystemEventDebounce: Duration
+    private let filesystemEventSleep: @Sendable (Duration) async -> Void
     private let diagnostics: CatalogDiagnostics?
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private var dbWriter: (any DatabaseWriter)?
@@ -112,6 +113,9 @@ actor CatalogStore {
         filesystemWatcher: CatalogFilesystemWatcher = .live,
         scanCadence: Duration = .milliseconds(100),
         filesystemEventDebounce: Duration = .milliseconds(500),
+        filesystemEventSleep: @escaping @Sendable (Duration) async -> Void = { duration in
+            try? await Task.sleep(for: duration)
+        },
         diagnostics: CatalogDiagnostics? = .shared,
         initialLoadDidRead: (@Sendable () async -> Void)? = nil
     ) {
@@ -120,6 +124,7 @@ actor CatalogStore {
         self.filesystemWatcher = filesystemWatcher
         self.scanCadence = scanCadence
         self.filesystemEventDebounce = filesystemEventDebounce
+        self.filesystemEventSleep = filesystemEventSleep
         self.diagnostics = diagnostics
         self.initialLoadDidRead = initialLoadDidRead
     }
@@ -136,6 +141,9 @@ extension CatalogStore {
         let id = UUID()
         changeContinuations[id] = continuation
         continuation.onTermination = { [weak self] _ in
+            // AsyncStream termination is synchronous, while the continuations
+            // dictionary is actor state. This short task is the required actor
+            // hop that removes the observer after the stream goes away.
             Task {
                 await self?.removeChangeContinuation(id)
             }
@@ -891,13 +899,14 @@ private extension CatalogStore {
             activeScan = scan
             notifyCatalogChanged()
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
-            Task {
-                await diagnostics?.record(
-                    operation: "catalog.scan",
-                    phase: "start",
-                    fields: ["rootPath": nextPath.rawValue]
-                )
-            }
+            recordDiagnostic(
+                operation: "catalog.scan",
+                phase: "start",
+                fields: ["rootPath": nextPath.rawValue]
+            )
+            // The scan task is retained in `currentScanTask`, cancelled when
+            // the owning root goes away, and every callback revalidates the
+            // `ActiveScan` lease before mutating actor state.
             currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence, diagnostics] in
                 do {
                     let observedPaths = try await scanner.scanRoot(nextPath, scanCadence, diagnostics) { batch in
@@ -1172,13 +1181,11 @@ private extension CatalogStore {
     private func markRootUnavailableBeforeScan(_ path: LibraryRootPath) {
         let changed = setAvailability(.unavailable, for: path)
         OtosLog.catalog.info("Library root unavailable before scan path=\(path.rawValue, privacy: .public)")
-        Task {
-            await diagnostics?.record(
-                operation: "catalog.library.availability",
-                phase: "unavailable",
-                fields: ["rootPath": path.rawValue]
-            )
-        }
+        recordDiagnostic(
+            operation: "catalog.library.availability",
+            phase: "unavailable",
+            fields: ["rootPath": path.rawValue]
+        )
         if changed {
             notifyCatalogChanged()
         }
@@ -1203,6 +1210,9 @@ private extension CatalogStore {
         filesystemWatchingStarted = true
         let roots = Array(rootsByPath.keys)
         filesystemWatcher.start(roots) { [weak self] event in
+            // FSEvents reaches us through a synchronous C callback. The Store
+            // actor is still the owner of debounce and scan scheduling, so the
+            // callback performs only this actor hop.
             Task {
                 await self?.handleFilesystemEvent(event)
             }
@@ -1228,17 +1238,15 @@ private extension CatalogStore {
         OtosLog.catalog.debug(
             "Filesystem event received path=\(event.path, privacy: .public) root=\(root.rawValue, privacy: .public)"
         )
-        Task {
-            await diagnostics?.record(
-                operation: "catalog.filesystemEvent",
-                phase: "receive",
-                fields: [
-                    "rootPath": root.rawValue,
-                    "path": event.path,
-                    "flags": "\(event.flags)",
-                ]
-            )
-        }
+        recordDiagnostic(
+            operation: "catalog.filesystemEvent",
+            phase: "receive",
+            fields: [
+                "rootPath": root.rawValue,
+                "path": event.path,
+                "flags": "\(event.flags)",
+            ]
+        )
         filesystemEventBatches[root, default: []].append(event)
         debounceFilesystemReconcile(for: root)
     }
@@ -1256,38 +1264,52 @@ private extension CatalogStore {
                 "Filesystem event ignored outside library roots path=\(path, privacy: .public)"
             )
         }
-        Task {
-            var fields: [String: String] = [
-                "path": path,
-                "reason": reason,
-            ]
-            if let root {
-                fields["rootPath"] = root.rawValue
-            }
-            await diagnostics?.record(
-                operation: "catalog.filesystemEvent",
-                phase: "drop",
-                fields: fields
-            )
+        var fields: [String: String] = [
+            "path": path,
+            "reason": reason,
+        ]
+        if let root {
+            fields["rootPath"] = root.rawValue
         }
+        recordDiagnostic(
+            operation: "catalog.filesystemEvent",
+            phase: "drop",
+            fields: fields
+        )
     }
 
     private func debounceFilesystemReconcile(for root: LibraryRootPath) {
         filesystemDebounceTasks[root]?.cancel()
         let debounce = filesystemEventDebounce
-        filesystemDebounceTasks[root] = Task { [root] in
-            try? await Task.sleep(for: debounce)
+        let sleep = filesystemEventSleep
+        filesystemDebounceTasks[root] = Task { [root, sleep] in
+            await sleep(debounce)
             guard !Task.isCancelled else {
                 return
             }
             await processFilesystemEventBatch(for: root)
         }
-        Task {
-            await diagnostics?.record(
-                operation: "catalog.filesystemEvent",
-                phase: "debounce",
-                fields: ["rootPath": root.rawValue]
-            )
+        recordDiagnostic(
+            operation: "catalog.filesystemEvent",
+            phase: "debounce",
+            fields: ["rootPath": root.rawValue]
+        )
+    }
+
+    /// Actor-isolated methods often need to record optional, bounded JSONL
+    /// diagnostics from synchronous branches. This is the one best-effort
+    /// fire-and-forget diagnostics escape in Store: it captures only scalar
+    /// strings and the diagnostics actor, never catalog state or asset batches.
+    private func recordDiagnostic(
+        operation: String,
+        phase: String,
+        fields: [String: String] = [:]
+    ) {
+        guard let diagnostics else {
+            return
+        }
+        Task { [diagnostics, operation, phase, fields] in
+            await diagnostics.record(operation: operation, phase: phase, fields: fields)
         }
     }
 

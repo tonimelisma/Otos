@@ -1,12 +1,13 @@
 # ADR 0002: Catalog Persistence And Filesystem Reconciliation
 
 - Status: Accepted
-- Last updated: 2026-06-27
+- Last updated: 2026-07-01
 - Specs: `docs/specs/0004-library-catalog-browser.md`,
   `docs/specs/0005-catalog-state-diagnostics-cleanup.md`,
   `docs/specs/0008-package-descendant-scan-skip.md`,
   `docs/specs/0013-catalog-lifecycle-race-safety.md`,
-  `docs/specs/0023-filesystem-event-rescan-v1.md`
+  `docs/specs/0023-filesystem-event-rescan-v1.md`,
+  `docs/specs/0025-store-owned-query-catalog-and-identity-grid.md`
 
 ## Context
 
@@ -21,8 +22,14 @@ or the full library-root access schema.
 
 Verified repo facts:
 
-- There is no existing persistence dependency or catalog implementation.
-- The current app is a SwiftUI macOS shell with an instrumentation facade in
+- `CatalogStore` is the single actor owner of GRDB, root runtime state, scan
+  lifecycle, filesystem-event debounce, and Store-owned catalog query APIs.
+- File-backed catalog locations use a GRDB `DatabasePool`; `.inMemory` test
+  locations use a GRDB `DatabaseQueue`.
+- SQLite is the per-asset working set. The Store keeps root identity,
+  availability, scan lifecycle, and notification state resident, but it no
+  longer keeps a resident per-asset map or publishes raw catalog snapshots.
+- The current app is a SwiftUI macOS app with an instrumentation facade in
   `Otos/Support/Instrumentation.swift`.
 - `docs/requirements.md` is the current implemented-requirements registry only;
   unimplemented catalog behavior belongs in specs and ADRs until it lands.
@@ -93,8 +100,10 @@ This ADR owns:
 
 - SQLite as the catalog persistence choice.
 - GRDB as the Swift SQLite access layer.
-- `DatabaseQueue` as the initial GRDB connection owner.
-- Full in-memory loading of the current SQLite catalog working set.
+- GRDB connection ownership: `DatabasePool` for file-backed locations and
+  `DatabaseQueue` for `.inMemory` tests.
+- SQLite as the per-asset working set, with Store-owned query APIs instead of a
+  resident per-asset map.
 - The exact initial filesystem scan schema for media asset rows.
 - The macOS filesystem resource keys requested during the initial scan.
 - The 10 Hz time-based cadence for filesystem scan SQLite flushes.
@@ -118,10 +127,11 @@ Separate ADRs or specs must own:
 - Filesystem access policy, root registration, root display names, and root
   restoration.
 - Move and rename detection.
-- Metadata extraction, metadata schema, metadata freshness, and metadata scan
-  cadence.
+- Metadata extraction, metadata schema, metadata freshness, and enrichment
+  scheduling (ADR 0009).
 - Thumbnail generation, thumbnail storage, thumbnail schema, thumbnail
-  freshness, and thumbnail scan cadence.
+  freshness, and enrichment scheduling (ADR 0009).
+- Identity-grid publication and visible detail reads (ADR 0010).
 - Camera package, AVCHD, XAVC, or other compound media-container import
   workflows.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
@@ -133,14 +143,17 @@ Separate ADRs or specs must own:
 
 Use GRDB with app-bundled SQLite as the catalog persistence layer.
 
-Create one app-owned catalog owner that owns the GRDB writer and the in-memory
-catalog working set for the app lifetime. Open the database at launch, run
-migrations, load the SQLite catalog into memory, and treat SQLite as the durable
-source after relaunch, crash recovery, and migration.
+Create one app-owned catalog owner that owns the GRDB writer, root runtime state,
+scan lifecycle, and catalog query APIs for the app lifetime. Open the database at
+launch, initialize the clean current schema, load saved roots and counts, and
+treat SQLite as the durable per-asset working set after relaunch and crash
+recovery.
 
-Start with `DatabaseQueue`. Do not use `DatabasePool`, WAL-specific tuning, a
-separate cache layer, or a query-paging architecture until measurements or
-implemented requirements prove the simple path is insufficient.
+Use `DatabasePool` with WAL for file-backed locations so Store-owned projection,
+grid-detail, and enrichment reads can run alongside serialized writes. Keep
+`.inMemory` test locations on `DatabaseQueue`, because GRDB pools require files.
+Do not add a second cache layer or query-paging architecture until measurements or
+implemented requirements prove the current Store-owned query model insufficient.
 
 ### macOS Scan Input
 
@@ -411,29 +424,32 @@ Failure modes:
 - SwiftUI view code becomes coupled to database query shapes.
 - Observation invalidation becomes the first catalog architecture problem.
 
-### Selected: GRDB With Full In-Memory Catalog Working Set
+### Superseded: GRDB With Full In-Memory Catalog Working Set
 
 Pros:
 
-- Keeps SQLite explicit and durable while preserving simple SwiftUI reads.
-- Loads every SQLite catalog row into memory by default, matching user guidance.
-- Avoids paging, pooling, and database-observation complexity before evidence
-  proves it is needed.
-- Keeps one app-owned owner responsible for synchronizing memory and disk.
+- Kept SQLite explicit and durable while preserving simple early SwiftUI reads.
+- Avoided paging and database-observation complexity before evidence proved the
+  first catalog model insufficient.
 
 Cons:
 
-- Creates two representations that must remain synchronized: SQLite durability
+- Created two representations that had to remain synchronized: SQLite durability
   and the in-memory working set.
-- Full startup load can become visible launch work if future schema rows grow.
-- Memory pressure becomes the app's responsibility as catalog columns grow.
+- Full startup load and full-map publication became visible work as catalog rows
+  and enrichment churn grew.
+- Memory pressure became the app's responsibility as catalog columns grew.
 
 Failure modes:
 
-- A write succeeds in memory but fails on disk, or succeeds on disk but does not
+- A write could succeed in memory but fail on disk, or succeed on disk but not
   update memory.
-- Later schema work adds large columns without revisiting the in-memory loading
-  rule in a separate decision.
+- Later schema work could add large columns without revisiting the in-memory
+  loading rule in a separate decision.
+
+Superseded by ADR 0010, which keeps SQLite as the per-asset working set and
+routes order, detail, metadata, and enrichment selection through Store-owned
+queries.
 
 ### Durable File IDs As Asset Identity
 
@@ -505,9 +521,11 @@ Failure modes:
 
 ## Consequences
 
-The first catalog implementation has one durable SQLite catalog, one app-owned
-in-memory working set, and one row per currently observed scanned media asset
-path.
+The current catalog implementation has one durable SQLite catalog, one app-owned
+Store actor, and one row per currently observed scanned media asset path. SQLite
+is the per-asset working set; root runtime state is resident in Store, while
+asset order, visible detail, metadata detail, and enrichment candidates are read
+through Store-owned queries.
 
 The schema contains only current filesystem facts for media assets. Metadata and
 thumbnails cannot be implemented by filling in placeholder fields from this ADR;
