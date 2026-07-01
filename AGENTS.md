@@ -497,7 +497,10 @@ script/verify.sh
 
 ## Git, CI, And Pull Requests
 
-- Work on a branch named `codex/<description>` for agent-driven increments.
+- Name branches with a conventional type prefix that matches the increment's
+  work classification, for example `feat/<description>`, `fix/<description>`,
+  `refactor/<description>`, `docs/<description>`, `chore/<description>`, or
+  `research/<description>`.
 - Increments should use a dedicated git worktree when starting new
   work. If an existing branch/worktree is already the active increment, keep the
   work there and state that in the PR.

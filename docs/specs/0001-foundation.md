@@ -12,7 +12,7 @@ In scope:
 
 - Move media fixtures into the test fixture tree.
 - Add AGENTS.md, setup docs, verification scripts, fast CI, lint configs, PR
-  template, shared Xcode scheme, and Codex run config.
+  template, shared Xcode scheme, and an agent run config.
 - Enforce full Xcode selection and Swift 6 strict concurrency settings.
 - Add a minimal instrumentation facade.
 - Create a private GitHub remote named `origin`.

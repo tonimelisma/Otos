@@ -117,10 +117,12 @@ recently removed design, or read like an increment changelog.
 
 ## Worktrees And Branches
 
-Use `codex/<description>` branches for agent-driven increments. Non-micro
-increments should start in a dedicated git worktree when the work is new. If the
-current task is already on an active increment branch, continue there and record
-that fact in the PR.
+Name branches with a conventional type prefix that matches the increment's work
+classification, for example `feat/<description>`, `fix/<description>`,
+`refactor/<description>`, `docs/<description>`, `chore/<description>`, or
+`research/<description>`. Non-micro increments should start in a dedicated git
+worktree when the work is new. If the current task is already on an active
+increment branch, continue there and record that fact in the PR.
 
 Never discard work unless it is proven to belong to the current increment and is
 already merged, patch-equivalent to `main`, or explicitly approved for removal.
