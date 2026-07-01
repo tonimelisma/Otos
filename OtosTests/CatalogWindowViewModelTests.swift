@@ -277,7 +277,7 @@ struct CatalogWindowViewModelTests {
 
         await loadGate.release()
         try await store.start(scansSavedLibraries: false)
-        try await Task.sleep(for: .milliseconds(50))
+        await yieldForQueuedMutationCancellation()
         let paths = try await catalogStoreTestState(store).libraries.map(\.path)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
         #expect(!paths.contains(secondPath))
@@ -334,14 +334,28 @@ private func waitForWindowState(
 }
 
 @MainActor
-private func waitForCondition(_ predicate: () -> Bool) async throws {
-    for _ in 0 ..< 1000 {
+private func waitForCondition(
+    timeout: Duration = .seconds(2),
+    predicate: () -> Bool
+) async throws {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    while clock.now < deadline {
         if predicate() {
             return
         }
         await Task.yield()
     }
+    if predicate() {
+        return
+    }
     throw CatalogWindowViewModelTestError.timedOut
+}
+
+private func yieldForQueuedMutationCancellation() async {
+    for _ in 0 ..< 10 {
+        await Task.yield()
+    }
 }
 
 private func makeTemporaryDirectory() throws -> URL {

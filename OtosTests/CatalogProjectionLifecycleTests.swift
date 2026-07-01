@@ -127,23 +127,21 @@ struct CatalogProjectionLifecycleTests {
     }
 }
 
-private actor LifecycleStateRecorder {
-    private var states: [CatalogWindowState] = []
+private typealias LifecycleStateRecorder = AsyncValueRecorder<CatalogWindowState>
 
-    func append(_ state: CatalogWindowState) {
-        states.append(state)
-    }
-
+private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForLast(
-        matching predicate: (CatalogWindowState) -> Bool
+        matching predicate: @escaping @Sendable (CatalogWindowState) -> Bool
     ) async throws -> CatalogWindowState {
-        for _ in 0 ..< 100 {
-            if let last = states.last, predicate(last) {
-                return last
+        let states = try await withTestTimeout("projection lifecycle state") {
+            await self.waitForValues { states in
+                states.last.map(predicate) ?? false
             }
-            try await Task.sleep(for: .milliseconds(20))
         }
-        throw CatalogProjectionLifecycleTestError.timedOut
+        guard let last = states.last else {
+            throw CatalogProjectionLifecycleTestError.timedOut
+        }
+        return last
     }
 }
 
@@ -151,6 +149,7 @@ private actor SelectionBuildGate {
     private let blockedSelection: SidebarSelection
     private var isPaused = false
     private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var pauseWaiters: [CheckedContinuation<Void, Never>] = []
 
     init(blockedSelection: SidebarSelection) {
         self.blockedSelection = blockedSelection
@@ -161,24 +160,42 @@ private actor SelectionBuildGate {
             return
         }
         isPaused = true
+        resumePauseWaiters()
         await withCheckedContinuation { continuation in
             releaseContinuation = continuation
         }
     }
 
     func waitUntilPaused() async throws {
-        for _ in 0 ..< 100 {
-            if isPaused {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("selection build pause") {
+            await self.waitUntilPausedUnbounded()
         }
-        throw CatalogProjectionLifecycleTestError.timedOut
+    }
+
+    private func waitUntilPausedUnbounded() async {
+        if isPaused {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            pauseWaiters.append(continuation)
+            resumePauseWaiters()
+        }
     }
 
     func release() {
         releaseContinuation?.resume()
         releaseContinuation = nil
+    }
+
+    private func resumePauseWaiters() {
+        guard isPaused else {
+            return
+        }
+        let waiters = pauseWaiters
+        pauseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
     }
 }
 

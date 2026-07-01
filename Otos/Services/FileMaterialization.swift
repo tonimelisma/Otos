@@ -81,17 +81,9 @@ nonisolated enum FileMaterialization {
 /// it has deliberately chosen to download a dataless file for enrichment. They are
 /// not scanner helpers and must stay out of filesystem-fact catalog reads.
 extension FileMaterialization {
-    /// The provider's view of whether `url`'s bytes are present, without reading
-    /// bytes. iCloud-flavored but populated by OneDrive in the spec 0016 POC. Used as
-    /// a cross-check and progress signal alongside the SF_DATALESS `status(of:)`.
-    static func downloadingStatus(of url: URL) -> URLUbiquitousItemDownloadingStatus? {
-        (try? url.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey]))?
-            .ubiquitousItemDownloadingStatus
-    }
-
     /// Asks the provider to download `url` and returns immediately. Non-blocking: the
-    /// transfer proceeds in the background and is observed via `status(of:)` or
-    /// `downloadingStatus(of:)`. Throws if the provider rejects the request.
+    /// transfer proceeds in the background and is observed via `status(of:)`. Throws
+    /// if the provider rejects the request.
     static func requestMaterialization(of url: URL) throws {
         try FileManager.default.startDownloadingUbiquitousItem(at: url)
     }

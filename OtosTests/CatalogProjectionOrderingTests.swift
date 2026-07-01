@@ -224,7 +224,7 @@ private func waitForOrderingDiagnostic(
                     return event
                 }
             }
-            try await Task.sleep(for: .milliseconds(20))
+            await Task.yield()
         }
         throw CancellationError()
     }
@@ -242,23 +242,21 @@ private enum CatalogProjectionOrderingTestError: Error {
     case detailStateTimedOut
 }
 
-private actor OrderingStateRecorder {
-    private var states: [CatalogWindowState] = []
+private typealias OrderingStateRecorder = AsyncValueRecorder<CatalogWindowState>
 
-    func append(_ state: CatalogWindowState) {
-        states.append(state)
-    }
-
+private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForState(
         timeout: CatalogProjectionOrderingTestError,
-        matching predicate: ([CatalogWindowState]) -> CatalogWindowState?
+        matching predicate: @escaping @Sendable ([CatalogWindowState]) -> CatalogWindowState?
     ) async throws -> [CatalogWindowState] {
-        for _ in 0 ..< 750 {
-            if predicate(states) != nil {
-                return states
+        do {
+            return try await withTestTimeout("ordering state", timeout: .seconds(15)) {
+                await self.waitForValues { states in
+                    predicate(states) != nil
+                }
             }
-            try await Task.sleep(for: .milliseconds(20))
+        } catch {
+            throw timeout
         }
-        throw timeout
     }
 }

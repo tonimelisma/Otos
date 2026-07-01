@@ -116,7 +116,7 @@ nonisolated struct MediaEnricher {
             ?? timestamps.gps?.instant
     }
 
-    /// Maps the full library result into Otos's persisted blob shape — every field.
+    /// Maps the full library result into Otos's owned metadata record — every field.
     static func map(_ result: MediaMetadataResult) -> AssetMetadata {
         AssetMetadata(
             family: result.format.family.rawValue,

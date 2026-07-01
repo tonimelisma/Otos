@@ -6,9 +6,9 @@ import Foundation
 ///
 /// This is Otos's own `Codable` mirror of the `MediaMetadata` library's result, kept
 /// independent so the catalog model does not depend on the library and so the persisted
-/// shape is Otos-owned. The enricher maps the library result into this; nothing in the
-/// current increment produces it except tests. "Persist everything" lives here: every
-/// timestamp role, location, and camera/video field round-trips.
+/// shape is Otos-owned. The live enricher maps the library result into this and tests
+/// prove it round-trips. "Persist everything" lives here: every timestamp role,
+/// location, and camera/video field round-trips.
 ///
 /// Metadata format is versioned by the current catalog schema, not per row: a future
 /// incompatible shape change resets the rebuildable catalog/enrichment overlay instead

@@ -17,12 +17,13 @@ struct ThumbnailStoreTests {
         #expect(!name.hasSuffix(".heic"))
     }
 
-    @Test func writeNormalizesToLoadableJPEG() throws {
+    @Test func stageAndPromoteNormalizeToLoadableJPEG() throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let image = try makeThumbnailTestImage()
 
-        let relativeName = try ThumbnailStore.write(image, named: "thumb.jpg", in: directory)
+        let generated = try ThumbnailStore.stage(image, finalRelativeName: "thumb.jpg", in: directory)
+        let relativeName = try ThumbnailStore.promote(generated, in: directory)
         let thumbnailURL = ThumbnailStore.url(for: relativeName, in: directory)
         let data = try Data(contentsOf: thumbnailURL)
         #expect(Array(data.prefix(2)) == [0xFF, 0xD8])

@@ -159,20 +159,19 @@ private func waitForFirstAsset(
     attempts: Int = 200,
     predicate: (MediaAsset) -> Bool
 ) async throws -> MediaAsset {
+    let timeout = attempts > 200 ? Duration.seconds(20) : .seconds(10)
     var lastAsset: MediaAsset?
-    for _ in 0 ..< attempts {
-        if let id = model.state.mediaGrid.orderedAssetIDs.first {
-            let asset = try await store.mediaAssets(for: [id])[id]
-            guard let asset else {
-                try await Task.sleep(for: .milliseconds(20))
-                continue
-            }
-            lastAsset = asset
-            if predicate(asset) {
-                return asset
-            }
+    for await state in windowStateStream(model, timeout: timeout) {
+        guard let id = state.mediaGrid.orderedAssetIDs.first else {
+            continue
         }
-        try await Task.sleep(for: .milliseconds(20))
+        guard let asset = try await store.mediaAssets(for: [id])[id] else {
+            continue
+        }
+        lastAsset = asset
+        if predicate(asset) {
+            return asset
+        }
     }
     let need = String(describing: lastAsset?.needsEnrichment)
     let cap = String(describing: lastAsset?.captureDate)

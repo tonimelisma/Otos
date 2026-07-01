@@ -56,21 +56,19 @@ struct CatalogProjectionEmptyStateTests {
     }
 }
 
-private actor EmptyStateRecorder {
-    private var states: [CatalogWindowState] = []
+private typealias EmptyStateRecorder = AsyncValueRecorder<CatalogWindowState>
 
-    func append(_ state: CatalogWindowState) {
-        states.append(state)
-    }
-
-    func waitForState(matching predicate: ([CatalogWindowState]) -> Bool) async throws -> [CatalogWindowState] {
-        for _ in 0 ..< 250 {
-            if predicate(states) {
-                return states
+private extension AsyncValueRecorder where Value == CatalogWindowState {
+    func waitForState(
+        matching predicate: @escaping @Sendable ([CatalogWindowState]) -> Bool
+    ) async throws -> [CatalogWindowState] {
+        do {
+            return try await withTestTimeout("empty-state projection", timeout: .seconds(10)) {
+                await self.waitForValues(matching: predicate)
             }
-            try await Task.sleep(for: .milliseconds(20))
+        } catch {
+            throw CatalogProjectionEmptyStateTestError.timedOut
         }
-        throw CatalogProjectionEmptyStateTestError.timedOut
     }
 }
 
