@@ -208,8 +208,8 @@ private func insertEnrichmentClaimFixture(
     }
 }
 
-private func legacyExclusionArguments(rootID: Int64, excludedCount: Int) -> [Any] {
-    (0 ..< excludedCount).flatMap { index -> [Any] in
+private func legacyExclusionArguments(rootID: Int64, excludedCount: Int) -> [any DatabaseValueConvertible] {
+    (0 ..< excludedCount).flatMap { index -> [any DatabaseValueConvertible] in
         [rootID, String(format: "asset-%04d.jpg", index)]
     }
 }
@@ -232,10 +232,15 @@ private func legacyNotInEnrichmentQuery(rootID: Int64, excludedCount: Int) -> Ca
         ORDER BY sort_key, relative_path
         LIMIT ?
         """,
-        arguments: StatementArguments(
-            [rootID] + legacyExclusionArguments(rootID: rootID, excludedCount: excludedCount) + [4]
-        ) ?? StatementArguments()
+        arguments: legacyNotInEnrichmentArguments(rootID: rootID, excludedCount: excludedCount)
     )
+}
+
+private func legacyNotInEnrichmentArguments(rootID: Int64, excludedCount: Int) -> StatementArguments {
+    var values: [any DatabaseValueConvertible] = [rootID]
+    values.append(contentsOf: legacyExclusionArguments(rootID: rootID, excludedCount: excludedCount))
+    values.append(4)
+    return StatementArguments(values)
 }
 
 private func explainPlan(

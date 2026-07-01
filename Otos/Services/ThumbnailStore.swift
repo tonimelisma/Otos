@@ -41,19 +41,6 @@ nonisolated enum ThumbnailStore {
         directory.appending(path: relativeName, directoryHint: .notDirectory)
     }
 
-    /// Writes `image` as JPEG at `relativeName` under `directory`, atomically. Returns the
-    /// relative name for storage in `thumbnail_path`.
-    @discardableResult
-    static func write(_ image: CGImage, named relativeName: String, in directory: URL) throws -> String {
-        let generated = try stage(image, finalRelativeName: relativeName, in: directory)
-        do {
-            return try promote(generated, in: directory)
-        } catch {
-            discard(generated, in: directory)
-            throw error
-        }
-    }
-
     /// Writes `image` as a staged JPEG under `directory` and returns the staged/final names.
     /// The final deterministic name is not touched until `promote`, so a stale completion
     /// cannot replace the catalog-visible thumbnail before Store validates it.

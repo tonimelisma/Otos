@@ -285,17 +285,17 @@ private func assertArrivalCountStays(
 
 private func waitForCatalogDiagnostics(
     _ url: URL,
-    matching predicate: (String) -> Bool
+    matching predicate: @escaping @Sendable (String) -> Bool
 ) async throws -> String {
-    // Generous budget: the diagnostics JSONL is written through actor hops + a file write,
-    // both delayed (not slowed) when the parallel suite saturates the cooperative pool.
-    for _ in 0 ..< 300 {
-        let data = try? Data(contentsOf: url)
-        let contents = data.flatMap { String(data: $0, encoding: .utf8) }
-        if let contents, predicate(contents) {
-            return contents
+    try await withTestTimeout("catalog diagnostics") {
+        while !Task.isCancelled {
+            let data = try? Data(contentsOf: url)
+            let contents = data.flatMap { String(data: $0, encoding: .utf8) }
+            if let contents, predicate(contents) {
+                return contents
+            }
+            await Task.yield()
         }
-        try await Task.sleep(for: .milliseconds(20))
+        throw CancellationError()
     }
-    throw CatalogLifecycleTestError.timedOut
 }

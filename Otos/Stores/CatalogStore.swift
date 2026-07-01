@@ -282,6 +282,8 @@ extension CatalogStore {
         return assetsByID
     }
 
+    /// On-demand metadata read retained for the future tile/inspector metadata surface
+    /// owned by ADR 0009. It is test-exercised today but stays out of the hot grid path.
     func metadata(for id: MediaAssetID) async throws -> AssetMetadata? {
         guard let rootID = rootRowIDsByPath[id.libraryRootPath] else {
             return nil
@@ -704,8 +706,7 @@ extension CatalogStore {
             fields: ["rootPath": path.rawValue]
         )
         let storedRoot = try await dbQueue.write { db in
-            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: [path.rawValue])
-            return StoredRoot(id: db.lastInsertedRowID, path: path)
+            try Self.insertLibraryRoot(path: path, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogAddRoot", state)
 
@@ -762,7 +763,7 @@ extension CatalogStore {
             fields: ["rootPath": path.rawValue]
         )
         try await dbQueue.write { db in
-            try db.execute(sql: "DELETE FROM library_root WHERE id = ?", arguments: [rootRowID])
+            try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogRemoveRoot", state)
 
@@ -1151,10 +1152,7 @@ private extension CatalogStore {
 
         try await dbQueue.write { db in
             for row in missingRows {
-                try db.execute(
-                    sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                    arguments: [scan.rootRowID, row.relativePath.rawValue]
-                )
+                try Self.deleteAssetRow(rootRowID: scan.rootRowID, relativePath: row.relativePath, db: db)
             }
         }
         // Removal and same-path replacement can run while GRDB owns the writer.
@@ -1584,7 +1582,7 @@ private extension CatalogStore {
             }
             deletionTarget = target
             let deleted = try await dbQueue.write { db in
-                try Self.deleteCatalogedFileRow(relativePath: relativePath, rootRowID: rootRowID, db: db)
+                try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db)
             }
             guard deleted else {
                 return false
@@ -1597,41 +1595,6 @@ private extension CatalogStore {
             ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
         }
         return true
-    }
-
-    private struct CatalogedFileDeletionTarget {
-        let thumbnailPath: String?
-    }
-
-    private static func catalogedFileDeletionTarget(
-        relativePath: MediaRelativePath,
-        rootRowID: Int64,
-        db: Database
-    ) throws -> CatalogedFileDeletionTarget? {
-        guard let row = try Row.fetchOne(
-            db,
-            sql: """
-            SELECT thumbnail_path
-            FROM media_asset
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
-            arguments: [rootRowID, relativePath.rawValue]
-        ) else {
-            return nil
-        }
-        return CatalogedFileDeletionTarget(thumbnailPath: row["thumbnail_path"])
-    }
-
-    private static func deleteCatalogedFileRow(
-        relativePath: MediaRelativePath,
-        rootRowID: Int64,
-        db: Database
-    ) throws -> Bool {
-        try db.execute(
-            sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-            arguments: [rootRowID, relativePath.rawValue]
-        )
-        return db.changesCount > 0
     }
 
     private func recordFilesystemEventDrop(root: LibraryRootPath, reason: String) async {

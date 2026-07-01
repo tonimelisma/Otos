@@ -511,16 +511,18 @@ private enum CatalogProjectionTestError: Error {
 
 private func waitForDiagnostics(
     _ url: URL,
-    matching predicate: (String) -> Bool
+    matching predicate: @escaping @Sendable (String) -> Bool
 ) async throws -> String {
-    for _ in 0 ..< 100 {
-        let contents = readableDiagnostics(at: url)
-        if let contents, predicate(contents) {
-            return contents
+    try await withTestTimeout("projection diagnostics") {
+        while !Task.isCancelled {
+            let contents = readableDiagnostics(at: url)
+            if let contents, predicate(contents) {
+                return contents
+            }
+            await Task.yield()
         }
-        try await Task.sleep(for: .milliseconds(20))
+        throw CancellationError()
     }
-    throw CatalogProjectionTestError.timedOut
 }
 
 private func assertStateCountStays(

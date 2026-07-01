@@ -41,14 +41,24 @@ actor CatalogProjection {
         let orderQueryMs: Int
     }
 
-    private struct PublicationChangeSummary {
+    struct PublicationChangeSummary {
         let previousSelectedScopeAssetCount: Int
+        let titleChanged: Bool
         let mediaIdentityChanged: Bool
         let librariesChanged: Bool
         let emptyStateChanged: Bool
         let resolvedSelectionChanged: Bool
         let detailRefreshChanged: Bool
         let mediaIdentityEqualityUs: Int
+
+        var stateChanged: Bool {
+            titleChanged
+                || mediaIdentityChanged
+                || librariesChanged
+                || emptyStateChanged
+                || resolvedSelectionChanged
+                || detailRefreshChanged
+        }
 
         static func compare(
             previous: CatalogWindowState?,
@@ -57,6 +67,7 @@ actor CatalogProjection {
             guard let previous else {
                 return PublicationChangeSummary(
                     previousSelectedScopeAssetCount: -1,
+                    titleChanged: true,
                     mediaIdentityChanged: true,
                     librariesChanged: true,
                     emptyStateChanged: true,
@@ -73,6 +84,7 @@ actor CatalogProjection {
 
             return PublicationChangeSummary(
                 previousSelectedScopeAssetCount: previous.mediaGrid.orderedAssetIDs.count,
+                titleChanged: previous.title != current.title,
                 mediaIdentityChanged: mediaIdentityChanged,
                 librariesChanged: previous.libraries != current.libraries,
                 emptyStateChanged: previous.mediaEmptyState != current.mediaEmptyState,
@@ -108,6 +120,7 @@ actor CatalogProjection {
                     "previousSelectedScopeAssetCount": "\(changeSummary.previousSelectedScopeAssetCount)",
                     "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
                     "assetOrderQueryMs": "\(metrics.orderQueryMs)",
+                    "titleChanged": "\(changeSummary.titleChanged)",
                     "mediaIdentityChanged": "\(changeSummary.mediaIdentityChanged)",
                     "librariesChanged": "\(changeSummary.librariesChanged)",
                     "emptyStateChanged": "\(changeSummary.emptyStateChanged)",
@@ -288,12 +301,12 @@ private extension CatalogProjection {
         let projectionMs = DiagnosticsTiming.milliseconds(since: projectionStart)
         let totalMs = DiagnosticsTiming.milliseconds(since: publicationStart)
         let equalityStart = Date()
-        let stateChanged = lastPublishedState != state
-        let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
         let changeSummary = PublicationChangeSummary.compare(
             previous: lastPublishedState,
             current: state
         )
+        let stateChanged = changeSummary.stateChanged
+        let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
 
         await PublicationDiagnostics(
             state: state,
@@ -357,6 +370,7 @@ private extension CatalogProjection {
     ) async -> (CatalogWindowState, BuildMetrics) {
         let libraries = Self.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
+        let resolvedSidebarSelection = Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
         if needsOrderRequery {
@@ -364,7 +378,7 @@ private extension CatalogProjection {
             needsOrderRequery = false
             do {
                 orderedAssetIDs = try await store.orderedAssetIDs(
-                    for: sidebarSelection,
+                    for: resolvedSidebarSelection,
                     availableLibraryPaths: availableLibraryPaths
                 )
                 cachedOrderedAssetIDs = orderedAssetIDs
@@ -379,27 +393,12 @@ private extension CatalogProjection {
             orderedAssetIDs = cachedOrderedAssetIDs
             orderQueryMs = 0
         }
-        let scopedAssetIDs = Self.assetIDs(
-            for: sidebarSelection,
-            orderedAssetIDs: orderedAssetIDs,
-            availableLibraryPaths: availableLibraryPaths
-        )
-        let allAssetCount: Int
-        if scopedAssetIDs.isEmpty {
-            do {
-                allAssetCount = try await store.catalogedAssetCount(for: sidebarSelection)
-            } catch {
-                OtosLog.catalog.error("Catalog asset count query failed")
-                allAssetCount = orderedAssetIDs.count
-            }
-        } else {
-            allAssetCount = orderedAssetIDs.count
-        }
         return await buildWindowState(
             libraries: libraries,
             orderedAssetIDs: orderedAssetIDs,
             sidebarSelection: sidebarSelection,
-            allAssetCount: allAssetCount,
+            resolvedSidebarSelection: resolvedSidebarSelection,
+            store: store,
             orderQueryMs: orderQueryMs
         )
     }
@@ -408,7 +407,8 @@ private extension CatalogProjection {
         libraries unsortedLibraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
         sidebarSelection: SidebarSelection,
-        allAssetCount: Int? = nil,
+        resolvedSidebarSelection providedResolvedSidebarSelection: SidebarSelection? = nil,
+        store: CatalogStore? = nil,
         orderQueryMs: Int = 0
     ) async -> (CatalogWindowState, BuildMetrics) {
         if let injectedState = await injectedWindowState(
@@ -425,18 +425,25 @@ private extension CatalogProjection {
         }
         let libraries = Self.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let resolvedSidebarSelection = Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
+        let resolvedSidebarSelection = providedResolvedSidebarSelection
+            ?? Self.resolvedSidebarSelection(sidebarSelection, libraries: libraries)
         let title = Self.title(for: resolvedSidebarSelection, libraries: libraries)
         let scopedAssetIDs = Self.assetIDs(
             for: resolvedSidebarSelection,
             orderedAssetIDs: orderedAssetIDs,
             availableLibraryPaths: availableLibraryPaths
         )
+        let allAssetCount = await catalogedAssetCountForEmptyState(
+            resolvedSidebarSelection: resolvedSidebarSelection,
+            scopedAssetIDs: scopedAssetIDs,
+            orderedAssetIDs: orderedAssetIDs,
+            store: store
+        )
 
         let mediaEmptyState = Self.mediaEmptyState(
             for: resolvedSidebarSelection,
             libraries: libraries,
-            allAssetCount: allAssetCount ?? orderedAssetIDs.count,
+            allAssetCount: allAssetCount,
             selectedAssetCount: scopedAssetIDs.count
         )
 
@@ -454,6 +461,23 @@ private extension CatalogProjection {
             ),
             BuildMetrics(orderQueryMs: orderQueryMs)
         )
+    }
+
+    private func catalogedAssetCountForEmptyState(
+        resolvedSidebarSelection: SidebarSelection,
+        scopedAssetIDs: [MediaAssetID],
+        orderedAssetIDs: [MediaAssetID],
+        store: CatalogStore?
+    ) async -> Int {
+        guard scopedAssetIDs.isEmpty, let store else {
+            return orderedAssetIDs.count
+        }
+        do {
+            return try await store.catalogedAssetCount(for: resolvedSidebarSelection)
+        } catch {
+            OtosLog.catalog.error("Catalog asset count query failed")
+            return orderedAssetIDs.count
+        }
     }
 
     /// Tests can inject deliberately slow or controlled derivation without

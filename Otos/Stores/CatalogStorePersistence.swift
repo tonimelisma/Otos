@@ -41,7 +41,7 @@ extension CatalogStore {
     }
 
     /// Thumbnail files live beside the catalog in Application Support. Created lazily by
-    /// `ThumbnailStore.write`; computed here so the location convention has one owner.
+    /// `ThumbnailStore.stage`/`promote`; computed here so the location convention has one owner.
     static func applicationThumbnailDirectory(bundleIdentifier: String) throws -> URL {
         let appSupportURL = try FileManager.default.url(
             for: .applicationSupportDirectory,
@@ -180,6 +180,57 @@ extension CatalogStore {
         return (roots, assetCount)
     }
 
+    static func insertLibraryRoot(path: LibraryRootPath, db: Database) throws -> StoredRoot {
+        try db.execute(
+            sql: "INSERT INTO library_root (path) VALUES (?)",
+            arguments: [path.rawValue]
+        )
+        return StoredRoot(id: db.lastInsertedRowID, path: path)
+    }
+
+    static func deleteLibraryRoot(rootRowID: Int64, db: Database) throws {
+        try db.execute(
+            sql: "DELETE FROM library_root WHERE id = ?",
+            arguments: [rootRowID]
+        )
+    }
+
+    @discardableResult
+    static func deleteAssetRow(
+        rootRowID: Int64,
+        relativePath: MediaRelativePath,
+        db: Database
+    ) throws -> Bool {
+        try db.execute(
+            sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [rootRowID, relativePath.rawValue]
+        )
+        return db.changesCount > 0
+    }
+
+    struct CatalogedFileDeletionTarget {
+        let thumbnailPath: String?
+    }
+
+    static func catalogedFileDeletionTarget(
+        relativePath: MediaRelativePath,
+        rootRowID: Int64,
+        db: Database
+    ) throws -> CatalogedFileDeletionTarget? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT thumbnail_path
+            FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootRowID, relativePath.rawValue]
+        ) else {
+            return nil
+        }
+        return CatalogedFileDeletionTarget(thumbnailPath: row["thumbnail_path"])
+    }
+
     /// Detects an incompatible pre-user catalog before GRDB erases and rebuilds it, so
     /// Store can purge thumbnail files whose SQLite references are about to disappear.
     static func databaseNeedsCleanSchemaReset(_ db: Database) throws -> Bool {
@@ -226,19 +277,6 @@ extension CatalogStore {
             "metadata_extra_json",
         ]
         return !requiredMetadataColumns.isSubset(of: metadataColumns)
-    }
-
-    /// Writes one asset's enrichment overlay after validating its source signature, touching
-    /// only enrichment columns (disjoint from the scan's fact columns). The validation keeps
-    /// an in-flight stale result from overwriting a row after a scan has already refreshed
-    /// the file facts in SQLite.
-    @discardableResult
-    static func updateEnrichment(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws -> Bool {
-        guard try enrichmentResultMatchesCurrentRow(result, libraryRootID: libraryRootID, db: db) else {
-            return false
-        }
-        try writeEnrichmentOverlay(result, libraryRootID: libraryRootID, db: db)
-        return true
     }
 
     static func enrichmentResultMatchesCurrentRow(
@@ -415,7 +453,7 @@ extension CatalogStore {
             }
             let relativePaths = idsForRoot.map(\.relativePath.rawValue)
             let placeholders = sqlPlaceholders(count: relativePaths.count)
-            var argumentValues: [Any] = [rootID]
+            var argumentValues: [any DatabaseValueConvertible] = [rootID]
             argumentValues.append(contentsOf: relativePaths)
             let rows = try Row.fetchAll(
                 db,
@@ -426,7 +464,7 @@ extension CatalogStore {
                 FROM media_asset
                 WHERE library_root_id = ? AND relative_path IN (\(placeholders))
                 """,
-                arguments: StatementArguments(argumentValues) ?? StatementArguments()
+                arguments: StatementArguments(argumentValues)
             )
             assets.append(contentsOf: rows.map(storedAsset(from:)))
         }

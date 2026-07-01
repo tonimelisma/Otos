@@ -2,7 +2,7 @@
 
 ## Classification
 
-- Work type: Research/POC plus dead-code helper addition and a contract change to the
+- Work type: Research/POC plus materialization helper addition and a contract change to the
   cloud materialization policy
 - Current requirement IDs: revises FND-057; references FND-053, FND-056, FND-059,
   FND-060
@@ -32,10 +32,10 @@ disk:
 3. Can a consumer app **reclaim** the space afterward by evicting files it
    downloaded?
 
-This spec records the POC that answered those questions, the dead-code helpers
-retained from it, and the revised materialization contract as the forward
-architectural guideline. It does not design the enrichment worker pools; that
-architecture is undecided and explicitly out of scope.
+This spec records the POC that answered those questions, the materialization
+helpers retained from it, and the revised materialization contract as the forward
+architectural guideline. Later enrichment specs made the helper path live; the
+worker-pool architecture itself is owned outside this POC.
 
 ## Scope
 
@@ -43,9 +43,9 @@ In scope:
 
 - Record the verified POC results for status classification, non-blocking
   materialization, and eviction against a real OneDrive library.
-- Retain the materialization trigger/observe primitives as dead code:
-  `downloadingStatus(of:)`, `requestMaterialization(of:)`, and
-  `materialize(_:pollInterval:timeout:)` with `MaterializationOutcome`.
+- Retain the materialization trigger/observe primitives:
+  `requestMaterialization(of:)` and `materialize(_:pollInterval:timeout:)` with
+  `MaterializationOutcome`.
 - Change the cloud materialization policy in ADR 0008 and `AGENTS.md` to permit
   deliberate, non-blocking, bounded background materialization as the forward
   guideline, and revise FND-057 accordingly without claiming the behavior ships
@@ -55,10 +55,9 @@ In scope:
 Out of scope:
 
 - The enrichment worker-pool architecture: queues, viewport prioritization, pool
-  topology, thumbnail/metadata stores, and the read path to the grid. Undecided; not
-  designed here.
-- Wiring any helper into a live path. The helpers stay dead until the enrichment work
-  is specced.
+  topology, thumbnail/metadata stores, and the read path to the grid. This POC did
+  not decide that architecture; ADR 0009 and spec 0022 later made
+  `EnrichmentCoordinator` the live caller.
 - Persisting materialization status. It remains transient and is never stored
   (FND-060 unchanged).
 - iCloud and other providers, and verification from the signed app bundle. Not tested
@@ -203,24 +202,21 @@ Failure modes:
 
 Alternative B for triggering, SF_DATALESS for both detection and completion. The
 retained helpers wrap exactly this: `requestMaterialization(of:)` fires the
-non-blocking trigger, `materialize(_:pollInterval:timeout:)` requests then polls
-SF_DATALESS until materialized or timeout, and `downloadingStatus(of:)` exposes the
-ubiquitous status for per-item progress only (never bulk). Eviction is not offered:
-the POC proved it is unavailable to a consumer app, so reclaiming space is left to the
-OS and the user.
+non-blocking trigger, and `materialize(_:pollInterval:timeout:)` requests then polls
+SF_DATALESS until materialized or timeout. Eviction is not offered: the POC proved it
+is unavailable to a consumer app, so reclaiming space is left to the OS and the user.
 
 The materialization **policy** changes accordingly. The old contract forbade
 materialization outside explicit user action. The new contract permits deliberate,
 non-blocking, bounded background materialization for enrichment, while keeping the
-detector gate so work never *accidentally* blocks on a read-fault. This is the forward
-architectural guideline in ADR 0008; the current app still materializes nothing.
+detector gate so work never *accidentally* blocks on a read-fault. This POC made that
+the forward architectural guideline in ADR 0008; ADR 0009 and spec 0022 later made
+background enrichment the live caller.
 
 ## Interfaces, Ownership, And Data Flow
 
 - `Otos/Services/FileMaterialization.swift`, `nonisolated enum FileMaterialization`:
   - `static func status(of: URL) -> FileMaterializationStatus` (from spec 0016).
-  - `static func downloadingStatus(of: URL) -> URLUbiquitousItemDownloadingStatus?` —
-    per-item progress/cross-check; not for bulk use.
   - `static func requestMaterialization(of: URL) throws` — non-blocking trigger.
   - `static func materialize(_: URL, pollInterval:timeout:) async -> MaterializationOutcome`
     — request plus off-thread poll; honors cancellation between polls; reads no bytes.
@@ -237,9 +233,11 @@ A prototype `evict(_:)` helper, its private `EvictFailure`, the `EvictionOutcome
 enum, and the `import FileProvider` it required were written during the POC and are
 removed in this increment. The POC proved eviction is unavailable to a consumer app
 (`ProviderNotFound`), so a non-working helper would be a wrong abstraction; the finding
-is recorded here and in ADR 0008 instead. No other structure is retired. The scanner
-and catalog fact-read path remain unchanged; ADR 0009 later made
-`EnrichmentCoordinator` the live caller for deliberate materialization.
+is recorded here and in ADR 0008 instead. A later quality pass also removed the
+per-item ubiquitous-status wrapper because current code uses SF_DATALESS for both the
+gate and completion signal. The scanner and catalog fact-read path remain unchanged;
+ADR 0009 later made `EnrichmentCoordinator` the live caller for deliberate
+materialization.
 
 ## Living Documentation And Comment Audit
 
@@ -256,19 +254,17 @@ and catalog fact-read path remain unchanged; ADR 0009 later made
 
 ## Instrumentation And Performance
 
-- The POC timings above are the performance evidence for the detection and trigger
-  cost. They are recorded here rather than collected from a live path because nothing
-  is wired in.
-- When a future enrichment owner wires these in, it instruments materialization
-  requests and completions at its batch boundary under `FileAccess` or `MediaIO`
-  (count requested, materialized, timed-out, bytes pulled), never per file inside
-  these functions, consistent with spec 0016.
+- The POC timings above remain the performance evidence for the detection and
+  trigger cost. Live materialization scheduling is now owned by
+  `EnrichmentCoordinator` under ADR 0009, which keeps instrumentation at the
+  coordinator and batch boundary instead of per file inside these helpers,
+  consistent with spec 0016.
 
 ## Code-Smell Review
 
-- Dead code: intentional and documented, matching the spec 0016 precedent. Not
-  unit-tested because only a live File Provider produces a dataless placeholder; the
-  POC is the evidence (owner accepted POC-validated only).
+- Live-provider behavior: unit coverage stays limited because only a live File
+  Provider produces a dataless placeholder; the POC is the evidence for trigger and
+  eviction behavior.
 - Stringly typed facts: avoided via typed `MaterializationOutcome`.
 - Diagnostic payload sprawl: not applicable; no media content is logged.
 - Wrong abstraction: avoided by removing the non-working eviction helper rather than
@@ -276,9 +272,9 @@ and catalog fact-read path remain unchanged; ADR 0009 later made
 
 ## Acceptance Criteria
 
-- `FileMaterialization` exposes `downloadingStatus`, `requestMaterialization`, and
-  `materialize` returning `MaterializationOutcome`; the file compiles under Swift 6 and
-  reads no bytes in any of them.
+- `FileMaterialization` exposes `requestMaterialization` and `materialize` returning
+  `MaterializationOutcome`; the file compiles under Swift 6 and reads no bytes in
+  either helper.
 - No code path persists materialization status, and no eviction helper or
   `FileProvider` import remains in the app.
 - ADR 0008 decision 6 states the revised materialization policy and the eviction

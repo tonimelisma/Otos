@@ -185,7 +185,7 @@ func waitForFilesystemDiagnostic(
                     return event
                 }
             }
-            try await Task.sleep(for: .milliseconds(20))
+            await Task.yield()
         }
         throw CancellationError()
     }

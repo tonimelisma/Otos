@@ -58,6 +58,8 @@ struct SourceHygieneTests {
             .deletingLastPathComponent()
         let content = try String(contentsOf: repoRoot.appending(path: "Otos/OtosApp.swift"), encoding: .utf8)
 
+        // This is a structural scene invariant; checking source avoids adding a UI-introspection
+        // dependency just to prove the app still declares exactly one main-window scene.
         #expect(!content.contains("WindowGroup"))
         #expect(content.contains("Window(\"Otos\", id: \"main\")"))
         #expect(content.contains("CommandGroup(replacing: .newItem)"))
@@ -81,6 +83,8 @@ struct SourceHygieneTests {
         let sidebarURL = repoRoot.appending(path: "Otos/Views/SidebarView.swift")
         let content = try String(contentsOf: sidebarURL, encoding: .utf8)
 
+        // The invariant is absence of specific transient labels in a passive SwiftUI view;
+        // source-level coverage keeps that guard narrow without UI-introspection machinery.
         #expect(!content.contains("sidebarSubtitle"))
         #expect(!content.contains("\"Checking\""))
         #expect(!content.contains("\"Scanning\""))
@@ -249,6 +253,8 @@ struct SourceHygieneTests {
             "Refresh Libraries",
         ]
 
+        // This absence-of-controls invariant spans several SwiftUI surfaces. Grepping labels
+        // keeps it explicit without introducing a UI-test target only to inspect menus/views.
         for file in files {
             let content = try String(contentsOf: repoRoot.appending(path: file), encoding: .utf8)
             for label in disallowedLabels {

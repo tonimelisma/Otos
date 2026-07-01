@@ -240,10 +240,6 @@ enum MediaAssetTilePresentation {
         MediaEligibility.isVideo(contentTypeIdentifier: asset.contentTypeIdentifier)
     }
 
-    static func isCatalogMedia(_ asset: MediaAsset) -> Bool {
-        MediaEligibility.isCatalogMedia(contentTypeIdentifier: asset.contentTypeIdentifier)
-    }
-
     static func title(_ asset: MediaAsset) -> String {
         if let name = asset.name {
             return name
