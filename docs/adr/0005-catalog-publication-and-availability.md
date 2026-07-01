@@ -11,7 +11,7 @@
 ## Context
 
 Catalog mutation, UI derivation, and MainActor assignment have different owners.
-`CatalogStore` owns SQLite, the in-memory catalog, and scans. `CatalogProjection`
+`CatalogStore` owns SQLite, root runtime catalog state, Store-owned queries, and scans. `CatalogProjection`
 owns ordering, scope filtering, availability hiding, empty-state selection, and
 the UI publication cadence. `CatalogWindowViewModel` owns the final state that
 SwiftUI observes and converts user actions into explicit intents.

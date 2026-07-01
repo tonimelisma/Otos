@@ -163,6 +163,8 @@ struct CatalogStoreFilesystemEventTests {
 
     @Test func eventsIgnoredBeforeFirstScanCompletes() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
+        let outputURL = temp.appending(path: "filesystem-event-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
@@ -174,7 +176,7 @@ struct CatalogStoreFilesystemEventTests {
             scanner: firstScanHangingScanner(probe: probe, recorder: recorder),
             filesystemWatcher: watcher,
             filesystemEventDebounce: .milliseconds(20),
-            diagnostics: nil
+            diagnostics: diagnostics
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -182,7 +184,11 @@ struct CatalogStoreFilesystemEventTests {
         try await probe.waitForInvocationCount(1)
 
         emit(FilesystemEvent(path: root.appending(path: "early.jpg").path, flags: 0))
-        await Task.yield()
+        _ = try await waitForFilesystemDiagnostic(outputURL) { event in
+            event.operation == "catalog.filesystemEvent"
+                && event.phase == "drop"
+                && event.fields["reason"] == "unarmed"
+        }
         #expect(await recorder.invocations().count == 1)
 
         await probe.release(1)

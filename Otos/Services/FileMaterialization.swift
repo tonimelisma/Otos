@@ -63,8 +63,8 @@ nonisolated enum FileMaterialization {
 /// Materialization (download) helpers.
 ///
 /// `status(of:)` above answers "is this dataless right now?" without reading bytes.
-/// These helpers answer the next question a future download pool will ask: "make it
-/// local." They are the deliberate, non-blocking counterpart to faulting bytes in.
+/// These helpers answer the enrichment coordinator's next question: "make it local."
+/// They are the deliberate, non-blocking counterpart to faulting bytes in.
 ///
 /// Triggering a download has three mechanisms (see the increment notes): faulting on
 /// a byte read (universal but blocks the calling thread for the whole transfer),

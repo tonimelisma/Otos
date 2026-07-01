@@ -36,6 +36,38 @@ struct ThumbnailStoreTests {
         #expect(loaded.height == image.height)
     }
 
+    @Test func stageDoesNotPublishUntilPromoted() throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let image = try makeThumbnailTestImage()
+
+        let generated = try ThumbnailStore.stage(image, finalRelativeName: "thumb.jpg", in: directory)
+        let finalURL = ThumbnailStore.url(for: generated.finalRelativePath, in: directory)
+        let stagedURL = ThumbnailStore.url(for: generated.stagedRelativePath, in: directory)
+        #expect(!FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: stagedURL.path(percentEncoded: false)))
+
+        let promotedName = try ThumbnailStore.promote(generated, in: directory)
+        #expect(promotedName == "thumb.jpg")
+        #expect(FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: stagedURL.path(percentEncoded: false)))
+    }
+
+    @Test func deleteAllPurgesOnlyThumbnailDirectoryContents() throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let nested = directory.appending(path: "thumb.jpg", directoryHint: .notDirectory)
+        let outside = temp.appending(path: "original.jpg", directoryHint: .notDirectory)
+        try Data("thumb".utf8).write(to: nested)
+        try Data("original".utf8).write(to: outside)
+
+        ThumbnailStore.deleteAll(in: directory)
+
+        #expect(!FileManager.default.fileExists(atPath: nested.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
+    }
+
     @Test func deleteRemovesThumbnailFile() throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)

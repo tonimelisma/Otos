@@ -14,7 +14,7 @@ not a session/window graph for multiple browsers.
 
 The app still needs strict ownership:
 
-- SQLite, migrations, in-memory catalog truth, and scans must stay out of
+- SQLite, migrations, Store-owned catalog truth, and scans must stay out of
   SwiftUI views.
 - Sorting, filtering, title lookup, availability hiding, empty-state selection,
   and selected-library validation must stay off the MainActor.
@@ -41,7 +41,7 @@ This ADR owns:
 
 This ADR references but does not own:
 
-- SQLite schema, GRDB connection type, in-memory catalog retention, scanner
+- SQLite schema, GRDB connection type, Store-owned query/read model, scanner
   filesystem facts, and scan persistence cadence. Those belong to ADR 0002.
 - Library-root identity, unsandboxed root access, and the decision not to use
   bookmarks or App Sandbox. Those belong to ADR 0003.
@@ -64,8 +64,8 @@ Use a single-window catalog UI ownership model:
   `Window("Otos", id: "main")`.
 - The app removes the standard New Window command for the main window.
 - `CatalogStore` remains the only runtime catalog truth owner. It owns GRDB,
-  migrations, in-memory catalog state, scan lifecycle, and raw point-in-time
-  snapshot construction.
+  migrations, root runtime state, scan lifecycle, Store-owned asset queries, and
+  cheap change notifications.
 - `CatalogProjection` remains a non-MainActor actor. It owns catalog library
   sorting, asset sorting, selected-scope filtering, title lookup, availability
   hiding, empty-state selection, selected-library validation, and the UI-state

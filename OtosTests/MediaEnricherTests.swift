@@ -31,8 +31,14 @@ struct MediaEnricherTests {
         #expect(result.sourceMTimeSeconds == 1000)
 
         let thumbnailPath = try #require(result.thumbnailPath)
-        let thumbnailURL = thumbnailDirectory.appending(path: thumbnailPath, directoryHint: .notDirectory)
-        #expect(FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
+        let generatedThumbnail = try #require(result.generatedThumbnail)
+        let finalURL = thumbnailDirectory.appending(path: thumbnailPath, directoryHint: .notDirectory)
+        let stagedURL = thumbnailDirectory.appending(
+            path: generatedThumbnail.stagedRelativePath,
+            directoryHint: .notDirectory
+        )
+        #expect(!FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: stagedURL.path(percentEncoded: false)))
     }
 
     @Test func unsupportedFileIsDefinitiveComplete() async throws {

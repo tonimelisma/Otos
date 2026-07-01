@@ -121,13 +121,15 @@ subordinate, rebuildable overlay.
    deleted or when the user explicitly removes that library root from Otos. There
    are no separately purged overlay classes.
 4. Proven deletion has two current proof paths. The broad proof is a file that was
-   previously cataloged at a root-relative path being absent from a completed
-   enumeration of a reachable root. The narrow proof is a regular-file remove
-   FSEvent delivered for an armed available root where Store checks that exact path
-   and finds it absent before deleting only that catalog row and its thumbnail
-   overlay. Temporary absence — an ejected or offline volume, an unreachable root,
-   or a dataless cloud placeholder that still enumerates — is not a deletion and
-   must not purge overlay. A cancelled or failed full scan never proves deletion.
+   previously cataloged at a root-relative path being absent, or no longer catalog-
+   eligible, in a completed enumeration of a reachable root. The narrow proof is a
+   supported single-file FSEvent delivered for an armed available root where Store
+   checks that exact path and finds it absent, or finds that it now exists only as a
+   non-catalog-eligible item, before deleting only that catalog row and its
+   thumbnail overlay. Temporary absence — an ejected or offline volume, an
+   unreachable root, or a dataless cloud placeholder that still enumerates — is not
+   a deletion and must not purge overlay. A cancelled or failed full scan never
+   proves deletion.
    One case is deliberately outside this current guarantee: a user-excluded
    selective-sync subtree inside an otherwise reachable root enumerates without its
    paths, so `reconcileMissingAssets` cannot today distinguish it from a real

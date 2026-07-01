@@ -30,8 +30,8 @@ No durable scan identity or scan history is introduced.
 
 ## Current Repo State
 
-- `CatalogStore` is an actor and the sole owner of GRDB, in-memory catalog truth,
-  availability, and serial scan lifecycle.
+- `CatalogStore` is an actor and the sole owner of GRDB, root runtime catalog
+  truth, Store-owned catalog queries, availability, and serial scan lifecycle.
 - every initial-load caller awaits one Store-owned startup task, and loaded state
   is applied exactly once before mutations proceed
 - roots restored by that initial load retain an exactly-once launch-scan request

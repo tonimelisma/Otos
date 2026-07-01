@@ -28,8 +28,9 @@ schema, scan cadence, or media-grid behavior.
 
 ## Current Repo State
 
-- `CatalogStore` is an actor that owns GRDB, SQLite migrations, the complete
-  in-memory catalog, serial scans, availability, and cheap change notifications.
+- `CatalogStore` is an actor that owns GRDB, SQLite migrations, root runtime
+  state, Store-owned catalog queries, serial scans, availability, and cheap
+  change notifications.
 - `CatalogProjection` is an actor that owns the 10 Hz one-in-flight window-state
   publication loop and all sorting/filtering outside MainActor.
 - `CatalogWindowViewModel` is the single MainActor adapter for final state and
@@ -316,8 +317,9 @@ constant-time invalidation.
 
 ## Ownership, Concurrency, And Cancellation
 
-- `CatalogStore` actor owns database connection, complete in-memory catalog,
-  transient availability, serial scan tasks, and broadcast change continuations.
+- `CatalogStore` actor owns database connection, root runtime state,
+  Store-owned catalog queries, transient availability, serial scan tasks, and
+  broadcast change continuations.
 - `CatalogProjection` actor owns snapshot requests, order cache, scope
   derivation, diagnostics summaries, 10 Hz loop, dirty flag, and state broadcast
   continuations.

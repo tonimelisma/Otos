@@ -18,11 +18,11 @@ struct CatalogProjectionOrderingTests {
         )
 
         _ = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [original]),
+            fixture: orderingFixture(root: root, assets: [original]),
             sidebarSelection: .allMedia
         )
         let updated = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [changed]),
+            fixture: orderingFixture(root: root, assets: [changed]),
             sidebarSelection: .allMedia
         )
 
@@ -36,11 +36,11 @@ struct CatalogProjectionOrderingTests {
         let replacement = orderingAsset(root: root, relativePath: "a.jpg")
 
         _ = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [first]),
+            fixture: orderingFixture(root: root, assets: [first]),
             sidebarSelection: .allMedia
         )
         let recovered = await projection.windowState(
-            snapshot: orderingSnapshot(root: root, assets: [replacement]),
+            fixture: orderingFixture(root: root, assets: [replacement]),
             sidebarSelection: .allMedia
         )
 
@@ -51,7 +51,7 @@ struct CatalogProjectionOrderingTests {
         let root = orderingRoot()
         let projection = CatalogProjection(diagnostics: nil)
         let first = await projection.windowState(
-            snapshot: orderingSnapshot(
+            fixture: orderingFixture(
                 root: root,
                 assets: [
                     orderingAsset(root: root, relativePath: "b.jpg"),
@@ -63,7 +63,7 @@ struct CatalogProjectionOrderingTests {
         #expect(first.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["b.jpg", "z.jpg"])
 
         let changed = await projection.windowState(
-            snapshot: orderingSnapshot(
+            fixture: orderingFixture(
                 root: root,
                 assets: [
                     orderingAsset(root: root, relativePath: "a.jpg"),
@@ -139,14 +139,20 @@ struct CatalogProjectionOrderingTests {
         try await store.addLibrary(url: root)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "one.jpg"))
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.map(\.id) == [id]
+        }
         let initialStates = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
             states.last { state in
                 state.mediaGrid.orderedAssetIDs == [id]
+                    && state.libraries.allSatisfy { $0.activity == .idle }
             }
         }
         let initialState = try #require(initialStates.last { state in
             state.mediaGrid.orderedAssetIDs == [id]
+                && state.libraries.allSatisfy { $0.activity == .idle }
         })
+        try await diagnostics.removeExistingDiagnosticsForTesting()
 
         let asset = try #require(try await store.mediaAssets(for: [id])[id])
         let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
@@ -192,34 +198,36 @@ private func orderingAsset(root: LibraryRoot, relativePath: String) -> MediaAsse
     )
 }
 
-private func orderingSnapshot(
+private func orderingFixture(
     root: LibraryRoot,
     assets: [MediaAsset]
-) -> ProjectionTestState {
-    ProjectionTestState(
+) -> ProjectionFixture {
+    ProjectionFixture(
         libraries: [CatalogLibraryState(root: root, availability: .available, activity: .idle)],
-        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+        orderedAssetIDs: orderedAssetIDs(for: assets)
     )
 }
 
 private func waitForOrderingDiagnostic(
     _ url: URL,
-    matching predicate: (CatalogDiagnosticEvent) -> Bool
+    matching predicate: @escaping @Sendable (CatalogDiagnosticEvent) -> Bool
 ) async throws -> CatalogDiagnosticEvent {
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    for _ in 0 ..< 250 {
-        if let data = try? Data(contentsOf: url) {
-            let events = data.split(separator: 0x0A).compactMap { line in
-                try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
+    try await withTestTimeout("ordering diagnostic") {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        while !Task.isCancelled {
+            if let data = try? Data(contentsOf: url) {
+                let events = data.split(separator: 0x0A).compactMap { line in
+                    try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
+                }
+                if let event = events.first(where: predicate) {
+                    return event
+                }
             }
-            if let event = events.first(where: predicate) {
-                return event
-            }
+            try await Task.sleep(for: .milliseconds(20))
         }
-        try await Task.sleep(for: .milliseconds(20))
+        throw CancellationError()
     }
-    throw CatalogProjectionOrderingTestError.timedOut
 }
 
 private func orderingTemporaryDirectory() throws -> URL {
@@ -230,7 +238,6 @@ private func orderingTemporaryDirectory() throws -> URL {
 }
 
 private enum CatalogProjectionOrderingTestError: Error {
-    case timedOut
     case initialStateTimedOut
     case detailStateTimedOut
 }

@@ -25,9 +25,9 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// row and unsafe events fall back to the full scan pipeline. Views never access
 /// persistence directly.
 ///
-/// Why an actor: the database, the in-memory catalog, and background scans all
-/// touch the same state, and a scan streams in thousands of files concurrently with
-/// user actions. Actor isolation serializes every access to that state
+/// Why an actor: the database handle, root runtime state, scan lifecycle, and
+/// background scans all touch the same catalog authority, and a scan streams in
+/// thousands of files concurrently with user actions. Actor isolation serializes every access to that state
 /// automatically, so the catalog cannot be corrupted by two operations at once and
 /// we never reach for a lock. The cost is that `await` is a yield point — the actor
 /// can run another message mid-operation — which is exactly why scans carry the
@@ -77,6 +77,24 @@ actor CatalogStore {
     private struct ActiveScan: Equatable {
         let rootPath: LibraryRootPath
         let rootRowID: Int64
+    }
+
+    private struct EnrichmentBatchWriteOutcome {
+        var appliedCount = 0
+        var promotionFailed = false
+        var discardedThumbnails: [GeneratedThumbnail] = []
+
+        mutating func discard(_ thumbnail: GeneratedThumbnail?) {
+            guard let thumbnail else {
+                return
+            }
+            discardedThumbnails.append(thumbnail)
+        }
+
+        mutating func failPromotion(_ thumbnail: GeneratedThumbnail?) {
+            promotionFailed = true
+            discard(thumbnail)
+        }
     }
 
     private let location: Location
@@ -432,7 +450,6 @@ extension CatalogStore {
     }
 
     private func claimedEnrichmentCandidates(limit: Int) async throws -> [MediaAsset] {
-        let rootIDsByPathBeforeRead = rootRowIDsByPath
         let availableRootIDs = availableLibraryRootIDs()
         let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
         let dbWriter = try database()
@@ -534,13 +551,16 @@ extension CatalogStore {
     /// Projection per completion. Enrichment writes only enrichment columns/fields,
     /// disjoint from facts; a row that was proven-deleted or whose source facts changed
     /// between extraction and this write is skipped, so a removed or edited asset is never
-    /// stamped current by stale work.
+    /// stamped current by stale work. Generated thumbnails are staged by the enricher and
+    /// promoted here only for accepted rows, keeping derived files subordinate to Store's
+    /// current SQLite truth.
     /// Applies a batch and reports the outcome so the coordinator can react correctly.
     /// `.applied(count:)` with `count < results.count` means some results were *validated*
     /// drops — proven-deleted, or stale because a scan observed newer bytes — which the
-    /// coordinator should re-wake to retry. `.writeFailed` means the SQLite write itself
-    /// failed (disk full, corruption, permissions); the coordinator must *not* re-wake into
-    /// a tight read/generate/fail loop and instead lets the recorded error back it off.
+    /// coordinator should re-wake to retry. `.writeFailed` means the SQLite write or
+    /// thumbnail promotion failed (disk full, corruption, permissions, missing staged file);
+    /// the coordinator must *not* re-wake into a tight read/generate/fail loop and instead
+    /// lets the recorded error back it off.
     @discardableResult
     func applyEnrichmentBatch(_ results: [EnrichmentResult]) async -> EnrichmentApplyOutcome {
         guard !results.isEmpty else {
@@ -548,47 +568,118 @@ extension CatalogStore {
         }
         let rootIDsByPathBeforeWrite = rootRowIDsByPath
         guard results.contains(where: { rootIDsByPathBeforeWrite[$0.id.libraryRootPath] != nil }) else {
+            discardGeneratedThumbnails(results.compactMap(\.generatedThumbnail))
             return .applied(count: 0)
         }
+        let resultIDs = results.map(\.id)
 
         let state = OtosSignpost.persistence.beginInterval("CatalogEnrichmentBatchWrite")
-        let appliedCount: Int
+        let writeOutcome: EnrichmentBatchWriteOutcome
+        let thumbnailDirectory = thumbnailDirectory
         do {
             let dbQueue = try database()
-            appliedCount = try await dbQueue.write { db in
-                var count = 0
-                for result in results {
-                    guard let rootID = rootIDsByPathBeforeWrite[result.id.libraryRootPath] else {
-                        continue
-                    }
-                    if try Self.updateEnrichment(result, libraryRootID: rootID, db: db) {
-                        count += 1
-                    }
-                }
-                return count
-            }
+            writeOutcome = try await writeEnrichmentBatch(
+                results,
+                rootIDsByPath: rootIDsByPathBeforeWrite,
+                thumbnailDirectory: thumbnailDirectory,
+                dbWriter: dbQueue
+            )
         } catch {
             OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
+            discardGeneratedThumbnails(results.compactMap(\.generatedThumbnail))
             await recordEnrichmentBatchError(error, count: results.count)
+            await releaseEnrichmentClaimsAfterBatch(resultIDs)
             return .writeFailed
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
+        discardGeneratedThumbnails(writeOutcome.discardedThumbnails)
 
         await diagnostics?.record(
             operation: "catalog.enrichment.batch",
             phase: "finish",
-            fields: ["count": "\(appliedCount)"]
+            fields: [
+                "count": "\(writeOutcome.appliedCount)",
+                "discardedThumbnails": "\(writeOutcome.discardedThumbnails.count)",
+                "promotionFailed": "\(writeOutcome.promotionFailed)",
+            ]
         )
-        if appliedCount > 0 {
+        if writeOutcome.appliedCount > 0 {
             notifyCatalogChanged(.assetsDetailChanged)
         }
-        let resultIDs = results.map(\.id)
+        await releaseEnrichmentClaimsAfterBatch(resultIDs)
+        if writeOutcome.promotionFailed {
+            return .writeFailed
+        }
+        return .applied(count: writeOutcome.appliedCount)
+    }
+
+    private func releaseEnrichmentClaimsAfterBatch(_ resultIDs: [MediaAssetID]) async {
         do {
             try await releaseEnrichmentClaims(resultIDs)
         } catch {
             OtosLog.metadata.error("Enrichment claim release failed count=\(resultIDs.count, privacy: .public)")
         }
-        return .applied(count: appliedCount)
+    }
+
+    private func writeEnrichmentBatch(
+        _ results: [EnrichmentResult],
+        rootIDsByPath: [LibraryRootPath: Int64],
+        thumbnailDirectory: URL?,
+        dbWriter: any DatabaseWriter
+    ) async throws -> EnrichmentBatchWriteOutcome {
+        try await dbWriter.write { db in
+            var outcome = EnrichmentBatchWriteOutcome()
+            for result in results {
+                try Self.applyEnrichmentResult(
+                    result,
+                    rootIDsByPath: rootIDsByPath,
+                    thumbnailDirectory: thumbnailDirectory,
+                    outcome: &outcome,
+                    db: db
+                )
+            }
+            return outcome
+        }
+    }
+
+    private static func applyEnrichmentResult(
+        _ result: EnrichmentResult,
+        rootIDsByPath: [LibraryRootPath: Int64],
+        thumbnailDirectory: URL?,
+        outcome: inout EnrichmentBatchWriteOutcome,
+        db: Database
+    ) throws {
+        guard let rootID = rootIDsByPath[result.id.libraryRootPath] else {
+            outcome.discard(result.generatedThumbnail)
+            return
+        }
+        guard result.generatedThumbnail == nil || thumbnailDirectory != nil else {
+            outcome.failPromotion(result.generatedThumbnail)
+            return
+        }
+        guard try enrichmentResultMatchesCurrentRow(result, libraryRootID: rootID, db: db) else {
+            outcome.discard(result.generatedThumbnail)
+            return
+        }
+        if let generatedThumbnail = result.generatedThumbnail, let thumbnailDirectory {
+            do {
+                try ThumbnailStore.promote(generatedThumbnail, in: thumbnailDirectory)
+            } catch {
+                outcome.failPromotion(generatedThumbnail)
+                return
+            }
+        }
+        try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
+        outcome.appliedCount += 1
+    }
+
+    private func discardGeneratedThumbnails(_ thumbnails: [GeneratedThumbnail]) {
+        guard let thumbnailDirectory else {
+            return
+        }
+        for thumbnail in thumbnails {
+            ThumbnailStore.discard(thumbnail, in: thumbnailDirectory)
+        }
     }
 
     private func recordEnrichmentBatchError(_ error: Error, count: Int) async {
@@ -793,7 +884,14 @@ private extension CatalogStore {
             dbWriter = try DatabaseQueue()
         }
 
+        let needsCleanReset = try dbWriter.read { db in
+            try Self.databaseNeedsCleanSchemaReset(db)
+        }
         try Self.migrator.migrate(dbWriter)
+        if needsCleanReset, let thumbnailDirectory {
+            ThumbnailStore.deleteAll(in: thumbnailDirectory)
+            OtosLog.thumbnails.info("Thumbnail directory purged after clean catalog schema reset")
+        }
         self.dbWriter = dbWriter
         OtosLog.persistence.info(
             "Catalog database opened storage=\(storageKind, privacy: .public)"
@@ -1410,7 +1508,6 @@ private extension CatalogStore {
         }
     }
 
-    // swiftlint:disable:next function_body_length
     private func reconcileDeletedFile(
         at absolutePath: String,
         root: LibraryRootPath,
@@ -1424,62 +1521,7 @@ private extension CatalogStore {
             return false
         }
 
-        guard let dbQueue = try? database() else {
-            return false
-        }
-
-        let thumbnailPath: String?
-        do {
-            thumbnailPath = try await dbQueue.read { db in
-                try Row.fetchOne(
-                    db,
-                    sql: """
-                    SELECT thumbnail_path
-                    FROM media_asset
-                    WHERE library_root_id = ? AND relative_path = ?
-                    """,
-                    arguments: [rootRowID, relativePath.rawValue]
-                )?["thumbnail_path"]
-            }
-        } catch {
-            return false
-        }
-        if thumbnailPath == nil {
-            let rowCount: Int
-            do {
-                rowCount = try await dbQueue.read { db in
-                    try Int.fetchOne(
-                        db,
-                        sql: "SELECT COUNT(*) FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                        arguments: [rootRowID, relativePath.rawValue]
-                    ) ?? 0
-                }
-            } catch {
-                return false
-            }
-            guard rowCount > 0 else {
-                return false
-            }
-        }
-
-        do {
-            let deleted = try await dbQueue.write { db -> Bool in
-                try db.execute(
-                    sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
-                    arguments: [rootRowID, relativePath.rawValue]
-                )
-                return db.changesCount > 0
-            }
-            guard deleted else {
-                return false
-            }
-        } catch {
-            return false
-        }
-        if let thumbnailPath, let thumbnailDirectory {
-            ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
-        }
-        return true
+        return await deleteCatalogedFile(relativePath: relativePath, rootRowID: rootRowID)
     }
 
     private func reconcileUpsertedFile(
@@ -1491,11 +1533,17 @@ private extension CatalogStore {
         guard FileManager.default.fileExists(atPath: absolutePath) else {
             return false
         }
-        guard let scannedFile = try? CatalogScannedFileReader.scannedFile(
-            fileURL: fileURL,
-            rootPath: root
-        ) else {
+        let scannedFile: ScannedMediaFile?
+        do {
+            scannedFile = try CatalogScannedFileReader.scannedFile(fileURL: fileURL, rootPath: root)
+        } catch {
             return false
+        }
+        guard let scannedFile else {
+            guard let relativePath = CatalogPath.relativePath(rootPath: root, fileURL: fileURL) else {
+                return false
+            }
+            return await deleteCatalogedFile(relativePath: relativePath, rootRowID: rootRowID)
         }
 
         let dbQueue: (any DatabaseWriter)?
@@ -1520,6 +1568,70 @@ private extension CatalogStore {
         } catch {
             return false
         }
+    }
+
+    private func deleteCatalogedFile(relativePath: MediaRelativePath, rootRowID: Int64) async -> Bool {
+        guard let dbQueue = try? database() else {
+            return false
+        }
+
+        let deletionTarget: CatalogedFileDeletionTarget
+        do {
+            guard let target = try await dbQueue.read({ db in
+                try Self.catalogedFileDeletionTarget(relativePath: relativePath, rootRowID: rootRowID, db: db)
+            }) else {
+                return false
+            }
+            deletionTarget = target
+            let deleted = try await dbQueue.write { db in
+                try Self.deleteCatalogedFileRow(relativePath: relativePath, rootRowID: rootRowID, db: db)
+            }
+            guard deleted else {
+                return false
+            }
+        } catch {
+            return false
+        }
+
+        if let thumbnailPath = deletionTarget.thumbnailPath, let thumbnailDirectory {
+            ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
+        }
+        return true
+    }
+
+    private struct CatalogedFileDeletionTarget {
+        let thumbnailPath: String?
+    }
+
+    private static func catalogedFileDeletionTarget(
+        relativePath: MediaRelativePath,
+        rootRowID: Int64,
+        db: Database
+    ) throws -> CatalogedFileDeletionTarget? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT thumbnail_path
+            FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootRowID, relativePath.rawValue]
+        ) else {
+            return nil
+        }
+        return CatalogedFileDeletionTarget(thumbnailPath: row["thumbnail_path"])
+    }
+
+    private static func deleteCatalogedFileRow(
+        relativePath: MediaRelativePath,
+        rootRowID: Int64,
+        db: Database
+    ) throws -> Bool {
+        try db.execute(
+            sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+            arguments: [rootRowID, relativePath.rawValue]
+        )
+        return db.changesCount > 0
     }
 
     private func recordFilesystemEventDrop(root: LibraryRootPath, reason: String) async {

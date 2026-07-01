@@ -21,7 +21,9 @@ import OSLog
 /// notification stream is registered before the loop starts so detail-only writes
 /// that arrive right after startup cannot be missed. `dirty` is cleared before
 /// awaited Store reads/build work so input arriving during that await survives for
-/// the next tick. Actor isolation permits only one build at a time.
+/// the next tick. The order-requery flag is also cleared before its awaited Store
+/// read, so a newer structural or sidebar event can set it again and force the next
+/// tick to read fresh IDs. Actor isolation permits only one build at a time.
 /// Store invalidations bump a scalar grid detail generation, so detail-only
 /// thumbnail/date/name changes still reach the visible cell detail reader without
 /// reintroducing whole-asset UI state. Asset order is produced by Store-owned SQL
@@ -359,16 +361,17 @@ private extension CatalogProjection {
         let orderQueryMs: Int
         if needsOrderRequery {
             let orderStart = Date()
+            needsOrderRequery = false
             do {
                 orderedAssetIDs = try await store.orderedAssetIDs(
                     for: sidebarSelection,
                     availableLibraryPaths: availableLibraryPaths
                 )
                 cachedOrderedAssetIDs = orderedAssetIDs
-                needsOrderRequery = false
                 orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
             } catch {
                 OtosLog.catalog.error("Catalog ordered asset query failed")
+                needsOrderRequery = true
                 orderedAssetIDs = cachedOrderedAssetIDs
                 orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
             }

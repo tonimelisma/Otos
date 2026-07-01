@@ -17,6 +17,11 @@ import GRDB
 /// is only the compact foreign key used by SQLite; allowing it across this boundary
 /// would give the same library two competing identities.
 extension CatalogStore {
+    struct SQLQuery {
+        let sql: String
+        let arguments: StatementArguments
+    }
+
     /// Places the rebuildable catalog beside the rest of Otos's Application
     /// Support data. The caller supplies the bundle identifier so tests can use
     /// isolated locations without changing the production path convention.
@@ -175,20 +180,78 @@ extension CatalogStore {
         return (roots, assetCount)
     }
 
-    /// Writes one asset's enrichment overlay, touching only enrichment columns (disjoint
-    /// from the scan's fact columns). The source signature in the `WHERE` clause keeps
+    /// Detects an incompatible pre-user catalog before GRDB erases and rebuilds it, so
+    /// Store can purge thumbnail files whose SQLite references are about to disappear.
+    static func databaseNeedsCleanSchemaReset(_ db: Database) throws -> Bool {
+        let userTables = try Set(String.fetchAll(
+            db,
+            sql: """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            """
+        ))
+        guard !userTables.isEmpty else {
+            return false
+        }
+        guard userTables.contains("media_asset") else {
+            return true
+        }
+
+        let mediaAssetColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')"))
+        let requiredMediaAssetColumns: Set = [
+            "library_root_id",
+            "relative_path",
+            "sort_key",
+            "name",
+            "content_type_identifier",
+            "byte_size",
+            "created_at_unix",
+            "content_modified_at_unix",
+            "enriched_source_size",
+            "enriched_source_mtime",
+            "thumbnail_path",
+            "capture_date_unix",
+            "enrichment_claimed_until",
+        ]
+        guard requiredMediaAssetColumns.isSubset(of: mediaAssetColumns),
+              userTables.contains("asset_metadata")
+        else {
+            return true
+        }
+
+        let metadataColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('asset_metadata')"))
+        let requiredMetadataColumns: Set = [
+            "library_root_id",
+            "relative_path",
+            "metadata_extra_json",
+        ]
+        return !requiredMetadataColumns.isSubset(of: metadataColumns)
+    }
+
+    /// Writes one asset's enrichment overlay after validating its source signature, touching
+    /// only enrichment columns (disjoint from the scan's fact columns). The validation keeps
     /// an in-flight stale result from overwriting a row after a scan has already refreshed
     /// the file facts in SQLite.
     @discardableResult
     static func updateEnrichment(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws -> Bool {
+        guard try enrichmentResultMatchesCurrentRow(result, libraryRootID: libraryRootID, db: db) else {
+            return false
+        }
+        try writeEnrichmentOverlay(result, libraryRootID: libraryRootID, db: db)
+        return true
+    }
+
+    static func enrichmentResultMatchesCurrentRow(
+        _ result: EnrichmentResult,
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> Bool {
         let sourceMTimeSeconds = result.sourceMTimeSeconds ?? -1
-        try db.execute(
+        return try Row.fetchOne(
+            db,
             sql: """
-            UPDATE media_asset SET
-                thumbnail_path = ?,
-                capture_date_unix = ?,
-                enriched_source_size = ?,
-                enriched_source_mtime = ?
+            SELECT 1
+            FROM media_asset
             WHERE library_root_id = ?
                 AND relative_path = ?
                 AND COALESCE(byte_size, -1) = ?
@@ -198,10 +261,6 @@ extension CatalogStore {
                 )
             """,
             arguments: [
-                result.thumbnailPath,
-                result.captureDate?.timeIntervalSince1970,
-                result.sourceSize,
-                result.sourceMTimeSeconds,
                 libraryRootID,
                 result.id.relativePath.rawValue,
                 result.sourceSize ?? -1,
@@ -209,17 +268,35 @@ extension CatalogStore {
                 sourceMTimeSeconds,
                 sourceMTimeSeconds + 1,
             ]
+        ) != nil
+    }
+
+    static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                thumbnail_path = ?,
+                capture_date_unix = ?,
+                enriched_source_size = ?,
+                enriched_source_mtime = ?
+            WHERE library_root_id = ?
+                AND relative_path = ?
+            """,
+            arguments: [
+                result.thumbnailPath,
+                result.captureDate?.timeIntervalSince1970,
+                result.sourceSize,
+                result.sourceMTimeSeconds,
+                libraryRootID,
+                result.id.relativePath.rawValue,
+            ]
         )
-        guard db.changesCount > 0 else {
-            return false
-        }
         try upsertAssetMetadata(
             result.metadata,
             libraryRootID: libraryRootID,
             relativePath: result.id.relativePath,
             db: db
         )
-        return true
     }
 
     /// Reads one asset's full preserved metadata JSON on demand. The scalar
@@ -252,12 +329,24 @@ extension CatalogStore {
     }
 
     static func fetchOrderedAssetIDRows(rootIDs: [Int64], db: Database) throws -> [(Int64, MediaRelativePath)] {
-        guard !rootIDs.isEmpty else {
+        guard let query = orderedAssetIDQuery(rootIDs: rootIDs) else {
             return []
         }
+        return try Row.fetchAll(
+            db,
+            sql: query.sql,
+            arguments: query.arguments
+        ).map { row in
+            (row["library_root_id"], MediaRelativePath(rawValue: row["relative_path"]))
+        }
+    }
+
+    static func orderedAssetIDQuery(rootIDs: [Int64]) -> SQLQuery? {
+        guard !rootIDs.isEmpty else {
+            return nil
+        }
         if rootIDs.count == 1, let rootID = rootIDs.first {
-            return try Row.fetchAll(
-                db,
+            return SQLQuery(
                 sql: """
                 SELECT library_root_id, relative_path
                 FROM media_asset INDEXED BY idx_media_asset_order_root
@@ -265,14 +354,11 @@ extension CatalogStore {
                 ORDER BY sort_key, relative_path
                 """,
                 arguments: [rootID]
-            ).map { row in
-                (row["library_root_id"], MediaRelativePath(rawValue: row["relative_path"]))
-            }
+            )
         }
 
         let placeholders = sqlPlaceholders(count: rootIDs.count)
-        return try Row.fetchAll(
-            db,
+        return SQLQuery(
             sql: """
             SELECT library_root_id, relative_path
             FROM media_asset INDEXED BY idx_media_asset_order_global
@@ -280,9 +366,7 @@ extension CatalogStore {
             ORDER BY sort_key, library_root_id, relative_path
             """,
             arguments: StatementArguments(rootIDs)
-        ).map { row in
-            (row["library_root_id"], MediaRelativePath(rawValue: row["relative_path"]))
-        }
+        )
     }
 
     static func countAssets(rootIDs: [Int64], db: Database) throws -> Int {
@@ -376,25 +460,112 @@ extension CatalogStore {
         limit: Int,
         db: Database
     ) throws -> [StoredAsset] {
-        guard !rootIDs.isEmpty, limit > 0 else {
-            return []
-        }
         let now = Date().timeIntervalSince1970
-        if rootIDs.count == 1, let rootID = rootIDs.first {
-            return try claimRootEnrichmentCandidates(
-                rootID: rootID,
-                now: now,
-                claimNotAfter: claimNotAfter,
-                limit: limit,
-                db: db
-            )
-        }
-        return try claimGlobalEnrichmentCandidates(
+        guard let query = enrichmentClaimQuery(
             rootIDs: rootIDs,
             now: now,
             claimNotAfter: claimNotAfter,
-            limit: limit,
-            db: db
+            limit: limit
+        ) else {
+            return []
+        }
+        return try Row.fetchAll(db, sql: query.sql, arguments: query.arguments).map(storedAsset(from:))
+    }
+
+    static func enrichmentClaimQuery(
+        rootIDs: [Int64],
+        now: TimeInterval,
+        claimNotAfter: TimeInterval,
+        limit: Int
+    ) -> SQLQuery? {
+        guard !rootIDs.isEmpty, limit > 0 else {
+            return nil
+        }
+        if rootIDs.count == 1, let rootID = rootIDs.first {
+            return rootEnrichmentClaimQuery(
+                rootID: rootID,
+                now: now,
+                claimNotAfter: claimNotAfter,
+                limit: limit
+            )
+        }
+
+        return globalEnrichmentClaimQuery(
+            rootIDs: rootIDs,
+            now: now,
+            claimNotAfter: claimNotAfter,
+            limit: limit
+        )
+    }
+
+    private static func rootEnrichmentClaimQuery(
+        rootID: Int64,
+        now: TimeInterval,
+        claimNotAfter: TimeInterval,
+        limit: Int
+    ) -> SQLQuery {
+        SQLQuery(
+            sql: """
+            WITH candidates AS (
+                SELECT library_root_id, relative_path
+                FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
+                WHERE library_root_id = ?
+                  AND (\(enrichmentStalenessSQLPredicate()))
+                  AND (
+                    enrichment_claimed_until IS NULL
+                    OR enrichment_claimed_until < ?
+                  )
+                ORDER BY sort_key, relative_path
+                LIMIT ?
+            )
+            UPDATE media_asset
+            SET enrichment_claimed_until = ?
+            WHERE (library_root_id, relative_path) IN (
+                SELECT library_root_id, relative_path FROM candidates
+            )
+            RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
+                      created_at_unix, content_modified_at_unix,
+                      enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
+            """,
+            arguments: sqlArguments(rootID, now, limit, claimNotAfter)
+        )
+    }
+
+    private static func globalEnrichmentClaimQuery(
+        rootIDs: [Int64],
+        now: TimeInterval,
+        claimNotAfter: TimeInterval,
+        limit: Int
+    ) -> SQLQuery {
+        let placeholders = sqlPlaceholders(count: rootIDs.count)
+        var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
+        arguments.append(now)
+        arguments.append(limit)
+        arguments.append(claimNotAfter)
+        return SQLQuery(
+            sql: """
+            WITH candidates AS (
+                SELECT library_root_id, relative_path
+                FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
+                WHERE library_root_id IN (\(placeholders))
+                  AND (\(enrichmentStalenessSQLPredicate()))
+                  AND (
+                    enrichment_claimed_until IS NULL
+                    OR enrichment_claimed_until < ?
+                  )
+                ORDER BY sort_key, library_root_id, relative_path
+                LIMIT ?
+            )
+            UPDATE media_asset
+            SET enrichment_claimed_until = ?
+            WHERE (library_root_id, relative_path) IN (
+                SELECT library_root_id, relative_path FROM candidates
+            )
+            RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
+                      created_at_unix, content_modified_at_unix,
+                      enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
+            """,
+            arguments: StatementArguments(arguments)
         )
     }
 
@@ -594,75 +765,8 @@ private nonisolated func sqlPlaceholders(count: Int) -> String {
     Array(repeating: "?", count: count).joined(separator: ",")
 }
 
-private nonisolated func claimRootEnrichmentCandidates(
-    rootID: Int64,
-    now: TimeInterval,
-    claimNotAfter: TimeInterval,
-    limit: Int,
-    db: Database
-) throws -> [CatalogStore.StoredAsset] {
-    try Row.fetchAll(
-        db,
-        sql: """
-        WITH candidates AS (
-            SELECT library_root_id, relative_path
-            FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-            WHERE library_root_id = ?
-              AND (\(enrichmentStalenessSQLPredicate()))
-              AND (
-                enrichment_claimed_until IS NULL
-                OR enrichment_claimed_until < ?
-              )
-            ORDER BY sort_key, relative_path
-            LIMIT ?
-        )
-        UPDATE media_asset
-        SET enrichment_claimed_until = ?
-        WHERE (library_root_id, relative_path) IN (
-            SELECT library_root_id, relative_path FROM candidates
-        )
-        RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
-                  created_at_unix, content_modified_at_unix,
-                  enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
-        """,
-        arguments: [rootID, now, limit, claimNotAfter]
-    ).map(storedAsset(from:))
-}
-
-private nonisolated func claimGlobalEnrichmentCandidates(
-    rootIDs: [Int64],
-    now: TimeInterval,
-    claimNotAfter: TimeInterval,
-    limit: Int,
-    db: Database
-) throws -> [CatalogStore.StoredAsset] {
-    let placeholders = sqlPlaceholders(count: rootIDs.count)
-    return try Row.fetchAll(
-        db,
-        sql: """
-        WITH candidates AS (
-            SELECT library_root_id, relative_path
-            FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
-            WHERE library_root_id IN (\(placeholders))
-              AND (\(enrichmentStalenessSQLPredicate()))
-              AND (
-                enrichment_claimed_until IS NULL
-                OR enrichment_claimed_until < ?
-              )
-            ORDER BY sort_key, library_root_id, relative_path
-            LIMIT ?
-        )
-        UPDATE media_asset
-        SET enrichment_claimed_until = ?
-        WHERE (library_root_id, relative_path) IN (
-            SELECT library_root_id, relative_path FROM candidates
-        )
-        RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
-                  created_at_unix, content_modified_at_unix,
-                  enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
-        """,
-        arguments: StatementArguments(rootIDs + [now, limit, claimNotAfter]) ?? StatementArguments()
-    ).map(storedAsset(from:))
+private nonisolated func sqlArguments(_ values: (any DatabaseValueConvertible)...) -> StatementArguments {
+    StatementArguments(values)
 }
 
 private nonisolated func assetMetadataStatementArguments(

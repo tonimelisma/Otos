@@ -72,6 +72,7 @@ implementation history.
 | [0026](specs/0026-telemetry-observability-increment.md) | Minimal telemetry capture and diagnostics test isolation. |
 | [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
 | [0028](specs/0028-code-quality-maintainability-audit.md) | Documentation truth, zero unchecked Sendables, named diagnostics task escapes, enrichment startup failure handling, and deterministic async test helpers. |
+| [0029](specs/0029-sqlite-retirement-completion.md) | SQLite retirement completion: staged thumbnail publication, Store-owned query-plan tests, retired helper removal, and stale-document cleanup. |
 
 ## Planning Documents
 

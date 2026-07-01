@@ -90,16 +90,46 @@ nonisolated struct GeoRecord: Codable, Equatable {
     var altitudeMeters: Double?
 }
 
+/// A thumbnail file that has been generated but not yet made catalog-visible.
+/// `MediaEnricher` writes the staged file; `CatalogStore` promotes it to the final
+/// deterministic name only after SQLite proves the enrichment result still matches
+/// the current asset row.
+nonisolated struct GeneratedThumbnail: Equatable {
+    let finalRelativePath: String
+    let stagedRelativePath: String
+}
+
 /// The result of enriching one asset, applied to the catalog as part of a batch. The
 /// enricher records the `(sourceSize, sourceMTimeSeconds)` it read at the start of the
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
+/// A generated thumbnail may be staged, in which case `thumbnailPath` is the final
+/// path to stamp only after Store promotes the staged file.
 nonisolated struct EnrichmentResult: Equatable {
     let id: MediaAssetID
     let metadata: AssetMetadata
     let captureDate: Date?
     let thumbnailPath: String?
+    let generatedThumbnail: GeneratedThumbnail?
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
+
+    init(
+        id: MediaAssetID,
+        metadata: AssetMetadata,
+        captureDate: Date?,
+        thumbnailPath: String?,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?,
+        generatedThumbnail: GeneratedThumbnail? = nil
+    ) {
+        self.id = id
+        self.metadata = metadata
+        self.captureDate = captureDate
+        self.thumbnailPath = generatedThumbnail?.finalRelativePath ?? thumbnailPath
+        self.generatedThumbnail = generatedThumbnail
+        self.sourceSize = sourceSize
+        self.sourceMTimeSeconds = sourceMTimeSeconds
+    }
 }
 
 /// The result of applying an enrichment batch, so the coordinator reacts correctly:

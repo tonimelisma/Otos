@@ -100,7 +100,9 @@ Enrichment selection moves from a resident map scan to a Store claim query:
 Because the app has no active users, schema changes use a clean destructive reset:
 discard the old local catalog and thumbnail state, create the new schema from
 zero, rescan originals, and re-enrich derived products. Originals on disk are
-untouched.
+untouched. The reset implementation detects incompatible pre-user schemas before
+GRDB rebuilds them and purges the app-owned thumbnail directory after the current
+schema is created, so discarded rows do not leave orphaned derived files behind.
 
 ## Alternatives Considered
 

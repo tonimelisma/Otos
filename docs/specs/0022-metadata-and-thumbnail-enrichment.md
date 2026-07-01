@@ -162,15 +162,16 @@ correct one.
 
 Modules (isolation — owns):
 
-- `CatalogStore` (actor, extended) — the `v3` schema; `applyEnrichmentBatch` (one
-  transaction, per-row existence and source-signature revalidation, one
-  notification); the rescan merge (`mergingFacts`); thumbnail delete when rows are
-  purged by proven deletion or explicit library removal; on-demand `metadataBlob`
-  decode; the `nonisolated thumbnailDirectory`.
+- `CatalogStore` (actor, extended) — the current clean SQLite schema;
+  `applyEnrichmentBatch` (one transaction, per-row existence and source-signature
+  revalidation, staged thumbnail promotion for accepted rows, one notification);
+  scan upserts that preserve enrichment overlay while updating fact columns;
+  thumbnail delete when rows are purged by proven deletion or explicit library
+  removal; on-demand `asset_metadata.metadata_extra_json` decode; the
+  `nonisolated thumbnailDirectory`.
 - `MediaAsset` (nonisolated value, extended) — the cheap hot detail fields
   (`thumbnailPath`, `captureDate`, `enrichedSourceSize`,
-  `enrichedSourceMTimeSeconds`), `needsEnrichment`, `bestCaptureDate`,
-  `mergingFacts`, `applyingEnrichment`.
+  `enrichedSourceMTimeSeconds`), `needsEnrichment`, and `bestCaptureDate`.
 - `AssetMetadata` (nonisolated value, new) — the full `MediaMetadataResult`
   mapped to Otos types and persisted on demand, never in grid publication.
 - `EnrichmentCoordinator` (actor, new) — the cursorless scheduler, the two pools,

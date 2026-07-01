@@ -71,6 +71,12 @@ For each domain: what the reviewer checks, and the standard it is held to.
 - App-owned catalog resets or schema resets never touch originals and also do not
   leave orphaned app-owned overlay behind; catalog rows and their derived thumbnails,
   metadata products, and other overlay are reset or purged as one lifecycle.
+- Derived files are not published before their catalog row is validated. Thumbnail
+  generation stages files first; Store promotes only results that pass current
+  SQLite source-signature validation, and rejected staged files are discarded without
+  replacing the previous accepted thumbnail. A promotion failure in a batch must
+  leave already accepted rows committed and the failed item retryable; it must not
+  roll back accepted catalog truth or overwrite the previous accepted thumbnail.
 - Asset identity stays the filesystem path. No durable identifiers, content
   fingerprints, generated UUIDs, or sidecars are introduced.
 - Cloud safety: no code path *accidentally* materializes a dataless file by faulting
@@ -118,6 +124,9 @@ For each domain: what the reviewer checks, and the standard it is held to.
   evictable cache. Generation differs by media type; it gates on the detector so it
   never blocks on an accidental fault, and any deliberate materialization is
   non-blocking and bounded (ADR 0008).
+- Thumbnail files are staged until Store validates the enrichment result. A stale
+  completion may leave old accepted overlay visible or be retried, but it must never
+  publish a new derived file as current before Store accepts the matching row.
 
 ### SwiftUI and AppKit boundary
 
@@ -167,7 +176,7 @@ For each domain: what the reviewer checks, and the standard it is held to.
 
 | Severity | Definition | Action |
 | --- | --- | --- |
-| Blocker | Originals at write-risk; data race or unsafe `Sendable`; new duplicate source of truth; SQL/GRDB or SQLite row IDs crossing outside Store as product state; MainActor doing IO, decode, or DB; overlay purged on temporary absence or a dataless file force-materialized by an accidental blocking read; app-owned reset touching originals; persistence or schema change with no ADR; fabricated domain fact; missing spec for non-micro work. | Cannot merge. |
+| Blocker | Originals at write-risk; data race or unsafe `Sendable`; new duplicate source of truth; SQL/GRDB or SQLite row IDs crossing outside Store as product state; MainActor doing IO, decode, or DB; overlay purged on temporary absence or a dataless file force-materialized by an accidental blocking read; derived thumbnail files published before Store validates the current SQLite row; app-owned reset touching originals; persistence or schema change with no ADR; fabricated domain fact; missing spec for non-micro work. | Cannot merge. |
 | Major | Ownership leak (view orchestrating catalog, bridge owning domain state); retired resident value-map/snapshot architecture reintroduced in production or test helpers; detail-only changes causing unmeasured full-catalog hot-path work; perf-sensitive path with no evidence; unbounded or uncancellable task; an architectural invariant guarded only by a grep test or copied production SQL in tests. | Fix before merge, or an ADR'd, recorded exception. |
 | Minor | Naming or units clarity, comment accuracy, test at the wrong altitude, missing log-category usage. | Fix, or file a tracked follow-up. |
 | Nit | Style within lint rules. | Optional. |

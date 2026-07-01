@@ -169,6 +169,28 @@ func waitForFilesystemRescan(
     }
 }
 
+func waitForFilesystemDiagnostic(
+    _ url: URL,
+    matching predicate: @escaping @Sendable (CatalogDiagnosticEvent) -> Bool
+) async throws -> CatalogDiagnosticEvent {
+    try await withTestTimeout("filesystem diagnostic") {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        while !Task.isCancelled {
+            if let data = try? Data(contentsOf: url) {
+                let events = data.split(separator: 0x0A).compactMap { line in
+                    try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
+                }
+                if let event = events.first(where: predicate) {
+                    return event
+                }
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw CancellationError()
+    }
+}
+
 private func filesystemRescanFinished(
     store: CatalogStore,
     recorder: FilesystemEventScanInvocationRecorder,

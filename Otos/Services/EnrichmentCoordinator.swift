@@ -31,7 +31,9 @@ import OSLog
 ///
 /// Writes are batched (`CatalogStore.applyEnrichmentBatch`): a per-asset transaction
 /// across a whole library would crawl, and a notification per asset would re-sort the
-/// catalog in Projection on every completion.
+/// catalog in Projection on every completion. Completed results may carry staged
+/// thumbnails; Store validates the SQLite source signature and promotes only the staged
+/// files it stamps current.
 ///
 /// Lifecycle mirrors `CatalogStore`: it is a process-lifetime owner started by the
 /// ViewModel; `shutdown()` cancels its tasks (tests use it to stop cleanly).

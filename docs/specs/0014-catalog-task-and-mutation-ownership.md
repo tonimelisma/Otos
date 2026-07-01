@@ -28,8 +28,8 @@ Store serially in submission order without delaying sidebar selection.
 
 ## Current Repository State
 
-- `CatalogStore` owns SQLite, the complete in-memory catalog, startup
-  coalescing, serial scans, and scan callback ownership.
+- `CatalogStore` owns SQLite, root runtime catalog state, Store-owned catalog
+  queries, startup coalescing, serial scans, and scan callback ownership.
 - `CatalogProjection` owns off-MainActor derivation and a 10 Hz one-in-flight
   publication loop.
 - `CatalogWindowViewModel` owns final MainActor state, sidebar selection, user

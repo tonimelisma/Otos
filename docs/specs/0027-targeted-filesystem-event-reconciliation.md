@@ -26,11 +26,13 @@ In scope:
   full-root fallback.
 - `CatalogScannedFileReader`, shared by full scans and targeted reconciliation for
   resource keys, symlink/package handling, and media eligibility.
-- Store-owned targeted upsert/delete for single regular-file paths.
+- Store-owned targeted upsert/delete for single regular-file paths, including
+  deleting an existing row when the path still exists but no longer qualifies as
+  catalog media.
 - Full-root fallback for directory events, symlinks, unknown flags, dropped events,
   `MustScanSubDirs`, root/mount ambiguity, and any unsupported shape.
-- Tests for flag classification, targeted create/upsert, targeted delete, and
-  unchanged full-root fallback behavior.
+- Tests for flag classification, targeted create/upsert, targeted ineligible
+  replacement, targeted delete, and unchanged full-root fallback behavior.
 
 Out of scope:
 
@@ -52,9 +54,11 @@ Out of scope:
 ### A: Target single regular-file events, fallback otherwise (selected)
 
 FSEvents remain hints. Store validates actual filesystem state before writing.
-Regular-file create/modify/xattr/inode/rename reads one path and upserts; regular
-file remove checks absence and deletes one row; everything ambiguous schedules the
-existing full-root scan.
+Regular-file create/modify/xattr/inode/rename reads one path and upserts when it
+is still catalog-eligible; if the path now exists but is not catalog-eligible,
+Store deletes the old row and derived overlay for that path. Regular-file remove
+checks absence and deletes one row; everything ambiguous schedules the existing
+full-root scan.
 
 Pros:
 
@@ -110,10 +114,11 @@ keeps the existing full-scan proof for everything else.
 
 ## Persistence, Concurrency, And Side Effects
 
-Targeted upsert uses the same `upsertScannedFile` SQL as full scans. Targeted delete
-deletes only the `(library_root_id, relative_path)` row after the exact path is
-absent and deletes that row's thumbnail file from Application Support. User originals
-are never modified.
+Targeted upsert uses the same `upsertScannedFile` SQL as full scans. If the path
+still exists but `CatalogScannedFileReader` proves it is no longer catalog-
+eligible, Store deletes the same `(library_root_id, relative_path)` row and
+thumbnail overlay that a completed full scan would remove. Targeted remove deletes
+only after the exact path is absent. User originals are never modified.
 
 The Store actor owns the debounce batches, active-scan fallback, row writes, and
 notifications. The watcher only delivers events. `CatalogScannedFileReader` reads
@@ -125,6 +130,8 @@ filesystem facts only and never reads media bytes.
   and unknown/directory events to full-root fallback.
 - `CatalogStoreFilesystemEventTests.targetedFileEventReconcilesWithoutFullScan`
   proves a regular-file create upserts without another scan invocation.
+- `CatalogStoreFilesystemEventTests.targetedFileEventDeletesCatalogRowWhenPathBecomesIneligible`
+  proves an ineligible replacement deletes one row without another scan invocation.
 - `CatalogStoreFilesystemEventTests.targetedFileRemovalDeletesWithoutFullScan`
   proves a regular-file remove deletes one row without another scan invocation.
 - Existing spec 0023 tests keep debounce, arming, active-scan follow-up, removal,

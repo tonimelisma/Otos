@@ -83,7 +83,7 @@ Out of scope:
 | CAT-001 | Architecture | The catalog owner uses GRDB with SQLite: `DatabasePool` for file-backed locations and `DatabaseQueue` for `.inMemory` tests. | Current | `docs/requirements.md`, ADR 0002, ADR 0010 |
 | CAT-002 | Architecture | SQLite is the per-asset working set; Store keeps root runtime state resident and exposes Store-owned query APIs instead of retaining a resident per-asset map. | Current | `docs/requirements.md`, ADR 0002, ADR 0010 |
 | CAT-003 | Architecture | The normalized root path is product identity; SQLite rowid is only a private foreign key implementation detail. | Current | `docs/requirements.md`, ADR 0003 |
-| CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, in-memory state, scan lifecycle, scan persistence cadence, and cheap catalog change notifications. | Current | `docs/requirements.md`, Spec 0009 |
+| CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, root runtime state, scan lifecycle, scan persistence cadence, Store-owned query APIs, and cheap catalog change notifications. | Current | `docs/requirements.md`, Spec 0009, Spec 0025 |
 | CAT-005 | Architecture | SwiftUI views never call SQLite directly; a MainActor ViewModel consumes projected catalog window state. | Current | `docs/requirements.md`, Spec 0007, Spec 0009 |
 | CAT-006 | Non-functional | SQLite scan writes and SwiftUI-visible scan updates happen at a 10 Hz time cadence when pending changes exist. | Current | `docs/requirements.md`, ADR 0002 |
 | DOD-001 | Process | There is exactly one DoD report for an increment, and no review handoff, partial, pre-merge, or ready-for-review DoD report may be sent to the user or posted to the PR. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
@@ -96,11 +96,12 @@ Out of scope:
 
 Pros:
 
-- One catalog authority owns persistence, in-memory state, and scan lifecycle.
+- One catalog authority owns persistence, root runtime state, Store-owned queries,
+  and scan lifecycle.
 - Keeps filesystem traversal and SQLite work off the MainActor.
 - Matches the current ADR decision to keep SQLite as the per-asset working set
   behind one Store actor.
-- Gives Projection keyed snapshots without database query coupling.
+- Gives Projection ordered identities through Store-owned query APIs.
 
 Cons:
 
@@ -121,8 +122,8 @@ Pros:
 
 Cons:
 
-- Makes SQLite query results the UI driver instead of the in-memory catalog
-  owner.
+- Makes raw SQLite observations the UI driver instead of Store-owned catalog
+  query APIs.
 - Couples SwiftUI state to query shape.
 - Requires scheduling care as observations grow.
 
@@ -170,13 +171,14 @@ Failure modes:
 Use a `CatalogStore` actor with a `CatalogProjection` actor and a
 `@MainActor @Observable CatalogWindowViewModel`. Store opens and initializes one
 long-lived GRDB writer, uses `DatabasePool` for file-backed locations, keeps only
-root runtime state resident, serializes add/remove/scan work, and emits cheap
+root runtime state resident, stores the per-asset working set in SQLite,
+serializes add/remove/scan work, exposes Store-owned query APIs, and emits cheap
 change notifications. Projection asks Store for current library rows and scoped
 ordered asset IDs, then emits `CatalogWindowState` for SwiftUI.
 
-This is the simplest correct approach because it has one persistence owner, one
-catalog query owner, no query-backed SwiftUI coupling, no parallel scan pipeline,
-and no generated product IDs.
+This is the simplest correct approach because it has one persistence/query owner,
+no resident per-asset value-map owner, no raw query-backed SwiftUI coupling, no
+parallel scan pipeline, and no generated product IDs.
 
 ## Interfaces, Ownership, And Data Flow
 

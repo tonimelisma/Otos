@@ -15,13 +15,28 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let now = Date().timeIntervalSince1970
+        let rootOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(rootIDs: [rootID1]))
+        let globalOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(rootIDs: [rootID1, rootID2]))
+        let rootEnrichmentQuery = try #require(CatalogStore.enrichmentClaimQuery(
+            rootIDs: [rootID1],
+            now: now,
+            claimNotAfter: now + 300,
+            limit: 4
+        ))
+        let globalEnrichmentQuery = try #require(CatalogStore.enrichmentClaimQuery(
+            rootIDs: [rootID1, rootID2],
+            now: now,
+            claimNotAfter: now + 300,
+            limit: 4
+        ))
 
         let plans = try await dbQueue.read { db in
             try QueryPlans(
-                rootOrder: explainPlan(db, sql: rootOrderSQL, arguments: [rootID1]),
-                globalOrder: explainPlan(db, sql: globalOrderSQL, arguments: [rootID1, rootID2]),
-                rootEnrichment: explainPlan(db, sql: rootEnrichmentSQL, arguments: [rootID1, 4]),
-                globalEnrichment: explainPlan(db, sql: globalEnrichmentSQL, arguments: [rootID1, rootID2, 4])
+                rootOrder: explainPlan(db, query: rootOrderQuery),
+                globalOrder: explainPlan(db, query: globalOrderQuery),
+                rootEnrichment: explainPlan(db, query: rootEnrichmentQuery),
+                globalEnrichment: explainPlan(db, query: globalEnrichmentQuery)
             )
         }
 
@@ -46,46 +61,33 @@ struct CatalogStoreQueryPlanTests {
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 200, claimedCount: 50)
+        let now = Date().timeIntervalSince1970
+        let claimQuery = try #require(CatalogStore.enrichmentClaimQuery(
+            rootIDs: [rootID],
+            now: now,
+            claimNotAfter: now + 300,
+            limit: 4
+        ))
 
-        let excludedCount = 50
-        let exclusionPlaceholders = Array(repeating: "(?, ?)", count: excludedCount).joined(separator: ", ")
-        let legacySQL = """
-        SELECT library_root_id, relative_path
-        FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-        WHERE library_root_id = ?
-          AND (
-            enriched_source_size IS NULL
-            OR enriched_source_mtime IS NULL
-            OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
-            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-               <> COALESCE(enriched_source_mtime, -1)
-          )
-          AND (library_root_id, relative_path) NOT IN (\(exclusionPlaceholders))
-        ORDER BY sort_key, relative_path
-        LIMIT ?
-        """
+        let legacyQuery = legacyNotInEnrichmentQuery(rootID: rootID, excludedCount: 50)
         let exclusionPlan = try await dbQueue.read { db in
             try explainPlan(
                 db,
-                sql: legacySQL,
-                arguments: StatementArguments([rootID] + legacyExclusionArguments(
-                    rootID: rootID,
-                    excludedCount: excludedCount
-                ) + [4]) ?? StatementArguments()
+                sql: legacyQuery.sql,
+                arguments: legacyQuery.arguments
             )
         }
         let claimPlan = try await dbQueue.read { db in
             try explainPlan(
                 db,
-                sql: claimEnrichmentSQL,
-                arguments: [rootID, Date().timeIntervalSince1970, 4, Date().timeIntervalSince1970 + 300]
+                query: claimQuery
             )
         }
 
-        #expect(legacySQL.localizedCaseInsensitiveContains("NOT IN"))
+        #expect(legacyQuery.sql.localizedCaseInsensitiveContains("NOT IN"))
         #expect(!exclusionPlan.isEmpty)
         #expect(claimPlan.contains("idx_media_asset_needs_enrichment_root"))
-        #expect(!claimEnrichmentSQL.localizedCaseInsensitiveContains("NOT IN"))
+        #expect(!claimQuery.sql.localizedCaseInsensitiveContains("NOT IN"))
     }
 
     @Test func enrichmentClaimUpdateReturningClaimsRows() async throws {
@@ -212,32 +214,29 @@ private func legacyExclusionArguments(rootID: Int64, excludedCount: Int) -> [Any
     }
 }
 
-private let claimEnrichmentSQL = """
-WITH candidates AS (
-    SELECT library_root_id, relative_path
-    FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-    WHERE library_root_id = ?
-      AND (
-        enriched_source_size IS NULL
-        OR enriched_source_mtime IS NULL
-        OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
-        OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-           <> COALESCE(enriched_source_mtime, -1)
-      )
-      AND (
-        enrichment_claimed_until IS NULL
-        OR enrichment_claimed_until < ?
-      )
-    ORDER BY sort_key, relative_path
-    LIMIT ?
-)
-UPDATE media_asset
-SET enrichment_claimed_until = ?
-WHERE (library_root_id, relative_path) IN (
-    SELECT library_root_id, relative_path FROM candidates
-)
-RETURNING library_root_id, relative_path
-"""
+private func legacyNotInEnrichmentQuery(rootID: Int64, excludedCount: Int) -> CatalogStore.SQLQuery {
+    let exclusionPlaceholders = Array(repeating: "(?, ?)", count: excludedCount).joined(separator: ", ")
+    return CatalogStore.SQLQuery(
+        sql: """
+        SELECT library_root_id, relative_path
+        FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
+        WHERE library_root_id = ?
+          AND (
+            enriched_source_size IS NULL
+            OR enriched_source_mtime IS NULL
+            OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+               <> COALESCE(enriched_source_mtime, -1)
+          )
+          AND (library_root_id, relative_path) NOT IN (\(exclusionPlaceholders))
+        ORDER BY sort_key, relative_path
+        LIMIT ?
+        """,
+        arguments: StatementArguments(
+            [rootID] + legacyExclusionArguments(rootID: rootID, excludedCount: excludedCount) + [4]
+        ) ?? StatementArguments()
+    )
+}
 
 private func explainPlan(
     _ db: Database,
@@ -249,50 +248,10 @@ private func explainPlan(
         .joined(separator: "\n")
 }
 
+private func explainPlan(_ db: Database, query: CatalogStore.SQLQuery) throws -> String {
+    try explainPlan(db, sql: query.sql, arguments: query.arguments)
+}
+
 private func usesTemporarySort(_ plan: String) -> Bool {
     plan.localizedCaseInsensitiveContains("TEMP B-TREE")
 }
-
-private let rootOrderSQL = """
-SELECT library_root_id, relative_path
-FROM media_asset INDEXED BY idx_media_asset_order_root
-WHERE library_root_id = ?
-ORDER BY sort_key, relative_path
-"""
-
-private let globalOrderSQL = """
-SELECT library_root_id, relative_path
-FROM media_asset INDEXED BY idx_media_asset_order_global
-WHERE library_root_id IN (?, ?)
-ORDER BY sort_key, library_root_id, relative_path
-"""
-
-private let rootEnrichmentSQL = """
-SELECT library_root_id, relative_path
-FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-WHERE library_root_id = ?
-  AND (
-    enriched_source_size IS NULL
-    OR enriched_source_mtime IS NULL
-    OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
-    OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-       <> COALESCE(enriched_source_mtime, -1)
-  )
-ORDER BY sort_key, relative_path
-LIMIT ?
-"""
-
-private let globalEnrichmentSQL = """
-SELECT library_root_id, relative_path
-FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
-WHERE library_root_id IN (?, ?)
-  AND (
-    enriched_source_size IS NULL
-    OR enriched_source_mtime IS NULL
-    OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
-    OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-       <> COALESCE(enriched_source_mtime, -1)
-  )
-ORDER BY sort_key, library_root_id, relative_path
-LIMIT ?
-"""

@@ -331,10 +331,12 @@ classifies the batch with `FilesystemEventFlags`.
 Supported single regular-file create, modify, inode-metadata, xattr, and rename
 events read that one path's filesystem facts through `CatalogScannedFileReader`
 and upsert the row through the same `upsertScannedFile` persistence edge used by
-full scans. A supported regular-file remove event first checks the path; only if
-that exact path is absent does Store delete the corresponding catalog row and
-thumbnail overlay. Rename remains delete plus add; Otos does not correlate pairs
-or introduce inode identity.
+full scans when the path is still catalog-eligible. If the path still exists but
+the shared reader proves it no longer qualifies as catalog media, Store deletes
+the corresponding catalog row and thumbnail overlay, matching the next completed
+full scan. A supported regular-file remove event first checks the path; only if
+that exact path is absent does Store delete the row. Rename remains delete plus
+add; Otos does not correlate pairs or introduce inode identity.
 
 Directory events, symlinks, unknown flags, dropped events, mount/root ambiguity,
 `kFSEventStreamEventFlagMustScanSubDirs`, and any event shape that is not a single

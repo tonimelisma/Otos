@@ -37,7 +37,8 @@ This ADR owns:
 
 - Thumbnails are files on disk; the catalog stores only the relative path. Size,
   format, and generator (256 px long edge, JPEG generated from QuickLook with
-  icon fallback accepted). No in-memory thumbnail cache.
+  icon fallback accepted). Generated files are staged until Store validates and
+  stamps the result. No in-memory thumbnail cache.
 - The full parsed metadata is persisted in `asset_metadata` as queryable scalar
   columns plus `metadata_extra_json`, decoded on demand, and is **never resident**
   in grid publication.
@@ -77,9 +78,13 @@ Adjacent decisions requiring separate ADRs or specs:
 ## Decision
 
 1. **Thumbnails are files; the catalog stores the path.** `ThumbnailStore` writes
-   a 256 px long-edge JPEG under `Application Support/<bundleID>/Thumbnails/`,
-   named from a hash of `(library_root_id, relative_path)` — an opaque storage
-   key, not asset identity. Writes are atomic (temp file, then `rename`) so a tile
+   a staged 256 px long-edge JPEG under
+   `Application Support/<bundleID>/Thumbnails/`, named for a deterministic final
+   hash of `(library_root_id, relative_path)` — an opaque storage key, not asset
+   identity. `CatalogStore.applyEnrichmentBatch` promotes the staged file to that
+   final name only after SQLite source-signature validation passes; stale or
+   deleted results discard their staged file and cannot overwrite the previous
+   final thumbnail. The final promotion is atomic (replace or move) so a tile
    never reads a half-written file during a re-enrichment overwrite. QuickLook
    generates the image and its icon fallback is accepted (a generic tile beats
    none). The catalog stores `thumbnail_path`; there is no in-memory thumbnail
@@ -97,8 +102,9 @@ Adjacent decisions requiring separate ADRs or specs:
 
 3. **There is no migration policy for pre-user metadata shape changes.** This app
    has no active users; incompatible local catalog state is destructively reset by
-   the clean schema policy in ADR 0010. Originals are untouched, and metadata is
-   rebuilt by re-enrichment.
+   the clean schema policy in ADR 0010. Originals are untouched. App-owned
+   thumbnails are purged with the reset because their SQLite references were
+   discarded, and metadata is rebuilt by re-enrichment.
 
 4. **One resolved capture date is stored; the best date is computed at display.**
    Enrichment resolves `capture_date_unix` from the metadata date priority chain
@@ -114,9 +120,10 @@ Adjacent decisions requiring separate ADRs or specs:
    writes only fact columns; enrichment writes only `asset_metadata`,
    `capture_date_unix`, `thumbnail_path`, and the `(size, mtime)` stamps. A re-scan
    never clobbers metadata or the thumbnail within one record. An enrichment
-   completion revalidates its source `(size, mtime)` in SQLite before writing; stale
-   overlay may remain visible as the best-known data, but stale work cannot mark a
-   changed source current.
+   completion revalidates its source `(size, mtime)` in SQLite before writing and
+   before promoting its staged thumbnail; stale overlay may remain visible as the
+   best-known data, but stale work cannot mark a changed source current or replace
+   the prior thumbnail file.
 
 6. **Staleness is the `(size, mtime)` source signature.** `needsEnrichment` is
    true when the stamps are absent or differ from the asset's current

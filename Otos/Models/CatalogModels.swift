@@ -198,54 +198,6 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     var bestCaptureDate: Date? {
         captureDate ?? createdAt ?? contentModifiedAt
     }
-
-    /// Returns a copy with refreshed filesystem facts and the existing enrichment
-    /// overlay preserved. This is the in-memory side of disjoint ownership: a re-scan
-    /// updates facts without ever clobbering metadata or the thumbnail.
-    func mergingFacts(
-        name: String?,
-        contentTypeIdentifier: String?,
-        byteSize: Int64?,
-        createdAt: Date?,
-        contentModifiedAt: Date?
-    ) -> MediaAsset {
-        MediaAsset(
-            libraryRootPath: libraryRootPath,
-            relativePath: relativePath,
-            name: name,
-            contentTypeIdentifier: contentTypeIdentifier,
-            byteSize: byteSize,
-            createdAt: createdAt,
-            contentModifiedAt: contentModifiedAt,
-            thumbnailPath: thumbnailPath,
-            captureDate: captureDate,
-            enrichedSourceSize: enrichedSourceSize,
-            enrichedSourceMTimeSeconds: enrichedSourceMTimeSeconds
-        )
-    }
-
-    /// Returns a copy with refreshed enrichment overlay and the existing filesystem
-    /// facts preserved (the other half of disjoint ownership).
-    func applyingEnrichment(
-        thumbnailPath: String?,
-        captureDate: Date?,
-        sourceSize: Int64?,
-        sourceMTimeSeconds: Int?
-    ) -> MediaAsset {
-        MediaAsset(
-            libraryRootPath: libraryRootPath,
-            relativePath: relativePath,
-            name: name,
-            contentTypeIdentifier: contentTypeIdentifier,
-            byteSize: byteSize,
-            createdAt: createdAt,
-            contentModifiedAt: contentModifiedAt,
-            thumbnailPath: thumbnailPath,
-            captureDate: captureDate,
-            enrichedSourceSize: sourceSize,
-            enrichedSourceMTimeSeconds: sourceMTimeSeconds
-        )
-    }
 }
 
 /// Builds the cheap, precomputed display-order key for a media asset. Digit runs

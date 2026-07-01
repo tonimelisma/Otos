@@ -19,8 +19,10 @@ import QuickLookThumbnailing
 /// Outcomes drive the store's stamp-vs-retry. A definitive metadata read (`parsed` or
 /// `unsupported`) yields `.complete` and is stamped, so it is not retried until the file
 /// changes — even if the file embeds no metadata and QuickLook could only render an icon.
-/// A transient read failure yields `.transient` (retry); a regressed-to-dataless file
-/// yields `.notMaterialized` (route back to download).
+/// Thumbnail bytes are staged, not published to their final deterministic filename, so
+/// Store remains the owner that decides whether a derived product matches current catalog
+/// truth. A transient read failure yields `.transient` (retry); a regressed-to-dataless
+/// file yields `.notMaterialized` (route back to download).
 nonisolated struct MediaEnricher {
     var enrich: @Sendable (
         _ id: MediaAssetID,
@@ -46,27 +48,28 @@ nonisolated struct MediaEnricher {
             guard FileMaterialization.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            let thumbnailPath = await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+            let generatedThumbnail = await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
             return .complete(
                 EnrichmentResult(
                     id: id,
                     metadata: Self.map(result),
                     captureDate: Self.resolveCaptureDate(result.timestamps),
-                    thumbnailPath: thumbnailPath,
+                    thumbnailPath: nil,
                     // Normalize unknown facts to the same -1 signature `needsEnrichment`
                     // compares against, so a definitive result with no scanner-provided
                     // size/mtime still stamps complete instead of looping forever.
                     sourceSize: sourceSize ?? -1,
-                    sourceMTimeSeconds: sourceMTimeSeconds ?? -1
+                    sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
+                    generatedThumbnail: generatedThumbnail
                 )
             )
         }
     }
 
-    /// Generates a 256 px thumbnail and writes it, returning its relative name. Accepts
-    /// QuickLook's icon fallback (a generic tile beats none); a generation failure returns
-    /// `nil` and is not fatal — the definitive metadata is still recorded.
-    static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> String? {
+    /// Generates a 256 px thumbnail and stages it, returning the staged/final names.
+    /// Accepts QuickLook's icon fallback (a generic tile beats none); a generation failure
+    /// returns `nil` and is not fatal — the definitive metadata is still recorded.
+    static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> GeneratedThumbnail? {
         let generationStart = Date()
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailGenerate")
         defer {
@@ -81,21 +84,21 @@ nonisolated struct MediaEnricher {
         )
         do {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
-            let thumbnailPath = try ThumbnailStore.write(
+            let thumbnail = try ThumbnailStore.stage(
                 representation.cgImage,
-                named: ThumbnailStore.relativeName(for: id),
+                finalRelativeName: ThumbnailStore.relativeName(for: id),
                 in: directory
             )
             let generationMs = DiagnosticsTiming.milliseconds(since: generationStart)
             OtosLog.thumbnails.info(
                 """
                 Thumbnail generation finished path=\(url.path(percentEncoded: false), privacy: .public) \
-                thumbnailPath=\(thumbnailPath, privacy: .public) \
+                thumbnailPath=\(thumbnail.finalRelativePath, privacy: .public) \
                 representation=\(String(describing: representation.type), privacy: .public) \
                 generationMs=\(generationMs, privacy: .public)
                 """
             )
-            return thumbnailPath
+            return thumbnail
         } catch {
             OtosLog.thumbnails.error(
                 "Thumbnail generation failed path=\(url.path(percentEncoded: false), privacy: .public)"

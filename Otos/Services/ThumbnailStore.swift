@@ -18,12 +18,13 @@ import UniformTypeIdentifiers
 /// `(library_root_id, relative_path)` pair (ADR 0008), and the hash is allowed for the
 /// same reason a SQLite row id is: it is a private storage detail.
 ///
-/// `write` normalizes QuickLook output to an opaque 8-bit sRGB image and atomically
-/// publishes a JPEG (temp file then replace) so a tile can never read a half-written
-/// file while a re-enrichment overwrites it. `load` decodes off the main actor and
-/// returns an immutable `CGImage`; the caller only assigns that already-decoded bitmap
-/// on the main actor. `delete` is the purge side: reconciliation or library removal
-/// removes the file when the asset row is purged.
+/// `stage` normalizes QuickLook output to an opaque 8-bit sRGB JPEG without making
+/// it visible to the grid. `CatalogStore` promotes that staged file only after the
+/// matching SQLite row validates, so stale enrichment work cannot overwrite the last
+/// good thumbnail. `load` decodes off the main actor and returns an immutable
+/// `CGImage`; the caller only assigns that already-decoded bitmap on the main actor.
+/// `delete`/`deleteAll` are the purge side for proven deletion, library removal, and
+/// clean pre-user schema reset.
 nonisolated enum ThumbnailStore {
     /// 256 px long edge keeps a true grid thumbnail (max zoom loads originals, separately).
     static let maxPixelSize = 256
@@ -44,6 +45,23 @@ nonisolated enum ThumbnailStore {
     /// relative name for storage in `thumbnail_path`.
     @discardableResult
     static func write(_ image: CGImage, named relativeName: String, in directory: URL) throws -> String {
+        let generated = try stage(image, finalRelativeName: relativeName, in: directory)
+        do {
+            return try promote(generated, in: directory)
+        } catch {
+            discard(generated, in: directory)
+            throw error
+        }
+    }
+
+    /// Writes `image` as a staged JPEG under `directory` and returns the staged/final names.
+    /// The final deterministic name is not touched until `promote`, so a stale completion
+    /// cannot replace the catalog-visible thumbnail before Store validates it.
+    static func stage(
+        _ image: CGImage,
+        finalRelativeName: String,
+        in directory: URL
+    ) throws -> GeneratedThumbnail {
         let writeStart = Date()
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailWrite")
         defer {
@@ -52,14 +70,11 @@ nonisolated enum ThumbnailStore {
 
         let jpegImage = try normalizedJPEGImage(from: image)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let destinationURL = url(for: relativeName, in: directory)
-        let tempURL = directory.appending(
-            path: "." + relativeName + "." + UUID().uuidString + ".tmp",
-            directoryHint: .notDirectory
-        )
+        let stagedRelativeName = "." + finalRelativeName + "." + UUID().uuidString + ".tmp"
+        let stagedURL = url(for: stagedRelativeName, in: directory)
 
         guard let destination = CGImageDestinationCreateWithURL(
-            tempURL as CFURL,
+            stagedURL as CFURL,
             UTType.jpeg.identifier as CFString,
             1,
             nil
@@ -71,28 +86,44 @@ nonisolated enum ThumbnailStore {
         ] as CFDictionary
         CGImageDestinationAddImage(destination, jpegImage, properties)
         guard CGImageDestinationFinalize(destination) else {
-            try? FileManager.default.removeItem(at: tempURL)
+            try? FileManager.default.removeItem(at: stagedURL)
             throw ThumbnailStoreError.writeFailed
         }
 
-        // Atomic publish so a concurrent reader sees either the old or the new file,
-        // never a partial one: replace an existing thumbnail in place, or move the temp
-        // into place on the first write (where there is nothing to replace).
-        if FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
-            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: tempURL)
-        } else {
-            try FileManager.default.moveItem(at: tempURL, to: destinationURL)
-        }
         let writeMs = DiagnosticsTiming.milliseconds(since: writeStart)
         OtosLog.thumbnails.info(
             """
-            Thumbnail write finished name=\(relativeName, privacy: .public) \
+            Thumbnail stage finished name=\(finalRelativeName, privacy: .public) \
             format=jpeg width=\(jpegImage.width, privacy: .public) \
             height=\(jpegImage.height, privacy: .public) \
             writeMs=\(writeMs, privacy: .public)
             """
         )
-        return relativeName
+        return GeneratedThumbnail(
+            finalRelativePath: finalRelativeName,
+            stagedRelativePath: stagedRelativeName
+        )
+    }
+
+    /// Atomically promotes a staged thumbnail to its deterministic final name.
+    @discardableResult
+    static func promote(_ thumbnail: GeneratedThumbnail, in directory: URL) throws -> String {
+        let finalURL = url(for: thumbnail.finalRelativePath, in: directory)
+        let stagedURL = url(for: thumbnail.stagedRelativePath, in: directory)
+        if FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)) {
+            _ = try FileManager.default.replaceItemAt(finalURL, withItemAt: stagedURL)
+        } else {
+            try FileManager.default.moveItem(at: stagedURL, to: finalURL)
+        }
+        OtosLog.thumbnails.info(
+            "Thumbnail promote finished name=\(thumbnail.finalRelativePath, privacy: .public)"
+        )
+        return thumbnail.finalRelativePath
+    }
+
+    /// Removes a staged thumbnail that was never accepted by the catalog.
+    static func discard(_ thumbnail: GeneratedThumbnail, in directory: URL) {
+        try? FileManager.default.removeItem(at: url(for: thumbnail.stagedRelativePath, in: directory))
     }
 
     /// Loads and decodes a thumbnail off the main actor. `nil` if the file is missing or
@@ -124,6 +155,21 @@ nonisolated enum ThumbnailStore {
     /// Deletes a thumbnail file. No-op if it is already absent.
     static func delete(_ relativeName: String, in directory: URL) {
         try? FileManager.default.removeItem(at: url(for: relativeName, in: directory))
+    }
+
+    /// Deletes every app-owned thumbnail file under `directory`. Originals never live
+    /// here; this is used only when the app-owned catalog state that referenced these
+    /// rebuildable products has been reset.
+    static func deleteAll(in directory: URL) {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil
+        ) else {
+            return
+        }
+        for url in contents {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     private static func normalizedJPEGImage(from image: CGImage) throws -> CGImage {

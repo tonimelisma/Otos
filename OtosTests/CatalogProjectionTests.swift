@@ -9,7 +9,7 @@ struct CatalogProjectionTests {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let projection = CatalogProjection(diagnostics: nil)
-        let snapshot = makeSnapshot(
+        let fixture = makeProjectionFixture(
             libraries: [
                 makeLibrary(root: pictures, activity: .scanning),
                 makeLibrary(root: archive),
@@ -22,7 +22,7 @@ struct CatalogProjectionTests {
         )
 
         let state = await projection.windowState(
-            snapshot: snapshot,
+            fixture: fixture,
             sidebarSelection: .allMedia
         )
 
@@ -35,7 +35,7 @@ struct CatalogProjectionTests {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let projection = CatalogProjection(diagnostics: nil)
-        let snapshot = makeSnapshot(
+        let fixture = makeProjectionFixture(
             libraries: [makeLibrary(root: pictures), makeLibrary(root: archive)],
             assets: [
                 makeAsset(root: pictures, relativePath: "one.jpg"),
@@ -44,7 +44,7 @@ struct CatalogProjectionTests {
         )
 
         let state = await projection.windowState(
-            snapshot: snapshot,
+            fixture: fixture,
             sidebarSelection: .library(pictures.path)
         )
 
@@ -59,7 +59,7 @@ struct CatalogProjectionTests {
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
 
         let state = await projection.windowState(
-            snapshot: makeSnapshot(
+            fixture: makeProjectionFixture(
                 libraries: [makeLibrary(root: pictures)],
                 assets: [
                     makeAsset(root: pictures, relativePath: "one.jpg"),
@@ -78,7 +78,7 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let snapshot = makeSnapshot(
+        let fixture = makeProjectionFixture(
             libraries: [
                 makeLibrary(root: pictures, availability: .unavailable),
                 makeLibrary(root: archive),
@@ -89,9 +89,9 @@ struct CatalogProjectionTests {
             ]
         )
 
-        let allMedia = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
+        let allMedia = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
         let selectedUnavailable = await projection.windowState(
-            snapshot: snapshot,
+            fixture: fixture,
             sidebarSelection: .library(pictures.path)
         )
 
@@ -103,14 +103,14 @@ struct CatalogProjectionTests {
     @Test func windowStateHidesUnknownAssetsAndReportsCheckingStates() async {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
-        let snapshot = makeSnapshot(
+        let fixture = makeProjectionFixture(
             libraries: [makeLibrary(root: pictures, availability: .unknown)],
             assets: [makeAsset(root: pictures, relativePath: "cached.jpg")]
         )
 
-        let allMedia = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
+        let allMedia = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
         let selected = await projection.windowState(
-            snapshot: snapshot,
+            fixture: fixture,
             sidebarSelection: .library(pictures.path)
         )
 
@@ -124,7 +124,7 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let snapshot = makeSnapshot(
+        let fixture = makeProjectionFixture(
             libraries: [
                 makeLibrary(root: pictures),
                 makeLibrary(root: archive, availability: .unknown),
@@ -135,7 +135,7 @@ struct CatalogProjectionTests {
             ]
         )
 
-        let state = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
+        let state = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
 
         #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["shown.jpg"])
         #expect(state.mediaEmptyState == .noMedia)
@@ -144,12 +144,12 @@ struct CatalogProjectionTests {
     @Test func allMediaEmptyStateDistinguishesUnavailableCatalogedMedia() async {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
-        let snapshot = makeSnapshot(
+        let fixture = makeProjectionFixture(
             libraries: [makeLibrary(root: pictures, availability: .unavailable)],
             assets: [makeAsset(root: pictures, relativePath: "hidden.jpg")]
         )
 
-        let state = await projection.windowState(snapshot: snapshot, sidebarSelection: .allMedia)
+        let state = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
 
         #expect(state.mediaGrid.orderedAssetIDs.isEmpty)
         #expect(state.mediaEmptyState == .noAvailableMedia)
@@ -482,41 +482,27 @@ private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
     )
 }
 
-private func makeSnapshot(
+private func makeProjectionFixture(
     libraries: [CatalogLibraryState],
     assets: [MediaAsset]
-) -> ProjectionTestState {
-    ProjectionTestState(
+) -> ProjectionFixture {
+    ProjectionFixture(
         libraries: libraries,
-        assetsByID: Dictionary(uniqueKeysWithValues: assets.map { ($0.id, $0) })
+        orderedAssetIDs: orderedAssetIDs(for: assets)
     )
 }
 
 extension CatalogProjection {
     func windowState(
-        snapshot: ProjectionTestState,
+        fixture: ProjectionFixture,
         sidebarSelection: SidebarSelection
     ) async -> CatalogWindowState {
         await windowState(
-            libraries: snapshot.libraries,
-            orderedAssetIDs: orderedAssetIDs(in: snapshot),
+            libraries: fixture.libraries,
+            orderedAssetIDs: fixture.orderedAssetIDs,
             sidebarSelection: sidebarSelection
         )
     }
-}
-
-private func orderedAssetIDs(in snapshot: ProjectionTestState) -> [MediaAssetID] {
-    snapshot.assetsByID.values
-        .sorted { left, right in
-            if left.sortKey != right.sortKey {
-                return left.sortKey < right.sortKey
-            }
-            if left.libraryRootPath.rawValue != right.libraryRootPath.rawValue {
-                return left.libraryRootPath.rawValue < right.libraryRootPath.rawValue
-            }
-            return left.relativePath.rawValue < right.relativePath.rawValue
-        }
-        .map(\.id)
 }
 
 private enum CatalogProjectionTestError: Error {

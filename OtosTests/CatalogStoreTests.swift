@@ -39,11 +39,18 @@ struct CatalogStoreTests {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = root.appending(path: "legacy.jpg", directoryHint: .notDirectory)
+        try writeCatalogStoreFile(original, contents: "jpeg")
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
         try FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        let staleThumbnail = thumbnailDirectory.appending(path: "stale.jpg", directoryHint: .notDirectory)
+        try Data("stale".utf8).write(to: staleThumbnail)
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
@@ -72,6 +79,8 @@ struct CatalogStoreTests {
 
         #expect(snapshot.libraries.isEmpty)
         #expect(snapshot.testAssets.isEmpty)
+        #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
 
         let newSchema = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')"))
