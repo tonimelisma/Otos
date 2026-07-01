@@ -66,9 +66,11 @@ implementation history.
 | [0020](specs/0020-scan-date-freshness-and-selective-sync-contract.md) | Scan-date freshness, selective-sync contract correction, and the PR-review-comment increment process. |
 | [0021](specs/0021-cloud-materialization-triggering-and-eviction-poc.md) | Cloud materialization triggering POC, the background-download contract change, the eviction constraint, and the retained non-blocking materialization helpers. |
 | [0022](specs/0022-metadata-and-thumbnail-enrichment.md) | Background metadata and JPEG thumbnail enrichment: the data model, the cursorless two-pool coordinator, the viewport channel, and tile rendering. |
-| [0023](specs/0023-filesystem-event-rescan-v1.md) | Running-app FSEvents: debounced per-root full rescans through the existing scan pipeline. |
+| [0023](specs/0023-filesystem-event-rescan-v1.md) | Running-app FSEvents: debounce, arming, affected-root fallback scans, and active-scan follow-up. |
 | [0024](specs/0024-grid-flicker-and-thumbnail-jpeg.md) | Sidebar status, grid flicker, and static thumbnail bug fix: name-only sidebar rows, in-place same-identity tile reconfiguration, JPEG thumbnail storage, and projection/grid/thumbnail instrumentation. |
 | [0025](specs/0025-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, clean schema/reset, identity-plus-generation grid state, visible detail reading, and query-based enrichment selection. |
+| [0026](specs/0026-telemetry-observability-increment.md) | Minimal telemetry capture and diagnostics test isolation. |
+| [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
 
 ## Planning Documents
 

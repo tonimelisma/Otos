@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 @testable import Otos
 import Testing
@@ -210,6 +211,88 @@ struct CatalogStoreFilesystemEventTests {
         #expect(await recorder.invocations().count == baseline)
     }
 
+    @Test func targetedFileEventReconcilesWithoutFullScan() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let first = root.appending(path: "first.jpg")
+        try writeCatalogStoreFile(first, contents: "jpeg")
+
+        let recorder = ScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingLiveScanner(recorder),
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(30),
+            diagnostics: nil
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let initial = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 1
+        }
+        #expect(initial.testAssets.map(\.relativePath.rawValue) == ["first.jpg"])
+        let baseline = await recorder.invocations().count
+
+        let second = root.appending(path: "second.jpg")
+        try writeCatalogStoreFile(second, contents: "jpeg")
+        emit(
+            FilesystemEvent(
+                path: second.path,
+                flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
+            )
+        )
+
+        let reconciled = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 2
+        }
+        let names = Set(reconciled.testAssets.map(\.relativePath.rawValue))
+        #expect(names == ["first.jpg", "second.jpg"])
+        #expect(await recorder.invocations().count == baseline)
+    }
+
+    @Test func targetedFileRemovalDeletesWithoutFullScan() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appending(path: "removed.jpg")
+        try writeCatalogStoreFile(file, contents: "jpeg")
+
+        let recorder = ScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingLiveScanner(recorder),
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(30),
+            diagnostics: nil
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 1
+        }
+        let baseline = await recorder.invocations().count
+
+        try FileManager.default.removeItem(at: file)
+        emit(
+            FilesystemEvent(
+                path: file.path,
+                flags: UInt32(kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemIsFile)
+            )
+        )
+
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.isEmpty
+        }
+        #expect(await recorder.invocations().count == baseline)
+    }
+
     @Test func diskChangeReconcilesAfterRescan() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -249,6 +332,13 @@ private func recordingScanner(_ recorder: ScanInvocationRecorder) -> CatalogScan
     CatalogScanner { rootPath, _, _, _ in
         await recorder.record(rootPath)
         return []
+    }
+}
+
+private func recordingLiveScanner(_ recorder: ScanInvocationRecorder) -> CatalogScanner {
+    CatalogScanner { rootPath, cadence, diagnostics, batchHandler in
+        await recorder.record(rootPath)
+        return try await CatalogScanner.live.scanRoot(rootPath, cadence, diagnostics, batchHandler)
     }
 }
 

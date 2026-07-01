@@ -19,6 +19,11 @@ roots schedule a **debounced full-root rescan** through the existing
 `CatalogStore` scan pipeline. No manual rescan UI, no per-file catalog mutations,
 and no Projection or ViewModel changes.
 
+Current-state amendment: spec 0027 adds targeted single regular-file
+reconciliation for safe FSEvent flag/path shapes. This spec still owns the debounce,
+arming, affected-root fallback, and active-scan follow-up path used whenever spec
+0027 classifies an event batch as unsafe for targeted reconciliation.
+
 ## Scope
 
 In scope:

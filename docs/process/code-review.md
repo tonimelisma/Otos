@@ -47,6 +47,12 @@ For each domain: what the reviewer checks, and the standard it is held to.
 - The `CatalogStore` to `CatalogProjection` to `CatalogWindowViewModel` to passive
   `View` boundary stays intact. Views do not call SQLite, subscribe to snapshot
   streams, sort, filter, or orchestrate scans.
+- SQLite/GRDB access is Store-owned. SQL, GRDB values, database handles, and SQLite
+  row IDs do not cross into Projection, ViewModel, views, AppKit controllers, cells,
+  or tests as product identity.
+- Catalog publication does not revive the retired resident value-map architecture by
+  another name. Store, Projection, ViewModel, grid state, and AppKit bridge do not
+  carry full per-asset value maps, snapshot models, or duplicate catalog truth.
 - No new duplicate source of truth: no second field, cache, or projection that can
   disagree with an existing one.
 - A new abstraction (protocol, cache, layer, pipeline) removes current complexity
@@ -62,6 +68,9 @@ For each domain: what the reviewer checks, and the standard it is held to.
   proven deletion (absent from a reachable, fully enumerated root), never on
   temporary absence (ejected drive, offline volume, unreachable root, dataless
   cloud placeholder, user-excluded subtree).
+- App-owned catalog resets or schema resets never touch originals and also do not
+  leave orphaned app-owned overlay behind; catalog rows and their derived thumbnails,
+  metadata products, and other overlay are reset or purged as one lifecycle.
 - Asset identity stays the filesystem path. No durable identifiers, content
   fingerprints, generated UUIDs, or sidecars are introduced.
 - Cloud safety: no code path *accidentally* materializes a dataless file by faulting
@@ -88,10 +97,14 @@ For each domain: what the reviewer checks, and the standard it is held to.
 - MainActor work stays under the 100 ms hang threshold; scroll, grid, animation,
   and pointer paths have tighter, named budgets in the spec.
 - No render or scroll path synchronously decodes, scans, queries, or formats.
+- Detail-only catalog changes must stay detail-only: they do not refetch, compare,
+  sort, publish, reload, or reconfigure the full catalog unless measurement and an
+  ADR show that the full-catalog operation is the simplest correct current design.
 - Per Pike's rules: optimizations are not added on intuition. Performance-sensitive
   changes carry signpost or `script/profile.sh` and `script/logs.sh` evidence and a
-  worst-span summary; "looks fine" is not evidence. Absent measured jank, the simple
-  resident-list catalog model is accepted as-is.
+  worst-span summary; "looks fine" is not evidence. The old resident-list catalog
+  model is retired; any replacement hot path must be reviewed on its own measured
+  behavior rather than accepted because it is smaller than the old value map.
 
 ### Media pipeline (thumbnails, decode, RAW), when it lands
 
@@ -128,6 +141,9 @@ For each domain: what the reviewer checks, and the standard it is held to.
 - Concurrency is tested deterministically with injected clocks, expectations, or
   suspension hooks; no fixed `sleep`. Persistence has migration, unknown-schema,
   preservation, and failure-mode tests.
+- Query-plan, persistence, and projection tests exercise production query builders
+  and owner APIs. They do not keep copied SQL strings, old snapshot/value-map test
+  models, or helper-only data flows that can pass while the shipped path regresses.
 - `SourceHygieneTests` grep-based invariants are a tripwire, not the proof: each
   architectural invariant they guard also has at least one behavioral test.
 
@@ -139,6 +155,9 @@ For each domain: what the reviewer checks, and the standard it is held to.
 - Living docs: every affected ADR, spec, requirement, and comment is updated in the
   same increment; stale claims are deleted. Requirements stay current-state only;
   futures are conditional architecture in ADRs, never TBD feature lists.
+- Retirement proof includes docs, comments, tests, fixtures, diagnostics, and helper
+  APIs. Old architecture terms may remain only when explicitly labeled historical or
+  superseded; they must not appear in current-state guides or executable test helpers.
 - Code smells are reported every PR, including `None observed` after actually
   looking.
 
@@ -146,8 +165,8 @@ For each domain: what the reviewer checks, and the standard it is held to.
 
 | Severity | Definition | Action |
 | --- | --- | --- |
-| Blocker | Originals at write-risk; data race or unsafe `Sendable`; new duplicate source of truth; MainActor doing IO, decode, or DB; overlay purged on temporary absence or a dataless file force-materialized by an accidental blocking read; persistence or schema change with no ADR; fabricated domain fact; missing spec for non-micro work. | Cannot merge. |
-| Major | Ownership leak (view orchestrating catalog, bridge owning domain state); perf-sensitive path with no evidence; unbounded or uncancellable task; an architectural invariant guarded only by a grep test. | Fix before merge, or an ADR'd, recorded exception. |
+| Blocker | Originals at write-risk; data race or unsafe `Sendable`; new duplicate source of truth; SQL/GRDB or SQLite row IDs crossing outside Store as product state; MainActor doing IO, decode, or DB; overlay purged on temporary absence or a dataless file force-materialized by an accidental blocking read; app-owned reset touching originals; persistence or schema change with no ADR; fabricated domain fact; missing spec for non-micro work. | Cannot merge. |
+| Major | Ownership leak (view orchestrating catalog, bridge owning domain state); retired resident value-map/snapshot architecture reintroduced in production or test helpers; detail-only changes causing unmeasured full-catalog hot-path work; perf-sensitive path with no evidence; unbounded or uncancellable task; an architectural invariant guarded only by a grep test or copied production SQL in tests. | Fix before merge, or an ADR'd, recorded exception. |
 | Minor | Naming or units clarity, comment accuracy, test at the wrong altitude, missing log-category usage. | Fix, or file a tracked follow-up. |
 | Nit | Style within lint rules. | Optional. |
 

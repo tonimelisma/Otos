@@ -186,11 +186,9 @@ private extension EnrichmentCoordinator {
         guard availableSlots > 0 else {
             return []
         }
-        let excludedIDs = inFlightEnrich.union(pendingApplyIDs).union(datalessPending)
         do {
             let candidates = try await store.enrichmentCandidates(
                 prioritizing: prioritizedEnrichmentIDs(),
-                excluding: excludedIDs,
                 limit: availableSlots
             )
             if candidates.isEmpty {
@@ -273,7 +271,7 @@ private extension EnrichmentCoordinator {
 // MARK: - Completion
 
 private extension EnrichmentCoordinator {
-    func finishEnrich(_ id: MediaAssetID, _ outcome: EnrichmentOutcome) {
+    func finishEnrich(_ id: MediaAssetID, _ outcome: EnrichmentOutcome) async {
         inFlightEnrich.remove(id)
         switch outcome {
         case let .complete(result):
@@ -281,21 +279,20 @@ private extension EnrichmentCoordinator {
             pendingApplyIDs.insert(id)
         case .notMaterialized:
             datalessPending.insert(id)
+            try? await store.refreshEnrichmentClaims([id])
         case .transient:
-            break
+            try? await store.releaseEnrichmentClaims([id])
         }
         signal()
     }
 
-    func finishDownload(_ id: MediaAssetID, materialized: Bool) {
+    func finishDownload(_ id: MediaAssetID, materialized: Bool) async {
         inFlightDownload.remove(id)
         datalessPending.remove(id)
+        try? await store.releaseEnrichmentClaims([id])
         if materialized {
-            // Hand the just-materialized file to the enrich pool, newest first.
             freshly.append(id)
         }
-        // A failed download drops out of the pending set; a later Store query
-        // re-discovers it as dataless if it is still needed.
         signal()
     }
 

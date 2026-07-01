@@ -114,6 +114,66 @@ struct CatalogProjectionOrderingTests {
 
         #expect(filtered.fields["selectedScopeAssetCount"] == "1")
     }
+
+    // swiftlint:disable:next function_body_length
+    @Test func detailOnlyStoreChangeSkipsOrderRequery() async throws {
+        let temp = try orderingTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let outputURL = temp.appending(path: "projection-order-skip.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
+        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
+        let recorder = OrderingStateRecorder()
+        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer { recordingTask.cancel() }
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "one.jpg"))
+        let initialStates = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+            states.last { state in
+                state.mediaGrid.orderedAssetIDs == [id]
+            }
+        }
+        let initialState = try #require(initialStates.last { state in
+            state.mediaGrid.orderedAssetIDs == [id]
+        })
+
+        let asset = try #require(try await store.mediaAssets(for: [id])[id])
+        let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
+        let enrichment = EnrichmentResult(
+            id: id,
+            metadata: AssetMetadata(cameraModel: "Cam"),
+            captureDate: Date(timeIntervalSince1970: 700),
+            thumbnailPath: "thumb.jpg",
+            sourceSize: asset.byteSize,
+            sourceMTimeSeconds: sourceMTime
+        )
+        _ = await store.applyEnrichmentBatch([enrichment])
+        let detailState = try await recorder.waitForState(timeout: .detailStateTimedOut) { states in
+            states.last { state in
+                state.mediaGrid.orderedAssetIDs == [id]
+                    && state.mediaGrid.detailRefreshGeneration > initialState.mediaGrid.detailRefreshGeneration
+            }
+        }
+        let detailGeneration = try #require(detailState.last?.mediaGrid.detailRefreshGeneration)
+        let detailOnly = try await waitForOrderingDiagnostic(outputURL) { event in
+            event.operation == "catalog.projection.window"
+                && event.fields["detailRefreshChanged"] == "true"
+                && event.fields["assetOrderQueryMs"] == "0"
+                && event.fields["detailRefreshGeneration"] == "\(detailGeneration)"
+        }
+        #expect(detailOnly.fields["assetOrderQueryMs"] == "0")
+    }
 }
 
 private func orderingRoot() -> LibraryRoot {
@@ -148,7 +208,7 @@ private func waitForOrderingDiagnostic(
 ) async throws -> CatalogDiagnosticEvent {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
-    for _ in 0 ..< 100 {
+    for _ in 0 ..< 250 {
         if let data = try? Data(contentsOf: url) {
             let events = data.split(separator: 0x0A).compactMap { line in
                 try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
@@ -171,4 +231,27 @@ private func orderingTemporaryDirectory() throws -> URL {
 
 private enum CatalogProjectionOrderingTestError: Error {
     case timedOut
+    case initialStateTimedOut
+    case detailStateTimedOut
+}
+
+private actor OrderingStateRecorder {
+    private var states: [CatalogWindowState] = []
+
+    func append(_ state: CatalogWindowState) {
+        states.append(state)
+    }
+
+    func waitForState(
+        timeout: CatalogProjectionOrderingTestError,
+        matching predicate: ([CatalogWindowState]) -> CatalogWindowState?
+    ) async throws -> [CatalogWindowState] {
+        for _ in 0 ..< 750 {
+            if predicate(states) != nil {
+                return states
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        throw timeout
+    }
 }

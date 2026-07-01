@@ -101,8 +101,9 @@ This ADR owns:
 - The 10 Hz time-based cadence for SwiftUI-visible filesystem scan updates.
 - Scan-time media eligibility: which regular files become `media_asset` rows based on
   `NSURLContentTypeKey` and `UTType` conformance.
-- Running-app filesystem watching (V1): coarse macOS FSEvents that schedule
-  debounced full-root rescans through the existing scan pipeline.
+- Running-app filesystem watching: macOS FSEvents are debounced hints. Supported
+  single regular-file events reconcile that path through Store; unsafe events
+  schedule debounced full-root rescans through the scan pipeline.
 
 This ADR references, but does not own:
 
@@ -312,15 +313,22 @@ catalog memory.
 `CatalogStore` maps each event path to exactly one library root, ignores events
 until that root's first scan has completed ("arming"), and coalesces bursts with a
 per-root quiet-period debounce (500 ms default). When the debounce fires, Store
-schedules a **full-root rescan for that root only** via `enqueueScans([root])`.
-If a debounced rescan is requested while that root is already scanning, Store
-records `rescanAfterCurrentScan` and enqueues one follow-up scan when the active
-scan clears. `kFSEventStreamEventFlagMustScanSubDirs` uses the same debounced
-full-rescan path.
+classifies the batch with `FilesystemEventFlags`.
 
-This V1 policy deliberately does not upsert or delete individual rows from event
-paths. Per-path incremental updates belong in a future spec if measurement proves
-full-root rescans are insufficient.
+Supported single regular-file create, modify, inode-metadata, xattr, and rename
+events read that one path's filesystem facts through `CatalogScannedFileReader`
+and upsert the row through the same `upsertScannedFile` persistence edge used by
+full scans. A supported regular-file remove event first checks the path; only if
+that exact path is absent does Store delete the corresponding catalog row and
+thumbnail overlay. Rename remains delete plus add; Otos does not correlate pairs
+or introduce inode identity.
+
+Directory events, symlinks, unknown flags, dropped events, mount/root ambiguity,
+`kFSEventStreamEventFlagMustScanSubDirs`, and any event shape that is not a single
+regular-file reconciliation fall back to the existing **full-root rescan for that
+root only** via `enqueueScans([root])`. If a debounced reconciliation is requested
+while that root is already scanning, Store records `rescanAfterCurrentScan` and
+enqueues one follow-up full-root scan when the active scan clears.
 
 Watcher lifecycle is tied to saved roots: start after catalog load, add on
 `addLibrary`, remove on `removeLibrary`, stop on `shutdown`. Availability

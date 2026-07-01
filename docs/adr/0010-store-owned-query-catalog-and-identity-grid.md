@@ -74,11 +74,16 @@ GRDB types, SQLite row IDs, or database handles.
 
 `CatalogProjection` owns presentation policy: selected scope, active sort mode,
 availability hiding, title, empty state, removed-library fallback, and a scalar
-detail-refresh generation. It calls Store query APIs for ordered IDs and publishes
-chrome plus `CatalogMediaGridState`: ordered identities and the generation only,
-never per-asset values. It registers Store change notifications before relying on
-the coalesced publication loop so detail-only Store writes cannot be missed between
-startup and the first visible publication.
+detail-refresh generation. It calls Store query APIs for ordered IDs when a
+structural change or scope change can affect membership/order, then publishes chrome
+plus `CatalogMediaGridState`: ordered visible identities and the generation only,
+never per-asset values. If that visible scope is empty, Projection may ask Store for
+a separate cataloged-asset count across the selected roots so All Media can
+distinguish "nothing exists" from "cataloged media is hidden because roots are
+unavailable." Detail-only Store changes reuse the last ordered-ID result and advance
+only the detail-refresh generation. Projection registers Store change notifications
+before relying on the coalesced publication loop so detail-only Store writes cannot
+be missed between startup and the first visible publication.
 
 The UI holds only ordered `MediaAssetID`s for the current scope and sort. The grid
 uses a diffable data source keyed by `MediaAssetID`. The scalar generation is not
@@ -89,8 +94,8 @@ detail through a controller-owned `MediaTileDetailReader` that batches, deduplic
 cancels, and generation-checks detail reads. Thumbnails remain file-backed and are
 loaded off the main actor.
 
-Enrichment selection moves from a resident map scan to a Store query:
-`enrichmentCandidates(prioritizing:excluding:limit:)`.
+Enrichment selection moves from a resident map scan to a Store claim query:
+`enrichmentCandidates(prioritizing:limit:)`.
 
 Because the app has no active users, schema changes use a clean destructive reset:
 discard the old local catalog and thumbnail state, create the new schema from

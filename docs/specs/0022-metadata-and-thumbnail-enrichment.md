@@ -71,7 +71,8 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
   disjoint scan/enrichment column ownership with preserving scan upserts; `(size, mtime)`
   staleness; stale in-flight completions are rejected before they can stamp newer
   source facts current; a single coordinator actor owning two fixed worker pools
-  by cursorless scheduling; enrichment writes batched through `CatalogStore`.
+  by cursorless scheduling; a single SQLite claim lease column preventing repeated
+  dequeue; enrichment writes batched through `CatalogStore`.
 - Non-functional: no media I/O, decode, or formatting on the MainActor; the tile
   loads its thumbnail and formats its date off-main and only assigns on Main.
 
@@ -102,7 +103,9 @@ Failure modes:
 - The whole pool parks on slow transfers while thousands of local files wait.
 
 Rejected: a worker must never block on a download. Two pools (4 enrich + 4
-download) are separate I/O budgets connected by the `freshly` hand-off (selected).
+download) are separate I/O budgets connected by the `freshly` hand-off (selected);
+Store's `enrichment_claimed_until` lease is the SQL dequeue gate, not a maintained
+coordinator backlog.
 
 ### Alternative B — Maintain explicit pending-work partitions
 

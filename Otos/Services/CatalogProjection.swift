@@ -1,6 +1,8 @@
 import Foundation
 import OSLog
 
+// swiftlint:disable file_length
+
 /// Catalog Projection guide
 ///
 /// This actor is the complete read-model boundary between catalog truth and the
@@ -23,8 +25,12 @@ import OSLog
 /// Store invalidations bump a scalar grid detail generation, so detail-only
 /// thumbnail/date/name changes still reach the visible cell detail reader without
 /// reintroducing whole-asset UI state. Asset order is produced by Store-owned SQL
-/// ordering; the projection no longer caches order. Missing selected libraries are
-/// normalized here, and fallback is retained only if no newer intent arrived.
+/// ordering for structural/scope changes; detail-only changes reuse the last ordered
+/// IDs because enrichment cannot affect membership or sort order. Missing selected
+/// libraries are normalized here, and empty-state policy asks Store for a separate
+/// cataloged count only when no assets are visible, so unavailable persisted rows
+/// still produce "no available media" instead of "no media." Selection fallback is
+/// retained only if no newer intent arrived.
 actor CatalogProjection {
     // swiftlint:disable:next line_length
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], SidebarSelection) async -> CatalogWindowState
@@ -133,6 +139,8 @@ actor CatalogProjection {
     private var publicationTask: Task<Void, Never>?
     private var lastPublishedState: CatalogWindowState?
     private var detailRefreshGeneration: UInt64 = 0
+    private var needsOrderRequery = true
+    private var cachedOrderedAssetIDs: [MediaAssetID] = []
 
     init(
         cadence: Duration = .milliseconds(100),
@@ -171,6 +179,7 @@ actor CatalogProjection {
             return
         }
         sidebarSelection = selection
+        needsOrderRequery = true
         markDirty()
     }
 
@@ -230,6 +239,12 @@ private extension CatalogProjection {
             if sidebarSelection == .library(path) {
                 sidebarSelection = .allMedia
             }
+        }
+        switch change {
+        case .catalogChanged, .libraryRemoved:
+            needsOrderRequery = true
+        case .assetsDetailChanged:
+            break
         }
         detailRefreshGeneration &+= 1
         markDirty()
@@ -316,6 +331,8 @@ private extension CatalogProjection {
         publicationTask = nil
         dirty = false
         lastPublishedState = nil
+        needsOrderRequery = true
+        cachedOrderedAssetIDs = []
     }
 
     private func retainResolvedSelection(
@@ -338,22 +355,49 @@ private extension CatalogProjection {
     ) async -> (CatalogWindowState, BuildMetrics) {
         let libraries = Self.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let orderStart = Date()
         let orderedAssetIDs: [MediaAssetID]
-        do {
-            orderedAssetIDs = try await store.orderedAssetIDs(
-                for: sidebarSelection,
-                availableLibraryPaths: availableLibraryPaths
-            )
-        } catch {
-            OtosLog.catalog.error("Catalog ordered asset query failed")
-            orderedAssetIDs = []
+        let orderQueryMs: Int
+        if needsOrderRequery {
+            let orderStart = Date()
+            do {
+                orderedAssetIDs = try await store.orderedAssetIDs(
+                    for: sidebarSelection,
+                    availableLibraryPaths: availableLibraryPaths
+                )
+                cachedOrderedAssetIDs = orderedAssetIDs
+                needsOrderRequery = false
+                orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
+            } catch {
+                OtosLog.catalog.error("Catalog ordered asset query failed")
+                orderedAssetIDs = cachedOrderedAssetIDs
+                orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
+            }
+        } else {
+            orderedAssetIDs = cachedOrderedAssetIDs
+            orderQueryMs = 0
+        }
+        let scopedAssetIDs = Self.assetIDs(
+            for: sidebarSelection,
+            orderedAssetIDs: orderedAssetIDs,
+            availableLibraryPaths: availableLibraryPaths
+        )
+        let allAssetCount: Int
+        if scopedAssetIDs.isEmpty {
+            do {
+                allAssetCount = try await store.catalogedAssetCount(for: sidebarSelection)
+            } catch {
+                OtosLog.catalog.error("Catalog asset count query failed")
+                allAssetCount = orderedAssetIDs.count
+            }
+        } else {
+            allAssetCount = orderedAssetIDs.count
         }
         return await buildWindowState(
             libraries: libraries,
             orderedAssetIDs: orderedAssetIDs,
             sidebarSelection: sidebarSelection,
-            orderQueryMs: DiagnosticsTiming.milliseconds(since: orderStart)
+            allAssetCount: allAssetCount,
+            orderQueryMs: orderQueryMs
         )
     }
 
@@ -361,6 +405,7 @@ private extension CatalogProjection {
         libraries unsortedLibraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
         sidebarSelection: SidebarSelection,
+        allAssetCount: Int? = nil,
         orderQueryMs: Int = 0
     ) async -> (CatalogWindowState, BuildMetrics) {
         if let injectedState = await injectedWindowState(
@@ -388,7 +433,7 @@ private extension CatalogProjection {
         let mediaEmptyState = Self.mediaEmptyState(
             for: resolvedSidebarSelection,
             libraries: libraries,
-            allAssetCount: orderedAssetIDs.count,
+            allAssetCount: allAssetCount ?? orderedAssetIDs.count,
             selectedAssetCount: scopedAssetIDs.count
         )
 

@@ -190,7 +190,12 @@ Takes current library rows plus Store-ordered asset IDs and produces a
   orders by that indexed key and Projection receives only IDs. The schema has
   root-local indexes for selected-library reads and global indexes for All Media
   reads, so SQLite can stream the ordered identities without temporary sort work.
-  There is no order cache and no full asset map in window state.
+  Projection reuses the last ordered-ID result for detail-only Store changes
+  because enrichment cannot change membership or sort order; structural changes and
+  scope changes still query Store. If the visible scope is empty, Projection asks
+  Store for a separate cataloged count so it can tell "no media exists" from
+  "media exists but every root is unavailable." There is no full asset map in window
+  state.
 - **Equal-state suppression.** If a rebuild produces a state identical to the last
   one, it is not published — the UI is never disturbed by a no-op.
 
@@ -249,9 +254,10 @@ The write-side satellite from §2. Read its file guide first. It runs two worker
 pools — one that enriches already-local files, one that downloads (materializes)
 dataless cloud files — and decides what to work on next by asking Store for a
 bounded set of current enrichment candidates, prioritizing the viewport and freshly
-materialized IDs. It keeps almost no state of its own: the work is *queried* from
-Store, not maintained in a backlog. Its products are written back through
-`CatalogStore.applyEnrichmentBatch` in batches. See
+materialized IDs. Store atomically claims those rows with
+`enrichment_claimed_until`; the coordinator's sets are process-local scheduling
+state, not a SQL exclusion list or durable backlog. Its products are written back
+through `CatalogStore.applyEnrichmentBatch` in batches. See
 `docs/adr/0009-enrichment-storage-and-staleness.md`,
 `docs/adr/0010-store-owned-query-catalog-and-identity-grid.md`, and
 `docs/specs/0022-metadata-and-thumbnail-enrichment.md`.
@@ -299,8 +305,9 @@ instead of guessing.
 6. Meanwhile the Store re-scans the libraries in the background to reconcile with
    the current filesystem. If nothing changed, it stays silent (no needless work).
 7. After load, `CatalogFilesystemWatcher` subscribes to macOS FSEvents for each
-   saved root. Changes under a root debounce (500 ms quiet period) and schedule a
-   full-root rescan for **that root only** through the same scan pipeline.
+   saved root. Changes under a root debounce (500 ms quiet period). Safe single
+   regular-file events reconcile one path; ambiguous events schedule a full-root
+   rescan for **that root only** through the same scan pipeline.
 
 **Filesystem changes while the app is running:**
 
@@ -308,9 +315,15 @@ instead of guessing.
 2. `CatalogFilesystemWatcher` forwards the event to `CatalogStore` (never SQLite).
 3. The Store ignores events until that root's first scan has completed, then
    resets a per-root debounce timer on each burst.
-4. When the quiet period elapses, Store calls `enqueueScans([root])` — or defers
-   until the current scan for that root finishes (`rescanAfterCurrentScan`).
-5. The existing scan → batch → reconcile → notify → Projection path updates the grid.
+4. When the quiet period elapses, Store classifies the event batch. Single regular-
+   file creates/modifies read filesystem facts through `CatalogScannedFileReader`
+   and upsert one row; single regular-file removes delete one row only after Store
+   checks that exact path is absent.
+5. Directory, symlink, dropped, unknown, subtree, and active-scan cases fall back to
+   `enqueueScans([root])` — or defer until the current scan for that root finishes
+   (`rescanAfterCurrentScan`).
+6. Either path notifies Store consumers only if catalog-visible facts changed, and
+   Projection updates the grid on its next coalesced tick.
 
 **Adding a library:**
 

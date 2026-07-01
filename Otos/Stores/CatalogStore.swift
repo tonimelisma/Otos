@@ -10,6 +10,7 @@ import OSLog
 /// observe that the selected library instance disappeared.
 nonisolated enum CatalogStoreChange: Equatable {
     case catalogChanged
+    case assetsDetailChanged
     case libraryRemoved(LibraryRootPath)
 }
 
@@ -19,9 +20,10 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// overlay storage and the per-asset working set; the actor keeps only root identity,
 /// root availability, scan lifecycle, and notification state resident. Filesystem scans
 /// write SQLite and notify consumers only when those writes actually inserted, updated,
-/// or deleted rows. While the app runs, `CatalogFilesystemWatcher` forwards macOS events
-/// to per-root debounced full-root rescans through the same scan pipeline. Views never
-/// access persistence directly.
+/// or deleted rows. While the app runs, `CatalogFilesystemWatcher` forwards macOS
+/// events to per-root debounced reconciliation: safe single-file events update one
+/// row and unsafe events fall back to the full scan pipeline. Views never access
+/// persistence directly.
 ///
 /// Why an actor: the database, the in-memory catalog, and background scans all
 /// touch the same state, and a scan streams in thousands of files concurrently with
@@ -40,7 +42,9 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// make this actor reentrant, so active scans carry the root path and private root-row
 /// instance they own and revalidate both after each database await. Completed scans
 /// reconcile missing paths; failed, cancelled, or stale scans preserve prior rows because
-/// incomplete observation cannot prove removal.
+/// incomplete observation cannot prove removal. A single regular-file remove event
+/// proves deletion only after Store checks that exact path is absent under an armed
+/// available root.
 actor CatalogStore {
     enum Location {
         case application(bundleIdentifier: String)
@@ -98,6 +102,9 @@ actor CatalogStore {
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
     private var rescanAfterCurrentScan: Set<LibraryRootPath> = []
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
+    private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
+
+    private static let enrichmentClaimLease: TimeInterval = 300
 
     init(
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
@@ -193,6 +200,17 @@ extension CatalogStore {
         return ids
     }
 
+    func catalogedAssetCount(for selection: SidebarSelection) async throws -> Int {
+        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: Set(rootsByPath.keys))
+        guard !rootIDs.isEmpty else {
+            return 0
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Self.countAssets(rootIDs: rootIDs, db: db)
+        }
+    }
+
     func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset] {
         guard !ids.isEmpty else {
             return [:]
@@ -274,7 +292,6 @@ extension CatalogStore {
 
     func enrichmentCandidates(
         prioritizing priorityIDs: [MediaAssetID],
-        excluding excludedIDs: Set<MediaAssetID>,
         limit: Int
     ) async throws -> [MediaAsset] {
         guard limit > 0 else {
@@ -289,7 +306,7 @@ extension CatalogStore {
 
         var candidates: [MediaAsset] = []
         candidates.reserveCapacity(limit)
-        var claimedIDs = excludedIDs
+        var claimedIDs = Set<MediaAssetID>()
         let uniquePriorityIDs = unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
 
         if !uniquePriorityIDs.isEmpty {
@@ -297,15 +314,15 @@ extension CatalogStore {
                 ids: uniquePriorityIDs,
                 limit: limit
             ))
+            for asset in candidates {
+                claimedIDs.insert(asset.id)
+            }
         }
 
         if candidates.count < limit {
             let remaining = limit - candidates.count
-            let queriedCandidates = try await queriedEnrichmentCandidates(
-                excluding: claimedIDs,
-                limit: remaining
-            )
-            for asset in queriedCandidates where candidates.count < limit {
+            let queriedCandidates = try await claimedEnrichmentCandidates(limit: remaining)
+            for asset in queriedCandidates where candidates.count < limit && !claimedIDs.contains(asset.id) {
                 claimedIDs.insert(asset.id)
                 candidates.append(asset)
             }
@@ -315,7 +332,7 @@ extension CatalogStore {
         OtosLog.catalog.debug(
             """
             Catalog enrichment candidates queried priority=\(priorityIDs.count, privacy: .public) \
-            excluded=\(excludedIDs.count, privacy: .public) returned=\(candidates.count, privacy: .public) \
+            returned=\(candidates.count, privacy: .public) \
             queryMs=\(queryMs, privacy: .public)
             """
         )
@@ -324,12 +341,39 @@ extension CatalogStore {
             phase: "finish",
             fields: [
                 "priority": "\(priorityIDs.count)",
-                "excluded": "\(excludedIDs.count)",
                 "returned": "\(candidates.count)",
                 "queryMs": "\(queryMs)",
             ]
         )
         return candidates
+    }
+
+    func releaseEnrichmentClaims(_ ids: [MediaAssetID]) async throws {
+        guard !ids.isEmpty else {
+            return
+        }
+        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            try Self.releaseEnrichmentClaims(ids: ids, rootIDsByPath: rootIDsByPathBeforeWrite, db: db)
+        }
+    }
+
+    func refreshEnrichmentClaims(_ ids: [MediaAssetID]) async throws {
+        guard !ids.isEmpty else {
+            return
+        }
+        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
+        let dbWriter = try database()
+        try await dbWriter.write { db in
+            try Self.refreshEnrichmentClaims(
+                ids: ids,
+                rootIDsByPath: rootIDsByPathBeforeWrite,
+                claimedUntil: claimedUntil,
+                db: db
+            )
+        }
     }
 
     private func unclaimedPriorityIDs(
@@ -347,6 +391,9 @@ extension CatalogStore {
 
     private func priorityEnrichmentCandidates(ids: [MediaAssetID], limit: Int) async throws -> [MediaAsset] {
         let priorityAssetsByID = try await mediaAssets(for: ids)
+        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
+        let dbWriter = try database()
         var candidates: [MediaAsset] = []
         candidates.reserveCapacity(limit)
         for id in ids {
@@ -355,8 +402,20 @@ extension CatalogStore {
             }
             guard let asset = priorityAssetsByID[id],
                   asset.needsEnrichment,
-                  availabilityByRootPath[asset.libraryRootPath] == .available
+                  availabilityByRootPath[asset.libraryRootPath] == .available,
+                  let rootID = rootIDsByPathBeforeWrite[asset.libraryRootPath]
             else {
+                continue
+            }
+            let claimed = try await dbWriter.write { db in
+                try Self.claimEnrichmentAsset(
+                    libraryRootID: rootID,
+                    relativePath: asset.relativePath,
+                    claimedUntil: claimedUntil,
+                    db: db
+                )
+            }
+            guard claimed else {
                 continue
             }
             candidates.append(asset)
@@ -364,19 +423,15 @@ extension CatalogStore {
         return candidates
     }
 
-    private func queriedEnrichmentCandidates(
-        excluding claimedIDs: Set<MediaAssetID>,
-        limit: Int
-    ) async throws -> [MediaAsset] {
+    private func claimedEnrichmentCandidates(limit: Int) async throws -> [MediaAsset] {
         let rootIDsByPathBeforeRead = rootRowIDsByPath
         let availableRootIDs = availableLibraryRootIDs()
-        let excludedIDsBeforeRead = Array(claimedIDs)
+        let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
         let dbWriter = try database()
-        let storedAssets = try await dbWriter.read { db in
+        let storedAssets = try await dbWriter.write { db in
             try Self.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: availableRootIDs,
-                excludedIDs: excludedIDsBeforeRead,
-                rootIDsByPath: rootIDsByPathBeforeRead,
+                claimNotAfter: claimedUntil,
                 limit: limit,
                 db: db
             )
@@ -388,8 +443,7 @@ extension CatalogStore {
             else {
                 return nil
             }
-            let asset = mediaAsset(from: storedAsset, rootPath: rootPath)
-            return asset.needsEnrichment && !claimedIDs.contains(asset.id) ? asset : nil
+            return mediaAsset(from: storedAsset, rootPath: rootPath)
         }
     }
 
@@ -518,7 +572,13 @@ extension CatalogStore {
             fields: ["count": "\(appliedCount)"]
         )
         if appliedCount > 0 {
-            notifyCatalogChanged()
+            notifyCatalogChanged(.assetsDetailChanged)
+        }
+        let resultIDs = results.map(\.id)
+        do {
+            try await releaseEnrichmentClaims(resultIDs)
+        } catch {
+            OtosLog.metadata.error("Enrichment claim release failed count=\(resultIDs.count, privacy: .public)")
         }
         return .applied(count: appliedCount)
     }
@@ -1063,6 +1123,7 @@ private extension CatalogStore {
         }
 
         if rescanAfterCurrentScan.remove(rootPath) != nil {
+            filesystemEventBatches.removeValue(forKey: rootPath)
             enqueueScans([rootPath])
         }
 
@@ -1178,7 +1239,8 @@ private extension CatalogStore {
                 ]
             )
         }
-        debounceFilesystemRescan(for: root)
+        filesystemEventBatches[root, default: []].append(event)
+        debounceFilesystemReconcile(for: root)
     }
 
     private func recordFilesystemEventDrop(path: String, root: LibraryRootPath?, reason: String) {
@@ -1210,7 +1272,7 @@ private extension CatalogStore {
         }
     }
 
-    private func debounceFilesystemRescan(for root: LibraryRootPath) {
+    private func debounceFilesystemReconcile(for root: LibraryRootPath) {
         filesystemDebounceTasks[root]?.cancel()
         let debounce = filesystemEventDebounce
         filesystemDebounceTasks[root] = Task { [root] in
@@ -1218,7 +1280,7 @@ private extension CatalogStore {
             guard !Task.isCancelled else {
                 return
             }
-            await scheduleFilesystemRescan(root)
+            await processFilesystemEventBatch(for: root)
         }
         Task {
             await diagnostics?.record(
@@ -1229,29 +1291,34 @@ private extension CatalogStore {
         }
     }
 
-    private func scheduleFilesystemRescan(_ root: LibraryRootPath) async {
-        let signpost = OtosSignpost.catalog.beginInterval("FilesystemRescanScheduled")
+    // swiftlint:disable:next function_body_length
+    private func processFilesystemEventBatch(for root: LibraryRootPath) async {
+        let signpost = OtosSignpost.catalog.beginInterval("FilesystemEventBatch")
         defer {
-            OtosSignpost.catalog.endInterval("FilesystemRescanScheduled", signpost)
+            OtosSignpost.catalog.endInterval("FilesystemEventBatch", signpost)
         }
 
         guard rootsByPath[root] != nil else {
+            filesystemEventBatches.removeValue(forKey: root)
             await recordFilesystemEventDrop(root: root, reason: "removed")
             return
         }
         guard filesystemWatchingArmed.contains(root) else {
+            filesystemEventBatches.removeValue(forKey: root)
             await recordFilesystemEventDrop(root: root, reason: "unarmed")
             return
         }
         guard rootIsAvailable(root) else {
+            filesystemEventBatches.removeValue(forKey: root)
             await recordFilesystemEventDrop(root: root, reason: "unavailable")
             return
         }
 
         if activeScan?.rootPath == root {
             rescanAfterCurrentScan.insert(root)
+            filesystemEventBatches.removeValue(forKey: root)
             OtosLog.catalog.debug(
-                "Filesystem rescan deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
+                "Filesystem reconcile deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
             )
             await diagnostics?.record(
                 operation: "catalog.filesystemEvent",
@@ -1264,16 +1331,173 @@ private extension CatalogStore {
             return
         }
 
-        enqueueScans([root])
-        OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
+        let events = filesystemEventBatches.removeValue(forKey: root) ?? []
+        guard !events.isEmpty else {
+            return
+        }
+
+        if events.contains(where: { FilesystemEventFlags(event: $0).requiresFullRootScan }) {
+            enqueueScans([root])
+            OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
+            await diagnostics?.record(
+                operation: "catalog.filesystemEvent",
+                phase: "schedule",
+                fields: [
+                    "rootPath": root.rawValue,
+                    "mode": "fullRoot",
+                ]
+            )
+            return
+        }
+
+        var catalogChanged = false
+        for event in events {
+            guard await reconcileFilesystemEvent(event, root: root) else {
+                continue
+            }
+            catalogChanged = true
+        }
+        if catalogChanged {
+            notifyCatalogChanged()
+        }
         await diagnostics?.record(
             operation: "catalog.filesystemEvent",
-            phase: "schedule",
+            phase: "reconcile",
             fields: [
                 "rootPath": root.rawValue,
-                "deferred": "false",
+                "eventCount": "\(events.count)",
+                "catalogChanged": "\(catalogChanged)",
             ]
         )
+    }
+
+    @discardableResult
+    private func reconcileFilesystemEvent(_ event: FilesystemEvent, root: LibraryRootPath) async -> Bool {
+        let flags = FilesystemEventFlags(event: event)
+        guard let action = flags.singleFileAction,
+              let rootRowID = rootRowIDsByPath[root]
+        else {
+            return false
+        }
+
+        switch action {
+        case .deleteIfMissing:
+            return await reconcileDeletedFile(at: event.path, root: root, rootRowID: rootRowID)
+        case .upsert:
+            return await reconcileUpsertedFile(at: event.path, root: root, rootRowID: rootRowID)
+        }
+    }
+
+    // swiftlint:disable:next function_body_length
+    private func reconcileDeletedFile(
+        at absolutePath: String,
+        root: LibraryRootPath,
+        rootRowID: Int64
+    ) async -> Bool {
+        let fileURL = URL(fileURLWithPath: absolutePath, isDirectory: false)
+        if FileManager.default.fileExists(atPath: absolutePath) {
+            return await reconcileUpsertedFile(at: absolutePath, root: root, rootRowID: rootRowID)
+        }
+        guard let relativePath = CatalogPath.relativePath(rootPath: root, fileURL: fileURL) else {
+            return false
+        }
+
+        guard let dbQueue = try? database() else {
+            return false
+        }
+
+        let thumbnailPath: String?
+        do {
+            thumbnailPath = try await dbQueue.read { db in
+                try Row.fetchOne(
+                    db,
+                    sql: """
+                    SELECT thumbnail_path
+                    FROM media_asset
+                    WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [rootRowID, relativePath.rawValue]
+                )?["thumbnail_path"]
+            }
+        } catch {
+            return false
+        }
+        if thumbnailPath == nil {
+            let rowCount: Int
+            do {
+                rowCount = try await dbQueue.read { db in
+                    try Int.fetchOne(
+                        db,
+                        sql: "SELECT COUNT(*) FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                        arguments: [rootRowID, relativePath.rawValue]
+                    ) ?? 0
+                }
+            } catch {
+                return false
+            }
+            guard rowCount > 0 else {
+                return false
+            }
+        }
+
+        do {
+            let deleted = try await dbQueue.write { db -> Bool in
+                try db.execute(
+                    sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [rootRowID, relativePath.rawValue]
+                )
+                return db.changesCount > 0
+            }
+            guard deleted else {
+                return false
+            }
+        } catch {
+            return false
+        }
+        if let thumbnailPath, let thumbnailDirectory {
+            ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
+        }
+        return true
+    }
+
+    private func reconcileUpsertedFile(
+        at absolutePath: String,
+        root: LibraryRootPath,
+        rootRowID: Int64
+    ) async -> Bool {
+        let fileURL = URL(fileURLWithPath: absolutePath, isDirectory: false)
+        guard FileManager.default.fileExists(atPath: absolutePath) else {
+            return false
+        }
+        guard let scannedFile = try? CatalogScannedFileReader.scannedFile(
+            fileURL: fileURL,
+            rootPath: root
+        ) else {
+            return false
+        }
+
+        let dbQueue: (any DatabaseWriter)?
+        do {
+            dbQueue = try database()
+        } catch {
+            return false
+        }
+        guard let dbQueue else {
+            return false
+        }
+
+        do {
+            return try await dbQueue.write { db in
+                try Self.upsertScannedFile(
+                    scannedFile,
+                    libraryRootPath: root,
+                    libraryRootID: rootRowID,
+                    db: db
+                )
+            }
+        } catch {
+            return false
+        }
     }
 
     private func recordFilesystemEventDrop(root: LibraryRootPath, reason: String) async {
@@ -1293,6 +1517,7 @@ private extension CatalogStore {
     private func cancelFilesystemDebounce(for root: LibraryRootPath) {
         filesystemDebounceTasks[root]?.cancel()
         filesystemDebounceTasks.removeValue(forKey: root)
+        filesystemEventBatches.removeValue(forKey: root)
     }
 
     private func cancelAllFilesystemDebounces() {

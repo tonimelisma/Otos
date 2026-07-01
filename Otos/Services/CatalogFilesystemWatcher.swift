@@ -132,7 +132,10 @@ private final nonisolated class WatcherState: @unchecked Sendable {
         )
 
         let flags = FSEventStreamCreateFlags(
-            kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagUseCFTypes
+            kFSEventStreamCreateFlagFileEvents
+                | kFSEventStreamCreateFlagUseCFTypes
+                | kFSEventStreamCreateFlagIgnoreSelf
+                | kFSEventStreamCreateFlagMarkSelf
         )
 
         guard let stream = FSEventStreamCreate(

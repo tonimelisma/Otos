@@ -137,23 +137,36 @@ Adjacent decisions requiring separate ADRs or specs:
    at materializes immediately; the background fill is governed by a materialized-
    first rule (enrich everything local before eagerly downloading the rest).
 
-8. **One coordinator, two pools, cursorless scheduling.** A single
+8. **One coordinator, two pools, cursorless scheduling, one claim lease.** A single
    `EnrichmentCoordinator` actor owns the scheduling and two fixed worker pools — 4
    enrichment slots and 4 materialization slots — because a worker must never block
    on a multi-second download, so the two are separate I/O-bound concurrency
    budgets (neither is CPU-bound). Scheduling is cursorless: the next units are
-   queried from Store through `enrichmentCandidates(prioritizing:excluding:limit:)`,
-   so the coordinator maintains no backlog — only the runtime state it cannot
-   derive (viewport, in-flight guards, the just-downloaded
-   `freshly` LIFO hand-off, the discovered-dataless set, the pending-apply buffer,
-   and one `eagerMode` latch). Materialization status is checked live at exactly
-   one site — the enrichment pull, immediately before the read — which is both the
-   router (materialized → enrich; dataless → download) and the ADR 0008 safety
-   gate; it is never persisted. Enrichment writes are batched (one transaction, one
-   notification per batch) because a per-asset transaction and per-asset
-   notification would crawl and re-sort the catalog on every completion.
-   Cancellation is teardown-only: eager-everything re-downloads anyway, thumbnails
-   are durable, and staleness re-queues, so per-unit cancel buys nothing.
+   queried from Store through `enrichmentCandidates(prioritizing:limit:)`, and Store
+   atomically claims returned rows with one nullable `enrichment_claimed_until`
+   column and `UPDATE ... RETURNING`. The coordinator maintains no backlog — only
+   the runtime state it cannot derive (viewport, in-flight guards, the just-
+   downloaded `freshly` LIFO hand-off, the discovered-dataless set, the pending-
+   apply buffer, and one `eagerMode` latch). Those process-local sets prevent
+   duplicate scheduling inside this coordinator; the SQLite lease is the SQL query
+   gate that prevents repeated dequeue of already-owned rows.
+
+   Claim transitions are explicit. Completed results keep their claim until
+   `applyEnrichmentBatch` attempts the write; after that attempt, successful and
+   stale-dropped results release the claim. Transient enrichment releases the claim
+   so it can retry. Dataless discovery refreshes the claim while the coordinator owns
+   download state. Successful or failed materialization releases the claim before
+   the ID is rediscovered or handed back through `freshly`; persistent write failure
+   leaves the ordinary lease expiry/backoff to avoid a tight retry loop.
+
+   Materialization status is checked live at exactly one site — the enrichment pull,
+   immediately before the read — which is both the router (materialized → enrich;
+   dataless → download) and the ADR 0008 safety gate; it is never persisted.
+   Enrichment writes are batched (one transaction, one detail-only notification per
+   batch) because a per-asset transaction and per-asset notification would crawl and
+   re-sort the catalog on every completion. Cancellation is teardown-only: eager-
+   everything re-downloads anyway, thumbnails are durable, and staleness re-queues,
+   so per-unit cancel buys nothing.
 
 ## Alternatives Considered
 

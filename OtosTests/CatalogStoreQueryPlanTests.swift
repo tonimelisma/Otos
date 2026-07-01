@@ -34,6 +34,96 @@ struct CatalogStoreQueryPlanTests {
         #expect(!usesTemporarySort(plans.rootEnrichment))
         #expect(!usesTemporarySort(plans.globalEnrichment))
     }
+
+    @Test func enrichmentClaimQueryUsesPartialIndexWithoutNotInExclusion() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 200, claimedCount: 50)
+
+        let excludedCount = 50
+        let exclusionPlaceholders = Array(repeating: "(?, ?)", count: excludedCount).joined(separator: ", ")
+        let legacySQL = """
+        SELECT library_root_id, relative_path
+        FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
+        WHERE library_root_id = ?
+          AND (
+            enriched_source_size IS NULL
+            OR enriched_source_mtime IS NULL
+            OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+               <> COALESCE(enriched_source_mtime, -1)
+          )
+          AND (library_root_id, relative_path) NOT IN (\(exclusionPlaceholders))
+        ORDER BY sort_key, relative_path
+        LIMIT ?
+        """
+        let exclusionPlan = try await dbQueue.read { db in
+            try explainPlan(
+                db,
+                sql: legacySQL,
+                arguments: StatementArguments([rootID] + legacyExclusionArguments(
+                    rootID: rootID,
+                    excludedCount: excludedCount
+                ) + [4]) ?? StatementArguments()
+            )
+        }
+        let claimPlan = try await dbQueue.read { db in
+            try explainPlan(
+                db,
+                sql: claimEnrichmentSQL,
+                arguments: [rootID, Date().timeIntervalSince1970, 4, Date().timeIntervalSince1970 + 300]
+            )
+        }
+
+        #expect(legacySQL.localizedCaseInsensitiveContains("NOT IN"))
+        #expect(!exclusionPlan.isEmpty)
+        #expect(claimPlan.contains("idx_media_asset_needs_enrichment_root"))
+        #expect(!claimEnrichmentSQL.localizedCaseInsensitiveContains("NOT IN"))
+    }
+
+    @Test func enrichmentClaimUpdateReturningClaimsRows() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 3, claimedCount: 0)
+        let claimedUntil = Date().timeIntervalSince1970 + 300
+
+        let claimed = try await dbQueue.write { db in
+            try CatalogStore.fetchStoredAssetsNeedingEnrichment(
+                rootIDs: [rootID],
+                claimNotAfter: claimedUntil,
+                limit: 2,
+                db: db
+            )
+        }
+        #expect(claimed.count == 2)
+
+        let stillClaimed = try await dbQueue.read { db in
+            try Int.fetchOne(
+                db,
+                sql: """
+                SELECT COUNT(*) FROM media_asset
+                WHERE library_root_id = ?
+                  AND enrichment_claimed_until IS NOT NULL
+                """,
+                arguments: [rootID]
+            ) ?? 0
+        }
+        #expect(stillClaimed == 2)
+    }
 }
 
 private struct QueryPlans {
@@ -73,6 +163,81 @@ private func insertPlanFixture(_ dbQueue: DatabaseQueue) async throws -> (Int64,
         return (rootID1, rootID2)
     }
 }
+
+private func insertEnrichmentClaimFixture(
+    _ dbQueue: DatabaseQueue,
+    assetCount: Int,
+    claimedCount: Int
+) async throws -> Int64 {
+    try await dbQueue.write { db in
+        try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-claim"])
+        let rootID = db.lastInsertedRowID
+        let claimedUntil = Date().timeIntervalSince1970 + 300
+        for index in 0 ..< assetCount {
+            let relativePath = String(format: "asset-%04d.jpg", index)
+            let claimed: Double? = index < claimedCount ? claimedUntil : nil
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id,
+                    relative_path,
+                    sort_key,
+                    name,
+                    content_type_identifier,
+                    byte_size,
+                    content_modified_at_unix,
+                    enrichment_claimed_until
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    rootID,
+                    relativePath,
+                    relativePath,
+                    relativePath,
+                    "public.jpeg",
+                    1,
+                    1000,
+                    claimed,
+                ]
+            )
+        }
+        return rootID
+    }
+}
+
+private func legacyExclusionArguments(rootID: Int64, excludedCount: Int) -> [Any] {
+    (0 ..< excludedCount).flatMap { index -> [Any] in
+        [rootID, String(format: "asset-%04d.jpg", index)]
+    }
+}
+
+private let claimEnrichmentSQL = """
+WITH candidates AS (
+    SELECT library_root_id, relative_path
+    FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
+    WHERE library_root_id = ?
+      AND (
+        enriched_source_size IS NULL
+        OR enriched_source_mtime IS NULL
+        OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+        OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+           <> COALESCE(enriched_source_mtime, -1)
+      )
+      AND (
+        enrichment_claimed_until IS NULL
+        OR enrichment_claimed_until < ?
+      )
+    ORDER BY sort_key, relative_path
+    LIMIT ?
+)
+UPDATE media_asset
+SET enrichment_claimed_until = ?
+WHERE (library_root_id, relative_path) IN (
+    SELECT library_root_id, relative_path FROM candidates
+)
+RETURNING library_root_id, relative_path
+"""
 
 private func explainPlan(
     _ db: Database,

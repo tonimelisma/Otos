@@ -38,7 +38,17 @@ Performance-sensitive specs must name:
 
 ## Repo Tooling
 
-Live logs and signposts:
+Timestamped per-run capture (build, launch, stream until Ctrl+C):
+
+```sh
+script/capture-run.sh
+```
+
+Output lands under `build/Logs/run-<ISO8601>-<pid>.log` with compact unified-log
+timestamps, process, subsystem, category, and signposts. Prefer this over ad-hoc
+debugger console redirection when analyzing a session.
+
+Live logs and signposts (attach to an already-running app):
 
 ```sh
 script/logs.sh
@@ -46,6 +56,10 @@ script/logs.sh UI
 script/logs.sh Performance
 script/logs.sh Thumbnails
 ```
+
+When reproducing main-thread stalls or priority inversions, enable Xcode's
+**Thread Performance Checker** under **Product → Scheme → Edit Scheme → Run →
+Diagnostics**.
 
 SwiftUI/AppKit high-cardinality view jank:
 

@@ -23,7 +23,9 @@ import UniformTypeIdentifiers
 /// A returned path set proves the completed observation used for reconciliation.
 /// Cancellation or any filesystem issue prevents that success return, so Store
 /// preserves earlier rows. Package descendants and symlinks are skipped before
-/// they can expand traversal beyond the regular-file catalog contract.
+/// they can expand traversal beyond the regular-file catalog contract. Full scans
+/// and targeted filesystem-event reconciliation share `CatalogScannedFileReader`
+/// so a one-path upsert observes the same facts and media eligibility as a scan.
 nonisolated struct CatalogScanner {
     var scanRoot: @Sendable (
         _ rootPath: LibraryRootPath,
@@ -189,9 +191,6 @@ private nonisolated enum LiveCatalogScanner {
             return nil
         }
         if values.isPackage == true {
-            // The enumerator option already prevents package descendants from
-            // being visited. Keep this branch so diagnostics show that the
-            // package root was intentionally skipped, not silently lost.
             scanState.skippedPackages.append(
                 SkippedPackage(
                     path: fileURL.path(percentEncoded: false),
@@ -203,24 +202,13 @@ private nonisolated enum LiveCatalogScanner {
             }
             return nil
         }
-        guard values.isRegularFile == true else {
-            return nil
-        }
-        guard MediaEligibility.isCatalogMedia(contentType: values.contentType) else {
+        if values.isRegularFile == true,
+           !MediaEligibility.isCatalogMedia(contentType: values.contentType)
+        { // swiftlint:disable:this opening_brace
             scanState.skippedNonMediaCount += 1
             return nil
         }
-        guard let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL) else {
-            throw CatalogScannerIssue.relativePathUnavailable
-        }
-        return ScannedMediaFile(
-            relativePath: relativePath,
-            name: values.name,
-            contentTypeIdentifier: values.contentType?.identifier,
-            byteSize: values.fileSize.map(Int64.init),
-            createdAt: values.creationDate,
-            contentModifiedAt: values.contentModificationDate
-        )
+        return try CatalogScannedFileReader.scannedFile(fileURL: fileURL, rootPath: rootPath)
     }
 
     private static func flush(

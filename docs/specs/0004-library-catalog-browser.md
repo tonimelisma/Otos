@@ -41,12 +41,13 @@ Out of scope:
 
 In scope (filesystem watching):
 
-- macOS FSEvents under saved library roots schedule debounced full-root rescans
-  for the affected root only (spec 0023).
+- macOS FSEvents under saved library roots schedule debounced reconciliation for
+  the affected root: safe single regular-file events reconcile one path, while
+  unsafe events fall back to full-root rescans (specs 0023 and 0027).
 
 Out of scope:
 
-- Per-path incremental FSEvents catalog updates.
+- Directory/subtree incremental FSEvents catalog updates.
 - Metadata, thumbnails, previews, editing,
   import/export, sandboxing, bookmarks, AppKit root picker, and parallel scans.
 

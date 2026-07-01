@@ -120,21 +120,23 @@ subordinate, rebuildable overlay.
    catalog row, the thumbnail, and any derived values, only when the item is proven
    deleted or when the user explicitly removes that library root from Otos. There
    are no separately purged overlay classes.
-4. Proven deletion means a file that was previously cataloged at a root-relative
-   path is absent from a completed enumeration of a reachable root. Temporary
-   absence — an ejected or offline volume, an unreachable root, or a dataless cloud
-   placeholder that still enumerates — is not a deletion and must not purge overlay.
-   This preserves and extends ADR 0002's rule that deletion happens only after a
-   completed scan, never after a cancelled or failed scan. One case is deliberately
-   outside this current guarantee: a user-excluded selective-sync subtree inside an
-   otherwise reachable root enumerates without its paths, so `reconcileMissingAssets`
-   cannot today distinguish it from a real deletion and will purge it. That is
-   acceptable only while overlay is derived-only and rebuildable; preserving such a
-   subtree is a forward invariant a detector must satisfy before user-authored
-   overlay ships, not a guarantee the current implementation makes. Explicit
-   library-root removal is different from temporary absence: the user chose to stop
-   tracking that root in Otos, so Otos drops the root's catalog rows and derived
-   overlay without changing originals on disk.
+4. Proven deletion has two current proof paths. The broad proof is a file that was
+   previously cataloged at a root-relative path being absent from a completed
+   enumeration of a reachable root. The narrow proof is a regular-file remove
+   FSEvent delivered for an armed available root where Store checks that exact path
+   and finds it absent before deleting only that catalog row and its thumbnail
+   overlay. Temporary absence — an ejected or offline volume, an unreachable root,
+   or a dataless cloud placeholder that still enumerates — is not a deletion and
+   must not purge overlay. A cancelled or failed full scan never proves deletion.
+   One case is deliberately outside this current guarantee: a user-excluded
+   selective-sync subtree inside an otherwise reachable root enumerates without its
+   paths, so `reconcileMissingAssets` cannot today distinguish it from a real
+   deletion and will purge it. That is acceptable only while overlay is derived-only
+   and rebuildable; preserving such a subtree is a forward invariant a detector must
+   satisfy before user-authored overlay ships, not a guarantee the current
+   implementation makes. Explicit library-root removal is different from temporary
+   absence: the user chose to stop tracking that root in Otos, so Otos drops the
+   root's catalog rows and derived overlay without changing originals on disk.
 5. Asset identity is the filesystem path, the `(library_root_id, relative_path)`
    pair from ADR 0002. Otos does not store durable filesystem identifiers, content
    fingerprints, or generated UUIDs, and does not write sidecars to track files. An

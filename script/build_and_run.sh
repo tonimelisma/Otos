@@ -53,6 +53,7 @@ case "$MODE" in
     ;;
   *)
     echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "For a timestamped per-run log file, use script/capture-run.sh" >&2
     exit 2
     ;;
 esac

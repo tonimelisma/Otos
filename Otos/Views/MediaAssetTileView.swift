@@ -31,6 +31,10 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         guard let tileView else {
             return
         }
+        let signpost = OtosSignpost.ui.beginInterval("MediaGridCellConfiguration")
+        defer {
+            OtosSignpost.ui.endInterval("MediaGridCellConfiguration", signpost)
+        }
         let start = Date()
         tileView.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
         let elapsedMs = DiagnosticsTiming.milliseconds(since: start)

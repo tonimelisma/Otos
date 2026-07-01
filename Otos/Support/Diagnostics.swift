@@ -111,11 +111,21 @@ actor CatalogDiagnostics {
         return handle
     }
 
+    /// Debug app builds write shared JSONL; test runs disable `.shared` by default so
+    /// the aggregate diagnostics file is not polluted by the test binary.
     private nonisolated static var defaultIsEnabled: Bool {
         #if DEBUG
-            true
+            !isRunningUnderTestHarness
         #else
             false
         #endif
+    }
+
+    private nonisolated static var isRunningUnderTestHarness: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        if environment["XCTestConfigurationFilePath"] != nil {
+            return true
+        }
+        return ProcessInfo.processInfo.processName == "xctest"
     }
 }

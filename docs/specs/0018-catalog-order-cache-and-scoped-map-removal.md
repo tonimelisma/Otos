@@ -98,8 +98,9 @@ identity-plus-generation grid state.
 
 ## Acceptance Criteria
 
-- `CatalogProjection` has no order cache. Current tests prove Store-ordered IDs
-  and visible-detail resolution through the grid detail reader.
+- `CatalogProjection` has no resident order cache for structural changes; current
+  ADR 0010 behavior reuses the last Store-ordered IDs only for detail-only Store
+  changes and still resolves visible detail through the grid detail reader.
 - Diagnostics no longer emit the removed fields; the summarizer no longer counts
   them.
 - `script/verify.sh` passes.

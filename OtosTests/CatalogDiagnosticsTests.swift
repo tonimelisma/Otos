@@ -50,6 +50,14 @@ struct CatalogDiagnosticsTests {
         #expect(contents.contains("\"operation\":\"after\""))
     }
 
+    @Test func defaultSharedDiagnosticsIsDisabledWhileTestsRun() async {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appending(path: "shared-default-\(UUID().uuidString)/catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL)
+        await diagnostics.record(operation: "test", phase: "finish")
+        #expect(!FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
+    }
+
     @Test func disabledDiagnosticsDoesNotCreateAFile() async throws {
         let temp = try makeDiagnosticsTemporaryDirectory()
         let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")

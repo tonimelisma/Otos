@@ -20,7 +20,10 @@ Implemented in this increment. The current code has no resident
 `CatalogMediaGridState.assetsByID`, and no `metadata_blob`. Store owns indexed
 SQLite queries; Projection publishes scoped ordered IDs plus a scalar
 detail-refresh generation; the AppKit grid uses that generation to re-read visible
-details through a Store-backed `MediaTileDetailReader`.
+details through a Store-backed `MediaTileDetailReader`. Detail-only Store changes
+reuse Projection's last ordered-ID result instead of re-running the order query.
+When no assets are visible, Projection asks Store for a separate cataloged count so
+empty-state policy can still see rows hidden by unavailable roots.
 
 ## Problem
 
@@ -224,10 +227,10 @@ actor CatalogStore {
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> [MediaAssetID]
+    func catalogedAssetCount(for selection: SidebarSelection) async throws -> Int
     func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset]
     func enrichmentCandidates(
         prioritizing priorityIDs: [MediaAssetID],
-        excluding excludedIDs: Set<MediaAssetID>,
         limit: Int
     ) async throws -> [MediaAsset]
     func metadata(for id: MediaAssetID) async throws -> AssetMetadata?
@@ -351,7 +354,9 @@ Each phase is independently shippable and must pass `script/verify.sh`.
 
 ### Phase 4: Query-Based Enrichment Selection
 
-- EnrichmentCoordinator uses `enrichmentCandidates(prioritizing:excluding:limit:)`.
+- EnrichmentCoordinator uses `enrichmentCandidates(prioritizing:limit:)`; Store
+  claims returned rows with `enrichment_claimed_until` instead of accepting a large
+  SQL exclusion list.
 - Retire `latestSnapshot`, `snapshotDirty`, and resident-map work scans.
 - Tests: viewport prioritization, stale/in-flight/pending/dataless semantics,
   re-wake after validated stale drops.
@@ -362,8 +367,8 @@ Each phase is independently shippable and must pass `script/verify.sh`.
 - Classify scan/enrichment changes through SQL-backed facts.
 - Remove `currentSnapshot()` and resident merge paths.
 - Tests: scan no-op publishes nothing; detail-only enrichment advances the grid
-  detail-refresh generation; insert and delete report correctly; stale enrichment
-  writes remain guarded by SQL.
+  detail-refresh generation without re-running the order query; insert and delete
+  report correctly; stale enrichment writes remain guarded by SQL.
 
 ### Phase 6: Scale Validation And Tuning
 
