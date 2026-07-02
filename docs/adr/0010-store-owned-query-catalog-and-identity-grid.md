@@ -200,7 +200,7 @@ The implementation removes or proves unreachable:
 - `CatalogStore.currentSnapshot()` and `makeSnapshot()`
 - `CatalogSnapshot.assetsByID`
 - `CatalogProjection.sortAssetIDs` and snapshot-based `buildWindowState`
-- `PublicationChangeSummary` full-map equality
+- `CatalogProjectionChangeSummary` full-map equality
 - `CatalogMediaGridState.assetsByID`
 - `MediaAssetCollectionViewController.assetsByID`
 - asset-value-based tile configuration

@@ -23,9 +23,10 @@ import OSLog
 /// is gone — a retain cycle (task keeps ViewModel, ViewModel keeps task) — and
 /// `deinit`, which cancels the task, could never run. So the consumer captures
 /// `self` weakly and upgrades to a strong reference only for the moment it applies
-/// one completed state, then lets go before the next wait. Projection may normalize a removed library
-/// back to All Media while preserving filter/sort; applying that result assigns
-/// the local control value directly and therefore cannot create a feedback intent.
+/// one completed state, then lets go before the next wait. Projection may normalize
+/// a removed library back to All Media while preserving filter/sort; applying that
+/// result updates local control state only when no newer local descriptor intent is
+/// pending, so stale projected states cannot roll back a user's rapid query edits.
 @MainActor
 @Observable
 final class CatalogWindowViewModel {
@@ -352,11 +353,21 @@ extension CatalogWindowViewModel {
         let applyStart = Date()
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateApply")
 
-        // Projection is authoritative for whether the selected library still
-        // exists. Direct assignment is not a new user intent and deliberately
-        // bypasses the selection stream.
-        queryDescriptor = nextState.queryDescriptor
-        sidebarSelection = nextState.resolvedSidebarSelection
+        // Projection is authoritative for whether the selected library still exists,
+        // but it can finish an older publication after a newer local query intent.
+        // Preserve that newer local descriptor so the user's next query command is
+        // built from the latest control state rather than from a stale state handoff.
+        if shouldApplyProjectedDescriptor(
+            nextState.queryDescriptor,
+            currentDescriptor: queryDescriptor,
+            previousDescriptor: previousState.queryDescriptor,
+            libraries: nextState.libraries
+        ) {
+            queryDescriptor = nextState.queryDescriptor
+            sidebarSelection = nextState.resolvedSidebarSelection
+        } else {
+            sidebarSelection = queryDescriptor.scope
+        }
 
         state = nextState
         OtosSignpost.ui.endInterval("CatalogWindowStateApply", signpost)
@@ -382,6 +393,37 @@ extension CatalogWindowViewModel {
             libraries=\(nextState.libraries.count, privacy: .public) applyMs=\(applyMs, privacy: .public)
             """
         )
+    }
+
+    private func shouldApplyProjectedDescriptor(
+        _ projectedDescriptor: CatalogQueryDescriptor,
+        currentDescriptor: CatalogQueryDescriptor,
+        previousDescriptor: CatalogQueryDescriptor,
+        libraries: [CatalogLibraryState]
+    ) -> Bool {
+        if currentDescriptor == previousDescriptor || currentDescriptor == projectedDescriptor {
+            return true
+        }
+        return isRemovedLibraryFallback(
+            projectedDescriptor: projectedDescriptor,
+            currentDescriptor: currentDescriptor,
+            libraries: libraries
+        )
+    }
+
+    private func isRemovedLibraryFallback(
+        projectedDescriptor: CatalogQueryDescriptor,
+        currentDescriptor: CatalogQueryDescriptor,
+        libraries: [CatalogLibraryState]
+    ) -> Bool {
+        guard projectedDescriptor.scope == .allMedia,
+              projectedDescriptor.filter == currentDescriptor.filter,
+              projectedDescriptor.sort == currentDescriptor.sort,
+              case let .library(path) = currentDescriptor.scope
+        else {
+            return false
+        }
+        return !libraries.contains { $0.path == path }
     }
 
     private func submitCatalogMutation(_ intent: CatalogMutationIntent) {

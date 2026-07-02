@@ -57,6 +57,6 @@ struct ProjectionChangeSummaryTests {
 private func summary(
     previous: CatalogWindowState?,
     current: CatalogWindowState
-) -> CatalogProjection.PublicationChangeSummary {
-    CatalogProjection.PublicationChangeSummary.compare(previous: previous, current: current)
+) -> CatalogProjectionChangeSummary {
+    CatalogProjectionChangeSummary.compare(previous: previous, current: current)
 }

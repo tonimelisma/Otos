@@ -77,6 +77,7 @@ implementation history.
 | [0029](specs/0029-sqlite-retirement-completion.md) | SQLite retirement completion: staged thumbnail publication, Store-owned query-plan tests, retired helper removal, and stale-document cleanup. |
 | [0030](specs/0030-toolbar-sort-filter-query-surface.md) | Toolbar/menu sort and filter controls, descriptor-owned browser query state, generated SQLite best values, and one-second background publication cadence. |
 | [0031](specs/0031-grid-selection-and-copy.md) | Media grid selection (single, ⌘-click, ⇧-click, ⌘A) with identity-based persistence across structural applies, and ⌘C copy of the selected assets' original file URLs. |
+| [0032](specs/0032-catalog-browser-smell-followup.md) | Catalog browser smell and review follow-up: Projection diagnostics/policy split, AppKit detail-cache pruning, review-thread fixes, and narrow persistence query cleanup. |
 
 ## Planning Documents
 

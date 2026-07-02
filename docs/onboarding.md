@@ -45,7 +45,7 @@ thing to internalize:
         │   writes back     produces thumbnails + metadata, writes them to the Store
         ▼
   CatalogProjection   ← turns raw truth into a UI-ready view (a second actor, off the main thread)
-        │  CatalogWindowState, published at most 10×/second
+        │  CatalogWindowState, immediate for user query intents and roughly 1s for background changes
         ▼
   CatalogWindowViewModel  ← the bridge to SwiftUI (lives on the main thread)
         │  assigns @Observable state
@@ -74,9 +74,10 @@ Otos uses them*:
   boundary is serialized for free — we never reach for a lock.
 - **`CatalogProjection` is a separate actor** because turning catalog truth into
   window state must **not** happen on the main thread (that is what makes a UI
-  hang). Store owns the indexed asset-order query; Projection owns the window
-  policies around that query: library ordering, availability hiding, sidebar scope,
-  title, empty state, and coalesced publication.
+  hang). Store owns the indexed asset-order query; Projection owns the coalesced
+  publication loop and asks pure policy helpers for the library ordering,
+  availability hiding, sidebar scope, title, and empty-state rules around that
+  query.
 - **`EnrichmentCoordinator` is a third actor** because producing thumbnails and
   metadata means reading bytes (and downloading cloud files), scheduling two worker
   pools, and tracking what is in flight — shared mutable state that must not race and
@@ -187,10 +188,17 @@ Walks a library folder and reports the image and video files it finds. Whys:
 - It is a pure, idempotent *observation* — it makes no decisions about deletion or
   UI. The Store decides what to do with what the scanner saw.
 
-### `Otos/Services/CatalogProjection.swift` — truth → view
+### `CatalogProjection`, `CatalogWindowPolicy`, and `CatalogProjectionDiagnostics` — truth → view
 
-Takes current library rows plus Store-ordered asset IDs and produces a
-`CatalogWindowState`. Whys:
+Read `CatalogWindowPolicy` first if you want the pure rules: library sorting,
+selection fallback, descriptor resolution, title lookup, scope membership, and
+empty-state choice. Read `CatalogProjectionDiagnostics` next for equal-state
+comparison and bounded JSONL field construction. Then read `CatalogProjection`,
+the actor that owns the long-running tasks, dirty flags, in-flight publication
+state, Store subscription, and stream continuation.
+
+Together these files take current library rows plus Store-ordered asset IDs and
+produce a `CatalogWindowState`. Whys:
 
 - **Two-tier cadence.** During a scan or enrichment sweep the Store might change
   many times. Projection coalesces Store-originated background changes into a
@@ -233,7 +241,11 @@ The ViewModel also uses **three separate async lanes** with deliberately differe
 behavior: sidebar clicks keep only the newest (you do not care about stale clicks),
 add/remove commands are lossless and serial (you must not drop a command), and
 state delivery is consumed losslessly. They are separate because mixing those
-delivery rules would be wrong for at least one of them.
+delivery rules would be wrong for at least one of them. When a projected state
+arrives, the ViewModel updates its local query controls only if that projected
+descriptor is not older than a newer local sidebar/sort/filter intent; this keeps
+rapid user edits from being rebuilt from stale control state while still accepting
+Projection's removed-library fallback.
 
 ### `Otos/Views/*` — passive rendering
 
@@ -252,7 +264,9 @@ survives — backpressure for a high-volume surface. Identity/order changes go
 through the diffable data source; detail-only changes for the same ordered IDs
 advance `detailRefreshGeneration`, re-read only visible details, and reconfigure
 the existing visible AppKit items in place, so a thumbnail does not blink just
-because metadata for an item changed. The bridge also reports the
+because metadata for an item changed. Structural applies prune cached tile details
+with set membership before snapshot application, so the MainActor work does not
+scan the full ordered ID array once per cached tile. The bridge also reports the
 visible identities upward (the **viewport**) so enrichment can prioritize what
 you are looking at. `MediaAssetTileView` is one reusable tile: it shows the
 thumbnail and capture date, loading and decoding the thumbnail *off the main

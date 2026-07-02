@@ -92,7 +92,8 @@ date sorting, and future current consumers read the same generated
 Projection always asks Store for ordered IDs for the current descriptor on
 publication. If enrichment changes best date, best kind, or best format, the next
 background tick treats the resulting order or membership change as ordinary
-truth. If the order is unchanged, `PublicationChangeSummary` suppresses needless
+truth. If the order is unchanged, `CatalogProjectionChangeSummary`
+suppresses needless
 SwiftUI/AppKit work as before.
 
 Direct user query intents wake publication immediately. Background dirt from

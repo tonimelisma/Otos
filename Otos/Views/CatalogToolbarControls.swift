@@ -47,7 +47,7 @@ struct CatalogFilterMenu: View {
     }
 
     private var availableKinds: [MediaKind] {
-        MediaKind.displayOrder.filter { !options.formats(for: $0).isEmpty }
+        options.availableKinds
     }
 
     private func kindSymbol(_ kind: MediaKind, formats: [MediaFormatToken]) -> String {

@@ -295,7 +295,7 @@ Retire:
 - `CatalogSnapshot.assetsByID`
 - `CatalogProjection.sortAssetIDs`
 - snapshot/value-map `CatalogWindowState` build path
-- `PublicationChangeSummary` full-map equality
+- `CatalogProjectionChangeSummary` full-map equality
 - `CatalogMediaGridState.assetsByID`
 - `MediaAssetCollectionViewController.assetsByID`
 - asset-value `MediaAssetCollectionItem.configure`

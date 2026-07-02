@@ -415,19 +415,6 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else {
             return nil
         }
-        if rootIDs.count == 1, let rootID = rootIDs.first {
-            return SQLQuery(
-                sql: """
-                SELECT DISTINCT best_kind, best_format
-                FROM media_asset
-                WHERE library_root_id = ?
-                  AND best_kind IS NOT NULL
-                ORDER BY best_kind, best_format
-                """,
-                arguments: [rootID]
-            )
-        }
-
         let placeholders = sqlPlaceholders(count: rootIDs.count)
         return SQLQuery(
             sql: """
@@ -445,18 +432,6 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else {
             return 0
         }
-        if rootIDs.count == 1, let rootID = rootIDs.first {
-            return try Int.fetchOne(
-                db,
-                sql: """
-                SELECT COUNT(*)
-                FROM media_asset
-                WHERE library_root_id = ?
-                """,
-                arguments: [rootID]
-            ) ?? 0
-        }
-
         let placeholders = sqlPlaceholders(count: rootIDs.count)
         return try Int.fetchOne(
             db,

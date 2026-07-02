@@ -1,8 +1,6 @@
 import Foundation
 import OSLog
 
-// swiftlint:disable file_length
-
 /// Catalog Projection guide
 ///
 /// This actor is the complete read-model boundary between catalog truth and the
@@ -10,174 +8,19 @@ import OSLog
 /// ordering, reachability filtering, sidebar scope, title selection, and empty-state
 /// meaning. None of that work belongs on MainActor or inside a SwiftUI body.
 ///
-/// Why a separate actor from the Store: sorting and filtering tens of thousands of
-/// assets is real CPU work that must not run on the main thread (main-thread work
-/// is what makes a UI hang). Being its own actor moves that work off the main
-/// thread automatically. Keeping it separate from the Store means "what media
-/// exists" and "how this window shows it" stay independent — sorting can change
-/// without touching persistence, and the Store stays testable without UI concerns.
+/// Store notifications coalesce on the cadence, while direct user query intents
+/// schedule an immediate publication attempt. The Store change stream is
+/// registered before publication starts, `dirty` is cleared before awaited
+/// reads/build work so new input survives for the next pass, and actor isolation
+/// permits only one build at a time.
 ///
-/// Background Store notifications coalesce on the cadence, while direct user query
-/// intents schedule an immediate publication attempt. Store's notification stream
-/// is registered before publication starts so detail-only writes that arrive right
-/// after startup cannot be missed. `dirty` is cleared before awaited Store
-/// reads/build work so input arriving during that await survives for the next pass.
-/// Actor isolation permits only one build at a time.
-///
-/// Store invalidations bump a scalar grid detail generation, so thumbnail/date/name
-/// changes still reach the visible cell detail reader without reintroducing
-/// whole-asset UI state. Every publication asks Store for ordered IDs for the
-/// current descriptor: enrichment can now change best date, kind, or format, so
-/// order and membership are query truth rather than a cached assumption. Missing
-/// selected libraries are normalized here while preserving filter/sort, and
-/// empty-state policy asks Store for separate counts only when no assets are
-/// visible. Selection fallback is retained only if no newer intent arrived.
+/// Pure policy lives in `CatalogWindowPolicy`, and diagnostics value plumbing
+/// lives in `CatalogProjectionDiagnostics`. This actor keeps the ownership-critical
+/// machinery: subscription lifetime, dirty/in-flight state, descriptor retention
+/// across awaits, Store reads, and publication to continuations.
 actor CatalogProjection {
     // swiftlint:disable:next line_length
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryDescriptor) async -> CatalogWindowState
-
-    private struct BuildMetrics {
-        let orderQueryMs: Int
-    }
-
-    private struct PublicationTiming {
-        let storeReadMs: Int
-        let projectionMs: Int
-        let totalMs: Int
-    }
-
-    private struct CompletedPublication {
-        let state: CatalogWindowState
-        let buildMetrics: BuildMetrics
-        let selectedDescriptor: CatalogQueryDescriptor
-        let retainedResolvedSelection: Bool
-        let timing: PublicationTiming
-    }
-
-    private struct WindowStateParts {
-        let title: String
-        let libraries: [CatalogLibraryState]
-        let resolvedDescriptor: CatalogQueryDescriptor
-        let scopedAssetIDs: [MediaAssetID]
-        let filterOptions: CatalogFilterOptions
-        let mediaEmptyState: CatalogMediaEmptyState
-    }
-
-    private struct EmptyStateBuildInput {
-        let descriptor: CatalogQueryDescriptor
-        let libraries: [CatalogLibraryState]
-        let orderedAssetIDs: [MediaAssetID]
-        let scopedAssetIDs: [MediaAssetID]
-        let store: CatalogStore?
-        let availableLibraryPaths: Set<LibraryRootPath>
-    }
-
-    struct PublicationChangeSummary {
-        let previousSelectedScopeAssetCount: Int
-        let titleChanged: Bool
-        let mediaIdentityChanged: Bool
-        let librariesChanged: Bool
-        let filterOptionsChanged: Bool
-        let emptyStateChanged: Bool
-        let resolvedSelectionChanged: Bool
-        let detailRefreshChanged: Bool
-        let mediaIdentityEqualityUs: Int
-
-        var stateChanged: Bool {
-            titleChanged
-                || mediaIdentityChanged
-                || librariesChanged
-                || filterOptionsChanged
-                || emptyStateChanged
-                || resolvedSelectionChanged
-                || detailRefreshChanged
-        }
-
-        static func compare(
-            previous: CatalogWindowState?,
-            current: CatalogWindowState
-        ) -> PublicationChangeSummary {
-            guard let previous else {
-                return PublicationChangeSummary(
-                    previousSelectedScopeAssetCount: -1,
-                    titleChanged: true,
-                    mediaIdentityChanged: true,
-                    librariesChanged: true,
-                    filterOptionsChanged: true,
-                    emptyStateChanged: true,
-                    resolvedSelectionChanged: true,
-                    detailRefreshChanged: true,
-                    mediaIdentityEqualityUs: 0
-                )
-            }
-
-            let identityStart = Date()
-            let mediaIdentityChanged = previous.mediaGrid.descriptor != current.mediaGrid.descriptor
-                || previous.mediaGrid.orderedAssetIDs != current.mediaGrid.orderedAssetIDs
-            let identityUs = DiagnosticsTiming.microseconds(since: identityStart)
-
-            return PublicationChangeSummary(
-                previousSelectedScopeAssetCount: previous.mediaGrid.orderedAssetIDs.count,
-                titleChanged: previous.title != current.title,
-                mediaIdentityChanged: mediaIdentityChanged,
-                librariesChanged: previous.libraries != current.libraries,
-                filterOptionsChanged: previous.filterOptions != current.filterOptions,
-                emptyStateChanged: previous.mediaEmptyState != current.mediaEmptyState,
-                resolvedSelectionChanged: previous.resolvedSidebarSelection != current.resolvedSidebarSelection,
-                detailRefreshChanged: previous.mediaGrid.detailRefreshGeneration
-                    != current.mediaGrid.detailRefreshGeneration,
-                mediaIdentityEqualityUs: identityUs
-            )
-        }
-    }
-
-    private struct PublicationDiagnostics {
-        let state: CatalogWindowState
-        let assetCount: Int
-        let metrics: BuildMetrics
-        let changeSummary: PublicationChangeSummary
-        let selectedSidebarRow: SidebarSelection
-        let retainedResolvedSelection: Bool
-        let equalityUs: Int
-        let storeReadMs: Int
-        let projectionMs: Int
-        let totalMs: Int
-        let dirtyAfter: Bool
-        let stateChanged: Bool
-
-        func emit(to diagnostics: CatalogDiagnostics?) async {
-            await diagnostics?.record(
-                operation: "catalog.projection.window",
-                phase: "finish",
-                fields: [
-                    "libraries": "\(state.libraries.count)",
-                    "assetCount": "\(assetCount)",
-                    "previousSelectedScopeAssetCount": "\(changeSummary.previousSelectedScopeAssetCount)",
-                    "selectedScopeAssetCount": "\(state.mediaGrid.orderedAssetIDs.count)",
-                    "assetOrderQueryMs": "\(metrics.orderQueryMs)",
-                    "titleChanged": "\(changeSummary.titleChanged)",
-                    "mediaIdentityChanged": "\(changeSummary.mediaIdentityChanged)",
-                    "librariesChanged": "\(changeSummary.librariesChanged)",
-                    "filterOptionsChanged": "\(changeSummary.filterOptionsChanged)",
-                    "emptyStateChanged": "\(changeSummary.emptyStateChanged)",
-                    "resolvedSelectionChanged": "\(changeSummary.resolvedSelectionChanged)",
-                    "detailRefreshChanged": "\(changeSummary.detailRefreshChanged)",
-                    "detailRefreshGeneration": "\(state.mediaGrid.detailRefreshGeneration)",
-                    "mediaIdentityEqualityUs": "\(changeSummary.mediaIdentityEqualityUs)",
-                    "equalityUs": "\(equalityUs)",
-                    "sidebarSelection": selectedSidebarRow.diagnosticDescription,
-                    "resolvedSidebarSelection": state.resolvedSidebarSelection.diagnosticDescription,
-                    "retainedResolvedSelection": "\(retainedResolvedSelection)",
-                    "emptyState": state.mediaEmptyState.diagnosticDescription,
-                    "storeReadMs": "\(storeReadMs)",
-                    "projectionMs": "\(projectionMs)",
-                    "totalMs": "\(totalMs)",
-                    "dirtyAfterPublication": "\(dirtyAfter)",
-                    "stateChanged": "\(stateChanged)",
-                ]
-            )
-        }
-    }
 
     private let cadence: Duration
     private let diagnostics: CatalogDiagnostics?
@@ -360,12 +203,12 @@ private extension CatalogProjection {
             state.queryDescriptor,
             forInput: selectedDescriptor
         )
-        await finishPublication(CompletedPublication(
+        await finishPublication(CatalogProjectionCompletedPublication(
             state: state,
             buildMetrics: buildMetrics,
             selectedDescriptor: selectedDescriptor,
             retainedResolvedSelection: retainedResolvedSelection,
-            timing: PublicationTiming(
+            timing: CatalogProjectionPublicationTiming(
                 storeReadMs: storeReadMs,
                 projectionMs: DiagnosticsTiming.milliseconds(since: projectionStart),
                 totalMs: DiagnosticsTiming.milliseconds(since: publicationStart)
@@ -374,18 +217,18 @@ private extension CatalogProjection {
     }
 
     private func finishPublication(
-        _ publication: CompletedPublication,
+        _ publication: CatalogProjectionCompletedPublication,
         store: CatalogStore
     ) async {
         let equalityStart = Date()
-        let changeSummary = PublicationChangeSummary.compare(
+        let changeSummary = CatalogProjectionChangeSummary.compare(
             previous: lastPublishedState,
             current: publication.state
         )
         let stateChanged = changeSummary.stateChanged
         let equalityUs = DiagnosticsTiming.microseconds(since: equalityStart)
 
-        await PublicationDiagnostics(
+        await CatalogProjectionPublicationDiagnostics(
             state: publication.state,
             assetCount: publication.state.mediaGrid.orderedAssetIDs.count,
             metrics: publication.buildMetrics,
@@ -450,10 +293,10 @@ private extension CatalogProjection {
         store: CatalogStore,
         libraries unsortedLibraries: [CatalogLibraryState],
         descriptor: CatalogQueryDescriptor
-    ) async -> (CatalogWindowState, BuildMetrics) {
-        let libraries = Self.sortLibraries(unsortedLibraries)
+    ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
+        let libraries = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let resolvedDescriptor = Self.resolvedDescriptor(descriptor, libraries: libraries)
+        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(descriptor, libraries: libraries)
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
         let orderStart = Date()
@@ -487,7 +330,7 @@ private extension CatalogProjection {
         store: CatalogStore? = nil,
         availableLibraryPaths providedAvailableLibraryPaths: Set<LibraryRootPath>? = nil,
         orderQueryMs: Int = 0
-    ) async -> (CatalogWindowState, BuildMetrics) {
+    ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         if let injectedState = await injectedWindowState(
             unsortedLibraries,
             orderedAssetIDs: orderedAssetIDs,
@@ -500,19 +343,20 @@ private extension CatalogProjection {
         defer {
             OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
         }
-        let libraries = Self.sortLibraries(unsortedLibraries)
+        let libraries = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = providedAvailableLibraryPaths ?? Set(
             libraries.filter(\.isAvailable).map(\.path)
         )
-        let resolvedDescriptor = providedResolvedDescriptor ?? Self.resolvedDescriptor(descriptor, libraries: libraries)
+        let resolvedDescriptor = providedResolvedDescriptor
+            ?? CatalogWindowPolicy.resolvedDescriptor(descriptor, libraries: libraries)
         let resolvedSidebarSelection = resolvedDescriptor.scope
-        let title = Self.title(for: resolvedSidebarSelection, libraries: libraries)
-        let scopedAssetIDs = Self.assetIDs(
+        let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: libraries)
+        let scopedAssetIDs = CatalogWindowPolicy.assetIDs(
             for: resolvedSidebarSelection,
             orderedAssetIDs: orderedAssetIDs,
             availableLibraryPaths: availableLibraryPaths
         )
-        let mediaEmptyState = await emptyStateForBuild(EmptyStateBuildInput(
+        let mediaEmptyState = await emptyStateForBuild(CatalogProjectionEmptyStateBuildInput(
             descriptor: resolvedDescriptor,
             libraries: libraries,
             orderedAssetIDs: orderedAssetIDs,
@@ -526,17 +370,19 @@ private extension CatalogProjection {
             availableLibraryPaths: availableLibraryPaths
         )
 
-        return (catalogWindowState(WindowStateParts(
+        return (catalogWindowState(CatalogProjectionWindowStateParts(
             title: title,
             libraries: libraries,
             resolvedDescriptor: resolvedDescriptor,
             scopedAssetIDs: scopedAssetIDs,
             filterOptions: filterOptions,
             mediaEmptyState: mediaEmptyState
-        )), BuildMetrics(orderQueryMs: orderQueryMs))
+        )), CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs))
     }
 
-    private func emptyStateForBuild(_ input: EmptyStateBuildInput) async -> CatalogMediaEmptyState {
+    private func emptyStateForBuild(
+        _ input: CatalogProjectionEmptyStateBuildInput
+    ) async -> CatalogMediaEmptyState {
         let unfilteredVisibleAssetCount = await unfilteredVisibleAssetCountForEmptyState(
             descriptor: input.descriptor,
             scopedAssetIDs: input.scopedAssetIDs,
@@ -549,7 +395,7 @@ private extension CatalogProjection {
             orderedAssetIDs: input.orderedAssetIDs,
             store: input.store
         )
-        return Self.mediaEmptyState(
+        return CatalogWindowPolicy.mediaEmptyState(
             for: input.descriptor,
             libraries: input.libraries,
             allAssetCount: allAssetCount,
@@ -558,7 +404,7 @@ private extension CatalogProjection {
         )
     }
 
-    private func catalogWindowState(_ parts: WindowStateParts) -> CatalogWindowState {
+    private func catalogWindowState(_ parts: CatalogProjectionWindowStateParts) -> CatalogWindowState {
         CatalogWindowState(
             title: parts.title,
             libraries: parts.libraries,
@@ -636,102 +482,11 @@ private extension CatalogProjection {
         _ libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
         descriptor: CatalogQueryDescriptor
-    ) async -> (CatalogWindowState, BuildMetrics)? {
+    ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics)? {
         guard let stateBuilder else {
             return nil
         }
         let state = await stateBuilder(libraries, orderedAssetIDs, descriptor)
-        return (state, BuildMetrics(orderQueryMs: 0))
-    }
-
-    static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
-        libraries.sorted { left, right in
-            let displayComparison = left.displayName.localizedStandardCompare(right.displayName)
-            if displayComparison == .orderedSame {
-                return left.path.rawValue.localizedStandardCompare(right.path.rawValue) == .orderedAscending
-            }
-            return displayComparison == .orderedAscending
-        }
-    }
-
-    static func resolvedSidebarSelection(
-        _ sidebarSelection: SidebarSelection,
-        libraries: [CatalogLibraryState]
-    ) -> SidebarSelection {
-        switch sidebarSelection {
-        case .allMedia:
-            .allMedia
-        case let .library(path):
-            libraries.contains { $0.path == path } ? sidebarSelection : .allMedia
-        }
-    }
-
-    static func resolvedDescriptor(
-        _ descriptor: CatalogQueryDescriptor,
-        libraries: [CatalogLibraryState]
-    ) -> CatalogQueryDescriptor {
-        CatalogQueryDescriptor(
-            scope: resolvedSidebarSelection(descriptor.scope, libraries: libraries),
-            filter: descriptor.filter,
-            sort: descriptor.sort
-        )
-    }
-
-    static func assetIDs(
-        for sidebarSelection: SidebarSelection,
-        orderedAssetIDs: [MediaAssetID],
-        availableLibraryPaths: Set<LibraryRootPath>
-    ) -> [MediaAssetID] {
-        orderedAssetIDs.filter { id in
-            guard availableLibraryPaths.contains(id.libraryRootPath) else {
-                return false
-            }
-            switch sidebarSelection {
-            case .allMedia:
-                return true
-            case let .library(path):
-                return id.libraryRootPath == path
-            }
-        }
-    }
-
-    static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
-        switch sidebarSelection {
-        case .allMedia:
-            "All Media"
-        case let .library(path):
-            libraries.first { $0.path == path }?.displayName ?? "Library"
-        }
-    }
-
-    static func mediaEmptyState(
-        for descriptor: CatalogQueryDescriptor,
-        libraries: [CatalogLibraryState],
-        allAssetCount: Int,
-        unfilteredVisibleAssetCount: Int,
-        selectedAssetCount: Int
-    ) -> CatalogMediaEmptyState {
-        guard selectedAssetCount == 0 else { return .noMedia }
-        if descriptor.filter.isActive, unfilteredVisibleAssetCount > 0 {
-            return .noFilterMatches
-        }
-        let sidebarSelection = descriptor.scope
-        switch sidebarSelection {
-        case .allMedia:
-            if libraries.contains(where: { $0.availability == .unknown }) {
-                return .checkingLibraries
-            }
-            return allAssetCount == 0 ? .noMedia : .noAvailableMedia
-        case let .library(path):
-            let library = libraries.first { $0.path == path }
-            switch library?.availability {
-            case .unknown:
-                return .libraryChecking
-            case .unavailable:
-                return .libraryUnavailable
-            case .available, .none:
-                return .noMedia
-            }
-        }
+        return (state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
     }
 }

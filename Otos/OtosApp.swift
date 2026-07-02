@@ -59,31 +59,32 @@ struct OtosApp: App {
                         Button("Show Everything", action: catalogViewModel.clearMediaFilter)
                         Divider()
                     }
-                    ForEach(MediaKind.displayOrder, id: \.self) { kind in
+                    let availableKinds = catalogViewModel.state.filterOptions.availableKinds
+                    ForEach(availableKinds, id: \.self) { kind in
                         let formats = catalogViewModel.state.filterOptions.formats(for: kind)
-                        if !formats.isEmpty {
+                        Button {
+                            catalogViewModel.toggleMediaKind(kind, formatsInKind: formats)
+                        } label: {
+                            Label(
+                                kind.label,
+                                systemImage: catalogViewModel.queryDescriptor.filter.kinds.contains(kind)
+                                    ? "checkmark"
+                                    : "circle"
+                            )
+                        }
+                        ForEach(formats, id: \.self) { format in
                             Button {
-                                catalogViewModel.toggleMediaKind(kind, formatsInKind: formats)
+                                catalogViewModel.toggleMediaFormat(format, kind: kind)
                             } label: {
                                 Label(
-                                    kind.label,
-                                    systemImage: catalogViewModel.queryDescriptor.filter.kinds.contains(kind)
+                                    format.rawValue,
+                                    systemImage: catalogViewModel.queryDescriptor.filter.formats.contains(format)
                                         ? "checkmark"
                                         : "circle"
                                 )
                             }
-                            ForEach(formats, id: \.self) { format in
-                                Button {
-                                    catalogViewModel.toggleMediaFormat(format, kind: kind)
-                                } label: {
-                                    Label(
-                                        format.rawValue,
-                                        systemImage: catalogViewModel.queryDescriptor.filter.formats.contains(format)
-                                            ? "checkmark"
-                                            : "circle"
-                                    )
-                                }
-                            }
+                        }
+                        if kind != availableKinds.last {
                             Divider()
                         }
                     }

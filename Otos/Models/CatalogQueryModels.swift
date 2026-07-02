@@ -185,6 +185,10 @@ nonisolated struct CatalogFilterOptions: Equatable {
         formatsByKind.isEmpty
     }
 
+    var availableKinds: [MediaKind] {
+        MediaKind.displayOrder.filter { formatsByKind.keys.contains($0) }
+    }
+
     func formats(for kind: MediaKind) -> [MediaFormatToken] {
         formatsByKind[kind] ?? []
     }

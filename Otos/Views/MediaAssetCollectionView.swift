@@ -234,7 +234,8 @@ private extension MediaAssetCollectionViewController {
     ) {
         let applyStart = Date()
         let preservedOrigin = resetScroll ? nil : scrollView.contentView.bounds.origin
-        tileDetailsByID = tileDetailsByID.filter { grid.orderedAssetIDs.contains($0.key) }
+        let orderedAssetIDSet = Set(grid.orderedAssetIDs)
+        tileDetailsByID = tileDetailsByID.filter { orderedAssetIDSet.contains($0.key) }
 
         // Snapshot the selected identities before the diffable apply can drop or shift
         // them. Query-descriptor changes are user context changes, so they intentionally
@@ -311,24 +312,22 @@ private extension MediaAssetCollectionViewController {
                 OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
                 return
             }
-            await MainActor.run {
-                guard let self, self.detailQueryGeneration == generation else {
-                    OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
-                    OtosSignpost.ui.emitEvent("MediaGridVisibleDetailQueryDropped")
-                    return
-                }
-                self.tileDetailsByID = assets
+            guard let self, detailQueryGeneration == generation else {
                 OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
-                let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
-                OtosLog.ui.debug(
-                    """
-                    Media grid visible detail query finished requested=\(visibleIDs.count, privacy: .public) \
-                    returned=\(assets.count, privacy: .public) reason=\(reason, privacy: .public) \
-                    queryMs=\(queryMs, privacy: .public)
-                    """
-                )
-                self.reconfigureVisibleItems(reason: "detailQuery")
+                OtosSignpost.ui.emitEvent("MediaGridVisibleDetailQueryDropped")
+                return
             }
+            tileDetailsByID = assets
+            OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+            let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+            OtosLog.ui.debug(
+                """
+                Media grid visible detail query finished requested=\(visibleIDs.count, privacy: .public) \
+                returned=\(assets.count, privacy: .public) reason=\(reason, privacy: .public) \
+                queryMs=\(queryMs, privacy: .public)
+                """
+            )
+            reconfigureVisibleItems(reason: "detailQuery")
         }
     }
 
