@@ -59,8 +59,8 @@ manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
   the content type conforms to `UTType.movie`.
 - Images and all other non-video files have one neutral presentation and no
   icon. Audio has no special behavior.
-- The grid has no media selection, activation, preview, Finder, drag, or keyboard
-  behavior.
+- The grid has no media activation, preview, Finder, drag, or keyboard behavior.
+  (Selection and ⌘C copy were added later; see spec 0031 and APP-010/APP-012.)
 - A sidebar scope change scrolls to the first item; same-scope scan updates
   preserve the current scroll position.
 - Existing `Checking Library`, `Checking Libraries`, `Library Unavailable`,

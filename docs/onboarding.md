@@ -255,6 +255,20 @@ thread* and only assigning the finished image on Main, with a generation token s
 a load that finishes after the tile has been reused for another asset is
 discarded.
 
+Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
+selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its
+`selectionIndexPaths` is the single live selection truth — there is no mirror in
+the ViewModel. Because enrichment and scans re-apply the grid structure often, each
+structural apply snapshots the selected `MediaAssetID`s first and restores the
+survivors by identity afterward, so a background update never loses your selection;
+`MediaGridSelection` holds that pure, tested membership logic. ⌘C / Edit ▸ Copy
+reaches the controller through the responder chain and `MediaGridClipboard` writes
+the selected assets' original file URLs to the pasteboard (one per asset, in display
+order). It writes references only — no image or video bytes are read — so copy is
+instant and never materializes a dataless cloud original; the URL is built by
+`MediaAssetID.fileURL`, the one asset→URL construction shared with enrichment. See
+ADR 0012 for why file URLs and not image pixels.
+
 ### `Otos/Services/EnrichmentCoordinator.swift` — the thumbnail + metadata scheduler
 
 The write-side satellite from §2. Read its file guide first. It runs two worker

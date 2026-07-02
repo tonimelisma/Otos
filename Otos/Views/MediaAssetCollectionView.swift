@@ -17,6 +17,15 @@ import UniformTypeIdentifiers
 /// only the newest pending value.
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
 /// cannot create file-writing tasks or retain grid state on MainActor.
+///
+/// Selection is native: `isSelectable` + `allowsMultipleSelection` give click,
+/// ⌘-click, ⇧-click, and ⌘A for free, and `NSCollectionView.selectionIndexPaths` is
+/// the live selection truth (no separate mirror to drift). Because enrichment and
+/// scans re-apply the structure frequently, each structural apply snapshots the
+/// selected identities first and restores the survivors by identity afterward, so a
+/// background update never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches
+/// this controller through the responder chain and writes the selected assets'
+/// original file URLs to the pasteboard (ADR 0012), reading no bytes.
 struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
@@ -85,7 +94,10 @@ final class MediaAssetCollectionViewController: NSViewController {
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
 
         collectionView.backgroundColors = [.clear]
-        collectionView.isSelectable = false
+        collectionView.isSelectable = true
+        collectionView.allowsMultipleSelection = true
+        collectionView.allowsEmptySelection = true
+        collectionView.delegate = self
         collectionView.register(
             MediaAssetCollectionItem.self,
             forItemWithIdentifier: Self.itemIdentifier
@@ -217,6 +229,10 @@ private extension MediaAssetCollectionViewController {
         let preservedOrigin = resetScroll ? nil : scrollView.contentView.bounds.origin
         tileDetailsByID = tileDetailsByID.filter { grid.orderedAssetIDs.contains($0.key) }
 
+        // Snapshot the selected identities before the diffable apply can drop or shift
+        // them; the completion restores the survivors by identity (see restoreSelection).
+        let preservedSelection = selectedIdentities()
+
         // Identity order is the complete structural contract. Details are read
         // for visible identities after the structural apply, so a filename or
         // thumbnail change never requires this O(n) diffable snapshot path.
@@ -245,6 +261,7 @@ private extension MediaAssetCollectionViewController {
             }
             requestVisibleDetails(reason: "structuralApply")
             reportViewport()
+            restoreSelection(preservedSelection, in: grid.orderedAssetIDs)
 
             let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
             OtosLog.ui.info(
@@ -372,62 +389,81 @@ private extension MediaAssetCollectionViewController {
     }
 }
 
-/// A small, testable state machine keeps imperative AppKit update lifecycle out
-/// of SwiftUI. It never queues history: while one apply is active, only the
-/// newest requested grid survives.
-@MainActor
-final class MediaAssetCollectionApplyGate {
-    enum Action {
-        case none
-        case pending(replacedExisting: Bool)
-        case refreshVisible(CatalogMediaGridState, resetScroll: Bool)
-        case apply(CatalogMediaGridState, resetScroll: Bool)
+// MARK: - Selection and copy
 
-        var diagnosticDescription: String {
-            switch self {
-            case .none:
-                "none"
-            case .pending:
-                "pending"
-            case .refreshVisible:
-                "refreshVisible"
-            case .apply:
-                "apply"
-            }
-        }
+extension MediaAssetCollectionViewController: NSCollectionViewDelegate {
+    /// User clicks drive native selection; we only observe it for telemetry. The
+    /// programmatic restore below uses select/deselectItems, which do not call these
+    /// delegate methods, so restore cannot feed back into itself.
+    func collectionView(_: NSCollectionView, didSelectItemsAt _: Set<IndexPath>) {
+        logSelection(reason: "select")
     }
 
-    private(set) var displayedOrderedIDs: [MediaAssetID] = []
-    private(set) var displayedScope: SidebarSelection = .allMedia
-    private(set) var isApplyInFlight = false
-    private var pendingGrid: CatalogMediaGridState?
+    func collectionView(_: NSCollectionView, didDeselectItemsAt _: Set<IndexPath>) {
+        logSelection(reason: "deselect")
+    }
+}
 
-    func receive(_ grid: CatalogMediaGridState) -> Action {
-        if isApplyInFlight {
-            let replacedExisting = pendingGrid != nil
-            pendingGrid = grid
-            return .pending(replacedExisting: replacedExisting)
+extension MediaAssetCollectionViewController: NSUserInterfaceValidations {
+    /// Edit ▸ Copy and its ⌘C key equivalent are enabled only when something is
+    /// selected. AppKit asks this controller because it is the responder-chain object
+    /// that implements `copy(_:)`.
+    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        if item.action == #selector(copy(_:)) {
+            return !collectionView.selectionIndexPaths.isEmpty
         }
+        return true
+    }
+}
 
-        let resetScroll = grid.scope != displayedScope
-        if grid.orderedAssetIDs == displayedOrderedIDs {
-            displayedScope = grid.scope
-            return .refreshVisible(grid, resetScroll: resetScroll)
-        }
-
-        isApplyInFlight = true
-        return .apply(grid, resetScroll: resetScroll)
+extension MediaAssetCollectionViewController {
+    /// ⌘C / Edit ▸ Copy arrives here through the responder chain: the collection view is
+    /// first responder but does not implement copy:, so the action travels to this
+    /// controller. We write the selected assets' original file URLs to the general
+    /// pasteboard in display order (ADR 0012). No image or video bytes are read, so copy
+    /// is instant and never materializes a dataless cloud original.
+    @objc func copy(_: Any?) {
+        let ordered = MediaGridSelection.orderedSelection(
+            selectedIdentities(),
+            in: applyGate.displayedOrderedIDs
+        )
+        let signpost = OtosSignpost.ui.beginInterval("MediaGridCopy")
+        let count = MediaGridClipboard.write(ordered, to: .general)
+        OtosSignpost.ui.endInterval("MediaGridCopy", signpost)
+        OtosSignpost.ui.emitEvent("MediaGridCopyInvoked")
+        OtosLog.ui.info("Media grid copy wrote fileURLs count=\(count, privacy: .public)")
     }
 
-    func complete(applied grid: CatalogMediaGridState) -> Action {
-        displayedOrderedIDs = grid.orderedAssetIDs
-        displayedScope = grid.scope
-        isApplyInFlight = false
+    /// The live selection as stable identities, read from the collection view's own
+    /// selection so there is no second copy of selection state to keep in sync.
+    func selectedIdentities() -> Set<MediaAssetID> {
+        Set(collectionView.selectionIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) })
+    }
 
-        guard let pendingGrid else {
-            return .none
+    /// Restores selection after a structural apply: survivors are the previously
+    /// selected identities that still exist. select/deselectItems update the tiles'
+    /// rings without re-entering the delegate.
+    func restoreSelection(_ preserved: Set<MediaAssetID>, in ordered: [MediaAssetID]) {
+        let current = collectionView.selectionIndexPaths
+        if !current.isEmpty {
+            collectionView.deselectItems(at: current)
         }
-        self.pendingGrid = nil
-        return receive(pendingGrid)
+        let survivors = MediaGridSelection.pruned(preserved, to: ordered)
+        let paths = Set(survivors.compactMap { dataSource.indexPath(for: $0) })
+        if !paths.isEmpty {
+            collectionView.selectItems(at: paths, scrollPosition: [])
+        }
+        logSelection(reason: "restore")
+    }
+
+    func logSelection(reason: String) {
+        let count = collectionView.selectionIndexPaths.count
+        OtosSignpost.ui.emitEvent("MediaGridSelectionChanged")
+        OtosLog.ui.debug(
+            """
+            Media grid selection changed count=\(count, privacy: .public) \
+            reason=\(reason, privacy: .public)
+            """
+        )
     }
 }

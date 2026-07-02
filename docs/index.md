@@ -40,6 +40,7 @@ implementation history.
 | [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
 | [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files, metadata as scalar columns plus JSON), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
 | [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, and clean destructive catalog reset. |
+| [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy representation: original file URLs on the pasteboard (not image pixels), references only, reading no bytes and never materializing a dataless cloud original. |
 
 ## Current Implementation Specs
 
@@ -73,6 +74,7 @@ implementation history.
 | [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
 | [0028](specs/0028-code-quality-maintainability-audit.md) | Documentation truth, zero unchecked Sendables, named diagnostics task escapes, enrichment startup failure handling, and deterministic async test helpers. |
 | [0029](specs/0029-sqlite-retirement-completion.md) | SQLite retirement completion: staged thumbnail publication, Store-owned query-plan tests, retired helper removal, and stale-document cleanup. |
+| [0031](specs/0031-grid-selection-and-copy.md) | Media grid selection (single, ⌘-click, ⇧-click, ⌘A) with identity-based persistence across structural applies, and ⌘C copy of the selected assets' original file URLs. |
 
 ## Planning Documents
 

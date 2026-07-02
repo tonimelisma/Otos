@@ -170,7 +170,7 @@ private extension EnrichmentCoordinator {
                     }
                 }
                 for id in dequeueDownloadWork() {
-                    let url = url(for: id)
+                    let url = id.fileURL
                     let materialize = materialize
                     group.addTask {
                         let materialized = await materialize(url)
@@ -245,7 +245,7 @@ private extension EnrichmentCoordinator {
     private func makeWork(_ asset: MediaAsset) -> EnrichWork {
         EnrichWork(
             id: asset.id,
-            url: url(for: asset.id),
+            url: asset.id.fileURL,
             sourceSize: asset.byteSize,
             sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt)
         )
@@ -263,10 +263,6 @@ private extension EnrichmentCoordinator {
 
     func hasEnrichmentWorkRemaining() -> Bool {
         !inFlightEnrich.isEmpty
-    }
-
-    func url(for id: MediaAssetID) -> URL {
-        id.libraryRootPath.url.appending(path: id.relativePath.rawValue, directoryHint: .notDirectory)
     }
 }
 

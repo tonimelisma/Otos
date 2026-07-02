@@ -46,6 +46,15 @@ nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, Custo
 nonisolated struct MediaAssetID: Hashable {
     let libraryRootPath: LibraryRootPath
     let relativePath: MediaRelativePath
+
+    /// The absolute filesystem URL of the original file this identity names. Built
+    /// from identity alone — no Store round-trip and no byte read — so the clipboard
+    /// copy path and enrichment share one asset→URL construction rather than two that
+    /// could disagree. `directoryHint: .notDirectory` avoids a stat: a media asset is
+    /// always a file.
+    var fileURL: URL {
+        libraryRootPath.url.appending(path: relativePath.rawValue, directoryHint: .notDirectory)
+    }
 }
 
 /// Durable saved library identity. This intentionally contains no scan status

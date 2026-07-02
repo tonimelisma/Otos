@@ -18,6 +18,14 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         view as? MediaAssetTileView
     }
 
+    /// AppKit sets `isSelected` on the reusable item as the collection view's
+    /// selection changes (user clicks and the controller's post-apply restore). The
+    /// tile draws the accent ring from this, so selection appearance is driven by one
+    /// source — the collection view's selection — not tracked separately in the view.
+    override var isSelected: Bool {
+        didSet { tileView?.setSelected(isSelected) }
+    }
+
     override func loadView() {
         view = MediaAssetTileView()
     }
@@ -139,6 +147,15 @@ private final class MediaAssetTileView: NSView {
         loadThumbnailAndDate(asset: asset, thumbnailDirectory: thumbnailDirectory)
     }
 
+    /// Draws or clears the selection ring. It uses the layer border rather than the
+    /// background so it is independent of the video/neutral `backgroundColor` that
+    /// `configure` rewrites on every reuse; a border ring is never clobbered by a
+    /// same-identity content refresh.
+    func setSelected(_ selected: Bool) {
+        layer?.borderWidth = selected ? 3 : 0
+        layer?.borderColor = selected ? NSColor.controlAccentColor.cgColor : nil
+    }
+
     /// Reads the thumbnail file and formats the date off the main actor (file I/O,
     /// decode, and formatting must never run on the scroll thread), then applies the
     /// result on the main actor only if this tile still represents the same content.
@@ -202,6 +219,7 @@ private final class MediaAssetTileView: NSView {
         titleField.stringValue = ""
         dateField.stringValue = ""
         videoIconView.isHidden = true
+        setSelected(false)
         setAccessibilityLabel(nil)
     }
 
