@@ -3,20 +3,21 @@
 ## Classification
 
 - Work type: Feature
-- Current requirement IDs: APP-010 (changed), APP-006, APP-009, FND-031, FND-044, MED-004
+- Current requirement IDs: APP-010, APP-011, APP-012, APP-006, APP-009,
+  FND-031, FND-044, MED-004
 - Future idea or candidate links explicitly requested by the user: none
 - ADRs: `docs/adr/0012-media-asset-clipboard-representation.md`
 
 ## Problem
 
-Otos shows a browsable six-column grid of cataloged images and videos, but the
-grid is inert: today the user cannot select a tile and cannot get an asset out of
-Otos into another app. The user wants to click a tile to select it, extend that
-to a multi-selection with the standard macOS modifier clicks (⌘ toggles, ⇧
-extends a range), and press ⌘C to copy the selected media so it can be pasted or
-attached elsewhere — Messages, Mail, Finder.
+Before this selection/copy increment, Otos showed a browsable six-column grid of
+cataloged images and videos, but the grid was inert: the user could not select a
+tile and could not get an asset out of Otos into another app. The implemented
+goal is standard macOS tile selection (click, ⌘ toggles, ⇧ range) plus ⌘C file-URL
+copy so selected media can be pasted or attached elsewhere — Messages, Mail,
+Finder.
 
-Current repo state, verified by inspection:
+Before implementation, repo inspection found:
 
 - `Otos/Views/MediaAssetCollectionView.swift` is the single AppKit boundary. It
   sets `collectionView.isSelectable = false` and installs no delegate, so there
@@ -37,11 +38,11 @@ Current repo state, verified by inspection:
 - The app is unsandboxed (`ENABLE_APP_SANDBOX = NO`; no entitlements file, no
   security-scoped bookmarks anywhere in app code). A plain file URL written to the
   pasteboard is directly readable by the receiving app, with no bookmark flow.
-- `APP-010` in `docs/requirements.md` currently states the grid "shall have no
+- `APP-010` in `docs/requirements.md` stated the grid "shall have no
   media selection or activation behavior" and that "clicks, double-clicks,
   previews, Finder actions, drags, and keyboard media actions are absent." This
   feature intentionally changes the selection half of that requirement while
-  preserving its scroll-reset half.
+  preserving the grid's descriptor-change scroll-reset behavior.
 - `OtosApp.swift` on `main` adds only `CommandGroup(replacing: .newItem) {}`. The
   standard SwiftUI **Edit ▸ Copy** menu item (⌘C) is present by default and routes
   the `copy:` action down the responder chain to the first responder.
@@ -104,7 +105,7 @@ Out of scope:
 | --- | --- | --- | --- | --- |
 | SEL-click | Functional | Clicking a tile selects it and shows a highlight; clicking another tile replaces the selection. | Current | `docs/requirements.md` APP-010 (changed) |
 | SEL-multi | Functional | ⌘-click toggles a tile in/out of the selection; ⇧-click extends a contiguous range; ⌘A selects all. | Current | `docs/requirements.md` APP-010 (changed) |
-| SEL-persist | Architecture | Selection is tracked by `MediaAssetID` and survives same-scope structural updates; assets that disappear are dropped from the selection. | Current | `docs/requirements.md` APP-011 |
+| SEL-persist | Architecture | Selection is tracked by `MediaAssetID` and survives same-descriptor structural updates; assets that disappear are dropped from the selection, and descriptor changes clear selection. | Current | `docs/requirements.md` APP-011 |
 | COPY-url | Functional | ⌘C / Edit ▸ Copy copies one original file URL per selected asset, in display order, so the media can be pasted into Finder or attached in Messages/Mail. | Current | `docs/requirements.md` APP-012 |
 | COPY-empty | Functional | Edit ▸ Copy is disabled when the selection is empty. | Current | `docs/requirements.md` APP-012 |
 | COPY-refs | Non-functional | Copy writes file references only; it reads no image/video bytes and does not itself materialize a dataless cloud original. | Current | `docs/requirements.md` APP-012, ADR 0012 |
@@ -239,7 +240,7 @@ diagnostics in this repo; copy logs a count and the scope, not full path lists.
 ## Retirement Proof
 
 - `docs/requirements.md` APP-010: rewrite from "no selection/activation" to the
-  new selection behavior while preserving the scroll-reset-on-scope-change clause;
+  new selection behavior while preserving the descriptor-change scroll-reset clause;
   mark `Changed`. Add APP-011 (selection identity/persistence) and APP-012 (copy).
 - `EnrichmentCoordinator.url(for:)`: removed; all call sites use
   `MediaAssetID.fileURL`. Grep proof that no `url(for:` remains in
@@ -304,10 +305,10 @@ diagnostics in this repo; copy logs a count and the scope, not full path lists.
   `NSPasteboard.general` in display order; pasting in Finder yields the files and
   pasting/attaching in Messages attaches them. With no selection, Edit ▸ Copy is
   disabled.
-- A background enrichment/scan update in the same scope preserves the selection and
-  its highlight; a selected asset that disappears is dropped from the selection; a
-  sidebar scope change clears the selection (no survivors) and resets scroll as
-  before.
+- A background enrichment/scan update in the same descriptor preserves the selection
+  and its highlight; a selected asset that disappears is dropped from the selection;
+  a descriptor change, including a sidebar scope, sort, or filter change, clears the
+  selection and resets scroll.
 - No image/video bytes are read on copy; `MediaAssetID.fileURL` is the only
   asset→URL construction.
 

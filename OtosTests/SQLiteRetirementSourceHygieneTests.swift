@@ -2,7 +2,7 @@ import Foundation
 import Testing
 
 struct SQLiteRetirementSourceHygieneTests {
-    @Test func projectionPreservesOrderRequeryRequestsAcrossAwaitedReads() throws {
+    @Test func projectionPreservesDirtyQueryDescriptorRequestsAcrossAwaitedReads() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
@@ -10,13 +10,17 @@ struct SQLiteRetirementSourceHygieneTests {
             contentsOf: repoRoot.appending(path: "Otos/Services/CatalogProjection.swift"),
             encoding: .utf8
         )
-        let clearBeforeAwait = try #require(content.range(of: "needsOrderRequery = false"))
+        let clearBeforeAwait = try #require(content.range(of: "dirty = false"))
         let awaitedQuery = try #require(content.range(of: "orderedAssetIDs = try await store.orderedAssetIDs"))
-        let cacheWrite = try #require(content.range(of: "cachedOrderedAssetIDs = orderedAssetIDs"))
-        let queryCompletion = content[awaitedQuery.lowerBound ..< cacheWrite.upperBound]
+        let afterAwaitedQuery = content[awaitedQuery.lowerBound...]
 
         #expect(clearBeforeAwait.lowerBound < awaitedQuery.lowerBound)
-        #expect(!queryCompletion.contains("needsOrderRequery = false"))
+        #expect(!afterAwaitedQuery.contains("dirty = false"))
+        #expect(content.contains("if dirty {"))
+        #expect(content.contains("markDirty(wakeImmediately: true, store: store)"))
+        #expect(content.contains("descriptor: selectedDescriptor"))
+        #expect(!content.contains("needsOrderRequery"))
+        #expect(!content.contains("cachedOrderedAssetIDs"))
     }
 
     @Test func retiredSnapshotFixturesAndCopiedProductionSQLStayRetired() throws {

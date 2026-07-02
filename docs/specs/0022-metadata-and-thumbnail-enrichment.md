@@ -170,8 +170,8 @@ Modules (isolation — owns):
   removal; on-demand `asset_metadata.metadata_extra_json` decode; the
   `nonisolated thumbnailDirectory`.
 - `MediaAsset` (nonisolated value, extended) — the cheap hot detail fields
-  (`thumbnailPath`, `captureDate`, `enrichedSourceSize`,
-  `enrichedSourceMTimeSeconds`), `needsEnrichment`, and `bestCaptureDate`.
+  (`thumbnailPath`, `bestCaptureDate`, `bestKind`, `bestFormat`,
+  `enrichedSourceSize`, `enrichedSourceMTimeSeconds`), and `needsEnrichment`.
 - `AssetMetadata` (nonisolated value, new) — the full `MediaMetadataResult`
   mapped to Otos types and persisted on demand, never in grid publication.
 - `EnrichmentCoordinator` (actor, new) — the cursorless scheduler, the two pools,
@@ -198,15 +198,15 @@ scan / FSEvents → Store notifies → Coordinator queries Store candidates → 
          stamp, one notification)
   enrich slot: status .notMaterialized → datalessPending → download pool
   download slot: materialize → freshly (LIFO) → signal → enrich slot pulls it
-Projection republishes (thumbnailPath / captureDate now set; cheap)
+Projection republishes (thumbnailPath / generated best values now set; cheap)
   → grid refreshVisible → existing visible tiles reconfigure in place
     → tile: if content key changed, ThumbnailStore.load off-main
     → image + best-date assigned on Main
 asset row purged (proven deletion or library removal) → ThumbnailStore.delete
 ```
 
-Only ordered IDs plus a scalar detail-refresh generation flow through the 10 Hz
-grid publication — no bytes and no full metadata. Hot tile details are faulted by
+Only ordered IDs plus a scalar detail-refresh generation flow through grid
+publication — no bytes and no full metadata. Hot tile details are faulted by
 visible ID, and full metadata lives in `asset_metadata` scalar columns plus
 `metadata_extra_json` for on-demand reads.
 

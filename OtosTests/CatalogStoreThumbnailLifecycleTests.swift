@@ -11,7 +11,7 @@ struct CatalogStoreThumbnailLifecycleTests {
             EnrichmentResult(
                 id: fixture.id,
                 metadata: AssetMetadata(cameraModel: "Cam"),
-                captureDate: Date(timeIntervalSince1970: 700),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -61,7 +61,7 @@ struct CatalogStoreThumbnailLifecycleTests {
             EnrichmentResult(
                 id: fixture.id,
                 metadata: AssetMetadata(cameraModel: "Cam"),
-                captureDate: Date(timeIntervalSince1970: 700),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: nil,
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
@@ -89,7 +89,7 @@ struct CatalogStoreThumbnailLifecycleTests {
             EnrichmentResult(
                 id: fixture.id,
                 metadata: AssetMetadata(cameraModel: "AcceptedCam"),
-                captureDate: Date(timeIntervalSince1970: 700),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -98,7 +98,7 @@ struct CatalogStoreThumbnailLifecycleTests {
             EnrichmentResult(
                 id: fixture.id,
                 metadata: AssetMetadata(cameraModel: "FailedCam"),
-                captureDate: Date(timeIntervalSince1970: 900),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 900)),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -145,7 +145,7 @@ private struct ThumbnailLifecycleFixture {
         EnrichmentResult(
             id: id,
             metadata: AssetMetadata(cameraModel: "InitialCam"),
-            captureDate: Date(timeIntervalSince1970: 700),
+            timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
             thumbnailPath: thumbnailPath,
             sourceSize: 100,
             sourceMTimeSeconds: 1000
@@ -156,7 +156,7 @@ private struct ThumbnailLifecycleFixture {
         EnrichmentResult(
             id: id,
             metadata: AssetMetadata(cameraModel: "StaleCam"),
-            captureDate: Date(timeIntervalSince1970: 900),
+            timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 900)),
             thumbnailPath: nil,
             sourceSize: 100,
             sourceMTimeSeconds: 1000,

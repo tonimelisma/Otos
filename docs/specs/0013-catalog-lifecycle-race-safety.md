@@ -75,7 +75,7 @@ Out of scope:
   probing
 - SQLite schema changes
 - grid, media eligibility, metadata, thumbnail, or filesystem-fact changes
-- changing Store/Projection/ViewModel ownership or the 10 Hz publication cadence
+- changing Store/Projection/ViewModel ownership or the publication cadence
 
 ## Captured Requirements For User Verification
 

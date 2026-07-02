@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 
+@Suite(.serialized)
 struct SourceHygieneTests {
     @Test func retiredCatalogStateNamesAreNotUsedInAppSource() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
@@ -165,10 +166,10 @@ struct SourceHygieneTests {
 
         #expect(content.contains("stateConsumptionTask"))
         #expect(content.contains("catalogStartupTask"))
-        #expect(content.contains("selectionForwardingTask"))
+        #expect(content.contains("queryForwardingTask"))
         #expect(content.contains("mutationForwardingTask"))
         #expect(content.contains("bufferingPolicy: .unbounded"))
-        #expect(content.contains("Task { [weak self, projection, store, initialSelection]"))
+        #expect(content.contains("Task { [weak self, projection, store, initialDescriptor]"))
         #expect(!content.contains("private var stateTask:"))
         #expect(!content.contains("private var startTask:"))
         #expect(!content.contains("private var selectionTask:"))
@@ -209,7 +210,7 @@ struct SourceHygieneTests {
             encoding: .utf8
         )
 
-        #expect(content.contains("case let .refreshVisible(_, resetScroll):"))
+        #expect(content.contains("case let .refreshVisible(_, resetScroll, resetSelection):"))
         #expect(content.contains("requestVisibleDetails(reason: \"detailRefresh\")"))
         #expect(content.contains("reconfigureVisibleItems(reason: \"detailQuery\")"))
         #expect(content.contains("collectionView.item(at: indexPath)"))
@@ -332,6 +333,7 @@ struct SourceHygieneTests {
     }
 }
 
+@Suite(.serialized)
 struct QualityIncrementSourceHygieneTests {
     @Test func sourceContainsNoUncheckedSendableConformances() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)

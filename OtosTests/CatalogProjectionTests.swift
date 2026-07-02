@@ -191,11 +191,11 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { libraries, orderedAssetIDs, sidebarSelection in
+            stateBuilder: { libraries, orderedAssetIDs, descriptor in
                 await probe.build(
                     libraries: libraries,
                     orderedAssetIDs: orderedAssetIDs,
-                    sidebarSelection: sidebarSelection
+                    descriptor: descriptor
                 )
             }
         )
@@ -261,7 +261,7 @@ struct CatalogProjectionTests {
             EnrichmentResult(
                 id: fixture.id,
                 metadata: AssetMetadata(cameraModel: "Cam"),
-                captureDate: Date(timeIntervalSince1970: 700),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: sourceMTime
@@ -361,7 +361,7 @@ private actor ProjectionProbe {
     func build(
         libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
-        sidebarSelection: SidebarSelection
+        descriptor: CatalogQueryDescriptor
     ) async -> CatalogWindowState {
         calls += 1
         currentInFlight += 1
@@ -378,10 +378,11 @@ private actor ProjectionProbe {
             title: "Call \(calls)",
             libraries: libraries,
             mediaGrid: CatalogMediaGridState(
-                scope: sidebarSelection,
+                descriptor: descriptor,
                 orderedAssetIDs: orderedAssetIDs
             ),
-            resolvedSidebarSelection: sidebarSelection,
+            filterOptions: .empty,
+            resolvedSidebarSelection: descriptor.scope,
             mediaEmptyState: .noMedia
         )
     }

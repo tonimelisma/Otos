@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 /// imperative viewport, reuse, layout, and diffable-data-source lifecycle that a
 /// high-cardinality browser requires.
 ///
-/// Identity order is structural; tile detail is read only for the visible window.
+/// Descriptor plus identity order is structural; tile detail is read only for the visible window.
 /// A structural change performs one nonanimated diffable apply, while unchanged
 /// IDs re-read visible details and reconfigure existing reusable items in place.
 /// `MediaAssetCollectionApplyGate` prevents overlapping AppKit applies and keeps
@@ -160,9 +160,9 @@ final class MediaAssetCollectionViewController: NSViewController {
         onViewportChanged(ids)
     }
 
-    /// Projection already limits incoming state to 10 Hz. This method adds only
-    /// AppKit backpressure: one structural apply may run, and any intermediate
-    /// pending value is replaced by the newest value rather than queued.
+    /// Projection coalesces incoming background state. This method adds only AppKit
+    /// backpressure: one structural apply may run, and any intermediate pending
+    /// value is replaced by the newest value rather than queued.
     func receive(_ grid: CatalogMediaGridState) {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStateReceive")
         defer { OtosSignpost.ui.endInterval("MediaGridStateReceive", signpost) }
@@ -213,25 +213,33 @@ private extension MediaAssetCollectionViewController {
             OtosLog.ui.debug(
                 "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
             )
-        case let .refreshVisible(_, resetScroll):
+        case let .refreshVisible(_, resetScroll, resetSelection):
+            if resetSelection {
+                clearSelection(reason: "descriptorChange")
+            }
             if resetScroll {
                 scrollToTop()
             }
             requestVisibleDetails(reason: "detailRefresh")
             reportViewport()
-        case let .apply(grid, resetScroll):
-            applyStructure(grid, resetScroll: resetScroll)
+        case let .apply(grid, resetScroll, resetSelection):
+            applyStructure(grid, resetScroll: resetScroll, resetSelection: resetSelection)
         }
     }
 
-    func applyStructure(_ grid: CatalogMediaGridState, resetScroll: Bool) {
+    func applyStructure(
+        _ grid: CatalogMediaGridState,
+        resetScroll: Bool,
+        resetSelection: Bool
+    ) {
         let applyStart = Date()
         let preservedOrigin = resetScroll ? nil : scrollView.contentView.bounds.origin
         tileDetailsByID = tileDetailsByID.filter { grid.orderedAssetIDs.contains($0.key) }
 
         // Snapshot the selected identities before the diffable apply can drop or shift
-        // them; the completion restores the survivors by identity (see restoreSelection).
-        let preservedSelection = selectedIdentities()
+        // them. Query-descriptor changes are user context changes, so they intentionally
+        // start from an empty selection instead of restoring surviving identities.
+        let preservedSelection = resetSelection ? [] : selectedIdentities()
 
         // Identity order is the complete structural contract. Details are read
         // for visible identities after the structural apply, so a filename or
@@ -465,5 +473,14 @@ extension MediaAssetCollectionViewController {
             reason=\(reason, privacy: .public)
             """
         )
+    }
+
+    func clearSelection(reason: String) {
+        let current = collectionView.selectionIndexPaths
+        guard !current.isEmpty else {
+            return
+        }
+        collectionView.deselectItems(at: current)
+        logSelection(reason: reason)
     }
 }

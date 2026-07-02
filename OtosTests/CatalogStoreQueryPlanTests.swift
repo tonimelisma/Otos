@@ -4,6 +4,33 @@ import GRDB
 import Testing
 
 struct CatalogStoreQueryPlanTests {
+    @Test func descriptorQueryFiltersAndSortsBySQLiteBestValues() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let rootID = try await insertDescriptorFixture(dbQueue)
+        let descriptor = CatalogQueryDescriptor(
+            scope: .allMedia,
+            filter: MediaFilter(
+                kinds: [.image],
+                formats: [MediaFormatToken(rawValue: "DNG")]
+            ),
+            sort: MediaSortOrder(field: .name, direction: .ascending)
+        )
+
+        let ids = try await dbQueue.read { db in
+            try CatalogStore.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: [rootID], db: db)
+        }
+
+        #expect(ids.map(\.1.rawValue) == ["alpha.jpg", "raw-original.nef", "retagged.mov"])
+    }
+
     @Test func querySchemaStreamsCatalogOrderAndEnrichmentCandidatesFromIndexes() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
@@ -16,8 +43,11 @@ struct CatalogStoreQueryPlanTests {
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let now = Date().timeIntervalSince1970
-        let rootOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(rootIDs: [rootID1]))
-        let globalOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(rootIDs: [rootID1, rootID2]))
+        let rootOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(descriptor: .default, rootIDs: [rootID1]))
+        let globalOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(
+            descriptor: .default,
+            rootIDs: [rootID1, rootID2]
+        ))
         let rootEnrichmentQuery = try #require(CatalogStore.enrichmentClaimQuery(
             rootIDs: [rootID1],
             now: now,
@@ -40,8 +70,8 @@ struct CatalogStoreQueryPlanTests {
             )
         }
 
-        #expect(plans.rootOrder.contains("idx_media_asset_order_root"))
-        #expect(plans.globalOrder.contains("idx_media_asset_order_global"))
+        #expect(plans.rootOrder.contains("idx_media_asset_best_capture_root_desc"))
+        #expect(plans.globalOrder.contains("idx_media_asset_best_capture_global_desc"))
         #expect(plans.rootEnrichment.contains("idx_media_asset_needs_enrichment_root"))
         #expect(plans.globalEnrichment.contains("idx_media_asset_needs_enrichment_global"))
         #expect(!usesTemporarySort(plans.rootOrder))
@@ -135,6 +165,111 @@ private struct QueryPlans {
     let globalEnrichment: String
 }
 
+private func insertDescriptorFixture(_ dbQueue: DatabaseQueue) async throws -> Int64 {
+    try await dbQueue.write { db in
+        try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-descriptor"])
+        let rootID = db.lastInsertedRowID
+        for fixture in descriptorFixtures() {
+            try insertDescriptorFixtureRow(fixture, rootID: rootID, db: db)
+        }
+        return rootID
+    }
+}
+
+private func descriptorFixtures() -> [DescriptorFixture] {
+    [
+        DescriptorFixture(
+            relativePath: "video.mov",
+            nameSortKey: "video.mov",
+            kind: "video",
+            format: "MOV",
+            enrichedKind: nil,
+            enrichedFormat: nil,
+            originalDate: 400,
+            byteSize: 40
+        ),
+        DescriptorFixture(
+            relativePath: "raw-original.nef",
+            nameSortKey: "raw-original.nef",
+            kind: "raw",
+            format: "NEF",
+            enrichedKind: nil,
+            enrichedFormat: "DNG",
+            originalDate: 300,
+            byteSize: 30
+        ),
+        DescriptorFixture(
+            relativePath: "alpha.jpg",
+            nameSortKey: "alpha.jpg",
+            kind: "image",
+            format: "JPEG",
+            enrichedKind: nil,
+            enrichedFormat: nil,
+            originalDate: 200,
+            byteSize: 20
+        ),
+        DescriptorFixture(
+            relativePath: "retagged.mov",
+            nameSortKey: "retagged.mov",
+            kind: "video",
+            format: "MOV",
+            enrichedKind: "image",
+            enrichedFormat: "JPEG",
+            originalDate: 100,
+            byteSize: 10
+        ),
+    ]
+}
+
+private func insertDescriptorFixtureRow(_ fixture: DescriptorFixture, rootID: Int64, db: Database) throws {
+    try db.execute(
+        sql: """
+        INSERT INTO media_asset (
+            library_root_id,
+            relative_path,
+            sort_key,
+            name_sort_key,
+            name,
+            content_type_identifier,
+            kind,
+            format,
+            byte_size,
+            content_modified_at_unix,
+            ts_original_unix,
+            enriched_kind,
+            enriched_format
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        arguments: [
+            rootID,
+            fixture.relativePath,
+            fixture.relativePath,
+            fixture.nameSortKey,
+            fixture.relativePath,
+            "public.item",
+            fixture.kind,
+            fixture.format,
+            fixture.byteSize,
+            10,
+            fixture.originalDate,
+            fixture.enrichedKind,
+            fixture.enrichedFormat,
+        ]
+    )
+}
+
+private struct DescriptorFixture {
+    let relativePath: String
+    let nameSortKey: String
+    let kind: String
+    let format: String
+    let enrichedKind: String?
+    let enrichedFormat: String?
+    let originalDate: Double
+    let byteSize: Int
+}
+
 private func insertPlanFixture(_ dbQueue: DatabaseQueue) async throws -> (Int64, Int64) {
     try await dbQueue.write { db in
         try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-a"])
@@ -152,14 +287,15 @@ private func insertPlanFixture(_ dbQueue: DatabaseQueue) async throws -> (Int64,
                     library_root_id,
                     relative_path,
                     sort_key,
+                    name_sort_key,
                     name,
                     content_type_identifier,
                     byte_size,
                     content_modified_at_unix
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                arguments: [rootID, relativePath, sortKey, relativePath, "public.jpeg", 1, 1000]
+                arguments: [rootID, relativePath, sortKey, sortKey, relativePath, "public.jpeg", 1, 1000]
             )
         }
         return (rootID1, rootID2)
@@ -184,16 +320,18 @@ private func insertEnrichmentClaimFixture(
                     library_root_id,
                     relative_path,
                     sort_key,
+                    name_sort_key,
                     name,
                     content_type_identifier,
                     byte_size,
                     content_modified_at_unix,
                     enrichment_claimed_until
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 arguments: [
                     rootID,
+                    relativePath,
                     relativePath,
                     relativePath,
                     relativePath,

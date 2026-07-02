@@ -38,7 +38,8 @@ It references but does not own:
 
 - SQLite and scan reconciliation: ADR 0002
 - UI ownership: ADR 0004
-- 10 Hz publication and availability: ADR 0005
+- coalesced publication and availability: ADR 0005
+- descriptor query ownership and generated best values: ADR 0011
 - collection rendering and diffable application: ADR 0006
 - the precomputed sort key itself: spec 0017
 

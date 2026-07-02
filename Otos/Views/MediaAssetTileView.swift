@@ -74,7 +74,7 @@ private final class MediaAssetTileView: NSView {
     private let videoIconView = NSImageView()
 
     /// Identifies the content the async load produced (thumbnail file + its enrichment
-    /// stamp + the displayed date). Equal keys mean nothing visible changed, so a 10 Hz
+    /// stamp + the displayed date). Equal keys mean nothing visible changed, so a
     /// detail refresh of an unchanged tile does not re-decode or re-format anything.
     private var currentContentKey: String?
     private var currentDiagnosticID: String?
@@ -255,7 +255,7 @@ private final class MediaAssetTileView: NSView {
 /// independent from reusable AppKit view state so each can be tested directly.
 enum MediaAssetTilePresentation {
     static func isVideo(_ asset: MediaAsset) -> Bool {
-        MediaEligibility.isVideo(contentTypeIdentifier: asset.contentTypeIdentifier)
+        asset.bestKind == .video
     }
 
     static func title(_ asset: MediaAsset) -> String {

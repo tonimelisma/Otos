@@ -110,13 +110,14 @@ struct CatalogProjectionOrderingTests {
         let filtered = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
                 && event.fields["sidebarSelection"] == "library:\(rootPath.rawValue)"
+                && event.fields["selectedScopeAssetCount"] == "1"
         }
 
         #expect(filtered.fields["selectedScopeAssetCount"] == "1")
     }
 
     // swiftlint:disable:next function_body_length
-    @Test func detailOnlyStoreChangeSkipsOrderRequery() async throws {
+    @Test func detailOnlyStoreChangePublishesRefreshAndChecksOrder() async throws {
         let temp = try orderingTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -159,7 +160,7 @@ struct CatalogProjectionOrderingTests {
         let enrichment = EnrichmentResult(
             id: id,
             metadata: AssetMetadata(cameraModel: "Cam"),
-            captureDate: Date(timeIntervalSince1970: 700),
+            timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
             thumbnailPath: "thumb.jpg",
             sourceSize: asset.byteSize,
             sourceMTimeSeconds: sourceMTime
@@ -175,10 +176,9 @@ struct CatalogProjectionOrderingTests {
         let detailOnly = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
                 && event.fields["detailRefreshChanged"] == "true"
-                && event.fields["assetOrderQueryMs"] == "0"
                 && event.fields["detailRefreshGeneration"] == "\(detailGeneration)"
         }
-        #expect(detailOnly.fields["assetOrderQueryMs"] == "0")
+        #expect(detailOnly.fields["assetOrderQueryMs"] != nil)
     }
 }
 

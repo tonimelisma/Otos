@@ -24,10 +24,10 @@ asked for a durable review approach and to add Rob Pike's 5 Rules of Programming
 across the docs.
 
 Current repo state verified by inspection: the catalog is `CatalogStore` (GRDB +
-in-memory working set) to `CatalogProjection` (10 Hz off-MainActor projection) to
+SQLite working set) to `CatalogProjection` (off-MainActor projection) to
 `CatalogWindowViewModel` (MainActor adapter) to passive SwiftUI views, with the
-grid bridged to `NSCollectionView`. The scanner reads only metadata resource values
-and no bytes. There is no thumbnail, metadata, or editing code, and no user-authored
+grid bridged to `NSCollectionView`. The scanner reads only filesystem resource values
+and no bytes. There is no editing code, and no user-authored
 overlay, so every stored value is currently rebuildable by re-observing the
 filesystem.
 

@@ -43,15 +43,16 @@ This ADR owns:
   columns plus `metadata_extra_json`, decoded on demand, and is **never resident**
   in grid publication.
 - The only enrichment data fetched with hot `MediaAsset` detail rows: the thumbnail
-  path, a resolved capture date, and the `(size, mtime)` source stamps.
+  path, generated best date/kind/format values, and the `(size, mtime)` source
+  stamps.
 - Disjoint column ownership: the scan writes only fact columns, enrichment writes
   only enrichment columns, scan upserts preserve enrichment overlay, and a stale
   in-flight enrichment completion must revalidate the source signature in SQLite
   before it can stamp a row current.
 - Staleness is the `(size, mtime)` source signature; `needsEnrichment` derives
   from it. mtime-only changes count.
-- The resolved `captureDate` is stored; `bestCaptureDate` is computed at display
-  as `captureDate ?? createdAt ?? contentModifiedAt`.
+- Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
+  supplies `bestCaptureDate` for tile display and date sort.
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
   application of ADR 0008's permission), accepting the unreclaimable disk growth.
 - The enrichment ownership split: a single `EnrichmentCoordinator` actor running
@@ -63,17 +64,18 @@ This ADR references, but does not own:
   background, owned by ADR 0008.
 - The SQLite catalog schema, Store query surface, and completed-scan
   reconciliation, owned by ADR 0002 and ADR 0010.
-- The 10 Hz projection/publication model, owned by ADR 0005, and Store-owned
-  sort-key ordering, owned by ADR 0007 and ADR 0010.
+- The Projection publication model, owned by ADR 0005, Store-owned query
+  architecture owned by ADR 0010, and descriptor/best-value query policy owned
+  by ADR 0011.
 - The narrow AppKit grid rendering boundary, owned by ADR 0006.
 
 Adjacent decisions requiring separate ADRs or specs:
 
-- Sorting or filtering by metadata, a metadata inspector surface, and the
-  max-zoom "load the original" path (thumbnails serve up to their native size).
+- A metadata inspector surface and the max-zoom "load the original" path
+  (thumbnails serve up to their native size).
 - An in-memory thumbnail cache, if a measured scroll profile ever demands one.
-- Additional metadata indexes only if a cross-asset feature (metadata sort/filter)
-  is ever built.
+- Additional metadata indexes only if a future cross-asset feature proves them
+  with measured query evidence.
 
 ## Decision
 
@@ -106,20 +108,21 @@ Adjacent decisions requiring separate ADRs or specs:
    thumbnails are purged with the reset because their SQLite references were
    discarded, and metadata is rebuilt by re-enrichment.
 
-4. **One resolved capture date is stored; the best date is computed at display.**
-   Enrichment resolves `capture_date_unix` from the metadata date priority chain
-   (original → quickTime creation → digitized → gps). `bestCaptureDate` is computed
-   as `captureDate ?? createdAt ?? contentModifiedAt`, so the grid shows a date
-   without the full metadata resident, the filesystem fallback cannot drift, and it
-   upgrades automatically as enrichment lands. The metadata detail row preserves
-   all date roles, so a future policy can re-resolve without re-reading files. The
-   date is shown as a plain date and is never fabricated (MED-002):
-   `bestCaptureDate` is nil only when nothing is known.
+4. **Timestamp role facts are stored; SQLite generates the best date.**
+   Enrichment writes timestamp role facts (original, QuickTime creation,
+   digitized, and GPS) instead of a pre-resolved winner. SQLite's
+   `best_capture_unix` generated column ranks those role facts ahead of
+   filesystem creation and modification dates, so tile display and date sort read
+   the same best value without keeping full metadata resident. The metadata
+   detail row still preserves all date roles. The date is shown as a plain date
+   and is never fabricated (MED-002): `bestCaptureDate` is nil only when nothing
+   is known.
 
 5. **Disjoint column ownership; scan upserts preserve overlay.** The scan upsert
-   writes only fact columns; enrichment writes only `asset_metadata`,
-   `capture_date_unix`, `thumbnail_path`, and the `(size, mtime)` stamps. A re-scan
-   never clobbers metadata or the thumbnail within one record. An enrichment
+   writes only scan fact columns; enrichment writes only `asset_metadata`,
+   timestamp role facts, enriched kind/format, `thumbnail_path`, and the
+   `(size, mtime)` stamps. A re-scan never clobbers metadata or the thumbnail
+   within one record. An enrichment
    completion revalidates its source `(size, mtime)` in SQLite before writing and
    before promoting its staged thumbnail; stale overlay may remain visible as the
    best-known data, but stale work cannot mark a changed source current or replace
@@ -189,7 +192,7 @@ Pros:
 
 Cons:
 
-- Rides the Projection 10 Hz rebuild and deep `==`; at 1M assets the per-tick copy
+- Rides the Projection background rebuild and deep `==`; at 1M assets the per-tick copy
   and compare cost is large even off-main.
 - Inline optionals cost their full slot whether nil or not (~480 B/asset ≈ 480 MB
   at 1M) for data nothing currently reads across assets.
@@ -221,7 +224,7 @@ Cons:
 
 Failure modes:
 
-- Image bytes leak into the 10 Hz pipeline through a careless column read.
+- Image bytes leak into the Projection pipeline through a careless column read.
 
 Rejected in favor of files-by-path, which keeps bytes entirely out of the catalog
 and the publication.
@@ -320,9 +323,9 @@ at a real large library.
 
 ## Consequences
 
-- The grid gains thumbnails and a capture date while the 10 Hz publication stays
+- The grid gains thumbnails and a capture date while publication stays
   identity-plus-generation only; hot detail reads fetch only `thumbnailPath`,
-  `captureDate`, and stamps for visible IDs. Full metadata stays out of grid
+  generated best values, and stamps for visible IDs. Full metadata stays out of grid
   memory.
 - Re-enrichment is self-healing: a fact change makes the stamp mismatch, so the
   asset re-queues with no cancellation logic.

@@ -20,7 +20,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             store: store,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in true },
-            applyBatchSize: 1,
+            applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
         let model = CatalogWindowViewModel(
@@ -38,7 +38,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         // The coordinator the view model started enriches the asset, and the enriched
         // capture date and thumbnail path surface in the projected window state.
         let asset = try await waitForFirstAsset(store: store, model: model) { asset in
-            asset.captureDate == captureDate
+            asset.bestCaptureDate == captureDate
         }
         #expect(asset.thumbnailPath == "t.jpg")
 
@@ -95,7 +95,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             store: secondStore,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in true },
-            applyBatchSize: 1,
+            applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
         let model = CatalogWindowViewModel(
@@ -110,7 +110,7 @@ struct CatalogWindowViewModelEnrichmentTests {
 
         // The persisted asset enriches purely from the post-load Store query.
         let asset = try await waitForFirstAsset(store: secondStore, model: model, attempts: 400) { asset in
-            asset.captureDate == captureDate
+            asset.bestCaptureDate == captureDate
         }
         #expect(asset.thumbnailPath == "t.jpg")
         await coordinator.shutdown()
@@ -143,7 +143,7 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg"
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(),
-                captureDate: captureDate,
+                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: thumbnailPath,
                 sourceSize: size,
                 sourceMTimeSeconds: mtime
@@ -174,9 +174,9 @@ private func waitForFirstAsset(
         }
     }
     let need = String(describing: lastAsset?.needsEnrichment)
-    let cap = String(describing: lastAsset?.captureDate)
+    let cap = String(describing: lastAsset?.bestCaptureDate)
     let size = String(describing: lastAsset?.byteSize)
-    Issue.record("waitForFirstAsset timed out: needsEnrichment=\(need) captureDate=\(cap) byteSize=\(size)")
+    Issue.record("waitForFirstAsset timed out: needsEnrichment=\(need) bestCaptureDate=\(cap) byteSize=\(size)")
     throw EnrichmentWiringTestError.timedOut
 }
 

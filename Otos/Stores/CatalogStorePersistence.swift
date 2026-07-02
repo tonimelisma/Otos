@@ -75,30 +75,13 @@ extension CatalogStore {
         // The catalog is a rebuildable filesystem projection. With no active users
         // and no authoritative user data in this schema, incompatible old local
         // databases are intentionally erased and rebuilt instead of migrated.
-        migrator.registerMigration("v1_clean_queryable_catalog") { db in
+        migrator.registerMigration("v2_query_descriptor_best_values") { db in
             try db.create(table: "library_root") { table in
                 table.autoIncrementedPrimaryKey("id")
                 table.column("path", .text).notNull().unique()
             }
 
-            try db.create(table: "media_asset") { table in
-                table.column("library_root_id", .integer)
-                    .notNull()
-                    .references("library_root", onDelete: .cascade)
-                table.column("relative_path", .text).notNull()
-                table.column("sort_key", .text).notNull()
-                table.column("name", .text)
-                table.column("content_type_identifier", .text)
-                table.column("byte_size", .integer)
-                table.column("created_at_unix", .double)
-                table.column("content_modified_at_unix", .double)
-                table.column("enriched_source_size", .integer)
-                table.column("enriched_source_mtime", .integer)
-                table.column("thumbnail_path", .text)
-                table.column("capture_date_unix", .double)
-                table.column("enrichment_claimed_until", .double)
-                table.primaryKey(["library_root_id", "relative_path"])
-            }
+            try db.execute(sql: mediaAssetTableSQL())
 
             try db.create(
                 index: "idx_media_asset_order_global",
@@ -110,7 +93,7 @@ extension CatalogStore {
                 on: "media_asset",
                 columns: ["library_root_id", "sort_key", "relative_path"]
             )
-            try db.create(index: "idx_media_asset_capture_date", on: "media_asset", columns: ["capture_date_unix"])
+            try createOrderIndexes(db)
             try db.execute(
                 sql: """
                 CREATE INDEX idx_media_asset_needs_enrichment_global
@@ -248,35 +231,18 @@ extension CatalogStore {
             return true
         }
 
-        let mediaAssetColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')"))
-        let requiredMediaAssetColumns: Set = [
-            "library_root_id",
-            "relative_path",
-            "sort_key",
-            "name",
-            "content_type_identifier",
-            "byte_size",
-            "created_at_unix",
-            "content_modified_at_unix",
-            "enriched_source_size",
-            "enriched_source_mtime",
-            "thumbnail_path",
-            "capture_date_unix",
-            "enrichment_claimed_until",
-        ]
-        guard requiredMediaAssetColumns.isSubset(of: mediaAssetColumns),
+        let mediaAssetColumns = try Set(String.fetchAll(
+            db,
+            sql: "SELECT name FROM pragma_table_xinfo('media_asset')"
+        ))
+        guard requiredCurrentMediaAssetColumns().isSubset(of: mediaAssetColumns),
               userTables.contains("asset_metadata")
         else {
             return true
         }
 
         let metadataColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('asset_metadata')"))
-        let requiredMetadataColumns: Set = [
-            "library_root_id",
-            "relative_path",
-            "metadata_extra_json",
-        ]
-        return !requiredMetadataColumns.isSubset(of: metadataColumns)
+        return !requiredCurrentMetadataColumns().isSubset(of: metadataColumns)
     }
 
     static func enrichmentResultMatchesCurrentRow(
@@ -314,7 +280,12 @@ extension CatalogStore {
             sql: """
             UPDATE media_asset SET
                 thumbnail_path = ?,
-                capture_date_unix = ?,
+                ts_original_unix = ?,
+                ts_quicktime_creation_unix = ?,
+                ts_digitized_unix = ?,
+                ts_gps_unix = ?,
+                enriched_kind = ?,
+                enriched_format = ?,
                 enriched_source_size = ?,
                 enriched_source_mtime = ?
             WHERE library_root_id = ?
@@ -322,7 +293,12 @@ extension CatalogStore {
             """,
             arguments: [
                 result.thumbnailPath,
-                result.captureDate?.timeIntervalSince1970,
+                result.timestampFacts.original?.timeIntervalSince1970,
+                result.timestampFacts.quickTimeCreation?.timeIntervalSince1970,
+                result.timestampFacts.digitized?.timeIntervalSince1970,
+                result.timestampFacts.gps?.timeIntervalSince1970,
+                result.enrichedKind?.rawValue,
+                result.enrichedFormat?.rawValue,
                 result.sourceSize,
                 result.sourceMTimeSeconds,
                 libraryRootID,
@@ -366,8 +342,12 @@ extension CatalogStore {
         return try? JSONDecoder().decode(AssetMetadata.self, from: data)
     }
 
-    static func fetchOrderedAssetIDRows(rootIDs: [Int64], db: Database) throws -> [(Int64, MediaRelativePath)] {
-        guard let query = orderedAssetIDQuery(rootIDs: rootIDs) else {
+    static func fetchOrderedAssetIDRows(
+        descriptor: CatalogQueryDescriptor,
+        rootIDs: [Int64],
+        db: Database
+    ) throws -> [(Int64, MediaRelativePath)] {
+        guard let query = orderedAssetIDQuery(descriptor: descriptor, rootIDs: rootIDs) else {
             return []
         }
         return try Row.fetchAll(
@@ -379,17 +359,70 @@ extension CatalogStore {
         }
     }
 
-    static func orderedAssetIDQuery(rootIDs: [Int64]) -> SQLQuery? {
+    static func orderedAssetIDQuery(descriptor: CatalogQueryDescriptor, rootIDs: [Int64]) -> SQLQuery? {
+        guard !rootIDs.isEmpty else {
+            return nil
+        }
+        let order = orderPlan(for: descriptor.sort, rootLocal: rootIDs.count == 1)
+        var arguments: [any DatabaseValueConvertible] = []
+        let rootPredicate: String
+        if rootIDs.count == 1, let rootID = rootIDs.first {
+            rootPredicate = "library_root_id = ?"
+            arguments.append(rootID)
+        } else {
+            let placeholders = sqlPlaceholders(count: rootIDs.count)
+            rootPredicate = "library_root_id IN (\(placeholders))"
+            arguments.append(contentsOf: rootIDs)
+        }
+        let filter = filterPredicate(for: descriptor.filter)
+        arguments.append(contentsOf: filter.arguments)
+        let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
+        return SQLQuery(
+            sql: """
+            SELECT library_root_id, relative_path
+            FROM media_asset INDEXED BY \(order.indexName)
+            WHERE \(rootPredicate)\(filterSQL)
+            ORDER BY \(order.orderBy)
+            """,
+            arguments: StatementArguments(arguments)
+        )
+    }
+
+    static func filterOptions(rootIDs: [Int64], db: Database) throws -> CatalogFilterOptions {
+        guard let query = distinctFilterableTypesQuery(rootIDs: rootIDs) else {
+            return .empty
+        }
+        let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
+        var formatsByKind: [MediaKind: Set<MediaFormatToken>] = [:]
+        for row in rows {
+            let kindValue: String? = row["best_kind"]
+            let formatValue: String? = row["best_format"]
+            guard let kindValue, let kind = MediaKind(rawValue: kindValue) else {
+                continue
+            }
+            var formats = formatsByKind[kind, default: []]
+            if let formatValue {
+                formats.insert(MediaFormatToken(rawValue: formatValue))
+            }
+            formatsByKind[kind] = formats
+        }
+        return CatalogFilterOptions(
+            formatsByKind: formatsByKind.mapValues { $0.sorted() }
+        )
+    }
+
+    static func distinctFilterableTypesQuery(rootIDs: [Int64]) -> SQLQuery? {
         guard !rootIDs.isEmpty else {
             return nil
         }
         if rootIDs.count == 1, let rootID = rootIDs.first {
             return SQLQuery(
                 sql: """
-                SELECT library_root_id, relative_path
-                FROM media_asset INDEXED BY idx_media_asset_order_root
+                SELECT DISTINCT best_kind, best_format
+                FROM media_asset
                 WHERE library_root_id = ?
-                ORDER BY sort_key, relative_path
+                  AND best_kind IS NOT NULL
+                ORDER BY best_kind, best_format
                 """,
                 arguments: [rootID]
             )
@@ -398,10 +431,11 @@ extension CatalogStore {
         let placeholders = sqlPlaceholders(count: rootIDs.count)
         return SQLQuery(
             sql: """
-            SELECT library_root_id, relative_path
-            FROM media_asset INDEXED BY idx_media_asset_order_global
+            SELECT DISTINCT best_kind, best_format
+            FROM media_asset
             WHERE library_root_id IN (\(placeholders))
-            ORDER BY sort_key, library_root_id, relative_path
+              AND best_kind IS NOT NULL
+            ORDER BY best_kind, best_format
             """,
             arguments: StatementArguments(rootIDs)
         )
@@ -460,7 +494,8 @@ extension CatalogStore {
                 sql: """
                 SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                        created_at_unix, content_modified_at_unix,
-                       enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
+                       enriched_source_size, enriched_source_mtime, thumbnail_path,
+                       best_capture_unix, best_kind, best_format
                 FROM media_asset
                 WHERE library_root_id = ? AND relative_path IN (\(placeholders))
                 """,
@@ -563,7 +598,8 @@ extension CatalogStore {
             )
             RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
                       created_at_unix, content_modified_at_unix,
-                      enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
+                      enriched_source_size, enriched_source_mtime, thumbnail_path,
+                      best_capture_unix, best_kind, best_format
             """,
             arguments: sqlArguments(rootID, now, limit, claimNotAfter)
         )
@@ -601,7 +637,8 @@ extension CatalogStore {
             )
             RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
                       created_at_unix, content_modified_at_unix,
-                      enriched_source_size, enriched_source_mtime, thumbnail_path, capture_date_unix
+                      enriched_source_size, enriched_source_mtime, thumbnail_path,
+                      best_capture_unix, best_kind, best_format
             """,
             arguments: StatementArguments(arguments)
         )
@@ -687,39 +724,43 @@ extension CatalogStore {
                 library_root_id,
                 relative_path,
                 sort_key,
+                name_sort_key,
                 name,
                 content_type_identifier,
+                kind,
+                format,
                 byte_size,
                 created_at_unix,
                 content_modified_at_unix
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
                 sort_key = excluded.sort_key,
+                name_sort_key = excluded.name_sort_key,
                 name = excluded.name,
                 content_type_identifier = excluded.content_type_identifier,
+                kind = excluded.kind,
+                format = excluded.format,
                 byte_size = excluded.byte_size,
                 created_at_unix = excluded.created_at_unix,
                 content_modified_at_unix = excluded.content_modified_at_unix
             WHERE media_asset.sort_key IS NOT excluded.sort_key
+               OR media_asset.name_sort_key IS NOT excluded.name_sort_key
                OR media_asset.name IS NOT excluded.name
                OR media_asset.content_type_identifier IS NOT excluded.content_type_identifier
+               OR media_asset.kind IS NOT excluded.kind
+               OR media_asset.format IS NOT excluded.format
                OR media_asset.byte_size IS NOT excluded.byte_size
                OR CAST(COALESCE(media_asset.created_at_unix, -1) AS INTEGER)
                   IS NOT CAST(COALESCE(excluded.created_at_unix, -1) AS INTEGER)
                OR CAST(COALESCE(media_asset.content_modified_at_unix, -1) AS INTEGER)
                   IS NOT CAST(COALESCE(excluded.content_modified_at_unix, -1) AS INTEGER)
             """,
-            arguments: [
-                libraryRootID,
-                file.relativePath.rawValue,
-                MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: file.relativePath),
-                file.name,
-                file.contentTypeIdentifier,
-                file.byteSize,
-                file.createdAt?.timeIntervalSince1970,
-                file.contentModifiedAt?.timeIntervalSince1970,
-            ]
+            arguments: scannedFileUpsertArguments(
+                file,
+                libraryRootPath: libraryRootPath,
+                libraryRootID: libraryRootID
+            )
         )
         return db.changesCount > 0
     }
@@ -740,6 +781,88 @@ extension CatalogStore {
         try db.execute(
             sql: upsertAssetMetadataSQL(),
             arguments: arguments
+        )
+    }
+}
+
+private nonisolated func mediaAssetTableSQL() -> String {
+    """
+    CREATE TABLE media_asset (
+        library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
+        relative_path TEXT NOT NULL,
+        sort_key TEXT NOT NULL,
+        name_sort_key TEXT NOT NULL,
+        name TEXT,
+        content_type_identifier TEXT,
+        kind TEXT,
+        format TEXT,
+        byte_size INTEGER,
+        created_at_unix DOUBLE,
+        content_modified_at_unix DOUBLE,
+        ts_original_unix DOUBLE,
+        ts_quicktime_creation_unix DOUBLE,
+        ts_digitized_unix DOUBLE,
+        ts_gps_unix DOUBLE,
+        enriched_kind TEXT,
+        enriched_format TEXT,
+        best_capture_unix DOUBLE GENERATED ALWAYS AS (
+            COALESCE(
+                ts_original_unix,
+                ts_quicktime_creation_unix,
+                ts_digitized_unix,
+                ts_gps_unix,
+                created_at_unix,
+                content_modified_at_unix
+            )
+        ) STORED,
+        best_kind TEXT GENERATED ALWAYS AS (COALESCE(enriched_kind, kind)) STORED,
+        best_format TEXT GENERATED ALWAYS AS (COALESCE(enriched_format, format)) STORED,
+        enriched_source_size INTEGER,
+        enriched_source_mtime INTEGER,
+        thumbnail_path TEXT,
+        enrichment_claimed_until DOUBLE,
+        PRIMARY KEY (library_root_id, relative_path)
+    )
+    """
+}
+
+private nonisolated func createOrderIndexes(_ db: Database) throws {
+    for direction in ["ASC", "DESC"] {
+        try db.execute(
+            sql: """
+            CREATE INDEX idx_media_asset_best_capture_global_\(direction.lowercased())
+            ON media_asset(best_capture_unix \(direction), library_root_id, relative_path)
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE INDEX idx_media_asset_best_capture_root_\(direction.lowercased())
+            ON media_asset(library_root_id, best_capture_unix \(direction), relative_path)
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE INDEX idx_media_asset_name_global_\(direction.lowercased())
+            ON media_asset(name_sort_key \(direction), library_root_id, relative_path)
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE INDEX idx_media_asset_name_root_\(direction.lowercased())
+            ON media_asset(library_root_id, name_sort_key \(direction), relative_path)
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE INDEX idx_media_asset_size_global_\(direction.lowercased())
+            ON media_asset((byte_size IS NULL), byte_size \(direction), library_root_id, relative_path)
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE INDEX idx_media_asset_size_root_\(direction.lowercased())
+            ON media_asset(library_root_id, (byte_size IS NULL), byte_size \(direction), relative_path)
+            """
         )
     }
 }
@@ -799,12 +922,142 @@ private nonisolated func enrichmentStalenessSQLPredicate() -> String {
     """
 }
 
+private nonisolated func orderPlan(
+    for sort: MediaSortOrder,
+    rootLocal: Bool
+) -> (indexName: String, orderBy: String) {
+    let direction = sort.direction.sqlKeyword
+    let suffix = direction.lowercased()
+    switch (sort.field, rootLocal) {
+    case (.bestDate, true):
+        return (
+            "idx_media_asset_best_capture_root_\(suffix)",
+            "best_capture_unix \(direction), relative_path"
+        )
+    case (.bestDate, false):
+        return (
+            "idx_media_asset_best_capture_global_\(suffix)",
+            "best_capture_unix \(direction), library_root_id, relative_path"
+        )
+    case (.name, true):
+        return (
+            "idx_media_asset_name_root_\(suffix)",
+            "name_sort_key \(direction), relative_path"
+        )
+    case (.name, false):
+        return (
+            "idx_media_asset_name_global_\(suffix)",
+            "name_sort_key \(direction), library_root_id, relative_path"
+        )
+    case (.size, true):
+        return (
+            "idx_media_asset_size_root_\(suffix)",
+            "(byte_size IS NULL), byte_size \(direction), relative_path"
+        )
+    case (.size, false):
+        return (
+            "idx_media_asset_size_global_\(suffix)",
+            "(byte_size IS NULL), byte_size \(direction), library_root_id, relative_path"
+        )
+    }
+}
+
+private nonisolated func filterPredicate(
+    for filter: MediaFilter
+) -> (sql: String?, arguments: [any DatabaseValueConvertible]) {
+    guard filter.isActive else {
+        return (nil, [])
+    }
+    var clauses: [String] = []
+    var arguments: [any DatabaseValueConvertible] = []
+    let kinds = filter.kinds.sorted { $0.rawValue < $1.rawValue }
+    if !kinds.isEmpty {
+        clauses.append("best_kind IN (\(sqlPlaceholders(count: kinds.count)))")
+        arguments.append(contentsOf: kinds.map(\.rawValue))
+    }
+    let formats = filter.formats.sorted()
+    if !formats.isEmpty {
+        clauses.append("best_format IN (\(sqlPlaceholders(count: formats.count)))")
+        arguments.append(contentsOf: formats.map(\.rawValue))
+    }
+    return ("(\(clauses.joined(separator: " OR ")))", arguments)
+}
+
+private extension MediaSortDirection {
+    nonisolated var sqlKeyword: String {
+        switch self {
+        case .ascending:
+            "ASC"
+        case .descending:
+            "DESC"
+        }
+    }
+}
+
 private nonisolated func sqlPlaceholders(count: Int) -> String {
     Array(repeating: "?", count: count).joined(separator: ",")
 }
 
 private nonisolated func sqlArguments(_ values: (any DatabaseValueConvertible)...) -> StatementArguments {
     StatementArguments(values)
+}
+
+private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
+    [
+        "library_root_id",
+        "relative_path",
+        "sort_key",
+        "name_sort_key",
+        "name",
+        "content_type_identifier",
+        "kind",
+        "format",
+        "byte_size",
+        "created_at_unix",
+        "content_modified_at_unix",
+        "ts_original_unix",
+        "ts_quicktime_creation_unix",
+        "ts_digitized_unix",
+        "ts_gps_unix",
+        "enriched_kind",
+        "enriched_format",
+        "best_capture_unix",
+        "best_kind",
+        "best_format",
+        "enriched_source_size",
+        "enriched_source_mtime",
+        "thumbnail_path",
+        "enrichment_claimed_until",
+    ]
+}
+
+private nonisolated func requiredCurrentMetadataColumns() -> Set<String> {
+    [
+        "library_root_id",
+        "relative_path",
+        "metadata_extra_json",
+    ]
+}
+
+private nonisolated func scannedFileUpsertArguments(
+    _ file: ScannedMediaFile,
+    libraryRootPath: LibraryRootPath,
+    libraryRootID: Int64
+) -> StatementArguments {
+    let values: [(any DatabaseValueConvertible)?] = [
+        libraryRootID,
+        file.relativePath.rawValue,
+        MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: file.relativePath),
+        MediaSortKey.naturalKey(file.name ?? URL(fileURLWithPath: file.relativePath.rawValue).lastPathComponent),
+        file.name,
+        file.contentTypeIdentifier,
+        file.kind?.rawValue,
+        file.format?.rawValue,
+        file.byteSize,
+        file.createdAt?.timeIntervalSince1970,
+        file.contentModifiedAt?.timeIntervalSince1970,
+    ]
+    return StatementArguments(values)
 }
 
 private nonisolated func assetMetadataStatementArguments(
@@ -842,7 +1095,9 @@ private nonisolated func assetMetadataStatementArguments(
 private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset {
     let createdUnix: Double? = row["created_at_unix"]
     let modifiedUnix: Double? = row["content_modified_at_unix"]
-    let captureUnix: Double? = row["capture_date_unix"]
+    let bestCaptureUnix: Double? = row["best_capture_unix"]
+    let bestKindRaw: String? = row["best_kind"]
+    let bestFormatRaw: String? = row["best_format"]
     return CatalogStore.StoredAsset(
         libraryRootID: row["library_root_id"],
         relativePath: MediaRelativePath(rawValue: row["relative_path"]),
@@ -852,7 +1107,9 @@ private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset 
         createdAt: createdUnix.map(Date.init(timeIntervalSince1970:)),
         contentModifiedAt: modifiedUnix.map(Date.init(timeIntervalSince1970:)),
         thumbnailPath: row["thumbnail_path"],
-        captureDate: captureUnix.map(Date.init(timeIntervalSince1970:)),
+        bestCaptureDate: bestCaptureUnix.map(Date.init(timeIntervalSince1970:)),
+        bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
+        bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
         enrichedSourceSize: row["enriched_source_size"],
         enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
     )

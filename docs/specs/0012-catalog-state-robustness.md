@@ -31,8 +31,8 @@ schema, scan cadence, or media-grid behavior.
 - `CatalogStore` is an actor that owns GRDB, SQLite migrations, root runtime
   state, Store-owned catalog queries, serial scans, availability, and cheap
   change notifications.
-- `CatalogProjection` is an actor that owns the 10 Hz one-in-flight window-state
-  publication loop and all sorting/filtering outside MainActor.
+- `CatalogProjection` is an actor that owns the one-in-flight window-state
+  publication loop and descriptor normalization outside MainActor.
 - `CatalogWindowViewModel` is the single MainActor adapter for final state and
   user intents.
 - `MediaAssetCollectionView` is a narrow AppKit bridge with one structural
@@ -320,9 +320,9 @@ constant-time invalidation.
 - `CatalogStore` actor owns database connection, root runtime state,
   Store-owned catalog queries, transient availability, serial scan tasks, and
   broadcast change continuations.
-- `CatalogProjection` actor owns snapshot requests, order cache, scope
-  derivation, diagnostics summaries, 10 Hz loop, dirty flag, and state broadcast
-  continuations.
+- `CatalogProjection` actor owns descriptor-ordered Store queries, scope
+  derivation, diagnostics summaries, publication loop, dirty flag, and state
+  broadcast continuations.
 - `CatalogWindowViewModel` runs on MainActor and owns final state assignment,
   explicit user intents, separate newest-value selection and lossless mutation
   streams/forwarding tasks, store startup task, weak state-consumer task, and

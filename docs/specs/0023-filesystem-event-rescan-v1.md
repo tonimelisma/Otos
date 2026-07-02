@@ -67,10 +67,10 @@ Out of scope:
 
 ### Quiet-period debounce (per root)
 
-- Production default: `filesystemEventDebounce = 500 ms` (injectable for tests).
+- Production default: `filesystemEventDebounce = 1 s` (injectable for tests).
 - Each qualifying event for root `R` cancels and restarts `R`'s debounce task.
-- **Acceptance:** Given 10 events for `R` at t=0…400 ms, one rescan schedules at
-  t=900 ms, not 10 rescans.
+- **Acceptance:** Given 10 events for `R` inside one quiet period, one rescan
+  schedules after the final event's one-second debounce, not 10 rescans.
 
 ### Per-root scope only
 

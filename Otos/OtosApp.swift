@@ -24,6 +24,71 @@ struct OtosApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandMenu("View") {
+                Menu("Sort By") {
+                    ForEach(MediaSortField.allCases, id: \.self) { field in
+                        Button {
+                            catalogViewModel.setSortField(field)
+                        } label: {
+                            Label(
+                                field.label,
+                                systemImage: catalogViewModel.queryDescriptor.sort.field == field
+                                    ? "checkmark"
+                                    : "circle"
+                            )
+                        }
+                    }
+                }
+                Menu("Sort Direction") {
+                    ForEach(MediaSortDirection.allCases, id: \.self) { direction in
+                        Button {
+                            catalogViewModel.setSortDirection(direction)
+                        } label: {
+                            Label(
+                                direction.label,
+                                systemImage: catalogViewModel.queryDescriptor.sort.direction == direction
+                                    ? "checkmark"
+                                    : "circle"
+                            )
+                        }
+                    }
+                }
+                Divider()
+                Menu("Filter") {
+                    if catalogViewModel.queryDescriptor.filter.isActive {
+                        Button("Show Everything", action: catalogViewModel.clearMediaFilter)
+                        Divider()
+                    }
+                    ForEach(MediaKind.displayOrder, id: \.self) { kind in
+                        let formats = catalogViewModel.state.filterOptions.formats(for: kind)
+                        if !formats.isEmpty {
+                            Button {
+                                catalogViewModel.toggleMediaKind(kind, formatsInKind: formats)
+                            } label: {
+                                Label(
+                                    kind.label,
+                                    systemImage: catalogViewModel.queryDescriptor.filter.kinds.contains(kind)
+                                        ? "checkmark"
+                                        : "circle"
+                                )
+                            }
+                            ForEach(formats, id: \.self) { format in
+                                Button {
+                                    catalogViewModel.toggleMediaFormat(format, kind: kind)
+                                } label: {
+                                    Label(
+                                        format.rawValue,
+                                        systemImage: catalogViewModel.queryDescriptor.filter.formats.contains(format)
+                                            ? "checkmark"
+                                            : "circle"
+                                    )
+                                }
+                            }
+                            Divider()
+                        }
+                    }
+                }
+            }
         }
 
         Settings {

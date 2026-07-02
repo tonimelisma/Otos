@@ -19,10 +19,14 @@ struct CatalogStoreEnrichmentTests {
         let capture = Date(timeIntervalSince1970: 700)
         let created = Date(timeIntervalSince1970: 500)
         let modified = Date(timeIntervalSince1970: 900)
-        #expect(makeAsset(captureDate: capture, createdAt: created, modifiedAt: modified).bestCaptureDate == capture)
-        #expect(makeAsset(captureDate: nil, createdAt: created, modifiedAt: modified).bestCaptureDate == created)
-        #expect(makeAsset(captureDate: nil, createdAt: nil, modifiedAt: modified).bestCaptureDate == modified)
-        #expect(makeAsset(captureDate: nil, createdAt: nil, modifiedAt: nil).bestCaptureDate == nil)
+        #expect(
+            makeAsset(bestCaptureDate: capture, createdAt: created, modifiedAt: modified).bestCaptureDate == capture
+        )
+        #expect(
+            makeAsset(bestCaptureDate: created, createdAt: created, modifiedAt: modified).bestCaptureDate == created
+        )
+        #expect(makeAsset(bestCaptureDate: modified, createdAt: nil, modifiedAt: modified).bestCaptureDate == modified)
+        #expect(makeAsset(bestCaptureDate: nil, createdAt: nil, modifiedAt: nil).bestCaptureDate == nil)
     }
 
     @Test func metadataExtraJSONRoundTrips() throws {
@@ -80,7 +84,7 @@ struct CatalogStoreEnrichmentTests {
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(cameraModel: "Cam"),
-                captureDate: captureDate,
+                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000
@@ -89,7 +93,6 @@ struct CatalogStoreEnrichmentTests {
 
         let enriched = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(enriched.thumbnailPath == "thumb.jpg")
-        #expect(enriched.captureDate == captureDate)
         #expect(enriched.bestCaptureDate == captureDate)
         #expect(enriched.needsEnrichment == false)
 
@@ -103,7 +106,7 @@ struct CatalogStoreEnrichmentTests {
         }
         let asset = try #require(restaled.testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
-        #expect(asset.captureDate == captureDate)
+        #expect(asset.bestCaptureDate == captureDate)
         #expect(asset.enrichedSourceSize == 100)
         #expect(asset.needsEnrichment == true)
     }
@@ -132,7 +135,7 @@ struct CatalogStoreEnrichmentTests {
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(cameraModel: "Cam", pixelWidth: 4000, pixelHeight: 3000),
-                captureDate: captureDate,
+                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: scannedSize,
                 sourceMTimeSeconds: scannedMTime
@@ -156,7 +159,7 @@ struct CatalogStoreEnrichmentTests {
         try await reloaded.start(scansSavedLibraries: false)
         let asset = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
-        #expect(asset.captureDate == captureDate)
+        #expect(asset.bestCaptureDate == captureDate)
         #expect(asset.enrichedSourceSize == scannedSize)
         #expect(asset.enrichedSourceMTimeSeconds == scannedMTime)
         #expect(asset.needsEnrichment == false)
@@ -195,7 +198,7 @@ struct CatalogStoreEnrichmentTests {
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(cameraModel: "OldCam"),
-                captureDate: Date(timeIntervalSince1970: 700),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: "old.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000
@@ -204,7 +207,7 @@ struct CatalogStoreEnrichmentTests {
 
         let current = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(current.thumbnailPath == nil)
-        #expect(current.captureDate == nil)
+        #expect(current.bestCaptureDate == Date(timeIntervalSince1970: 500))
         #expect(current.enrichedSourceSize == nil)
         #expect(current.enrichedSourceMTimeSeconds == nil)
         #expect(current.needsEnrichment)
@@ -213,7 +216,7 @@ struct CatalogStoreEnrichmentTests {
         try await reloaded.start(scansSavedLibraries: false)
         let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(persisted.thumbnailPath == nil)
-        #expect(persisted.captureDate == nil)
+        #expect(persisted.bestCaptureDate == Date(timeIntervalSince1970: 500))
         #expect(persisted.enrichedSourceSize == nil)
         #expect(persisted.enrichedSourceMTimeSeconds == nil)
         #expect(persisted.needsEnrichment)
@@ -256,7 +259,6 @@ struct CatalogStoreEnrichmentTests {
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(),
-                captureDate: nil,
                 thumbnailPath: thumbnailName,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000
@@ -300,7 +302,6 @@ struct CatalogStoreEnrichmentTests {
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(),
-                captureDate: nil,
                 thumbnailPath: thumbnailName,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000
@@ -319,7 +320,7 @@ struct CatalogStoreEnrichmentTests {
 
 private func makeAsset(
     size: Int64? = 100,
-    captureDate: Date? = nil,
+    bestCaptureDate: Date? = nil,
     createdAt: Date? = nil,
     modifiedAt: Date? = nil,
     stampSize: Int64? = nil,
@@ -334,7 +335,7 @@ private func makeAsset(
         createdAt: createdAt,
         contentModifiedAt: modifiedAt,
         thumbnailPath: nil,
-        captureDate: captureDate,
+        bestCaptureDate: bestCaptureDate,
         enrichedSourceSize: stampSize,
         enrichedSourceMTimeSeconds: stampMtime
     )

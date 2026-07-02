@@ -90,13 +90,14 @@ private func insertLegacyNonMediaRow(
                 library_root_id,
                 relative_path,
                 sort_key,
+                name_sort_key,
                 name,
                 content_type_identifier,
                 byte_size,
                 created_at_unix,
                 content_modified_at_unix
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 rootID,
@@ -105,6 +106,7 @@ private func insertLegacyNonMediaRow(
                     libraryRootPath: rootPath,
                     relativePath: MediaRelativePath(rawValue: relativePath)
                 ),
+                MediaSortKey.naturalKey(relativePath),
                 relativePath,
                 "public.plain-text",
                 4,

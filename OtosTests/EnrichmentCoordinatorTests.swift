@@ -33,7 +33,7 @@ struct EnrichmentCoordinatorTests {
                 EnrichmentResult(
                     id: id,
                     metadata: AssetMetadata(cameraModel: "Cam"),
-                    captureDate: captureDate,
+                    timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime
@@ -47,7 +47,7 @@ struct EnrichmentCoordinatorTests {
                 await state.materialize(url.path(percentEncoded: false))
                 return true
             },
-            applyBatchSize: 1,
+            applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
         await coordinator.start()
@@ -58,7 +58,6 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
 
         #expect(enriched.testAssets.allSatisfy { $0.thumbnailPath == "t.jpg" })
-        #expect(enriched.testAssets.allSatisfy { $0.captureDate == captureDate })
         #expect(enriched.testAssets.allSatisfy { $0.bestCaptureDate == captureDate })
     }
 
@@ -82,7 +81,6 @@ struct EnrichmentCoordinatorTests {
                 EnrichmentResult(
                     id: id,
                     metadata: AssetMetadata(),
-                    captureDate: nil,
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime
@@ -93,7 +91,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in true },
-            applyBatchSize: 1,
+            applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
         await coordinator.start()
@@ -127,7 +125,6 @@ struct EnrichmentCoordinatorTests {
                 EnrichmentResult(
                     id: id,
                     metadata: AssetMetadata(),
-                    captureDate: nil,
                     thumbnailPath: "t.jpg",
                     sourceSize: reportedSize,
                     sourceMTimeSeconds: mtime
@@ -138,7 +135,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in true },
-            applyBatchSize: 1,
+            applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
         await coordinator.start()

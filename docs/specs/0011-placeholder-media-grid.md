@@ -20,10 +20,10 @@ switches between All Media and libraries.
 
 ## Current Repo State
 
-- `CatalogStore` owns keyed in-memory media grouped by library and persists the
-  same catalog to SQLite.
-- `CatalogProjection` owns the 10 Hz coalesced UI publication loop and reuses
-  ordered IDs when direct membership validation succeeds.
+- `CatalogStore` owns catalog truth and persists the media working set to
+  SQLite.
+- `CatalogProjection` owns the coalesced UI publication loop and asks Store for
+  descriptor-ordered IDs.
 - `CatalogWindowViewModel` assigns final state on the MainActor.
 - The media browser uses `NSCollectionView`; Spec 0010 retains the failure
   evidence that justifies that boundary. The Settings table is unrelated.
@@ -61,8 +61,9 @@ manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
   icon. Audio has no special behavior.
 - The grid has no media activation, preview, Finder, drag, or keyboard behavior.
   (Selection and ⌘C copy were added later; see spec 0031 and APP-010/APP-012.)
-- A sidebar scope change scrolls to the first item; same-scope scan updates
-  preserve the current scroll position.
+- A query descriptor change through sidebar scope, sort, or filter scrolls to
+  the first item; same-descriptor scan updates preserve the current scroll
+  position.
 - Existing `Checking Library`, `Checking Libraries`, `Library Unavailable`,
   `No Available Media`, and `No Media` states remain visible when the projected
   grid is empty.
@@ -82,7 +83,7 @@ manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
 
 ### Non-Functional
 
-- Projection's 10 Hz loop is the sole catalog-to-grid cadence.
+- Projection's coalesced publication loop is the sole catalog-to-grid cadence.
 - Only one diffable structural apply may be in flight; intermediate pending
   states are replaced by the newest state.
 - MainActor spans remain below 100 ms and visible cell configuration targets
@@ -155,11 +156,10 @@ custom rendering engine.
 
 ## Ownership And Data Flow
 
-1. `CatalogStore` mutates keyed runtime truth and emits a cheap change signal.
-2. At most once per dirty 100 ms tick, `CatalogProjection` requests a keyed
-   snapshot, validates cached identity membership, sorts only on cache miss,
-   filters cached order for the current scope/availability, and publishes
-   `CatalogWindowState`.
+1. `CatalogStore` mutates catalog truth and emits a cheap change signal.
+2. On the background cadence, or immediately for direct user query intents,
+   `CatalogProjection` requests current library rows plus descriptor-ordered IDs,
+   filters for availability, and publishes `CatalogWindowState`.
 3. `CatalogWindowViewModel` assigns that state on the MainActor.
 4. `MediaGridView` renders title/empty state and forwards grid state to the
    collection controller.
@@ -197,7 +197,8 @@ and is not stored in SQLite.
   filtering, unknown/unavailable hiding, orphan fallback ordering, and scoped
   value-map isolation.
 - Collection state-machine tests prove one in-flight apply, newest pending,
-  detail refresh classification, scope reset, and same-scope preservation.
+  detail refresh classification, descriptor reset, and same-descriptor
+  preservation.
 - Content-type tests prove movies are marked while image, audio, unknown, DOCX,
   and source files remain generic.
 - Source hygiene proves the AppKit collection/compositional layout exists and

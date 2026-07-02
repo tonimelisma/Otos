@@ -89,16 +89,22 @@ struct CatalogProjectionLifecycleTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { _, _, selection in
+            stateBuilder: { _, _, descriptor in
+                let selection = descriptor.scope
                 await gate.pauseIfNeeded(selection)
                 let resolved = selection == missing ? SidebarSelection.allMedia : selection
                 return CatalogWindowState(
                     title: "Selection",
                     libraries: [],
                     mediaGrid: CatalogMediaGridState(
-                        scope: resolved,
+                        descriptor: CatalogQueryDescriptor(
+                            scope: resolved,
+                            filter: descriptor.filter,
+                            sort: descriptor.sort
+                        ),
                         orderedAssetIDs: []
                     ),
+                    filterOptions: .empty,
                     resolvedSidebarSelection: resolved,
                     mediaEmptyState: .noMedia
                 )

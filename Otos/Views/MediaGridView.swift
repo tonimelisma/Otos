@@ -10,18 +10,12 @@ struct MediaGridView: View {
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
+    var clearFilters: () -> Void = {}
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
+        Group {
             if grid.orderedAssetIDs.isEmpty {
-                ContentUnavailableView(
-                    emptyState.title,
-                    systemImage: emptyState.systemImage,
-                    description: Text(emptyState.message)
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                emptyContent
             } else {
                 MediaAssetCollectionView(
                     grid: grid,
@@ -34,17 +28,18 @@ struct MediaGridView: View {
         .navigationTitle(title)
     }
 
-    private var header: some View {
-        HStack {
-            Text(title)
-                .font(.title2.weight(.semibold))
-            Spacer()
-            Text("\(grid.orderedAssetIDs.count) files")
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
+    private var emptyContent: some View {
+        VStack(spacing: 12) {
+            ContentUnavailableView(
+                emptyState.title,
+                systemImage: emptyState.systemImage,
+                description: Text(emptyState.message)
+            )
+            if emptyState == .noFilterMatches {
+                Button("Clear Filters", action: clearFilters)
+            }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -73,6 +68,8 @@ private extension CatalogMediaEmptyState {
         switch self {
         case .noMedia:
             "No Media"
+        case .noFilterMatches:
+            "No Matching Media"
         case .checkingLibraries:
             "Checking Libraries"
         case .noAvailableMedia:
@@ -88,6 +85,8 @@ private extension CatalogMediaEmptyState {
         switch self {
         case .noMedia:
             "Add a library with media files to begin."
+        case .noFilterMatches:
+            "No media in this scope matches the active filters."
         case .checkingLibraries:
             "Otos is checking whether saved library folders are reachable."
         case .noAvailableMedia:
@@ -103,6 +102,8 @@ private extension CatalogMediaEmptyState {
         switch self {
         case .noMedia:
             "photo.on.rectangle"
+        case .noFilterMatches:
+            "line.3.horizontal.decrease.circle"
         case .checkingLibraries, .libraryChecking:
             "externaldrive.badge.timemachine"
         case .noAvailableMedia, .libraryUnavailable:

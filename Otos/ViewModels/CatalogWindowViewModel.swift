@@ -14,8 +14,8 @@ import OSLog
 /// ever lands here it belongs down in the Store or Projection instead.
 ///
 /// The three asynchronous lanes deliberately have different delivery semantics:
-/// Projection states are consumed losslessly, sidebar changes keep only the
-/// newest pending value, and add/remove mutations are lossless and serial.
+/// Projection states are consumed losslessly, query descriptor changes keep only
+/// the newest pending value, and add/remove mutations are lossless and serial.
 ///
 /// Why `weak self` in the state consumer: that task loops forever over the
 /// Projection's state stream, and a task strongly retains whatever it captures. If
@@ -24,8 +24,8 @@ import OSLog
 /// `deinit`, which cancels the task, could never run. So the consumer captures
 /// `self` weakly and upgrades to a strong reference only for the moment it applies
 /// one completed state, then lets go before the next wait. Projection may normalize a removed library
-/// back to All Media; applying that result assigns the local control value
-/// directly and therefore cannot create a feedback intent.
+/// back to All Media while preserving filter/sort; applying that result assigns
+/// the local control value directly and therefore cannot create a feedback intent.
 @MainActor
 @Observable
 final class CatalogWindowViewModel {
@@ -35,6 +35,7 @@ final class CatalogWindowViewModel {
     }
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
+    private(set) var queryDescriptor: CatalogQueryDescriptor = .default
     var state: CatalogWindowState = .empty
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
@@ -49,14 +50,14 @@ final class CatalogWindowViewModel {
 
     @ObservationIgnored private let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
-    @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator
+    @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator?
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let diagnostics: CatalogDiagnostics?
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
-    @ObservationIgnored private let selectionStream: AsyncStream<SidebarSelection>
-    @ObservationIgnored private let selectionContinuation: AsyncStream<SidebarSelection>.Continuation
+    @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryDescriptor>
+    @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryDescriptor>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
     @ObservationIgnored private let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
     // Newest-value: only the latest viewport is a useful priority hint; an obsolete
@@ -66,7 +67,7 @@ final class CatalogWindowViewModel {
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
-    @ObservationIgnored private var selectionForwardingTask: Task<Void, Never>?
+    @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
@@ -81,7 +82,7 @@ final class CatalogWindowViewModel {
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true
     ) {
-        let (selectionStream, selectionContinuation) = AsyncStream<SidebarSelection>.makeStream(
+        let (queryStream, queryContinuation) = AsyncStream<CatalogQueryDescriptor>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
         // Selection may discard obsolete pending values, but every accepted
@@ -95,20 +96,23 @@ final class CatalogWindowViewModel {
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
-        self.enrichmentCoordinator = enrichmentCoordinator
-            ?? EnrichmentCoordinator(
-                store: catalogStore,
-                enricher: .live(
-                    thumbnailDirectory: catalogStore.thumbnailDirectory
-                        ?? FileManager.default.temporaryDirectory
+        self.enrichmentCoordinator = enrichmentCoordinator ?? (
+            startsEnrichment
+                ? EnrichmentCoordinator(
+                    store: catalogStore,
+                    enricher: .live(
+                        thumbnailDirectory: catalogStore.thumbnailDirectory
+                            ?? FileManager.default.temporaryDirectory
+                    )
                 )
-            )
+                : nil
+        )
         self.diagnostics = diagnostics
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
-        self.selectionStream = selectionStream
-        self.selectionContinuation = selectionContinuation
+        self.queryStream = queryStream
+        self.queryContinuation = queryContinuation
         self.mutationStream = mutationStream
         self.mutationContinuation = mutationContinuation
         self.viewportStream = viewportStream
@@ -121,21 +125,24 @@ final class CatalogWindowViewModel {
         // mutations from starting after the ViewModel's ownership has ended.
         stateConsumptionTask?.cancel()
         catalogStartupTask?.cancel()
-        selectionForwardingTask?.cancel()
+        queryForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
-        selectionContinuation.finish()
+        queryContinuation.finish()
         mutationContinuation.finish()
         viewportContinuation.finish()
-        // The coordinator's supervisor strongly retains the coordinator, so it must be
-        // told to stop or it (and the store) would outlive this window. shutdown() is
-        // async and deinit cannot await, so hand it off; this owner is already gone.
-        let coordinator = enrichmentCoordinator
-        Task { await coordinator.shutdown() }
+        if let coordinator = enrichmentCoordinator {
+            // The coordinator's supervisor strongly retains the coordinator, so it must be
+            // told to stop or it (and the store) would outlive this window. shutdown() is
+            // async and deinit cannot await, so hand it off; this owner is already gone.
+            Task { await coordinator.shutdown() }
+        }
         stallMonitor.stop()
     }
+}
 
+extension CatalogWindowViewModel {
     func start() {
         guard !hasStarted else {
             return
@@ -149,20 +156,20 @@ final class CatalogWindowViewModel {
             stallMonitor.start(diagnostics: diagnostics)
         }
 
-        // This is the sole sidebar-intent task. AsyncStream provides ordered
+        // This is the sole query-intent task. AsyncStream provides ordered
         // delivery and bufferingNewest prevents obsolete clicks from building a
         // queue while Projection is busy publishing a large state.
         let projection = catalogProjection
         let store = catalogStore
         let diagnostics = diagnostics
-        let initialSelection = sidebarSelection
+        let initialDescriptor = queryDescriptor
 
-        startSelectionForwarding(projection: projection)
+        startQueryForwarding(projection: projection)
         startMutationForwarding(store: store, diagnostics: diagnostics)
         startStateConsumption(
             projection: projection,
             store: store,
-            initialSelection: initialSelection
+            initialDescriptor: initialDescriptor
         )
         startCatalog(store: store, diagnostics: diagnostics)
         if startsEnrichment {
@@ -179,13 +186,66 @@ final class CatalogWindowViewModel {
     }
 
     func selectSidebar(_ selection: SidebarSelection) {
-        guard sidebarSelection != selection else {
-            return
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: selection,
+            filter: queryDescriptor.filter,
+            sort: queryDescriptor.sort
+        ))
+    }
+
+    func setMediaFilter(_ filter: MediaFilter) {
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: queryDescriptor.scope,
+            filter: filter,
+            sort: queryDescriptor.sort
+        ))
+    }
+
+    func clearMediaFilter() {
+        setMediaFilter(.all)
+    }
+
+    func toggleMediaKind(_ kind: MediaKind, formatsInKind: [MediaFormatToken]) {
+        var filter = queryDescriptor.filter
+        if filter.kinds.remove(kind) == nil {
+            filter.kinds.insert(kind)
         }
-        sidebarSelection = selection
-        OtosLog.ui.info("Sidebar selection changed selection=\(selection.diagnosticDescription, privacy: .public)")
-        OtosSignpost.ui.emitEvent("CatalogSidebarSelectionIntent")
-        selectionContinuation.yield(selection)
+        filter.formats.subtract(formatsInKind)
+        setMediaFilter(filter)
+    }
+
+    func toggleMediaFormat(_ format: MediaFormatToken, kind: MediaKind) {
+        var filter = queryDescriptor.filter
+        filter.kinds.remove(kind)
+        if filter.formats.remove(format) == nil {
+            filter.formats.insert(format)
+        }
+        setMediaFilter(filter)
+    }
+
+    func setSortField(_ field: MediaSortField) {
+        setSortOrder(.defaultForField(field))
+    }
+
+    func setSortDirection(_ direction: MediaSortDirection) {
+        setSortOrder(MediaSortOrder(field: queryDescriptor.sort.field, direction: direction))
+    }
+
+    func setSortOrder(_ sort: MediaSortOrder) {
+        setQueryDescriptor(CatalogQueryDescriptor(
+            scope: queryDescriptor.scope,
+            filter: queryDescriptor.filter,
+            sort: sort
+        ))
+    }
+
+    private func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
+        guard queryDescriptor != descriptor else { return }
+        queryDescriptor = descriptor
+        sidebarSelection = descriptor.scope
+        OtosLog.ui.info("Catalog query changed descriptor=\(descriptor.diagnosticDescription, privacy: .public)")
+        OtosSignpost.ui.emitEvent("CatalogQueryDescriptorIntent")
+        queryContinuation.yield(descriptor)
     }
 
     /// The AppKit grid reports its visible identities here as the user scrolls. This is a
@@ -195,7 +255,9 @@ final class CatalogWindowViewModel {
     }
 
     private func startEnrichment() {
-        let coordinator = enrichmentCoordinator
+        guard let coordinator = enrichmentCoordinator else {
+            return
+        }
         // updateViewport is delivered newest-value; the coordinator is the single owner of
         // the priority hint, so this forwards verbatim with no main-actor work.
         viewportForwardingTask = Task { [coordinator, viewportStream] in
@@ -220,10 +282,10 @@ final class CatalogWindowViewModel {
         }
     }
 
-    private func startSelectionForwarding(projection: CatalogProjection) {
-        selectionForwardingTask = Task { [projection, selectionStream] in
-            for await selection in selectionStream {
-                await projection.updateSidebarSelection(selection)
+    private func startQueryForwarding(projection: CatalogProjection) {
+        queryForwardingTask = Task { [projection, queryStream] in
+            for await descriptor in queryStream {
+                await projection.updateQueryDescriptor(descriptor)
             }
         }
     }
@@ -246,13 +308,13 @@ final class CatalogWindowViewModel {
     private func startStateConsumption(
         projection: CatalogProjection,
         store: CatalogStore,
-        initialSelection: SidebarSelection
+        initialDescriptor: CatalogQueryDescriptor
     ) {
-        stateConsumptionTask = Task { [weak self, projection, store, initialSelection] in
+        stateConsumptionTask = Task { [weak self, projection, store, initialDescriptor] in
             let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateStream")
             let states = await projection.states(
                 store: store,
-                initialSidebarSelection: initialSelection
+                initialDescriptor: initialDescriptor
             )
             OtosSignpost.ui.endInterval("CatalogWindowStateStream", signpost)
             for await nextState in states {
@@ -293,6 +355,7 @@ final class CatalogWindowViewModel {
         // Projection is authoritative for whether the selected library still
         // exists. Direct assignment is not a new user intent and deliberately
         // bypasses the selection stream.
+        queryDescriptor = nextState.queryDescriptor
         sidebarSelection = nextState.resolvedSidebarSelection
 
         state = nextState

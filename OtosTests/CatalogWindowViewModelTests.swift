@@ -10,16 +10,17 @@ struct CatalogWindowViewModelTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { libraries, _, selection in
+            stateBuilder: { libraries, _, descriptor in
                 await buildProbe.recordBuild()
                 return CatalogWindowState(
                     title: "Test",
                     libraries: libraries,
                     mediaGrid: CatalogMediaGridState(
-                        scope: selection,
+                        descriptor: descriptor,
                         orderedAssetIDs: []
                     ),
-                    resolvedSidebarSelection: selection,
+                    filterOptions: .empty,
+                    resolvedSidebarSelection: descriptor.scope,
                     mediaEmptyState: .noMedia
                 )
             }
@@ -38,8 +39,10 @@ struct CatalogWindowViewModelTests {
         model = nil
 
         try await waitForCondition { weakModel == nil }
-        try await waitForNoAdditionalBuilds(buildProbe, duration: .milliseconds(40))
-        let buildCountAfterTermination = await buildProbe.buildCount
+        let buildCountAfterTermination = try await waitForBuildsToQuiesce(
+            buildProbe,
+            quietDuration: .milliseconds(40)
+        )
 
         await store.shutdown()
         try await waitForNoAdditionalBuilds(buildProbe, duration: .milliseconds(40))
@@ -464,4 +467,23 @@ private func waitForNoAdditionalBuilds(
     let baseline = await probe.buildCount
     try await Task.sleep(for: duration)
     #expect(await probe.buildCount == baseline)
+}
+
+private func waitForBuildsToQuiesce(
+    _ probe: WindowStateBuildProbe,
+    quietDuration: Duration,
+    timeout: Duration = .seconds(2)
+) async throws -> Int {
+    let clock = ContinuousClock()
+    let deadline = clock.now.advanced(by: timeout)
+    var baseline = await probe.buildCount
+    while clock.now < deadline {
+        try await Task.sleep(for: quietDuration)
+        let current = await probe.buildCount
+        if current == baseline {
+            return current
+        }
+        baseline = current
+    }
+    throw CatalogWindowViewModelTestError.timedOut
 }

@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 // Catalog model guide
 //
@@ -119,10 +120,10 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     }
 }
 
-/// One cataloged file and the filesystem facts persisted for it. Library display
-/// text is intentionally absent: it is derived from `LibraryRootPath`, so storing
-/// it on every asset would create a second value that could disagree with root
-/// identity.
+/// One cataloged file and the hot facts the grid can read by identity. Library
+/// display text is intentionally absent: it is derived from `LibraryRootPath`, so
+/// storing it on every asset would create a second value that could disagree with
+/// root identity.
 nonisolated struct MediaAsset: Identifiable, Hashable {
     let libraryRootPath: LibraryRootPath
     let relativePath: MediaRelativePath
@@ -137,8 +138,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     /// constant for an asset and never disagrees with it.
     let sortKey: String
 
-    // Enrichment overlay. These are the only enrichment fields fetched with hot asset
-    // rows: a thumbnail file path, a resolved capture date, and the staleness stamps.
+    // Enrichment overlay and SQLite-derived best values. The best date/kind/format
+    // fields are generated in SQLite from scan and enrichment facts, so display,
+    // sort, and filter use the same policy without a Swift fallback chain.
     // Full parsed metadata lives in the `asset_metadata` companion table as queryable
     // scalar columns plus JSON for long-tail fields, and is not loaded by the grid.
     //
@@ -148,7 +150,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     // enrichment when its current `(byteSize, contentModifiedAt-seconds)` no longer match
     // the `(enrichedSourceSize, enrichedSourceMTimeSeconds)` the last enrichment recorded.
     let thumbnailPath: String?
-    let captureDate: Date?
+    let bestCaptureDate: Date?
+    let bestKind: MediaKind?
+    let bestFormat: MediaFormatToken?
     let enrichedSourceSize: Int64?
     let enrichedSourceMTimeSeconds: Int?
 
@@ -161,7 +165,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         createdAt: Date?,
         contentModifiedAt: Date?,
         thumbnailPath: String? = nil,
-        captureDate: Date? = nil,
+        bestCaptureDate: Date? = nil,
+        bestKind: MediaKind? = nil,
+        bestFormat: MediaFormatToken? = nil,
         enrichedSourceSize: Int64? = nil,
         enrichedSourceMTimeSeconds: Int? = nil
     ) {
@@ -173,7 +179,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.createdAt = createdAt
         self.contentModifiedAt = contentModifiedAt
         self.thumbnailPath = thumbnailPath
-        self.captureDate = captureDate
+        self.bestCaptureDate = bestCaptureDate
+        self.bestKind = bestKind
+        self.bestFormat = bestFormat
         self.enrichedSourceSize = enrichedSourceSize
         self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
         sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)
@@ -199,13 +207,6 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         }
         return enrichedSourceSize != (byteSize ?? -1)
             || enrichedSourceMTimeSeconds != Self.mtimeSeconds(contentModifiedAt)
-    }
-
-    /// Truest available capture date, never fabricated (MED-002): the metadata-resolved
-    /// date, then the filesystem creation date, then the modification date. `nil` only
-    /// when nothing is known. Filesystem dates are real dates, surfaced like any other.
-    var bestCaptureDate: Date? {
-        captureDate ?? createdAt ?? contentModifiedAt
     }
 }
 
@@ -257,20 +258,47 @@ nonisolated enum MediaSortKey {
 /// reader owned by the AppKit grid boundary, so publishing a window state never
 /// copies every asset value.
 nonisolated struct CatalogMediaGridState: Equatable {
-    var scope: SidebarSelection
+    var descriptor: CatalogQueryDescriptor
     var orderedAssetIDs: [MediaAssetID]
     var detailRefreshGeneration: UInt64 = 0
 
+    var scope: SidebarSelection {
+        descriptor.scope
+    }
+
     static let empty = CatalogMediaGridState(
-        scope: .allMedia,
+        descriptor: .default,
         orderedAssetIDs: []
     )
+
+    init(
+        scope: SidebarSelection,
+        orderedAssetIDs: [MediaAssetID],
+        detailRefreshGeneration: UInt64 = 0
+    ) {
+        self.init(
+            descriptor: CatalogQueryDescriptor(scope: scope),
+            orderedAssetIDs: orderedAssetIDs,
+            detailRefreshGeneration: detailRefreshGeneration
+        )
+    }
+
+    init(
+        descriptor: CatalogQueryDescriptor,
+        orderedAssetIDs: [MediaAssetID],
+        detailRefreshGeneration: UInt64 = 0
+    ) {
+        self.descriptor = descriptor
+        self.orderedAssetIDs = orderedAssetIDs
+        self.detailRefreshGeneration = detailRefreshGeneration
+    }
 }
 
 /// Why the media browser is empty. Projection chooses the reason so the view
 /// can stay declarative and avoid re-deriving catalog state in `body`.
 nonisolated enum CatalogMediaEmptyState: Equatable {
     case noMedia
+    case noFilterMatches
     case checkingLibraries
     case noAvailableMedia
     case libraryChecking
@@ -280,6 +308,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
         switch self {
         case .noMedia:
             "noMedia"
+        case .noFilterMatches:
+            "noFilterMatches"
         case .checkingLibraries:
             "checkingLibraries"
         case .noAvailableMedia:
@@ -298,13 +328,19 @@ nonisolated struct CatalogWindowState: Equatable {
     var title: String
     var libraries: [CatalogLibraryState]
     var mediaGrid: CatalogMediaGridState
+    var filterOptions: CatalogFilterOptions
     var resolvedSidebarSelection: SidebarSelection
     var mediaEmptyState: CatalogMediaEmptyState
+
+    var queryDescriptor: CatalogQueryDescriptor {
+        mediaGrid.descriptor
+    }
 
     static let empty = CatalogWindowState(
         title: "All Media",
         libraries: [],
         mediaGrid: .empty,
+        filterOptions: .empty,
         resolvedSidebarSelection: .allMedia,
         mediaEmptyState: .noMedia
     )
@@ -330,9 +366,32 @@ nonisolated struct ScannedMediaFile: Hashable {
     let relativePath: MediaRelativePath
     let name: String?
     let contentTypeIdentifier: String?
+    let kind: MediaKind?
+    let format: MediaFormatToken?
     let byteSize: Int64?
     let createdAt: Date?
     let contentModifiedAt: Date?
+
+    init(
+        relativePath: MediaRelativePath,
+        name: String?,
+        contentTypeIdentifier: String?,
+        byteSize: Int64?,
+        createdAt: Date?,
+        contentModifiedAt: Date?,
+        kind: MediaKind? = nil,
+        format: MediaFormatToken? = nil
+    ) {
+        let contentType = contentTypeIdentifier.flatMap(UTType.init)
+        self.relativePath = relativePath
+        self.name = name
+        self.contentTypeIdentifier = contentTypeIdentifier
+        self.kind = kind ?? MediaKind.classify(contentType)
+        self.format = format ?? MediaFormatToken.normalize(contentType: contentType)
+        self.byteSize = byteSize
+        self.createdAt = createdAt
+        self.contentModifiedAt = contentModifiedAt
+    }
 }
 
 nonisolated enum CatalogPath {

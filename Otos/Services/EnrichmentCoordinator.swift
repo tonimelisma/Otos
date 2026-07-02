@@ -31,9 +31,11 @@ import OSLog
 ///
 /// Writes are batched (`CatalogStore.applyEnrichmentBatch`): a per-asset transaction
 /// across a whole library would crawl, and a notification per asset would re-sort the
-/// catalog in Projection on every completion. Completed results may carry staged
-/// thumbnails; Store validates the SQLite source signature and promotes only the staged
-/// files it stamps current.
+/// catalog in Projection on every completion. The batch is time-based, so background
+/// updates align with Projection's one-second publication cadence instead of flushing
+/// by an arbitrary item count. Completed results may carry staged thumbnails; Store
+/// validates the SQLite source signature and promotes only the staged files it stamps
+/// current.
 ///
 /// Lifecycle mirrors `CatalogStore`: it is a process-lifetime owner started by the
 /// ViewModel; `shutdown()` cancels its tasks (tests use it to stop cleanly).
@@ -50,7 +52,8 @@ actor EnrichmentCoordinator {
     private let materialize: @Sendable (URL) async -> Bool
     private let enrichConcurrency: Int
     private let downloadConcurrency: Int
-    private let applyBatchSize: Int
+    private let applyFlushInterval: Duration
+    private let applyFlushSleep: @Sendable (Duration) async -> Void
     private let diagnostics: CatalogDiagnostics?
 
     private var viewport: [MediaAssetID] = []
@@ -66,6 +69,7 @@ actor EnrichmentCoordinator {
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
+    private var applyFlushTask: Task<Void, Never>?
     private var writeRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
@@ -76,7 +80,10 @@ actor EnrichmentCoordinator {
         materialize: @escaping @Sendable (URL) async -> Bool = { await EnrichmentCoordinator.liveMaterialize($0) },
         enrichConcurrency: Int = 4,
         downloadConcurrency: Int = 4,
-        applyBatchSize: Int = 64,
+        applyFlushInterval: Duration = .seconds(1),
+        applyFlushSleep: @escaping @Sendable (Duration) async -> Void = { duration in
+            try? await Task.sleep(for: duration)
+        },
         writeFailureBackoff: Duration = .seconds(5),
         diagnostics: CatalogDiagnostics? = .shared
     ) {
@@ -85,7 +92,8 @@ actor EnrichmentCoordinator {
         self.materialize = materialize
         self.enrichConcurrency = enrichConcurrency
         self.downloadConcurrency = downloadConcurrency
-        self.applyBatchSize = applyBatchSize
+        self.applyFlushInterval = applyFlushInterval
+        self.applyFlushSleep = applyFlushSleep
         self.writeFailureBackoff = writeFailureBackoff
         self.diagnostics = diagnostics
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
@@ -126,6 +134,8 @@ extension EnrichmentCoordinator {
         supervisor = nil
         changeConsumer?.cancel()
         changeConsumer = nil
+        applyFlushTask?.cancel()
+        applyFlushTask = nil
         writeRetryTask?.cancel()
         writeRetryTask = nil
         signalContinuation.finish()
@@ -177,7 +187,6 @@ private extension EnrichmentCoordinator {
                         await self.finishDownload(id, materialized: materialized)
                     }
                 }
-                await flushPendingApply(force: !hasEnrichmentWorkRemaining())
             }
         }
     }
@@ -275,6 +284,7 @@ private extension EnrichmentCoordinator {
         case let .complete(result):
             pendingApply.append(result)
             pendingApplyIDs.insert(id)
+            scheduleApplyFlushIfNeeded()
         case .notMaterialized:
             datalessPending.insert(id)
             try? await store.refreshEnrichmentClaims([id])
@@ -294,8 +304,24 @@ private extension EnrichmentCoordinator {
         signal()
     }
 
-    func flushPendingApply(force: Bool) async {
-        guard !pendingApply.isEmpty, force || pendingApply.count >= applyBatchSize else {
+    func scheduleApplyFlushIfNeeded() {
+        guard applyFlushTask == nil, !pendingApply.isEmpty else {
+            return
+        }
+        let interval = applyFlushInterval
+        let sleep = applyFlushSleep
+        applyFlushTask = Task { [weak self, sleep] in
+            await sleep(interval)
+            guard !Task.isCancelled else {
+                return
+            }
+            await self?.flushPendingApply()
+        }
+    }
+
+    func flushPendingApply() async {
+        applyFlushTask = nil
+        guard !pendingApply.isEmpty else {
             return
         }
         let batch = pendingApply
@@ -325,6 +351,7 @@ private extension EnrichmentCoordinator {
             // have recovered.
             scheduleWriteFailureRetry()
         }
+        scheduleApplyFlushIfNeeded()
     }
 
     /// One pending backoff retry at a time. After the delay it re-wakes the loop, which

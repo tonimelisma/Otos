@@ -9,7 +9,7 @@ struct MediaEnricherTests {
             .appending(path: "Fixtures/Media", directoryHint: .isDirectory)
     }
 
-    @Test func enrichesJpegFixtureWithMetadataThumbnailAndCaptureDate() async throws {
+    @Test func enrichesJpegFixtureWithMetadataThumbnailAndTimestampFacts() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
         let enricher = MediaEnricher.live(thumbnailDirectory: thumbnailDirectory)
@@ -24,7 +24,7 @@ struct MediaEnricherTests {
             Issue.record("expected .complete, got \(outcome)")
             return
         }
-        #expect(result.captureDate != nil)
+        #expect(result.timestampFacts.original != nil)
         #expect(!result.metadata.timestamps.isEmpty)
         #expect(result.metadata.family != nil)
         #expect(result.sourceSize == 100)

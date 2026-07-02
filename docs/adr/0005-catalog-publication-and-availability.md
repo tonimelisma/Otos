@@ -26,7 +26,7 @@ to delete catalog rows.
 This ADR owns:
 
 - Store change notifications versus Store-published UI snapshots
-- Projection-owned 10 Hz `CatalogWindowState` publication
+- Projection-owned coalesced `CatalogWindowState` publication
 - one-in-flight publication and dirty-during-await behavior
 - explicit sidebar-selection delivery from ViewModel to Projection
 - transient `unknown`, `available`, and `unavailable` library availability
@@ -41,7 +41,9 @@ This ADR references but does not own:
 - ViewModel state-consumer lifetime and lossless serial add/remove delivery: ADR
   0004
 - AppKit grid rendering: ADR 0006
-- ordered asset-ID reuse: ADR 0007
+- precomputed file-name sort keys: ADR 0007
+- descriptor query ownership, generated best values, and current two-tier
+  publication cadence: ADR 0011
 
 Metadata, thumbnails, manual scans, sandboxing, bookmarks, durable scan IDs, and
 media-container import are outside this decision. Coarse running-app FSEvents→rescan
@@ -65,10 +67,11 @@ runtime state remain catalog truth.
 
 ### Projection-Owned Publication
 
-`CatalogProjection` owns one 10 Hz dirty loop. Store changes and sidebar intents
-mark the same loop dirty. On a tick with pending work, Projection asks Store for
-current library rows plus ordered asset IDs, derives one `CatalogWindowState`, and
-yields it.
+`CatalogProjection` owns one coalesced dirty loop. Store changes mark the
+background loop dirty; direct sidebar, sort, and filter intents also mark dirty
+and schedule an immediate publication attempt. On a publication with pending
+work, Projection asks Store for current library rows plus descriptor-ordered
+asset IDs, derives one `CatalogWindowState`, and yields it.
 
 When Projection receives `.libraryRemoved(path)` for its selected root, it
 immediately retains `.allMedia` as selection input and marks itself dirty. A
@@ -191,7 +194,8 @@ Failure mode: the UI states a domain fact that is not known.
   while newer user input remains authoritative.
 - Startup truthfully represents unchecked roots without blocking database load.
 - Cached rows survive removable-disk and network availability changes.
-- Projection tests require controlled clocks to verify 10 Hz coalescing.
+- Projection tests require controlled clocks to verify background coalescing and
+  immediate user-intent publication.
 
 ## Living Documentation Impact
 

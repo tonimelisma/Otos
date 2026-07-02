@@ -17,7 +17,8 @@ Current repo state verified through inspection:
 
 - `CatalogStore` owns GRDB, the clean current schema, root runtime state, scans,
   and catalog query APIs.
-- `CatalogProjection` publishes derived window state at the 10 Hz dirty cadence.
+- `CatalogProjection` publishes derived window state through a coalesced
+  background cadence, with immediate wakeups for direct user query intents.
 - `CatalogWindowViewModel` assigns final state and routes explicit intents.
 - `ContentView` composes a library sidebar and placeholder media grid.
 - The app is unsandboxed, SwiftUI-first, and uses AppKit only for the verified
@@ -85,7 +86,7 @@ Out of scope:
 | CAT-003 | Architecture | The normalized root path is product identity; SQLite rowid is only a private foreign key implementation detail. | Current | `docs/requirements.md`, ADR 0003 |
 | CAT-004 | Architecture | A `CatalogStore` actor owns GRDB, migrations, root runtime state, scan lifecycle, scan persistence cadence, Store-owned query APIs, and cheap catalog change notifications. | Current | `docs/requirements.md`, Spec 0009, Spec 0025 |
 | CAT-005 | Architecture | SwiftUI views never call SQLite directly; a MainActor ViewModel consumes projected catalog window state. | Current | `docs/requirements.md`, Spec 0007, Spec 0009 |
-| CAT-006 | Non-functional | SQLite scan writes and SwiftUI-visible scan updates happen at a 10 Hz time cadence when pending changes exist. | Current | `docs/requirements.md`, ADR 0002 |
+| CAT-006 | Non-functional | SQLite scan writes and SwiftUI-visible background scan updates happen on a time cadence when pending changes exist; direct user query intents can publish immediately. | Current | `docs/requirements.md`, ADR 0002, ADR 0011 |
 | DOD-001 | Process | There is exactly one DoD report for an increment, and no review handoff, partial, pre-merge, or ready-for-review DoD report may be sent to the user or posted to the PR. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
 | DOD-002 | Process | The final DoD report is created only after the entire DoD is complete or after a true external blocker prevents completion. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
 | DOD-003 | Process | The final DoD report uses green and red status emoji plus clear textual descriptions for every required DoD question, and it is included in the PR and sent to the user. | Current | `docs/requirements.md`, `AGENTS.md`, `docs/process/development-workflow.md`, `script/dod-report.sh` |
@@ -199,8 +200,9 @@ parallel scan pipeline, and no generated product IDs.
 - Root identity is the normalized path. `library_root.id` is storage-only.
 - Active scanner callbacks are guarded by normalized root path plus the private
   root-row instance so remove/re-add at the same path cannot revive old work.
-- Scans write pending batches no more often than 10 Hz; Projection publishes
-  UI-ready window state no more often than 10 Hz when dirty.
+- Scans write pending batches on the background scan cadence; Projection
+  publishes UI-ready background updates on its coalesced cadence when dirty, and
+  wakes immediately for direct sidebar, sort, or filter intents.
 - The app never writes, moves, deletes, or rewrites original media files.
 
 ## Retirement Proof

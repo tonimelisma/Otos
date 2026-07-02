@@ -36,7 +36,8 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// Store notifications are intentionally lightweight. Ordinary events only mark
 /// Projection dirty; successful root removal additionally carries its typed path
 /// so same-path replacement cannot hide selection invalidation. Projection pulls
-/// cheap root state and ordered asset IDs on its 10 Hz cadence and owns presentation.
+/// cheap root state and descriptor-ordered asset IDs on its background cadence
+/// and owns presentation.
 /// Initial loading is represented by one finite task so every concurrent caller
 /// observes the same load instead of applying competing root sets. Awaited GRDB calls
 /// make this actor reentrant, so active scans carry the root path and private root-row
@@ -66,7 +67,9 @@ actor CatalogStore {
         let createdAt: Date?
         let contentModifiedAt: Date?
         var thumbnailPath: String?
-        var captureDate: Date?
+        var bestCaptureDate: Date?
+        var bestKind: MediaKind?
+        var bestFormat: MediaFormatToken?
         var enrichedSourceSize: Int64?
         var enrichedSourceMTimeSeconds: Int?
     }
@@ -129,8 +132,8 @@ actor CatalogStore {
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
         scanner: CatalogScanner = .live,
         filesystemWatcher: CatalogFilesystemWatcher = .live,
-        scanCadence: Duration = .milliseconds(100),
-        filesystemEventDebounce: Duration = .milliseconds(500),
+        scanCadence: Duration = .seconds(1),
+        filesystemEventDebounce: Duration = .seconds(1),
         filesystemEventSleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
@@ -180,10 +183,10 @@ extension CatalogStore {
     }
 
     func orderedAssetIDs(
-        for selection: SidebarSelection,
+        for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> [MediaAssetID] {
-        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        let rootIDs = rootIDsForQuery(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
         guard !rootIDs.isEmpty else {
             return []
         }
@@ -192,7 +195,7 @@ extension CatalogStore {
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
         let rows = try await dbWriter.read { db in
-            try Self.fetchOrderedAssetIDRows(rootIDs: rootIDs, db: db)
+            try Self.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: rootIDs, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
@@ -208,7 +211,7 @@ extension CatalogStore {
         let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
         OtosLog.catalog.debug(
             """
-            Catalog ordered asset IDs queried selection=\(selection.diagnosticDescription, privacy: .public) \
+            Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
             roots=\(rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
             queryMs=\(queryMs, privacy: .public)
             """
@@ -217,13 +220,23 @@ extension CatalogStore {
             operation: "catalog.store.query.order",
             phase: "finish",
             fields: [
-                "selection": selection.diagnosticDescription,
+                "descriptor": descriptor.diagnosticDescription,
                 "rootCount": "\(rootIDs.count)",
                 "count": "\(ids.count)",
                 "queryMs": "\(queryMs)",
             ]
         )
         return ids
+    }
+
+    func orderedAssetIDs(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> [MediaAssetID] {
+        try await orderedAssetIDs(
+            for: CatalogQueryDescriptor(scope: selection),
+            availableLibraryPaths: availableLibraryPaths
+        )
     }
 
     func catalogedAssetCount(for selection: SidebarSelection) async throws -> Int {
@@ -234,6 +247,34 @@ extension CatalogStore {
         let dbWriter = try database()
         return try await dbWriter.read { db in
             try Self.countAssets(rootIDs: rootIDs, db: db)
+        }
+    }
+
+    func visibleAssetCount(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> Int {
+        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        guard !rootIDs.isEmpty else {
+            return 0
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Self.countAssets(rootIDs: rootIDs, db: db)
+        }
+    }
+
+    func filterOptions(
+        for selection: SidebarSelection,
+        availableLibraryPaths: Set<LibraryRootPath>
+    ) async throws -> CatalogFilterOptions {
+        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        guard !rootIDs.isEmpty else {
+            return .empty
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Self.filterOptions(rootIDs: rootIDs, db: db)
         }
     }
 
@@ -928,7 +969,9 @@ private extension CatalogStore {
             createdAt: storedAsset.createdAt,
             contentModifiedAt: storedAsset.contentModifiedAt,
             thumbnailPath: storedAsset.thumbnailPath,
-            captureDate: storedAsset.captureDate,
+            bestCaptureDate: storedAsset.bestCaptureDate,
+            bestKind: storedAsset.bestKind,
+            bestFormat: storedAsset.bestFormat,
             enrichedSourceSize: storedAsset.enrichedSourceSize,
             enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds
         )

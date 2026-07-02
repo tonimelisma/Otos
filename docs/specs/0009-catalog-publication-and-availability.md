@@ -20,7 +20,7 @@ In scope:
 
 - cheap Store change notifications
 - Store-owned query APIs for current libraries and ordered media IDs
-- Projection-owned 10 Hz dirty publication loop
+- Projection-owned coalesced dirty publication loop
 - one projection publication in flight
 - explicit sidebar intent delivery
 - transient unknown, available, and unavailable library states
@@ -40,8 +40,8 @@ Out of scope:
 | --- | --- | --- |
 | PUB-001 | Architecture | Store emits dirty signals, not UI snapshots. |
 | PUB-002 | Architecture | Projection asks Store for keyed point-in-time snapshots. |
-| PUB-003 | Non-functional | Projection publishes at most once per 100 ms tick while dirty and never overlaps derivation. |
-| PUB-004 | Architecture | Store changes and explicit sidebar intents use the same dirty loop. |
+| PUB-003 | Non-functional | Projection coalesces Store-originated background changes, publishes immediately for direct user query intents, and never overlaps derivation. |
+| PUB-004 | Architecture | Store changes and explicit sidebar/sort/filter intents use one dirty-publication owner. |
 | AVA-001 | Architecture | Availability is transient and never persisted. |
 | AVA-002 | Functional | Database-loaded roots begin unknown; new validated roots begin available. |
 | AVA-003 | Regression | Unavailable or failed roots preserve catalog rows and skip reconciliation deletion. |
@@ -96,10 +96,11 @@ Selected: Projection-owned publication.
 
 1. Store mutates SQLite/in-memory truth and yields a cheap change notification.
 2. Projection's Store listener marks the actor dirty.
-3. Explicit selection intents arrive through the ViewModel-owned newest-buffered
-   stream and also mark Projection dirty.
-4. On the next 100 ms tick, Projection requests current library rows and scoped
-   ordered IDs from Store.
+3. Explicit sidebar, sort, and filter intents arrive through the
+   ViewModel-owned newest-buffered query stream and also mark Projection dirty.
+4. On the next background tick, or immediately for direct user query intents,
+   Projection requests current library rows and descriptor-ordered IDs from
+   Store.
 5. Projection filters availability and scope, selects title/empty state, advances
    the grid detail-refresh generation for Store invalidations, and emits
    `CatalogWindowState`.
@@ -129,9 +130,9 @@ reachability knowledge.
 ## Ownership And Cancellation
 
 - Store owns database, memory, scans, availability, and change subscriptions.
-- Projection owns Store-listener, 10 Hz loop, order cache, state subscriptions,
-  selection input, and dirty/in-flight state.
-- ViewModel owns a newest-value selection stream/task, lossless serial mutation
+- Projection owns Store-listener, coalesced publication loop, state
+  subscriptions, query input, and dirty/in-flight state.
+- ViewModel owns a newest-value query stream/task, lossless serial mutation
   stream/task, weak state-consumer task, startup task, and MainActor assignment.
 - Removing a root remains a Store intent that cancels its scan and deletes only
   Otos catalog state.
@@ -140,8 +141,9 @@ reachability knowledge.
 
 - Store and scan boundaries, failures, and availability transitions use bounded
   JSONL plus Logger/signposts.
-- Projection records one coarse summary per derived publication: snapshot,
-  ordering cache, membership change, sort duration, counts, scope, and timing.
+- Projection records one coarse summary per derived publication: descriptor,
+  ordered-ID query timing, membership change, counts, empty state, scope, and
+  timing.
 - ViewModel assignment uses Logger/signposts, not per-update JSONL.
 - Actual active-app run-loop stalls alone write durable UI correlation.
 
@@ -156,7 +158,8 @@ current mechanics only.
 
 - Store notifications carry no full UI snapshot.
 - Store query APIs return current libraries and ordered IDs without a UI snapshot.
-- publication coalesces Store/selection changes at 10 Hz.
+- publication coalesces Store changes on the background cadence and publishes
+  immediately for direct user query intents.
 - dirty-during-await yields then reruns without overlap.
 - database-loaded roots remain unknown when scanning is disabled.
 - pre-scan checks resolve unknown.

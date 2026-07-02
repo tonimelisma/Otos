@@ -30,10 +30,10 @@ Store serially in submission order without delaying sidebar selection.
 
 - `CatalogStore` owns SQLite, root runtime catalog state, Store-owned catalog
   queries, startup coalescing, serial scans, and scan callback ownership.
-- `CatalogProjection` owns off-MainActor derivation and a 10 Hz one-in-flight
+- `CatalogProjection` owns off-MainActor derivation and a one-in-flight
   publication loop.
-- `CatalogWindowViewModel` owns final MainActor state, sidebar selection, user
-  intents, task lifetimes, and scalar stall correlation.
+- `CatalogWindowViewModel` owns final MainActor state, query descriptor intents,
+  user intents, task lifetimes, and scalar stall correlation.
 - SwiftUI views are passive and call synchronous ViewModel intents.
 - Catalog errors remain logs and debug diagnostics only.
 
@@ -76,7 +76,7 @@ Acceptance examples:
 | Lane | Producer | Consumer task | Buffering | Owner | Cancellation |
 | --- | --- | --- | --- | --- | --- |
 | Projected state | `CatalogProjection` | `stateConsumptionTask` | Projection stream, newest published state | ViewModel | ViewModel deinit cancels iteration; Projection removes its continuation |
-| Sidebar selection | ViewModel control intents | `selectionForwardingTask` | `.bufferingNewest(1)` | ViewModel | ViewModel deinit cancels consumer and finishes continuation |
+| Query descriptor | ViewModel sidebar/sort/filter control intents | `queryForwardingTask` | `.bufferingNewest(1)` | ViewModel | ViewModel deinit cancels consumer and finishes continuation |
 | Catalog mutation | ViewModel add/remove intents | `mutationForwardingTask` | `.unbounded` | ViewModel | ViewModel deinit cancels consumer before finishing continuation |
 | Store startup | ViewModel start intent | `catalogStartupTask` | one finite operation | ViewModel and Store startup coalescing | ViewModel deinit cancels its caller; Store preserves its own consistency |
 
@@ -184,8 +184,8 @@ Private changes:
 - add `CatalogMutationIntent`
 - add mutation stream and continuation
 - add `mutationForwardingTask`
-- rename generic task properties to `stateConsumptionTask`,
-  `catalogStartupTask`, and `selectionForwardingTask`
+- use named task properties including `stateConsumptionTask`,
+  `catalogStartupTask`, `queryForwardingTask`, and `mutationForwardingTask`
 - replace per-action tasks with synchronous stream submission
 - replace `AsyncStream<Void>` Store invalidation with
   `AsyncStream<CatalogStoreChange>` and preserve successful root-removal events

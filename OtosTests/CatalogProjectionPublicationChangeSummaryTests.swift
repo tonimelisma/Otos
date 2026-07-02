@@ -27,8 +27,14 @@ struct ProjectionChangeSummaryTests {
         #expect(summary(previous: base, current: librariesChanged).stateChanged)
 
         var mediaScopeChanged = base
-        mediaScopeChanged.mediaGrid.scope = .library(root.path)
+        mediaScopeChanged.mediaGrid.descriptor = CatalogQueryDescriptor(scope: .library(root.path))
         #expect(summary(previous: base, current: mediaScopeChanged).stateChanged)
+
+        var filterOptionsChanged = base
+        filterOptionsChanged.filterOptions = CatalogFilterOptions(
+            formatsByKind: [.image: [MediaFormatToken(rawValue: "JPEG")]]
+        )
+        #expect(summary(previous: base, current: filterOptionsChanged).stateChanged)
 
         var mediaOrderChanged = base
         mediaOrderChanged.mediaGrid.orderedAssetIDs = [id]

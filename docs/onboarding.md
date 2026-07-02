@@ -127,8 +127,9 @@ This is the heart. Read its file guide at the top first. Key whys:
   overlay are read through Store-owned queries.
 - It exposes a **cheap "something changed" notification** plus query APIs, rather
   than pushing big values to subscribers. Why: the Projection decides *when* to do
-  work (on its own 10 Hz clock), so the Store only needs to say "I changed," then
-  answer the current library/order query when Projection asks.
+  background work (on its own one-second clock, with immediate wakeups for user
+  query intents), so the Store only needs to say "I changed," then answer the
+  current descriptor query when Projection asks.
 - **The scan ownership lease (`ActiveScan`).** Because the Store is an actor, it can
   process a "remove this library" message *in the middle* of a scan (every `await`
   is a yield point). So each scan carries the root path plus the private database row
@@ -162,7 +163,11 @@ This is the heart. Read its file guide at the top first. Key whys:
 
 The actual SQL. The one thing to know: SQLite row ids stay *private to this file*.
 The rest of the app identifies things by filesystem path, never by database id, so
-the database is an implementation detail you could swap out.
+the database is an implementation detail you could swap out. The current browser
+query is one `CatalogQueryDescriptor` over generated best-value columns:
+`best_capture_unix`, `best_kind`, and `best_format`. Scan and enrichment persist
+facts; SQLite owns the current best-value ranking used by tile dates, sort order,
+and filter membership.
 
 ### `Otos/Services/CatalogScanner.swift` — read-only filesystem observation
 
@@ -187,22 +192,22 @@ Walks a library folder and reports the image and video files it finds. Whys:
 Takes current library rows plus Store-ordered asset IDs and produces a
 `CatalogWindowState`. Whys:
 
-- **One 10 Hz loop.** During a scan the Store might change hundreds of times a
-  second. The Projection coalesces all of that into at most one update every 100 ms,
-  so the UI is fed a steady, bounded stream instead of a flood. The Projection
-  registers its Store change subscription before relying on the loop, so a
-  detail-only thumbnail/date update immediately after startup still advances the
-  grid detail-refresh generation.
-- **Asset order is a Store query.** Each row stores a cheap `sort_key`; SQLite
-  orders by that indexed key and Projection receives only IDs. The schema has
-  root-local indexes for selected-library reads and global indexes for All Media
-  reads, so SQLite can stream the ordered identities without temporary sort work.
-  Projection reuses the last ordered-ID result for detail-only Store changes
-  because enrichment cannot change membership or sort order; structural changes and
-  scope changes still query Store. If the visible scope is empty, Projection asks
-  Store for a separate cataloged count so it can tell "no media exists" from
-  "media exists but every root is unavailable." There is no full asset map in window
-  state.
+- **Two-tier cadence.** During a scan or enrichment sweep the Store might change
+  many times. Projection coalesces Store-originated background changes into a
+  roughly one-second stream, while direct sidebar/sort/filter intents wake
+  publication immediately. The Projection registers its Store change subscription
+  before relying on the loop, so a detail-only thumbnail/date update immediately
+  after startup still advances the grid detail-refresh generation.
+- **Asset order and filter membership are Store queries.** The descriptor carries
+  sidebar scope, media filter, and sort order. SQLite orders by indexed generated
+  best values or persisted sort facts and Projection receives only IDs. The schema
+  has root-local indexes for selected-library reads and global indexes for All
+  Media reads, so SQLite can stream the ordered identities without temporary sort
+  work for the covered paths. Projection asks Store for ordered IDs on every
+  publication because enrichment can change best date, kind, or format. If the
+  visible scope is empty, Projection asks Store for separate counts so it can tell
+  "no media exists," "media exists but every root is unavailable," and "the active
+  filter matches nothing" apart. There is no full asset map in window state.
 - **Equal-state suppression.** If a rebuild produces a state identical to the last
   one, it is not published — the UI is never disturbed by a no-op.
 
@@ -319,14 +324,14 @@ instead of guessing.
 2. The ViewModel starts its tasks and tells the Store to load.
 3. `CatalogStore` opens SQLite, reads the saved library roots, and fires "I changed."
 4. `CatalogProjection`, already subscribed to Store invalidations, asks Store for
-   current library rows and ordered asset IDs on its 10 Hz tick, then publishes a
-   `CatalogWindowState`.
+   current library rows and descriptor-ordered asset IDs on its background tick,
+   then publishes a `CatalogWindowState`.
 5. The ViewModel assigns that to its `@Observable` `state`; SwiftUI notices and
    re-renders; the grid fills.
 6. Meanwhile the Store re-scans the libraries in the background to reconcile with
    the current filesystem. If nothing changed, it stays silent (no needless work).
 7. After load, `CatalogFilesystemWatcher` subscribes to macOS FSEvents for each
-   saved root. Changes under a root debounce (500 ms quiet period). Safe single
+   saved root. Changes under a root debounce (one-second quiet period). Safe single
    regular-file events reconcile one path; ambiguous events schedule a full-root
    rescan for **that root only** through the same scan pipeline.
 

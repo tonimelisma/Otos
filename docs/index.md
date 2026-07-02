@@ -40,6 +40,7 @@ implementation history.
 | [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
 | [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files, metadata as scalar columns plus JSON), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
 | [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, and clean destructive catalog reset. |
+| [0011](adr/0011-catalog-query-descriptor-best-values-and-cadence.md) | Catalog query descriptor, generated best date/kind/format values, toolbar/menu sort-filter query ownership, and two-tier publication cadence. |
 | [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy representation: original file URLs on the pasteboard (not image pixels), references only, reading no bytes and never materializing a dataless cloud original. |
 
 ## Current Implementation Specs
@@ -74,6 +75,7 @@ implementation history.
 | [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
 | [0028](specs/0028-code-quality-maintainability-audit.md) | Documentation truth, zero unchecked Sendables, named diagnostics task escapes, enrichment startup failure handling, and deterministic async test helpers. |
 | [0029](specs/0029-sqlite-retirement-completion.md) | SQLite retirement completion: staged thumbnail publication, Store-owned query-plan tests, retired helper removal, and stale-document cleanup. |
+| [0030](specs/0030-toolbar-sort-filter-query-surface.md) | Toolbar/menu sort and filter controls, descriptor-owned browser query state, generated SQLite best values, and one-second background publication cadence. |
 | [0031](specs/0031-grid-selection-and-copy.md) | Media grid selection (single, ⌘-click, ⇧-click, ⌘A) with identity-based persistence across structural applies, and ⌘C copy of the selected assets' original file URLs. |
 
 ## Planning Documents
@@ -88,6 +90,8 @@ user explicitly asks to use them for the current task.
 | [product/roadmap.md](product/roadmap.md) | Non-authoritative idea and planning notes that may include concepts never meant to be implemented. | The user explicitly asks to record, revise, or use roadmap/planning material. |
 | [research/media-grid-best-practices.md](research/media-grid-best-practices.md) | Non-authoritative platform research for large media-grid identity, detail loading, prefetching, and responsiveness design. | New platform guidance or architecture research changes the media-grid design basis. |
 | [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md) | Non-authoritative storage/query research for database-backed media catalog design. | New storage/query research changes the catalog architecture design basis. |
+| [research/toolbar-sort-filter-architecture.md](research/toolbar-sort-filter-architecture.md) | Non-authoritative HIG/Liquid Glass toolbar research and end-to-end sort/filter query architecture alternatives. | New platform guidance or a sort/filter design decision changes the toolbar/query design basis. |
+| [plans/0030-toolbar-sort-filter-query-surface-plan.md](plans/0030-toolbar-sort-filter-query-surface-plan.md) | Non-authoritative implementation plan used as the explicit blueprint for the toolbar sort/filter query increment. | Historical implementation planning needs clarification or the user explicitly asks to revisit the plan. |
 
 ## Templates
 

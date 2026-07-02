@@ -39,12 +39,12 @@ Out of scope:
 - OtosApp owns one CatalogWindowViewModel and declares a singleton Window.
 - Views render inputs, own local control state, and call explicit intents. They
   do not subscribe to catalog changes or coordinate projection.
-- CatalogStore owns SQLite, migrations, complete in-memory truth, scans,
-  availability, cheap change notifications, and raw snapshot construction.
-- CatalogProjection owns sorting, filtering, title lookup, availability hiding,
-  empty-state selection, selection resolution, and 10 Hz UI-state publication
-  outside MainActor.
-- CatalogWindowViewModel owns final state assignment, explicit selection
+- CatalogStore owns SQLite, migrations, runtime catalog truth, scans,
+  availability, cheap change notifications, and Store-owned query APIs.
+- CatalogProjection owns descriptor normalization, title lookup, availability
+  hiding, empty-state selection, selection resolution, and coalesced UI-state
+  publication outside MainActor.
+- CatalogWindowViewModel owns final state assignment, explicit query intent
   delivery, lossless serial add/remove delivery, weak state consumption, named
   task lifetimes, and scalar stall correlation on MainActor. It does no catalog
   work itself.
@@ -188,8 +188,9 @@ ordinary code.
 - ViewModel tests: idempotent start, weak state consumption and deallocation,
   rapid explicit selection intents, normalization without feedback, ordered
   lossless add/remove delivery, failure continuation, and cancellation
-- Projection tests: ordering/filtering, availability hiding, empty states, 10 Hz
-  coalescing, one-in-flight work, and dirty-during-await rerun
+- Projection tests: ordering/filtering, availability hiding, empty states,
+  background coalescing, immediate user-intent publication, one-in-flight work,
+  and dirty-during-await rerun
 - source hygiene: no View orchestration, no main WindowGroup, no retired
   parallel UI-state owners, and no implicit selection didSet
 - script/verify.sh

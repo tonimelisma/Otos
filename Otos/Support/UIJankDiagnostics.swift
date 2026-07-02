@@ -118,7 +118,7 @@ final class MainRunLoopStallMonitor {
         }
 
         let diagnostics = diagnostics
-        // Stalls are rare boundary events rather than the 10 Hz UI path. Capture
+        // Stalls are rare boundary events rather than the high-frequency UI path. Capture
         // only the completed scalar payload so this best-effort diagnostic task
         // cannot retain catalog state while waiting for the JSONL actor.
         Task {

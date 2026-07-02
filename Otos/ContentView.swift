@@ -30,8 +30,25 @@ struct ContentView: View {
                 emptyState: viewModel.state.mediaEmptyState,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
-                onViewportChanged: viewModel.viewportChanged
+                onViewportChanged: viewModel.viewportChanged,
+                clearFilters: viewModel.clearMediaFilter
             )
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                CatalogFilterMenu(
+                    descriptor: viewModel.queryDescriptor,
+                    options: viewModel.state.filterOptions,
+                    toggleKind: viewModel.toggleMediaKind,
+                    toggleFormat: viewModel.toggleMediaFormat,
+                    clearFilters: viewModel.clearMediaFilter
+                )
+                CatalogSortMenu(
+                    sort: viewModel.queryDescriptor.sort,
+                    setField: viewModel.setSortField,
+                    setDirection: viewModel.setSortDirection
+                )
+            }
         }
     }
 }

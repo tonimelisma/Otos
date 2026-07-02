@@ -73,10 +73,13 @@ Captured user guidance for verification:
 - Everything stored in the SQLite catalog should be loaded into the in-memory
   catalog working set until evidence or an explicit requirement proves
   otherwise.
-- During filesystem scans, SQLite writes happen at 10 Hz, not based on the
-  number of scanned files.
-- During filesystem scans, SwiftUI-visible updates happen at 10 Hz, not based on
-  the number of scanned files.
+- During filesystem scans, SQLite writes happen on a time cadence, not based on
+  the number of scanned files. ADR 0011 currently sets this background cadence
+  to roughly one second.
+- During filesystem scans, SwiftUI-visible updates happen on Projection's
+  background publication cadence, not based on the number of scanned files. ADR
+  0011 currently sets this background cadence to roughly one second while direct
+  user query intents publish immediately.
 - ADRs should have clear MECE scope: each decision record owns one coherent
   decision area, names adjacent decisions, and does not decide unrelated future
   architecture.
@@ -106,8 +109,9 @@ This ADR owns:
   resident per-asset map.
 - The exact initial filesystem scan schema for media asset rows.
 - The macOS filesystem resource keys requested during the initial scan.
-- The 10 Hz time-based cadence for filesystem scan SQLite flushes.
-- The 10 Hz time-based cadence for SwiftUI-visible filesystem scan updates.
+- The time-based cadence for filesystem scan SQLite flushes.
+- The time-based cadence for SwiftUI-visible filesystem scan updates, as refined
+  by ADR 0011's two-tier publication model.
 - Scan-time media eligibility: which regular files become `media_asset` rows based on
   `NSURLContentTypeKey` and `UTType` conformance.
 - Running-app filesystem watching: macOS FSEvents are debounced hints. Supported
@@ -299,12 +303,13 @@ Fields deliberately not stored by this ADR:
 ### Scan Update Cadence
 
 During a filesystem scan, discovered asset changes are accumulated by the catalog
-owner and flushed to SQLite at 10 Hz when pending changes exist. This is a
-time-based cadence: every 100 ms, not a file-count threshold.
+owner and flushed to SQLite on the background scan cadence when pending changes
+exist. This is a time-based cadence, not a file-count threshold.
 
-`CatalogProjection` publishes SwiftUI-visible scan state at 10 Hz when pending
-view changes exist. This is also time-based: every 100 ms, not a scanned-file
-threshold.
+`CatalogProjection` publishes SwiftUI-visible background scan state on its
+background publication cadence when pending view changes exist. Direct user
+sidebar, sort, and filter intents can still wake a publication immediately. The
+cadence is time-based, not a scanned-file threshold.
 
 If a SQLite flush takes longer than one tick, the next tick coalesces pending
 changes. The catalog owner must not run overlapping SQLite writes for one
@@ -325,7 +330,7 @@ catalog memory.
 
 `CatalogStore` maps each event path to exactly one library root, ignores events
 until that root's first scan has completed ("arming"), and coalesces bursts with a
-per-root quiet-period debounce (500 ms default). When the debounce fires, Store
+per-root quiet-period debounce (roughly one second by default). When the debounce fires, Store
 classifies the batch with `FilesystemEventFlags`.
 
 Supported single regular-file create, modify, inode-metadata, xattr, and rename
@@ -549,8 +554,9 @@ The selected pattern constrains implementation:
   `fileResourceIdentifier`, or `volumeIdentifier`
 - no main-actor filesystem traversal or database work
 - no count-based scan flush threshold
-- SQLite scan flushes at 10 Hz when pending changes exist
-- SwiftUI-visible scan updates publish at 10 Hz when pending changes exist
+- SQLite scan flushes on the background scan cadence when pending changes exist
+- SwiftUI-visible background scan updates publish on Projection's background
+  cadence when pending changes exist
 - concurrent initial-load callers share one Store-owned startup task
 - database-restored roots receive one automatic launch scan request
 - scan callbacks must still own the same root path and private root-row instance
@@ -579,8 +585,8 @@ interfaces and values, not GRDB types directly.
 If the in-memory working set proves too large, measure startup time, memory, and
 interaction latency before introducing paging or query-backed views.
 
-If 10 Hz scan flushing proves too frequent or too sparse, change the cadence
-through a new requirement or ADR update with measured evidence.
+If scan flushing proves too frequent or too sparse, change the cadence through a
+new requirement or ADR update with measured evidence.
 
 Durable scan history and scan IDs are out of scope because scans are idempotent
 reconciliation operations, not product entities.

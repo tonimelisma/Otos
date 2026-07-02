@@ -3,6 +3,7 @@ import Foundation
 import MediaMetadata
 import OSLog
 import QuickLookThumbnailing
+import UniformTypeIdentifiers
 
 /// Media enricher guide
 ///
@@ -49,11 +50,14 @@ nonisolated struct MediaEnricher {
                 return .notMaterialized
             }
             let generatedThumbnail = await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
+            let metadata = Self.map(result)
             return .complete(
                 EnrichmentResult(
                     id: id,
-                    metadata: Self.map(result),
-                    captureDate: Self.resolveCaptureDate(result.timestamps),
+                    metadata: metadata,
+                    timestampFacts: Self.timestampFacts(result.timestamps),
+                    enrichedKind: Self.normalizedKind(result.format),
+                    enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
                     thumbnailPath: nil,
                     // Normalize unknown facts to the same -1 signature `needsEnrichment`
                     // compares against, so a definitive result with no scanner-provided
@@ -107,13 +111,32 @@ nonisolated struct MediaEnricher {
         }
     }
 
-    /// Otos's best-known metadata capture date, by priority. The filesystem fallback is
-    /// applied later, at display, by `MediaAsset.bestCaptureDate`.
-    static func resolveCaptureDate(_ timestamps: CaptureTimestamps) -> Date? {
-        timestamps.original?.instant
-            ?? timestamps.quickTimeCreation?.instant
-            ?? timestamps.digitized?.instant
-            ?? timestamps.gps?.instant
+    /// Promotes the timestamp roles that participate in the current best-date
+    /// generated column. Roles without a usable UTC instant remain nil here while
+    /// their raw components stay preserved in metadata JSON.
+    static func timestampFacts(_ timestamps: CaptureTimestamps) -> EnrichmentTimestampFacts {
+        EnrichmentTimestampFacts(
+            original: timestamps.original?.instant,
+            quickTimeCreation: timestamps.quickTimeCreation?.instant,
+            digitized: timestamps.digitized?.instant,
+            gps: timestamps.gps?.instant
+        )
+    }
+
+    static func normalizedKind(_ format: MediaFormat) -> MediaKind? {
+        let kind = UTType(filenameExtension: format.fileExtension)
+            .flatMap(MediaKind.classify)
+        if let kind {
+            return kind
+        }
+        switch format.family {
+        case .jpeg, .heif, .tiff:
+            return .image
+        case .isoBMFF, .riffAVI:
+            return .video
+        case .id3, .riffWAV, .unknown:
+            return nil
+        }
     }
 
     /// Maps the full library result into Otos's owned metadata record — every field.
