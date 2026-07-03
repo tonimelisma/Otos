@@ -44,15 +44,35 @@ nonisolated struct CatalogScanner {
     }
 }
 
+nonisolated struct CatalogScanIssueSummary: Equatable {
+    let kind: String
+    let errorDescription: String
+    let count: Int
+    let examplePaths: [String]
+}
+
 nonisolated enum CatalogScanError: Error {
-    case filesystemErrorsEncountered(Int)
+    case filesystemErrorsEncountered(count: Int, summaries: [CatalogScanIssueSummary])
 }
 
 private nonisolated enum LiveCatalogScanner {
-    private struct ScanIssue {
+    private static let issueExampleLimitPerKey = 10
+
+    private struct ScanIssueKey: Hashable {
         let kind: String
-        let path: String
         let errorDescription: String
+    }
+
+    private struct ScanIssueBucket {
+        var count = 0
+        var examplePaths: [String] = []
+
+        mutating func record(path: String) {
+            count += 1
+            if examplePaths.count < issueExampleLimitPerKey {
+                examplePaths.append(path)
+            }
+        }
     }
 
     private struct SkippedPackage {
@@ -63,9 +83,37 @@ private nonisolated enum LiveCatalogScanner {
     private struct ScanState {
         var pending: [ScannedMediaFile] = []
         var observedPaths = Set<MediaRelativePath>()
-        var filesystemIssues: [ScanIssue] = []
+        var filesystemIssueCount = 0
+        var filesystemIssueBuckets: [ScanIssueKey: ScanIssueBucket] = [:]
         var skippedPackages: [SkippedPackage] = []
         var skippedNonMediaCount = 0
+
+        mutating func recordIssue(kind: String, path: String, errorDescription: String) {
+            filesystemIssueCount += 1
+            let key = ScanIssueKey(kind: kind, errorDescription: errorDescription)
+            filesystemIssueBuckets[key, default: ScanIssueBucket()].record(path: path)
+        }
+
+        func issueSummaries() -> [CatalogScanIssueSummary] {
+            filesystemIssueBuckets
+                .map { key, bucket in
+                    CatalogScanIssueSummary(
+                        kind: key.kind,
+                        errorDescription: key.errorDescription,
+                        count: bucket.count,
+                        examplePaths: bucket.examplePaths
+                    )
+                }
+                .sorted {
+                    if $0.count != $1.count {
+                        return $0.count > $1.count
+                    }
+                    if $0.kind != $1.kind {
+                        return $0.kind < $1.kind
+                    }
+                    return $0.errorDescription < $1.errorDescription
+                }
+        }
     }
 
     private static let resourceKeys: Set<URLResourceKey> = [
@@ -107,12 +155,10 @@ private nonisolated enum LiveCatalogScanner {
             // in the regular-file scanner.
             options: [.skipsPackageDescendants],
             errorHandler: { url, error in
-                scanState.filesystemIssues.append(
-                    ScanIssue(
-                        kind: "enumeration",
-                        path: url.path(percentEncoded: false),
-                        errorDescription: String(describing: error)
-                    )
+                scanState.recordIssue(
+                    kind: "enumeration",
+                    path: url.path(percentEncoded: false),
+                    errorDescription: String(describing: error)
                 )
                 return true
             }
@@ -134,6 +180,20 @@ private nonisolated enum LiveCatalogScanner {
             }
         }
 
+        return try await finish(
+            scanState: &scanState,
+            rootPath: rootPath,
+            diagnostics: diagnostics,
+            batchHandler: batchHandler
+        )
+    }
+
+    private static func finish(
+        scanState: inout ScanState,
+        rootPath: LibraryRootPath,
+        diagnostics: CatalogDiagnostics?,
+        batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
+    ) async throws -> Set<MediaRelativePath> {
         try await flush(&scanState.pending, batchHandler: batchHandler)
         await recordSkippedPackages(scanState.skippedPackages, rootPath: rootPath, diagnostics: diagnostics)
         await recordSkippedNonMedia(
@@ -141,10 +201,14 @@ private nonisolated enum LiveCatalogScanner {
             rootPath: rootPath,
             diagnostics: diagnostics
         )
-        await recordIssues(scanState.filesystemIssues, rootPath: rootPath, diagnostics: diagnostics)
+        let summaries = scanState.issueSummaries()
+        recordIssues(summaries, rootPath: rootPath)
 
-        if !scanState.filesystemIssues.isEmpty {
-            throw CatalogScanError.filesystemErrorsEncountered(scanState.filesystemIssues.count)
+        if scanState.filesystemIssueCount > 0 {
+            throw CatalogScanError.filesystemErrorsEncountered(
+                count: scanState.filesystemIssueCount,
+                summaries: summaries
+            )
         }
         return scanState.observedPaths
     }
@@ -167,12 +231,10 @@ private nonisolated enum LiveCatalogScanner {
             scanState.pending.append(file)
             scanState.observedPaths.insert(file.relativePath)
         } catch {
-            scanState.filesystemIssues.append(
-                ScanIssue(
-                    kind: "resource",
-                    path: fileURL.path(percentEncoded: false),
-                    errorDescription: String(describing: error)
-                )
+            scanState.recordIssue(
+                kind: "resource",
+                path: fileURL.path(percentEncoded: false),
+                errorDescription: String(describing: error)
             )
         }
     }
@@ -280,25 +342,19 @@ private nonisolated enum LiveCatalogScanner {
     }
 
     private static func recordIssues(
-        _ issues: [ScanIssue],
-        rootPath: LibraryRootPath,
-        diagnostics: CatalogDiagnostics?
-    ) async {
-        for issue in issues {
-            await diagnostics?.record(
-                operation: "catalog.scan.issue",
-                phase: "issue",
-                fields: [
-                    "rootPath": rootPath.rawValue,
-                    "path": issue.path,
-                    "kind": issue.kind,
-                    "error": issue.errorDescription,
-                ]
+        _ summaries: [CatalogScanIssueSummary],
+        rootPath: LibraryRootPath
+    ) {
+        for summary in summaries {
+            OtosLog.fileAccess.error(
+                """
+                Catalog scan issue summary root=\(rootPath.rawValue, privacy: .public) \
+                kind=\(summary.kind, privacy: .public) \
+                error=\(summary.errorDescription, privacy: .public) \
+                count=\(summary.count, privacy: .public) \
+                firstExample=\(summary.examplePaths.first ?? "none", privacy: .public)
+                """
             )
         }
     }
-}
-
-private nonisolated enum CatalogScannerIssue: Error {
-    case relativePathUnavailable
 }

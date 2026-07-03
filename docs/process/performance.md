@@ -44,7 +44,7 @@ Timestamped per-run capture (build, launch, stream until Ctrl+C):
 script/capture-run.sh
 ```
 
-Output lands under `build/Logs/run-<ISO8601>-<pid>.log` with compact unified-log
+Output lands under `logs/run-<sessionID>-prod.log` with compact unified-log
 timestamps, process, subsystem, category, and signposts. Prefer this over ad-hoc
 debugger console redirection when analyzing a session.
 
@@ -57,9 +57,10 @@ script/smoke-run.sh
 
 This is the default agent smoke path for browser runtime and jank-sensitive work.
 It avoids the false confidence of launching into an empty catalog, captures a
-compact log under `build/Logs`, and writes catalog diagnostics artifacts under
+compact log under `logs/`, and writes catalog diagnostics artifacts under
 `build/Diagnostics`. Use `script/smoke-run.sh --verify` only when you need the
-lighter seeded-launch check and jank scrolling is not relevant.
+lighter seeded-launch check; it still fails unless diagnostics prove the seeded
+root was consumed, but it does not exercise scrolling.
 
 Live logs and signposts (attach to an already-running app):
 
@@ -93,6 +94,11 @@ Catalog diagnostics:
 script/catalog-diagnostics.sh check
 script/catalog-diagnostics.sh summary
 ```
+
+By default this reads the newest session-scoped JSONL file from
+`~/Library/Application Support/net.melisma.Otos/Diagnostics/`, named
+`catalog-diagnostics-<sessionID>-<prod|test>.jsonl`. Set
+`OTOS_CATALOG_DIAGNOSTICS_FILE` to summarize a specific copied artifact.
 
 Profiles:
 

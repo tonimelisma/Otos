@@ -4,9 +4,15 @@ import OSLog
 /// Durable diagnostics guide
 ///
 /// JSONL is a debug-only, machine-checkable record for coarse catalog operations,
-/// projection summaries, filesystem issues, failures, and detected stalls. It is
-/// not the high-frequency UI tracing system; Logger and OSSignposter serve that
-/// path without allocating asynchronous file-write work on MainActor.
+/// projection summaries, aggregated scan issues, failures, and detected stalls.
+/// It is not the high-frequency UI tracing system; Logger and OSSignposter serve
+/// that path without allocating asynchronous file-write work on MainActor.
+///
+/// Default diagnostics are session-scoped:
+/// `catalog-diagnostics-<UTC>-p<PID>-<prod|test>.jsonl`. Startup deletes the
+/// retired unbounded `catalog-diagnostics.jsonl` and keeps only the newest ten
+/// default files per run kind. Injected `outputURL` instances are exempt from
+/// pruning so focused tests can use temporary paths without side effects.
 ///
 /// This actor serializes append order and owns one lazily opened file handle.
 /// Callers outside UI hot paths may await `record`, which provides natural
@@ -24,20 +30,31 @@ actor CatalogDiagnostics {
     static let shared = CatalogDiagnostics(
         outputURL: CatalogDiagnostics.defaultOutputURL(
             bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"
-        )
+        ),
+        managesDefaultDirectory: true
     )
+
+    private nonisolated static let retainedSessionFileCountPerRunKind = 10
+    private nonisolated static let legacyDiagnosticsFileName = "catalog-diagnostics.jsonl"
 
     private let outputURL: URL
     private let isEnabled: Bool
     private let encoder: JSONEncoder
     private var fileHandle: FileHandle?
 
-    init(outputURL: URL, isEnabled: Bool = CatalogDiagnostics.defaultIsEnabled) {
+    init(
+        outputURL: URL,
+        isEnabled: Bool = CatalogDiagnostics.defaultIsEnabled,
+        managesDefaultDirectory: Bool = false
+    ) {
         self.outputURL = outputURL
         self.isEnabled = isEnabled
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
+        if managesDefaultDirectory {
+            Self.prepareDefaultDirectory(for: outputURL)
+        }
     }
 
     deinit {
@@ -52,7 +69,9 @@ actor CatalogDiagnostics {
         return appSupportURL
             .appending(path: bundleIdentifier, directoryHint: .isDirectory)
             .appending(path: "Diagnostics", directoryHint: .isDirectory)
-            .appending(path: "catalog-diagnostics.jsonl")
+            .appending(
+                path: "catalog-diagnostics-\(RunContext.sessionID)-\(RunContext.runKind).jsonl"
+            )
     }
 
     func record(operation: String, phase: String, fields: [String: String] = [:]) async {
@@ -111,21 +130,60 @@ actor CatalogDiagnostics {
         return handle
     }
 
-    /// Debug app builds write shared JSONL; test runs disable `.shared` by default so
-    /// the aggregate diagnostics file is not polluted by the test binary.
+    private nonisolated static func prepareDefaultDirectory(for outputURL: URL) {
+        let directory = outputURL.deletingLastPathComponent()
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            let legacyURL = directory.appending(path: legacyDiagnosticsFileName)
+            if fileManager.fileExists(atPath: legacyURL.path(percentEncoded: false)) {
+                try fileManager.removeItem(at: legacyURL)
+            }
+            try pruneSessionFiles(in: directory, runKind: "prod", fileManager: fileManager)
+            try pruneSessionFiles(in: directory, runKind: "test", fileManager: fileManager)
+        } catch {
+            OtosLog.performance.error(
+                "Catalog diagnostics startup cleanup failed error=\(String(describing: error), privacy: .public)"
+            )
+        }
+    }
+
+    private nonisolated static func pruneSessionFiles(
+        in directory: URL,
+        runKind: String,
+        fileManager: FileManager
+    ) throws {
+        let suffix = "-\(runKind).jsonl"
+        let urls = try fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )
+        let sessionFiles = urls.filter { url in
+            let name = url.lastPathComponent
+            return name.hasPrefix("catalog-diagnostics-") && name.hasSuffix(suffix)
+        }
+        let sortedFiles = sessionFiles.sorted { lhs, rhs in
+            modificationDate(of: lhs) > modificationDate(of: rhs)
+        }
+        for url in sortedFiles.dropFirst(retainedSessionFileCountPerRunKind) {
+            try fileManager.removeItem(at: url)
+        }
+    }
+
+    private nonisolated static func modificationDate(of url: URL) -> Date {
+        let values = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+        return values?.contentModificationDate ?? .distantPast
+    }
+
+    /// Debug builds write shared session JSONL for both app and test runs. Release
+    /// builds keep durable diagnostics disabled until a shipping requirement asks for
+    /// them.
     private nonisolated static var defaultIsEnabled: Bool {
         #if DEBUG
-            !isRunningUnderTestHarness
+            true
         #else
             false
         #endif
-    }
-
-    private nonisolated static var isRunningUnderTestHarness: Bool {
-        let environment = ProcessInfo.processInfo.environment
-        if environment["XCTestConfigurationFilePath"] != nil {
-            return true
-        }
-        return ProcessInfo.processInfo.processName == "xctest"
     }
 }

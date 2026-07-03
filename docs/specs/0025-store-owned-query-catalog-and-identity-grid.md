@@ -456,8 +456,8 @@ Production-size evidence was captured after deleting only app-owned state:
 
 - deleted `~/Library/Application Support/net.melisma.Otos/Catalog`
 - deleted `~/Library/Application Support/net.melisma.Otos/Thumbnails`
-- deleted
-  `~/Library/Application Support/net.melisma.Otos/Diagnostics/catalog-diagnostics.jsonl`
+- deleted session diagnostics under
+  `~/Library/Application Support/net.melisma.Otos/Diagnostics/`
 - preserved originals in the tracked library roots
 
 The fresh run used two OneDrive-backed roots and reached 25,050 cataloged rows:

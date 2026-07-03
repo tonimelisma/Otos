@@ -4,13 +4,25 @@ set -euo pipefail
 MODE="${1:-summary}"
 APP_ID="net.melisma.Otos"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEFAULT_FILE="$HOME/Library/Application Support/$APP_ID/Diagnostics/catalog-diagnostics.jsonl"
-DIAGNOSTICS_FILE="${OTOS_CATALOG_DIAGNOSTICS_FILE:-$DEFAULT_FILE}"
+DEFAULT_DIR="$HOME/Library/Application Support/$APP_ID/Diagnostics"
+LEGACY_FILE="$DEFAULT_DIR/catalog-diagnostics.jsonl"
 OUTPUT_DIR="$ROOT_DIR/build/Diagnostics"
 
 usage() {
   echo "usage: $0 [path|summary|check]" >&2
 }
+
+latest_diagnostics_file() {
+  local latest
+  latest="$(ls -t "$DEFAULT_DIR"/catalog-diagnostics-*.jsonl 2>/dev/null | head -n 1 || true)"
+  if [[ -n "$latest" ]]; then
+    echo "$latest"
+  else
+    echo "$LEGACY_FILE"
+  fi
+}
+
+DIAGNOSTICS_FILE="${OTOS_CATALOG_DIAGNOSTICS_FILE:-$(latest_diagnostics_file)}"
 
 diagnostic_count() {
   local pattern="$1"
@@ -82,7 +94,7 @@ write_summary() {
     echo "scan starts: $(diagnostic_count '\"operation\":\"catalog.scan\".*\"phase\":\"start\"')"
     echo "scan finishes: $(diagnostic_count '\"operation\":\"catalog.scan\".*\"phase\":\"finish\"')"
     echo "scan errors: $(diagnostic_count '\"operation\":\"catalog.scan\".*\"phase\":\"error\"')"
-    echo "scan issues: $(diagnostic_count '\"operation\":\"catalog.scan.issue\"')"
+    echo "scan issue max count: $(diagnostic_field_max '\"operation\":\"catalog.scan\".*\"phase\":\"error\"' issueCount)"
     echo "scan batches: $(diagnostic_count '\"operation\":\"catalog.scan.batch\"')"
     echo "stale scan callbacks ignored: $(diagnostic_count '\"operation\":\"catalog.scan.staleCallback\"')"
     echo "skipped packages: $(diagnostic_count '\"operation\":\"catalog.scan.skippedPackage\"')"

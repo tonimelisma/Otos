@@ -64,7 +64,7 @@ struct CatalogStoreAvailabilityTests {
 
         let disappearingScanner = CatalogScanner { rootPath, _, _, _ in
             try FileManager.default.removeItem(at: rootPath.url)
-            throw CatalogScanError.filesystemErrorsEncountered(1)
+            throw CatalogScanError.filesystemErrorsEncountered(count: 1, summaries: [])
         }
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),

@@ -2,22 +2,12 @@ import Foundation
 import OSLog
 
 /// Catalog Projection guide
-///
-/// This actor is the complete read-model boundary between catalog truth and the main
-/// window. Store exposes root rows and ordered asset IDs; Projection owns library
+/// This actor is the read-model boundary between catalog truth and the main window:
 /// ordering, reachability filtering, sidebar scope, title selection, and empty-state
-/// meaning, none of which belongs on MainActor or inside a SwiftUI body.
-///
-/// Store notifications coalesce on the cadence, while direct user query intents
-/// schedule an immediate publication attempt. The Store change stream is
-/// registered before publication starts, `dirty` is cleared before awaited
-/// reads/build work so new input survives for the next pass, and actor isolation
-/// permits only one build at a time.
-///
-/// Pure policy lives in `CatalogWindowPolicy`; diagnostics value plumbing lives in
-/// `CatalogProjectionDiagnostics`. This actor keeps the ownership-critical machinery:
-/// subscription lifetime, dirty/in-flight state, request retention across awaits,
-/// Store reads, and publication to continuations.
+/// meaning. Notifications coalesce on the cadence; direct query intents wake
+/// publication immediately. `dirty` is cleared before awaited reads/build work so
+/// input survives for the next pass. Pure policy lives in
+/// `CatalogWindowPolicy`; diagnostics values live in `CatalogProjectionDiagnostics`.
 actor CatalogProjection {
     // swiftlint:disable:next line_length
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async -> CatalogWindowState
@@ -314,7 +304,9 @@ private extension CatalogProjection {
             )
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
         } catch {
-            OtosLog.catalog.error("Catalog ordered asset query failed")
+            OtosLog.catalog.error(
+                "Catalog ordered asset query failed error=\(String(describing: error), privacy: .public)"
+            )
             orderedAssetIDs = []
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
         }
@@ -440,7 +432,9 @@ private extension CatalogProjection {
         do {
             return try await store.catalogedAssetCount(for: resolvedSidebarSelection)
         } catch {
-            OtosLog.catalog.error("Catalog asset count query failed")
+            OtosLog.catalog.error(
+                "Catalog asset count query failed error=\(String(describing: error), privacy: .public)"
+            )
             return orderedAssetIDs.count
         }
     }
@@ -460,7 +454,12 @@ private extension CatalogProjection {
                 availableLibraryPaths: availableLibraryPaths
             )
         } catch {
-            OtosLog.catalog.error("Catalog unfiltered visible count query failed")
+            OtosLog.catalog.error(
+                """
+                Catalog unfiltered visible count query failed \
+                error=\(String(describing: error), privacy: .public)
+                """
+            )
             return 0
         }
     }
@@ -479,7 +478,9 @@ private extension CatalogProjection {
                 availableLibraryPaths: availableLibraryPaths
             )
         } catch {
-            OtosLog.catalog.error("Catalog filter option query failed")
+            OtosLog.catalog.error(
+                "Catalog filter option query failed error=\(String(describing: error), privacy: .public)"
+            )
             return .empty
         }
     }

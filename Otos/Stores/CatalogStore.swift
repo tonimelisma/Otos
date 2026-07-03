@@ -47,6 +47,8 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// proves deletion only after Store checks that exact path is absent under an armed
 /// available root.
 actor CatalogStore {
+    private nonisolated static let slowQueryDiagnosticThresholdMs = 50
+
     enum Location {
         case application(bundleIdentifier: String)
         case databaseFile(URL)
@@ -72,6 +74,11 @@ actor CatalogStore {
         var bestFormat: MediaFormatToken?
         var enrichedSourceSize: Int64?
         var enrichedSourceMTimeSeconds: Int?
+    }
+
+    struct ThumbnailPathMigration {
+        let oldRelativeName: String
+        let newRelativeName: String
     }
 
     /// This value is a process-local ownership lease, not scan identity. The
@@ -305,21 +312,24 @@ extension CatalogStore {
         }
 
         let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
-        OtosLog.catalog.debug(
-            """
-            Catalog tile details queried requested=\(ids.count, privacy: .public) \
-            returned=\(assetsByID.count, privacy: .public) queryMs=\(queryMs, privacy: .public)
-            """
-        )
-        await diagnostics?.record(
-            operation: "catalog.store.query.tileDetail",
-            phase: "finish",
-            fields: [
-                "requested": "\(ids.count)",
-                "returned": "\(assetsByID.count)",
-                "queryMs": "\(queryMs)",
-            ]
-        )
+        if queryMs > Self.slowQueryDiagnosticThresholdMs {
+            OtosLog.catalog.debug(
+                """
+                Catalog slow tile details query requested=\(ids.count, privacy: .public) \
+                returned=\(assetsByID.count, privacy: .public) queryMs=\(queryMs, privacy: .public)
+                """
+            )
+            await diagnostics?.record(
+                operation: "catalog.store.query.tileDetail",
+                phase: "finish",
+                fields: [
+                    "requested": "\(ids.count)",
+                    "returned": "\(assetsByID.count)",
+                    "queryMs": "\(queryMs)",
+                    "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
+                ]
+            )
+        }
         return assetsByID
     }
 
@@ -398,22 +408,25 @@ extension CatalogStore {
         }
 
         let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
-        OtosLog.catalog.debug(
-            """
-            Catalog enrichment candidates queried priority=\(priorityIDs.count, privacy: .public) \
-            returned=\(candidates.count, privacy: .public) \
-            queryMs=\(queryMs, privacy: .public)
-            """
-        )
-        await diagnostics?.record(
-            operation: "catalog.store.query.enrichment",
-            phase: "finish",
-            fields: [
-                "priority": "\(priorityIDs.count)",
-                "returned": "\(candidates.count)",
-                "queryMs": "\(queryMs)",
-            ]
-        )
+        if queryMs > Self.slowQueryDiagnosticThresholdMs {
+            OtosLog.catalog.debug(
+                """
+                Catalog slow enrichment candidates query priority=\(priorityIDs.count, privacy: .public) \
+                returned=\(candidates.count, privacy: .public) \
+                queryMs=\(queryMs, privacy: .public)
+                """
+            )
+            await diagnostics?.record(
+                operation: "catalog.store.query.enrichment",
+                phase: "finish",
+                fields: [
+                    "priority": "\(priorityIDs.count)",
+                    "returned": "\(candidates.count)",
+                    "queryMs": "\(queryMs)",
+                    "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
+                ]
+            )
+        }
         return candidates
     }
 
@@ -661,7 +674,12 @@ extension CatalogStore {
         do {
             try await releaseEnrichmentClaims(resultIDs)
         } catch {
-            OtosLog.metadata.error("Enrichment claim release failed count=\(resultIDs.count, privacy: .public)")
+            OtosLog.metadata.error(
+                """
+                Enrichment claim release failed count=\(resultIDs.count, privacy: .public) \
+                error=\(String(describing: error), privacy: .public)
+                """
+            )
         }
     }
 
@@ -727,7 +745,12 @@ extension CatalogStore {
     }
 
     private func recordEnrichmentBatchError(_ error: Error, count: Int) async {
-        OtosLog.metadata.error("Enrichment batch persist failed count=\(count, privacy: .public)")
+        OtosLog.metadata.error(
+            """
+            Enrichment batch persist failed count=\(count, privacy: .public) \
+            error=\(String(describing: error), privacy: .public)
+            """
+        )
         await diagnostics?.record(
             operation: "catalog.enrichment.batch",
             phase: "error",
@@ -841,7 +864,9 @@ extension CatalogStore {
             }
             return deletionFacts.compactMap(\.thumbnailPath)
         } catch {
-            OtosLog.persistence.error("Catalog remove root thumbnail lookup failed")
+            OtosLog.persistence.error(
+                "Catalog remove root thumbnail lookup failed error=\(String(describing: error), privacy: .public)"
+            )
             throw error
         }
     }
@@ -1003,51 +1028,103 @@ private extension CatalogStore {
     ) async -> [StoredRoot] {
         var normalizedRoots: [StoredRoot] = []
         for storedRoot in roots {
-            guard let normalizedPath = try? CatalogPath.normalizedExistingDirectoryPath(for: storedRoot.path.url),
-                  normalizedPath != storedRoot.path
-            else {
-                normalizedRoots.append(storedRoot)
-                continue
-            }
-            do {
-                try await dbWriter.write { db in
-                    try Self.updateLibraryRootPath(rootRowID: storedRoot.id, path: normalizedPath, db: db)
-                }
-                OtosLog.persistence.info(
-                    """
-                    Library root normalized oldPath=\(storedRoot.path.rawValue, privacy: .public) \
-                    path=\(normalizedPath.rawValue, privacy: .public)
-                    """
-                )
-                await diagnostics?.record(
-                    operation: "catalog.library.normalize",
-                    phase: "finish",
-                    fields: [
-                        "oldRootPath": storedRoot.path.rawValue,
-                        "rootPath": normalizedPath.rawValue,
-                    ]
-                )
-                normalizedRoots.append(StoredRoot(id: storedRoot.id, path: normalizedPath))
-            } catch {
-                OtosLog.persistence.error(
-                    """
-                    Library root normalization failed oldPath=\(storedRoot.path.rawValue, privacy: .public) \
-                    path=\(normalizedPath.rawValue, privacy: .public)
-                    """
-                )
-                await diagnostics?.record(
-                    operation: "catalog.library.normalize",
-                    phase: "error",
-                    fields: [
-                        "oldRootPath": storedRoot.path.rawValue,
-                        "rootPath": normalizedPath.rawValue,
-                        "error": String(describing: error),
-                    ]
-                )
-                normalizedRoots.append(storedRoot)
-            }
+            let normalizedRoot = await normalizedLoadedRoot(storedRoot, dbWriter: dbWriter)
+            normalizedRoots.append(normalizedRoot)
         }
         return normalizedRoots
+    }
+
+    private func normalizedLoadedRoot(
+        _ storedRoot: StoredRoot,
+        dbWriter: any DatabaseWriter
+    ) async -> StoredRoot {
+        guard let normalizedPath = try? CatalogPath.normalizedExistingDirectoryPath(for: storedRoot.path.url),
+              normalizedPath != storedRoot.path
+        else {
+            return storedRoot
+        }
+        do {
+            let thumbnailMigrations = try await dbWriter.write { db in
+                try Self.updateLibraryRootPath(rootRowID: storedRoot.id, path: normalizedPath, db: db)
+            }
+            migrateNormalizedRootThumbnails(thumbnailMigrations)
+            OtosLog.persistence.info(
+                """
+                Library root normalized oldPath=\(storedRoot.path.rawValue, privacy: .public) \
+                path=\(normalizedPath.rawValue, privacy: .public) \
+                thumbnailMigrations=\(thumbnailMigrations.count, privacy: .public)
+                """
+            )
+            await diagnostics?.record(
+                operation: "catalog.library.normalize",
+                phase: "finish",
+                fields: [
+                    "oldRootPath": storedRoot.path.rawValue,
+                    "rootPath": normalizedPath.rawValue,
+                    "thumbnailMigrations": "\(thumbnailMigrations.count)",
+                ]
+            )
+            return StoredRoot(id: storedRoot.id, path: normalizedPath)
+        } catch {
+            await recordRootNormalizationFailure(storedRoot, normalizedPath: normalizedPath, error: error)
+            return storedRoot
+        }
+    }
+
+    private func recordRootNormalizationFailure(
+        _ storedRoot: StoredRoot,
+        normalizedPath: LibraryRootPath,
+        error: Error
+    ) async {
+        OtosLog.persistence.error(
+            """
+            Library root normalization failed oldPath=\(storedRoot.path.rawValue, privacy: .public) \
+            path=\(normalizedPath.rawValue, privacy: .public) \
+            error=\(String(describing: error), privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.library.normalize",
+            phase: "error",
+            fields: [
+                "oldRootPath": storedRoot.path.rawValue,
+                "rootPath": normalizedPath.rawValue,
+                "error": String(describing: error),
+            ]
+        )
+    }
+
+    private func migrateNormalizedRootThumbnails(_ migrations: [ThumbnailPathMigration]) {
+        guard !migrations.isEmpty, let thumbnailDirectory else {
+            return
+        }
+
+        var failureCount = 0
+        for migration in migrations {
+            do {
+                try ThumbnailStore.move(
+                    migration.oldRelativeName,
+                    to: migration.newRelativeName,
+                    in: thumbnailDirectory
+                )
+            } catch {
+                failureCount += 1
+                OtosLog.thumbnails.error(
+                    """
+                    Thumbnail migration failed old=\(migration.oldRelativeName, privacy: .public) \
+                    new=\(migration.newRelativeName, privacy: .public) \
+                    error=\(String(describing: error), privacy: .public)
+                    """
+                )
+            }
+        }
+
+        OtosLog.thumbnails.info(
+            """
+            Thumbnail paths migrated for normalized root count=\(migrations.count, privacy: .public) \
+            failures=\(failureCount, privacy: .public)
+            """
+        )
     }
 
     private func mediaAsset(from storedAsset: StoredAsset, rootPath: LibraryRootPath) -> MediaAsset {
@@ -1242,7 +1319,12 @@ private extension CatalogStore {
             await recordIgnoredStaleCallback(scan, callback: "reconciliation")
             return
         } catch {
-            OtosLog.catalog.error("Catalog scan reconciliation failed path=\(scan.rootPath.rawValue, privacy: .public)")
+            OtosLog.catalog.error(
+                """
+                Catalog scan reconciliation failed path=\(scan.rootPath.rawValue, privacy: .public) \
+                error=\(String(describing: error), privacy: .public)
+                """
+            )
             await diagnostics?.record(
                 operation: "catalog.scan.reconcile",
                 phase: "error",
@@ -1321,6 +1403,11 @@ private extension CatalogStore {
             await recordIgnoredStaleCallback(scan, callback: "failure")
             return
         }
+        let errorDescription = if case CatalogScanError.filesystemErrorsEncountered = error {
+            "filesystemErrorsEncountered"
+        } else {
+            String(describing: error)
+        }
         let isStillAvailable = rootIsAvailable(scan.rootPath)
         if !isStillAvailable {
             setAvailability(.unavailable, for: scan.rootPath)
@@ -1333,18 +1420,32 @@ private extension CatalogStore {
                 fields: ["rootPath": scan.rootPath.rawValue]
             )
         } else {
-            OtosLog.catalog.error("Catalog scan failed path=\(scan.rootPath.rawValue, privacy: .public)")
+            OtosLog.catalog.error(
+                """
+                Catalog scan failed path=\(scan.rootPath.rawValue, privacy: .public) \
+                error=\(errorDescription, privacy: .public)
+                """
+            )
         }
-        if case let CatalogScanError.filesystemErrorsEncountered(count) = error {
+        var diagnosticFields = [
+            "rootPath": scan.rootPath.rawValue,
+            "error": errorDescription,
+        ]
+        if case let CatalogScanError.filesystemErrorsEncountered(count, summaries) = error {
             OtosLog.fileAccess.error("Filesystem scan errors count=\(count, privacy: .public)")
+            diagnosticFields["issueCount"] = "\(count)"
+            for (index, summary) in summaries.enumerated() {
+                let prefix = "issue\(index)"
+                diagnosticFields["\(prefix).kind"] = summary.kind
+                diagnosticFields["\(prefix).error"] = summary.errorDescription
+                diagnosticFields["\(prefix).count"] = "\(summary.count)"
+                diagnosticFields["\(prefix).examples"] = summary.examplePaths.joined(separator: " | ")
+            }
         }
         await diagnostics?.record(
             operation: "catalog.scan",
             phase: "error",
-            fields: [
-                "rootPath": scan.rootPath.rawValue,
-                "error": String(describing: error),
-            ]
+            fields: diagnosticFields
         )
         clearCurrentScan(scan, armFilesystemWatching: true)
     }

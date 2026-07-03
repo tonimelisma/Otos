@@ -9,8 +9,8 @@ struct CatalogDiagnosticsTests {
         let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
 
         await diagnostics.record(
-            operation: "catalog.scan.issue",
-            phase: "issue",
+            operation: "catalog.scan",
+            phase: "error",
             fields: [
                 "rootPath": "/Users/example/Pictures",
                 "path": "/Users/example/Pictures/broken.jpg",
@@ -31,8 +31,8 @@ struct CatalogDiagnosticsTests {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         let event = try decoder.decode(CatalogDiagnosticEvent.self, from: Data(lines[0].utf8))
-        #expect(event.operation == "catalog.scan.issue")
-        #expect(event.phase == "issue")
+        #expect(event.operation == "catalog.scan")
+        #expect(event.phase == "error")
         #expect(event.fields["path"] == "/Users/example/Pictures/broken.jpg")
     }
 
@@ -50,12 +50,62 @@ struct CatalogDiagnosticsTests {
         #expect(contents.contains("\"operation\":\"after\""))
     }
 
-    @Test func defaultSharedDiagnosticsIsDisabledWhileTestsRun() async {
+    @Test func defaultOutputURLIsSessionScopedAndLabelsTestRuns() {
+        let outputURL = CatalogDiagnostics.defaultOutputURL(bundleIdentifier: "net.melisma.OtosTests")
+        let fileName = outputURL.lastPathComponent
+
+        #expect(fileName.hasPrefix("catalog-diagnostics-"))
+        #expect(fileName.contains("-p\(ProcessInfo.processInfo.processIdentifier)-"))
+        #expect(fileName.hasSuffix("-\(RunContext.runKind).jsonl"))
+        #expect(RunContext.runKind == "test")
+    }
+
+    @Test func defaultDiagnosticsWriteInTestSessions() async {
         let outputURL = FileManager.default.temporaryDirectory
-            .appending(path: "shared-default-\(UUID().uuidString)/catalog-diagnostics.jsonl")
+            .appending(path: "shared-default-\(UUID().uuidString)")
+            .appending(path: "catalog-diagnostics-\(RunContext.sessionID)-test.jsonl")
         let diagnostics = CatalogDiagnostics(outputURL: outputURL)
         await diagnostics.record(operation: "test", phase: "finish")
-        #expect(!FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
+    }
+
+    @Test func defaultDiagnosticsStartupPrunesOldSessionFilesAndDeletesLegacyFile() throws {
+        let temp = try makeDiagnosticsTemporaryDirectory()
+        let diagnosticsDirectory = temp.appending(path: "Diagnostics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
+        let legacyURL = diagnosticsDirectory.appending(path: "catalog-diagnostics.jsonl")
+        try Data("legacy\n".utf8).write(to: legacyURL)
+
+        for index in 0 ..< 12 {
+            let prodURL = diagnosticsDirectory.appending(
+                path: "catalog-diagnostics-20260703T1200\(String(format: "%02d", index))Z-p\(index)-prod.jsonl"
+            )
+            let testURL = diagnosticsDirectory.appending(
+                path: "catalog-diagnostics-20260703T1300\(String(format: "%02d", index))Z-p\(index)-test.jsonl"
+            )
+            try Data("prod\n".utf8).write(to: prodURL)
+            try Data("test\n".utf8).write(to: testURL)
+            let date = Date(timeIntervalSince1970: TimeInterval(index))
+            try FileManager.default.setAttributes(
+                [.modificationDate: date],
+                ofItemAtPath: prodURL.path(percentEncoded: false)
+            )
+            try FileManager.default.setAttributes(
+                [.modificationDate: date],
+                ofItemAtPath: testURL.path(percentEncoded: false)
+            )
+        }
+
+        let outputURL = diagnosticsDirectory.appending(path: "catalog-diagnostics-current-p999-prod.jsonl")
+        _ = CatalogDiagnostics(outputURL: outputURL, isEnabled: false, managesDefaultDirectory: true)
+
+        let remaining = try FileManager.default.contentsOfDirectory(
+            at: diagnosticsDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path(percentEncoded: false)))
+        #expect(remaining.count(where: { $0.lastPathComponent.hasSuffix("-prod.jsonl") }) == 10)
+        #expect(remaining.count(where: { $0.lastPathComponent.hasSuffix("-test.jsonl") }) == 10)
     }
 
     @Test func disabledDiagnosticsDoesNotCreateAFile() async throws {

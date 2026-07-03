@@ -261,7 +261,7 @@ struct CatalogStoreTests {
                     contentModifiedAt: Date()
                 ),
             ])
-            throw CatalogScanError.filesystemErrorsEncountered(1)
+            throw CatalogScanError.filesystemErrorsEncountered(count: 1, summaries: [])
         }
 
         let secondStore = CatalogStore(

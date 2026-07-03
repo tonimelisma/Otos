@@ -46,6 +46,52 @@ struct CatalogStoreRootNormalizationTests {
         #expect(diagnosticsText.contains("\"operation\":\"catalog.library.normalize\""))
         #expect(diagnosticsText.contains("\"phase\":\"finish\""))
     }
+
+    @Test func startupMigratesThumbnailPathsWhenNormalizingSavedRoot() async throws {
+        let fixture = try makeSymlinkedOneDrivePicturesFixture()
+        let databaseURL = fixture.temp.appending(path: "db/catalog.sqlite")
+        let savedSymlinkPath = LibraryRootPath(
+            rawValue: fixture.symlinkedPictures.standardizedFileURL.path(percentEncoded: false)
+        )
+        let resolvedPath = try CatalogPath.normalizedDirectoryPath(for: fixture.pictures)
+        let relativePath = MediaRelativePath(rawValue: "one.jpg")
+        let oldThumbnail = ThumbnailStore.relativeName(for: MediaAssetID(
+            libraryRootPath: savedSymlinkPath,
+            relativePath: relativePath
+        ))
+        let newThumbnail = ThumbnailStore.relativeName(for: MediaAssetID(
+            libraryRootPath: resolvedPath,
+            relativePath: relativePath
+        ))
+        try await writeSavedSymlinkCatalog(
+            databaseURL: databaseURL,
+            rootPath: savedSymlinkPath,
+            thumbnailPath: oldThumbnail
+        )
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        try Data("thumbnail".utf8).write(to: thumbnailDirectory.appending(path: oldThumbnail))
+
+        let diagnosticsURL = fixture.temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
+        let store = CatalogStore(
+            location: .databaseFile(databaseURL),
+            scanCadence: .milliseconds(10),
+            diagnostics: CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
+        )
+        try await store.start()
+
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["one.jpg"]
+        }
+        #expect(try await savedAssetThumbnailPaths(in: databaseURL) == [newThumbnail])
+        #expect(!FileManager.default.fileExists(
+            atPath: thumbnailDirectory.appending(path: oldThumbnail).path(percentEncoded: false)
+        ))
+        #expect(FileManager.default.fileExists(
+            atPath: thumbnailDirectory.appending(path: newThumbnail).path(percentEncoded: false)
+        ))
+    }
 }
 
 private struct SymlinkedOneDrivePicturesFixture {
@@ -72,7 +118,11 @@ private func makeSymlinkedOneDrivePicturesFixture() throws -> SymlinkedOneDriveP
     )
 }
 
-private func writeSavedSymlinkCatalog(databaseURL: URL, rootPath: LibraryRootPath) async throws {
+private func writeSavedSymlinkCatalog(
+    databaseURL: URL,
+    rootPath: LibraryRootPath,
+    thumbnailPath: String? = nil
+) async throws {
     try FileManager.default.createDirectory(
         at: databaseURL.deletingLastPathComponent(),
         withIntermediateDirectories: true
@@ -82,7 +132,13 @@ private func writeSavedSymlinkCatalog(databaseURL: URL, rootPath: LibraryRootPat
     try await dbQueue.write { db in
         let storedRoot = try CatalogStore.insertLibraryRoot(path: rootPath, db: db)
         let relativePath = MediaRelativePath(rawValue: "one.jpg")
-        try insertSavedAsset(rootID: storedRoot.id, rootPath: rootPath, relativePath: relativePath, db: db)
+        try insertSavedAsset(
+            rootID: storedRoot.id,
+            rootPath: rootPath,
+            relativePath: relativePath,
+            thumbnailPath: thumbnailPath,
+            db: db
+        )
     }
 }
 
@@ -90,6 +146,7 @@ private func insertSavedAsset(
     rootID: Int64,
     rootPath: LibraryRootPath,
     relativePath: MediaRelativePath,
+    thumbnailPath: String?,
     db: Database
 ) throws {
     try db.execute(
@@ -100,9 +157,10 @@ private func insertSavedAsset(
             sort_key,
             name_sort_key,
             name,
-            content_type_identifier
+            content_type_identifier,
+            thumbnail_path
         )
-        VALUES (?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         arguments: [
             rootID,
@@ -111,6 +169,7 @@ private func insertSavedAsset(
             MediaSortKey.naturalKey(relativePath.rawValue),
             relativePath.rawValue,
             "public.jpeg",
+            thumbnailPath,
         ]
     )
 }
@@ -118,5 +177,11 @@ private func insertSavedAsset(
 private func savedLibraryRootPaths(in databaseURL: URL) async throws -> [String] {
     try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
         try String.fetchAll(db, sql: "SELECT path FROM library_root")
+    }
+}
+
+private func savedAssetThumbnailPaths(in databaseURL: URL) async throws -> [String] {
+    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        try String.fetchAll(db, sql: "SELECT thumbnail_path FROM media_asset")
     }
 }

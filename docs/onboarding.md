@@ -324,10 +324,11 @@ coordinator uses it to deliberately materialize the library in the background. S
 
 ### `Otos/Support/*` — observability
 
-`Instrumentation.swift` (logging + signposts), `Diagnostics.swift` (a debug-only
-JSONL record), and `UIJankDiagnostics.swift` (a monitor that catches real main-thread
-stalls). You do not need these to read the app, but they are how we *measure* it
-instead of guessing.
+`Instrumentation.swift` (logging + signposts), `RunContext.swift` (process
+session naming), `Diagnostics.swift` (session-scoped debug JSONL), and
+`UIJankDiagnostics.swift` (a monitor that catches real main-thread stalls). You do
+not need these to read the app, but they are how we *measure* it instead of
+guessing.
 
 ## 5. A day in the life — two narratives
 
@@ -340,7 +341,9 @@ instead of guessing.
    not product onboarding.
 3. The ViewModel starts its tasks and tells the Store to load.
 4. `CatalogStore` opens SQLite, reads the saved library roots, repairs reachable
-   symlink-spelled roots to their resolved provider paths, and fires "I changed."
+   symlink-spelled roots to their resolved provider paths, migrates any thumbnail
+   files whose deterministic names changed with the root spelling, and fires
+   "I changed."
 5. `CatalogProjection`, already subscribed to Store invalidations, asks Store for
    current library rows and descriptor-ordered asset IDs on its background tick,
    then publishes a `CatalogWindowState`.
@@ -390,10 +393,12 @@ instead of guessing.
 3. `CatalogStore.ensureLibrary(url:)` loads the catalog if needed, no-ops if the
    resolved root is already saved, or inserts the root and starts the normal scan
    if it is missing.
-4. The smoke script lets startup run for about 10 seconds, then drives down/up
-   scrolling and captures logs plus catalog diagnostics. It is the default agent
-   runtime smoke path because an empty catalog launch is not useful browser
-   evidence.
+4. In quick `--verify` mode, the smoke script locates that app run's diagnostics
+   by PID and fails unless a successful ensure event exists for the seeded root.
+5. The default smoke script lets startup run for about 10 seconds, then drives down/up
+   scrolling, captures compact unified logs under `logs/`, and summarizes the
+   newest session-scoped catalog diagnostics. It is the default agent runtime
+   smoke path because an empty catalog launch is not useful browser evidence.
 
 ## 6. Where to make a change without breaking things
 

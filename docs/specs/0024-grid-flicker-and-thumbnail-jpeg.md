@@ -21,10 +21,10 @@ Stable visible thumbnails: background enrichment and no-op rescans must not make
 already-visible tiles disappear and reappear. Thumbnails generated from 10-bit or
 HDR video must render as normal still images instead of static.
 
-## Current Repo State
+## Historical Before-Fix Evidence
 
-- `run.log` from the latest run has 2,216 lines. It recorded 114 catalog window
-  state applications; 105 had `delta=0`.
+- The run captured for this increment had 2,216 lines. It recorded 114 catalog
+  window state applications; 105 had `delta=0`.
 - The same log recorded 82 `refreshVisible` collection actions and 90 visible
   reload calls, reloading 7,164 visible cells total.
 - All 342 scan batches in that run reported `changed=false`, and 40 scan
@@ -347,7 +347,7 @@ enrichment writes `.jpg` paths.
 
 ## Instrumentation And Profiling Plan
 
-- Use existing `run.log` and copied JSONL as before-fix evidence.
+- Use the captured run log and copied JSONL as before-fix evidence.
 - Add JSONL Projection fields:
   - `mediaIdentityChanged`
   - `mediaDetailsChanged`

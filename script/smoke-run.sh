@@ -4,8 +4,10 @@ set -euo pipefail
 APP_NAME="Otos"
 SUBSYSTEM="net.melisma.Otos"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_DIR="$ROOT_DIR/build/Logs"
+source "$ROOT_DIR/script/lib/run-context.sh"
+LOG_DIR="$(otos_logs_dir "$ROOT_DIR")"
 DIAGNOSTICS_DIR="$ROOT_DIR/build/Diagnostics"
+APP_DIAGNOSTICS_DIR="$HOME/Library/Application Support/$SUBSYSTEM/Diagnostics"
 DEFAULT_ROOT="$HOME/Desktop/OneDrive/Pictures"
 
 MODE="${1:---jank}"
@@ -101,9 +103,7 @@ wait_for_app_pid() {
 
 start_log_capture() {
   mkdir -p "$LOG_DIR"
-  local timestamp
-  timestamp="$(date -u +%Y-%m-%dT%H%M%SZ)"
-  LOG_FILE="$LOG_DIR/smoke-${timestamp}.log"
+  LOG_FILE="$(otos_log_file "$ROOT_DIR" run prod)"
   /usr/bin/log stream \
     --style compact \
     --level info \
@@ -116,14 +116,50 @@ start_log_capture() {
 
 run_seeded_launch() {
   export OTOS_SMOKE_LIBRARY_ROOT="$SMOKE_ROOT"
-  "$ROOT_DIR/script/build_and_run.sh" --verify
-  wait_for_app_pid >/dev/null
+  "$ROOT_DIR/script/build_and_run.sh" --verify >&2
+  wait_for_app_pid
+}
+
+diagnostics_file_for_pid() {
+  local app_pid="$1"
+  local diagnostics_file=""
+  for _ in $(seq 1 50); do
+    diagnostics_file="$(ls -t "$APP_DIAGNOSTICS_DIR"/catalog-diagnostics-*-p"$app_pid"-prod.jsonl 2>/dev/null | head -n 1 || true)"
+    if [[ -n "$diagnostics_file" ]]; then
+      echo "$diagnostics_file"
+      return
+    fi
+    sleep 0.1
+  done
+  echo "Timed out waiting for diagnostics for pid=$app_pid in $APP_DIAGNOSTICS_DIR" >&2
+  exit 1
+}
+
+verify_seed_consumed() {
+  local app_pid="$1"
+  local diagnostics_file
+  diagnostics_file="$(diagnostics_file_for_pid "$app_pid")"
+  local escaped_root="${SMOKE_ROOT//\//\\/}"
+  for _ in $(seq 1 50); do
+    if grep -E '"operation":"catalog\.library\.ensure".*"phase":"(exists|finish)"' "$diagnostics_file" >/dev/null \
+      && grep -F "\"rootPath\":\"$escaped_root\"" "$diagnostics_file" >/dev/null; then
+      echo "Seeded library verified diagnostics=$diagnostics_file"
+      return
+    fi
+    sleep 0.1
+  done
+
+  echo "Seeded smoke launch did not record successful catalog.library.ensure for root=$SMOKE_ROOT" >&2
+  OTOS_CATALOG_DIAGNOSTICS_FILE="$diagnostics_file" "$ROOT_DIR/script/catalog-diagnostics.sh" summary >&2 || true
+  exit 1
 }
 
 run_verify() {
   QUIT_ON_EXIT=1
-  run_seeded_launch
+  local app_pid
+  app_pid="$(run_seeded_launch)"
   sleep "${OTOS_SMOKE_VERIFY_SECONDS:-3}"
+  verify_seed_consumed "$app_pid"
   echo "Seeded smoke launch succeeded root=$SMOKE_ROOT"
 }
 
@@ -132,9 +168,8 @@ run_jank() {
   start_log_capture
   echo "Capturing smoke logs to $LOG_FILE"
 
-  run_seeded_launch
   local app_pid
-  app_pid="$(wait_for_app_pid)"
+  app_pid="$(run_seeded_launch)"
   echo "Seeded app launched pid=$app_pid root=$SMOKE_ROOT"
   echo "Waiting ${SETTLE_SECONDS}s before scrolling"
 

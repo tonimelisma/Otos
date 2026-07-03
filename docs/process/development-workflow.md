@@ -170,7 +170,7 @@ The command defaults to the user's main OneDrive Pictures root at
 `$HOME/Desktop/OneDrive/Pictures`, launches the Debug app with
 `OTOS_SMOKE_LIBRARY_ROOT`, resolves symlink components before launch, lets the
 app run for 10 seconds, drives automated down/up scrolling, captures unified logs
-under `build/Logs`, writes catalog diagnostic artifacts under
+under `logs/`, writes catalog diagnostic artifacts under
 `build/Diagnostics`, and quits the app. Repeated runs are idempotent because the
 app submits the root through `CatalogStore`'s ensure-library path.
 
@@ -182,9 +182,10 @@ script/smoke-run.sh /path/to/media/root
 OTOS_SMOKE_LIBRARY_ROOT=/path/to/media/root script/smoke-run.sh
 ```
 
-Use `script/smoke-run.sh --verify` only for a quick seeded-launch check. It is
-not a replacement for the default seeded scroll smoke when jank or browser
-runtime behavior is part of the work.
+Use `script/smoke-run.sh --verify` only for a quick seeded-launch check. It
+inspects the app run's diagnostics and fails unless the seeded root reached
+`CatalogStore.ensureLibrary`, but it is not a replacement for the default seeded
+scroll smoke when jank or browser runtime behavior is part of the work.
 
 ## Definition Of Done
 

@@ -270,8 +270,10 @@ The default smoke mode captures unified logs, waits 10 seconds, then invokes
 `script/smoke-scroll.swift` to post real scroll-wheel events to the Otos window:
 several downward scrolls followed by several upward scrolls. It then summarizes
 catalog diagnostics and quits the app. A launch-only `--verify` mode remains
-available for quick seed checks, but the process docs define the default jank
-mode as the meaningful smoke test.
+available for quick seed checks; it locates the launched app's session diagnostics
+by PID and fails unless a successful `catalog.library.ensure` event was recorded
+for the seeded root. The process docs still define the default jank mode as the
+meaningful browser smoke test.
 
 This is the simplest correct design because it adds one developer entry point and
 one idempotent owner intent without changing product onboarding, schema, or scan
@@ -286,7 +288,7 @@ architecture.
   - resolves the chosen directory with `pwd -P` before exporting the seed
   - side effects: kills an existing Otos process through `build_and_run.sh`,
     builds Debug, launches Debug with the seed environment, captures logs in
-    `build/Logs`, drives scroll events in jank mode, writes diagnostics summaries
+    `logs/`, drives scroll events in jank mode, writes diagnostics summaries
     in `build/Diagnostics`, and quits the app at the end of jank mode
 - `script/smoke-scroll.swift`
   - activates Otos, finds its on-screen window, moves the pointer to the window
@@ -357,7 +359,7 @@ Filesystem/media effects:
   `finish`, and `error` outcomes.
 - Store and the startup hook log bounded operation messages with the root path.
 - `script/smoke-run.sh` captures compact unified logs and signposts for the smoke
-  run under `build/Logs/smoke-<timestamp>-<pid>.log`.
+  run under `logs/run-<sessionID>-prod.log`.
 - `script/smoke-run.sh` runs `script/catalog-diagnostics.sh summary` at the end
   of jank mode and writes the summary under `build/Diagnostics`.
 - Existing scan diagnostics (`catalog.scan`, `catalog.scan.batch`,
@@ -405,8 +407,8 @@ Filesystem/media effects:
   `tileDetailsByID`, toolbar and View menu filters use the shared menu content,
   and ViewModel tests share observation helpers.
 - If the default OneDrive Pictures path exists in this environment,
-  `script/smoke-run.sh --verify` launches the Debug app and the logs/diagnostics
-  show the ensure request.
+  `script/smoke-run.sh --verify` launches the Debug app and fails unless the
+  app run's diagnostics show a successful ensure request for the seeded root.
 - If Accessibility/input automation is available in this environment,
   `script/smoke-run.sh` runs the default seeded jank smoke, waits 10 seconds,
   scrolls down/up, captures logs, writes a diagnostics summary, and quits the app.
@@ -424,7 +426,7 @@ Filesystem/media effects:
   `/Users/example/Library/CloudStorage/OneDrive-Personal/Pictures`.
 - `script/smoke-run.sh` passed the default seeded jank smoke, waited 10 seconds,
   scrolled down and up, quit the app, and wrote:
-  `build/Logs/smoke-2026-07-03T024857Z.log`,
+  `logs/run-20260703T024857Z-p<smoke-script-pid>-prod.log`,
   `build/Diagnostics/catalog-diagnostics-20260702-194918.txt`, and
   `build/Diagnostics/smoke-diagnostics-2026-07-03T024918Z.txt`.
 - After the smoke run, the live development catalog persisted one resolved root,

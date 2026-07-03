@@ -71,7 +71,7 @@ implementation history.
 | [0023](specs/0023-filesystem-event-rescan-v1.md) | Running-app FSEvents: debounce, arming, affected-root fallback scans, and active-scan follow-up. |
 | [0024](specs/0024-grid-flicker-and-thumbnail-jpeg.md) | Sidebar status, grid flicker, and static thumbnail bug fix: name-only sidebar rows, in-place same-identity tile reconfiguration, JPEG thumbnail storage, and projection/grid/thumbnail instrumentation. |
 | [0025](specs/0025-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, clean schema/reset, identity-plus-generation grid state, visible detail reading, and query-based enrichment selection. |
-| [0026](specs/0026-telemetry-observability-increment.md) | Minimal telemetry capture and diagnostics test isolation. |
+| [0026](specs/0026-telemetry-observability-increment.md) | Original telemetry capture increment; session-file details are superseded by spec 0034. |
 | [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
 | [0028](specs/0028-code-quality-maintainability-audit.md) | Documentation truth, zero unchecked Sendables, named diagnostics task escapes, enrichment startup failure handling, and deterministic async test helpers. |
 | [0029](specs/0029-sqlite-retirement-completion.md) | SQLite retirement completion: staged thumbnail publication, Store-owned query-plan tests, retired helper removal, and stale-document cleanup. |
@@ -79,6 +79,7 @@ implementation history.
 | [0031](specs/0031-grid-selection-and-copy.md) | Media grid selection (single, ⌘-click, ⇧-click, ⌘A) with identity-based persistence across structural applies, and ⌘C copy of the selected assets' original file URLs. |
 | [0032](specs/0032-catalog-browser-smell-followup.md) | Catalog browser smell and review follow-up: Projection diagnostics/policy split, AppKit detail-cache pruning, review-thread fixes, and narrow persistence query cleanup. |
 | [0033](specs/0033-smoke-library-seeding.md) | Seeded smoke launch tooling: ensure the main OneDrive Pictures library, wait, scroll down/up, capture logs and catalog diagnostics, and avoid empty-catalog runtime evidence. |
+| [0034](specs/0034-session-scoped-diagnostics-and-log-hygiene.md) | Session-scoped diagnostics, ignored run/test log captures, JSONL de-spamming, scan issue aggregation, and cancellation-aware tile-detail errors. |
 
 ## Planning Documents
 

@@ -57,8 +57,12 @@ struct MediaTileDetailReader {
     func assets(for ids: [MediaAssetID]) async -> [MediaAssetID: MediaAsset] {
         do {
             return try await store.mediaAssets(for: ids)
+        } catch is CancellationError {
+            return [:]
         } catch {
-            OtosLog.catalog.error("Media tile detail query failed")
+            OtosLog.catalog.error(
+                "Media tile detail query failed error=\(String(describing: error), privacy: .public)"
+            )
             return [:]
         }
     }

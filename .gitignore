@@ -18,5 +18,9 @@ DerivedData/
 .idea/
 
 # Logs and local diagnostics
+logs/
+console.log
+run.log
+lldb.log
 *.log
 *.trace

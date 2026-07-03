@@ -215,7 +215,9 @@ private extension EnrichmentCoordinator {
             }
             return items
         } catch {
-            OtosLog.metadata.error("Enrichment candidate query failed")
+            OtosLog.metadata.error(
+                "Enrichment candidate query failed error=\(String(describing: error), privacy: .public)"
+            )
             await diagnostics?.record(
                 operation: "catalog.enrichment.coordinator",
                 phase: "queryError",

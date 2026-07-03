@@ -41,6 +41,23 @@ nonisolated enum ThumbnailStore {
         directory.appending(path: relativeName, directoryHint: .notDirectory)
     }
 
+    static func move(_ relativeName: String, to newRelativeName: String, in directory: URL) throws {
+        guard relativeName != newRelativeName else {
+            return
+        }
+        let sourceURL = url(for: relativeName, in: directory)
+        let destinationURL = url(for: newRelativeName, in: directory)
+        guard FileManager.default.fileExists(atPath: sourceURL.path(percentEncoded: false)) else {
+            return
+        }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if FileManager.default.fileExists(atPath: destinationURL.path(percentEncoded: false)) {
+            try FileManager.default.removeItem(at: sourceURL)
+        } else {
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+        }
+    }
+
     /// Writes `image` as a staged JPEG under `directory` and returns the staged/final names.
     /// The final deterministic name is not touched until `promote`, so a stale completion
     /// cannot replace the catalog-visible thumbnail before Store validates it.

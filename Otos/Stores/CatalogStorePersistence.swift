@@ -171,31 +171,52 @@ extension CatalogStore {
         return StoredRoot(id: db.lastInsertedRowID, path: path)
     }
 
-    static func updateLibraryRootPath(rootRowID: Int64, path: LibraryRootPath, db: Database) throws {
+    static func updateLibraryRootPath(
+        rootRowID: Int64,
+        path: LibraryRootPath,
+        db: Database
+    ) throws -> [ThumbnailPathMigration] {
         try db.execute(
             sql: "UPDATE library_root SET path = ? WHERE id = ?",
             arguments: [path.rawValue, rootRowID]
         )
-        let relativePaths = try String.fetchAll(
+        let rows = try Row.fetchAll(
             db,
-            sql: "SELECT relative_path FROM media_asset WHERE library_root_id = ?",
+            sql: "SELECT relative_path, thumbnail_path FROM media_asset WHERE library_root_id = ?",
             arguments: [rootRowID]
         )
-        for relativePath in relativePaths {
-            let relative = MediaRelativePath(rawValue: relativePath)
+        var thumbnailMigrations: [ThumbnailPathMigration] = []
+        for row in rows {
+            let relativePath: String = row["relative_path"]
+            let thumbnailPath: String? = row["thumbnail_path"]
+            let relativePathValue = MediaRelativePath(rawValue: relativePath)
+            let newThumbnailPath = thumbnailPath.map { _ in
+                ThumbnailStore.relativeName(for: MediaAssetID(
+                    libraryRootPath: path,
+                    relativePath: relativePathValue
+                ))
+            }
             try db.execute(
                 sql: """
                 UPDATE media_asset
-                SET sort_key = ?
+                SET sort_key = ?, thumbnail_path = ?
                 WHERE library_root_id = ? AND relative_path = ?
                 """,
                 arguments: [
-                    MediaSortKey.make(libraryRootPath: path, relativePath: relative),
+                    MediaSortKey.make(libraryRootPath: path, relativePath: relativePathValue),
+                    newThumbnailPath,
                     rootRowID,
                     relativePath,
                 ]
             )
+            if let thumbnailPath, let newThumbnailPath, thumbnailPath != newThumbnailPath {
+                thumbnailMigrations.append(ThumbnailPathMigration(
+                    oldRelativeName: thumbnailPath,
+                    newRelativeName: newThumbnailPath
+                ))
+            }
         }
+        return thumbnailMigrations
     }
 
     static func deleteLibraryRoot(rootRowID: Int64, db: Database) throws {
