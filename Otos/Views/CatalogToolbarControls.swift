@@ -16,34 +16,52 @@ struct CatalogFilterMenu: View {
 
     var body: some View {
         Menu {
-            if descriptor.filter.isActive {
-                Button("Show Everything", action: clearFilters)
-                Divider()
-            }
-            ForEach(availableKinds, id: \.self) { kind in
-                let formats = options.formats(for: kind)
-                Button {
-                    toggleKind(kind, formats)
-                } label: {
-                    Label(kind.label, systemImage: kindSymbol(kind, formats: formats))
-                }
-                ForEach(formats, id: \.self) { format in
-                    Button {
-                        toggleFormat(format, kind)
-                    } label: {
-                        Label(format.rawValue, systemImage: formatSymbol(format))
-                    }
-                }
-                if kind != availableKinds.last {
-                    Divider()
-                }
-            }
+            CatalogFilterMenuContent(
+                descriptor: descriptor,
+                options: options,
+                toggleKind: toggleKind,
+                toggleFormat: toggleFormat,
+                clearFilters: clearFilters
+            )
         } label: {
             Image(systemName: descriptor.filter.isActive
                 ? "line.3.horizontal.decrease.circle.fill"
                 : "line.3.horizontal.decrease")
         }
         .help("Filter")
+    }
+}
+
+struct CatalogFilterMenuContent: View {
+    let descriptor: CatalogQueryDescriptor
+    let options: CatalogFilterOptions
+    let toggleKind: (MediaKind, [MediaFormatToken]) -> Void
+    let toggleFormat: (MediaFormatToken, MediaKind) -> Void
+    let clearFilters: () -> Void
+
+    var body: some View {
+        if descriptor.filter.isActive {
+            Button("Show Everything", action: clearFilters)
+            Divider()
+        }
+        ForEach(availableKinds, id: \.self) { kind in
+            let formats = options.formats(for: kind)
+            Button {
+                toggleKind(kind, formats)
+            } label: {
+                Label(kind.label, systemImage: kindSymbol(kind, formats: formats))
+            }
+            ForEach(formats, id: \.self) { format in
+                Button {
+                    toggleFormat(format, kind)
+                } label: {
+                    Label(format.rawValue, systemImage: formatSymbol(format))
+                }
+            }
+            if kind != availableKinds.last {
+                Divider()
+            }
+        }
     }
 
     private var availableKinds: [MediaKind] {

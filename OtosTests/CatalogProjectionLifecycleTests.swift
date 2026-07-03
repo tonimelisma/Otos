@@ -11,7 +11,7 @@ struct CatalogProjectionLifecycleTests {
         let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
         let projection = CatalogProjection(cadence: .milliseconds(50), diagnostics: nil)
         let recorder = LifecycleStateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)
@@ -48,7 +48,7 @@ struct CatalogProjectionLifecycleTests {
         let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
         let recorder = LifecycleStateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)
@@ -86,32 +86,9 @@ struct CatalogProjectionLifecycleTests {
         )
         let gate = SelectionBuildGate(blockedSelection: missing)
         let store = CatalogStore(location: .inMemory, diagnostics: nil)
-        let projection = CatalogProjection(
-            cadence: .milliseconds(10),
-            diagnostics: nil,
-            stateBuilder: { _, _, descriptor in
-                let selection = descriptor.scope
-                await gate.pauseIfNeeded(selection)
-                let resolved = selection == missing ? SidebarSelection.allMedia : selection
-                return CatalogWindowState(
-                    title: "Selection",
-                    libraries: [],
-                    mediaGrid: CatalogMediaGridState(
-                        descriptor: CatalogQueryDescriptor(
-                            scope: resolved,
-                            filter: descriptor.filter,
-                            sort: descriptor.sort
-                        ),
-                        orderedAssetIDs: []
-                    ),
-                    filterOptions: .empty,
-                    resolvedSidebarSelection: resolved,
-                    mediaEmptyState: .noMedia
-                )
-            }
-        )
+        let projection = selectionNormalizingProjection(missing: missing, gate: gate)
         let recorder = LifecycleStateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)
@@ -134,6 +111,33 @@ struct CatalogProjectionLifecycleTests {
 }
 
 private typealias LifecycleStateRecorder = AsyncValueRecorder<CatalogWindowState>
+
+private func selectionNormalizingProjection(
+    missing: SidebarSelection,
+    gate: SelectionBuildGate
+) -> CatalogProjection {
+    CatalogProjection(cadence: .milliseconds(10), diagnostics: nil) { _, _, request in
+        let selection = request.descriptor.scope
+        await gate.pauseIfNeeded(selection)
+        let resolved = selection == missing ? SidebarSelection.allMedia : selection
+        return CatalogWindowState(
+            title: "Selection",
+            libraries: [],
+            mediaGrid: CatalogMediaGridState(
+                descriptor: CatalogQueryDescriptor(
+                    scope: resolved,
+                    filter: request.descriptor.filter,
+                    sort: request.descriptor.sort
+                ),
+                orderedAssetIDs: []
+            ),
+            filterOptions: .empty,
+            resolvedSidebarSelection: resolved,
+            mediaEmptyState: .noMedia,
+            queryGeneration: request.generation
+        )
+    }
+}
 
 private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForLast(

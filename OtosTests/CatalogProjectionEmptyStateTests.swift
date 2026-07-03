@@ -30,7 +30,7 @@ struct CatalogProjectionEmptyStateTests {
         )
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
         let recorder = EmptyStateRecorder()
-        let stream = await projection.states(store: secondStore, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: secondStore, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)

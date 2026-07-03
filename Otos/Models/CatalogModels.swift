@@ -331,6 +331,7 @@ nonisolated struct CatalogWindowState: Equatable {
     var filterOptions: CatalogFilterOptions
     var resolvedSidebarSelection: SidebarSelection
     var mediaEmptyState: CatalogMediaEmptyState
+    var queryGeneration: UInt64 = 0
 
     var queryDescriptor: CatalogQueryDescriptor {
         mediaGrid.descriptor
@@ -395,8 +396,11 @@ nonisolated struct ScannedMediaFile: Hashable {
 }
 
 nonisolated enum CatalogPath {
+    /// Existing roots resolve symlink components before persistence so scanner
+    /// enumeration, root-relative paths, and filesystem events all use one path
+    /// spelling for the same directory.
     static func normalizedDirectoryPath(for url: URL) throws -> LibraryRootPath {
-        let standardizedURL = url.standardizedFileURL
+        let standardizedURL = url.standardizedFileURL.resolvingSymlinksInPath()
         var path = standardizedURL.path(percentEncoded: false)
         while path.count > 1, path.hasSuffix("/") {
             path.removeLast()
@@ -426,7 +430,7 @@ nonisolated enum CatalogPath {
     }
 
     static func relativePath(rootPath: LibraryRootPath, fileURL: URL) -> MediaRelativePath? {
-        let filePath = fileURL.standardizedFileURL.path(percentEncoded: false)
+        let filePath = fileURL.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
         let prefix = rootPath.rawValue + "/"
         guard filePath.hasPrefix(prefix) else {
             return nil

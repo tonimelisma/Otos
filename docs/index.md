@@ -78,6 +78,7 @@ implementation history.
 | [0030](specs/0030-toolbar-sort-filter-query-surface.md) | Toolbar/menu sort and filter controls, descriptor-owned browser query state, generated SQLite best values, and one-second background publication cadence. |
 | [0031](specs/0031-grid-selection-and-copy.md) | Media grid selection (single, ⌘-click, ⇧-click, ⌘A) with identity-based persistence across structural applies, and ⌘C copy of the selected assets' original file URLs. |
 | [0032](specs/0032-catalog-browser-smell-followup.md) | Catalog browser smell and review follow-up: Projection diagnostics/policy split, AppKit detail-cache pruning, review-thread fixes, and narrow persistence query cleanup. |
+| [0033](specs/0033-smoke-library-seeding.md) | Seeded smoke launch tooling: ensure the main OneDrive Pictures library, wait, scroll down/up, capture logs and catalog diagnostics, and avoid empty-catalog runtime evidence. |
 
 ## Planning Documents
 

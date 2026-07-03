@@ -48,6 +48,19 @@ Output lands under `build/Logs/run-<ISO8601>-<pid>.log` with compact unified-log
 timestamps, process, subsystem, category, and signposts. Prefer this over ad-hoc
 debugger console redirection when analyzing a session.
 
+Seeded scroll smoke (build, resolve and launch with the user's OneDrive Pictures
+library, wait 10 seconds, scroll down/up, summarize diagnostics, quit):
+
+```sh
+script/smoke-run.sh
+```
+
+This is the default agent smoke path for browser runtime and jank-sensitive work.
+It avoids the false confidence of launching into an empty catalog, captures a
+compact log under `build/Logs`, and writes catalog diagnostics artifacts under
+`build/Diagnostics`. Use `script/smoke-run.sh --verify` only when you need the
+lighter seeded-launch check and jank scrolling is not relevant.
+
 Live logs and signposts (attach to an already-running app):
 
 ```sh

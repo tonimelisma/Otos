@@ -176,6 +176,13 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
     }
 }
 
+nonisolated struct CatalogQueryRequest: Hashable {
+    var descriptor: CatalogQueryDescriptor
+    var generation: UInt64
+
+    static let initial = CatalogQueryRequest(descriptor: .default, generation: 0)
+}
+
 nonisolated struct CatalogFilterOptions: Equatable {
     var formatsByKind: [MediaKind: [MediaFormatToken]] = [:]
 

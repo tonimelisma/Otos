@@ -234,8 +234,6 @@ private extension MediaAssetCollectionViewController {
     ) {
         let applyStart = Date()
         let preservedOrigin = resetScroll ? nil : scrollView.contentView.bounds.origin
-        let orderedAssetIDSet = Set(grid.orderedAssetIDs)
-        tileDetailsByID = tileDetailsByID.filter { orderedAssetIDSet.contains($0.key) }
 
         // Snapshot the selected identities before the diffable apply can drop or shift
         // them. Query-descriptor changes are user context changes, so they intentionally

@@ -1,26 +1,11 @@
 @testable import Otos
 import Testing
 
+@Suite(.serialized)
 struct CatalogWindowViewModelQueryIntentTests {
     @MainActor
     @Test func staleProjectedStateDoesNotRollbackNewerQueryIntent() async throws {
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
-        let gate = WindowStateBuildGate()
-        let projection = CatalogProjection(
-            cadence: .milliseconds(10),
-            diagnostics: nil,
-            stateBuilder: { libraries, _, descriptor in
-                let buildNumber = await gate.record(descriptor)
-                return testWindowState(buildNumber: buildNumber, libraries: libraries, descriptor: descriptor)
-            }
-        )
-        let model = CatalogWindowViewModel(
-            catalogStore: store,
-            catalogProjection: projection,
-            diagnostics: nil,
-            startsStallMonitor: false,
-            startsEnrichment: false
-        )
+        let (model, gate) = makeQueryIntentModel()
 
         model.start()
         try await gate.waitForBuildCount(1)
@@ -37,63 +22,136 @@ struct CatalogWindowViewModelQueryIntentTests {
         #expect(model.queryDescriptor.sort.field == .name)
         #expect(model.queryDescriptor.filter.kinds == [.image])
 
-        await gate.releaseAll()
-        let descriptors = try await withTestTimeout("target query descriptor") {
-            await gate.waitForDescriptors { descriptors in
-                descriptors.contains(CatalogQueryDescriptor(
+        let requests = try await waitForRequestsReleasingBuilds(gate, "target query descriptor") { requests in
+            requests.contains { request in
+                request.descriptor == CatalogQueryDescriptor(
                     scope: .allMedia,
                     filter: MediaFilter(kinds: [.image]),
                     sort: .defaultForField(.name)
-                ))
+                )
+                    && request.generation > 0
             }
         }
         await gate.releaseAll()
-        #expect(descriptors.last?.sort.field == .name)
+        #expect(requests.last?.descriptor.sort.field == .name)
     }
+
+    @MainActor
+    @Test func staleProjectedStateDoesNotRollbackToggledBackQueryIntent() async throws {
+        let (model, gate) = makeQueryIntentModel()
+
+        model.start()
+        try await gate.waitForBuildCount(1)
+        model.setSortField(.name)
+        await gate.releaseNext()
+
+        _ = try await waitForWindowState(model) { state in
+            state.title == "Build 1"
+        }
+        try await gate.waitForBuildCount(2)
+
+        model.setSortField(.bestDate)
+        #expect(model.queryDescriptor == .default)
+
+        await gate.releaseNext()
+        _ = try await waitForWindowState(model) { state in
+            state.title == "Build 2"
+        }
+        #expect(model.state.queryGeneration == 1)
+        #expect(model.state.queryDescriptor.sort.field == .name)
+        #expect(model.queryDescriptor == .default)
+
+        let staleGeneration = model.state.queryGeneration
+        model.setMediaFilter(MediaFilter(kinds: [.image]))
+        let expectedDescriptor = CatalogQueryDescriptor(
+            scope: .allMedia,
+            filter: MediaFilter(kinds: [.image]),
+            sort: .defaultOrder
+        )
+        #expect(model.queryDescriptor == expectedDescriptor)
+
+        let requests = try await waitForRequestsReleasingBuilds(gate, "toggled-back query descriptor") { requests in
+            requests.contains { request in
+                request.descriptor == expectedDescriptor
+                    && request.generation > staleGeneration
+            }
+        }
+        await gate.releaseAll()
+        #expect(requests.last?.descriptor == expectedDescriptor)
+    }
+}
+
+private func waitForRequestsReleasingBuilds(
+    _ gate: WindowStateBuildGate,
+    _ description: String,
+    matching predicate: @escaping @Sendable ([CatalogQueryRequest]) -> Bool
+) async throws -> [CatalogQueryRequest] {
+    let releaseTask = Task {
+        while !Task.isCancelled {
+            await gate.releaseAll()
+            try? await Task.sleep(for: .milliseconds(1))
+        }
+    }
+    defer { releaseTask.cancel() }
+
+    return try await withTestTimeout(description) {
+        await gate.waitForRequests(matching: predicate)
+    }
+}
+
+@MainActor
+private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
+    let store = CatalogStore(location: .inMemory, diagnostics: nil)
+    let gate = WindowStateBuildGate()
+    let projection = CatalogProjection(
+        cadence: .milliseconds(10),
+        diagnostics: nil,
+        stateBuilder: { libraries, _, request in
+            let buildNumber = await gate.record(request)
+            return testWindowState(buildNumber: buildNumber, libraries: libraries, request: request)
+        }
+    )
+    let model = CatalogWindowViewModel(
+        catalogStore: store,
+        catalogProjection: projection,
+        diagnostics: nil,
+        startsStallMonitor: false,
+        startsEnrichment: false
+    )
+    return (model, gate)
 }
 
 private func testWindowState(
     buildNumber: Int,
     libraries: [CatalogLibraryState],
-    descriptor: CatalogQueryDescriptor
+    request: CatalogQueryRequest
 ) -> CatalogWindowState {
     CatalogWindowState(
         title: "Build \(buildNumber)",
         libraries: libraries,
         mediaGrid: CatalogMediaGridState(
-            descriptor: descriptor,
+            descriptor: request.descriptor,
             orderedAssetIDs: []
         ),
         filterOptions: .empty,
-        resolvedSidebarSelection: descriptor.scope,
-        mediaEmptyState: .noMedia
+        resolvedSidebarSelection: request.descriptor.scope,
+        mediaEmptyState: .noMedia,
+        queryGeneration: request.generation
     )
 }
 
-@MainActor
-private func waitForWindowState(
-    _ model: CatalogWindowViewModel,
-    predicate: @escaping @MainActor @Sendable (CatalogWindowState) -> Bool
-) async throws -> CatalogWindowState {
-    let stream = windowStateStream(model, timeout: .seconds(10))
-    for await state in stream where predicate(state) {
-        return state
-    }
-    throw AsyncTestTimeoutError.timedOut("window state")
-}
-
 private actor WindowStateBuildGate {
-    private var descriptors: [CatalogQueryDescriptor] = []
+    private var requests: [CatalogQueryRequest] = []
     private var pausedBuilds: [CheckedContinuation<Void, Never>] = []
     private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
-    private var descriptorWaiters: [
-        (@Sendable ([CatalogQueryDescriptor]) -> Bool, CheckedContinuation<[CatalogQueryDescriptor], Never>)
+    private var requestWaiters: [
+        (@Sendable ([CatalogQueryRequest]) -> Bool, CheckedContinuation<[CatalogQueryRequest], Never>)
     ] = []
 
-    func record(_ descriptor: CatalogQueryDescriptor) async -> Int {
-        descriptors.append(descriptor)
+    func record(_ request: CatalogQueryRequest) async -> Int {
+        requests.append(request)
         resumeWaiters()
-        let buildNumber = descriptors.count
+        let buildNumber = requests.count
         await withCheckedContinuation { continuation in
             pausedBuilds.append(continuation)
         }
@@ -107,7 +165,7 @@ private actor WindowStateBuildGate {
     }
 
     private func waitForBuildCountUnbounded(_ expectedCount: Int) async {
-        if descriptors.count >= expectedCount {
+        if requests.count >= expectedCount {
             return
         }
         await withCheckedContinuation { continuation in
@@ -116,14 +174,14 @@ private actor WindowStateBuildGate {
         }
     }
 
-    func waitForDescriptors(
-        matching predicate: @escaping @Sendable ([CatalogQueryDescriptor]) -> Bool
-    ) async -> [CatalogQueryDescriptor] {
-        if predicate(descriptors) {
-            return descriptors
+    func waitForRequests(
+        matching predicate: @escaping @Sendable ([CatalogQueryRequest]) -> Bool
+    ) async -> [CatalogQueryRequest] {
+        if predicate(requests) {
+            return requests
         }
         return await withCheckedContinuation { continuation in
-            descriptorWaiters.append((predicate, continuation))
+            requestWaiters.append((predicate, continuation))
             resumeWaiters()
         }
     }
@@ -146,7 +204,7 @@ private actor WindowStateBuildGate {
     private func resumeWaiters() {
         var remainingCountWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
         for waiter in countWaiters {
-            if descriptors.count >= waiter.0 {
+            if requests.count >= waiter.0 {
                 waiter.1.resume()
             } else {
                 remainingCountWaiters.append(waiter)
@@ -154,16 +212,16 @@ private actor WindowStateBuildGate {
         }
         countWaiters = remainingCountWaiters
 
-        var remainingDescriptorWaiters: [
-            (@Sendable ([CatalogQueryDescriptor]) -> Bool, CheckedContinuation<[CatalogQueryDescriptor], Never>)
+        var remainingRequestWaiters: [
+            (@Sendable ([CatalogQueryRequest]) -> Bool, CheckedContinuation<[CatalogQueryRequest], Never>)
         ] = []
-        for waiter in descriptorWaiters {
-            if waiter.0(descriptors) {
-                waiter.1.resume(returning: descriptors)
+        for waiter in requestWaiters {
+            if waiter.0(requests) {
+                waiter.1.resume(returning: requests)
             } else {
-                remainingDescriptorWaiters.append(waiter)
+                remainingRequestWaiters.append(waiter)
             }
         }
-        descriptorWaiters = remainingDescriptorWaiters
+        requestWaiters = remainingRequestWaiters
     }
 }

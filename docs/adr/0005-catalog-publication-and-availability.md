@@ -202,7 +202,7 @@ Failure mode: the UI states a domain fact that is not known.
 Specs 0006, 0007, 0009, 0010, and 0011, requirements FND-023, FND-028,
 FND-034, FND-039, and FND-040, and comments at the Store/Projection/ViewModel
 boundaries must describe explicit selection delivery and unknown availability.
-Retired generation guards, optimistic availability claims, and ViewModel
+Retired selection-generation guards, optimistic availability claims, and ViewModel
 selection `didSet` orchestration must not remain in current docs or comments.
 
 ## Verification

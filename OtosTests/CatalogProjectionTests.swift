@@ -163,7 +163,7 @@ struct CatalogProjectionTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
         let recorder = StateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)
@@ -191,16 +191,16 @@ struct CatalogProjectionTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { libraries, orderedAssetIDs, descriptor in
+            stateBuilder: { libraries, orderedAssetIDs, request in
                 await probe.build(
                     libraries: libraries,
                     orderedAssetIDs: orderedAssetIDs,
-                    descriptor: descriptor
+                    request: request
                 )
             }
         )
         let recorder = StateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)
@@ -225,7 +225,7 @@ struct CatalogProjectionTests {
         let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
         let store = CatalogStore(location: .inMemory, diagnostics: nil)
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await _ in stream {}
         }
@@ -294,7 +294,7 @@ struct CatalogProjectionTests {
             stateBuilder: { _, _, _ in .empty }
         )
         let recorder = StateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)
@@ -361,7 +361,7 @@ private actor ProjectionProbe {
     func build(
         libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
-        descriptor: CatalogQueryDescriptor
+        request: CatalogQueryRequest
     ) async -> CatalogWindowState {
         calls += 1
         currentInFlight += 1
@@ -378,12 +378,13 @@ private actor ProjectionProbe {
             title: "Call \(calls)",
             libraries: libraries,
             mediaGrid: CatalogMediaGridState(
-                descriptor: descriptor,
+                descriptor: request.descriptor,
                 orderedAssetIDs: orderedAssetIDs
             ),
             filterOptions: .empty,
-            resolvedSidebarSelection: descriptor.scope,
-            mediaEmptyState: .noMedia
+            resolvedSidebarSelection: request.descriptor.scope,
+            mediaEmptyState: .noMedia,
+            queryGeneration: request.generation
         )
     }
 
@@ -452,7 +453,7 @@ private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
     let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
     let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
     let recorder = StateRecorder()
-    let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+    let stream = await projection.states(store: store, initialDescriptor: .default)
     let recordingTask = Task {
         for await state in stream {
             await recorder.append(state)

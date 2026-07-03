@@ -71,6 +71,16 @@ root. SQLite may store an internal `INTEGER PRIMARY KEY` rowid for the
 `library_root` table, but that rowid is only a private foreign-key implementation
 detail for child catalog rows. It is not a generated product identifier, is not
 user-visible, and must not be treated as the filesystem source of truth.
+For existing selected directories, normalization resolves symbolic-link
+components before persistence. A user-selected convenience path such as a Desktop
+OneDrive symlink therefore becomes the provider's real directory path in
+`LibraryRootPath`, matching the path spelling returned by filesystem enumeration
+and used for root-relative media paths.
+When an older reachable saved root uses a symlink-spelled path, Store repairs the
+saved row to the resolved path during startup before applying runtime root state.
+If the repair cannot be written, startup preserves the saved row and records
+diagnostics rather than treating a repair failure as proof that originals are
+gone.
 
 ## Alternatives Considered
 

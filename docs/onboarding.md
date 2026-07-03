@@ -238,14 +238,14 @@ cancels the task. Weak self here is not a style choice — it is what makes the
 ViewModel able to die.
 
 The ViewModel also uses **three separate async lanes** with deliberately different
-behavior: sidebar clicks keep only the newest (you do not care about stale clicks),
-add/remove commands are lossless and serial (you must not drop a command), and
-state delivery is consumed losslessly. They are separate because mixing those
-delivery rules would be wrong for at least one of them. When a projected state
-arrives, the ViewModel updates its local query controls only if that projected
-descriptor is not older than a newer local sidebar/sort/filter intent; this keeps
-rapid user edits from being rebuilt from stale control state while still accepting
-Projection's removed-library fallback.
+behavior: query intents keep only the newest descriptor request, catalog mutation
+commands are lossless and serial (you must not drop a command), and state delivery
+is consumed losslessly. They are separate because mixing those delivery rules would
+be wrong for at least one of them. Query requests carry a monotonic generation.
+When a projected state arrives, the ViewModel updates its local query controls
+only if the state generation is at least as fresh as the newest local
+sidebar/sort/filter intent; this keeps rapid user edits from being rebuilt from
+stale control state while still accepting Projection's removed-library fallback.
 
 ### `Otos/Views/*` — passive rendering
 
@@ -264,15 +264,14 @@ survives — backpressure for a high-volume surface. Identity/order changes go
 through the diffable data source; detail-only changes for the same ordered IDs
 advance `detailRefreshGeneration`, re-read only visible details, and reconfigure
 the existing visible AppKit items in place, so a thumbnail does not blink just
-because metadata for an item changed. Structural applies prune cached tile details
-with set membership before snapshot application, so the MainActor work does not
-scan the full ordered ID array once per cached tile. The bridge also reports the
-visible identities upward (the **viewport**) so enrichment can prioritize what
-you are looking at. `MediaAssetTileView` is one reusable tile: it shows the
-thumbnail and capture date, loading and decoding the thumbnail *off the main
-thread* and only assigning the finished image on Main, with a generation token so
-a load that finishes after the tile has been reused for another asset is
-discarded.
+because metadata for an item changed. Structural applies do not prune the
+visible-detail cache first: the post-apply visible-detail request replaces that
+map for the current viewport. The bridge also reports the visible identities
+upward (the **viewport**) so enrichment can prioritize what you are looking at.
+`MediaAssetTileView` is one reusable tile: it shows the thumbnail and capture
+date, loading and decoding the thumbnail *off the main thread* and only assigning
+the finished image on Main, with a generation token so a load that finishes after
+the tile has been reused for another asset is discarded.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
 selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its
@@ -335,16 +334,21 @@ instead of guessing.
 **Launching the app and seeing your media:**
 
 1. The window appears; `ContentView`'s `.task` calls `viewModel.start()`.
-2. The ViewModel starts its tasks and tells the Store to load.
-3. `CatalogStore` opens SQLite, reads the saved library roots, and fires "I changed."
-4. `CatalogProjection`, already subscribed to Store invalidations, asks Store for
+2. Agent smoke launches may pass `OTOS_SMOKE_LIBRARY_ROOT`; `SmokeLibrarySeed`
+   then submits that path through `viewModel.ensureLibrary(url:)`, which uses the
+   same Store-owned mutation lane as manual library adds. This is process tooling,
+   not product onboarding.
+3. The ViewModel starts its tasks and tells the Store to load.
+4. `CatalogStore` opens SQLite, reads the saved library roots, repairs reachable
+   symlink-spelled roots to their resolved provider paths, and fires "I changed."
+5. `CatalogProjection`, already subscribed to Store invalidations, asks Store for
    current library rows and descriptor-ordered asset IDs on its background tick,
    then publishes a `CatalogWindowState`.
-5. The ViewModel assigns that to its `@Observable` `state`; SwiftUI notices and
+6. The ViewModel assigns that to its `@Observable` `state`; SwiftUI notices and
    re-renders; the grid fills.
-6. Meanwhile the Store re-scans the libraries in the background to reconcile with
+7. Meanwhile the Store re-scans the libraries in the background to reconcile with
    the current filesystem. If nothing changed, it stays silent (no needless work).
-7. After load, `CatalogFilesystemWatcher` subscribes to macOS FSEvents for each
+8. After load, `CatalogFilesystemWatcher` subscribes to macOS FSEvents for each
    saved root. Changes under a root debounce (one-second quiet period). Safe single
    regular-file events reconcile one path; ambiguous events schedule a full-root
    rescan for **that root only** through the same scan pipeline.
@@ -375,6 +379,21 @@ instead of guessing.
 3. The scan streams files in batches; the Store writes each batch to SQLite and
    fires "I changed" only when SQLite reports inserted or changed rows.
 4. Projection → ViewModel → grid, exactly as above, so you watch the grid populate.
+
+**Seeded smoke launch:**
+
+1. `script/smoke-run.sh` defaults to `$HOME/Desktop/OneDrive/Pictures`, validates
+   that it is a directory, resolves symlink components to the real provider path,
+   and launches the Debug app with `OTOS_SMOKE_LIBRARY_ROOT`.
+2. `SmokeLibrarySeed` reads that environment value and calls
+   `viewModel.ensureLibrary(url:)`.
+3. `CatalogStore.ensureLibrary(url:)` loads the catalog if needed, no-ops if the
+   resolved root is already saved, or inserts the root and starts the normal scan
+   if it is missing.
+4. The smoke script lets startup run for about 10 seconds, then drives down/up
+   scrolling and captures logs plus catalog diagnostics. It is the default agent
+   runtime smoke path because an empty catalog launch is not useful browser
+   evidence.
 
 ## 6. Where to make a change without breaking things
 

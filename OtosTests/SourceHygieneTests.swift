@@ -142,14 +142,18 @@ struct SourceHygieneTests {
         #expect(!persistence.contains("filesystem_scan"))
     }
 
-    @Test func viewModelDoesNotUseGenerationBasedProjectionRejection() throws {
+    @Test func viewModelUsesQueryGenerationForProjectedStateFreshness() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
         let viewModelURL = repoRoot.appending(path: "Otos/ViewModels/CatalogWindowViewModel.swift")
         let content = try String(contentsOf: viewModelURL, encoding: .utf8)
 
-        #expect(!content.contains("generation"))
+        #expect(content.contains("private var queryGeneration"))
+        #expect(content.contains("nextState.queryGeneration >= queryGeneration"))
+        #expect(content.contains("AsyncStream<CatalogQueryRequest>"))
+        #expect(!content.contains("hasPendingQueryIntent"))
+        #expect(!content.contains("isRemovedLibraryFallback"))
         #expect(!content.contains("projectionTask"))
         #expect(!content.contains("applyCatalogSnapshot"))
         #expect(!content.contains("didSet"))
@@ -169,7 +173,7 @@ struct SourceHygieneTests {
         #expect(content.contains("queryForwardingTask"))
         #expect(content.contains("mutationForwardingTask"))
         #expect(content.contains("bufferingPolicy: .unbounded"))
-        #expect(content.contains("Task { [weak self, projection, store, initialDescriptor]"))
+        #expect(content.contains("Task { [weak self, projection, store, initialRequest]"))
         #expect(!content.contains("private var stateTask:"))
         #expect(!content.contains("private var startTask:"))
         #expect(!content.contains("private var selectionTask:"))

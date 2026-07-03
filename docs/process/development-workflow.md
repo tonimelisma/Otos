@@ -157,6 +157,35 @@ Keep verification close to the changed owner. Prefer narrow tests and targeted
 log/profile evidence during development, then run the full local gate before
 handoff.
 
+## Runtime Smoke Launches
+
+An empty catalog launch is not useful Otos smoke evidence when the user's main
+OneDrive Pictures library can be seeded. For agent runtime checks, use:
+
+```sh
+script/smoke-run.sh
+```
+
+The command defaults to the user's main OneDrive Pictures root at
+`$HOME/Desktop/OneDrive/Pictures`, launches the Debug app with
+`OTOS_SMOKE_LIBRARY_ROOT`, resolves symlink components before launch, lets the
+app run for 10 seconds, drives automated down/up scrolling, captures unified logs
+under `build/Logs`, writes catalog diagnostic artifacts under
+`build/Diagnostics`, and quits the app. Repeated runs are idempotent because the
+app submits the root through `CatalogStore`'s ensure-library path.
+
+If that default root is unavailable in the agent environment, pass a substitute
+root or set `OTOS_SMOKE_LIBRARY_ROOT` and record the exact limitation in the PR:
+
+```sh
+script/smoke-run.sh /path/to/media/root
+OTOS_SMOKE_LIBRARY_ROOT=/path/to/media/root script/smoke-run.sh
+```
+
+Use `script/smoke-run.sh --verify` only for a quick seeded-launch check. It is
+not a replacement for the default seeded scroll smoke when jank or browser
+runtime behavior is part of the work.
+
 ## Definition Of Done
 
 There is one Definition of Done for each increment. It covers the full path

@@ -10,18 +10,19 @@ struct CatalogWindowViewModelTests {
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
             diagnostics: nil,
-            stateBuilder: { libraries, _, descriptor in
+            stateBuilder: { libraries, _, request in
                 await buildProbe.recordBuild()
                 return CatalogWindowState(
                     title: "Test",
                     libraries: libraries,
                     mediaGrid: CatalogMediaGridState(
-                        descriptor: descriptor,
+                        descriptor: request.descriptor,
                         orderedAssetIDs: []
                     ),
                     filterOptions: .empty,
-                    resolvedSidebarSelection: descriptor.scope,
-                    mediaEmptyState: .noMedia
+                    resolvedSidebarSelection: request.descriptor.scope,
+                    mediaEmptyState: .noMedia,
+                    queryGeneration: request.generation
                 )
             }
         )
@@ -32,7 +33,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false
         )
-        weak var weakModel = model
+        weak let weakModel = model
 
         model?.start()
         try await buildProbe.waitForBuildCount(1)
@@ -268,7 +269,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false
         )
-        weak var weakModel = model
+        weak let weakModel = model
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
 
         model?.start()
@@ -322,18 +323,6 @@ struct CatalogWindowViewModelTests {
         #expect(model.sidebarSelection == .library(archivePath))
         #expect(state.title == "Archive")
     }
-}
-
-@MainActor
-private func waitForWindowState(
-    _ model: CatalogWindowViewModel,
-    predicate: @escaping @MainActor @Sendable (CatalogWindowState) -> Bool
-) async throws -> CatalogWindowState {
-    let stream = windowStateStream(model, timeout: .seconds(10))
-    for await state in stream where predicate(state) {
-        return state
-    }
-    throw AsyncTestTimeoutError.timedOut("window state")
 }
 
 @MainActor

@@ -171,6 +171,33 @@ extension CatalogStore {
         return StoredRoot(id: db.lastInsertedRowID, path: path)
     }
 
+    static func updateLibraryRootPath(rootRowID: Int64, path: LibraryRootPath, db: Database) throws {
+        try db.execute(
+            sql: "UPDATE library_root SET path = ? WHERE id = ?",
+            arguments: [path.rawValue, rootRowID]
+        )
+        let relativePaths = try String.fetchAll(
+            db,
+            sql: "SELECT relative_path FROM media_asset WHERE library_root_id = ?",
+            arguments: [rootRowID]
+        )
+        for relativePath in relativePaths {
+            let relative = MediaRelativePath(rawValue: relativePath)
+            try db.execute(
+                sql: """
+                UPDATE media_asset
+                SET sort_key = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [
+                    MediaSortKey.make(libraryRootPath: path, relativePath: relative),
+                    rootRowID,
+                    relativePath,
+                ]
+            )
+        }
+    }
+
     static func deleteLibraryRoot(rootRowID: Int64, db: Database) throws {
         try db.execute(
             sql: "DELETE FROM library_root WHERE id = ?",

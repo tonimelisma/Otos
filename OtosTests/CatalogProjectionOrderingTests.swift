@@ -90,7 +90,7 @@ struct CatalogProjectionOrderingTests {
             diagnostics: nil
         )
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await _ in stream {}
         }
@@ -128,7 +128,7 @@ struct CatalogProjectionOrderingTests {
         let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
         let recorder = OrderingStateRecorder()
-        let stream = await projection.states(store: store, initialSidebarSelection: .allMedia)
+        let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
             for await state in stream {
                 await recorder.append(state)

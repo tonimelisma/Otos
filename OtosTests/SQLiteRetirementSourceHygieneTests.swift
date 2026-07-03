@@ -18,7 +18,9 @@ struct SQLiteRetirementSourceHygieneTests {
         #expect(!afterAwaitedQuery.contains("dirty = false"))
         #expect(content.contains("if dirty {"))
         #expect(content.contains("markDirty(wakeImmediately: true, store: store)"))
-        #expect(content.contains("descriptor: selectedDescriptor"))
+        #expect(content.contains("let selectedRequest = queryRequest"))
+        #expect(content.contains("request: selectedRequest"))
+        #expect(content.contains("selectedDescriptor: selectedRequest.descriptor"))
         #expect(!content.contains("needsOrderRequery"))
         #expect(!content.contains("cachedOrderedAssetIDs"))
     }

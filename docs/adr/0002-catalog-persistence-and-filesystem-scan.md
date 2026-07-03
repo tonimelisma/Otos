@@ -271,7 +271,7 @@ All date values are stored as `REAL` seconds since the Unix epoch in UTC, using
 | Column | SQLite type | Null | Definition |
 | --- | --- | --- | --- |
 | `library_root_id` | `INTEGER` | no | SQLite rowid of the selected library-root record that owns the scanned root. It is a private foreign-key implementation detail, not library-root domain identity. |
-| `relative_path` | `TEXT` | no | Root-relative file-system path string from the library root to the item, with no leading slash. It is derived by removing the scanned root URL's standardized file-system path plus one path separator from the observed file URL's standardized file-system path. This is not localized display text. |
+| `relative_path` | `TEXT` | no | Root-relative file-system path string from the library root to the item, with no leading slash. It is derived by removing the scanned root URL's normalized, symlink-resolved file-system path plus one path separator from the observed file URL's normalized, symlink-resolved file-system path. This is not localized display text. |
 | `name` | `TEXT` | yes | `URLResourceValues.name` from `NSURLNameKey`, when available. This is the filesystem resource name for the item, not localized display text. |
 | `content_type_identifier` | `TEXT` | yes | `UTType.identifier` from `NSURLContentTypeKey`, when available. |
 | `byte_size` | `INTEGER` | yes | File size in bytes from `URLResourceValues.fileSize`. |

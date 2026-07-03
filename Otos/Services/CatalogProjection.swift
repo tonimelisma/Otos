@@ -3,10 +3,10 @@ import OSLog
 
 /// Catalog Projection guide
 ///
-/// This actor is the complete read-model boundary between catalog truth and the
-/// main window. Store exposes root rows and ordered asset IDs; Projection owns library
+/// This actor is the complete read-model boundary between catalog truth and the main
+/// window. Store exposes root rows and ordered asset IDs; Projection owns library
 /// ordering, reachability filtering, sidebar scope, title selection, and empty-state
-/// meaning. None of that work belongs on MainActor or inside a SwiftUI body.
+/// meaning, none of which belongs on MainActor or inside a SwiftUI body.
 ///
 /// Store notifications coalesce on the cadence, while direct user query intents
 /// schedule an immediate publication attempt. The Store change stream is
@@ -14,19 +14,19 @@ import OSLog
 /// reads/build work so new input survives for the next pass, and actor isolation
 /// permits only one build at a time.
 ///
-/// Pure policy lives in `CatalogWindowPolicy`, and diagnostics value plumbing
-/// lives in `CatalogProjectionDiagnostics`. This actor keeps the ownership-critical
-/// machinery: subscription lifetime, dirty/in-flight state, descriptor retention
-/// across awaits, Store reads, and publication to continuations.
+/// Pure policy lives in `CatalogWindowPolicy`; diagnostics value plumbing lives in
+/// `CatalogProjectionDiagnostics`. This actor keeps the ownership-critical machinery:
+/// subscription lifetime, dirty/in-flight state, request retention across awaits,
+/// Store reads, and publication to continuations.
 actor CatalogProjection {
     // swiftlint:disable:next line_length
-    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryDescriptor) async -> CatalogWindowState
+    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async -> CatalogWindowState
 
     private let cadence: Duration
     private let diagnostics: CatalogDiagnostics?
     private let stateBuilder: WindowStateBuilder?
 
-    private var queryDescriptor: CatalogQueryDescriptor = .default
+    private var queryRequest: CatalogQueryRequest = .initial
     private var dirty = false
     private var publishing = false
     private var continuations: [UUID: AsyncStream<CatalogWindowState>.Continuation] = [:]
@@ -49,16 +49,19 @@ actor CatalogProjection {
 
     func states(
         store: CatalogStore,
-        initialSidebarSelection: SidebarSelection
+        initialDescriptor: CatalogQueryDescriptor
     ) async -> AsyncStream<CatalogWindowState> {
-        await states(store: store, initialDescriptor: CatalogQueryDescriptor(scope: initialSidebarSelection))
+        await states(
+            store: store,
+            initialRequest: CatalogQueryRequest(descriptor: initialDescriptor, generation: 0)
+        )
     }
 
     func states(
         store: CatalogStore,
-        initialDescriptor: CatalogQueryDescriptor
+        initialRequest: CatalogQueryRequest
     ) async -> AsyncStream<CatalogWindowState> {
-        queryDescriptor = initialDescriptor
+        queryRequest = initialRequest
         let changes = changeTask == nil ? await store.changeNotifications() : nil
         ensurePublicationLoop(store: store, changes: changes)
 
@@ -68,9 +71,7 @@ actor CatalogProjection {
         let id = UUID()
         continuations[id] = continuation
         continuation.onTermination = { [weak self] _ in
-            Task {
-                await self?.removeContinuation(id)
-            }
+            Task { await self?.removeContinuation(id) }
         }
         markDirty(wakeImmediately: true, store: store)
         return stream
@@ -79,14 +80,23 @@ actor CatalogProjection {
     func updateSidebarSelection(_ selection: SidebarSelection) {
         updateQueryDescriptor(CatalogQueryDescriptor(
             scope: selection,
-            filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
+            filter: queryRequest.descriptor.filter,
+            sort: queryRequest.descriptor.sort
         ))
     }
 
     func updateQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
-        guard queryDescriptor != descriptor else { return }
-        queryDescriptor = descriptor
+        guard queryRequest.descriptor != descriptor else { return }
+        queryRequest = CatalogQueryRequest(
+            descriptor: descriptor,
+            generation: queryRequest.generation &+ 1
+        )
+        scheduleImmediatePublicationAfterIntent()
+    }
+
+    func updateQueryRequest(_ request: CatalogQueryRequest) {
+        guard queryRequest != request else { return }
+        queryRequest = request
         scheduleImmediatePublicationAfterIntent()
     }
 
@@ -98,7 +108,10 @@ actor CatalogProjection {
         let (state, _) = await buildWindowState(
             libraries: libraries,
             orderedAssetIDs: orderedAssetIDs,
-            descriptor: CatalogQueryDescriptor(scope: sidebarSelection)
+            request: CatalogQueryRequest(
+                descriptor: CatalogQueryDescriptor(scope: sidebarSelection),
+                generation: 0
+            )
         )
         return state
     }
@@ -152,14 +165,12 @@ private extension CatalogProjection {
     }
 
     func storeDidChange(_ change: CatalogStoreChange) {
-        // A remove and same-path add can occur inside one coalescing interval. The
-        // final queried state then contains the path again, so state validation
-        // alone cannot prove that the selected root was removed. Store's typed
-        // removal signal preserves that transient fact without exposing row IDs
-        // or creating durable library-instance identity.
+        // A remove and same-path add can coalesce into a final snapshot where the
+        // path exists again. Store's typed removal signal preserves that transient
+        // deletion fact without durable library-instance identity.
         if case let .libraryRemoved(path) = change {
-            if queryDescriptor.scope == .library(path) {
-                queryDescriptor.scope = .allMedia
+            if queryRequest.descriptor.scope == .library(path) {
+                queryRequest.descriptor.scope = .allMedia
             }
         }
         detailRefreshGeneration &+= 1
@@ -174,11 +185,10 @@ private extension CatalogProjection {
             return
         }
 
-        // Clear before awaiting so changes that arrive during Store reads/projection
-        // work remain queued for the next tick instead of being lost.
+        // Clear before awaiting so changes during reads/build remain queued.
         dirty = false
         publishing = true
-        let selectedDescriptor = queryDescriptor
+        let selectedRequest = queryRequest
 
         let publicationStart = Date()
         let storeReadStart = Date()
@@ -190,23 +200,20 @@ private extension CatalogProjection {
         let (state, buildMetrics) = await buildWindowState(
             store: store,
             libraries: libraries,
-            descriptor: selectedDescriptor
+            request: selectedRequest
         )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
 
-        // The emitted state and Projection's retained input must agree after a
-        // selected root disappears. Actor reentrancy may have delivered a newer
-        // user intent during the awaited reads/build, so only normalize the
-        // exact input used by this completed build; newer input stays dirty and
-        // wins on the next tick.
+        // Normalize only the exact input this build used; a newer reentrant user
+        // intent stays dirty and wins on the next tick.
         let retainedResolvedSelection = retainResolvedSelection(
             state.queryDescriptor,
-            forInput: selectedDescriptor
+            forInput: selectedRequest
         )
         await finishPublication(CatalogProjectionCompletedPublication(
             state: state,
             buildMetrics: buildMetrics,
-            selectedDescriptor: selectedDescriptor,
+            selectedDescriptor: selectedRequest.descriptor,
             retainedResolvedSelection: retainedResolvedSelection,
             timing: CatalogProjectionPublicationTiming(
                 storeReadMs: storeReadMs,
@@ -278,13 +285,13 @@ private extension CatalogProjection {
 
     private func retainResolvedSelection(
         _ resolvedDescriptor: CatalogQueryDescriptor,
-        forInput inputDescriptor: CatalogQueryDescriptor
+        forInput inputRequest: CatalogQueryRequest
     ) -> Bool {
-        guard queryDescriptor == inputDescriptor else {
+        guard queryRequest == inputRequest else {
             return false
         }
-        queryDescriptor = resolvedDescriptor
-        return resolvedDescriptor != inputDescriptor
+        queryRequest.descriptor = resolvedDescriptor
+        return resolvedDescriptor != inputRequest.descriptor
     }
 }
 
@@ -292,11 +299,11 @@ private extension CatalogProjection {
     private func buildWindowState(
         store: CatalogStore,
         libraries unsortedLibraries: [CatalogLibraryState],
-        descriptor: CatalogQueryDescriptor
+        request: CatalogQueryRequest
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let libraries = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(descriptor, libraries: libraries)
+        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: libraries)
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
         let orderStart = Date()
@@ -314,7 +321,7 @@ private extension CatalogProjection {
         return await buildWindowState(
             libraries: libraries,
             orderedAssetIDs: orderedAssetIDs,
-            descriptor: descriptor,
+            request: request,
             resolvedDescriptor: resolvedDescriptor,
             store: store,
             availableLibraryPaths: availableLibraryPaths,
@@ -325,7 +332,7 @@ private extension CatalogProjection {
     private func buildWindowState(
         libraries unsortedLibraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
-        descriptor: CatalogQueryDescriptor,
+        request: CatalogQueryRequest,
         resolvedDescriptor providedResolvedDescriptor: CatalogQueryDescriptor? = nil,
         store: CatalogStore? = nil,
         availableLibraryPaths providedAvailableLibraryPaths: Set<LibraryRootPath>? = nil,
@@ -334,7 +341,7 @@ private extension CatalogProjection {
         if let injectedState = await injectedWindowState(
             unsortedLibraries,
             orderedAssetIDs: orderedAssetIDs,
-            descriptor: descriptor
+            request: request
         ) {
             return injectedState
         }
@@ -348,7 +355,7 @@ private extension CatalogProjection {
             libraries.filter(\.isAvailable).map(\.path)
         )
         let resolvedDescriptor = providedResolvedDescriptor
-            ?? CatalogWindowPolicy.resolvedDescriptor(descriptor, libraries: libraries)
+            ?? CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: libraries)
         let resolvedSidebarSelection = resolvedDescriptor.scope
         let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: libraries)
         let scopedAssetIDs = CatalogWindowPolicy.assetIDs(
@@ -374,6 +381,7 @@ private extension CatalogProjection {
             title: title,
             libraries: libraries,
             resolvedDescriptor: resolvedDescriptor,
+            queryGeneration: request.generation,
             scopedAssetIDs: scopedAssetIDs,
             filterOptions: filterOptions,
             mediaEmptyState: mediaEmptyState
@@ -415,7 +423,8 @@ private extension CatalogProjection {
             ),
             filterOptions: parts.filterOptions,
             resolvedSidebarSelection: parts.resolvedDescriptor.scope,
-            mediaEmptyState: parts.mediaEmptyState
+            mediaEmptyState: parts.mediaEmptyState,
+            queryGeneration: parts.queryGeneration
         )
     }
 
@@ -475,18 +484,16 @@ private extension CatalogProjection {
         }
     }
 
-    /// Tests can inject deliberately slow or controlled derivation without
-    /// replacing the publication loop whose dirty/in-flight behavior they need
-    /// to exercise. Injected output reports a zero sort duration.
+    /// Tests inject controlled derivation while keeping the real publication loop.
     private func injectedWindowState(
         _ libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
-        descriptor: CatalogQueryDescriptor
+        request: CatalogQueryRequest
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics)? {
         guard let stateBuilder else {
             return nil
         }
-        let state = await stateBuilder(libraries, orderedAssetIDs, descriptor)
+        let state = await stateBuilder(libraries, orderedAssetIDs, request)
         return (state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
     }
 }

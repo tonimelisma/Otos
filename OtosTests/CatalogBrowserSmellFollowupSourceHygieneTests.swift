@@ -3,15 +3,14 @@ import Testing
 
 @Suite("Catalog browser smell follow-up source hygiene")
 struct CatalogSmellSourceHygieneTests {
-    @Test func appKitGridPrunesTileDetailsWithSetMembership() throws {
+    @Test func appKitGridDoesNotPruneTileDetailsDuringStructuralApply() throws {
         let content = try source("Otos/Views/MediaAssetCollectionView.swift")
         let applyStart = try #require(content.range(of: "func applyStructure("))
         let visibleDetailStart = try #require(content.range(of: "func requestVisibleDetails("))
         let applyBody = content[applyStart.lowerBound ..< visibleDetailStart.lowerBound]
 
-        #expect(applyBody.contains("let orderedAssetIDSet = Set(grid.orderedAssetIDs)"))
+        #expect(!applyBody.contains("tileDetailsByID = tileDetailsByID.filter"))
         #expect(!applyBody.contains("grid.orderedAssetIDs.contains($0.key)"))
-        #expect(!content.contains("await MainActor.run {"))
     }
 
     @Test func projectionDiagnosticsAndPolicyAreSplitFromPublicationActor() throws {
@@ -33,9 +32,12 @@ struct CatalogSmellSourceHygieneTests {
         let toolbar = try source("Otos/Views/CatalogToolbarControls.swift")
         let app = try source("Otos/OtosApp.swift")
 
+        #expect(toolbar.contains("struct CatalogFilterMenuContent"))
         #expect(toolbar.contains("options.availableKinds"))
+        #expect(toolbar.contains("kindSymbol(kind, formats: formats)"))
         #expect(!toolbar.contains("MediaKind.displayOrder.filter { !options.formats"))
-        #expect(app.contains("filterOptions.availableKinds"))
+        #expect(app.contains("CatalogFilterMenuContent("))
+        #expect(!app.contains("catalogViewModel.queryDescriptor.filter.kinds.contains(kind)"))
         #expect(!app.contains("if !formats.isEmpty"))
     }
 

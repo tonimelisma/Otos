@@ -65,8 +65,8 @@ In scope:
 - Split pure projection/window policy into `CatalogWindowPolicy.swift`.
 - Keep `CatalogProjection` as the single actor that owns publication cadence,
   dirty state, subscriptions, descriptor retention, and publication ordering.
-- Replace the AppKit detail-prune array membership scan with a Set membership
-  check or equivalent no-worse path.
+- Remove the redundant AppKit detail-cache prune from structural apply, or use
+  an equivalent no-worse path if pruning becomes necessary again.
 - Remove redundant MainActor wrapping only if Swift concurrency still preserves
   the same actor-safety and stale-completion rejection.
 - Collapse `countAssets` and `distinctFilterableTypesQuery` SQL construction only
@@ -119,7 +119,7 @@ Out of scope:
 | --- | --- | --- | --- | --- |
 | CBS-001 | Process | Follow the supplied code-smell review's small recommendations and avoid the large rejected rewrites. | Current increment | This spec |
 | CBS-002 | Architecture | Keep `CatalogProjection` as one publication actor while moving diagnostics and pure policy to focused non-actor files. | Current | This spec, docs/onboarding.md |
-| CBS-003 | Non-functional | AppKit grid structural apply shall not prune visible detail cache with repeated linear membership scans over the full ordered ID array. | Current | This spec, `MediaAssetCollectionView.swift` |
+| CBS-003 | Non-functional | AppKit grid structural apply shall not prune the visible detail cache with repeated linear membership scans over the full ordered ID array; current code does not prune the visible detail cache before the post-apply visible detail request replaces it. | Current | This spec, `MediaAssetCollectionView.swift` |
 | CBS-004 | Architecture | Persistence cleanup shall not change schema, query descriptor semantics, forced order indexes, or Store ownership. | Current | This spec |
 | CBS-005 | Process | The code-smell follow-up shall document smells observed, addressed, accepted, or deferred in the final DoD report. | Current | This spec, PR DoD |
 | CBS-006 | Regression | Applying an older projected state shall not roll back a newer local ViewModel query descriptor; the next query intent must be built from the newest local sidebar/sort/filter state. | Current | This spec, `CatalogWindowViewModelQueryIntentTests` |
@@ -240,14 +240,14 @@ or product decision is redesigned.
 - `CatalogStorePersistence` remains the single SQLite edge; query construction
   cleanup is local and uses the same columns, indexes, and arguments.
 - `CatalogWindowViewModel` remains a MainActor adapter. It applies projected
-  descriptor state only when it is not stale relative to newer local query intent
-  state, or when Projection is resolving the currently selected removed library
-  to All Media with the same filter/sort.
+  descriptor state to local query controls only when the projected state's query
+  generation is at least as fresh as the newest local query request. Projection
+  carries removed-library fallback through that same request-generation path.
 - `CatalogFilterOptions.availableKinds` is the single model-level answer for
   which kind rows appear in toolbar and View menu filters.
 - `MediaAssetCollectionViewController` remains the only AppKit grid bridge; it
-  prunes cached visible details using a membership set and still requests visible
-  details by ID through the Store-backed detail reader.
+  does not prune cached visible details during structural apply, because the
+  post-apply visible-detail request replaces the map for the current viewport.
 
 Persistence effects:
 
@@ -272,8 +272,9 @@ Privacy and media-originals effects:
 - Projection diagnostics and policy helpers are synchronous value/pure helpers
   called from the actor; they introduce no tasks and no shared mutable state.
 - `CatalogWindowViewModel` still forwards query intents through its newest-value
-  stream. Stale projected states update rendered state but do not overwrite a
-  newer local query descriptor used to build the next intent.
+  stream. Each request carries a generation, and stale projected states update
+  rendered state but do not overwrite a newer local query descriptor used to
+  build the next intent.
 - The visible-detail query task keeps the existing stale-generation rejection and
   cancellation check. If removing `MainActor.run` fails strict concurrency, keep
   the explicit hop rather than weakening actor isolation.
@@ -301,8 +302,8 @@ new performance design.
 - `CatalogProjection` tests continue to pass after the diagnostics/policy split.
 - Source hygiene proves `CatalogProjection.swift` no longer disables
   `file_length`.
-- Source hygiene proves the AppKit tile detail prune does not use
-  `grid.orderedAssetIDs.contains` inside the dictionary filter closure.
+- Source hygiene proves structural apply does not prune `tileDetailsByID` and
+  does not use `grid.orderedAssetIDs.contains` for detail-cache pruning.
 - Media grid selection/apply tests continue to pass.
 - Query-plan tests continue to pass, proving SQL cleanup did not change locked
   order query behavior.
@@ -321,7 +322,8 @@ Retire:
 - `// swiftlint:disable file_length` from `CatalogProjection.swift`
 - projection diagnostics structs living inside the actor file
 - pure projection policy functions living inside the actor file
-- MainActor repeated linear `grid.orderedAssetIDs.contains` detail-prune scan
+- MainActor repeated linear `grid.orderedAssetIDs.contains` detail-prune scan,
+  along with the now-redundant structural-apply detail-cache prune
 - redundant single-root branches in `countAssets` and
   `distinctFilterableTypesQuery`
 - redundant `MainActor.run` wrapper if strict concurrency permits

@@ -20,6 +20,7 @@ struct OtosApp: App {
                     OtosLog.app.info("Main window content attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
                     catalogViewModel.start()
+                    SmokeLibrarySeed.applyIfPresent(to: catalogViewModel)
                 }
         }
         .commands {
@@ -55,39 +56,17 @@ struct OtosApp: App {
                 }
                 Divider()
                 Menu("Filter") {
-                    if catalogViewModel.queryDescriptor.filter.isActive {
-                        Button("Show Everything", action: catalogViewModel.clearMediaFilter)
-                        Divider()
-                    }
-                    let availableKinds = catalogViewModel.state.filterOptions.availableKinds
-                    ForEach(availableKinds, id: \.self) { kind in
-                        let formats = catalogViewModel.state.filterOptions.formats(for: kind)
-                        Button {
+                    CatalogFilterMenuContent(
+                        descriptor: catalogViewModel.queryDescriptor,
+                        options: catalogViewModel.state.filterOptions,
+                        toggleKind: { kind, formats in
                             catalogViewModel.toggleMediaKind(kind, formatsInKind: formats)
-                        } label: {
-                            Label(
-                                kind.label,
-                                systemImage: catalogViewModel.queryDescriptor.filter.kinds.contains(kind)
-                                    ? "checkmark"
-                                    : "circle"
-                            )
-                        }
-                        ForEach(formats, id: \.self) { format in
-                            Button {
-                                catalogViewModel.toggleMediaFormat(format, kind: kind)
-                            } label: {
-                                Label(
-                                    format.rawValue,
-                                    systemImage: catalogViewModel.queryDescriptor.filter.formats.contains(format)
-                                        ? "checkmark"
-                                        : "circle"
-                                )
-                            }
-                        }
-                        if kind != availableKinds.last {
-                            Divider()
-                        }
-                    }
+                        },
+                        toggleFormat: { format, kind in
+                            catalogViewModel.toggleMediaFormat(format, kind: kind)
+                        },
+                        clearFilters: catalogViewModel.clearMediaFilter
+                    )
                 }
             }
         }

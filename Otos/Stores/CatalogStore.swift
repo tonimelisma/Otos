@@ -566,14 +566,15 @@ extension CatalogStore {
         // concurrent mutation callers join this load. Production leaves the
         // hook nil and performs no additional work.
         await initialLoadDidRead?()
+        let normalizedRoots = await normalizeLoadedRoots(loaded.roots, dbWriter: dbQueue)
         let applyState = OtosSignpost.catalog.beginInterval("CatalogApplyLoadedCatalog")
-        applyLoadedCatalog(roots: loaded.roots)
-        unrequestedLoadedRootPaths = loaded.roots.map(\.path)
+        applyLoadedCatalog(roots: normalizedRoots)
+        unrequestedLoadedRootPaths = normalizedRoots.map(\.path)
         OtosSignpost.catalog.endInterval("CatalogApplyLoadedCatalog", applyState)
         started = true
         OtosLog.persistence.info(
             """
-            Catalog loaded roots=\(loaded.roots.count, privacy: .public) \
+            Catalog loaded roots=\(normalizedRoots.count, privacy: .public) \
             assets=\(loaded.assetCount, privacy: .public)
             """
         )
@@ -581,7 +582,7 @@ extension CatalogStore {
             operation: "catalog.start",
             phase: "finish",
             fields: [
-                "roots": "\(loaded.roots.count)",
+                "roots": "\(normalizedRoots.count)",
                 "assets": "\(loaded.assetCount)",
             ]
         )
@@ -738,33 +739,32 @@ extension CatalogStore {
         let path = try CatalogPath.normalizedExistingDirectoryPath(for: url)
         try await ensureStartedForMutation()
         try validateNoOverlap(path)
-        let dbQueue = try database()
+        try await insertLibraryRootAndStartScan(path, operation: "catalog.library.add")
+    }
 
-        let state = OtosSignpost.persistence.beginInterval("CatalogAddRoot")
+    func ensureLibrary(url: URL) async throws {
+        let path = try CatalogPath.normalizedExistingDirectoryPath(for: url)
+        try await ensureStartedForMutation()
         await diagnostics?.record(
-            operation: "catalog.library.add",
+            operation: "catalog.library.ensure",
             phase: "start",
             fields: ["rootPath": path.rawValue]
         )
-        let storedRoot = try await dbQueue.write { db in
-            try Self.insertLibraryRoot(path: path, db: db)
+        if rootsByPath[path] != nil {
+            OtosLog.catalog.info("Smoke library root already saved path=\(path.rawValue, privacy: .public)")
+            await diagnostics?.record(
+                operation: "catalog.library.ensure",
+                phase: "exists",
+                fields: ["rootPath": path.rawValue]
+            )
+            return
         }
-        OtosSignpost.persistence.endInterval("CatalogAddRoot", state)
-
-        let root = LibraryRoot(path: storedRoot.path)
-        rootsByPath[root.path] = root
-        availabilityByRootPath[root.path] = .available
-        rootRowIDsByPath[root.path] = storedRoot.id
-        rootPathsByRowID[storedRoot.id] = root.path
-        OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
-        await diagnostics?.record(
-            operation: "catalog.library.add",
-            phase: "finish",
-            fields: ["rootPath": root.path.rawValue]
+        try validateNoOverlap(path)
+        try await insertLibraryRootAndStartScan(
+            path,
+            operation: "catalog.library.ensure",
+            recordsStart: false
         )
-        notifyCatalogChanged()
-        filesystemWatcher.addRoot(root.path)
-        enqueueScans([root.path])
     }
 
     func removeLibrary(path: LibraryRootPath) async throws {
@@ -851,6 +851,44 @@ extension CatalogStore {
         availabilityByRootPath.removeValue(forKey: path)
         rootRowIDsByPath.removeValue(forKey: path)
         rootPathsByRowID.removeValue(forKey: rootRowID)
+    }
+
+    private func insertLibraryRootAndStartScan(
+        _ path: LibraryRootPath,
+        operation: String,
+        recordsStart: Bool = true
+    ) async throws {
+        let dbQueue = try database()
+
+        let state = OtosSignpost.persistence.beginInterval("CatalogAddRoot")
+        defer {
+            OtosSignpost.persistence.endInterval("CatalogAddRoot", state)
+        }
+        if recordsStart {
+            await diagnostics?.record(
+                operation: operation,
+                phase: "start",
+                fields: ["rootPath": path.rawValue]
+            )
+        }
+        let storedRoot = try await dbQueue.write { db in
+            try Self.insertLibraryRoot(path: path, db: db)
+        }
+
+        let root = LibraryRoot(path: storedRoot.path)
+        rootsByPath[root.path] = root
+        availabilityByRootPath[root.path] = .available
+        rootRowIDsByPath[root.path] = storedRoot.id
+        rootPathsByRowID[storedRoot.id] = root.path
+        OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
+        await diagnostics?.record(
+            operation: operation,
+            phase: "finish",
+            fields: ["rootPath": root.path.rawValue]
+        )
+        notifyCatalogChanged()
+        filesystemWatcher.addRoot(root.path)
+        enqueueScans([root.path])
     }
 
     func shutdown() {
@@ -957,6 +995,59 @@ private extension CatalogStore {
             rootRowIDsByPath[root.path] = storedRoot.id
             rootPathsByRowID[storedRoot.id] = root.path
         }
+    }
+
+    private func normalizeLoadedRoots(
+        _ roots: [StoredRoot],
+        dbWriter: any DatabaseWriter
+    ) async -> [StoredRoot] {
+        var normalizedRoots: [StoredRoot] = []
+        for storedRoot in roots {
+            guard let normalizedPath = try? CatalogPath.normalizedExistingDirectoryPath(for: storedRoot.path.url),
+                  normalizedPath != storedRoot.path
+            else {
+                normalizedRoots.append(storedRoot)
+                continue
+            }
+            do {
+                try await dbWriter.write { db in
+                    try Self.updateLibraryRootPath(rootRowID: storedRoot.id, path: normalizedPath, db: db)
+                }
+                OtosLog.persistence.info(
+                    """
+                    Library root normalized oldPath=\(storedRoot.path.rawValue, privacy: .public) \
+                    path=\(normalizedPath.rawValue, privacy: .public)
+                    """
+                )
+                await diagnostics?.record(
+                    operation: "catalog.library.normalize",
+                    phase: "finish",
+                    fields: [
+                        "oldRootPath": storedRoot.path.rawValue,
+                        "rootPath": normalizedPath.rawValue,
+                    ]
+                )
+                normalizedRoots.append(StoredRoot(id: storedRoot.id, path: normalizedPath))
+            } catch {
+                OtosLog.persistence.error(
+                    """
+                    Library root normalization failed oldPath=\(storedRoot.path.rawValue, privacy: .public) \
+                    path=\(normalizedPath.rawValue, privacy: .public)
+                    """
+                )
+                await diagnostics?.record(
+                    operation: "catalog.library.normalize",
+                    phase: "error",
+                    fields: [
+                        "oldRootPath": storedRoot.path.rawValue,
+                        "rootPath": normalizedPath.rawValue,
+                        "error": String(describing: error),
+                    ]
+                )
+                normalizedRoots.append(storedRoot)
+            }
+        }
+        return normalizedRoots
     }
 
     private func mediaAsset(from storedAsset: StoredAsset, rootPath: LibraryRootPath) -> MediaAsset {

@@ -24,6 +24,18 @@ func windowStateStream(
 }
 
 @MainActor
+func waitForWindowState(
+    _ model: CatalogWindowViewModel,
+    predicate: @escaping @MainActor @Sendable (CatalogWindowState) -> Bool
+) async throws -> CatalogWindowState {
+    let stream = windowStateStream(model, timeout: .seconds(10))
+    for await state in stream where predicate(state) {
+        return state
+    }
+    throw AsyncTestTimeoutError.timedOut("window state")
+}
+
+@MainActor
 private final class WindowStateObserver {
     private weak var model: CatalogWindowViewModel?
     private let continuation: AsyncStream<CatalogWindowState>.Continuation

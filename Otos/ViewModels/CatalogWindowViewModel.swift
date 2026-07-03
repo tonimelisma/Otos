@@ -25,13 +25,15 @@ import OSLog
 /// `self` weakly and upgrades to a strong reference only for the moment it applies
 /// one completed state, then lets go before the next wait. Projection may normalize
 /// a removed library back to All Media while preserving filter/sort; applying that
-/// result updates local control state only when no newer local descriptor intent is
-/// pending, so stale projected states cannot roll back a user's rapid query edits.
+/// result carries the request generation used to build it, so stale projected
+/// states cannot roll back a user's rapid query edits even when the user toggles
+/// back to the same descriptor value.
 @MainActor
 @Observable
 final class CatalogWindowViewModel {
-    private enum CatalogMutationIntent {
+    enum CatalogMutationIntent {
         case addLibrary(URL)
+        case ensureLibrary(URL)
         case removeLibrary(LibraryRootPath)
     }
 
@@ -57,8 +59,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
-    @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryDescriptor>
-    @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryDescriptor>.Continuation
+    @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
+    @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
     @ObservationIgnored private let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
     // Newest-value: only the latest viewport is a useful priority hint; an obsolete
@@ -73,6 +75,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
+    @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
 
     init(
         catalogStore: CatalogStore = CatalogStore(),
@@ -83,7 +86,7 @@ final class CatalogWindowViewModel {
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true
     ) {
-        let (queryStream, queryContinuation) = AsyncStream<CatalogQueryDescriptor>.makeStream(
+        let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
         // Selection may discard obsolete pending values, but every accepted
@@ -163,14 +166,17 @@ extension CatalogWindowViewModel {
         let projection = catalogProjection
         let store = catalogStore
         let diagnostics = diagnostics
-        let initialDescriptor = queryDescriptor
+        let initialRequest = CatalogQueryRequest(
+            descriptor: queryDescriptor,
+            generation: queryGeneration
+        )
 
         startQueryForwarding(projection: projection)
         startMutationForwarding(store: store, diagnostics: diagnostics)
         startStateConsumption(
             projection: projection,
             store: store,
-            initialDescriptor: initialDescriptor
+            initialRequest: initialRequest
         )
         startCatalog(store: store, diagnostics: diagnostics)
         if startsEnrichment {
@@ -180,6 +186,10 @@ extension CatalogWindowViewModel {
 
     func addLibrary(url: URL) {
         submitCatalogMutation(.addLibrary(url))
+    }
+
+    func ensureLibrary(url: URL) {
+        submitCatalogMutation(.ensureLibrary(url))
     }
 
     func removeLibrary(_ library: LibraryRoot) {
@@ -242,11 +252,15 @@ extension CatalogWindowViewModel {
 
     private func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
         guard queryDescriptor != descriptor else { return }
+        queryGeneration &+= 1
         queryDescriptor = descriptor
         sidebarSelection = descriptor.scope
         OtosLog.ui.info("Catalog query changed descriptor=\(descriptor.diagnosticDescription, privacy: .public)")
         OtosSignpost.ui.emitEvent("CatalogQueryDescriptorIntent")
-        queryContinuation.yield(descriptor)
+        queryContinuation.yield(CatalogQueryRequest(
+            descriptor: descriptor,
+            generation: queryGeneration
+        ))
     }
 
     /// The AppKit grid reports its visible identities here as the user scrolls. This is a
@@ -285,8 +299,8 @@ extension CatalogWindowViewModel {
 
     private func startQueryForwarding(projection: CatalogProjection) {
         queryForwardingTask = Task { [projection, queryStream] in
-            for await descriptor in queryStream {
-                await projection.updateQueryDescriptor(descriptor)
+            for await request in queryStream {
+                await projection.updateQueryRequest(request)
             }
         }
     }
@@ -309,13 +323,13 @@ extension CatalogWindowViewModel {
     private func startStateConsumption(
         projection: CatalogProjection,
         store: CatalogStore,
-        initialDescriptor: CatalogQueryDescriptor
+        initialRequest: CatalogQueryRequest
     ) {
-        stateConsumptionTask = Task { [weak self, projection, store, initialDescriptor] in
+        stateConsumptionTask = Task { [weak self, projection, store, initialRequest] in
             let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateStream")
             let states = await projection.states(
                 store: store,
-                initialDescriptor: initialDescriptor
+                initialRequest: initialRequest
             )
             OtosSignpost.ui.endInterval("CatalogWindowStateStream", signpost)
             for await nextState in states {
@@ -353,16 +367,12 @@ extension CatalogWindowViewModel {
         let applyStart = Date()
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateApply")
 
-        // Projection is authoritative for whether the selected library still exists,
-        // but it can finish an older publication after a newer local query intent.
-        // Preserve that newer local descriptor so the user's next query command is
-        // built from the latest control state rather than from a stale state handoff.
-        if shouldApplyProjectedDescriptor(
-            nextState.queryDescriptor,
-            currentDescriptor: queryDescriptor,
-            previousDescriptor: previousState.queryDescriptor,
-            libraries: nextState.libraries
-        ) {
+        // Projection is authoritative for resolved library availability, but an
+        // older publication can finish after a newer local query intent. Request
+        // generations make that freshness check value-independent, covering rapid
+        // A -> B -> A toggles that equality alone cannot distinguish.
+        if nextState.queryGeneration >= queryGeneration {
+            queryGeneration = nextState.queryGeneration
             queryDescriptor = nextState.queryDescriptor
             sidebarSelection = nextState.resolvedSidebarSelection
         } else {
@@ -395,37 +405,6 @@ extension CatalogWindowViewModel {
         )
     }
 
-    private func shouldApplyProjectedDescriptor(
-        _ projectedDescriptor: CatalogQueryDescriptor,
-        currentDescriptor: CatalogQueryDescriptor,
-        previousDescriptor: CatalogQueryDescriptor,
-        libraries: [CatalogLibraryState]
-    ) -> Bool {
-        if currentDescriptor == previousDescriptor || currentDescriptor == projectedDescriptor {
-            return true
-        }
-        return isRemovedLibraryFallback(
-            projectedDescriptor: projectedDescriptor,
-            currentDescriptor: currentDescriptor,
-            libraries: libraries
-        )
-    }
-
-    private func isRemovedLibraryFallback(
-        projectedDescriptor: CatalogQueryDescriptor,
-        currentDescriptor: CatalogQueryDescriptor,
-        libraries: [CatalogLibraryState]
-    ) -> Bool {
-        guard projectedDescriptor.scope == .allMedia,
-              projectedDescriptor.filter == currentDescriptor.filter,
-              projectedDescriptor.sort == currentDescriptor.sort,
-              case let .library(path) = currentDescriptor.scope
-        else {
-            return false
-        }
-        return !libraries.contains { $0.path == path }
-    }
-
     private func submitCatalogMutation(_ intent: CatalogMutationIntent) {
         switch mutationContinuation.yield(intent) {
         case .enqueued:
@@ -441,48 +420,6 @@ extension CatalogWindowViewModel {
         @unknown default:
             assertionFailure("Unknown catalog mutation stream yield result")
             OtosLog.ui.error("Catalog mutation intent returned an unknown yield result")
-        }
-    }
-
-    private nonisolated static func performCatalogMutation(
-        _ intent: CatalogMutationIntent,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
-    ) async {
-        switch intent {
-        case let .addLibrary(url):
-            let signpost = OtosSignpost.ui.beginInterval("CatalogAddLibraryIntent")
-            do {
-                try await store.addLibrary(url: url)
-            } catch {
-                OtosLog.catalog.error("Catalog add library failed")
-                await diagnostics?.record(
-                    operation: "catalog.library.add",
-                    phase: "error",
-                    fields: [
-                        "url": url.path(percentEncoded: false),
-                        "error": String(describing: error),
-                    ]
-                )
-            }
-            OtosSignpost.ui.endInterval("CatalogAddLibraryIntent", signpost)
-
-        case let .removeLibrary(path):
-            let signpost = OtosSignpost.ui.beginInterval("CatalogRemoveLibraryIntent")
-            do {
-                try await store.removeLibrary(path: path)
-            } catch {
-                OtosLog.catalog.error("Catalog remove library failed")
-                await diagnostics?.record(
-                    operation: "catalog.library.remove",
-                    phase: "error",
-                    fields: [
-                        "rootPath": path.rawValue,
-                        "error": String(describing: error),
-                    ]
-                )
-            }
-            OtosSignpost.ui.endInterval("CatalogRemoveLibraryIntent", signpost)
         }
     }
 }
