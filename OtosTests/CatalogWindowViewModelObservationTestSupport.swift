@@ -65,3 +65,23 @@ private final class WindowStateObserver {
         continuation.finish()
     }
 }
+
+func fixedViewModelSelectionScanner(filesByRoot: [LibraryRootPath: String]) -> CatalogScanner {
+    CatalogScanner { rootPath, _, _, batchHandler in
+        guard let fileName = filesByRoot[rootPath] else {
+            return []
+        }
+        let relativePath = MediaRelativePath(rawValue: fileName)
+        try await batchHandler([
+            ScannedMediaFile(
+                relativePath: relativePath,
+                name: fileName,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 100,
+                createdAt: nil,
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ])
+        return [relativePath]
+    }
+}

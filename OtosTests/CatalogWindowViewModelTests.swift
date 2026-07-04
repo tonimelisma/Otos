@@ -85,10 +85,19 @@ struct CatalogWindowViewModelTests {
         let archiveURL = temp.appending(path: "Archive", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: picturesURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: archiveURL, withIntermediateDirectories: true)
-        try writeFile(picturesURL.appending(path: "one.jpg"), contents: "jpeg")
-        try writeFile(archiveURL.appending(path: "two.jpg"), contents: "jpeg")
+        let picturesPath = try CatalogPath.normalizedDirectoryPath(for: picturesURL)
+        let archivePath = try CatalogPath.normalizedDirectoryPath(for: archiveURL)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let scanner = fixedViewModelSelectionScanner(filesByRoot: [
+            picturesPath: "one.jpg",
+            archivePath: "two.jpg",
+        ])
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: scanner,
+            scanCadence: .milliseconds(10),
+            diagnostics: nil
+        )
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
@@ -101,10 +110,10 @@ struct CatalogWindowViewModelTests {
         model.addLibrary(url: picturesURL)
         model.addLibrary(url: archiveURL)
         _ = try await waitForWindowState(model) { state in
-            state.mediaGrid.orderedAssetIDs.count == 2
+            Set(state.libraries.map(\.path)) == [picturesPath, archivePath]
+                && state.mediaGrid.orderedAssetIDs.count == 2
         }
 
-        let picturesPath = try CatalogPath.normalizedDirectoryPath(for: picturesURL)
         model.selectSidebar(.library(picturesPath))
 
         let state = try await waitForWindowState(model) { state in

@@ -239,6 +239,8 @@ Focused tests:
 - query normalization does not bump or roll back generation
 - staged thumbnail cleanup deletes only app-owned temp files
 - reorder-only structural apply chooses the nonanimated large-update path
+- ViewModel sidebar selection routing uses deterministic Store scan input so the
+  post-merge DoD test no longer depends on concurrent real filesystem scanning
 
 Acceptance examples:
 
