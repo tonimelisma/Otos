@@ -48,13 +48,18 @@ Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. They display a one-line filename. Only content conforming to
 `UTType.movie` gets a small video symbol and blue tint.
 
-Apply a diffable snapshot without animation only when ordered IDs change. For
-unchanged IDs, re-read visible details through the Store-backed detail reader and
-reconfigure the existing visible items in place. Do not call AppKit item reload for
-a detail-only refresh: reload enters the reuse lifecycle, and reusable tile cleanup
-clears the thumbnail before the async loader repaints it. Permit one structural
-apply at a time and retain only the latest pending grid state. Reset scroll only
-when sidebar scope changes.
+Apply an animated diffable snapshot when ordered IDs change. On macOS the
+nonanimated diffable path behaves like `reloadData`, which tears down visible
+items and clears their layer contents before thumbnail reloads repaint them; the
+animated batch-update path lets surviving items move with their rendered
+thumbnails intact. For unchanged IDs, re-read visible details through the
+Store-backed detail reader and reconfigure the existing visible items in place.
+Do not call AppKit item reload for a detail-only refresh: reload enters the reuse
+lifecycle, and reusable tile cleanup clears the thumbnail before the async loader
+repaints it. Permit one structural apply at a time and retain only the latest
+pending grid state. Reset scroll and selection only when the query descriptor
+changes; same-descriptor structural applies rely on native batch-update scroll
+preservation and restore surviving selected identities.
 
 ## Why This Is Simplest Correct
 
@@ -71,7 +76,8 @@ responsive columns and removes flow-layout width bookkeeping.
 - Same-identity background enrichment or fact-detail updates do not recycle
   visible cells, so thumbnails remain painted while unchanged content is skipped
   by the tile content key.
-- The current grid intentionally has no interaction behavior.
+- Native AppKit selection and responder-chain copy behavior live at this boundary
+  so SwiftUI and the ViewModel do not mirror high-cardinality selection state.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
   high-cardinality media browser.
 
@@ -81,3 +87,4 @@ responsive columns and removes flow-layout width bookkeeping.
 - Apple, [NSCollectionView layout ownership](https://developer.apple.com/documentation/appkit/nscollectionview/collectionviewlayout)
 - Apple, [UTType.movie](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/movie)
 - `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md`
+- `docs/specs/0035-catalog-browser-remediation-completion.md`

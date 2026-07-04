@@ -9,10 +9,12 @@ import OSLog
 /// that path without allocating asynchronous file-write work on MainActor.
 ///
 /// Default diagnostics are session-scoped:
-/// `catalog-diagnostics-<UTC>-p<PID>-<prod|test>.jsonl`. Startup deletes the
-/// retired unbounded `catalog-diagnostics.jsonl` and keeps only the newest ten
-/// default files per run kind. Injected `outputURL` instances are exempt from
-/// pruning so focused tests can use temporary paths without side effects.
+/// `catalog-diagnostics-<UTC>-p<PID>-<prod|test>.jsonl`. The first default write
+/// removes the retired unbounded `catalog-diagnostics.jsonl` and keeps only the
+/// newest ten default files per run kind. Injected `outputURL` instances are
+/// exempt from pruning so focused tests can use temporary paths without side
+/// effects, and app construction never scans the diagnostics directory
+/// synchronously.
 ///
 /// This actor serializes append order and owns one lazily opened file handle.
 /// Callers outside UI hot paths may await `record`, which provides natural
@@ -39,8 +41,10 @@ actor CatalogDiagnostics {
 
     private let outputURL: URL
     private let isEnabled: Bool
+    private let managesDefaultDirectory: Bool
     private let encoder: JSONEncoder
     private var fileHandle: FileHandle?
+    private var preparedDefaultDirectory = false
 
     init(
         outputURL: URL,
@@ -49,12 +53,10 @@ actor CatalogDiagnostics {
     ) {
         self.outputURL = outputURL
         self.isEnabled = isEnabled
+        self.managesDefaultDirectory = managesDefaultDirectory
         encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.sortedKeys]
-        if managesDefaultDirectory {
-            Self.prepareDefaultDirectory(for: outputURL)
-        }
     }
 
     deinit {
@@ -91,6 +93,7 @@ actor CatalogDiagnostics {
             data.append(0x0A)
             let handle = try writableHandle()
             try handle.write(contentsOf: data)
+            prepareDefaultDirectoryIfNeeded()
         } catch {
             try? fileHandle?.close()
             fileHandle = nil
@@ -130,6 +133,14 @@ actor CatalogDiagnostics {
         return handle
     }
 
+    private func prepareDefaultDirectoryIfNeeded() {
+        guard managesDefaultDirectory, !preparedDefaultDirectory else {
+            return
+        }
+        preparedDefaultDirectory = true
+        Self.prepareDefaultDirectory(for: outputURL)
+    }
+
     private nonisolated static func prepareDefaultDirectory(for outputURL: URL) {
         let directory = outputURL.deletingLastPathComponent()
         let fileManager = FileManager.default
@@ -143,7 +154,7 @@ actor CatalogDiagnostics {
             try pruneSessionFiles(in: directory, runKind: "test", fileManager: fileManager)
         } catch {
             OtosLog.performance.error(
-                "Catalog diagnostics startup cleanup failed error=\(String(describing: error), privacy: .public)"
+                "Catalog diagnostics retention failed error=\(String(describing: error), privacy: .public)"
             )
         }
     }

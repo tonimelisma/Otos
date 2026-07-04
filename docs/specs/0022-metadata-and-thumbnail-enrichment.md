@@ -73,8 +73,9 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
   source facts current; a single coordinator actor owning two fixed worker pools
   by cursorless scheduling; a single SQLite claim lease column preventing repeated
   dequeue; enrichment writes batched through `CatalogStore`.
-- Non-functional: no media I/O, decode, or formatting on the MainActor; the tile
-  loads its thumbnail and formats its date off-main and only assigns on Main.
+- Non-functional: no media I/O or thumbnail decode on the MainActor; the tile
+  loads and decodes its thumbnail off-main, while the small capture-date label is
+  formatted synchronously during configuration.
 
 ## Architectural Alternatives
 
@@ -154,9 +155,9 @@ before the read — serving as both router and ADR 0008 safety gate. Results are
 applied in batches (one transaction, one notification) by `CatalogStore`. The
 products are a 256 px JPEG thumbnail file and on-demand metadata scalar/detail
 rows; only the thumbnail path, a resolved capture date, and the `(size, mtime)`
-stamps are fetched with hot asset detail rows. The tile loads its thumbnail and
-formats its date off-main. See ADR 0009 for why each choice is the simplest
-correct one.
+stamps are fetched with hot asset detail rows. The tile loads and decodes its
+thumbnail off-main and updates its small date label synchronously during
+configuration. See ADR 0009 for why each choice is the simplest correct one.
 
 ## Interfaces, Ownership, And Data Flow
 
@@ -270,8 +271,8 @@ Implementation sequence (each landed and verified on its own):
   never media payloads.
 - The grid uses signposts for state receive, structural apply, visible in-place
   reconfiguration, structural reload, and slow-cell setup. The tile's thumbnail
-  read/decode and date formatting run off the main actor; Main only assigns,
-  keeping the configure path below the slow-cell threshold.
+  read/decode runs off the main actor; Main updates the small date label during
+  configuration and assigns only the finished image from the background load.
 - Performance budgets: MainActor under 100 ms; the full metadata is not resident
   (ADR 0009 §2), and Projection publications carry only ordered IDs plus a scalar
   detail-refresh generation. Measure-before-optimize gates: no thumbnail cache

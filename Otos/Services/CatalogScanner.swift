@@ -57,6 +57,7 @@ nonisolated enum CatalogScanError: Error {
 
 private nonisolated enum LiveCatalogScanner {
     private static let issueExampleLimitPerKey = 10
+    private static let issueSummaryLimit = 20
 
     private struct ScanIssueKey: Hashable {
         let kind: String
@@ -95,7 +96,7 @@ private nonisolated enum LiveCatalogScanner {
         }
 
         func issueSummaries() -> [CatalogScanIssueSummary] {
-            filesystemIssueBuckets
+            Array(filesystemIssueBuckets
                 .map { key, bucket in
                     CatalogScanIssueSummary(
                         kind: key.kind,
@@ -113,6 +114,7 @@ private nonisolated enum LiveCatalogScanner {
                     }
                     return $0.errorDescription < $1.errorDescription
                 }
+                .prefix(issueSummaryLimit))
         }
     }
 
@@ -158,7 +160,7 @@ private nonisolated enum LiveCatalogScanner {
                 scanState.recordIssue(
                     kind: "enumeration",
                     path: url.path(percentEncoded: false),
-                    errorDescription: String(describing: error)
+                    errorDescription: stableIssueDescription(error)
                 )
                 return true
             }
@@ -234,9 +236,14 @@ private nonisolated enum LiveCatalogScanner {
             scanState.recordIssue(
                 kind: "resource",
                 path: fileURL.path(percentEncoded: false),
-                errorDescription: String(describing: error)
+                errorDescription: stableIssueDescription(error)
             )
         }
+    }
+
+    private static func stableIssueDescription(_ error: Error) -> String {
+        let nsError = error as NSError
+        return "\(String(reflecting: type(of: error)))(domain:\(nsError.domain),code:\(nsError.code))"
     }
 
     private static func scannedFile(

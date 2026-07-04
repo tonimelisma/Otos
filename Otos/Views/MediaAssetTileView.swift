@@ -10,9 +10,11 @@ import OSLog
 /// date. Keeping it separate keeps each file focused and lets the tile's pure policy
 /// (`MediaAssetTilePresentation`) be unit-tested without any AppKit lifecycle.
 ///
-/// The thumbnail read/decode and date formatting run off the main actor (never on the
-/// scroll thread); a generation token discards a load that resolves after the reusable
-/// tile has moved on to another asset.
+/// The thumbnail read/decode runs off the main actor (never on the scroll thread);
+/// a generation token discards a load that resolves after the reusable tile has
+/// moved on to another asset. Capture-date text is cheap scalar UI text and is
+/// assigned synchronously, so a date-only enrichment update does not clear the
+/// already-painted thumbnail.
 final class MediaAssetCollectionItem: NSCollectionViewItem {
     private var tileView: MediaAssetTileView? {
         view as? MediaAssetTileView
@@ -35,19 +37,20 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         tileView?.prepareForReuse()
     }
 
-    func configure(asset: MediaAsset, thumbnailDirectory: URL?) {
+    @discardableResult
+    func configure(asset: MediaAsset, thumbnailDirectory: URL?) -> Bool {
         guard let tileView else {
-            return
+            return false
         }
         let signpost = OtosSignpost.ui.beginInterval("MediaGridCellConfiguration")
         defer {
             OtosSignpost.ui.endInterval("MediaGridCellConfiguration", signpost)
         }
         let start = Date()
-        tileView.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
+        let startedLoad = tileView.configure(asset: asset, thumbnailDirectory: thumbnailDirectory)
         let elapsedMs = DiagnosticsTiming.milliseconds(since: start)
         guard elapsedMs >= 5 else {
-            return
+            return startedLoad
         }
         OtosSignpost.ui.emitEvent("MediaGridSlowCellConfiguration")
         OtosLog.ui.error(
@@ -56,15 +59,15 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
             \(asset.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
             """
         )
+        return startedLoad
     }
 }
 
-/// Ferries a freshly loaded thumbnail and its capture-date label from the
-/// background loader to the main actor. `CGImage` is immutable and Sendable, so
-/// no unchecked wrapper is needed; the main actor only assigns it to the layer.
+/// Ferries a freshly loaded thumbnail from the background loader to the main
+/// actor. `CGImage` is immutable and Sendable, so no unchecked wrapper is needed;
+/// the main actor only assigns it to the layer.
 private struct LoadedTile {
     let image: CGImage?
-    let dateText: String
 }
 
 private final class MediaAssetTileView: NSView {
@@ -73,10 +76,10 @@ private final class MediaAssetTileView: NSView {
     private let dateField = NSTextField(labelWithString: "")
     private let videoIconView = NSImageView()
 
-    /// Identifies the content the async load produced (thumbnail file + its enrichment
-    /// stamp + the displayed date). Equal keys mean nothing visible changed, so a
-    /// detail refresh of an unchanged tile does not re-decode or re-format anything.
-    private var currentContentKey: String?
+    /// Identifies the image content the async load produced (thumbnail file plus its
+    /// enrichment stamp). Equal keys mean the painted thumbnail can stay in place even
+    /// when capture-date text changes.
+    private var currentImageContentKey: String?
     /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
     /// the tile was handed to another asset is discarded instead of painting stale data.
     private var loadGeneration = 0
@@ -122,9 +125,11 @@ private final class MediaAssetTileView: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(asset: MediaAsset, thumbnailDirectory: URL?) {
+    @discardableResult
+    func configure(asset: MediaAsset, thumbnailDirectory: URL?) -> Bool {
         let isVideo = MediaAssetTilePresentation.isVideo(asset)
         titleField.stringValue = MediaAssetTilePresentation.title(asset)
+        dateField.stringValue = MediaAssetTilePresentation.captureDateText(asset)
         videoIconView.isHidden = !isVideo
         layer?.backgroundColor = isVideo
             ? NSColor.systemBlue.withAlphaComponent(0.20).cgColor
@@ -132,13 +137,14 @@ private final class MediaAssetTileView: NSView {
         setAccessibilityLabel(titleField.stringValue)
         needsLayout = true
 
-        let key = MediaAssetTilePresentation.contentKey(asset)
-        guard key != currentContentKey else {
+        let key = MediaAssetTilePresentation.imageContentKey(asset)
+        guard key != currentImageContentKey else {
             OtosSignpost.ui.emitEvent("MediaTileContentUnchanged")
-            return
+            return false
         }
-        currentContentKey = key
-        loadThumbnailAndDate(asset: asset, thumbnailDirectory: thumbnailDirectory)
+        currentImageContentKey = key
+        loadThumbnailImage(asset: asset, thumbnailDirectory: thumbnailDirectory)
+        return true
     }
 
     /// Draws or clears the selection ring. It uses the layer border rather than the
@@ -150,16 +156,15 @@ private final class MediaAssetTileView: NSView {
         layer?.borderColor = selected ? NSColor.controlAccentColor.cgColor : nil
     }
 
-    /// Reads the thumbnail file and formats the date off the main actor (file I/O,
-    /// decode, and formatting must never run on the scroll thread), then applies the
-    /// result on the main actor only if this tile still represents the same content.
-    private func loadThumbnailAndDate(asset: MediaAsset, thumbnailDirectory: URL?) {
+    /// Reads the thumbnail file off the main actor, then applies the result on the main
+    /// actor only if this tile still represents the same image content.
+    private func loadThumbnailImage(asset: MediaAsset, thumbnailDirectory: URL?) {
         loadGeneration += 1
         let generation = loadGeneration
         loadTask?.cancel()
         OtosSignpost.ui.emitEvent("MediaTileLoadStarted")
-        loadTask = Task.detached(priority: .utility) { [weak self] in
-            let loaded = MediaAssetTilePresentation.load(asset: asset, thumbnailDirectory: thumbnailDirectory)
+        loadTask = Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = MediaAssetTilePresentation.loadImage(asset: asset, thumbnailDirectory: thumbnailDirectory)
             if Task.isCancelled {
                 return
             }
@@ -173,7 +178,6 @@ private final class MediaAssetTileView: NSView {
                 }
                 self.imageView.image = nil
                 self.imageView.layer?.contents = loaded.image
-                self.dateField.stringValue = loaded.dateText
                 OtosSignpost.ui.emitEvent("MediaTileLoadApplied")
             }
         }
@@ -185,7 +189,7 @@ private final class MediaAssetTileView: NSView {
         loadTask?.cancel()
         loadTask = nil
         loadGeneration += 1
-        currentContentKey = nil
+        currentImageContentKey = nil
         imageView.image = nil
         imageView.layer?.contents = nil
         titleField.stringValue = ""
@@ -246,25 +250,25 @@ enum MediaAssetTilePresentation {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
 
-    /// Distinguishes everything the async tile load produces: the thumbnail file, the
-    /// full `(size, mtime)` enrichment stamp that changes when the file is re-thumbnailed
-    /// (size is included because bytes can change while mtime seconds stay equal), and the
-    /// displayed date.
-    nonisolated static func contentKey(_ asset: MediaAsset) -> String {
+    /// Distinguishes the async image load result: the thumbnail file plus the full
+    /// `(size, mtime)` enrichment stamp that changes when the file is re-thumbnailed
+    /// (size is included because bytes can change while mtime seconds stay equal).
+    /// Capture-date text is not part of image identity, so a date-only update does
+    /// not clear and reload the thumbnail.
+    nonisolated static func imageContentKey(_ asset: MediaAsset) -> String {
         let thumbnail = asset.thumbnailPath ?? ""
         let size = asset.enrichedSourceSize ?? -1
         let stamp = asset.enrichedSourceMTimeSeconds ?? -1
-        let date = asset.bestCaptureDate?.timeIntervalSince1970 ?? -1
-        return "\(thumbnail)#\(size)#\(stamp)#\(date)"
+        return "\(thumbnail)#\(size)#\(stamp)"
     }
 
-    /// Loads the thumbnail (if enriched and a directory exists) and formats the date.
+    /// Loads the thumbnail (if enriched and a directory exists).
     /// Pure and `nonisolated`, so it runs on a background executor. `fileprivate` because
     /// it returns the file-private `LoadedTile` ferry.
-    fileprivate nonisolated static func load(asset: MediaAsset, thumbnailDirectory: URL?) -> LoadedTile {
+    fileprivate nonisolated static func loadImage(asset: MediaAsset, thumbnailDirectory: URL?) -> LoadedTile {
         let image = asset.thumbnailPath.flatMap { name in
             thumbnailDirectory.flatMap { ThumbnailStore.load(name, in: $0) }
         }
-        return LoadedTile(image: image, dateText: captureDateText(asset))
+        return LoadedTile(image: image)
     }
 }

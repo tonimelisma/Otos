@@ -330,7 +330,8 @@ data-structure change from after-fix measurements.
 
 - Grid in-place reconfiguration is MainActor-bound because it touches AppKit
   views.
-- Thumbnail reads and date formatting remain off-main in detached tile tasks.
+- Thumbnail reads remain off-main in detached tile tasks; the small capture-date
+  label formats synchronously during tile configuration.
 - Thumbnail generation remains off-main in the enrichment workers.
 - No new long-lived tasks are added.
 - Existing tile generation guards reject stale thumbnail loads after reuse.

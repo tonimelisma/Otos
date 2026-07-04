@@ -39,7 +39,9 @@ In scope:
 
 - Add a process `RunContext` that identifies test vs app runs and names sessions.
 - Change default debug diagnostics to per-session files and prune old files.
-- Remove the legacy unbounded diagnostics file at diagnostics startup.
+- Remove the legacy unbounded diagnostics file after the first default diagnostics
+  write, without scanning/pruning the diagnostics directory during synchronous app
+  construction.
 - Route script log-stream captures into session-named files under `logs/`.
 - Stop leaving `console.log`, `run.log`, or `lldb.log` in the repo root.
 - Demote or delete high-cardinality console and JSONL spam.
@@ -143,7 +145,7 @@ Cons:
 Failure modes:
 
 - A bad pruning predicate could remove injected test files if it is not limited
-  to default diagnostics startup and file naming.
+  to default diagnostics file naming and the default diagnostics owner.
 - Multiple launches in the same second could collide without a PID suffix.
 
 ### Alternative C: Remove Durable JSONL And Use Only Unified Logs
@@ -184,7 +186,8 @@ availability transitions, failures, actual stalls, and slow query outliers.
   Its default path becomes
   `Application Support/<bundleID>/Diagnostics/catalog-diagnostics-<sessionID>-<runKind>.jsonl`.
 - `CatalogDiagnostics` owns default diagnostics retention and legacy file
-  deletion at startup. Injected `outputURL` instances used by tests do not prune
+  deletion after the first default write. Construction only records the output URL
+  and retention intent; injected `outputURL` instances used by tests do not prune
   unrelated directories.
 - `CatalogScanner` owns scan issue aggregation for a single scan and passes a
   compact summary through the existing scan finish diagnostic.
@@ -199,7 +202,8 @@ availability transitions, failures, actual stalls, and slow query outliers.
 
 ## Retirement Proof
 
-- `catalog-diagnostics.jsonl` is deleted by default diagnostics startup.
+- `catalog-diagnostics.jsonl` is deleted by the default diagnostics actor after
+  the first default write.
 - Repo-root `console.log`, `run.log`, and `lldb.log` are ignored and removed from
   the working tree.
 - Per-tile debug lines in `MediaAssetTileView` are deleted while signposts remain.
@@ -238,8 +242,9 @@ Unaffected after audit:
 - Keep `ui.mainRunLoop.stall` unchanged in this phase.
 - Add/retain slow-query JSONL only for `catalog.store.query.tileDetail` and
   `catalog.store.query.enrichment` when `queryMs > 50`.
-- Scan issue diagnostics become scan-level aggregate fields plus at most ten
-  path examples per `(kind, error)` key.
+- Scan issue diagnostics become scan-level aggregate fields, stable error keys
+  that do not include individual path-bearing error descriptions, a capped number
+  of issue buckets, and at most ten path examples per repeated issue key.
 - Verification uses `script/catalog-diagnostics.sh check`, focused tests, and
   targeted script/log file assertions. A full jank profile is out of scope until
   later phases change runtime behavior.
@@ -260,8 +265,8 @@ Unaffected after audit:
 ## Acceptance Criteria
 
 - Default diagnostics filenames include session ID, PID, and `prod` or `test`.
-- Default diagnostics startup removes the legacy global JSONL file and retains
-  only the newest ten diagnostics files per run kind.
+- The first default diagnostics write removes the legacy global JSONL file and
+  retains only the newest ten diagnostics files per run kind.
 - `CatalogDiagnostics(outputURL:)` remains usable by tests without unexpected
   pruning.
 - `script/build_and_run.sh --logs`, `--telemetry`, `script/capture-run.sh`,
@@ -269,8 +274,8 @@ Unaffected after audit:
   session-named files under `logs/` when they capture to disk.
 - Tile debug spam is gone while tile signposts remain.
 - Tile-detail and enrichment-candidate query JSONL appears only for slow queries.
-- Scan issue spam is summarized on scan finish with aggregate counts and bounded
-  examples.
+- Scan issue spam is summarized on scan finish with aggregate counts, stable
+  non-path-bearing issue keys, and bounded examples.
 - Scroll-driven visible-detail cancellation returns an empty detail map without
   an error log.
 - `script/smoke-run.sh --verify` proves the seeded root was consumed through the

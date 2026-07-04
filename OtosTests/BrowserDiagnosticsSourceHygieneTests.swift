@@ -22,6 +22,10 @@ struct BrowserDiagnosticsSourceHygieneTests {
             contentsOf: repoRoot.appending(path: "Otos/Services/CatalogScanner.swift"),
             encoding: .utf8
         )
+        let diagnostics = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Support/Diagnostics.swift"),
+            encoding: .utf8
+        )
 
         #expect(tile.contains("OtosSignpost.ui.emitEvent(\"MediaTileLoadStarted\")"))
         #expect(tile.contains("OtosSignpost.ui.emitEvent(\"MediaTilePrepareForReuse\")"))
@@ -41,7 +45,16 @@ struct BrowserDiagnosticsSourceHygieneTests {
         #expect(!store.contains("Catalog enrichment candidates queried priority="))
 
         #expect(scanner.contains("issueExampleLimitPerKey"))
+        #expect(scanner.contains("issueSummaryLimit"))
         #expect(scanner.contains("filesystemIssueBuckets"))
+        #expect(scanner.contains("stableIssueDescription"))
+        #expect(!scanner.contains("String(describing: error)"))
         #expect(!scanner.contains("operation: \"catalog.scan.issue\""))
+
+        let initializer = try #require(diagnostics.range(of: "init(\n"))
+        let record = try #require(diagnostics.range(of: "func record("))
+        let initializerBody = diagnostics[initializer.lowerBound ..< record.lowerBound]
+        #expect(!initializerBody.contains("prepareDefaultDirectory"))
+        #expect(diagnostics.contains("prepareDefaultDirectoryIfNeeded()"))
     }
 }

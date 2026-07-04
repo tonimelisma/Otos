@@ -243,9 +243,10 @@ commands are lossless and serial (you must not drop a command), and state delive
 is consumed losslessly. They are separate because mixing those delivery rules would
 be wrong for at least one of them. Query requests carry a monotonic generation.
 When a projected state arrives, the ViewModel updates its local query controls
-only if the state generation is at least as fresh as the newest local
-sidebar/sort/filter intent; this keeps rapid user edits from being rebuilt from
-stale control state while still accepting Projection's removed-library fallback.
+only if the state generation exactly matches the newest local sidebar/sort/filter
+intent; this keeps rapid A -> B -> A user edits from being rebuilt from stale
+control state. Projection's removed-library fallback is still accepted because it
+preserves the generation of the request it resolved.
 
 ### `Otos/Views/*` — passive rendering
 
@@ -258,20 +259,30 @@ transient availability and scan activity stay out of sidebar row text.
 `MediaAssetCollectionView` is the exception and the one place we drop to **AppKit**.
 Why: a media library can have tens of thousands of tiles, and `NSCollectionView`
 reuses cells (it only creates views for what is on screen), which SwiftUI's grids do
-not do as well at that scale. The small `MediaAssetCollectionApplyGate` exists so
-that only one structural update runs at a time and only the newest pending update
-survives — backpressure for a high-volume surface. Identity/order changes go
-through the diffable data source; detail-only changes for the same ordered IDs
-advance `detailRefreshGeneration`, re-read only visible details, and reconfigure
-the existing visible AppKit items in place, so a thumbnail does not blink just
-because metadata for an item changed. Structural applies do not prune the
-visible-detail cache first: the post-apply visible-detail request replaces that
-map for the current viewport. The bridge also reports the visible identities
-upward (the **viewport**) so enrichment can prioritize what you are looking at.
-`MediaAssetTileView` is one reusable tile: it shows the thumbnail and capture
-date, loading and decoding the thumbnail *off the main thread* and only assigning
-the finished image on Main, with a generation token so a load that finishes after
-the tile has been reused for another asset is discarded.
+not do as well at that scale. Read `MediaAssetCollectionView.swift` with its focused
+selection and structural-apply extensions (`MediaAssetCollectionSelection.swift` and
+`MediaAssetCollectionStructuralApply.swift`) as one AppKit boundary. The small
+`MediaAssetCollectionApplyGate` exists so that only one structural update runs at a
+time and only the newest pending update survives — backpressure for a high-volume
+surface. Identity/order changes go through animated diffable data-source applies so
+surviving visible items move with their rendered thumbnails intact instead of being
+torn down by `reloadData`.
+Detail-only changes for the same ordered IDs advance `detailRefreshGeneration`,
+re-read only visible details, and reconfigure the existing visible AppKit items in
+place, so a thumbnail does not blink just because metadata for an item changed.
+Structural applies do not prune the visible-detail cache first: the post-apply
+visible-detail request replaces that map for the current viewport.
+Structural-apply diagnostics record aggregate insert/remove counts, apply time,
+and how many visible image loads were actually started. The bridge also reports
+the visible identities upward (the **viewport**) so enrichment can prioritize what
+you are looking at. `MediaAssetTileView` is one reusable tile: it shows the
+thumbnail and capture date. It updates the small date label synchronously during
+configuration, while loading and decoding the thumbnail *off the main thread* and
+only assigning the finished image on Main, with a generation token so a load that
+finishes after the tile has been reused for another asset is discarded. The image
+reload key includes the thumbnail path plus source size and modification stamp,
+but not the date, so a date-only enrichment update does not clear or reload the
+image.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
 selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its
@@ -294,8 +305,10 @@ pools — one that enriches already-local files, one that downloads (materialize
 dataless cloud files — and decides what to work on next by asking Store for a
 bounded set of current enrichment candidates, prioritizing the viewport and freshly
 materialized IDs. Store atomically claims those rows with
-`enrichment_claimed_until`; the coordinator's sets are process-local scheduling
-state, not a SQL exclusion list or durable backlog. Its products are written back
+`enrichment_claimed_until`; the coordinator's sets and small queue of already
+claimed work are process-local scheduling state, not a SQL exclusion list or
+durable backlog. The queue lets the coordinator claim a modest batch and feed
+future worker slots without one SQLite write transaction per slot. Its products are written back
 through `CatalogStore.applyEnrichmentBatch` in batches. See
 `docs/adr/0009-enrichment-storage-and-staleness.md`,
 `docs/adr/0010-store-owned-query-catalog-and-identity-grid.md`, and
@@ -328,7 +341,10 @@ coordinator uses it to deliberately materialize the library in the background. S
 session naming), `Diagnostics.swift` (session-scoped debug JSONL), and
 `UIJankDiagnostics.swift` (a monitor that catches real main-thread stalls). You do
 not need these to read the app, but they are how we *measure* it instead of
-guessing.
+guessing. Store diagnostics split database wait from SQLite execution, enrichment
+batch diagnostics include write pressure and WAL byte-size samples, and stall
+records include the active UI operation or the most recent long completed
+operation so a 100 ms+ main-thread stall has nearby owner context.
 
 ## 5. A day in the life — two narratives
 

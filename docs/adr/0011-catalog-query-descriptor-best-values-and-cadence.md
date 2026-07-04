@@ -60,11 +60,18 @@ Adjacent decisions requiring separate specs or ADRs:
 Otos will model the media browser query as one `CatalogQueryDescriptor`:
 sidebar scope, `MediaFilter`, and `MediaSortOrder`. ViewModel owns the
 session-lifetime control state and forwards descriptor intents through one
-newest-value lane. Projection owns descriptor normalization, publication
+newest-value lane as `CatalogQueryRequest` values with monotonic generations.
+Projection owns descriptor normalization, publication
 coalescing, empty-state meaning, filter-option publication, and final
 `CatalogWindowState` construction. Store owns all ordered-ID, unfiltered-count,
 and distinct filter-option SQL. SwiftUI and AppKit receive already-resolved state
 and call owner intents; they do not query, sort, or filter themselves.
+
+Projected states carry the generation of the query request used to build them.
+The ViewModel applies projected query controls only when that generation exactly
+matches the newest local intent generation. Removed-library fallback preserves
+the same request generation because it resolves that intent; stale A -> B -> A
+publications cannot roll controls back through descriptor equality.
 
 SQLite stores scan facts (`kind`, `format`, and `name_sort_key`) and enrichment
 facts (`ts_original_unix`, `ts_quicktime_creation_unix`, `ts_digitized_unix`,
@@ -101,6 +108,11 @@ Store notifications is coalesced by a roughly one-second cadence. Store scan
 flush cadence, filesystem-event debounce, and enrichment apply flushing align to
 that same background scale. Viewport priority hints remain immediate because
 they affect scheduling, not UI publication.
+
+Toolbar filter controls and View menu filter commands share
+`CatalogFilterMenuContent`, so kind availability and partial-selection symbols
+cannot drift between the two command surfaces while both still call the same
+ViewModel descriptor intents.
 
 ## Alternatives Considered
 
@@ -178,6 +190,8 @@ definition, and keeps the UI passive.
   `best_capture_unix`.
 - The toolbar and menu commands can update one descriptor state and share one
   intent path.
+- Query request generations make stale-publication rejection independent of
+  descriptor equality.
 - Background enrichment may visibly reorder assets or change filter membership;
   this is correct behavior, not a special-case animation path.
 - Query-plan tests must cover production SQL builders for the default and

@@ -154,12 +154,15 @@ Adjacent decisions requiring separate ADRs or specs:
    budgets (neither is CPU-bound). Scheduling is cursorless: the next units are
    queried from Store through `enrichmentCandidates(prioritizing:limit:)`, and Store
    atomically claims returned rows with one nullable `enrichment_claimed_until`
-   column and `UPDATE ... RETURNING`. The coordinator maintains no backlog — only
-   the runtime state it cannot derive (viewport, in-flight guards, the just-
-   downloaded `freshly` LIFO hand-off, the discovered-dataless set, the pending-
-   apply buffer, and one `eagerMode` latch). Those process-local sets prevent
-   duplicate scheduling inside this coordinator; the SQLite lease is the SQL query
-   gate that prevents repeated dequeue of already-owned rows.
+   column and `UPDATE ... RETURNING`. The coordinator maintains no durable backlog
+   or SQL partition, but it does keep one small process-local queue of already
+   claimed work so a full sweep does not become one claim transaction per free
+   worker slot. The rest of its runtime state is what it cannot derive (viewport,
+   in-flight guards, the just-downloaded `freshly` LIFO hand-off, the
+   discovered-dataless set, the pending-apply buffer, and one `eagerMode` latch).
+   Those process-local sets and queued claims prevent duplicate scheduling inside
+   this coordinator; the SQLite lease is the SQL query gate that prevents repeated
+   dequeue of already-owned rows across queries.
 
    Claim transitions are explicit. Completed results keep their claim until
    `applyEnrichmentBatch` attempts the write; after that attempt, successful and
@@ -316,10 +319,12 @@ Failure modes:
   skips after a rescan.
 
 Rejected: cursorless derivation is simpler and correct (FND-042/043 precedent for
-deriving over maintaining). The one expensive case — the full sweep to prove "no
-materialized work left" before the latch — is hoisted off the coordinator actor.
-Revisit a maintained partition only if the cursorless scan is measured too costly
-at a real large library.
+deriving over maintaining). The current coordinator still derives candidates from
+Store truth, but it batches claimed rows into a small actor-local queue after
+measurement showed writer-queue pressure from many tiny claim transactions. That
+queue is not a maintained catalog partition: if the process exits, Store lease
+expiry is the recovery path. Revisit a durable partition only if the cursorless
+query itself is measured too costly at a real large library.
 
 ## Consequences
 

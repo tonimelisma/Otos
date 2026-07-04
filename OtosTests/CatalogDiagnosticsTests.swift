@@ -69,7 +69,7 @@ struct CatalogDiagnosticsTests {
         #expect(FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
     }
 
-    @Test func defaultDiagnosticsStartupPrunesOldSessionFilesAndDeletesLegacyFile() throws {
+    @Test func firstDefaultDiagnosticsWritePrunesOldSessionFilesAndDeletesLegacyFile() async throws {
         let temp = try makeDiagnosticsTemporaryDirectory()
         let diagnosticsDirectory = temp.appending(path: "Diagnostics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
@@ -97,7 +97,14 @@ struct CatalogDiagnosticsTests {
         }
 
         let outputURL = diagnosticsDirectory.appending(path: "catalog-diagnostics-current-p999-prod.jsonl")
-        _ = CatalogDiagnostics(outputURL: outputURL, isEnabled: false, managesDefaultDirectory: true)
+        let diagnostics = CatalogDiagnostics(
+            outputURL: outputURL,
+            isEnabled: true,
+            managesDefaultDirectory: true
+        )
+        #expect(FileManager.default.fileExists(atPath: legacyURL.path(percentEncoded: false)))
+
+        await diagnostics.record(operation: "test", phase: "finish")
 
         let remaining = try FileManager.default.contentsOfDirectory(
             at: diagnosticsDirectory,

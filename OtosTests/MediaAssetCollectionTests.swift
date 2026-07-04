@@ -153,7 +153,7 @@ struct MediaAssetCollectionTests {
         #expect(MediaAssetTilePresentation.captureDateText(undated).isEmpty)
     }
 
-    @Test func contentKeyDistinguishesThumbnailStampAndDate() {
+    @Test func imageContentKeyDistinguishesThumbnailStampButNotDate() {
         let base = makeDatedAsset(
             bestCaptureDate: Date(timeIntervalSince1970: 1000),
             thumbnailPath: "t.jpg",
@@ -164,14 +164,20 @@ struct MediaAssetCollectionTests {
             thumbnailPath: "t.jpg",
             enrichedMTime: 10
         )
-        #expect(MediaAssetTilePresentation.contentKey(base) == MediaAssetTilePresentation.contentKey(sameAgain))
+        #expect(
+            MediaAssetTilePresentation.imageContentKey(base)
+                == MediaAssetTilePresentation.imageContentKey(sameAgain)
+        )
 
         let newThumbnail = makeDatedAsset(
             bestCaptureDate: Date(timeIntervalSince1970: 1000),
             thumbnailPath: "u.jpg",
             enrichedMTime: 10
         )
-        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newThumbnail))
+        #expect(
+            MediaAssetTilePresentation.imageContentKey(base)
+                != MediaAssetTilePresentation.imageContentKey(newThumbnail)
+        )
 
         // A re-thumbnailed file keeps the same name but a newer stamp; the key must change.
         let newStamp = makeDatedAsset(
@@ -179,7 +185,10 @@ struct MediaAssetCollectionTests {
             thumbnailPath: "t.jpg",
             enrichedMTime: 11
         )
-        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newStamp))
+        #expect(
+            MediaAssetTilePresentation.imageContentKey(base)
+                != MediaAssetTilePresentation.imageContentKey(newStamp)
+        )
 
         // Bytes can change while mtime seconds stay equal; the size must be in the key.
         let newSize = makeDatedAsset(
@@ -188,14 +197,14 @@ struct MediaAssetCollectionTests {
             enrichedMTime: 10,
             enrichedSize: 999
         )
-        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newSize))
+        #expect(MediaAssetTilePresentation.imageContentKey(base) != MediaAssetTilePresentation.imageContentKey(newSize))
 
         let newDate = makeDatedAsset(
             bestCaptureDate: Date(timeIntervalSince1970: 2000),
             thumbnailPath: "t.jpg",
             enrichedMTime: 10
         )
-        #expect(MediaAssetTilePresentation.contentKey(base) != MediaAssetTilePresentation.contentKey(newDate))
+        #expect(MediaAssetTilePresentation.imageContentKey(base) == MediaAssetTilePresentation.imageContentKey(newDate))
     }
 }
 

@@ -24,7 +24,10 @@ struct CatalogScannerIssueAggregationTests {
             #expect(summaries.count == 1)
             let summary = try #require(summaries.first)
             #expect(summary.kind == "resource")
-            #expect(summary.errorDescription == "relativePathUnavailable")
+            #expect(summary.errorDescription.contains("CatalogScannedFileReaderIssue"))
+            #expect(summary.errorDescription.contains("domain:"))
+            #expect(summary.errorDescription.contains("code:"))
+            #expect(!summary.errorDescription.contains("photo-"))
             #expect(summary.count == 12)
             #expect(summary.examplePaths.count == 10)
         }

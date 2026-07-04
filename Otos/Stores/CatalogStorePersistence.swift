@@ -62,6 +62,7 @@ extension CatalogStore {
         var configuration = Configuration()
         configuration.maximumReaderCount = 4
         configuration.prepareDatabase { db in
+            try db.execute(sql: "PRAGMA synchronous = NORMAL")
             try db.execute(sql: "PRAGMA cache_size = -32768")
             try db.execute(sql: "PRAGMA mmap_size = 268435456")
         }
@@ -75,7 +76,7 @@ extension CatalogStore {
         // The catalog is a rebuildable filesystem projection. With no active users
         // and no authoritative user data in this schema, incompatible old local
         // databases are intentionally erased and rebuilt instead of migrated.
-        migrator.registerMigration("v2_query_descriptor_best_values") { db in
+        migrator.registerMigration("v3_sort_key_separator") { db in
             try db.create(table: "library_root") { table in
                 table.autoIncrementedPrimaryKey("id")
                 table.column("path", .text).notNull().unique()

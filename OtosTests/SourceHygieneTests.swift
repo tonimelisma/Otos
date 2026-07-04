@@ -121,6 +121,33 @@ struct SourceHygieneTests {
         #expect(!content.contains("func makeSnapshot()"))
     }
 
+    @Test func projectionDiagnosticsAndPolicyAreSplitFromPublicationActor() throws {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let projection = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Services/CatalogProjection.swift"),
+            encoding: .utf8
+        )
+        let diagnostics = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Services/CatalogProjectionDiagnostics.swift"),
+            encoding: .utf8
+        )
+        let policy = try String(
+            contentsOf: repoRoot.appending(path: "Otos/Services/CatalogWindowPolicy.swift"),
+            encoding: .utf8
+        )
+
+        #expect(!projection.contains("swiftlint:disable file_length"))
+        #expect(!projection.contains("struct CatalogProjectionPublicationDiagnostics"))
+        #expect(!projection.contains("static func sortLibraries"))
+        #expect(projection.contains("CatalogWindowPolicy"))
+        #expect(diagnostics.contains("struct CatalogProjectionPublicationDiagnostics"))
+        #expect(diagnostics.contains("struct CatalogProjectionChangeSummary"))
+        #expect(policy.contains("enum CatalogWindowPolicy"))
+        #expect(policy.contains("static func sortLibraries"))
+    }
+
     @Test func storeUsesPersistenceInstanceScanOwnershipWithoutDurableScanIDs() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -150,7 +177,7 @@ struct SourceHygieneTests {
         let content = try String(contentsOf: viewModelURL, encoding: .utf8)
 
         #expect(content.contains("private var queryGeneration"))
-        #expect(content.contains("nextState.queryGeneration >= queryGeneration"))
+        #expect(content.contains("nextState.queryGeneration == queryGeneration"))
         #expect(content.contains("AsyncStream<CatalogQueryRequest>"))
         #expect(!content.contains("hasPendingQueryIntent"))
         #expect(!content.contains("isRemovedLibraryFallback"))
@@ -187,38 +214,6 @@ struct SourceHygieneTests {
         #expect(!removeBody.contains("Task {"))
         #expect(!addBody.contains("catalogStore"))
         #expect(!removeBody.contains("catalogStore"))
-    }
-
-    @Test func appKitGridUsesNativeTelemetryWithoutJSONLTasks() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let content = try String(
-            contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
-            encoding: .utf8
-        )
-
-        #expect(!content.contains("CatalogDiagnostics"))
-        #expect(!content.contains("diagnostics?.record"))
-        #expect(content.contains("Task { [weak self, detailReader, visibleIDs]"))
-        #expect(content.contains("OtosLog.ui"))
-        #expect(content.contains("OtosSignpost.ui"))
-    }
-
-    @Test func appKitGridDoesNotReloadItemsForDetailRefresh() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let content = try String(
-            contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
-            encoding: .utf8
-        )
-
-        #expect(content.contains("case let .refreshVisible(_, resetScroll, resetSelection):"))
-        #expect(content.contains("requestVisibleDetails(reason: \"detailRefresh\")"))
-        #expect(content.contains("reconfigureVisibleItems(reason: \"detailQuery\")"))
-        #expect(content.contains("collectionView.item(at: indexPath)"))
-        #expect(!content.contains("reloadItems(at:"))
     }
 
     @Test func sqliteRowIDDoesNotLeakOutsideStore() throws {

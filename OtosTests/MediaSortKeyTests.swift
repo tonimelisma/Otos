@@ -47,4 +47,14 @@ struct MediaSortKeyTests {
         // Library /A precedes /B regardless of the within-library filename.
         #expect(inLibraryA.sortKey < inLibraryB.sortKey)
     }
+
+    @Test func assetSortKeyUsesNonNullSegmentSeparator() {
+        let key = MediaSortKey.make(
+            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+            relativePath: MediaRelativePath(rawValue: "img1.jpg")
+        )
+
+        #expect(!key.contains("\u{0}"))
+        #expect(key.contains("\u{1}"))
+    }
 }

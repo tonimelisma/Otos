@@ -241,8 +241,8 @@ or product decision is redesigned.
   cleanup is local and uses the same columns, indexes, and arguments.
 - `CatalogWindowViewModel` remains a MainActor adapter. It applies projected
   descriptor state to local query controls only when the projected state's query
-  generation is at least as fresh as the newest local query request. Projection
-  carries removed-library fallback through that same request-generation path.
+  generation exactly matches the newest local query request. Projection carries
+  removed-library fallback through that same request-generation path.
 - `CatalogFilterOptions.availableKinds` is the single model-level answer for
   which kind rows appear in toolbar and View menu filters.
 - `MediaAssetCollectionViewController` remains the only AppKit grid bridge; it

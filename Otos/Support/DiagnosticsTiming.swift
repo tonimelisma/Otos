@@ -1,8 +1,12 @@
 import Foundation
 
 nonisolated enum DiagnosticsTiming {
+    static func milliseconds(from start: Date, to end: Date) -> Int {
+        max(0, Int((end.timeIntervalSince(start) * 1000).rounded()))
+    }
+
     static func milliseconds(since start: Date, now: Date = Date()) -> Int {
-        max(0, Int((now.timeIntervalSince(start) * 1000).rounded()))
+        milliseconds(from: start, to: now)
     }
 
     /// Microsecond resolution for sub-millisecond pipeline steps (membership

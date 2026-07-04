@@ -93,6 +93,8 @@ actor CatalogStore {
         var appliedCount = 0
         var promotionFailed = false
         var discardedThumbnails: [GeneratedThumbnail] = []
+        var waitMs = 0
+        var execMs = 0
 
         mutating func discard(_ thumbnail: GeneratedThumbnail?) {
             guard let thumbnail else {
@@ -107,6 +109,26 @@ actor CatalogStore {
         }
     }
 
+    private struct DatabaseTimedValue<Value: Sendable> {
+        let value: Value
+        let waitMs: Int
+        let execMs: Int
+
+        var totalMs: Int {
+            waitMs + execMs
+        }
+    }
+
+    private struct EnrichmentCandidateClaimResult {
+        let candidates: [MediaAsset]
+        let waitMs: Int
+        let execMs: Int
+
+        var queryMs: Int {
+            waitMs + execMs
+        }
+    }
+
     private let location: Location
     private let scanner: CatalogScanner
     private let filesystemWatcher: CatalogFilesystemWatcher
@@ -116,6 +138,7 @@ actor CatalogStore {
     private let diagnostics: CatalogDiagnostics?
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private var dbWriter: (any DatabaseWriter)?
+    private var databaseFileURL: URL?
     private var started = false
     private var startupTask: Task<Void, Error>?
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
@@ -201,26 +224,33 @@ extension CatalogStore {
         let queryStart = Date()
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
-        let rows = try await dbWriter.read { db in
-            try Self.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: rootIDs, db: db)
+        let timedRows = try await dbWriter.read { db in
+            let entered = Date()
+            let rows = try Self.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: rootIDs, db: db)
+            return DatabaseTimedValue(
+                value: rows,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
         let validRootPathsByRowID = rootPathsByRowID.filter { rowID, path in
             rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
-        let ids = rows.compactMap { rootRowID, relativePath -> MediaAssetID? in
+        let ids = timedRows.value.compactMap { rootRowID, relativePath -> MediaAssetID? in
             guard let rootPath = validRootPathsByRowID[rootRowID] else {
                 return nil
             }
             return MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
         }
-        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        let queryMs = timedRows.totalMs
         OtosLog.catalog.debug(
             """
             Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
             roots=\(rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
-            queryMs=\(queryMs, privacy: .public)
+            waitMs=\(timedRows.waitMs, privacy: .public) \
+            execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
             """
         )
         await diagnostics?.record(
@@ -230,6 +260,8 @@ extension CatalogStore {
                 "descriptor": descriptor.diagnosticDescription,
                 "rootCount": "\(rootIDs.count)",
                 "count": "\(ids.count)",
+                "waitMs": "\(timedRows.waitMs)",
+                "execMs": "\(timedRows.execMs)",
                 "queryMs": "\(queryMs)",
             ]
         )
@@ -251,10 +283,30 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else {
             return 0
         }
+        let queryStart = Date()
         let dbWriter = try database()
-        return try await dbWriter.read { db in
-            try Self.countAssets(rootIDs: rootIDs, db: db)
+        let timedCount = try await dbWriter.read { db in
+            let entered = Date()
+            let count = try Self.countAssets(rootIDs: rootIDs, db: db)
+            return DatabaseTimedValue(
+                value: count,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
+        await diagnostics?.record(
+            operation: "catalog.store.query.catalogedCount",
+            phase: "finish",
+            fields: [
+                "selection": selection.diagnosticDescription,
+                "rootCount": "\(rootIDs.count)",
+                "count": "\(timedCount.value)",
+                "waitMs": "\(timedCount.waitMs)",
+                "execMs": "\(timedCount.execMs)",
+                "queryMs": "\(timedCount.totalMs)",
+            ]
+        )
+        return timedCount.value
     }
 
     func visibleAssetCount(
@@ -265,10 +317,30 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else {
             return 0
         }
+        let queryStart = Date()
         let dbWriter = try database()
-        return try await dbWriter.read { db in
-            try Self.countAssets(rootIDs: rootIDs, db: db)
+        let timedCount = try await dbWriter.read { db in
+            let entered = Date()
+            let count = try Self.countAssets(rootIDs: rootIDs, db: db)
+            return DatabaseTimedValue(
+                value: count,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
+        await diagnostics?.record(
+            operation: "catalog.store.query.visibleCount",
+            phase: "finish",
+            fields: [
+                "selection": selection.diagnosticDescription,
+                "rootCount": "\(rootIDs.count)",
+                "count": "\(timedCount.value)",
+                "waitMs": "\(timedCount.waitMs)",
+                "execMs": "\(timedCount.execMs)",
+                "queryMs": "\(timedCount.totalMs)",
+            ]
+        )
+        return timedCount.value
     }
 
     func filterOptions(
@@ -279,10 +351,31 @@ extension CatalogStore {
         guard !rootIDs.isEmpty else {
             return .empty
         }
+        let queryStart = Date()
         let dbWriter = try database()
-        return try await dbWriter.read { db in
-            try Self.filterOptions(rootIDs: rootIDs, db: db)
+        let timedOptions = try await dbWriter.read { db in
+            let entered = Date()
+            let options = try Self.filterOptions(rootIDs: rootIDs, db: db)
+            return DatabaseTimedValue(
+                value: options,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
+        await diagnostics?.record(
+            operation: "catalog.store.query.filterOptions",
+            phase: "finish",
+            fields: [
+                "selection": selection.diagnosticDescription,
+                "rootCount": "\(rootIDs.count)",
+                "kindCount": "\(timedOptions.value.availableKinds.count)",
+                "formatCount": "\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count })",
+                "waitMs": "\(timedOptions.waitMs)",
+                "execMs": "\(timedOptions.execMs)",
+                "queryMs": "\(timedOptions.totalMs)",
+            ]
+        )
+        return timedOptions.value
     }
 
     func mediaAssets(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaAsset] {
@@ -294,14 +387,20 @@ extension CatalogStore {
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
         let rootIDsBeforeRead = rootRowIDsByPath
         let dbWriter = try database()
-        let storedAssets = try await dbWriter.read { db in
-            try Self.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
+        let timedAssets = try await dbWriter.read { db in
+            let entered = Date()
+            let assets = try Self.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
+            return DatabaseTimedValue(
+                value: assets,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
 
         var assetsByID: [MediaAssetID: MediaAsset] = [:]
-        assetsByID.reserveCapacity(storedAssets.count)
-        for storedAsset in storedAssets {
+        assetsByID.reserveCapacity(timedAssets.value.count)
+        for storedAsset in timedAssets.value {
             guard let rootPath = rootPathsByRowID[storedAsset.libraryRootID],
                   rootRowIDsByPath[rootPath] == storedAsset.libraryRootID
             else {
@@ -311,26 +410,42 @@ extension CatalogStore {
             assetsByID[asset.id] = asset
         }
 
-        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        let queryMs = timedAssets.totalMs
         if queryMs > Self.slowQueryDiagnosticThresholdMs {
-            OtosLog.catalog.debug(
-                """
-                Catalog slow tile details query requested=\(ids.count, privacy: .public) \
-                returned=\(assetsByID.count, privacy: .public) queryMs=\(queryMs, privacy: .public)
-                """
-            )
-            await diagnostics?.record(
-                operation: "catalog.store.query.tileDetail",
-                phase: "finish",
-                fields: [
-                    "requested": "\(ids.count)",
-                    "returned": "\(assetsByID.count)",
-                    "queryMs": "\(queryMs)",
-                    "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
-                ]
+            await recordSlowTileDetailQuery(
+                requestedCount: ids.count,
+                returnedCount: assetsByID.count,
+                timing: timedAssets
             )
         }
         return assetsByID
+    }
+
+    private func recordSlowTileDetailQuery(
+        requestedCount: Int,
+        returnedCount: Int,
+        timing: DatabaseTimedValue<[StoredAsset]>
+    ) async {
+        OtosLog.catalog.debug(
+            """
+            Catalog slow tile details query requested=\(requestedCount, privacy: .public) \
+            returned=\(returnedCount, privacy: .public) \
+            waitMs=\(timing.waitMs, privacy: .public) \
+            execMs=\(timing.execMs, privacy: .public) queryMs=\(timing.totalMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.store.query.tileDetail",
+            phase: "finish",
+            fields: [
+                "requested": "\(requestedCount)",
+                "returned": "\(returnedCount)",
+                "waitMs": "\(timing.waitMs)",
+                "execMs": "\(timing.execMs)",
+                "queryMs": "\(timing.totalMs)",
+                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
+            ]
+        )
     }
 
     /// On-demand metadata read retained for the future tile/inspector metadata surface
@@ -343,30 +458,39 @@ extension CatalogStore {
         let queryStart = Date()
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreMetadataQuery")
         let dbWriter = try database()
-        let metadata = try await dbWriter.read { db in
-            try Self.metadataExtra(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+        let timedMetadata = try await dbWriter.read { db in
+            let entered = Date()
+            let metadata = try Self.metadataExtra(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+            return DatabaseTimedValue(
+                value: metadata,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreMetadataQuery", signpost)
 
         guard rootRowIDsByPath[id.libraryRootPath] == rootID else {
             return nil
         }
-        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        let queryMs = timedMetadata.totalMs
         OtosLog.catalog.debug(
             """
-            Catalog metadata queried returned=\(metadata == nil ? 0 : 1, privacy: .public) \
-            queryMs=\(queryMs, privacy: .public)
+            Catalog metadata queried returned=\(timedMetadata.value == nil ? 0 : 1, privacy: .public) \
+            waitMs=\(timedMetadata.waitMs, privacy: .public) \
+            execMs=\(timedMetadata.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
             """
         )
         await diagnostics?.record(
             operation: "catalog.store.query.metadata",
             phase: "finish",
             fields: [
-                "returned": metadata == nil ? "0" : "1",
+                "returned": timedMetadata.value == nil ? "0" : "1",
+                "waitMs": "\(timedMetadata.waitMs)",
+                "execMs": "\(timedMetadata.execMs)",
                 "queryMs": "\(queryMs)",
             ]
         )
-        return metadata
+        return timedMetadata.value
     }
 
     func enrichmentCandidates(
@@ -387,12 +511,17 @@ extension CatalogStore {
         candidates.reserveCapacity(limit)
         var claimedIDs = Set<MediaAssetID>()
         let uniquePriorityIDs = unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
+        var waitMs = 0
+        var execMs = 0
 
         if !uniquePriorityIDs.isEmpty {
-            try await candidates.append(contentsOf: priorityEnrichmentCandidates(
+            let priorityClaims = try await priorityEnrichmentCandidates(
                 ids: uniquePriorityIDs,
                 limit: limit
-            ))
+            )
+            candidates.append(contentsOf: priorityClaims.candidates)
+            waitMs += priorityClaims.waitMs
+            execMs += priorityClaims.execMs
             for asset in candidates {
                 claimedIDs.insert(asset.id)
             }
@@ -400,34 +529,58 @@ extension CatalogStore {
 
         if candidates.count < limit {
             let remaining = limit - candidates.count
-            let queriedCandidates = try await claimedEnrichmentCandidates(limit: remaining)
-            for asset in queriedCandidates where candidates.count < limit && !claimedIDs.contains(asset.id) {
+            let queriedClaims = try await claimedEnrichmentCandidates(limit: remaining)
+            waitMs += queriedClaims.waitMs
+            execMs += queriedClaims.execMs
+            for asset in queriedClaims.candidates where candidates.count < limit && !claimedIDs.contains(asset.id) {
                 claimedIDs.insert(asset.id)
                 candidates.append(asset)
             }
         }
 
-        let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+        let queryMs = waitMs + execMs
+        let wallMs = DiagnosticsTiming.milliseconds(since: queryStart)
         if queryMs > Self.slowQueryDiagnosticThresholdMs {
-            OtosLog.catalog.debug(
-                """
-                Catalog slow enrichment candidates query priority=\(priorityIDs.count, privacy: .public) \
-                returned=\(candidates.count, privacy: .public) \
-                queryMs=\(queryMs, privacy: .public)
-                """
-            )
-            await diagnostics?.record(
-                operation: "catalog.store.query.enrichment",
-                phase: "finish",
-                fields: [
-                    "priority": "\(priorityIDs.count)",
-                    "returned": "\(candidates.count)",
-                    "queryMs": "\(queryMs)",
-                    "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
-                ]
+            await recordSlowEnrichmentCandidateQuery(
+                priorityCount: priorityIDs.count,
+                returnedCount: candidates.count,
+                waitMs: waitMs,
+                execMs: execMs,
+                wallMs: wallMs
             )
         }
         return candidates
+    }
+
+    private func recordSlowEnrichmentCandidateQuery(
+        priorityCount: Int,
+        returnedCount: Int,
+        waitMs: Int,
+        execMs: Int,
+        wallMs: Int
+    ) async {
+        let queryMs = waitMs + execMs
+        OtosLog.catalog.debug(
+            """
+            Catalog slow enrichment candidates query priority=\(priorityCount, privacy: .public) \
+            returned=\(returnedCount, privacy: .public) \
+            waitMs=\(waitMs, privacy: .public) execMs=\(execMs, privacy: .public) \
+            queryMs=\(queryMs, privacy: .public) wallMs=\(wallMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.store.query.enrichment",
+            phase: "finish",
+            fields: [
+                "priority": "\(priorityCount)",
+                "returned": "\(returnedCount)",
+                "waitMs": "\(waitMs)",
+                "execMs": "\(execMs)",
+                "queryMs": "\(queryMs)",
+                "wallMs": "\(wallMs)",
+                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
+            ]
+        )
     }
 
     func releaseEnrichmentClaims(_ ids: [MediaAssetID]) async throws {
@@ -471,53 +624,123 @@ extension CatalogStore {
         }
     }
 
-    private func priorityEnrichmentCandidates(ids: [MediaAssetID], limit: Int) async throws -> [MediaAsset] {
+    private func priorityEnrichmentCandidates(
+        ids: [MediaAssetID],
+        limit: Int
+    ) async throws -> EnrichmentCandidateClaimResult {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = rootRowIDsByPath
         let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
         let dbWriter = try database()
-        var candidates: [MediaAsset] = []
-        candidates.reserveCapacity(limit)
-        for id in ids {
-            guard candidates.count < limit else {
-                break
-            }
-            guard let asset = priorityAssetsByID[id],
-                  asset.needsEnrichment,
-                  availabilityByRootPath[asset.libraryRootPath] == .available,
-                  let rootID = rootIDsByPathBeforeWrite[asset.libraryRootPath]
-            else {
-                continue
-            }
-            let claimed = try await dbWriter.write { db in
-                try Self.claimEnrichmentAsset(
+        let eligibleClaims = priorityEnrichmentClaimInputs(
+            ids: ids,
+            assetsByID: priorityAssetsByID,
+            rootIDsByPath: rootIDsByPathBeforeWrite,
+            limit: limit
+        )
+        guard !eligibleClaims.isEmpty else {
+            return EnrichmentCandidateClaimResult(candidates: [], waitMs: 0, execMs: 0)
+        }
+        let claimInputs = eligibleClaims
+
+        let claimStart = Date()
+        let timedClaim = try await dbWriter.write { db in
+            let entered = Date()
+            var candidates: [MediaAsset] = []
+            candidates.reserveCapacity(claimInputs.count)
+            for (asset, rootID) in claimInputs {
+                guard try Self.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
                     claimedUntil: claimedUntil,
                     db: db
-                )
+                ) else {
+                    continue
+                }
+                candidates.append(asset)
             }
-            guard claimed else {
-                continue
-            }
-            candidates.append(asset)
+            return DatabaseTimedValue(
+                value: candidates,
+                waitMs: DiagnosticsTiming.milliseconds(from: claimStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
-        return candidates
+        let result = EnrichmentCandidateClaimResult(
+            candidates: timedClaim.value,
+            waitMs: timedClaim.waitMs,
+            execMs: timedClaim.execMs
+        )
+        if result.queryMs > Self.slowQueryDiagnosticThresholdMs {
+            await recordSlowPriorityEnrichmentClaim(
+                priorityCount: ids.count,
+                eligibleCount: claimInputs.count,
+                result: result
+            )
+        }
+        return result
     }
 
-    private func claimedEnrichmentCandidates(limit: Int) async throws -> [MediaAsset] {
+    private func priorityEnrichmentClaimInputs(
+        ids: [MediaAssetID],
+        assetsByID: [MediaAssetID: MediaAsset],
+        rootIDsByPath: [LibraryRootPath: Int64],
+        limit: Int
+    ) -> [(asset: MediaAsset, rootID: Int64)] {
+        var eligibleClaims: [(asset: MediaAsset, rootID: Int64)] = []
+        eligibleClaims.reserveCapacity(min(limit, ids.count))
+        for id in ids where eligibleClaims.count < limit {
+            guard let asset = assetsByID[id],
+                  asset.needsEnrichment,
+                  availabilityByRootPath[asset.libraryRootPath] == .available,
+                  let rootID = rootIDsByPath[asset.libraryRootPath]
+            else {
+                continue
+            }
+            eligibleClaims.append((asset, rootID))
+        }
+        return eligibleClaims
+    }
+
+    private func recordSlowPriorityEnrichmentClaim(
+        priorityCount: Int,
+        eligibleCount: Int,
+        result: EnrichmentCandidateClaimResult
+    ) async {
+        await diagnostics?.record(
+            operation: "catalog.store.query.enrichment.priorityClaim",
+            phase: "finish",
+            fields: [
+                "priority": "\(priorityCount)",
+                "eligible": "\(eligibleCount)",
+                "returned": "\(result.candidates.count)",
+                "waitMs": "\(result.waitMs)",
+                "execMs": "\(result.execMs)",
+                "queryMs": "\(result.queryMs)",
+                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
+            ]
+        )
+    }
+
+    private func claimedEnrichmentCandidates(limit: Int) async throws -> EnrichmentCandidateClaimResult {
         let availableRootIDs = availableLibraryRootIDs()
         let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
         let dbWriter = try database()
-        let storedAssets = try await dbWriter.write { db in
-            try Self.fetchStoredAssetsNeedingEnrichment(
+        let queryStart = Date()
+        let timedStoredAssets = try await dbWriter.write { db in
+            let entered = Date()
+            let storedAssets = try Self.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: availableRootIDs,
                 claimNotAfter: claimedUntil,
                 limit: limit,
                 db: db
             )
+            return DatabaseTimedValue(
+                value: storedAssets,
+                waitMs: DiagnosticsTiming.milliseconds(from: queryStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
-        return storedAssets.compactMap { storedAsset in
+        let candidates: [MediaAsset] = timedStoredAssets.value.compactMap { storedAsset -> MediaAsset? in
             guard let rootPath = rootPathsByRowID[storedAsset.libraryRootID],
                   rootRowIDsByPath[rootPath] == storedAsset.libraryRootID,
                   availabilityByRootPath[rootPath] == .available
@@ -526,6 +749,27 @@ extension CatalogStore {
             }
             return mediaAsset(from: storedAsset, rootPath: rootPath)
         }
+        let result = EnrichmentCandidateClaimResult(
+            candidates: candidates,
+            waitMs: timedStoredAssets.waitMs,
+            execMs: timedStoredAssets.execMs
+        )
+        if result.queryMs > Self.slowQueryDiagnosticThresholdMs {
+            await diagnostics?.record(
+                operation: "catalog.store.query.enrichment.claim",
+                phase: "finish",
+                fields: [
+                    "limit": "\(limit)",
+                    "availableRootCount": "\(availableRootIDs.count)",
+                    "returned": "\(candidates.count)",
+                    "waitMs": "\(result.waitMs)",
+                    "execMs": "\(result.execMs)",
+                    "queryMs": "\(result.queryMs)",
+                    "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
+                ]
+            )
+        }
+        return result
     }
 
     func start(scansSavedLibraries: Bool = true) async throws {
@@ -651,15 +895,8 @@ extension CatalogStore {
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
         discardGeneratedThumbnails(writeOutcome.discardedThumbnails)
 
-        await diagnostics?.record(
-            operation: "catalog.enrichment.batch",
-            phase: "finish",
-            fields: [
-                "count": "\(writeOutcome.appliedCount)",
-                "discardedThumbnails": "\(writeOutcome.discardedThumbnails.count)",
-                "promotionFailed": "\(writeOutcome.promotionFailed)",
-            ]
-        )
+        await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
+        await recordWALDiagnostics(reason: "enrichmentBatch")
         if writeOutcome.appliedCount > 0 {
             notifyCatalogChanged(.assetsDetailChanged)
         }
@@ -668,6 +905,25 @@ extension CatalogStore {
             return .writeFailed
         }
         return .applied(count: writeOutcome.appliedCount)
+    }
+
+    private func recordEnrichmentBatchWrite(
+        resultsCount: Int,
+        writeOutcome: EnrichmentBatchWriteOutcome
+    ) async {
+        await diagnostics?.record(
+            operation: "catalog.enrichment.batch",
+            phase: "finish",
+            fields: [
+                "attempted": "\(resultsCount)",
+                "count": "\(writeOutcome.appliedCount)",
+                "discardedThumbnails": "\(writeOutcome.discardedThumbnails.count)",
+                "promotionFailed": "\(writeOutcome.promotionFailed)",
+                "waitMs": "\(writeOutcome.waitMs)",
+                "execMs": "\(writeOutcome.execMs)",
+                "writeMs": "\(writeOutcome.waitMs + writeOutcome.execMs)",
+            ]
+        )
     }
 
     private func releaseEnrichmentClaimsAfterBatch(_ resultIDs: [MediaAssetID]) async {
@@ -689,7 +945,9 @@ extension CatalogStore {
         thumbnailDirectory: URL?,
         dbWriter: any DatabaseWriter
     ) async throws -> EnrichmentBatchWriteOutcome {
-        try await dbWriter.write { db in
+        let writeStart = Date()
+        return try await dbWriter.write { db in
+            let entered = Date()
             var outcome = EnrichmentBatchWriteOutcome()
             for result in results {
                 try Self.applyEnrichmentResult(
@@ -700,6 +958,8 @@ extension CatalogStore {
                     db: db
                 )
             }
+            outcome.waitMs = DiagnosticsTiming.milliseconds(from: writeStart, to: entered)
+            outcome.execMs = DiagnosticsTiming.milliseconds(since: entered)
             return outcome
         }
     }
@@ -967,6 +1227,7 @@ private extension CatalogStore {
 
         let dbWriter: any DatabaseWriter
         var storageKind = "memory"
+        var openedFileURL: URL?
         switch location {
         case let .application(bundleIdentifier):
             let databaseURL = try Self.applicationDatabaseURL(bundleIdentifier: bundleIdentifier)
@@ -975,6 +1236,7 @@ private extension CatalogStore {
                 configuration: Self.fileBackedDatabaseConfiguration()
             )
             storageKind = "application"
+            openedFileURL = databaseURL
         case let .databaseFile(url):
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
@@ -985,6 +1247,7 @@ private extension CatalogStore {
                 configuration: Self.fileBackedDatabaseConfiguration()
             )
             storageKind = "file"
+            openedFileURL = url
         case .inMemory:
             dbWriter = try DatabaseQueue()
         }
@@ -998,10 +1261,49 @@ private extension CatalogStore {
             OtosLog.thumbnails.info("Thumbnail directory purged after clean catalog schema reset")
         }
         self.dbWriter = dbWriter
+        databaseFileURL = openedFileURL
+        recordDatabaseOpenDiagnostics(dbWriter: dbWriter, storageKind: storageKind)
         OtosLog.persistence.info(
             "Catalog database opened storage=\(storageKind, privacy: .public)"
         )
         return dbWriter
+    }
+
+    private func recordDatabaseOpenDiagnostics(dbWriter: any DatabaseWriter, storageKind: String) {
+        let synchronousValue = (try? dbWriter.read { db in
+            try Int.fetchOne(db, sql: "PRAGMA synchronous") ?? -1
+        }) ?? -1
+        let synchronousLabel = Self.sqliteSynchronousLabel(synchronousValue)
+        OtosLog.persistence.info(
+            """
+            Catalog database pragmas storage=\(storageKind, privacy: .public) \
+            synchronous=\(synchronousLabel, privacy: .public)(\(synchronousValue, privacy: .public))
+            """
+        )
+        recordDiagnostic(
+            operation: "catalog.database.open",
+            phase: "finish",
+            fields: [
+                "storage": storageKind,
+                "synchronous": synchronousLabel,
+                "synchronousValue": "\(synchronousValue)",
+            ]
+        )
+    }
+
+    private static func sqliteSynchronousLabel(_ value: Int) -> String {
+        switch value {
+        case 0:
+            "OFF"
+        case 1:
+            "NORMAL"
+        case 2:
+            "FULL"
+        case 3:
+            "EXTRA"
+        default:
+            "unknown"
+        }
     }
 
     private func applyLoadedCatalog(roots: [StoredRoot]) {
@@ -1240,8 +1542,10 @@ private extension CatalogStore {
         }
 
         let dbQueue = try database()
+        let writeStart = Date()
         let state = OtosSignpost.persistence.beginInterval("CatalogScanBatchWrite")
-        let changedCount = try await dbQueue.write { db in
+        let timedChangedCount = try await dbQueue.write { db in
+            let entered = Date()
             var count = 0
             for file in batch {
                 let changed = try Self.upsertScannedFile(
@@ -1254,9 +1558,14 @@ private extension CatalogStore {
                     count += 1
                 }
             }
-            return count
+            return DatabaseTimedValue(
+                value: count,
+                waitMs: DiagnosticsTiming.milliseconds(from: writeStart, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
         OtosSignpost.persistence.endInterval("CatalogScanBatchWrite", state)
+        let changedCount = timedChangedCount.value
 
         // The store actor can process remove/cancel messages while SQLite is
         // writing. Recheck ownership before notifying from this batch.
@@ -1266,20 +1575,11 @@ private extension CatalogStore {
         }
 
         let visibleChange = changedCount > 0
-        OtosLog.catalog.debug(
-            """
-            Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) \
-            count=\(batch.count, privacy: .public) changed=\(visibleChange, privacy: .public)
-            """
-        )
-        await diagnostics?.record(
-            operation: "catalog.scan.batch",
-            phase: "finish",
-            fields: [
-                "rootPath": scan.rootPath.rawValue,
-                "count": "\(batch.count)",
-                "changed": "\(visibleChange)",
-            ]
+        await recordScanBatchWrite(
+            scan: scan,
+            scannedCount: batch.count,
+            changedCount: changedCount,
+            timing: timedChangedCount
         )
         // SQLite reported whether this batch inserted a new row or changed existing
         // filesystem facts. Identical rescans publish nothing; changed dates now count
@@ -1287,6 +1587,37 @@ private extension CatalogStore {
         if visibleChange {
             notifyCatalogChanged()
         }
+    }
+
+    private func recordScanBatchWrite(
+        scan: ActiveScan,
+        scannedCount: Int,
+        changedCount: Int,
+        timing: DatabaseTimedValue<Int>
+    ) async {
+        let visibleChange = changedCount > 0
+        OtosLog.catalog.debug(
+            """
+            Catalog scan batch path=\(scan.rootPath.rawValue, privacy: .public) \
+            count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) \
+            waitMs=\(timing.waitMs, privacy: .public) \
+            execMs=\(timing.execMs, privacy: .public) \
+            writeMs=\(timing.totalMs, privacy: .public)
+            """
+        )
+        await diagnostics?.record(
+            operation: "catalog.scan.batch",
+            phase: "finish",
+            fields: [
+                "rootPath": scan.rootPath.rawValue,
+                "count": "\(scannedCount)",
+                "changed": "\(visibleChange)",
+                "changedCount": "\(changedCount)",
+                "waitMs": "\(timing.waitMs)",
+                "execMs": "\(timing.execMs)",
+                "writeMs": "\(timing.totalMs)",
+            ]
+        )
     }
 
     private func scanCompleted(scan: ActiveScan, observedPaths: Set<MediaRelativePath>) async {
@@ -1642,6 +1973,34 @@ private extension CatalogStore {
         Task { [diagnostics, operation, phase, fields] in
             await diagnostics.record(operation: operation, phase: phase, fields: fields)
         }
+    }
+
+    private func recordWALDiagnostics(reason: String) async {
+        guard databaseFileURL != nil else {
+            return
+        }
+        await diagnostics?.record(
+            operation: "catalog.database.wal",
+            phase: "sample",
+            fields: [
+                "reason": reason,
+                "walBytes": "\(walFileSizeBytes() ?? -1)",
+            ]
+        )
+    }
+
+    private func walFileSizeBytes() -> Int64? {
+        guard let databaseFileURL else {
+            return nil
+        }
+        let walPath = databaseFileURL.path(percentEncoded: false) + "-wal"
+        guard FileManager.default.fileExists(atPath: walPath) else {
+            return 0
+        }
+        guard let size = try? FileManager.default.attributesOfItem(atPath: walPath)[.size] as? NSNumber else {
+            return nil
+        }
+        return size.int64Value
     }
 
     // swiftlint:disable:next function_body_length

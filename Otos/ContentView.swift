@@ -30,6 +30,8 @@ struct ContentView: View {
                 emptyState: viewModel.state.mediaEmptyState,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
+                stallMonitor: viewModel.uiStallMonitor,
+                diagnostics: viewModel.catalogDiagnostics,
                 onViewportChanged: viewModel.viewportChanged,
                 clearFilters: viewModel.clearMediaFilter
             )

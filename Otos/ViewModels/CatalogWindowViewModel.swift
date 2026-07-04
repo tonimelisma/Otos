@@ -51,6 +51,14 @@ final class CatalogWindowViewModel {
         mediaTileDetailReader
     }
 
+    var uiStallMonitor: MainRunLoopStallMonitor {
+        stallMonitor
+    }
+
+    var catalogDiagnostics: CatalogDiagnostics? {
+        diagnostics
+    }
+
     @ObservationIgnored private let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator?
@@ -365,13 +373,15 @@ extension CatalogWindowViewModel {
         let previousState = state
         let updateID = stallMonitor.reserveUpdateID()
         let applyStart = Date()
+        let operation = stallMonitor.beginOperation("CatalogWindowViewModel.applyState")
+        defer { stallMonitor.endOperation(operation) }
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateApply")
 
         // Projection is authoritative for resolved library availability, but an
         // older publication can finish after a newer local query intent. Request
         // generations make that freshness check value-independent, covering rapid
         // A -> B -> A toggles that equality alone cannot distinguish.
-        if nextState.queryGeneration >= queryGeneration {
+        if nextState.queryGeneration == queryGeneration {
             queryGeneration = nextState.queryGeneration
             queryDescriptor = nextState.queryDescriptor
             sidebarSelection = nextState.resolvedSidebarSelection

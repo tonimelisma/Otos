@@ -14,12 +14,13 @@ import OSLog
 /// heavy work — reading bytes, decoding, downloading — runs OFF this actor inside the
 /// worker tasks; only scheduling and the fast result hand-off run on the actor.
 ///
-/// Scheduling is cursorless: there is no maintained backlog of "what needs enrichment".
-/// Store derives that from queryable source/enrichment stamps and returns only the next
-/// bounded set of candidates. The coordinator keeps only the runtime state it cannot
-/// derive: the viewport, in-flight guards, the just-downloaded `freshly` hand-off, the
-/// set of dataless ids discovered so far, the pending-apply buffer, and one `eagerMode`
-/// latch.
+/// Scheduling is cursorless: there is no durable backlog of "what needs enrichment".
+/// Store derives that from queryable source/enrichment stamps and returns a bounded set
+/// of claimed candidates. The coordinator keeps only the runtime state it cannot
+/// derive: the viewport, a small process-local queue of already-claimed work used to
+/// avoid one SQLite claim query per worker slot, in-flight guards, the just-downloaded
+/// `freshly` hand-off, the set of dataless ids discovered so far, the pending-apply
+/// buffer, and one `eagerMode` latch.
 ///
 /// Materialization status is not checked on this actor. The enricher checks it off-actor
 /// immediately before any read (the ADR 0008 safety gate) and reports `.notMaterialized`
@@ -52,12 +53,14 @@ actor EnrichmentCoordinator {
     private let materialize: @Sendable (URL) async -> Bool
     private let enrichConcurrency: Int
     private let downloadConcurrency: Int
+    private let claimBatchSize: Int
     private let applyFlushInterval: Duration
     private let applyFlushSleep: @Sendable (Duration) async -> Void
     private let diagnostics: CatalogDiagnostics?
 
     private var viewport: [MediaAssetID] = []
     private var freshly: [MediaAssetID] = []
+    private var claimedEnrichQueue: [EnrichWork] = []
     private var datalessPending: Set<MediaAssetID> = []
     private var inFlightEnrich: Set<MediaAssetID> = []
     private var inFlightDownload: Set<MediaAssetID> = []
@@ -80,6 +83,7 @@ actor EnrichmentCoordinator {
         materialize: @escaping @Sendable (URL) async -> Bool = { await EnrichmentCoordinator.liveMaterialize($0) },
         enrichConcurrency: Int = 4,
         downloadConcurrency: Int = 4,
+        claimBatchSize: Int = 32,
         applyFlushInterval: Duration = .seconds(1),
         applyFlushSleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
@@ -92,6 +96,7 @@ actor EnrichmentCoordinator {
         self.materialize = materialize
         self.enrichConcurrency = enrichConcurrency
         self.downloadConcurrency = downloadConcurrency
+        self.claimBatchSize = max(claimBatchSize, enrichConcurrency)
         self.applyFlushInterval = applyFlushInterval
         self.applyFlushSleep = applyFlushSleep
         self.writeFailureBackoff = writeFailureBackoff
@@ -138,6 +143,7 @@ extension EnrichmentCoordinator {
         applyFlushTask = nil
         writeRetryTask?.cancel()
         writeRetryTask = nil
+        claimedEnrichQueue.removeAll()
         signalContinuation.finish()
     }
 
@@ -191,28 +197,43 @@ private extension EnrichmentCoordinator {
         }
     }
 
-    /// Claims up to the free enrich slots, marking each in-flight so the next claim skips it.
+    /// Drains already-claimed work into free slots before asking Store for another
+    /// bounded claim batch. The queue is process-local scheduling state only; SQLite
+    /// `enrichment_claimed_until` remains the cross-query lease.
     private func dequeueEnrichmentWork() async -> [EnrichWork] {
         let availableSlots = enrichConcurrency - inFlightEnrich.count
         guard availableSlots > 0 else {
             return []
         }
+
+        var items = drainClaimedEnrichmentQueue(limit: availableSlots)
+        guard items.count < availableSlots else {
+            return items
+        }
+
         do {
+            let claimLimit = max(claimBatchSize, availableSlots - items.count)
             let candidates = try await store.enrichmentCandidates(
                 prioritizing: prioritizedEnrichmentIDs(),
-                limit: availableSlots
+                limit: claimLimit
             )
-            if candidates.isEmpty {
+            if candidates.isEmpty, claimedEnrichQueue.isEmpty, items.isEmpty {
                 eagerMode = true
             }
-            var items: [EnrichWork] = []
-            items.reserveCapacity(candidates.count)
             let claimedIDs = Set(candidates.map(\.id))
             freshly.removeAll { claimedIDs.contains($0) }
             for asset in candidates where !inFlightEnrich.contains(asset.id) {
-                inFlightEnrich.insert(asset.id)
-                items.append(makeWork(asset))
+                claimedEnrichQueue.append(makeWork(asset))
             }
+            items.append(contentsOf: drainClaimedEnrichmentQueue(limit: availableSlots - items.count))
+            let queuedCount = claimedEnrichQueue.count
+            OtosLog.metadata.debug(
+                """
+                Enrichment claim batch claimed=\(candidates.count, privacy: .public) \
+                queued=\(queuedCount, privacy: .public) \
+                dispatched=\(items.count, privacy: .public) limit=\(claimLimit, privacy: .public)
+                """
+            )
             return items
         } catch {
             OtosLog.metadata.error(
@@ -225,6 +246,23 @@ private extension EnrichmentCoordinator {
             )
             return []
         }
+    }
+
+    private func drainClaimedEnrichmentQueue(limit: Int) -> [EnrichWork] {
+        guard limit > 0, !claimedEnrichQueue.isEmpty else {
+            return []
+        }
+        var items: [EnrichWork] = []
+        items.reserveCapacity(limit)
+        while items.count < limit, !claimedEnrichQueue.isEmpty {
+            let work = claimedEnrichQueue.removeFirst()
+            guard !inFlightEnrich.contains(work.id) else {
+                continue
+            }
+            inFlightEnrich.insert(work.id)
+            items.append(work)
+        }
+        return items
     }
 
     private func dequeueDownloadWork() -> [MediaAssetID] {

@@ -216,9 +216,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
 nonisolated enum MediaSortKey {
     static func make(libraryRootPath: LibraryRootPath, relativePath: MediaRelativePath) -> String {
         // The library segment groups a library's assets together; the relative
-        // path orders within it. A null separator keeps the two segments from
+        // path orders within it. U+0001 keeps the two segments from
         // ordering across the boundary.
-        naturalKey(libraryRootPath.rawValue) + "\u{0}" + naturalKey(relativePath.rawValue)
+        naturalKey(libraryRootPath.rawValue) + "\u{1}" + naturalKey(relativePath.rawValue)
     }
 
     static func naturalKey(_ string: String) -> String {
