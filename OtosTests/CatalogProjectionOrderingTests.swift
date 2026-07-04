@@ -91,13 +91,22 @@ struct CatalogProjectionOrderingTests {
         )
         let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
         let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recorder = OrderingStateRecorder()
         let recordingTask = Task {
-            for await _ in stream {}
+            for await state in stream {
+                await recorder.append(state)
+            }
         }
         defer { recordingTask.cancel() }
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
+        _ = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+            states.last { state in
+                state.resolvedSidebarSelection == .allMedia
+                    && state.mediaGrid.orderedAssetIDs.count == 1
+            }
+        }
         _ = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
                 && event.fields["sidebarSelection"] == "allMedia"
@@ -107,6 +116,12 @@ struct CatalogProjectionOrderingTests {
         try await diagnostics.removeExistingDiagnosticsForTesting()
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
         await projection.updateSidebarSelection(.library(rootPath))
+        _ = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+            states.last { state in
+                state.resolvedSidebarSelection == .library(rootPath)
+                    && state.mediaGrid.orderedAssetIDs.count == 1
+            }
+        }
         let filtered = try await waitForOrderingDiagnostic(outputURL) { event in
             event.operation == "catalog.projection.window"
                 && event.fields["sidebarSelection"] == "library:\(rootPath.rawValue)"

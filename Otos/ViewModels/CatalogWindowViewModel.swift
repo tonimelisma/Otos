@@ -164,6 +164,9 @@ extension CatalogWindowViewModel {
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowViewModelStart")
         OtosSignpost.ui.endInterval("CatalogWindowViewModelStart", signpost)
         OtosLog.ui.info("Catalog window view model started")
+        Task { [diagnostics] in
+            await diagnostics?.prepareForLifecycle()
+        }
         if startsStallMonitor {
             stallMonitor.start(diagnostics: diagnostics)
         }
@@ -382,7 +385,6 @@ extension CatalogWindowViewModel {
         // generations make that freshness check value-independent, covering rapid
         // A -> B -> A toggles that equality alone cannot distinguish.
         if nextState.queryGeneration == queryGeneration {
-            queryGeneration = nextState.queryGeneration
             queryDescriptor = nextState.queryDescriptor
             sidebarSelection = nextState.resolvedSidebarSelection
         } else {

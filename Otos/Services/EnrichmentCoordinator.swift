@@ -39,41 +39,44 @@ import OSLog
 /// current.
 ///
 /// Lifecycle mirrors `CatalogStore`: it is a process-lifetime owner started by the
-/// ViewModel; `shutdown()` cancels its tasks (tests use it to stop cleanly).
+/// ViewModel; `shutdown()` cancels its tasks and releases process-local SQLite
+/// claims before dropping queued work (tests use it to stop cleanly).
 actor EnrichmentCoordinator {
-    private struct EnrichWork {
+    struct EnrichWork {
         let id: MediaAssetID
         let url: URL
         let sourceSize: Int64?
         let sourceMTimeSeconds: Int?
     }
 
-    private let store: CatalogStore
-    private let enricher: MediaEnricher
-    private let materialize: @Sendable (URL) async -> Bool
-    private let enrichConcurrency: Int
-    private let downloadConcurrency: Int
-    private let claimBatchSize: Int
-    private let applyFlushInterval: Duration
-    private let applyFlushSleep: @Sendable (Duration) async -> Void
-    private let diagnostics: CatalogDiagnostics?
+    let store: CatalogStore
+    let enricher: MediaEnricher
+    let materialize: @Sendable (URL) async -> Bool
+    let enrichConcurrency: Int
+    let downloadConcurrency: Int
+    let claimBatchSize: Int
+    let applyFlushInterval: Duration
+    let applyFlushSleep: @Sendable (Duration) async -> Void
+    let diagnostics: CatalogDiagnostics?
 
-    private var viewport: [MediaAssetID] = []
-    private var freshly: [MediaAssetID] = []
-    private var claimedEnrichQueue: [EnrichWork] = []
-    private var datalessPending: Set<MediaAssetID> = []
-    private var inFlightEnrich: Set<MediaAssetID> = []
-    private var inFlightDownload: Set<MediaAssetID> = []
-    private var pendingApply: [EnrichmentResult] = []
-    private var pendingApplyIDs: Set<MediaAssetID> = []
-    private var eagerMode = false
+    var viewport: [MediaAssetID] = []
+    var freshly: [MediaAssetID] = []
+    var claimedEnrichQueue: [EnrichWork] = []
+    var datalessPending: Set<MediaAssetID> = []
+    var inFlightEnrich: Set<MediaAssetID> = []
+    var inFlightDownload: Set<MediaAssetID> = []
+    var pendingApply: [EnrichmentResult] = []
+    var pendingApplyIDs: Set<MediaAssetID> = []
+    var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
+    var eagerMode = false
+    var isShuttingDown = false
 
-    private let writeFailureBackoff: Duration
+    let writeFailureBackoff: Duration
 
     private var supervisor: Task<Void, Never>?
     private var changeConsumer: Task<Void, Never>?
-    private var applyFlushTask: Task<Void, Never>?
-    private var writeRetryTask: Task<Void, Never>?
+    var applyFlushTask: Task<Void, Never>?
+    var writeRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -134,7 +137,8 @@ extension EnrichmentCoordinator {
         signal()
     }
 
-    func shutdown() {
+    func shutdown() async {
+        isShuttingDown = true
         supervisor?.cancel()
         supervisor = nil
         changeConsumer?.cancel()
@@ -143,7 +147,15 @@ extension EnrichmentCoordinator {
         applyFlushTask = nil
         writeRetryTask?.cancel()
         writeRetryTask = nil
+        await releaseOutstandingClaimsForShutdown()
         claimedEnrichQueue.removeAll()
+        datalessPending.removeAll()
+        inFlightEnrich.removeAll()
+        inFlightDownload.removeAll()
+        pendingApply.removeAll()
+        pendingApplyIDs.removeAll()
+        diagnosedThumbnailLifecycleIDs.removeAll()
+        freshly.removeAll()
         signalContinuation.finish()
     }
 
@@ -153,12 +165,18 @@ extension EnrichmentCoordinator {
     }
 }
 
-private extension EnrichmentCoordinator {
+extension EnrichmentCoordinator {
     func markDirtyAndSignal() {
+        guard !isShuttingDown else {
+            return
+        }
         signal()
     }
 
     func signal() {
+        guard !isShuttingDown else {
+            return
+        }
         signalContinuation.yield()
     }
 
@@ -195,224 +213,5 @@ private extension EnrichmentCoordinator {
                 }
             }
         }
-    }
-
-    /// Drains already-claimed work into free slots before asking Store for another
-    /// bounded claim batch. The queue is process-local scheduling state only; SQLite
-    /// `enrichment_claimed_until` remains the cross-query lease.
-    private func dequeueEnrichmentWork() async -> [EnrichWork] {
-        let availableSlots = enrichConcurrency - inFlightEnrich.count
-        guard availableSlots > 0 else {
-            return []
-        }
-
-        var items = drainClaimedEnrichmentQueue(limit: availableSlots)
-        guard items.count < availableSlots else {
-            return items
-        }
-
-        do {
-            let claimLimit = max(claimBatchSize, availableSlots - items.count)
-            let candidates = try await store.enrichmentCandidates(
-                prioritizing: prioritizedEnrichmentIDs(),
-                limit: claimLimit
-            )
-            if candidates.isEmpty, claimedEnrichQueue.isEmpty, items.isEmpty {
-                eagerMode = true
-            }
-            let claimedIDs = Set(candidates.map(\.id))
-            freshly.removeAll { claimedIDs.contains($0) }
-            for asset in candidates where !inFlightEnrich.contains(asset.id) {
-                claimedEnrichQueue.append(makeWork(asset))
-            }
-            items.append(contentsOf: drainClaimedEnrichmentQueue(limit: availableSlots - items.count))
-            let queuedCount = claimedEnrichQueue.count
-            OtosLog.metadata.debug(
-                """
-                Enrichment claim batch claimed=\(candidates.count, privacy: .public) \
-                queued=\(queuedCount, privacy: .public) \
-                dispatched=\(items.count, privacy: .public) limit=\(claimLimit, privacy: .public)
-                """
-            )
-            return items
-        } catch {
-            OtosLog.metadata.error(
-                "Enrichment candidate query failed error=\(String(describing: error), privacy: .public)"
-            )
-            await diagnostics?.record(
-                operation: "catalog.enrichment.coordinator",
-                phase: "queryError",
-                fields: ["error": String(describing: error)]
-            )
-            return []
-        }
-    }
-
-    private func drainClaimedEnrichmentQueue(limit: Int) -> [EnrichWork] {
-        guard limit > 0, !claimedEnrichQueue.isEmpty else {
-            return []
-        }
-        var items: [EnrichWork] = []
-        items.reserveCapacity(limit)
-        while items.count < limit, !claimedEnrichQueue.isEmpty {
-            let work = claimedEnrichQueue.removeFirst()
-            guard !inFlightEnrich.contains(work.id) else {
-                continue
-            }
-            inFlightEnrich.insert(work.id)
-            items.append(work)
-        }
-        return items
-    }
-
-    private func dequeueDownloadWork() -> [MediaAssetID] {
-        var ids: [MediaAssetID] = []
-        while inFlightDownload.count < downloadConcurrency, let id = nextDownloadID() {
-            inFlightDownload.insert(id)
-            ids.append(id)
-        }
-        return ids
-    }
-}
-
-// MARK: - Work selection (cursorless)
-
-private extension EnrichmentCoordinator {
-    func prioritizedEnrichmentIDs() -> [MediaAssetID] {
-        var ids: [MediaAssetID] = []
-        var seen: Set<MediaAssetID> = []
-        ids.reserveCapacity(viewport.count + freshly.count)
-        for id in viewport.reversed() where seen.insert(id).inserted {
-            ids.append(id)
-        }
-        for id in freshly.reversed() where seen.insert(id).inserted {
-            ids.append(id)
-        }
-        return ids
-    }
-
-    private func makeWork(_ asset: MediaAsset) -> EnrichWork {
-        EnrichWork(
-            id: asset.id,
-            url: asset.id.fileURL,
-            sourceSize: asset.byteSize,
-            sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt)
-        )
-    }
-
-    func nextDownloadID() -> MediaAssetID? {
-        for id in viewport.reversed() where datalessPending.contains(id) && !inFlightDownload.contains(id) {
-            return id
-        }
-        guard eagerMode else {
-            return nil
-        }
-        return datalessPending.first { !inFlightDownload.contains($0) }
-    }
-
-    func hasEnrichmentWorkRemaining() -> Bool {
-        !inFlightEnrich.isEmpty
-    }
-}
-
-// MARK: - Completion
-
-private extension EnrichmentCoordinator {
-    func finishEnrich(_ id: MediaAssetID, _ outcome: EnrichmentOutcome) async {
-        inFlightEnrich.remove(id)
-        switch outcome {
-        case let .complete(result):
-            pendingApply.append(result)
-            pendingApplyIDs.insert(id)
-            scheduleApplyFlushIfNeeded()
-        case .notMaterialized:
-            datalessPending.insert(id)
-            try? await store.refreshEnrichmentClaims([id])
-        case .transient:
-            try? await store.releaseEnrichmentClaims([id])
-        }
-        signal()
-    }
-
-    func finishDownload(_ id: MediaAssetID, materialized: Bool) async {
-        inFlightDownload.remove(id)
-        datalessPending.remove(id)
-        try? await store.releaseEnrichmentClaims([id])
-        if materialized {
-            freshly.append(id)
-        }
-        signal()
-    }
-
-    func scheduleApplyFlushIfNeeded() {
-        guard applyFlushTask == nil, !pendingApply.isEmpty else {
-            return
-        }
-        let interval = applyFlushInterval
-        let sleep = applyFlushSleep
-        applyFlushTask = Task { [weak self, sleep] in
-            await sleep(interval)
-            guard !Task.isCancelled else {
-                return
-            }
-            await self?.flushPendingApply()
-        }
-    }
-
-    func flushPendingApply() async {
-        applyFlushTask = nil
-        guard !pendingApply.isEmpty else {
-            return
-        }
-        let batch = pendingApply
-        pendingApply.removeAll(keepingCapacity: true)
-        pendingApplyIDs.removeAll(keepingCapacity: true)
-        let outcome = await store.applyEnrichmentBatch(batch)
-        await diagnostics?.record(
-            operation: "catalog.enrichment.coordinator",
-            phase: "flush",
-            fields: ["count": "\(batch.count)", "outcome": "\(outcome)"]
-        )
-        switch outcome {
-        case let .applied(count) where count < batch.count:
-            // A *validated* drop (stale because a scan observed newer bytes, or
-            // proven-deleted) leaves its asset `needsEnrichment`, but its scan notification
-            // was already consumed while the id was in flight/pending. Re-wake against fresh
-            // Store queries so a still-stale asset is re-dispatched immediately; a
-            // proven-deleted one simply drops out of candidate results.
-            markDirtyAndSignal()
-        case .applied:
-            break
-        case .writeFailed:
-            // Don't re-wake immediately (that would tight-loop the read/generate/fail cycle),
-            // but don't drop the only wake either: if this failure was the last in-flight
-            // work, nothing else would ever re-dispatch the still-`needsEnrichment` assets.
-            // Schedule one coalesced delayed retry so they are re-attempted once storage may
-            // have recovered.
-            scheduleWriteFailureRetry()
-        }
-        scheduleApplyFlushIfNeeded()
-    }
-
-    /// One pending backoff retry at a time. After the delay it re-wakes the loop, which
-    /// re-dispatches any asset still `needsEnrichment` (including those a failed write left
-    /// unstamped); a persistent failure simply reschedules, pacing the retries.
-    private func scheduleWriteFailureRetry() {
-        guard writeRetryTask == nil else {
-            return
-        }
-        let backoff = writeFailureBackoff
-        writeRetryTask = Task { [weak self] in
-            try? await Task.sleep(for: backoff)
-            await self?.fireWriteFailureRetry()
-        }
-    }
-
-    private func fireWriteFailureRetry() {
-        writeRetryTask = nil
-        guard !Task.isCancelled else {
-            return
-        }
-        markDirtyAndSignal()
     }
 }

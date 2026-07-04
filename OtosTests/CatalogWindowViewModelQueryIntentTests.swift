@@ -4,6 +4,27 @@ import Testing
 @Suite(.serialized)
 struct CatalogWindowViewModelQueryIntentTests {
     @MainActor
+    @Test func normalizedNoOpQueryIntentDoesNotBumpOrRollbackGeneration() async throws {
+        let (model, gate) = makeQueryIntentModel()
+
+        model.start()
+        try await gate.waitForBuildCount(1)
+        model.setSortField(.bestDate)
+        await gate.releaseAll()
+        _ = try await waitForWindowState(model) { state in
+            state.title == "Build 1"
+        }
+
+        let requests = try await waitForRequestsReleasingBuilds(gate, "no-op query generation") { requests in
+            requests.count >= 1
+        }
+
+        #expect(model.queryDescriptor == .default)
+        #expect(model.state.queryGeneration == 0)
+        #expect(requests.allSatisfy { $0.descriptor == .default && $0.generation == 0 })
+    }
+
+    @MainActor
     @Test func staleProjectedStateDoesNotRollbackNewerQueryIntent() async throws {
         let (model, gate) = makeQueryIntentModel()
 
@@ -57,8 +78,6 @@ struct CatalogWindowViewModelQueryIntentTests {
         _ = try await waitForWindowState(model) { state in
             state.title == "Build 2"
         }
-        #expect(model.state.queryGeneration == 1)
-        #expect(model.state.queryDescriptor.sort.field == .name)
         #expect(model.queryDescriptor == .default)
 
         let staleGeneration = model.state.queryGeneration

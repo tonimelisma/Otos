@@ -27,8 +27,8 @@ In scope:
 - correlate main-run-loop stalls with the current or most recently completed UI
   operation
 - expose enrichment write pressure and WAL byte-size facts
-- change structural collection applies to the animated diffable path and remove
-  manual scroll-origin restoration
+- change structural collection applies to the diffable path and remove manual
+  scroll-origin restoration
 - split tile image reload identity from capture-date text so date-only changes do
   not clear thumbnails
 - batch enrichment candidate claims when timing evidence confirms writer-queue
@@ -156,8 +156,8 @@ Cons:
 
 Failure modes:
 
-- animated diffable applies could reveal a different AppKit hitch, which the new
-  stall tags and apply summary logs must identify
+- diffable applies could reveal a different AppKit hitch, which the new stall
+  tags and apply summary logs must identify
 - claim batching could keep stale candidates in a small actor queue after Store
   truth changes; process-local in-flight checks and claim leases bound that risk
 
@@ -229,8 +229,8 @@ New fields:
 - Enrichment batches: attempted/applied counts, discarded thumbnails,
   promotion failure, transaction timings, and WAL bytes
 - UI stalls: current operation and most recent completed operation over 100 ms
-- Structural grid apply logs: insert/remove counts, apply time, visible reloads
-  started
+- Structural grid apply logs: insert/remove counts, apply time, reorder-only and
+  animation status, and post-apply visible-detail request count
 
 ## Tests And Acceptance Criteria
 

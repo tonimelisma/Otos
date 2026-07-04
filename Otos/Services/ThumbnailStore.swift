@@ -24,7 +24,9 @@ import UniformTypeIdentifiers
 /// good thumbnail. `load` decodes off the main actor and returns an immutable
 /// `CGImage`; the caller only assigns that already-decoded bitmap on the main actor.
 /// `delete`/`deleteAll` are the purge side for proven deletion, library removal, and
-/// clean pre-user schema reset.
+/// clean pre-user schema reset. `deleteStagedTemporaryFiles` is startup hygiene for
+/// app-owned staged files abandoned by a prior process; it never reaches into media
+/// library roots.
 nonisolated enum ThumbnailStore {
     /// 256 px long edge keeps a true grid thumbnail (max zoom loads originals, separately).
     static let maxPixelSize = 256
@@ -174,6 +176,39 @@ nonisolated enum ThumbnailStore {
         for url in contents {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+
+    /// Deletes abandoned staged thumbnail temp files under the app-owned thumbnail
+    /// directory. The staged naming convention is hidden plus `.tmp`; final thumbnails
+    /// are deterministic non-hidden `.jpg` names and are left untouched.
+    @discardableResult
+    static func deleteStagedTemporaryFiles(in directory: URL) -> Int {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else {
+            return 0
+        }
+        var removedCount = 0
+        for url in contents {
+            let name = url.lastPathComponent
+            guard name.hasPrefix("."), name.hasSuffix(".tmp") else {
+                continue
+            }
+            let values = try? url.resourceValues(forKeys: [.isRegularFileKey])
+            guard values?.isRegularFile != false else {
+                continue
+            }
+            do {
+                try FileManager.default.removeItem(at: url)
+                removedCount += 1
+            } catch {
+                OtosLog.thumbnails.debug(
+                    "Staged thumbnail cleanup skipped name=\(name, privacy: .public)"
+                )
+            }
+        }
+        return removedCount
     }
 
     private static func normalizedJPEGImage(from image: CGImage) throws -> CGImage {

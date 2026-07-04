@@ -80,7 +80,8 @@ implementation history.
 | [0032](specs/0032-catalog-browser-smell-followup.md) | Catalog browser smell and review follow-up: Projection diagnostics/policy split, AppKit detail-cache pruning, review-thread fixes, and narrow persistence query cleanup. |
 | [0033](specs/0033-smoke-library-seeding.md) | Seeded smoke launch tooling: ensure the main OneDrive Pictures library, wait, scroll down/up, capture logs and catalog diagnostics, and avoid empty-catalog runtime evidence. |
 | [0034](specs/0034-session-scoped-diagnostics-and-log-hygiene.md) | Session-scoped diagnostics, ignored run/test log captures, JSONL de-spamming, scan issue aggregation, and cancellation-aware tile-detail errors. |
-| [0035](specs/0035-catalog-browser-remediation-completion.md) | Catalog browser remediation completion: Store wait/exec timing, stall operation attribution, WAL visibility, animated structural grid applies, image-only tile reload identity, enrichment claim batching, query-intent freshness, and source/docs hygiene. |
+| [0035](specs/0035-catalog-browser-remediation-completion.md) | Catalog browser remediation completion: Store wait/exec timing, stall operation attribution, WAL visibility, diffable structural grid applies, image-only tile reload identity, enrichment claim batching, query-intent freshness, and source/docs hygiene. |
+| [0036](specs/0036-pr41-browser-remediation-follow-up.md) | PR 41 remediation follow-up: enrichment claim lifecycle, newest-first fallback claiming, bounded filesystem diagnostics, large reorder-only grid apply policy, and source/docs cleanup. |
 
 ## Planning Documents
 

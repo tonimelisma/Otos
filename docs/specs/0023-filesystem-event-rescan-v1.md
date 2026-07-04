@@ -149,7 +149,8 @@ Watcher `stop()` on `shutdown`.
 
 - Signposts: `FilesystemWatcherStart`, `FilesystemWatcherStop`, `FilesystemWatcherEvent`,
   `FilesystemEventDebounce`, `FilesystemRescanScheduled`.
-- JSONL: `catalog.filesystemEvent` phases `receive`, `debounce`, `schedule`, `drop`.
+- JSONL: `catalog.filesystemEvent` emits one decoded batch summary per debounce
+  window with bounded counts, plus bounded `schedule` and `drop` summaries.
 
 ## Test And Acceptance Criteria
 

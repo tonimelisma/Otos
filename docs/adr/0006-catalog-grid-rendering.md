@@ -48,18 +48,19 @@ Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. They display a one-line filename. Only content conforming to
 `UTType.movie` gets a small video symbol and blue tint.
 
-Apply an animated diffable snapshot when ordered IDs change. On macOS the
-nonanimated diffable path behaves like `reloadData`, which tears down visible
-items and clears their layer contents before thumbnail reloads repaint them; the
-animated batch-update path lets surviving items move with their rendered
-thumbnails intact. For unchanged IDs, re-read visible details through the
-Store-backed detail reader and reconfigure the existing visible items in place.
-Do not call AppKit item reload for a detail-only refresh: reload enters the reuse
-lifecycle, and reusable tile cleanup clears the thumbnail before the async loader
-repaints it. Permit one structural apply at a time and retain only the latest
-pending grid state. Reset scroll and selection only when the query descriptor
-changes; same-descriptor structural applies rely on native batch-update scroll
-preservation and restore surviving selected identities.
+Apply a diffable snapshot when ordered IDs change. Small and user-visible
+insert/remove changes may animate so surviving items move with rendered thumbnails
+intact. Large same-membership background reorders apply nonanimated: real-library
+smoke proved multi-second animated full-grid resorts can jank the browser, while a
+nonanimated reorder preserves item identity without creating useful visual motion.
+For unchanged IDs, re-read visible details through the Store-backed detail reader
+and reconfigure the existing visible items in place. Do not call AppKit item reload
+for a detail-only refresh: reload enters the reuse lifecycle, and reusable tile
+cleanup clears the thumbnail before the async loader repaints it. Permit one
+structural apply at a time and retain only the latest pending grid state. Reset
+scroll and selection only when the query descriptor changes; same-descriptor
+structural applies rely on native diffable update preservation and restore
+surviving selected identities.
 
 ## Why This Is Simplest Correct
 

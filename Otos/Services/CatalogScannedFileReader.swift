@@ -47,6 +47,6 @@ nonisolated enum CatalogScannedFileReader {
     }
 }
 
-private nonisolated enum CatalogScannedFileReaderIssue: Error {
+nonisolated enum CatalogScannedFileReaderIssue: Error {
     case relativePathUnavailable
 }

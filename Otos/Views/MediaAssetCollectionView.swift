@@ -11,8 +11,10 @@ import UniformTypeIdentifiers
 /// high-cardinality browser requires.
 ///
 /// Descriptor plus identity order is structural; tile detail is read only for the visible window.
-/// A structural change performs one animated diffable apply, while unchanged IDs
-/// re-read visible details and reconfigure existing reusable items in place.
+/// A structural change performs one diffable apply, animating small/user-visible
+/// insert/remove changes while applying large same-membership background reorders
+/// nonanimated. Unchanged IDs re-read visible details and reconfigure existing
+/// reusable items in place.
 /// `MediaAssetCollectionApplyGate` prevents overlapping AppKit applies and keeps
 /// only the newest pending value.
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
@@ -74,6 +76,7 @@ struct MediaTileDetailReader {
 
 @MainActor
 final class MediaAssetCollectionViewController: NSViewController {
+    private static let largeReorderAnimationItemLimit = 1000
     enum Section: Hashable {
         case media
     }
@@ -89,8 +92,6 @@ final class MediaAssetCollectionViewController: NSViewController {
     private var tileDetailsByID: [MediaAssetID: MediaAsset] = [:]
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
-    var countsStructuralApplyReloads = false
-    var structuralApplyReloadsStarted = 0
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let preservedSelection: Set<MediaAssetID>
@@ -98,7 +99,16 @@ final class MediaAssetCollectionViewController: NSViewController {
         let applyStart: Date
         let insertedCount: Int
         let removedCount: Int
+        let reorderOnly: Bool
+        let animatingDifferences: Bool
         let signpost: OSSignpostIntervalState
+    }
+
+    private struct StructuralChangeSummary {
+        let insertedCount: Int
+        let removedCount: Int
+        let reorderOnly: Bool
+        let animatingDifferences: Bool
     }
 
     /// Set by the representable each SwiftUI update. Tiles resolve `thumbnailPath`
@@ -144,10 +154,7 @@ final class MediaAssetCollectionViewController: NSViewController {
             else {
                 return nil
             }
-            let startedLoad = item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory)
-            if startedLoad, countsStructuralApplyReloads {
-                structuralApplyReloadsStarted += 1
-            }
+            _ = item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory)
             return item
         }
 
@@ -175,7 +182,7 @@ final class MediaAssetCollectionViewController: NSViewController {
 
     @objc private func scrollBoundsChanged() {
         reportViewport()
-        requestVisibleDetails(reason: "scroll")
+        _ = requestVisibleDetails(reason: "scroll")
     }
 
     /// Maps the currently visible items to their ordered identities and forwards them as
@@ -250,7 +257,7 @@ extension MediaAssetCollectionViewController {
             if resetScroll {
                 scrollToTop()
             }
-            requestVisibleDetails(reason: "detailRefresh")
+            _ = requestVisibleDetails(reason: "detailRefresh")
             reportViewport()
         case let .apply(grid, resetScroll, resetSelection):
             applyStructure(grid, resetScroll: resetScroll, resetSelection: resetSelection)
@@ -264,14 +271,7 @@ extension MediaAssetCollectionViewController {
     ) {
         let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.applyStructure")
         let applyStart = Date()
-        let previousOrderedIDs = applyGate.displayedOrderedIDs
-        let previousIDs = Set(previousOrderedIDs)
-        let nextIDs = Set(grid.orderedAssetIDs)
-        let insertedCount = nextIDs.subtracting(previousIDs).count
-        let removedCount = previousIDs.subtracting(nextIDs).count
-        structuralApplyReloadsStarted = 0
-        countsStructuralApplyReloads = true
-
+        let summary = structuralChangeSummary(for: grid.orderedAssetIDs)
         // Snapshot the selected identities before the diffable apply can drop or shift
         // them. Query-descriptor changes are user context changes, so they intentionally
         // start from an empty selection instead of restoring surviving identities.
@@ -280,16 +280,16 @@ extension MediaAssetCollectionViewController {
         // Identity order is the complete structural contract. Details are read
         // for visible identities after the structural apply, so a filename or
         // thumbnail change never requires this O(n) diffable snapshot path.
-        var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
-        snapshot.appendSections([.media])
-        snapshot.appendItems(grid.orderedAssetIDs, toSection: .media)
+        let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
 
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         OtosLog.ui.debug(
             """
             Media grid structural apply started items=\(grid.orderedAssetIDs.count, privacy: .public) \
             scope=\(grid.scope.diagnosticDescription, privacy: .public) \
-            resetScroll=\(resetScroll, privacy: .public)
+            resetScroll=\(resetScroll, privacy: .public) \
+            reorderOnly=\(summary.reorderOnly, privacy: .public) \
+            animating=\(summary.animatingDifferences, privacy: .public)
             """
         )
         let stallMonitor = stallMonitor
@@ -299,8 +299,10 @@ extension MediaAssetCollectionViewController {
             preservedSelection: preservedSelection,
             resetScroll: resetScroll,
             applyStart: applyStart,
-            insertedCount: insertedCount,
-            removedCount: removedCount,
+            insertedCount: summary.insertedCount,
+            removedCount: summary.removedCount,
+            reorderOnly: summary.reorderOnly,
+            animatingDifferences: summary.animatingDifferences,
             signpost: signpost
         )
         let completion = { [weak self, operation, stallMonitor, diagnostics, context] in
@@ -317,13 +319,44 @@ extension MediaAssetCollectionViewController {
                 diagnostics: diagnostics
             )
         }
-        dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
+        dataSource.apply(snapshot, animatingDifferences: summary.animatingDifferences, completion: completion)
     }
 
-    func requestVisibleDetails(reason: String) {
+    private func structuralChangeSummary(for nextOrderedIDs: [MediaAssetID]) -> StructuralChangeSummary {
+        let previousOrderedIDs = applyGate.displayedOrderedIDs
+        let previousIDs = Set(previousOrderedIDs)
+        let retainedCount = nextOrderedIDs.reduce(into: 0) { count, id in
+            if previousIDs.contains(id) {
+                count += 1
+            }
+        }
+        let insertedCount = nextOrderedIDs.count - retainedCount
+        let removedCount = previousOrderedIDs.count - retainedCount
+        let reorderOnly = insertedCount == 0
+            && removedCount == 0
+            && previousOrderedIDs != nextOrderedIDs
+        return StructuralChangeSummary(
+            insertedCount: insertedCount,
+            removedCount: removedCount,
+            reorderOnly: reorderOnly,
+            animatingDifferences: !(reorderOnly && nextOrderedIDs.count >= Self.largeReorderAnimationItemLimit)
+        )
+    }
+
+    private func mediaSnapshot(
+        for orderedIDs: [MediaAssetID]
+    ) -> NSDiffableDataSourceSnapshot<Section, MediaAssetID> {
+        var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
+        snapshot.appendSections([.media])
+        snapshot.appendItems(orderedIDs, toSection: .media)
+        return snapshot
+    }
+
+    @discardableResult
+    func requestVisibleDetails(reason: String) -> Int {
         let visibleIDs = visibleAssetIDs()
         guard !visibleIDs.isEmpty else {
-            return
+            return 0
         }
         detailQueryGeneration += 1
         let generation = detailQueryGeneration
@@ -331,7 +364,7 @@ extension MediaAssetCollectionViewController {
 
         guard let detailReader else {
             reconfigureVisibleItems(reason: reason)
-            return
+            return visibleIDs.count
         }
 
         let queryStart = Date()
@@ -365,6 +398,7 @@ extension MediaAssetCollectionViewController {
             )
             reconfigureVisibleItems(reason: "detailQuery")
         }
+        return visibleIDs.count
     }
 
     func reconfigureVisibleItems(reason: String) {
@@ -384,7 +418,7 @@ extension MediaAssetCollectionViewController {
         let reconfigureStart = Date()
         let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleReconfigure")
         var configuredCount = 0
-        var visibleReloadsStarted = 0
+        var thumbnailLoadsStarted = 0
         var missingAssetCount = 0
         var missingItemCount = 0
 
@@ -398,7 +432,7 @@ extension MediaAssetCollectionViewController {
                 continue
             }
             if item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory) {
-                visibleReloadsStarted += 1
+                thumbnailLoadsStarted += 1
             }
             configuredCount += 1
         }
@@ -411,7 +445,7 @@ extension MediaAssetCollectionViewController {
             requested=\(visibleIndexPaths.count, privacy: .public) \
             missingAssets=\(missingAssetCount, privacy: .public) \
             missingItems=\(missingItemCount, privacy: .public) \
-            visibleReloadsStarted=\(visibleReloadsStarted, privacy: .public) \
+            thumbnailLoadsStarted=\(thumbnailLoadsStarted, privacy: .public) \
             reason=\(reason, privacy: .public) \
             reconfigureMs=\(reconfigureMs, privacy: .public)
             """

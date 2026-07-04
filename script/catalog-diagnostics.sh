@@ -112,7 +112,7 @@ write_summary() {
     echo "window projection detail refreshes: $(diagnostic_field_equals_count '\"operation\":\"catalog.projection.window\"' detailRefreshChanged true)"
     echo "structural applies: $(diagnostic_count '\"operation\":\"ui.mediaGrid.structuralApply\"')"
     echo "structural apply worst applyMs: $(diagnostic_field_max '\"operation\":\"ui.mediaGrid.structuralApply\"' applyMs)"
-    echo "structural apply max visible reloads started: $(diagnostic_field_max '\"operation\":\"ui.mediaGrid.structuralApply\"' visibleReloadsStarted)"
+    echo "structural apply max visible detail requests: $(diagnostic_field_max '\"operation\":\"ui.mediaGrid.structuralApply\"' visibleDetailRequestCount)"
     echo "ordered-ID queries: $(diagnostic_count '\"operation\":\"catalog.store.query.order\"')"
     echo "ordered-ID query worst queryMs: $(diagnostic_field_max '\"operation\":\"catalog.store.query.order\"' queryMs)"
     echo "ordered-ID query max count: $(diagnostic_field_max '\"operation\":\"catalog.store.query.order\"' count)"

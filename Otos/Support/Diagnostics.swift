@@ -9,12 +9,11 @@ import OSLog
 /// that path without allocating asynchronous file-write work on MainActor.
 ///
 /// Default diagnostics are session-scoped:
-/// `catalog-diagnostics-<UTC>-p<PID>-<prod|test>.jsonl`. The first default write
-/// removes the retired unbounded `catalog-diagnostics.jsonl` and keeps only the
-/// newest ten default files per run kind. Injected `outputURL` instances are
-/// exempt from pruning so focused tests can use temporary paths without side
-/// effects, and app construction never scans the diagnostics directory
-/// synchronously.
+/// `catalog-diagnostics-<UTC>-p<PID>-<prod|test>.jsonl`. Default lifecycle
+/// preparation removes the retired unbounded `catalog-diagnostics.jsonl` and keeps
+/// only the newest ten default files per run kind, even when JSONL writes are
+/// disabled. Injected `outputURL` instances are exempt from pruning so focused
+/// tests can use temporary paths without side effects.
 ///
 /// This actor serializes append order and owns one lazily opened file handle.
 /// Callers outside UI hot paths may await `record`, which provides natural
@@ -76,6 +75,10 @@ actor CatalogDiagnostics {
             )
     }
 
+    func prepareForLifecycle() {
+        prepareDefaultDirectoryIfNeeded()
+    }
+
     func record(operation: String, phase: String, fields: [String: String] = [:]) async {
         guard isEnabled else {
             return
@@ -93,7 +96,6 @@ actor CatalogDiagnostics {
             data.append(0x0A)
             let handle = try writableHandle()
             try handle.write(contentsOf: data)
-            prepareDefaultDirectoryIfNeeded()
         } catch {
             try? fileHandle?.close()
             fileHandle = nil

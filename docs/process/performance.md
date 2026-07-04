@@ -79,13 +79,18 @@ SwiftUI/AppKit high-cardinality view jank:
 
 - Use Otos Logger events and signposts for high-frequency ViewModel and AppKit
   boundaries: state assignment, media item count, collection receipt/apply/
-  coalescing/reload/layout, and slow cells. These paths must not create JSONL
+  coalescing/reconfigure/layout, and slow cells. These paths must not create JSONL
   tasks or retain full catalog state, except for the bounded structural-apply
-  aggregate that records scalar insert/remove/reload counts after an apply
-  completes.
+  aggregate that records scalar insert/remove counts, reorder-only status,
+  animation status, apply timing, and post-apply visible-detail request count.
 - Use coarse JSONL diagnostics for Store/scan operations, Projection summaries,
   availability transitions, failures, Store wait/exec timing, enrichment
-  write/WAL facts, and actual active-app run-loop stalls.
+  write/WAL facts, scan write/WAL facts, decoded filesystem-event batch summaries,
+  bounded slow/visible-priority thumbnail lifecycle rows, and actual active-app
+  run-loop stalls.
+- Do not add per-FSEvent receive/debounce rows or per-cell/per-tile durable rows
+  to investigate browser jank. If a path is high frequency, put detail in unified
+  logs/signposts and keep JSONL at batch or slow-outlier granularity.
 - Use `sample` or `script/profile.sh "Time Profiler" 10s` while the app is
   beach balling to inspect private SwiftUI/AppKit stacks.
 - Do not claim Otos directly measures private AppKit internals. Correlate our

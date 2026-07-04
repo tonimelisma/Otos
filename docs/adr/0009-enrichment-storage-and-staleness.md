@@ -56,7 +56,8 @@ This ADR owns:
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
   application of ADR 0008's permission), accepting the unreclaimable disk growth.
 - The enrichment ownership split: a single `EnrichmentCoordinator` actor running
-  two fixed worker pools (4 enrich + 4 download) by cursorless scheduling.
+  two fixed worker pools (4 enrich + 4 download) by cursorless scheduling, with
+  Store-owned claim ordering and process-local lease cleanup.
 
 This ADR references, but does not own:
 
@@ -153,12 +154,17 @@ Adjacent decisions requiring separate ADRs or specs:
    on a multi-second download, so the two are separate I/O-bound concurrency
    budgets (neither is CPU-bound). Scheduling is cursorless: the next units are
    queried from Store through `enrichmentCandidates(prioritizing:limit:)`, and Store
-   atomically claims returned rows with one nullable `enrichment_claimed_until`
-   column and `UPDATE ... RETURNING`. The coordinator maintains no durable backlog
-   or SQL partition, but it does keep one small process-local queue of already
-   claimed work so a full sweep does not become one claim transaction per free
-   worker slot. The rest of its runtime state is what it cannot derive (viewport,
-   in-flight guards, the just-downloaded `freshly` LIFO hand-off, the
+   selects eligible candidate keys in priority/default order, claims only the rows
+   still free with one nullable `enrichment_claimed_until` column, then fetches the
+   claimed rows back in selected order. Visible priority always outranks fallback
+   and fills past contended rows until the limit or eligible input is exhausted.
+   Fallback work follows the default browser's useful order — newest
+   `best_capture_unix` first, then stable path tie-breakers — rather than path
+   `sort_key` order. The coordinator maintains no durable backlog or SQL partition,
+   but it does keep one small process-local queue of already claimed work so a full
+   sweep does not become one claim transaction per free worker slot. The rest of
+   its runtime state is what it cannot derive (viewport, in-flight guards, the
+   just-downloaded `freshly` LIFO hand-off, the
    discovered-dataless set, the pending-apply buffer, and one `eagerMode` latch).
    Those process-local sets and queued claims prevent duplicate scheduling inside
    this coordinator; the SQLite lease is the SQL query gate that prevents repeated
@@ -170,7 +176,11 @@ Adjacent decisions requiring separate ADRs or specs:
    so it can retry. Dataless discovery refreshes the claim while the coordinator owns
    download state. Successful or failed materialization releases the claim before
    the ID is rediscovered or handed back through `freshly`; persistent write failure
-   leaves the ordinary lease expiry/backoff to avoid a tight retry loop.
+   leaves the ordinary lease expiry/backoff to avoid a tight retry loop. Because
+   `enrichment_claimed_until` is a process-local scheduler lease, Store startup
+   clears abandoned claims from the prior process, and coordinator shutdown releases
+   queued, undispatched, in-flight, and pending claims before dropping runtime
+   state.
 
    Materialization status is checked live at exactly one site — the enrichment pull,
    immediately before the read — which is both the router (materialized → enrich;
@@ -341,6 +351,9 @@ query itself is measured too costly at a real large library.
   in a new spec; it cannot assume metadata is resident in the grid path.
 - Thumbnail files are owned overlay: they are deleted when their row is purged by
   proven deletion or explicit library removal (ADR 0008 lifecycle).
+- Orphan hidden staged thumbnail temp files are also deleted at app-owned
+  thumbnail-store startup, limited to the Application Support thumbnail directory.
+  Originals and user media folders are never touched by that cleanup.
 - Existing generated thumbnails from an older private format may be deleted
   manually during a development increment; the app does not carry a compatibility
   loader or migration path for generated thumbnail overlay.

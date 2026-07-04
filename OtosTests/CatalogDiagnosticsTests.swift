@@ -69,7 +69,7 @@ struct CatalogDiagnosticsTests {
         #expect(FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
     }
 
-    @Test func firstDefaultDiagnosticsWritePrunesOldSessionFilesAndDeletesLegacyFile() async throws {
+    @Test func defaultDiagnosticsLifecyclePreparationPrunesOldSessionFilesAndDeletesLegacyFile() async throws {
         let temp = try makeDiagnosticsTemporaryDirectory()
         let diagnosticsDirectory = temp.appending(path: "Diagnostics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
@@ -104,13 +104,14 @@ struct CatalogDiagnosticsTests {
         )
         #expect(FileManager.default.fileExists(atPath: legacyURL.path(percentEncoded: false)))
 
-        await diagnostics.record(operation: "test", phase: "finish")
+        await diagnostics.prepareForLifecycle()
 
         let remaining = try FileManager.default.contentsOfDirectory(
             at: diagnosticsDirectory,
             includingPropertiesForKeys: nil
         )
         #expect(!FileManager.default.fileExists(atPath: legacyURL.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
         #expect(remaining.count(where: { $0.lastPathComponent.hasSuffix("-prod.jsonl") }) == 10)
         #expect(remaining.count(where: { $0.lastPathComponent.hasSuffix("-test.jsonl") }) == 10)
     }
@@ -123,6 +124,42 @@ struct CatalogDiagnosticsTests {
         await diagnostics.record(operation: "disabled", phase: "finish")
 
         #expect(!FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
+    }
+
+    @Test func disabledDefaultDiagnosticsLifecyclePreparationStillPrunesOldFiles() async throws {
+        let temp = try makeDiagnosticsTemporaryDirectory()
+        let diagnosticsDirectory = temp.appending(path: "Diagnostics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: diagnosticsDirectory, withIntermediateDirectories: true)
+        let legacyURL = diagnosticsDirectory.appending(path: "catalog-diagnostics.jsonl")
+        try Data("legacy\n".utf8).write(to: legacyURL)
+
+        for index in 0 ..< 12 {
+            let prodURL = diagnosticsDirectory.appending(
+                path: "catalog-diagnostics-20260703T1400\(String(format: "%02d", index))Z-p\(index)-prod.jsonl"
+            )
+            try Data("prod\n".utf8).write(to: prodURL)
+            try FileManager.default.setAttributes(
+                [.modificationDate: Date(timeIntervalSince1970: TimeInterval(index))],
+                ofItemAtPath: prodURL.path(percentEncoded: false)
+            )
+        }
+
+        let outputURL = diagnosticsDirectory.appending(path: "catalog-diagnostics-current-p999-prod.jsonl")
+        let diagnostics = CatalogDiagnostics(
+            outputURL: outputURL,
+            isEnabled: false,
+            managesDefaultDirectory: true
+        )
+
+        await diagnostics.prepareForLifecycle()
+
+        let remaining = try FileManager.default.contentsOfDirectory(
+            at: diagnosticsDirectory,
+            includingPropertiesForKeys: nil
+        )
+        #expect(!FileManager.default.fileExists(atPath: legacyURL.path(percentEncoded: false)))
+        #expect(!FileManager.default.fileExists(atPath: outputURL.path(percentEncoded: false)))
+        #expect(remaining.count(where: { $0.lastPathComponent.hasSuffix("-prod.jsonl") }) == 10)
     }
 
     @Test func diagnosticsScriptSummarizesJsonLines() async throws {

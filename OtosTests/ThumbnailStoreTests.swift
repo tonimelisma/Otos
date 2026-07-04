@@ -81,6 +81,31 @@ struct ThumbnailStoreTests {
 
         #expect(!FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
     }
+
+    @Test func startupCleanupDeletesOnlyHiddenTemporaryThumbnailFiles() throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let directory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let outside = temp.appending(path: ".outside.tmp", directoryHint: .notDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let staged = directory.appending(path: ".thumb.jpg.tmp", directoryHint: .notDirectory)
+        let visibleTemporary = directory.appending(path: "thumb.jpg.tmp", directoryHint: .notDirectory)
+        let hiddenNonTemporary = directory.appending(path: ".thumb.jpg", directoryHint: .notDirectory)
+        let hiddenTemporaryDirectory = directory.appending(path: ".nested.tmp", directoryHint: .isDirectory)
+        try Data("staged".utf8).write(to: staged)
+        try Data("visible".utf8).write(to: visibleTemporary)
+        try Data("hidden".utf8).write(to: hiddenNonTemporary)
+        try FileManager.default.createDirectory(at: hiddenTemporaryDirectory, withIntermediateDirectories: true)
+        try Data("original".utf8).write(to: outside)
+
+        let deletedCount = try ThumbnailStore.deleteStagedTemporaryFiles(in: directory)
+
+        #expect(deletedCount == 1)
+        #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: visibleTemporary.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: hiddenNonTemporary.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: hiddenTemporaryDirectory.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: outside.path(percentEncoded: false)))
+    }
 }
 
 private func makeThumbnailTestImage() throws -> CGImage {

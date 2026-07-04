@@ -39,6 +39,22 @@ struct CatalogBrowserSourceHygieneTests {
         #expect(content.contains("OtosSignpost.ui"))
     }
 
+    @Test func appKitGridTreatsLargeReorderOnlyAppliesAsNonAnimatedStructuralUpdates() throws {
+        let bridge = try appSource("Otos/Views/MediaAssetCollectionView.swift")
+        let structuralApply = try appSource("Otos/Views/MediaAssetCollectionStructuralApply.swift")
+
+        #expect(bridge.contains("largeReorderAnimationItemLimit"))
+        #expect(bridge.contains("let reorderOnly ="))
+        #expect(bridge.contains("animatingDifferences: !(reorderOnly"))
+        #expect(bridge.contains("animatingDifferences: summary.animatingDifferences"))
+        #expect(!bridge.contains("countsStructuralApplyReloads"))
+        #expect(!bridge.contains("structuralApplyReloadsStarted"))
+        #expect(!bridge.contains("visibleReloadsStarted"))
+        #expect(structuralApply.contains("\"reorderOnly\": \"\\(reorderOnly)\""))
+        #expect(structuralApply.contains("\"animatingDifferences\": \"\\(animatingDifferences)\""))
+        #expect(structuralApply.contains("\"visibleDetailRequestCount\": \"\\(visibleDetailRequestCount)\""))
+    }
+
     @Test func appKitGridDoesNotReloadItemsForDetailRefresh() throws {
         let content = try appSource("Otos/Views/MediaAssetCollectionView.swift")
 
@@ -57,12 +73,36 @@ struct CatalogBrowserSourceHygieneTests {
         let priorityBody = content[priorityStart.lowerBound ..< claimedStart.lowerBound]
         let claimedBody = content[claimedStart.lowerBound ..< startMethod.lowerBound]
 
-        #expect(priorityBody.contains("let timedClaim = try await dbWriter.write"))
-        #expect(priorityBody.components(separatedBy: "try await dbWriter.write").count - 1 == 1)
-        #expect(priorityBody.contains("let claimInputs = eligibleClaims"))
-        #expect(priorityBody.contains("for (asset, rootID) in claimInputs"))
-        #expect(priorityBody.contains("if result.queryMs > Self.slowQueryDiagnosticThresholdMs"))
-        #expect(claimedBody.contains("if result.queryMs > Self.slowQueryDiagnosticThresholdMs"))
+        #expect(priorityBody.contains("let timedClaim = try await timedWrite(dbWriter)"))
+        #expect(priorityBody.components(separatedBy: "try await timedWrite(dbWriter)").count - 1 == 1)
+        #expect(priorityBody.contains("for (asset, rootID) in"))
+        #expect(priorityBody.contains("candidates.count < limit"))
+        #expect(priorityBody.contains("if result.totalMs > Self.slowQueryDiagnosticThresholdMs"))
+        #expect(claimedBody.contains("if result.totalMs > Self.slowQueryDiagnosticThresholdMs"))
+        #expect(!priorityBody.contains("let claimInputs = eligibleClaims"))
+        #expect(!content.contains("NOT IN"))
+    }
+
+    @Test func visibleThumbnailLifecycleDiagnosticsStayCoordinatorBounded() throws {
+        let content = try appSource("Otos/Services/EnrichmentCoordinator.swift")
+            + appSource("Otos/Services/EnrichmentCoordinatorCompletion.swift")
+            + appSource("Otos/Services/EnrichmentCoordinatorWorkSelection.swift")
+
+        #expect(content.contains("diagnosedThumbnailLifecycleIDs"))
+        #expect(content.contains("operation: \"catalog.thumbnails.visibleLifecycle\""))
+        #expect(content.contains("viewport.contains(id)"))
+        #expect(content.contains("batchAccepted"))
+        #expect(!content.contains("operation: \"catalog.thumbnails.fileLifecycle\""))
+    }
+
+    @Test func filesystemEventsUseBatchJSONLInsteadOfReceiveAndDebounceSpam() throws {
+        let content = try appSource("Otos/Stores/CatalogStore.swift")
+
+        #expect(content.contains("filesystemEventBatchFields("))
+        #expect(content.contains("\"flags\""))
+        #expect(content.contains("\"actions\""))
+        #expect(!content.contains("phase: \"receive\""))
+        #expect(!content.contains("phase: \"debounce\""))
     }
 
     @Test func walDiagnosticsSampleSizeWithoutForcingCheckpoints() throws {
@@ -70,6 +110,7 @@ struct CatalogBrowserSourceHygieneTests {
 
         #expect(content.contains("operation: \"catalog.database.wal\""))
         #expect(content.contains("phase: \"sample\""))
+        #expect(content.contains("recordWALDiagnostics(reason: \"scanBatch\")"))
         #expect(content.contains("\"walBytes\""))
         #expect(!content.contains("wal_checkpoint"))
         #expect(!content.contains("passiveWALCheckpoint"))

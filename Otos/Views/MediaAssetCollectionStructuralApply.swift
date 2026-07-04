@@ -14,19 +14,21 @@ extension MediaAssetCollectionViewController {
         if context.resetScroll {
             scrollToTop()
         }
-        requestVisibleDetails(reason: "structuralApply")
+        let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
         reportViewport()
         restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)
 
         let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)
-        let visibleReloadsStarted = structuralApplyReloadsStarted
-        countsStructuralApplyReloads = false
-        logFinishedStructuralApply(context, applyMs: applyMs, visibleReloadsStarted: visibleReloadsStarted)
+        logFinishedStructuralApply(
+            context,
+            applyMs: applyMs,
+            visibleDetailRequestCount: visibleDetailRequestCount
+        )
         recordStructuralApplyDiagnostics(
             context,
             diagnostics: diagnostics,
             applyMs: applyMs,
-            visibleReloadsStarted: visibleReloadsStarted
+            visibleDetailRequestCount: visibleDetailRequestCount
         )
         if let operation {
             stallMonitor?.endOperation(operation)
@@ -37,14 +39,16 @@ extension MediaAssetCollectionViewController {
     private func logFinishedStructuralApply(
         _ context: StructuralApplyCompletionContext,
         applyMs: Int,
-        visibleReloadsStarted: Int
+        visibleDetailRequestCount: Int
     ) {
         OtosLog.ui.info(
             """
             Media grid structural apply finished items=\(context.grid.orderedAssetIDs.count, privacy: .public) \
             scope=\(context.grid.scope.diagnosticDescription, privacy: .public) \
             inserted=\(context.insertedCount, privacy: .public) removed=\(context.removedCount, privacy: .public) \
-            visibleReloadsStarted=\(visibleReloadsStarted, privacy: .public) \
+            reorderOnly=\(context.reorderOnly, privacy: .public) \
+            animating=\(context.animatingDifferences, privacy: .public) \
+            visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
             applyMs=\(applyMs, privacy: .public)
             """
         )
@@ -54,12 +58,14 @@ extension MediaAssetCollectionViewController {
         _ context: StructuralApplyCompletionContext,
         diagnostics: CatalogDiagnostics?,
         applyMs: Int,
-        visibleReloadsStarted: Int
+        visibleDetailRequestCount: Int
     ) {
         let itemCount = context.grid.orderedAssetIDs.count
         let scopeDescription = context.grid.scope.diagnosticDescription
         let insertedCount = context.insertedCount
         let removedCount = context.removedCount
+        let reorderOnly = context.reorderOnly
+        let animatingDifferences = context.animatingDifferences
         Task {
             await diagnostics?.record(
                 operation: "ui.mediaGrid.structuralApply",
@@ -69,7 +75,9 @@ extension MediaAssetCollectionViewController {
                     "scope": scopeDescription,
                     "inserted": "\(insertedCount)",
                     "removed": "\(removedCount)",
-                    "visibleReloadsStarted": "\(visibleReloadsStarted)",
+                    "reorderOnly": "\(reorderOnly)",
+                    "animatingDifferences": "\(animatingDifferences)",
+                    "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
                     "applyMs": "\(applyMs)",
                 ]
             )

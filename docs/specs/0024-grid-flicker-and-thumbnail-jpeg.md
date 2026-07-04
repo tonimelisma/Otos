@@ -403,8 +403,8 @@ enrichment writes `.jpg` paths.
 
 ## Stale-Document Audit Plan
 
-Update current docs that mention visible reloads, HEIC thumbnails, or sidebar
-status text:
+Update current docs that mention visible detail refreshes, HEIC thumbnails, or
+sidebar status text:
 
 - `docs/requirements.md`
 - `docs/adr/0006-catalog-grid-rendering.md`

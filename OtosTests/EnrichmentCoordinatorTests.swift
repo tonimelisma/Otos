@@ -3,6 +3,83 @@ import Foundation
 import Testing
 
 struct EnrichmentCoordinatorTests {
+    @Test func shutdownReleasesQueuedAndInFlightClaims() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
+
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: fixedScanner(relativeNames),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
+
+        let blocker = BlockingEnrichment()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: blocker.enricher(),
+            materialize: { _ in true },
+            enrichConcurrency: 1,
+            downloadConcurrency: 1,
+            claimBatchSize: 3,
+            applyFlushInterval: .seconds(60),
+            diagnostics: nil
+        )
+        await coordinator.start()
+        try await blocker.waitForStarted()
+
+        await coordinator.shutdown()
+        let reclaimed = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
+        await blocker.release()
+
+        #expect(Set(reclaimed.map(\.relativePath.rawValue)) == Set(relativeNames))
+        try await store.releaseEnrichmentClaims(reclaimed.map(\.id))
+    }
+
+    @Test func visibleThumbnailLifecycleDiagnosticsAreBoundedToViewportPriority() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let outputURL = temp.appending(path: "visible-thumbnail-lifecycle.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: fixedScanner(["a.jpg", "b.jpg"]),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let visibleID = try #require(scanned.testAssets.first { $0.relativePath.rawValue == "a.jpg" }?.id)
+
+        let coordinator = visibleLifecycleCoordinator(store: store, diagnostics: diagnostics)
+        await coordinator.updateViewport([visibleID])
+        await coordinator.start()
+
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment }
+        }
+        _ = try await waitForDiagnosticEvents(outputURL) { events in
+            events.contains {
+                $0.operation == "catalog.thumbnails.visibleLifecycle" && $0.phase == "batchAccepted"
+            }
+        }
+        await coordinator.shutdown()
+
+        let lifecycleEvents = try diagnosticEvents(at: outputURL).filter {
+            $0.operation == "catalog.thumbnails.visibleLifecycle"
+        }
+        let phases = Set(lifecycleEvents.map(\.phase))
+        #expect(!lifecycleEvents.isEmpty)
+        #expect(lifecycleEvents.allSatisfy { $0.fields["relativePath"] == "a.jpg" })
+        #expect(phases.isSuperset(of: ["claimed", "dispatched", "generated", "batchAccepted"]))
+    }
+
     @Test func enrichesMaterializedAndDownloadsThenEnrichesDataless() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -190,5 +267,118 @@ private actor AttemptCounter {
     func next() -> Int {
         defer { total += 1 }
         return total
+    }
+}
+
+private actor BlockingEnrichment {
+    private var started = false
+    private var released = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+    private var releaseWaiter: CheckedContinuation<Void, Never>?
+
+    nonisolated func enricher() -> MediaEnricher {
+        MediaEnricher { _, _, _, _ in
+            await self.waitUntilReleased()
+            return .transient
+        }
+    }
+
+    func waitForStarted() async throws {
+        try await withTestTimeout("blocking enrichment started") {
+            await self.waitForStartedUnbounded()
+        }
+    }
+
+    private func waitForStartedUnbounded() async {
+        if started {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            startWaiters.append(continuation)
+            resumeStartWaiters()
+        }
+    }
+
+    func release() {
+        released = true
+        releaseWaiter?.resume()
+        releaseWaiter = nil
+    }
+
+    private func waitUntilReleased() async {
+        started = true
+        resumeStartWaiters()
+        if released {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            releaseWaiter = continuation
+        }
+    }
+
+    private func resumeStartWaiters() {
+        guard started else {
+            return
+        }
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+}
+
+private func visibleLifecycleCoordinator(
+    store: CatalogStore,
+    diagnostics: CatalogDiagnostics
+) -> EnrichmentCoordinator {
+    EnrichmentCoordinator(
+        store: store,
+        enricher: visibleLifecycleEnricher(),
+        materialize: { _ in true },
+        enrichConcurrency: 2,
+        downloadConcurrency: 1,
+        claimBatchSize: 2,
+        applyFlushInterval: .milliseconds(1),
+        diagnostics: diagnostics
+    )
+}
+
+private func visibleLifecycleEnricher() -> MediaEnricher {
+    MediaEnricher { id, _, size, mtime in
+        .complete(
+            EnrichmentResult(
+                id: id,
+                metadata: AssetMetadata(),
+                thumbnailPath: "thumb-\(id.relativePath.rawValue)",
+                sourceSize: size,
+                sourceMTimeSeconds: mtime
+            )
+        )
+    }
+}
+
+private func waitForDiagnosticEvents(
+    _ url: URL,
+    matching predicate: @escaping @Sendable ([CatalogDiagnosticEvent]) -> Bool
+) async throws -> [CatalogDiagnosticEvent] {
+    try await withTestTimeout("diagnostic events") {
+        while !Task.isCancelled {
+            let events = (try? diagnosticEvents(at: url)) ?? []
+            if predicate(events) {
+                return events
+            }
+            await Task.yield()
+        }
+        throw CancellationError()
+    }
+}
+
+private func diagnosticEvents(at url: URL) throws -> [CatalogDiagnosticEvent] {
+    let data = try Data(contentsOf: url)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    return data.split(separator: 0x0A).compactMap { line in
+        try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
     }
 }

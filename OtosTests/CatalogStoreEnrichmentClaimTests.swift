@@ -1,0 +1,140 @@
+import Foundation
+import GRDB
+@testable import Otos
+import Testing
+
+struct CatalogStoreEnrichmentClaimTests {
+    @Test func startupClearsAbandonedEnrichmentClaims() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let rel = MediaRelativePath(rawValue: "a.jpg")
+
+        let store = CatalogStore(
+            location: .databaseFile(databaseURL),
+            scanner: claimTestSingleFileScanner(rel),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        let firstClaim = try await store.enrichmentCandidates(prioritizing: [], limit: 1)
+        #expect(firstClaim.map(\.relativePath) == [rel])
+        let blockedByLease = try await store.enrichmentCandidates(prioritizing: [], limit: 1)
+        #expect(blockedByLease.isEmpty)
+        #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
+
+        let reloaded = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        try await reloaded.start(scansSavedLibraries: false)
+
+        #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 0)
+    }
+
+    @Test func priorityClaimingContinuesPastContendedRowsBeforeFallback() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: claimTestMultiFileScanner([
+                EnrichmentClaimScanFixture(name: "claimed.jpg", modifiedAt: 1000),
+                EnrichmentClaimScanFixture(name: "visible-second.jpg", modifiedAt: 3000),
+                EnrichmentClaimScanFixture(name: "visible-third.jpg", modifiedAt: 2000),
+                EnrichmentClaimScanFixture(name: "fallback-newest.jpg", modifiedAt: 4000),
+            ]),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 4 }
+        let idsByName = Dictionary(uniqueKeysWithValues: scanned.testAssets.map { ($0.relativePath.rawValue, $0.id) })
+        let claimedID = try #require(idsByName["claimed.jpg"])
+        let visibleSecondID = try #require(idsByName["visible-second.jpg"])
+        let visibleThirdID = try #require(idsByName["visible-third.jpg"])
+
+        let firstClaim = try await store.enrichmentCandidates(prioritizing: [claimedID], limit: 1)
+        #expect(firstClaim.map(\.relativePath.rawValue) == ["claimed.jpg"])
+
+        let visibleClaims = try await store.enrichmentCandidates(
+            prioritizing: [claimedID, visibleSecondID, visibleThirdID],
+            limit: 2
+        )
+
+        #expect(visibleClaims.map(\.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
+    }
+
+    @Test func fallbackEnrichmentClaimsUseNewestBestDateOrder() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: claimTestMultiFileScanner([
+                EnrichmentClaimScanFixture(name: "old.jpg", modifiedAt: 1000),
+                EnrichmentClaimScanFixture(name: "newest.jpg", modifiedAt: 3000),
+                EnrichmentClaimScanFixture(name: "middle.jpg", modifiedAt: 2000),
+            ]),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
+
+        let claims = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
+
+        #expect(claims.map(\.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
+    }
+}
+
+private struct EnrichmentClaimScanFixture {
+    let name: String
+    let modifiedAt: TimeInterval
+}
+
+private func enrichmentClaimedRowCount(databaseURL: URL) async throws -> Int {
+    try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+        try Int.fetchOne(
+            db,
+            sql: """
+            SELECT COUNT(*)
+            FROM media_asset
+            WHERE enrichment_claimed_until IS NOT NULL
+            """
+        ) ?? 0
+    }
+}
+
+private func claimTestSingleFileScanner(_ rel: MediaRelativePath) -> CatalogScanner {
+    CatalogScanner { _, _, _, batchHandler in
+        try await batchHandler([
+            ScannedMediaFile(
+                relativePath: rel,
+                name: "a.jpg",
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 100,
+                createdAt: Date(timeIntervalSince1970: 500),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ])
+        return [rel]
+    }
+}
+
+private func claimTestMultiFileScanner(_ fixtures: [EnrichmentClaimScanFixture]) -> CatalogScanner {
+    CatalogScanner { _, _, _, batchHandler in
+        let files = fixtures.map { fixture in
+            ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: fixture.name),
+                name: fixture.name,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 100,
+                createdAt: Date(timeIntervalSince1970: fixture.modifiedAt),
+                contentModifiedAt: Date(timeIntervalSince1970: fixture.modifiedAt)
+            )
+        }
+        try await batchHandler(files)
+        return Set(files.map(\.relativePath))
+    }
+}

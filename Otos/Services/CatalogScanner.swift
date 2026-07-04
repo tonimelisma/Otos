@@ -242,8 +242,15 @@ private nonisolated enum LiveCatalogScanner {
     }
 
     private static func stableIssueDescription(_ error: Error) -> String {
+        if let issue = error as? CatalogScannedFileReaderIssue {
+            switch issue {
+            case .relativePathUnavailable:
+                return "Otos.CatalogScannedFileReaderIssue.relativePathUnavailable"
+            }
+        }
+        let typeName = String(reflecting: type(of: error))
         let nsError = error as NSError
-        return "\(String(reflecting: type(of: error)))(domain:\(nsError.domain),code:\(nsError.code))"
+        return "\(typeName)(domain:\(nsError.domain),code:\(nsError.code))"
     }
 
     private static func scannedFile(

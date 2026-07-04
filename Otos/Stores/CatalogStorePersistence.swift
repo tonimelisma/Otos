@@ -95,20 +95,7 @@ extension CatalogStore {
                 columns: ["library_root_id", "sort_key", "relative_path"]
             )
             try createOrderIndexes(db)
-            try db.execute(
-                sql: """
-                CREATE INDEX idx_media_asset_needs_enrichment_global
-                ON media_asset(sort_key, library_root_id, relative_path)
-                WHERE \(enrichmentStalenessSQLPredicate())
-                """
-            )
-            try db.execute(
-                sql: """
-                CREATE INDEX idx_media_asset_needs_enrichment_root
-                ON media_asset(library_root_id, sort_key, relative_path)
-                WHERE \(enrichmentStalenessSQLPredicate())
-                """
-            )
+            try createEnrichmentClaimIndexes(db)
 
             try db.execute(
                 sql: """
@@ -149,6 +136,11 @@ extension CatalogStore {
                 on: "asset_metadata",
                 columns: ["pixel_width", "pixel_height"]
             )
+        }
+        migrator.registerMigration("v4_newest_first_enrichment_claims") { db in
+            try db.drop(index: "idx_media_asset_needs_enrichment_global")
+            try db.drop(index: "idx_media_asset_needs_enrichment_root")
+            try createEnrichmentClaimIndexes(db)
         }
         return migrator
     }
@@ -566,13 +558,27 @@ extension CatalogStore {
         ) else {
             return []
         }
-        return try Row.fetchAll(db, sql: query.sql, arguments: query.arguments).map(storedAsset(from:))
+        let keys = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments).map(enrichmentCandidateKey(from:))
+        guard !keys.isEmpty else {
+            return []
+        }
+        try claimStoredAssetsNeedingEnrichment(
+            keys,
+            now: now,
+            claimedUntil: claimNotAfter,
+            db: db
+        )
+        let assets = try fetchStoredAssetsForEnrichmentCandidates(keys, db: db)
+        let assetsByKey = Dictionary(uniqueKeysWithValues: assets.map { asset in
+            (EnrichmentCandidateKey(libraryRootID: asset.libraryRootID, relativePath: asset.relativePath), asset)
+        })
+        return keys.compactMap { assetsByKey[$0] }
     }
 
     static func enrichmentClaimQuery(
         rootIDs: [Int64],
         now: TimeInterval,
-        claimNotAfter: TimeInterval,
+        claimNotAfter _: TimeInterval,
         limit: Int
     ) -> SQLQuery? {
         guard !rootIDs.isEmpty, limit > 0 else {
@@ -582,7 +588,6 @@ extension CatalogStore {
             return rootEnrichmentClaimQuery(
                 rootID: rootID,
                 now: now,
-                claimNotAfter: claimNotAfter,
                 limit: limit
             )
         }
@@ -590,7 +595,6 @@ extension CatalogStore {
         return globalEnrichmentClaimQuery(
             rootIDs: rootIDs,
             now: now,
-            claimNotAfter: claimNotAfter,
             limit: limit
         )
     }
@@ -598,71 +602,46 @@ extension CatalogStore {
     private static func rootEnrichmentClaimQuery(
         rootID: Int64,
         now: TimeInterval,
-        claimNotAfter: TimeInterval,
         limit: Int
     ) -> SQLQuery {
         SQLQuery(
             sql: """
-            WITH candidates AS (
-                SELECT library_root_id, relative_path
-                FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-                WHERE library_root_id = ?
-                  AND (\(enrichmentStalenessSQLPredicate()))
-                  AND (
-                    enrichment_claimed_until IS NULL
-                    OR enrichment_claimed_until < ?
-                  )
-                ORDER BY sort_key, relative_path
-                LIMIT ?
-            )
-            UPDATE media_asset
-            SET enrichment_claimed_until = ?
-            WHERE (library_root_id, relative_path) IN (
-                SELECT library_root_id, relative_path FROM candidates
-            )
-            RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
-                      created_at_unix, content_modified_at_unix,
-                      enriched_source_size, enriched_source_mtime, thumbnail_path,
-                      best_capture_unix, best_kind, best_format
+            SELECT library_root_id, relative_path
+            FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
+            WHERE library_root_id = ?
+              AND (\(enrichmentStalenessSQLPredicate()))
+              AND (
+                enrichment_claimed_until IS NULL
+                OR enrichment_claimed_until < ?
+              )
+            ORDER BY best_capture_unix DESC, relative_path
+            LIMIT ?
             """,
-            arguments: sqlArguments(rootID, now, limit, claimNotAfter)
+            arguments: sqlArguments(rootID, now, limit)
         )
     }
 
     private static func globalEnrichmentClaimQuery(
         rootIDs: [Int64],
         now: TimeInterval,
-        claimNotAfter: TimeInterval,
         limit: Int
     ) -> SQLQuery {
         let placeholders = sqlPlaceholders(count: rootIDs.count)
         var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
         arguments.append(now)
         arguments.append(limit)
-        arguments.append(claimNotAfter)
         return SQLQuery(
             sql: """
-            WITH candidates AS (
-                SELECT library_root_id, relative_path
-                FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
-                WHERE library_root_id IN (\(placeholders))
-                  AND (\(enrichmentStalenessSQLPredicate()))
-                  AND (
-                    enrichment_claimed_until IS NULL
-                    OR enrichment_claimed_until < ?
-                  )
-                ORDER BY sort_key, library_root_id, relative_path
-                LIMIT ?
-            )
-            UPDATE media_asset
-            SET enrichment_claimed_until = ?
-            WHERE (library_root_id, relative_path) IN (
-                SELECT library_root_id, relative_path FROM candidates
-            )
-            RETURNING library_root_id, relative_path, name, content_type_identifier, byte_size,
-                      created_at_unix, content_modified_at_unix,
-                      enriched_source_size, enriched_source_mtime, thumbnail_path,
-                      best_capture_unix, best_kind, best_format
+            SELECT library_root_id, relative_path
+            FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
+            WHERE library_root_id IN (\(placeholders))
+              AND (\(enrichmentStalenessSQLPredicate()))
+              AND (
+                enrichment_claimed_until IS NULL
+                OR enrichment_claimed_until < ?
+              )
+            ORDER BY best_capture_unix DESC, library_root_id, relative_path
+            LIMIT ?
             """,
             arguments: StatementArguments(arguments)
         )
@@ -710,6 +689,18 @@ extension CatalogStore {
                 arguments: [rootID, id.relativePath.rawValue]
             )
         }
+    }
+
+    @discardableResult
+    static func clearEnrichmentClaims(db: Database) throws -> Int {
+        try db.execute(
+            sql: """
+            UPDATE media_asset
+            SET enrichment_claimed_until = NULL
+            WHERE enrichment_claimed_until IS NOT NULL
+            """
+        )
+        return db.changesCount
     }
 
     static func refreshEnrichmentClaims(
@@ -891,6 +882,23 @@ private nonisolated func createOrderIndexes(_ db: Database) throws {
     }
 }
 
+private nonisolated func createEnrichmentClaimIndexes(_ db: Database) throws {
+    try db.execute(
+        sql: """
+        CREATE INDEX idx_media_asset_needs_enrichment_global
+        ON media_asset(best_capture_unix DESC, library_root_id, relative_path)
+        WHERE \(enrichmentStalenessSQLPredicate())
+        """
+    )
+    try db.execute(
+        sql: """
+        CREATE INDEX idx_media_asset_needs_enrichment_root
+        ON media_asset(library_root_id, best_capture_unix DESC, relative_path)
+        WHERE \(enrichmentStalenessSQLPredicate())
+        """
+    )
+}
+
 private nonisolated func upsertAssetMetadataSQL() -> String {
     """
     INSERT INTO asset_metadata (
@@ -944,6 +952,66 @@ private nonisolated func enrichmentStalenessSQLPredicate() -> String {
        OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
           <> COALESCE(enriched_source_mtime, -1)
     """
+}
+
+private nonisolated struct EnrichmentCandidateKey: Hashable {
+    let libraryRootID: Int64
+    let relativePath: MediaRelativePath
+}
+
+private nonisolated func enrichmentCandidateKey(from row: Row) -> EnrichmentCandidateKey {
+    EnrichmentCandidateKey(
+        libraryRootID: row["library_root_id"],
+        relativePath: MediaRelativePath(rawValue: row["relative_path"])
+    )
+}
+
+private nonisolated func claimStoredAssetsNeedingEnrichment(
+    _ keys: [EnrichmentCandidateKey],
+    now: TimeInterval,
+    claimedUntil: TimeInterval,
+    db: Database
+) throws {
+    guard !keys.isEmpty else {
+        return
+    }
+    var arguments: [any DatabaseValueConvertible] = [claimedUntil]
+    arguments.append(contentsOf: enrichmentCandidateKeyArguments(keys))
+    arguments.append(now)
+    try db.execute(
+        sql: """
+        UPDATE media_asset
+        SET enrichment_claimed_until = ?
+        WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
+          AND (\(enrichmentStalenessSQLPredicate()))
+          AND (
+            enrichment_claimed_until IS NULL
+            OR enrichment_claimed_until < ?
+          )
+        """,
+        arguments: StatementArguments(arguments)
+    )
+}
+
+private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
+    _ keys: [EnrichmentCandidateKey],
+    db: Database
+) throws -> [CatalogStore.StoredAsset] {
+    guard !keys.isEmpty else {
+        return []
+    }
+    return try Row.fetchAll(
+        db,
+        sql: """
+        SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
+               created_at_unix, content_modified_at_unix,
+               enriched_source_size, enriched_source_mtime, thumbnail_path,
+               best_capture_unix, best_kind, best_format
+        FROM media_asset
+        WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
+        """,
+        arguments: StatementArguments(enrichmentCandidateKeyArguments(keys))
+    ).map(storedAsset(from:))
 }
 
 private nonisolated func orderPlan(
@@ -1022,8 +1090,21 @@ private nonisolated func sqlPlaceholders(count: Int) -> String {
     Array(repeating: "?", count: count).joined(separator: ",")
 }
 
+private nonisolated func sqlTuplePlaceholders(rowCount: Int, columnCount: Int) -> String {
+    let tuple = "(\(sqlPlaceholders(count: columnCount)))"
+    return Array(repeating: tuple, count: rowCount).joined(separator: ",")
+}
+
 private nonisolated func sqlArguments(_ values: (any DatabaseValueConvertible)...) -> StatementArguments {
     StatementArguments(values)
+}
+
+private nonisolated func enrichmentCandidateKeyArguments(
+    _ keys: [EnrichmentCandidateKey]
+) -> [any DatabaseValueConvertible] {
+    keys.flatMap { key in
+        [key.libraryRootID, key.relativePath.rawValue] as [any DatabaseValueConvertible]
+    }
 }
 
 private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {

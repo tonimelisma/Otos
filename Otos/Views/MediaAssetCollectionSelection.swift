@@ -1,6 +1,18 @@
 import AppKit
 import OSLog
 
+// Media collection selection guide
+//
+// This file contains the AppKit-only selection and copy surface for the media grid.
+// SwiftUI provides the surrounding commands and window state, but AppKit owns the
+// live collection selection and responder chain. Keeping that bridge here gives one
+// path for mouse selection, command validation, and Edit > Copy without mirroring
+// selected IDs into a second model.
+//
+// Copy writes original file URLs to the pasteboard in display order. It does not read
+// media bytes, decode thumbnails, or materialize cloud placeholders; it only maps the
+// collection view's selected identities back through `MediaAssetID.fileURL`.
+
 // MARK: - Selection and copy
 
 extension MediaAssetCollectionViewController: NSCollectionViewDelegate {

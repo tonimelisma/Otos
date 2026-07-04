@@ -51,12 +51,53 @@ nonisolated struct FilesystemEventFlags: Equatable {
         return .upsert
     }
 
+    var diagnosticNames: [String] {
+        var names: [String] = []
+        appendName("mustScanSubDirs", for: kFSEventStreamEventFlagMustScanSubDirs, to: &names)
+        appendName("kernelDropped", for: kFSEventStreamEventFlagKernelDropped, to: &names)
+        appendName("userDropped", for: kFSEventStreamEventFlagUserDropped, to: &names)
+        appendName("itemCreated", for: kFSEventStreamEventFlagItemCreated, to: &names)
+        appendName("itemRemoved", for: kFSEventStreamEventFlagItemRemoved, to: &names)
+        appendName("itemInodeMetaMod", for: kFSEventStreamEventFlagItemInodeMetaMod, to: &names)
+        appendName("itemRenamed", for: kFSEventStreamEventFlagItemRenamed, to: &names)
+        appendName("itemModified", for: kFSEventStreamEventFlagItemModified, to: &names)
+        appendName("itemFinderInfoMod", for: kFSEventStreamEventFlagItemFinderInfoMod, to: &names)
+        appendName("itemChangeOwner", for: kFSEventStreamEventFlagItemChangeOwner, to: &names)
+        appendName("itemXattrMod", for: kFSEventStreamEventFlagItemXattrMod, to: &names)
+        appendName("itemIsFile", for: kFSEventStreamEventFlagItemIsFile, to: &names)
+        appendName("itemIsDir", for: kFSEventStreamEventFlagItemIsDir, to: &names)
+        appendName("itemIsSymlink", for: kFSEventStreamEventFlagItemIsSymlink, to: &names)
+        if names.isEmpty {
+            names.append(rawValue == 0 ? "none" : "unknown")
+        }
+        return names
+    }
+
+    var diagnosticDescription: String {
+        diagnosticNames.joined(separator: ",")
+    }
+
     private func contains(_ flag: Int) -> Bool {
         rawValue & UInt32(flag) != 0
+    }
+
+    private func appendName(_ name: String, for flag: Int, to names: inout [String]) {
+        if contains(flag) {
+            names.append(name)
+        }
     }
 }
 
 nonisolated enum SingleFileReconcileOperation: Equatable {
     case upsert
     case deleteIfMissing
+
+    var diagnosticDescription: String {
+        switch self {
+        case .upsert:
+            "upsert"
+        case .deleteIfMissing:
+            "deleteIfMissing"
+        }
+    }
 }
