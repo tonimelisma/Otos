@@ -38,7 +38,9 @@ This ADR owns:
 - Thumbnails are files on disk; the catalog stores only the relative path. Size,
   format, and generator (256 px long edge, JPEG generated from QuickLook with
   icon fallback accepted). Generated files are staged until Store validates and
-  stamps the result. No in-memory thumbnail cache.
+  stamps the result. The visible grid may hold a bounded decoded-thumbnail memory
+  cache for synchronous repaint, but that cache is rendering state only, never
+  catalog truth or durable overlay.
 - The full parsed metadata is persisted in `asset_metadata` as queryable scalar
   columns plus `metadata_extra_json`, decoded on demand, and is **never resident**
   in grid publication.
@@ -76,7 +78,8 @@ Adjacent decisions requiring separate ADRs or specs:
 
 - A metadata inspector surface and the max-zoom "load the original" path
   (thumbnails serve up to their native size).
-- An in-memory thumbnail cache, if a measured scroll profile ever demands one.
+- Any durable thumbnail cache beyond the app-owned JPEG files, or any larger
+  preview/original-rendering cache.
 - Additional metadata indexes only if a future cross-asset feature proves them
   with measured query evidence.
 
@@ -92,9 +95,17 @@ Adjacent decisions requiring separate ADRs or specs:
    final thumbnail. The final promotion is atomic (replace or move) so a tile
    never reads a half-written file during a re-enrichment overwrite. QuickLook
    generates the image and its icon fallback is accepted (a generic tile beats
-   none). The catalog stores `thumbnail_path`; there is no in-memory thumbnail
-   cache. 256 px is a true grid thumbnail; the max-zoom path that loads originals
-   is a separate future decision.
+   none). The catalog stores `thumbnail_path`. 256 px is a true grid thumbnail;
+   the max-zoom path that loads originals is a separate future decision.
+
+   Spec 0038 adds a bounded decoded-thumbnail memory cache used only by the
+   visible grid. It is keyed by the tile image-content key (`thumbnail_path`,
+   source size, and source mtime seconds), cost-capped around 128 MB, and
+   pressure-evictable through `NSCache`. It exists so a recycled or recreated tile
+   can synchronously repaint a thumbnail that has already decoded in this process,
+   enforcing the no-blank grid invariant. It is never persisted, never used to
+   answer catalog truth, and stale entries age out naturally because re-enrichment
+   changes the key.
 
 2. **The full metadata is on-demand scalar-plus-JSON, never resident in grid
    publication.** Enrichment writes the parsed `AssetMetadata` into an
@@ -163,7 +174,10 @@ Adjacent decisions requiring separate ADRs or specs:
    `EnrichmentCoordinator` actor owns the scheduling and two fixed worker pools — 4
    enrichment slots and 4 materialization slots — because a worker must never block
    on a multi-second download, so the two are separate I/O-bound concurrency
-   budgets (neither is CPU-bound). Scheduling is cursorless: the next units are
+   budgets (neither is CPU-bound). Non-viewport eager materialization may use at
+   most `downloadConcurrency - 1` slots while viewport-dataless work is pending, so
+   eager fill cannot block what the user is looking at behind a full download pool.
+   Scheduling is cursorless: the next units are
    queried from Store through `enrichmentCandidates(prioritizing:limit:)`, and Store
    selects eligible candidate keys in priority/default order, claims only the rows
    still free with one nullable `enrichment_claimed_until` column, then fetches the
@@ -196,6 +210,11 @@ Adjacent decisions requiring separate ADRs or specs:
    Materialization status is checked live at exactly one site — the enrichment pull,
    immediately before the read — which is both the router (materialized → enrich;
    dataless → download) and the ADR 0008 safety gate; it is never persisted.
+   Download workers issue a non-blocking provider request and then poll status
+   without reading bytes. If a file remains dataless, the worker re-issues the
+   provider request on a short cadence within the same overall timeout so a stalled
+   provider request becomes attributable and bounded rather than an invisible
+   120-second wait.
    Enrichment writes are batched (one transaction, one detail-only notification per
    batch) because a per-asset transaction and per-asset notification would crawl and
    re-sort the catalog on every completion. Cancellation is teardown-only: eager-
@@ -377,6 +396,10 @@ query itself is measured too costly at a real large library.
   identity-plus-generation only; hot detail reads fetch only `thumbnailPath`,
   generated best values, and stamps for visible IDs. Full metadata stays out of grid
   memory.
+- The grid can synchronously repaint decoded thumbnails already seen in the current
+  process without making decoded image memory a source of truth. Memory pressure may
+  evict entries, after which a never-cached path can still show placeholder until a
+  new decode succeeds.
 - Re-enrichment is self-healing: a fact change makes the stamp mismatch, so the
   asset re-queues with no cancellation logic.
 - Local disk grows as the library materializes and that growth is unreclaimable;
@@ -392,6 +415,9 @@ query itself is measured too costly at a real large library.
 - Existing generated thumbnails from an older private format may be deleted
   manually during a development increment; the app does not carry a compatibility
   loader or migration path for generated thumbnail overlay.
+- Stalled provider materialization requests are retried within the same timeout
+  and attributed in diagnostics, but Otos still cannot guarantee a third-party
+  provider will materialize a file before the timeout.
 
 ## Retirement Proof
 

@@ -39,19 +39,27 @@ struct CatalogBrowserSourceHygieneTests {
         #expect(content.contains("OtosSignpost.ui"))
     }
 
-    @Test func appKitGridTreatsLargeReorderOnlyAppliesAsNonAnimatedStructuralUpdates() throws {
+    @Test func appKitGridUsesTrueDiffingWithZeroDurationBackgroundSuppression() throws {
         let bridge = try appSource("Otos/Views/MediaAssetCollectionView.swift")
+        let support = try appSource("Otos/Views/MediaAssetCollectionSupport.swift")
         let structuralApply = try appSource("Otos/Views/MediaAssetCollectionStructuralApply.swift")
+        let bridgeAndSupport = bridge + support
 
-        #expect(bridge.contains("largeReorderAnimationItemLimit"))
-        #expect(bridge.contains("let reorderOnly ="))
-        #expect(bridge.contains("animatingDifferences: !(reorderOnly"))
-        #expect(bridge.contains("animatingDifferences: summary.animatingDifferences"))
+        #expect(bridgeAndSupport.contains("MediaGridStructuralApplyPolicy"))
+        #expect(bridgeAndSupport.contains("let reorderOnly ="))
+        #expect(bridgeAndSupport.contains("let animatingDifferences = true"))
+        #expect(bridgeAndSupport.contains("usesZeroDurationAnimation: reorderOnly || largeApply"))
+        #expect(bridge.contains("NSAnimationContext.runAnimationGroup"))
+        #expect(bridge.contains("dataSource.apply(snapshot, animatingDifferences: true"))
+        #expect(!bridge.contains("largeReorderAnimationItemLimit"))
+        #expect(!bridge.contains("animatingDifferences: !(reorderOnly"))
         #expect(!bridge.contains("countsStructuralApplyReloads"))
         #expect(!bridge.contains("structuralApplyReloadsStarted"))
         #expect(!bridge.contains("visibleReloadsStarted"))
         #expect(structuralApply.contains("\"reorderOnly\": \"\\(reorderOnly)\""))
+        #expect(structuralApply.contains("\"largeApply\": \"\\(largeApply)\""))
         #expect(structuralApply.contains("\"animatingDifferences\": \"\\(animatingDifferences)\""))
+        #expect(structuralApply.contains("\"zeroDuration\": \"\\(usesZeroDurationAnimation)\""))
         #expect(structuralApply.contains("\"visibleDetailRequestCount\": \"\\(visibleDetailRequestCount)\""))
     }
 

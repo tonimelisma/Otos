@@ -56,6 +56,8 @@ private struct BrowserDiagnosticsSources {
             .deletingLastPathComponent()
         tile = try Self.read("Otos/Views/MediaAssetTileView.swift", repoRoot: repoRoot)
         grid = try Self.read("Otos/Views/MediaAssetCollectionView.swift", repoRoot: repoRoot)
+            + Self.read("Otos/Views/MediaAssetCollectionSupport.swift", repoRoot: repoRoot)
+            + Self.read("Otos/Views/MediaAssetCollectionPrefetch.swift", repoRoot: repoRoot)
         store = try Self.read("Otos/Stores/CatalogStore.swift", repoRoot: repoRoot)
         scanner = try Self.read("Otos/Services/CatalogScanner.swift", repoRoot: repoRoot)
         diagnostics = try Self.read("Otos/Support/Diagnostics.swift", repoRoot: repoRoot)

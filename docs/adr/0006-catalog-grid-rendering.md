@@ -14,10 +14,11 @@ and ordering. ADR 0010 owns Store-executed ordering, identity-plus-generation gr
 publication, and visible detail reads. ADRs 0002, 0004, and 0005 retain
 scan/persistence, UI ownership, and publication ownership.
 Selection, preview, and zoom require separate future specs/ADRs if implemented.
-Thumbnail storage is owned by ADR 0009; this ADR owns only how the visible grid
-renders and refreshes those thumbnail-backed values. Scan-time media eligibility
-(UTType image or movie) is owned by ADR 0002; the grid displays every cataloged
-eligible asset.
+Thumbnail storage is owned by ADR 0009; this ADR owns how the visible grid
+renders and refreshes those thumbnail-backed values, including the invariant that
+a painted same-asset thumbnail never blanks while the asset remains on screen.
+Scan-time media eligibility (UTType image or movie) is owned by ADR 0002; the grid
+displays every cataloged eligible asset.
 
 ## Context
 
@@ -25,6 +26,17 @@ The previous large media table can enter a permanent AppKit/SwiftUI table stall
 with continuous heap growth after repeated scope changes. Spec 0010 records the
 sample and heap evidence. Otos needs a thumbnail-backed browser that can scale to
 large libraries without putting one SwiftUI hosting tree behind every tile.
+
+Spec 0038 adds a stricter rendering fact: a tile whose thumbnail has already
+painted must never render placeholder content for that same on-screen asset.
+Baseline diagnostics showed large reorder-only snapshots being applied with
+`animatingDifferences: false`; the macOS 27 AppKit SDK header documents that this
+path applies by calling `reloadData` (`NSDiffableDataSource.h:105`), and AppKit
+does not provide `applySnapshotUsingReloadData`. ReloadData tears down visible
+items, so no-blank correctness cannot rely on AppKit preserving cell instances.
+The invariant is enforced by synchronous paint from a decoded memory cache plus
+same-identity downgrade guards inside the tile; diffable apply semantics only
+affect how much work AppKit does.
 
 ## Alternatives
 
@@ -55,18 +67,22 @@ video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
 insert/remove changes may animate so surviving items move with rendered thumbnails
-intact. Large same-membership background reorders apply nonanimated: real-library
-smoke proved multi-second animated full-grid resorts can jank the browser, while a
-nonanimated reorder preserves item identity without creating useful visual motion.
+intact. Background reorder-only changes use true diffable applies wrapped in a
+zero-duration `NSAnimationContext`, so they avoid visible animation without
+requesting AppKit's `reloadData` path. If that path ever proves too expensive at
+real-library scale, the fallback is to use reloadData again; the no-blank invariant
+still holds because the tile can synchronously repaint any decoded thumbnail and
+never downgrades a painted same-asset image to placeholder content.
+
 For unchanged IDs, re-read visible details through the Store-backed detail reader
 and reconfigure the existing visible items in place. Do not call AppKit item reload
 for a detail-only refresh: reload enters the reuse lifecycle, and reusable tile
 cleanup clears the thumbnail before the async loader repaints it. Permit one
 structural apply at a time and retain only the latest pending grid state. Reset
 scroll and selection only when the query descriptor changes; same-descriptor
-structural applies rely on native diffable update preservation and restore
-surviving selected identities. The selection ring is drawn on the visible tile
-face, so it follows the thumbnail aspect instead of the whole square cell.
+structural applies restore surviving selected identities. The selection ring is
+drawn on the visible tile face, so it follows the thumbnail aspect instead of the
+whole square cell.
 
 ## Why This Is Simplest Correct
 
@@ -81,9 +97,12 @@ responsive columns and removes flow-layout width bookkeeping.
 - SwiftUI remains responsible for window composition and empty-state shell.
 - Collection updates are imperative but isolated and state-machine tested.
 - Same-identity background enrichment or fact-detail updates do not recycle
-  visible cells, so thumbnails remain painted while unchanged image content is
-  skipped by the tile content key. Date and duration overlay updates do not
-  participate in image identity.
+  visible cells; if AppKit does recycle a visible cell for structural reasons, the
+  tile synchronously repaints from the decoded cache when available. Date and
+  duration overlay updates do not participate in image identity.
+- Missing detail rows, detail-query failures, and nil thumbnail decode results
+  are information loss, not proof that a painted same-asset thumbnail should be
+  cleared.
 - Native AppKit selection and responder-chain copy behavior live at this boundary
   so SwiftUI and the ViewModel do not mirror high-cardinality selection state.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
@@ -97,3 +116,4 @@ responsive columns and removes flow-layout width bookkeeping.
 - `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md`
 - `docs/specs/0037-thumbnail-tile-redesign.md`
 - `docs/specs/0035-catalog-browser-remediation-completion.md`
+- `docs/specs/0038-no-blank-grid-invariant.md`

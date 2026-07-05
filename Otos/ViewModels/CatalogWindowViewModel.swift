@@ -51,6 +51,10 @@ final class CatalogWindowViewModel {
         mediaTileDetailReader
     }
 
+    var tileImageCache: MediaTileImageCache {
+        mediaTileImageCache
+    }
+
     var uiStallMonitor: MainRunLoopStallMonitor {
         stallMonitor
     }
@@ -63,6 +67,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator?
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
+    @ObservationIgnored private let mediaTileImageCache = MediaTileImageCache()
     @ObservationIgnored private let diagnostics: CatalogDiagnostics?
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool

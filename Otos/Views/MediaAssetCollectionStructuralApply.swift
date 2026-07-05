@@ -16,19 +16,22 @@ extension MediaAssetCollectionViewController {
         }
         let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
         reportViewport()
+        let preheatCount = preheatLookahead(reason: "structuralApply")
         restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)
 
         let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)
         logFinishedStructuralApply(
             context,
             applyMs: applyMs,
-            visibleDetailRequestCount: visibleDetailRequestCount
+            visibleDetailRequestCount: visibleDetailRequestCount,
+            preheatCount: preheatCount
         )
         recordStructuralApplyDiagnostics(
             context,
             diagnostics: diagnostics,
             applyMs: applyMs,
-            visibleDetailRequestCount: visibleDetailRequestCount
+            visibleDetailRequestCount: visibleDetailRequestCount,
+            preheatCount: preheatCount
         )
         if let operation {
             stallMonitor?.endOperation(operation)
@@ -39,7 +42,8 @@ extension MediaAssetCollectionViewController {
     private func logFinishedStructuralApply(
         _ context: StructuralApplyCompletionContext,
         applyMs: Int,
-        visibleDetailRequestCount: Int
+        visibleDetailRequestCount: Int,
+        preheatCount: Int
     ) {
         OtosLog.ui.info(
             """
@@ -47,8 +51,11 @@ extension MediaAssetCollectionViewController {
             scope=\(context.grid.scope.diagnosticDescription, privacy: .public) \
             inserted=\(context.insertedCount, privacy: .public) removed=\(context.removedCount, privacy: .public) \
             reorderOnly=\(context.reorderOnly, privacy: .public) \
+            largeApply=\(context.largeApply, privacy: .public) \
             animating=\(context.animatingDifferences, privacy: .public) \
+            zeroDuration=\(context.usesZeroDurationAnimation, privacy: .public) \
             visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
+            preheatCount=\(preheatCount, privacy: .public) \
             applyMs=\(applyMs, privacy: .public)
             """
         )
@@ -58,14 +65,17 @@ extension MediaAssetCollectionViewController {
         _ context: StructuralApplyCompletionContext,
         diagnostics: CatalogDiagnostics?,
         applyMs: Int,
-        visibleDetailRequestCount: Int
+        visibleDetailRequestCount: Int,
+        preheatCount: Int
     ) {
         let itemCount = context.grid.orderedAssetIDs.count
         let scopeDescription = context.grid.scope.diagnosticDescription
         let insertedCount = context.insertedCount
         let removedCount = context.removedCount
         let reorderOnly = context.reorderOnly
+        let largeApply = context.largeApply
         let animatingDifferences = context.animatingDifferences
+        let usesZeroDurationAnimation = context.usesZeroDurationAnimation
         Task {
             await diagnostics?.record(
                 operation: "ui.mediaGrid.structuralApply",
@@ -76,8 +86,11 @@ extension MediaAssetCollectionViewController {
                     "inserted": "\(insertedCount)",
                     "removed": "\(removedCount)",
                     "reorderOnly": "\(reorderOnly)",
+                    "largeApply": "\(largeApply)",
                     "animatingDifferences": "\(animatingDifferences)",
+                    "zeroDuration": "\(usesZeroDurationAnimation)",
                     "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
+                    "preheatCount": "\(preheatCount)",
                     "applyMs": "\(applyMs)",
                 ]
             )

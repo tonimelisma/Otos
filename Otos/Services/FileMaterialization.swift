@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// File materialization guide
 ///
@@ -96,19 +97,34 @@ extension FileMaterialization {
     static func materialize(
         _ url: URL,
         pollInterval: Duration = .milliseconds(250),
-        timeout: Duration = .seconds(120)
+        timeout: Duration = .seconds(120),
+        requestRetryInterval: Duration = .seconds(15)
     ) async -> MaterializationOutcome {
+        let start = Date()
         if status(of: url) == .materialized {
-            return .alreadyMaterialized
+            return finishMaterialization(.alreadyMaterialized, url: url, start: start)
         }
-        do {
-            try requestMaterialization(of: url)
-        } catch {
-            return .requestFailed
+        if let failed = requestDownload(url, retry: false) {
+            return finishMaterialization(failed, url: url, start: start)
         }
+        let outcome = await pollMaterialization(
+            url,
+            pollInterval: pollInterval,
+            timeout: timeout,
+            requestRetryInterval: requestRetryInterval
+        )
+        return finishMaterialization(outcome, url: url, start: start)
+    }
 
+    private static func pollMaterialization(
+        _ url: URL,
+        pollInterval: Duration,
+        timeout: Duration,
+        requestRetryInterval: Duration
+    ) async -> MaterializationOutcome {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
+        var nextRetry = clock.now.advanced(by: requestRetryInterval)
         while clock.now < deadline {
             do {
                 try await Task.sleep(for: pollInterval)
@@ -119,12 +135,56 @@ extension FileMaterialization {
             case .materialized:
                 return .materialized
             case .dataless:
+                if clock.now >= nextRetry {
+                    if let failed = requestDownload(url, retry: true) {
+                        return failed
+                    }
+                    nextRetry = clock.now.advanced(by: requestRetryInterval)
+                }
                 continue
             case .unknown:
                 return .statusUnavailable
             }
         }
         return .timedOut
+    }
+
+    private static func requestDownload(_ url: URL, retry: Bool) -> MaterializationOutcome? {
+        let prefix = retry ? "re-" : ""
+        do {
+            OtosLog.fileAccess.debug(
+                """
+                File materialization \(prefix, privacy: .public)requested path=\
+                \(url.path(percentEncoded: false), privacy: .public)
+                """
+            )
+            try requestMaterialization(of: url)
+            return nil
+        } catch {
+            OtosLog.fileAccess.error(
+                """
+                File materialization \(prefix, privacy: .public)request failed path=\
+                \(url.path(percentEncoded: false), privacy: .public) error=\
+                \(String(describing: error), privacy: .public)
+                """
+            )
+            return .requestFailed
+        }
+    }
+
+    private static func finishMaterialization(
+        _ outcome: MaterializationOutcome,
+        url: URL,
+        start: Date
+    ) -> MaterializationOutcome {
+        OtosLog.fileAccess.debug(
+            """
+            File materialization finished outcome=\(outcome.diagnosticDescription, privacy: .public) \
+            elapsedMs=\(DiagnosticsTiming.milliseconds(since: start), privacy: .public) \
+            path=\(url.path(percentEncoded: false), privacy: .public)
+            """
+        )
+        return outcome
     }
 }
 
@@ -142,6 +202,32 @@ nonisolated enum MaterializationOutcome: Equatable {
     case cancelled
     /// The file's status could not be read (for example it disappeared).
     case statusUnavailable
+
+    var isMaterialized: Bool {
+        switch self {
+        case .alreadyMaterialized, .materialized:
+            true
+        case .requestFailed, .timedOut, .cancelled, .statusUnavailable:
+            false
+        }
+    }
+
+    var diagnosticDescription: String {
+        switch self {
+        case .alreadyMaterialized:
+            "alreadyMaterialized"
+        case .materialized:
+            "materialized"
+        case .requestFailed:
+            "requestFailed"
+        case .timedOut:
+            "timedOut"
+        case .cancelled:
+            "cancelled"
+        case .statusUnavailable:
+            "statusUnavailable"
+        }
+    }
 }
 
 /// Point-in-time materialization status of a file. Transient and never persisted: a

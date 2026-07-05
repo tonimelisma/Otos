@@ -4,6 +4,13 @@
 
 Implemented in this increment.
 
+## Current-State Note
+
+Spec 0038 supersedes the earlier rendering assumption that nonanimated diffable
+applies are a no-blank fix. On AppKit, `animatingDifferences: false` is a
+reloadData-class path; the current invariant is enforced by synchronous tile
+paint from decoded cache plus same-identity downgrade guards.
+
 ## Classification
 
 Bug fix, refactor, and performance/instrumentation.

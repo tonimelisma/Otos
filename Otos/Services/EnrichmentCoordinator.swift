@@ -19,7 +19,7 @@ import OSLog
 /// of claimed candidates. The coordinator keeps only the runtime state it cannot
 /// derive: the viewport, a small process-local queue of already-claimed work used to
 /// avoid one SQLite claim query per worker slot, in-flight guards, the just-downloaded
-/// `freshly` hand-off, the set of dataless ids discovered so far, the pending-apply
+/// `freshly` hand-off, the pending dataless download work discovered so far, the pending-apply
 /// buffer, and one `eagerMode` latch.
 ///
 /// Materialization status is not checked on this actor. The enricher checks it off-actor
@@ -27,8 +27,8 @@ import OSLog
 /// for a dataless file; the coordinator routes those to the download pool. So the enrich
 /// pool both enriches materialized files and discovers dataless ones, and the download
 /// pool materializes them (then hands them back through `freshly`). Non-viewport eager
-/// downloads wait for the latch — every materialized file is enriched (or being enriched)
-/// first; viewport-dataless downloads run immediately.
+/// downloads wait for the latch and reserve the final download slot for viewport work;
+/// viewport-dataless downloads run immediately.
 ///
 /// Writes are batched (`CatalogStore.applyEnrichmentBatch`): a per-asset transaction
 /// across a whole library would crawl, and a notification per asset would re-sort the
@@ -49,9 +49,15 @@ actor EnrichmentCoordinator {
         let sourceMTimeSeconds: Int?
     }
 
+    struct DownloadWork {
+        let id: MediaAssetID
+        let url: URL
+        let sourceSize: Int64?
+    }
+
     let store: CatalogStore
     let enricher: MediaEnricher
-    let materialize: @Sendable (URL) async -> Bool
+    let materialize: @Sendable (URL) async -> MaterializationOutcome
     let enrichConcurrency: Int
     let downloadConcurrency: Int
     let claimBatchSize: Int
@@ -62,7 +68,7 @@ actor EnrichmentCoordinator {
     var viewport: [MediaAssetID] = []
     var freshly: [MediaAssetID] = []
     var claimedEnrichQueue: [EnrichWork] = []
-    var datalessPending: Set<MediaAssetID> = []
+    var datalessPending: [MediaAssetID: DownloadWork] = [:]
     var inFlightEnrich: Set<MediaAssetID> = []
     var inFlightDownload: Set<MediaAssetID> = []
     var pendingApply: [EnrichmentResult] = []
@@ -83,7 +89,9 @@ actor EnrichmentCoordinator {
     init(
         store: CatalogStore,
         enricher: MediaEnricher,
-        materialize: @escaping @Sendable (URL) async -> Bool = { await EnrichmentCoordinator.liveMaterialize($0) },
+        materialize: @escaping @Sendable (URL) async -> MaterializationOutcome = {
+            await EnrichmentCoordinator.liveMaterialize($0)
+        },
         enrichConcurrency: Int = 4,
         downloadConcurrency: Int = 4,
         claimBatchSize: Int = 32,
@@ -109,13 +117,8 @@ actor EnrichmentCoordinator {
         signalContinuation = continuation
     }
 
-    static func liveMaterialize(_ url: URL) async -> Bool {
-        switch await FileMaterialization.materialize(url) {
-        case .materialized, .alreadyMaterialized:
-            true
-        default:
-            false
-        }
+    static func liveMaterialize(_ url: URL) async -> MaterializationOutcome {
+        await FileMaterialization.materialize(url)
     }
 }
 
@@ -200,15 +203,19 @@ extension EnrichmentCoordinator {
                         let outcome = await enricher.enrich(
                             work.id, work.url, work.sourceSize, work.sourceMTimeSeconds
                         )
-                        await self.finishEnrich(work.id, outcome)
+                        await self.finishEnrich(work, outcome)
                     }
                 }
-                for id in dequeueDownloadWork() {
-                    let url = id.fileURL
+                for work in await dequeueDownloadWork() {
                     let materialize = materialize
                     group.addTask {
-                        let materialized = await materialize(url)
-                        await self.finishDownload(id, materialized: materialized)
+                        let start = Date()
+                        let outcome = await materialize(work.url)
+                        await self.finishDownload(
+                            work,
+                            outcome: outcome,
+                            attemptMs: DiagnosticsTiming.milliseconds(since: start)
+                        )
                     }
                 }
             }

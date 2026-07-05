@@ -9,6 +9,13 @@ ENR-003, ENR-005, ENR-010.
 
 ADR changed: `docs/adr/0009-enrichment-storage-and-staleness.md`.
 
+## Current-State Note
+
+Spec 0038 supersedes the overlay geometry from this redesign where it differs:
+the current text scrim is anchored at the thumbnail's top-left corner with no
+outer inset and sized to the text extent, and the video badge is anchored at the
+bottom-right thumbnail corner.
+
 ## Problem Statement And User-Facing Goal
 
 Before this increment, the media grid tile still looked like a placeholder: every

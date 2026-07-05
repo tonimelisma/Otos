@@ -3,6 +3,34 @@ import Foundation
 import Testing
 
 struct EnrichmentCoordinatorTests {
+    @Test func downloadSchedulingReservesFinalSlotForViewportWork() {
+        #expect(!EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
+            isViewportWork: false,
+            inFlightDownloadCount: 0,
+            downloadConcurrency: 1
+        ))
+        #expect(EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
+            isViewportWork: true,
+            inFlightDownloadCount: 0,
+            downloadConcurrency: 1
+        ))
+        #expect(EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
+            isViewportWork: false,
+            inFlightDownloadCount: 2,
+            downloadConcurrency: 4
+        ))
+        #expect(!EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
+            isViewportWork: false,
+            inFlightDownloadCount: 3,
+            downloadConcurrency: 4
+        ))
+        #expect(EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
+            isViewportWork: true,
+            inFlightDownloadCount: 3,
+            downloadConcurrency: 4
+        ))
+    }
+
     @Test func shutdownReleasesQueuedAndInFlightClaims() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -22,7 +50,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: blocker.enricher(),
-            materialize: { _ in true },
+            materialize: { _ in .materialized },
             enrichConcurrency: 1,
             downloadConcurrency: 1,
             claimBatchSize: 3,
@@ -122,7 +150,7 @@ struct EnrichmentCoordinatorTests {
             enricher: enricher,
             materialize: { url in
                 await state.materialize(url.path(percentEncoded: false))
-                return true
+                return .materialized
             },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
@@ -167,7 +195,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            materialize: { _ in true },
+            materialize: { _ in .materialized },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
@@ -211,7 +239,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            materialize: { _ in true },
+            materialize: { _ in .materialized },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
@@ -335,7 +363,7 @@ private func visibleLifecycleCoordinator(
     EnrichmentCoordinator(
         store: store,
         enricher: visibleLifecycleEnricher(),
-        materialize: { _ in true },
+        materialize: { _ in .materialized },
         enrichConcurrency: 2,
         downloadConcurrency: 1,
         claimBatchSize: 2,

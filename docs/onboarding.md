@@ -264,17 +264,20 @@ selection and structural-apply extensions (`MediaAssetCollectionSelection.swift`
 `MediaAssetCollectionStructuralApply.swift`) as one AppKit boundary. The small
 `MediaAssetCollectionApplyGate` exists so that only one structural update runs at a
 time and only the newest pending update survives — backpressure for a high-volume
-surface. Identity/order changes go through diffable data-source applies so
-surviving visible items keep identity and their rendered thumbnails instead of
-being torn down by `reloadData`. Small and user-visible insert/remove changes may
-animate; large same-membership background reorders apply nonanimated because a
-real-library smoke run proved multi-second animated full-grid reorders can jank the
-browser without adding useful user feedback.
+surface. Identity/order changes go through diffable data-source applies. Small and
+user-visible insert/remove changes may animate; background reorder-only changes
+use true diffable applies inside a zero-duration animation context. Do not switch
+that path back to `animatingDifferences: false` as an optimization without
+evidence: on AppKit that flag means `reloadData`, which tears down visible items.
+The grid stays visually correct even if AppKit recycles a tile because decoded
+thumbnails are cached as rendering state and repainted synchronously when a tile
+configures for a key already seen in this process.
 Detail-only changes for the same ordered IDs advance `detailRefreshGeneration`,
 re-read only visible details, and reconfigure the existing visible AppKit items in
 place, so a thumbnail does not blink just because metadata for an item changed.
-Structural applies do not prune the visible-detail cache first: the post-apply
-visible-detail request replaces that map for the current viewport.
+Structural applies do not prune the visible-detail cache first: the controller
+keeps a bounded sticky detail map so a transient query failure or missing row does
+not erase the best detail known for a visible asset.
 Structural-apply diagnostics record aggregate insert/remove counts, reorder-only
 status, animation status, apply time, and the visible-detail request count caused
 by the apply. They do not try to count scroll-driven visible loads that merely
@@ -283,15 +286,18 @@ identities upward (the **viewport**) so enrichment can prioritize what you are
 looking at. `MediaAssetTileView` is one reusable tile. The collection cell stays
 transparent; the visible face is the loaded thumbnail's aspect-fit rect, or a
 full-square neutral placeholder before any image has loaded. Filename and relative
-capture date sit on a small top-left scrim inside that face. Videos, and only
-videos, add a bottom-right scrim with duration text when Store has parsed it or a
-film symbol while duration is still unknown. The tile formats those scalar labels
-synchronously during configuration, while loading and decoding the thumbnail *off
-the main thread* and only assigning the finished image on Main, with a generation
-token so a load that finishes after the tile has been reused for another asset is
-discarded. The image reload key includes the thumbnail path plus source size and
-modification stamp, but not the date or duration, so overlay-only enrichment
-updates do not clear or reload the image.
+capture date sit on a top-left scrim anchored to the thumbnail corner and sized to
+the text. Videos, and only videos, add a bottom-right scrim with duration text
+when Store has parsed it or a film symbol while duration is still unknown. The
+tile formats those scalar labels synchronously during configuration. It first
+checks the ViewModel-owned `MediaTileImageCache`; a hit paints immediately, while
+a miss loads and decodes the thumbnail *off the main thread* and only assigns a
+non-nil finished image on Main, with a generation token so a load that finishes
+after the tile has been reused for another asset is discarded. The image reload
+key includes the thumbnail path plus source size and modification stamp, but not
+the date or duration, so overlay-only enrichment updates do not clear or reload
+the image. A same-asset detail downgrade or nil decode result keeps the painted
+thumbnail instead of replacing it with placeholder content.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
 selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its

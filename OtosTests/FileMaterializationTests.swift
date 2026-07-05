@@ -9,6 +9,14 @@ import Testing
 /// during the spec's proof of concept (see
 /// `docs/specs/0016-cloud-materialization-detection.md`).
 struct FileMaterializationTests {
+    @Test func materializationOutcomeDiagnosticsClassifyTerminalStates() {
+        #expect(MaterializationOutcome.alreadyMaterialized.isMaterialized)
+        #expect(MaterializationOutcome.materialized.isMaterialized)
+        #expect(!MaterializationOutcome.requestFailed.isMaterialized)
+        #expect(!MaterializationOutcome.timedOut.isMaterialized)
+        #expect(MaterializationOutcome.statusUnavailable.diagnosticDescription == "statusUnavailable")
+    }
+
     @Test func localFileIsMaterialized() throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "otos-materialization-\(UUID().uuidString)", directoryHint: .isDirectory)

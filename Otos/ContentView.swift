@@ -30,6 +30,7 @@ struct ContentView: View {
                 emptyState: viewModel.state.mediaEmptyState,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
+                imageCache: viewModel.tileImageCache,
                 stallMonitor: viewModel.uiStallMonitor,
                 diagnostics: viewModel.catalogDiagnostics,
                 onViewportChanged: viewModel.viewportChanged,

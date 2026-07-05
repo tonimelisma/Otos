@@ -271,6 +271,10 @@ struct SourceHygieneTests {
             contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
             encoding: .utf8
         )
+            + String(
+                contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionLayout.swift"),
+                encoding: .utf8
+            )
 
         #expect(content.contains("NSViewControllerRepresentable"))
         #expect(content.contains("NSCollectionView"))

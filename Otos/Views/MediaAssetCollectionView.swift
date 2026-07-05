@@ -12,9 +12,10 @@ import UniformTypeIdentifiers
 ///
 /// Descriptor plus identity order is structural; tile detail is read only for the visible window.
 /// A structural change performs one diffable apply, animating small/user-visible
-/// insert/remove changes while applying large same-membership background reorders
-/// nonanimated. Unchanged IDs re-read visible details and reconfigure existing
-/// reusable items in place.
+/// insert/remove changes while suppressing visible motion for reorder-only background
+/// applies. Unchanged IDs re-read visible details and reconfigure existing reusable
+/// items in place. Decoded thumbnails are supplied by the ViewModel-owned
+/// `MediaTileImageCache` so recycled items can repaint synchronously.
 /// `MediaAssetCollectionApplyGate` prevents overlapping AppKit applies and keeps
 /// only the newest pending value.
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
@@ -32,6 +33,7 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
+    var imageCache: MediaTileImageCache?
     var stallMonitor: MainRunLoopStallMonitor?
     var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
@@ -46,6 +48,7 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     ) {
         controller.thumbnailDirectory = thumbnailDirectory
         controller.detailReader = detailReader
+        controller.imageCache = imageCache
         controller.stallMonitor = stallMonitor
         controller.diagnostics = diagnostics
         controller.onViewportChanged = onViewportChanged
@@ -53,45 +56,26 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     }
 }
 
-struct MediaTileDetailReader {
-    private let store: CatalogStore
-
-    init(store: CatalogStore) {
-        self.store = store
-    }
-
-    func assets(for ids: [MediaAssetID]) async -> [MediaAssetID: MediaAsset] {
-        do {
-            return try await store.mediaAssets(for: ids)
-        } catch is CancellationError {
-            return [:]
-        } catch {
-            OtosLog.catalog.error(
-                "Media tile detail query failed error=\(String(describing: error), privacy: .public)"
-            )
-            return [:]
-        }
-    }
-}
-
 @MainActor
 final class MediaAssetCollectionViewController: NSViewController {
-    private static let largeReorderAnimationItemLimit = 1000
     enum Section: Hashable {
         case media
     }
 
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaAssetCollectionItem")
 
-    private let scrollView = NSScrollView()
+    let scrollView = NSScrollView()
     let collectionView = NSCollectionView()
     let applyGate = MediaAssetCollectionApplyGate()
     var dataSource: NSCollectionViewDiffableDataSource<Section, MediaAssetID>!
-    /// Details for the current visible window only. Identity order lives in the
-    /// diffable data source; values are faulted after AppKit tells us what is visible.
-    private var tileDetailsByID: [MediaAssetID: MediaAsset] = [:]
+    /// Sticky, bounded tile details. Identity order lives in the diffable data source;
+    /// this cache preserves best-known rows across scroll, reloadData-class recycling,
+    /// and transient query failures so a tile does not downgrade to placeholder merely
+    /// because the current visible query returned no row.
+    private var tileDetails = MediaTileDetailCache()
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
+    var preheatTasks: [MediaAssetID: Task<Void, Never>] = [:]
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let preservedSelection: Set<MediaAssetID>
@@ -100,21 +84,17 @@ final class MediaAssetCollectionViewController: NSViewController {
         let insertedCount: Int
         let removedCount: Int
         let reorderOnly: Bool
+        let largeApply: Bool
         let animatingDifferences: Bool
+        let usesZeroDurationAnimation: Bool
         let signpost: OSSignpostIntervalState
-    }
-
-    private struct StructuralChangeSummary {
-        let insertedCount: Int
-        let removedCount: Int
-        let reorderOnly: Bool
-        let animatingDifferences: Bool
     }
 
     /// Set by the representable each SwiftUI update. Tiles resolve `thumbnailPath`
     /// against this directory; the scroll observer reports visible identities here.
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
+    var imageCache: MediaTileImageCache?
     var stallMonitor: MainRunLoopStallMonitor?
     var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
@@ -130,59 +110,24 @@ final class MediaAssetCollectionViewController: NSViewController {
         collectionView.collectionViewLayout = Self.makeLayout()
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
 
-        collectionView.backgroundColors = [.clear]
-        collectionView.isSelectable = true
-        collectionView.allowsMultipleSelection = true
-        collectionView.allowsEmptySelection = true
-        collectionView.delegate = self
-        collectionView.register(
-            MediaAssetCollectionItem.self,
-            forItemWithIdentifier: Self.itemIdentifier
-        )
-
-        // AppKit asks for items only as they enter its managed viewport. The
-        // provider configures a reused AppKit item directly, avoiding one
-        // SwiftUI hosting tree per catalog asset.
-        dataSource = NSCollectionViewDiffableDataSource<Section, MediaAssetID>(
-            collectionView: collectionView
-        ) { [weak self] collectionView, indexPath, assetID in
-            guard let self,
-                  let item = collectionView.makeItem(
-                      withIdentifier: Self.itemIdentifier,
-                      for: indexPath
-                  ) as? MediaAssetCollectionItem
-            else {
-                return nil
-            }
-            _ = item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory)
-            return item
-        }
-
-        scrollView.documentView = collectionView
-        scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        view = scrollView
-
-        // The clip view posts bounds changes as the user scrolls; each is a chance to
-        // re-report the visible identities as the enrichment priority hint. The newest
-        // -value stream upstream coalesces the bursts, so reporting per tick is cheap.
-        let clipView = scrollView.contentView
-        clipView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(scrollBoundsChanged),
-            name: NSView.boundsDidChangeNotification,
-            object: clipView
-        )
-
+        configureCollectionView()
+        configureScrollView()
+        installScrollObserver()
         OtosLog.ui.info("Media grid layout installed columns=6")
+    }
+
+    deinit {
+        detailQueryTask?.cancel()
+        for task in preheatTasks.values {
+            task.cancel()
+        }
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func scrollBoundsChanged() {
         reportViewport()
         _ = requestVisibleDetails(reason: "scroll")
+        preheatLookahead(reason: "scroll")
     }
 
     /// Maps the currently visible items to their ordered identities and forwards them as
@@ -217,28 +162,62 @@ final class MediaAssetCollectionViewController: NSViewController {
 }
 
 extension MediaAssetCollectionViewController {
-    static func makeLayout() -> NSCollectionViewCompositionalLayout {
-        // A counted fractional group expresses the invariant six columns once;
-        // AppKit recomputes the square item size as the viewport width changes.
-        let itemSize = NSCollectionLayoutSize(
-            widthDimension: .fractionalWidth(1),
-            heightDimension: .fractionalHeight(1)
+    private func configureCollectionView() {
+        collectionView.backgroundColors = [.clear]
+        collectionView.isSelectable = true
+        collectionView.allowsMultipleSelection = true
+        collectionView.allowsEmptySelection = true
+        collectionView.delegate = self
+        collectionView.prefetchDataSource = self
+        collectionView.register(
+            MediaAssetCollectionItem.self,
+            forItemWithIdentifier: Self.itemIdentifier
         )
-        let item = NSCollectionLayoutItem(layoutSize: itemSize)
-        item.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 4, bottom: 4, trailing: 4)
 
-        let groupSize = NSCollectionLayoutSize(
-            widthDimension: .fractionalWidth(1),
-            heightDimension: .fractionalWidth(1.0 / 6.0)
+        dataSource = NSCollectionViewDiffableDataSource<Section, MediaAssetID>(
+            collectionView: collectionView
+        ) { [weak self] collectionView, indexPath, assetID in
+            self?.makeCollectionItem(collectionView: collectionView, indexPath: indexPath, assetID: assetID)
+        }
+    }
+
+    private func makeCollectionItem(
+        collectionView: NSCollectionView,
+        indexPath: IndexPath,
+        assetID: MediaAssetID
+    ) -> MediaAssetCollectionItem? {
+        guard let item = collectionView.makeItem(
+            withIdentifier: Self.itemIdentifier,
+            for: indexPath
+        ) as? MediaAssetCollectionItem else {
+            return nil
+        }
+        _ = item.configure(
+            asset: assetForTile(assetID),
+            thumbnailDirectory: thumbnailDirectory,
+            imageCache: imageCache
         )
-        let group = NSCollectionLayoutGroup.horizontal(
-            layoutSize: groupSize,
-            subitem: item,
-            count: 6
+        return item
+    }
+
+    private func configureScrollView() {
+        scrollView.documentView = collectionView
+        scrollView.drawsBackground = false
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        view = scrollView
+    }
+
+    private func installScrollObserver() {
+        let clipView = scrollView.contentView
+        clipView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(scrollBoundsChanged),
+            name: NSView.boundsDidChangeNotification,
+            object: clipView
         )
-        let section = NSCollectionLayoutSection(group: group)
-        section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        return NSCollectionViewCompositionalLayout(section: section)
     }
 
     func performApplyGateAction(_ action: MediaAssetCollectionApplyGate.Action) {
@@ -271,7 +250,10 @@ extension MediaAssetCollectionViewController {
     ) {
         let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.applyStructure")
         let applyStart = Date()
-        let summary = structuralChangeSummary(for: grid.orderedAssetIDs)
+        let summary = MediaGridStructuralApplyPolicy.summarize(
+            previousOrderedIDs: applyGate.displayedOrderedIDs,
+            nextOrderedIDs: grid.orderedAssetIDs
+        )
         // Snapshot the selected identities before the diffable apply can drop or shift
         // them. Query-descriptor changes are user context changes, so they intentionally
         // start from an empty selection instead of restoring surviving identities.
@@ -289,7 +271,9 @@ extension MediaAssetCollectionViewController {
             scope=\(grid.scope.diagnosticDescription, privacy: .public) \
             resetScroll=\(resetScroll, privacy: .public) \
             reorderOnly=\(summary.reorderOnly, privacy: .public) \
-            animating=\(summary.animatingDifferences, privacy: .public)
+            largeApply=\(summary.largeApply, privacy: .public) \
+            animating=\(summary.animatingDifferences, privacy: .public) \
+            zeroDuration=\(summary.usesZeroDurationAnimation, privacy: .public)
             """
         )
         let stallMonitor = stallMonitor
@@ -302,7 +286,9 @@ extension MediaAssetCollectionViewController {
             insertedCount: summary.insertedCount,
             removedCount: summary.removedCount,
             reorderOnly: summary.reorderOnly,
+            largeApply: summary.largeApply,
             animatingDifferences: summary.animatingDifferences,
+            usesZeroDurationAnimation: summary.usesZeroDurationAnimation,
             signpost: signpost
         )
         let completion = { [weak self, operation, stallMonitor, diagnostics, context] in
@@ -319,28 +305,23 @@ extension MediaAssetCollectionViewController {
                 diagnostics: diagnostics
             )
         }
-        dataSource.apply(snapshot, animatingDifferences: summary.animatingDifferences, completion: completion)
+        applySnapshot(snapshot, summary: summary, completion: completion)
     }
 
-    private func structuralChangeSummary(for nextOrderedIDs: [MediaAssetID]) -> StructuralChangeSummary {
-        let previousOrderedIDs = applyGate.displayedOrderedIDs
-        let previousIDs = Set(previousOrderedIDs)
-        let retainedCount = nextOrderedIDs.reduce(into: 0) { count, id in
-            if previousIDs.contains(id) {
-                count += 1
-            }
+    private func applySnapshot(
+        _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
+        summary: MediaGridStructuralApplyPolicy,
+        completion: @escaping () -> Void
+    ) {
+        guard summary.usesZeroDurationAnimation else {
+            dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
+            return
         }
-        let insertedCount = nextOrderedIDs.count - retainedCount
-        let removedCount = previousOrderedIDs.count - retainedCount
-        let reorderOnly = insertedCount == 0
-            && removedCount == 0
-            && previousOrderedIDs != nextOrderedIDs
-        return StructuralChangeSummary(
-            insertedCount: insertedCount,
-            removedCount: removedCount,
-            reorderOnly: reorderOnly,
-            animatingDifferences: !(reorderOnly && nextOrderedIDs.count >= Self.largeReorderAnimationItemLimit)
-        )
+        NSAnimationContext.runAnimationGroup { animationContext in
+            animationContext.duration = 0
+            animationContext.allowsImplicitAnimation = false
+            dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
+        }
     }
 
     private func mediaSnapshot(
@@ -386,7 +367,7 @@ extension MediaAssetCollectionViewController {
                 OtosSignpost.ui.emitEvent("MediaGridVisibleDetailQueryDropped")
                 return
             }
-            tileDetailsByID = assets
+            mergeTileDetails(assets, reason: reason)
             OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
             let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
             OtosLog.ui.debug(
@@ -431,7 +412,11 @@ extension MediaAssetCollectionViewController {
                 missingItemCount += 1
                 continue
             }
-            if item.configure(asset: assetForTile(assetID), thumbnailDirectory: thumbnailDirectory) {
+            if item.configure(
+                asset: assetForTile(assetID),
+                thumbnailDirectory: thumbnailDirectory,
+                imageCache: imageCache
+            ) {
                 thumbnailLoadsStarted += 1
             }
             configuredCount += 1
@@ -464,7 +449,7 @@ extension MediaAssetCollectionViewController {
     }
 
     func assetForTile(_ id: MediaAssetID) -> MediaAsset {
-        tileDetailsByID[id] ?? MediaAsset(
+        tileDetails.asset(for: id) ?? MediaAsset(
             libraryRootPath: id.libraryRootPath,
             relativePath: id.relativePath,
             name: nil,
@@ -472,6 +457,22 @@ extension MediaAssetCollectionViewController {
             byteSize: nil,
             createdAt: nil,
             contentModifiedAt: nil
+        )
+    }
+
+    func mergeTileDetails(_ assets: [MediaAssetID: MediaAsset], reason: String) {
+        guard !assets.isEmpty else {
+            OtosSignpost.ui.emitEvent("MediaGridTileDetailsMergeEmpty")
+            return
+        }
+        tileDetails.merge(assets)
+        let storedCount = tileDetails.count
+        OtosSignpost.ui.emitEvent("MediaGridTileDetailsMerged")
+        OtosLog.ui.debug(
+            """
+            Media grid tile details merged incoming=\(assets.count, privacy: .public) \
+            stored=\(storedCount, privacy: .public) reason=\(reason, privacy: .public)
+            """
         )
     }
 }

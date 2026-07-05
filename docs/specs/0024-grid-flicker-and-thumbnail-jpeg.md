@@ -4,6 +4,14 @@
 
 Bug fix with rendering, enrichment-storage, and diagnostics updates.
 
+## Current-State Note
+
+Spec 0038 supersedes this spec's original assumption that in-place visible
+reconfiguration alone is sufficient to prevent all thumbnail blanking. The current
+grid invariant also covers structural applies, reloadData-class recycling, missing
+detail rows, nil thumbnail loads, and scroll-back repaint through synchronous
+decoded-cache paint.
+
 ## Problem Statement
 
 The latest debug run showed the media grid repeatedly blanking and repainting

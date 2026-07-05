@@ -48,6 +48,13 @@ into the user's media folders.
   original is never treated as a deletion. Asset identity is the filesystem path;
   Otos does not invent durable IDs, content fingerprints, or sidecars to track
   files.
+- The media grid never blanks a thumbnail that has already been displayed for the
+  same on-screen asset in the current process. A tile may show placeholder content
+  only before that asset's thumbnail has ever decoded in this process; after a
+  thumbnail paints, reorder-only applies, detail-query failures, missing detail
+  rows, nil thumbnail loads, scrolling, enrichment, structural applies, and
+  availability churn must keep that thumbnail or replace it only with a newer
+  thumbnail for the same asset.
 
 ## Engineering Philosophy: Measure Before Optimizing
 

@@ -9,6 +9,7 @@ struct MediaGridView: View {
     let emptyState: CatalogMediaEmptyState
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
+    var imageCache = MediaTileImageCache()
     var stallMonitor: MainRunLoopStallMonitor?
     var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
@@ -23,6 +24,7 @@ struct MediaGridView: View {
                     grid: grid,
                     thumbnailDirectory: thumbnailDirectory,
                     detailReader: detailReader,
+                    imageCache: imageCache,
                     stallMonitor: stallMonitor,
                     diagnostics: diagnostics,
                     onViewportChanged: onViewportChanged

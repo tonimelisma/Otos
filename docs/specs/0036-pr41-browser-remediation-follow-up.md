@@ -4,6 +4,13 @@
 
 Implemented in this increment.
 
+## Current-State Note
+
+Spec 0038 supersedes this spec's large reorder-only apply policy. The current
+grid uses duration-zero true diffable applies for background reorders, and the
+no-blank invariant does not depend on AppKit preserving item instances because
+tiles repaint synchronously from decoded cache when possible.
+
 ## Classification
 
 Bug fix, performance/instrumentation, and refactor.
@@ -238,7 +245,8 @@ Focused tests:
 - source hygiene avoids exact source spelling locks
 - query normalization does not bump or roll back generation
 - staged thumbnail cleanup deletes only app-owned temp files
-- reorder-only structural apply chooses the nonanimated large-update path
+- reorder-only structural apply uses true diffing with zero-duration animation
+  suppression instead of AppKit's reloadData-class nonanimated path
 - ViewModel sidebar selection routing uses deterministic Store scan input so the
   post-merge DoD test no longer depends on concurrent real filesystem scanning
 

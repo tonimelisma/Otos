@@ -8,7 +8,8 @@ import OSLog
 /// diagnostics, batches Store writes, and releases process-local SQLite claims on
 /// success, retryable failure, or shutdown.
 extension EnrichmentCoordinator {
-    func finishEnrich(_ id: MediaAssetID, _ outcome: EnrichmentOutcome) async {
+    func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
+        let id = work.id
         guard !isShuttingDown else {
             try? await store.releaseEnrichmentClaims([id])
             return
@@ -18,8 +19,16 @@ extension EnrichmentCoordinator {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
         case .notMaterialized:
-            await recordVisibleThumbnailLifecycle(phase: "notMaterialized", id: id)
-            datalessPending.insert(id)
+            await recordVisibleThumbnailLifecycle(
+                phase: "notMaterialized",
+                id: id,
+                fields: ["sourceSize": "\(work.sourceSize ?? -1)"]
+            )
+            datalessPending[id] = DownloadWork(
+                id: id,
+                url: work.url,
+                sourceSize: work.sourceSize
+            )
             try? await store.refreshEnrichmentClaims([id])
         case .transient:
             await recordVisibleThumbnailLifecycle(phase: "transient", id: id)
@@ -28,17 +37,28 @@ extension EnrichmentCoordinator {
         signal()
     }
 
-    func finishDownload(_ id: MediaAssetID, materialized: Bool) async {
+    func finishDownload(
+        _ work: DownloadWork,
+        outcome: MaterializationOutcome,
+        attemptMs: Int
+    ) async {
+        let id = work.id
         guard !isShuttingDown else {
             try? await store.releaseEnrichmentClaims([id])
             return
         }
         inFlightDownload.remove(id)
-        datalessPending.remove(id)
+        datalessPending[id] = nil
         try? await store.releaseEnrichmentClaims([id])
+        let materialized = outcome.isMaterialized
         await recordVisibleThumbnailLifecycle(
             phase: materialized ? "materialized" : "materializationFailed",
-            id: id
+            id: id,
+            fields: [
+                "outcome": outcome.diagnosticDescription,
+                "attemptMs": "\(attemptMs)",
+                "sourceSize": "\(work.sourceSize ?? -1)",
+            ]
         )
         if materialized {
             freshly.append(id)
@@ -92,7 +112,7 @@ extension EnrichmentCoordinator {
         ids.formUnion(claimedEnrichQueue.map(\.id))
         ids.formUnion(inFlightEnrich)
         ids.formUnion(inFlightDownload)
-        ids.formUnion(datalessPending)
+        ids.formUnion(datalessPending.keys)
         ids.formUnion(pendingApplyIDs)
         guard !ids.isEmpty else {
             return

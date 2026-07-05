@@ -1,6 +1,20 @@
 import Foundation
 import OSLog
 
+nonisolated enum EnrichmentDownloadSchedulingPolicy {
+    static func canDispatchDownload(
+        isViewportWork: Bool,
+        inFlightDownloadCount: Int,
+        downloadConcurrency: Int
+    ) -> Bool {
+        guard inFlightDownloadCount < downloadConcurrency else {
+            return false
+        }
+        let eagerSlotLimit = max(downloadConcurrency - 1, 0)
+        return isViewportWork || inFlightDownloadCount < eagerSlotLimit
+    }
+}
+
 /// Cursorless work-selection extension for `EnrichmentCoordinator`.
 ///
 /// Store remains the catalog truth owner: this file only asks for bounded claimed
@@ -36,16 +50,32 @@ extension EnrichmentCoordinator {
         }
     }
 
-    func dequeueDownloadWork() -> [MediaAssetID] {
+    func dequeueDownloadWork() async -> [DownloadWork] {
         guard !isShuttingDown else {
             return []
         }
-        var ids: [MediaAssetID] = []
-        while inFlightDownload.count < downloadConcurrency, let id = nextDownloadID() {
-            inFlightDownload.insert(id)
-            ids.append(id)
+        var items: [DownloadWork] = []
+        while inFlightDownload.count < downloadConcurrency, let work = nextDownloadWork() {
+            let isViewportWork = viewport.contains(work.id)
+            guard EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
+                isViewportWork: isViewportWork,
+                inFlightDownloadCount: inFlightDownload.count,
+                downloadConcurrency: downloadConcurrency
+            ) else {
+                break
+            }
+            inFlightDownload.insert(work.id)
+            items.append(work)
+            await recordVisibleThumbnailLifecycle(
+                phase: "downloadDispatched",
+                id: work.id,
+                fields: [
+                    "sourceSize": "\(work.sourceSize ?? -1)",
+                    "viewport": "\(isViewportWork)",
+                ]
+            )
         }
-        return ids
+        return items
     }
 
     func prioritizedEnrichmentIDs() -> [MediaAssetID] {
@@ -61,14 +91,16 @@ extension EnrichmentCoordinator {
         return ids
     }
 
-    func nextDownloadID() -> MediaAssetID? {
-        for id in viewport.reversed() where datalessPending.contains(id) && !inFlightDownload.contains(id) {
-            return id
+    func nextDownloadWork() -> DownloadWork? {
+        for id in viewport.reversed() where !inFlightDownload.contains(id) {
+            if let work = datalessPending[id] {
+                return work
+            }
         }
         guard eagerMode else {
             return nil
         }
-        return datalessPending.first { !inFlightDownload.contains($0) }
+        return datalessPending.values.first { !inFlightDownload.contains($0.id) }
     }
 
     func hasEnrichmentWorkRemaining() -> Bool {
