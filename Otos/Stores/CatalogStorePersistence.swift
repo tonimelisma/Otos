@@ -255,7 +255,7 @@ extension CatalogStore {
         return CatalogedFileDeletionTarget(thumbnailPath: row["thumbnail_path"])
     }
 
-    /// Detects an incompatible pre-user catalog before GRDB erases and rebuilds it, so
+    /// Detects an incompatible pre-user catalog before Store erases and rebuilds it, so
     /// Store can purge thumbnail files whose SQLite references are about to disappear.
     static func databaseNeedsCleanSchemaReset(_ db: Database) throws -> Bool {
         let userTables = try Set(String.fetchAll(
@@ -327,6 +327,7 @@ extension CatalogStore {
                 ts_gps_unix = ?,
                 enriched_kind = ?,
                 enriched_format = ?,
+                duration_seconds = ?,
                 enriched_source_size = ?,
                 enriched_source_mtime = ?
             WHERE library_root_id = ?
@@ -340,6 +341,7 @@ extension CatalogStore {
                 result.timestampFacts.gps?.timeIntervalSince1970,
                 result.enrichedKind?.rawValue,
                 result.enrichedFormat?.rawValue,
+                result.metadata.durationSeconds,
                 result.sourceSize,
                 result.sourceMTimeSeconds,
                 libraryRootID,
@@ -511,6 +513,7 @@ extension CatalogStore {
                 SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                        created_at_unix, content_modified_at_unix,
                        enriched_source_size, enriched_source_mtime, thumbnail_path,
+                       duration_seconds,
                        best_capture_unix, best_kind, best_format
                 FROM media_asset
                 WHERE library_root_id = ? AND relative_path IN (\(placeholders))
@@ -835,6 +838,7 @@ private nonisolated func mediaAssetTableSQL() -> String {
         enriched_source_size INTEGER,
         enriched_source_mtime INTEGER,
         thumbnail_path TEXT,
+        duration_seconds DOUBLE,
         enrichment_claimed_until DOUBLE,
         PRIMARY KEY (library_root_id, relative_path)
     )
@@ -1006,6 +1010,7 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
         SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                created_at_unix, content_modified_at_unix,
                enriched_source_size, enriched_source_mtime, thumbnail_path,
+               duration_seconds,
                best_capture_unix, best_kind, best_format
         FROM media_asset
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
@@ -1132,6 +1137,7 @@ private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
         "enriched_source_size",
         "enriched_source_mtime",
         "thumbnail_path",
+        "duration_seconds",
         "enrichment_claimed_until",
     ]
 }
@@ -1215,6 +1221,7 @@ private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset 
         bestCaptureDate: bestCaptureUnix.map(Date.init(timeIntervalSince1970:)),
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
+        durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],
         enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
     )

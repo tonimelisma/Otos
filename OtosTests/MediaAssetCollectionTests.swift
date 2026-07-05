@@ -1,3 +1,4 @@
+import CoreGraphics
 @testable import Otos
 import Testing
 import UniformTypeIdentifiers
@@ -135,25 +136,128 @@ struct MediaAssetCollectionTests {
         #expect(MediaAssetTilePresentation.title(asset) == "fallback.jpg")
     }
 
-    @Test func captureDateTextUsesBestDateAndIsEmptyWhenUnknown() {
+    @Test func captureDateTextUsesBestDateAndIsEmptyWhenUnknown() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.locale = Locale(identifier: "en_US")
+        calendar.timeZone = try #require(TimeZone(secondsFromGMT: 0))
+        let now = try #require(calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 6,
+            day: 10,
+            hour: 12
+        )))
         let captured = Date(timeIntervalSince1970: 1000)
-        let created = Date(timeIntervalSince1970: 2000)
+        let created = try #require(calendar.date(from: DateComponents(
+            calendar: calendar,
+            timeZone: calendar.timeZone,
+            year: 2026,
+            month: 6,
+            day: 9,
+            hour: 12
+        )))
 
         let enriched = makeDatedAsset(bestCaptureDate: captured, createdAt: created)
-        #expect(MediaAssetTilePresentation.captureDateText(enriched)
-            == captured.formatted(date: .abbreviated, time: .omitted))
+        #expect(MediaAssetTilePresentation.captureDateText(enriched, now: now, calendar: calendar)
+            == "January 1, 1970")
 
         // Falls back to the filesystem date when no metadata date exists.
         let filesystemOnly = makeDatedAsset(bestCaptureDate: created, createdAt: created)
-        #expect(MediaAssetTilePresentation.captureDateText(filesystemOnly)
-            == created.formatted(date: .abbreviated, time: .omitted))
+        #expect(MediaAssetTilePresentation.captureDateText(filesystemOnly, now: now, calendar: calendar)
+            == "Yesterday")
 
         // Empty, never fabricated, when nothing is known.
         let undated = makeDatedAsset(bestCaptureDate: nil, createdAt: nil)
-        #expect(MediaAssetTilePresentation.captureDateText(undated).isEmpty)
+        #expect(MediaAssetTilePresentation.captureDateText(undated, now: now, calendar: calendar).isEmpty)
     }
 
-    @Test func imageContentKeyDistinguishesThumbnailStampButNotDate() {
+    @Test func videoBadgeTextOnlyAppearsForVideosWithDuration() {
+        #expect(MediaAssetTilePresentation.videoBadgeText(makeAsset(
+            path: "image.jpg",
+            type: UTType.jpeg.identifier,
+            kind: .image,
+            durationSeconds: 42
+        )) == nil)
+        #expect(MediaAssetTilePresentation.videoBadgeText(makeAsset(
+            path: "movie.mp4",
+            type: UTType.mpeg4Movie.identifier,
+            kind: .video,
+            durationSeconds: nil
+        )) == nil)
+        #expect(MediaAssetTilePresentation.videoBadgeText(makeAsset(
+            path: "short.mp4",
+            type: UTType.mpeg4Movie.identifier,
+            kind: .video,
+            durationSeconds: 0.5
+        )) == "0:00")
+        #expect(MediaAssetTilePresentation.videoBadgeText(makeAsset(
+            path: "clip.mp4",
+            type: UTType.mpeg4Movie.identifier,
+            kind: .video,
+            durationSeconds: 42
+        )) == "0:42")
+        #expect(MediaAssetTilePresentation.videoBadgeText(makeAsset(
+            path: "scene.mp4",
+            type: UTType.mpeg4Movie.identifier,
+            kind: .video,
+            durationSeconds: 187
+        )) == "3:07")
+        #expect(MediaAssetTilePresentation.videoBadgeText(makeAsset(
+            path: "long.mp4",
+            type: UTType.mpeg4Movie.identifier,
+            kind: .video,
+            durationSeconds: 3753
+        )) == "1:02:33")
+    }
+
+    @Test func videoBadgeVisibilityIsVideosOnly() {
+        #expect(MediaAssetTilePresentation.showsVideoBadge(makeAsset(
+            path: "movie.mp4",
+            type: UTType.mpeg4Movie.identifier,
+            kind: .video
+        )))
+        #expect(!MediaAssetTilePresentation.showsVideoBadge(makeAsset(
+            path: "image.jpg",
+            type: UTType.jpeg.identifier,
+            kind: .image,
+            durationSeconds: 42
+        )))
+    }
+
+    @Test func contentRectAspectFitsImageInsideSquareCell() {
+        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
+        #expect(MediaAssetTilePresentation.contentRect(
+            imagePixelSize: CGSize(width: 400, height: 200),
+            bounds: bounds
+        ) == CGRect(x: 0, y: 30, width: 120, height: 60))
+        #expect(MediaAssetTilePresentation.contentRect(
+            imagePixelSize: CGSize(width: 200, height: 400),
+            bounds: bounds
+        ) == CGRect(x: 30, y: 0, width: 60, height: 120))
+        #expect(MediaAssetTilePresentation.contentRect(
+            imagePixelSize: CGSize(width: 300, height: 300),
+            bounds: bounds
+        ) == bounds)
+        #expect(MediaAssetTilePresentation.contentRect(imagePixelSize: nil, bounds: bounds) == bounds)
+    }
+
+    @Test func overlayVisibilityHidesBadgeBeforeDateOnShortRects() {
+        #expect(MediaAssetTilePresentation.overlayVisibility(
+            contentRect: CGRect(x: 0, y: 0, width: 80, height: 80)
+        ) == MediaAssetTileOverlayVisibility(showsDate: true, showsVideoBadge: true))
+        #expect(MediaAssetTilePresentation.overlayVisibility(
+            contentRect: CGRect(x: 0, y: 0, width: 80, height: 50)
+        ) == MediaAssetTileOverlayVisibility(showsDate: true, showsVideoBadge: false))
+        #expect(MediaAssetTilePresentation.overlayVisibility(
+            contentRect: CGRect(x: 0, y: 0, width: 80, height: 25)
+        ) == MediaAssetTileOverlayVisibility(showsDate: false, showsVideoBadge: false))
+        #expect(MediaAssetTilePresentation.overlayVisibility(
+            contentRect: CGRect(x: 0, y: 0, width: 40, height: 80)
+        ) == MediaAssetTileOverlayVisibility(showsDate: false, showsVideoBadge: false))
+    }
+
+    @Test func imageContentKeyDistinguishesThumbnailPathStampAndSize() {
         let base = makeDatedAsset(
             bestCaptureDate: Date(timeIntervalSince1970: 1000),
             thumbnailPath: "t.jpg",
@@ -197,14 +301,35 @@ struct MediaAssetCollectionTests {
             enrichedMTime: 10,
             enrichedSize: 999
         )
-        #expect(MediaAssetTilePresentation.imageContentKey(base) != MediaAssetTilePresentation.imageContentKey(newSize))
+        #expect(
+            MediaAssetTilePresentation.imageContentKey(base)
+                != MediaAssetTilePresentation.imageContentKey(newSize)
+        )
+    }
 
+    @Test func imageContentKeyIgnoresDateAndDurationOverlayChanges() {
+        let base = makeDatedAsset(
+            bestCaptureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "t.jpg",
+            enrichedMTime: 10
+        )
         let newDate = makeDatedAsset(
             bestCaptureDate: Date(timeIntervalSince1970: 2000),
             thumbnailPath: "t.jpg",
             enrichedMTime: 10
         )
         #expect(MediaAssetTilePresentation.imageContentKey(base) == MediaAssetTilePresentation.imageContentKey(newDate))
+
+        let newDuration = makeDatedAsset(
+            bestCaptureDate: Date(timeIntervalSince1970: 1000),
+            thumbnailPath: "t.jpg",
+            enrichedMTime: 10,
+            durationSeconds: 42
+        )
+        #expect(
+            MediaAssetTilePresentation.imageContentKey(base)
+                == MediaAssetTilePresentation.imageContentKey(newDuration)
+        )
     }
 }
 
@@ -214,7 +339,8 @@ private func makeDatedAsset(
     createdAt: Date? = nil,
     thumbnailPath: String? = nil,
     enrichedMTime: Int? = nil,
-    enrichedSize: Int64 = 1
+    enrichedSize: Int64 = 1,
+    durationSeconds: Double? = nil
 ) -> MediaAsset {
     MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
@@ -226,6 +352,7 @@ private func makeDatedAsset(
         contentModifiedAt: nil,
         thumbnailPath: thumbnailPath,
         bestCaptureDate: bestCaptureDate,
+        durationSeconds: durationSeconds,
         enrichedSourceSize: enrichedSize,
         enrichedSourceMTimeSeconds: enrichedMTime
     )
@@ -241,7 +368,13 @@ private func makeGrid(scope: SidebarSelection, paths: [String]) -> CatalogMediaG
 }
 
 @MainActor
-private func makeAsset(path: String, type: String?, name: String? = "asset", kind: MediaKind? = nil) -> MediaAsset {
+private func makeAsset(
+    path: String,
+    type: String?,
+    name: String? = "asset",
+    kind: MediaKind? = nil,
+    durationSeconds: Double? = nil
+) -> MediaAsset {
     MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path),
@@ -250,7 +383,8 @@ private func makeAsset(path: String, type: String?, name: String? = "asset", kin
         byteSize: 1,
         createdAt: nil,
         contentModifiedAt: nil,
-        bestKind: kind
+        bestKind: kind,
+        durationSeconds: durationSeconds
     )
 }
 

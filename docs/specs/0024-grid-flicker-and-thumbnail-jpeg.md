@@ -123,8 +123,9 @@ round is needed before implementation.
 - `CatalogProjection` still owns sorting, availability filtering, selected-scope
   derivation, and coalesced publication.
 - `MediaAssetCollectionView` remains the narrow AppKit boundary.
-- `MediaAssetTilePresentation.contentKey` remains the tile's guard for whether
-  image/date work must reload.
+- `MediaAssetTilePresentation.imageContentKey` remains the tile's guard for
+  whether thumbnail image work must reload. Date and duration are overlay text,
+  not image identity.
 - `ThumbnailStore` owns the private thumbnail file format and extension.
 
 ### Privacy
@@ -186,8 +187,8 @@ Pros:
 - Uses existing visible index paths and item lookup to update only on-screen
   views.
 - Preserves the tile instance and therefore does not call `prepareForReuse()`.
-- Lets `MediaAssetTilePresentation.contentKey` suppress redundant thumbnail/date
-  work on unchanged content.
+- Lets `MediaAssetTilePresentation.imageContentKey` suppress redundant thumbnail
+  work on unchanged image content while overlay text can still update.
 
 Cons:
 
@@ -321,8 +322,9 @@ data-structure change from after-fix measurements.
 - `MediaAssetCollectionViewController.refreshVisible` now re-queries visible
   details through the Store-backed detail reader and calls an in-place visible
   reconfigure helper.
-- `MediaAssetTileView.configure` still handles title/badge/background and only
-  reloads thumbnail/date when `contentKey` changes.
+- `MediaAssetTileView.configure` still handles title, date, badge, and visible
+  face layout while only reloading the thumbnail image when `imageContentKey`
+  changes.
 - `ThumbnailStore.relativeName` now returns `.jpg`; `write` encodes JPEG;
   `load` remains extension-agnostic through Image I/O.
 
@@ -330,8 +332,8 @@ data-structure change from after-fix measurements.
 
 - Grid in-place reconfiguration is MainActor-bound because it touches AppKit
   views.
-- Thumbnail reads remain off-main in detached tile tasks; the small capture-date
-  label formats synchronously during tile configuration.
+- Thumbnail reads remain off-main in detached tile tasks; small overlay labels
+  format synchronously during tile configuration.
 - Thumbnail generation remains off-main in the enrichment workers.
 - No new long-lived tasks are added.
 - Existing tile generation guards reject stale thumbnail loads after reuse.
@@ -378,8 +380,9 @@ enrichment writes `.jpg` paths.
 - Source hygiene proves `refreshVisible` no longer calls `reloadItems(at:)`.
 - Source hygiene proves `SidebarView` does not render `Checking`, `Scanning`, or
   `Unavailable` status text.
-- Tile presentation tests continue to prove content-key changes for thumbnail
-  path, source stamp, and date.
+- Tile presentation tests continue to prove image-content-key changes for
+  thumbnail path and source stamp, while date and duration changes leave the
+  image key unchanged.
 - Thumbnail store tests prove relative names use `.jpg`, writing produces a
   loadable JPEG, and deletion still works.
 - Catalog/enrichment tests use `.jpg` representative paths.

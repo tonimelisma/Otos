@@ -23,8 +23,8 @@ accidentally materializing a file by faulting on a read.
 In scope:
 
 - The enrichment data model (SQLite enrichment columns, hot `MediaAsset` detail
-  fields, on-demand `AssetMetadata` scalar/detail JSON, the `(size, mtime)`
-  staleness signature, the computed `bestCaptureDate`).
+  fields, hot video duration, on-demand `AssetMetadata` scalar/detail JSON, the
+  `(size, mtime)` staleness signature, the computed `bestCaptureDate`).
 - `MediaEnricher` (metadata read + QuickLook thumbnail) and `ThumbnailStore`
   (JPEG thumbnail files).
 - `EnrichmentCoordinator`: the cursorless two-pool scheduler.
@@ -32,6 +32,7 @@ In scope:
   thumbnail and capture date.
 - Integration with `CatalogStore` (batched apply, stale-completion rejection,
   rescan merge, thumbnail purge), `CatalogProjection`, and the grid.
+  Spec 0037 owns the current overlay anatomy of the tile surface.
 
 Out of scope (named so they are not built): sort/filter by metadata and any grid
 reordering (data plus a computed best-date only); a film-strip / single-image /
@@ -62,19 +63,21 @@ Captured from the user across the design discussion and recorded as ENR-001…
 ENR-010 in `docs/requirements.md` (Current). Highlights:
 
 - Functional: every cataloged image/video gets a thumbnail and parsed metadata;
-  the grid shows the thumbnail and a capture date; eager full-library
+  the grid shows the thumbnail, relative capture date when known, and video
+  duration/fallback badge when applicable; eager full-library
   materialization; the viewport is prioritized; the capture date is the best
   available real date and is never fabricated.
 - Architecture: thumbnails are files referenced by path (256 px JPEG generated
   from QuickLook);
   the full metadata is on-demand scalar/detail JSON, never in grid publication;
+  video duration is promoted as one hot tile scalar;
   disjoint scan/enrichment column ownership with preserving scan upserts; `(size, mtime)`
   staleness; stale in-flight completions are rejected before they can stamp newer
   source facts current; a single coordinator actor owning two fixed worker pools
   by cursorless scheduling; a single SQLite claim lease column preventing repeated
   dequeue; enrichment writes batched through `CatalogStore`.
 - Non-functional: no media I/O or thumbnail decode on the MainActor; the tile
-  loads and decodes its thumbnail off-main, while the small capture-date label is
+  loads and decodes its thumbnail off-main, while small overlay labels are
   formatted synchronously during configuration.
 
 ## Architectural Alternatives
@@ -154,10 +157,11 @@ status is checked off-actor at exactly one site — the enrichment pull, immedia
 before the read — serving as both router and ADR 0008 safety gate. Results are
 applied in batches (one transaction, one notification) by `CatalogStore`. The
 products are a 256 px JPEG thumbnail file and on-demand metadata scalar/detail
-rows; only the thumbnail path, a resolved capture date, and the `(size, mtime)`
-stamps are fetched with hot asset detail rows. The tile loads and decodes its
-thumbnail off-main and updates its small date label synchronously during
-configuration. See ADR 0009 for why each choice is the simplest correct one.
+rows; only the thumbnail path, a resolved capture date, video duration, and the
+`(size, mtime)` stamps are fetched with hot asset detail rows. The tile loads and
+decodes its thumbnail off-main and updates its small overlay labels synchronously
+during configuration. See ADR 0009 and spec 0037 for why each choice is the
+simplest correct one.
 
 ## Interfaces, Ownership, And Data Flow
 
@@ -172,7 +176,8 @@ Modules (isolation — owns):
   `nonisolated thumbnailDirectory`.
 - `MediaAsset` (nonisolated value, extended) — the cheap hot detail fields
   (`thumbnailPath`, `bestCaptureDate`, `bestKind`, `bestFormat`,
-  `enrichedSourceSize`, `enrichedSourceMTimeSeconds`), and `needsEnrichment`.
+  `durationSeconds`, `enrichedSourceSize`, `enrichedSourceMTimeSeconds`), and
+  `needsEnrichment`.
 - `AssetMetadata` (nonisolated value, new) — the full `MediaMetadataResult`
   mapped to Otos types and persisted on demand, never in grid publication.
 - `EnrichmentCoordinator` (actor, new) — the cursorless scheduler, the two pools,
@@ -188,7 +193,8 @@ Modules (isolation — owns):
 - `CatalogWindowViewModel` (@MainActor, extended) — owns the coordinator's
   lifetime, the newest-value `viewportChanged` intent lane, and `startEnrichment`.
 - The grid bridge and tile (@MainActor, extended) — report visible identities;
-  load the thumbnail off-main keyed on content; show the filename and best date.
+  load the thumbnail off-main keyed on image content; show the filename, relative
+  best date, and video badge overlays inside the visible tile face.
 
 Data flow:
 
@@ -199,17 +205,17 @@ scan / FSEvents → Store notifies → Coordinator queries Store candidates → 
          stamp, one notification)
   enrich slot: status .notMaterialized → datalessPending → download pool
   download slot: materialize → freshly (LIFO) → signal → enrich slot pulls it
-Projection republishes (thumbnailPath / generated best values now set; cheap)
+Projection republishes (thumbnailPath / generated best values / duration now set; cheap)
   → grid refreshVisible → existing visible tiles reconfigure in place
     → tile: if content key changed, ThumbnailStore.load off-main
-    → image + best-date assigned on Main
+    → image + overlay text assigned on Main
 asset row purged (proven deletion or library removal) → ThumbnailStore.delete
 ```
 
 Only ordered IDs plus a scalar detail-refresh generation flow through grid
-publication — no bytes and no full metadata. Hot tile details are faulted by
-visible ID, and full metadata lives in `asset_metadata` scalar columns plus
-`metadata_extra_json` for on-demand reads.
+publication — no bytes and no full metadata. Hot tile details, including nullable
+video duration, are faulted by visible ID, and full metadata lives in
+`asset_metadata` scalar columns plus `metadata_extra_json` for on-demand reads.
 
 Concurrency and cancellation: the coordinator owns one supervising task (started
 by the ViewModel), captured weakly; `MediaEnricher`/`ThumbnailStore` run inside the
@@ -271,7 +277,7 @@ Implementation sequence (each landed and verified on its own):
   never media payloads.
 - The grid uses signposts for state receive, structural apply, visible in-place
   reconfiguration, structural reload, and slow-cell setup. The tile's thumbnail
-  read/decode runs off the main actor; Main updates the small date label during
+  read/decode runs off the main actor; Main updates small overlay labels during
   configuration and assigns only the finished image from the background load.
 - Performance budgets: MainActor under 100 ms; the full metadata is not resident
   (ADR 0009 §2), and Projection publications carry only ordered IDs plus a scalar

@@ -6,14 +6,15 @@ import OSLog
 ///
 /// One reusable AppKit item and its view render a single grid cell. The collection
 /// bridge (`MediaAssetCollectionView`) owns viewport, reuse, and structure; this file
-/// owns only how one tile paints itself: title, video badge, thumbnail, and capture
-/// date. Keeping it separate keeps each file focused and lets the tile's pure policy
-/// (`MediaAssetTilePresentation`) be unit-tested without any AppKit lifecycle.
+/// owns only how one tile paints itself: thumbnail face, filename/date overlays,
+/// video badge, and selection ring. Keeping it separate keeps each file focused and
+/// lets the tile's pure policy (`MediaAssetTilePresentation`) be unit-tested without
+/// any AppKit lifecycle.
 ///
 /// The thumbnail read/decode runs off the main actor (never on the scroll thread);
 /// a generation token discards a load that resolves after the reusable tile has
-/// moved on to another asset. Capture-date text is cheap scalar UI text and is
-/// assigned synchronously, so a date-only enrichment update does not clear the
+/// moved on to another asset. Overlay text is cheap scalar UI state and is assigned
+/// synchronously, so date- or duration-only enrichment updates do not clear the
 /// already-painted thumbnail.
 final class MediaAssetCollectionItem: NSCollectionViewItem {
     private var tileView: MediaAssetTileView? {
@@ -68,18 +69,45 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
 /// the main actor only assigns it to the layer.
 private struct LoadedTile {
     let image: CGImage?
+    let pixelSize: CGSize?
+}
+
+private final class FlippedView: NSView {
+    override var isFlipped: Bool {
+        true
+    }
 }
 
 private final class MediaAssetTileView: NSView {
+    private enum Layout {
+        static let contentCornerRadius: CGFloat = 4
+        static let scrimCornerRadius: CGFloat = 3
+        static let overlayInset: CGFloat = 6
+        static let scrimPaddingX: CGFloat = 5
+        static let scrimPaddingY: CGFloat = 4
+        static let titleHeight: CGFloat = 14
+        static let dateHeight: CGFloat = 12
+        static let lineGap: CGFloat = 1
+        static let badgeHeight: CGFloat = 20
+        static let badgeMinWidth: CGFloat = 22
+        static let filmIconSize: CGFloat = 13
+    }
+
+    private let contentView = FlippedView()
     private let imageView = NSImageView()
+    private let textScrim = FlippedView()
     private let titleField = NSTextField(labelWithString: "")
     private let dateField = NSTextField(labelWithString: "")
-    private let videoIconView = NSImageView()
+    private let videoBadge = FlippedView()
+    private let durationField = NSTextField(labelWithString: "")
+    private let filmIconView = NSImageView()
 
     /// Identifies the image content the async load produced (thumbnail file plus its
     /// enrichment stamp). Equal keys mean the painted thumbnail can stay in place even
-    /// when capture-date text changes.
+    /// when overlay text changes.
     private var currentImageContentKey: String?
+    private var currentImagePixelSize: CGSize?
+    private var shouldShowVideoBadge = false
     /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
     /// the tile was handed to another asset is discarded instead of painting stale data.
     private var loadGeneration = 0
@@ -92,32 +120,55 @@ private final class MediaAssetTileView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        layer?.cornerRadius = 4
-        layer?.masksToBounds = true
+        layer?.backgroundColor = nil
+
+        contentView.wantsLayer = true
+        contentView.layer?.cornerRadius = Layout.contentCornerRadius
+        contentView.layer?.masksToBounds = true
+        addSubview(contentView)
 
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.imageAlignment = .alignCenter
         imageView.wantsLayer = true
         imageView.layer?.contentsGravity = .resizeAspect
-        addSubview(imageView)
+        contentView.addSubview(imageView)
 
-        titleField.font = .systemFont(ofSize: 12, weight: .medium)
-        titleField.textColor = .labelColor
+        textScrim.wantsLayer = true
+        textScrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        textScrim.layer?.cornerRadius = Layout.scrimCornerRadius
+        textScrim.layer?.masksToBounds = true
+        contentView.addSubview(textScrim)
+
+        titleField.font = .systemFont(ofSize: 11, weight: .medium)
+        titleField.textColor = .white
         titleField.usesSingleLineMode = true
         titleField.lineBreakMode = .byTruncatingMiddle
         titleField.cell?.truncatesLastVisibleLine = true
-        addSubview(titleField)
+        textScrim.addSubview(titleField)
 
-        dateField.font = .systemFont(ofSize: 10, weight: .regular)
-        dateField.textColor = .secondaryLabelColor
+        dateField.font = .systemFont(ofSize: 9, weight: .regular)
+        dateField.textColor = .white
         dateField.usesSingleLineMode = true
         dateField.lineBreakMode = .byTruncatingTail
-        addSubview(dateField)
+        textScrim.addSubview(dateField)
 
-        videoIconView.image = NSImage(systemSymbolName: "video.fill", accessibilityDescription: "Video")
-        videoIconView.imageScaling = .scaleProportionallyDown
-        videoIconView.contentTintColor = .secondaryLabelColor
-        addSubview(videoIconView)
+        videoBadge.wantsLayer = true
+        videoBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        videoBadge.layer?.cornerRadius = Layout.scrimCornerRadius
+        videoBadge.layer?.masksToBounds = true
+        contentView.addSubview(videoBadge)
+
+        durationField.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
+        durationField.textColor = .white
+        durationField.alignment = .center
+        durationField.usesSingleLineMode = true
+        durationField.lineBreakMode = .byClipping
+        videoBadge.addSubview(durationField)
+
+        filmIconView.image = NSImage(systemSymbolName: "film", accessibilityDescription: "Video")
+        filmIconView.imageScaling = .scaleProportionallyDown
+        filmIconView.contentTintColor = .white
+        videoBadge.addSubview(filmIconView)
     }
 
     @available(*, unavailable)
@@ -127,14 +178,19 @@ private final class MediaAssetTileView: NSView {
 
     @discardableResult
     func configure(asset: MediaAsset, thumbnailDirectory: URL?) -> Bool {
-        let isVideo = MediaAssetTilePresentation.isVideo(asset)
         titleField.stringValue = MediaAssetTilePresentation.title(asset)
         dateField.stringValue = MediaAssetTilePresentation.captureDateText(asset)
-        videoIconView.isHidden = !isVideo
-        layer?.backgroundColor = isVideo
-            ? NSColor.systemBlue.withAlphaComponent(0.20).cgColor
-            : NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
-        setAccessibilityLabel(titleField.stringValue)
+        shouldShowVideoBadge = MediaAssetTilePresentation.showsVideoBadge(asset)
+        if let badgeText = MediaAssetTilePresentation.videoBadgeText(asset) {
+            durationField.stringValue = badgeText
+            durationField.isHidden = false
+            filmIconView.isHidden = true
+        } else {
+            durationField.stringValue = ""
+            durationField.isHidden = true
+            filmIconView.isHidden = !shouldShowVideoBadge
+        }
+        setAccessibilityLabel(accessibilityLabel(title: titleField.stringValue, date: dateField.stringValue))
         needsLayout = true
 
         let key = MediaAssetTilePresentation.imageContentKey(asset)
@@ -145,15 +201,6 @@ private final class MediaAssetTileView: NSView {
         currentImageContentKey = key
         loadThumbnailImage(asset: asset, thumbnailDirectory: thumbnailDirectory)
         return true
-    }
-
-    /// Draws or clears the selection ring. It uses the layer border rather than the
-    /// background so it is independent of the video/neutral `backgroundColor` that
-    /// `configure` rewrites on every reuse; a border ring is never clobbered by a
-    /// same-identity content refresh.
-    func setSelected(_ selected: Bool) {
-        layer?.borderWidth = selected ? 3 : 0
-        layer?.borderColor = selected ? NSColor.controlAccentColor.cgColor : nil
     }
 
     /// Reads the thumbnail file off the main actor, then applies the result on the main
@@ -178,6 +225,9 @@ private final class MediaAssetTileView: NSView {
                 }
                 self.imageView.image = nil
                 self.imageView.layer?.contents = loaded.image
+                self.currentImagePixelSize = loaded.pixelSize
+                self.updatePlaceholderBackground()
+                self.needsLayout = true
                 OtosSignpost.ui.emitEvent("MediaTileLoadApplied")
             }
         }
@@ -190,40 +240,137 @@ private final class MediaAssetTileView: NSView {
         loadTask = nil
         loadGeneration += 1
         currentImageContentKey = nil
+        currentImagePixelSize = nil
+        shouldShowVideoBadge = false
         imageView.image = nil
         imageView.layer?.contents = nil
         titleField.stringValue = ""
         dateField.stringValue = ""
-        videoIconView.isHidden = true
+        durationField.stringValue = ""
+        durationField.isHidden = true
+        filmIconView.isHidden = true
+        videoBadge.isHidden = true
+        textScrim.isHidden = true
+        updatePlaceholderBackground()
         setSelected(false)
         setAccessibilityLabel(nil)
     }
 
     override func layout() {
         super.layout()
-        imageView.frame = bounds
-        let inset: CGFloat = 8
-        let iconSize: CGFloat = 13
-        let iconVisible = !videoIconView.isHidden
-        videoIconView.frame = NSRect(
-            x: max(bounds.width - inset - iconSize, inset),
-            y: inset,
-            width: iconSize,
-            height: iconSize
+        contentView.frame = MediaAssetTilePresentation.contentRect(
+            imagePixelSize: currentImagePixelSize,
+            bounds: bounds
         )
-        let iconAllowance = iconVisible ? iconSize + 6 : 0
+        imageView.frame = contentView.bounds
+        updatePlaceholderBackground()
+        layoutTextScrim()
+        layoutVideoBadge()
+    }
+
+    /// Draws or clears the selection ring. The ring lives on `contentView` so it
+    /// hugs the thumbnail's actual aspect-fit face, not the transparent square cell.
+    func setSelected(_ selected: Bool) {
+        contentView.layer?.borderWidth = selected ? 3 : 0
+        contentView.layer?.borderColor = selected ? NSColor.controlAccentColor.cgColor : nil
+    }
+
+    private func layoutTextScrim() {
+        let contentBounds = contentView.bounds
+        let visibility = MediaAssetTilePresentation.overlayVisibility(contentRect: contentBounds)
+        guard !titleField.stringValue.isEmpty,
+              contentBounds.width > Layout.overlayInset * 2,
+              contentBounds.height > Layout.overlayInset * 2
+        else {
+            textScrim.isHidden = true
+            return
+        }
+
+        let showsDate = !dateField.stringValue.isEmpty && visibility.showsDate
+        dateField.isHidden = !showsDate
+        let desiredHeight = Layout.scrimPaddingY * 2
+            + Layout.titleHeight
+            + (showsDate ? Layout.lineGap + Layout.dateHeight : 0)
+        let availableWidth = max(contentBounds.width - Layout.overlayInset * 2, 0)
+        let availableHeight = max(contentBounds.height - Layout.overlayInset * 2, 0)
+        let scrimHeight = min(desiredHeight, availableHeight)
+        textScrim.isHidden = scrimHeight <= 0 || availableWidth <= 0
+        textScrim.frame = NSRect(
+            x: Layout.overlayInset,
+            y: Layout.overlayInset,
+            width: availableWidth,
+            height: scrimHeight
+        )
+        let textWidth = max(availableWidth - Layout.scrimPaddingX * 2, 0)
         titleField.frame = NSRect(
-            x: inset,
-            y: inset - 1,
-            width: max(bounds.width - inset * 2 - iconAllowance, 0),
-            height: 17
+            x: Layout.scrimPaddingX,
+            y: Layout.scrimPaddingY - 1,
+            width: textWidth,
+            height: Layout.titleHeight
         )
         dateField.frame = NSRect(
-            x: inset,
-            y: max(bounds.height - inset - 14, inset),
-            width: max(bounds.width - inset * 2, 0),
+            x: Layout.scrimPaddingX,
+            y: Layout.scrimPaddingY + Layout.titleHeight + Layout.lineGap - 1,
+            width: textWidth,
+            height: Layout.dateHeight
+        )
+    }
+
+    private func layoutVideoBadge() {
+        let contentBounds = contentView.bounds
+        let visibility = MediaAssetTilePresentation.overlayVisibility(contentRect: contentBounds)
+        guard shouldShowVideoBadge, visibility.showsVideoBadge else {
+            videoBadge.isHidden = true
+            return
+        }
+
+        let hasDuration = !durationField.isHidden
+        let badgeWidth = hasDuration
+            ? max(Layout.badgeMinWidth, ceil(durationField.intrinsicContentSize.width) + Layout.scrimPaddingX * 2)
+            : Layout.badgeMinWidth
+        let badgeHeight = Layout.badgeHeight
+        guard contentBounds.width >= badgeWidth + Layout.overlayInset * 2,
+              contentBounds.height >= badgeHeight + Layout.overlayInset * 2
+        else {
+            videoBadge.isHidden = true
+            return
+        }
+        videoBadge.isHidden = false
+        videoBadge.frame = NSRect(
+            x: contentBounds.width - Layout.overlayInset - badgeWidth,
+            y: contentBounds.height - Layout.overlayInset - badgeHeight,
+            width: badgeWidth,
+            height: badgeHeight
+        )
+        durationField.frame = NSRect(
+            x: Layout.scrimPaddingX,
+            y: 3,
+            width: max(badgeWidth - Layout.scrimPaddingX * 2, 0),
             height: 14
         )
+        filmIconView.frame = NSRect(
+            x: (badgeWidth - Layout.filmIconSize) / 2,
+            y: (badgeHeight - Layout.filmIconSize) / 2,
+            width: Layout.filmIconSize,
+            height: Layout.filmIconSize
+        )
+    }
+
+    private func updatePlaceholderBackground() {
+        contentView.layer?.backgroundColor = currentImagePixelSize == nil
+            ? NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
+            : nil
+    }
+
+    private func accessibilityLabel(title: String, date: String) -> String {
+        var parts = [title]
+        if !date.isEmpty {
+            parts.append(date)
+        }
+        if !durationField.stringValue.isEmpty {
+            parts.append(durationField.stringValue)
+        }
+        return parts.joined(separator: ", ")
     }
 }
 
@@ -247,14 +394,72 @@ enum MediaAssetTilePresentation {
         guard let date = asset.bestCaptureDate else {
             return ""
         }
-        return date.formatted(date: .abbreviated, time: .omitted)
+        return RelativeDateText.string(for: date)
+    }
+
+    nonisolated static func captureDateText(
+        _ asset: MediaAsset,
+        now: Date,
+        calendar: Calendar
+    ) -> String {
+        guard let date = asset.bestCaptureDate else {
+            return ""
+        }
+        return RelativeDateText.string(for: date, now: now, calendar: calendar)
+    }
+
+    nonisolated static func videoBadgeText(_ asset: MediaAsset) -> String? {
+        guard showsVideoBadge(asset),
+              let durationSeconds = asset.durationSeconds,
+              durationSeconds.isFinite
+        else {
+            return nil
+        }
+        let wholeSeconds = max(0, Int64(durationSeconds.rounded(.down)))
+        let duration = Duration.seconds(wholeSeconds)
+        if wholeSeconds >= 3600 {
+            return duration.formatted(.time(pattern: .hourMinuteSecond))
+        }
+        return duration.formatted(.time(pattern: .minuteSecond))
+    }
+
+    nonisolated static func showsVideoBadge(_ asset: MediaAsset) -> Bool {
+        asset.bestKind == .video
+    }
+
+    nonisolated static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
+        guard bounds.width > 0, bounds.height > 0 else {
+            return bounds
+        }
+        guard let imagePixelSize,
+              imagePixelSize.width > 0,
+              imagePixelSize.height > 0
+        else {
+            return bounds.integral
+        }
+        let scale = min(bounds.width / imagePixelSize.width, bounds.height / imagePixelSize.height)
+        let fittedWidth = min(bounds.width, max(1, (imagePixelSize.width * scale).rounded()))
+        let fittedHeight = min(bounds.height, max(1, (imagePixelSize.height * scale).rounded()))
+        return CGRect(
+            x: bounds.minX + ((bounds.width - fittedWidth) / 2).rounded(),
+            y: bounds.minY + ((bounds.height - fittedHeight) / 2).rounded(),
+            width: fittedWidth,
+            height: fittedHeight
+        )
+    }
+
+    nonisolated static func overlayVisibility(contentRect: CGRect) -> MediaAssetTileOverlayVisibility {
+        MediaAssetTileOverlayVisibility(
+            showsDate: contentRect.width >= 44 && contentRect.height >= 34,
+            showsVideoBadge: contentRect.width >= 56 && contentRect.height >= 72
+        )
     }
 
     /// Distinguishes the async image load result: the thumbnail file plus the full
     /// `(size, mtime)` enrichment stamp that changes when the file is re-thumbnailed
     /// (size is included because bytes can change while mtime seconds stay equal).
-    /// Capture-date text is not part of image identity, so a date-only update does
-    /// not clear and reload the thumbnail.
+    /// Capture-date and duration text are not part of image identity, so overlay-only
+    /// updates do not clear and reload the thumbnail.
     nonisolated static func imageContentKey(_ asset: MediaAsset) -> String {
         let thumbnail = asset.thumbnailPath ?? ""
         let size = asset.enrichedSourceSize ?? -1
@@ -269,6 +474,14 @@ enum MediaAssetTilePresentation {
         let image = asset.thumbnailPath.flatMap { name in
             thumbnailDirectory.flatMap { ThumbnailStore.load(name, in: $0) }
         }
-        return LoadedTile(image: image)
+        return LoadedTile(
+            image: image,
+            pixelSize: image.map { CGSize(width: CGFloat($0.width), height: CGFloat($0.height)) }
+        )
     }
+}
+
+nonisolated struct MediaAssetTileOverlayVisibility: Equatable {
+    let showsDate: Bool
+    let showsVideoBadge: Bool
 }

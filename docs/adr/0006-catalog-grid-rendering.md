@@ -23,8 +23,8 @@ eligible asset.
 
 The previous large media table can enter a permanent AppKit/SwiftUI table stall
 with continuous heap growth after repeated scope changes. Spec 0010 records the
-sample and heap evidence. Otos needs a placeholder browser now, before thumbnail
-or interaction design exists.
+sample and heap evidence. Otos needs a thumbnail-backed browser that can scale to
+large libraries without putting one SwiftUI hosting tree behind every tile.
 
 ## Alternatives
 
@@ -45,8 +45,13 @@ The layout has one full-width group with exactly six square fractional items,
 12-point section insets, and 8-point effective gaps.
 
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
-Auto Layout trees. They display a one-line filename. Only content conforming to
-`UTType.movie` gets a small video symbol and blue tint.
+Auto Layout trees. Each square collection cell is transparent; the visible tile
+face is the loaded thumbnail's native aspect-fit rect, or a full-square neutral
+placeholder before the thumbnail is known. Filename and optional relative capture
+date are drawn on a top-left scrim inside that face. Only content conforming to
+`UTType.movie` gets a bottom-right badge inside the face: duration text when
+available, otherwise a film symbol. Images have no video badge, blue tint, or
+video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
 insert/remove changes may animate so surviving items move with rendered thumbnails
@@ -60,7 +65,8 @@ cleanup clears the thumbnail before the async loader repaints it. Permit one
 structural apply at a time and retain only the latest pending grid state. Reset
 scroll and selection only when the query descriptor changes; same-descriptor
 structural applies rely on native diffable update preservation and restore
-surviving selected identities.
+surviving selected identities. The selection ring is drawn on the visible tile
+face, so it follows the thumbnail aspect instead of the whole square cell.
 
 ## Why This Is Simplest Correct
 
@@ -75,8 +81,9 @@ responsive columns and removes flow-layout width bookkeeping.
 - SwiftUI remains responsible for window composition and empty-state shell.
 - Collection updates are imperative but isolated and state-machine tested.
 - Same-identity background enrichment or fact-detail updates do not recycle
-  visible cells, so thumbnails remain painted while unchanged content is skipped
-  by the tile content key.
+  visible cells, so thumbnails remain painted while unchanged image content is
+  skipped by the tile content key. Date and duration overlay updates do not
+  participate in image identity.
 - Native AppKit selection and responder-chain copy behavior live at this boundary
   so SwiftUI and the ViewModel do not mirror high-cardinality selection state.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
@@ -88,4 +95,5 @@ responsive columns and removes flow-layout width bookkeeping.
 - Apple, [NSCollectionView layout ownership](https://developer.apple.com/documentation/appkit/nscollectionview/collectionviewlayout)
 - Apple, [UTType.movie](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/movie)
 - `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md`
+- `docs/specs/0037-thumbnail-tile-redesign.md`
 - `docs/specs/0035-catalog-browser-remediation-completion.md`

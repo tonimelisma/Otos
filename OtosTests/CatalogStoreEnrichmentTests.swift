@@ -83,7 +83,7 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(cameraModel: "Cam"),
+                metadata: AssetMetadata(cameraModel: "Cam", durationSeconds: 42.5),
                 timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: 100,
@@ -94,6 +94,7 @@ struct CatalogStoreEnrichmentTests {
         let enriched = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(enriched.thumbnailPath == "thumb.jpg")
         #expect(enriched.bestCaptureDate == captureDate)
+        #expect(enriched.durationSeconds == 42.5)
         #expect(enriched.needsEnrichment == false)
 
         // Re-scan observing a changed mtime (same size): enrichment survives the merge,
@@ -107,6 +108,7 @@ struct CatalogStoreEnrichmentTests {
         let asset = try #require(restaled.testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
         #expect(asset.bestCaptureDate == captureDate)
+        #expect(asset.durationSeconds == 42.5)
         #expect(asset.enrichedSourceSize == 100)
         #expect(asset.needsEnrichment == true)
     }
@@ -134,7 +136,12 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(cameraModel: "Cam", pixelWidth: 4000, pixelHeight: 3000),
+                metadata: AssetMetadata(
+                    cameraModel: "Cam",
+                    pixelWidth: 4000,
+                    pixelHeight: 3000,
+                    durationSeconds: 187.25
+                ),
                 timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: scannedSize,
@@ -142,24 +149,19 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
-        let persistedMetadata = try await persistedMetadataRow(
+        try await expectVideoMetadataPersisted(
             databaseURL: databaseURL,
             rootPath: rootPath,
-            relativePath: rel
+            relativePath: rel,
+            store: store
         )
-        #expect(persistedMetadata.cameraModel == "Cam")
-        #expect(persistedMetadata.pixelWidth == 4000)
-        #expect(persistedMetadata.metadata?.cameraModel == "Cam")
-        #expect(persistedMetadata.metadata?.pixelWidth == 4000)
-        let queriedMetadata = try #require(try await store.metadata(for: id))
-        #expect(queriedMetadata.cameraModel == "Cam")
-        #expect(queriedMetadata.pixelWidth == 4000)
 
         let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
         let asset = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(asset.thumbnailPath == "thumb.jpg")
         #expect(asset.bestCaptureDate == captureDate)
+        #expect(asset.durationSeconds == 187.25)
         #expect(asset.enrichedSourceSize == scannedSize)
         #expect(asset.enrichedSourceMTimeSeconds == scannedMTime)
         #expect(asset.needsEnrichment == false)
@@ -356,7 +358,7 @@ private func persistedMetadataRow(
         let fetchedRow = try Row.fetchOne(
             db,
             sql: """
-            SELECT camera_model, pixel_width, metadata_extra_json
+            SELECT camera_model, pixel_width, duration_seconds, metadata_extra_json
             FROM asset_metadata
             WHERE library_root_id = ? AND relative_path = ?
             """,
@@ -366,14 +368,41 @@ private func persistedMetadataRow(
         return try PersistedMetadataRow(
             cameraModel: row["camera_model"] as String?,
             pixelWidth: row["pixel_width"] as Int?,
+            durationSeconds: row["duration_seconds"] as Double?,
             metadata: CatalogStore.metadataExtra(libraryRootID: rootID, relativePath: relativePath, db: db)
         )
     }
 }
 
+private func expectVideoMetadataPersisted(
+    databaseURL: URL,
+    rootPath: LibraryRootPath,
+    relativePath: MediaRelativePath,
+    store: CatalogStore
+) async throws {
+    let persisted = try await persistedMetadataRow(
+        databaseURL: databaseURL,
+        rootPath: rootPath,
+        relativePath: relativePath
+    )
+    #expect(persisted.cameraModel == "Cam")
+    #expect(persisted.pixelWidth == 4000)
+    #expect(persisted.durationSeconds == 187.25)
+    #expect(persisted.metadata?.cameraModel == "Cam")
+    #expect(persisted.metadata?.pixelWidth == 4000)
+    #expect(persisted.metadata?.durationSeconds == 187.25)
+
+    let id = MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
+    let queried = try #require(try await store.metadata(for: id))
+    #expect(queried.cameraModel == "Cam")
+    #expect(queried.pixelWidth == 4000)
+    #expect(queried.durationSeconds == 187.25)
+}
+
 private struct PersistedMetadataRow {
     let cameraModel: String?
     let pixelWidth: Int?
+    let durationSeconds: Double?
     let metadata: AssetMetadata?
 }
 

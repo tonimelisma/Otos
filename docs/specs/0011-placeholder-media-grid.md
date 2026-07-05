@@ -27,14 +27,16 @@ switches between All Media and libraries.
 - `CatalogWindowViewModel` assigns final state on the MainActor.
 - The media browser uses `NSCollectionView`; Spec 0010 retains the failure
   evidence that justifies that boundary. The Settings table is unrelated.
-- Catalog rows contain filesystem facts but no thumbnails.
+- Catalog rows now contain thumbnail enrichment overlay and hot tile detail facts;
+  the original placeholder-only state described by this spec was superseded by
+  specs 0022, 0024, and 0037.
 
 ## In Scope
 
 - Keep a passive SwiftUI shell around the narrow AppKit `NSCollectionView`
   bridge.
-- Render exactly six responsive square columns with filenames and video-only
-  markers.
+- Render exactly six responsive square columns. The initial implementation used
+  filenames and video-only markers; current tile anatomy is owned by spec 0037.
 - Preserve all cataloged non-video image assets as generic tiles.
 - Split structural identity order from detail values.
 - Reuse Projection's ordered-ID cache only after direct identity validation.
@@ -43,22 +45,25 @@ switches between All Media and libraries.
 
 ## Out Of Scope
 
-Real thumbnails, decoding, preview, metadata, audio support, selection, activation,
-drag and drop, Finder actions, keyboard actions, zoom controls, animated updates,
-manual scan, sandboxing, bookmarks, durable scan IDs, and SQLite schema changes.
+At the time, real thumbnails, decoding, preview, metadata, audio support,
+selection, activation, drag and drop, Finder actions, keyboard actions, zoom
+controls, animated updates, manual scan, sandboxing, bookmarks, durable scan IDs,
+and SQLite schema changes were out of scope. Later thumbnail, metadata,
+selection/copy, and tile-anatomy increments updated current behavior.
 
 ## Captured Requirements
 
 ### Functional
 
-- The media browser shows a square placeholder tile for every visible cataloged
-  image or video asset.
-- Each tile shows one middle-truncated filename at the top, falling back to the
-  final relative-path component when the stored name is unavailable.
-- A tiny `video.fill` marker and subdued system-blue background appear only when
-  the content type conforms to `UTType.movie`.
-- Images and all other non-video files have one neutral presentation and no
-  icon. Audio has no special behavior.
+- The original media browser showed a square placeholder tile for every visible
+  cataloged image or video asset.
+- The original tile showed one middle-truncated filename at the top, falling back
+  to the final relative-path component when the stored name was unavailable.
+- The original video differentiator was a tiny `video.fill` marker and subdued
+  system-blue background. Current video differentiation is the bottom-right
+  duration/film badge described in spec 0037.
+- Images and all other non-video files had one neutral presentation and no icon.
+  Audio has no special behavior.
 - The grid has no media activation, preview, Finder, drag, or keyboard behavior.
   (Selection and ⌘C copy were added later; see spec 0031 and APP-010/APP-012.)
 - A query descriptor change through sidebar scope, sort, or filter scrolls to

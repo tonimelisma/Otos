@@ -35,10 +35,10 @@ implementation history.
 | [0003](adr/0003-library-root-selection-and-access.md) | Unsandboxed folder selection, normalized path identity, and overlap rules. |
 | [0004](adr/0004-catalog-ui-ownership.md) | Permanent single-window Store/Projection/ViewModel/View ownership. |
 | [0005](adr/0005-catalog-publication-and-availability.md) | Projection publication, explicit selection delivery, and transient availability. |
-| [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering and structural/detail update mechanics. |
+| [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering, aspect-fit tile face overlays, and structural/detail update mechanics. |
 | [0007](adr/0007-catalog-order-reuse.md) | Superseded ordering/materialization decision retained for precomputed sort-key and order-cache-removal evidence. |
 | [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
-| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files, metadata as scalar columns plus JSON), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
+| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files, metadata as scalar columns plus JSON, hot video duration), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
 | [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, and clean destructive catalog reset. |
 | [0011](adr/0011-catalog-query-descriptor-best-values-and-cadence.md) | Catalog query descriptor, generated best date/kind/format values, toolbar/menu sort-filter query ownership, and two-tier publication cadence. |
 | [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy representation: original file URLs on the pasteboard (not image pixels), references only, reading no bytes and never materializing a dataless cloud original. |
@@ -82,6 +82,7 @@ implementation history.
 | [0034](specs/0034-session-scoped-diagnostics-and-log-hygiene.md) | Session-scoped diagnostics, ignored run/test log captures, JSONL de-spamming, scan issue aggregation, and cancellation-aware tile-detail errors. |
 | [0035](specs/0035-catalog-browser-remediation-completion.md) | Catalog browser remediation completion: Store wait/exec timing, stall operation attribution, WAL visibility, diffable structural grid applies, image-only tile reload identity, enrichment claim batching, query-intent freshness, and source/docs hygiene. |
 | [0036](specs/0036-pr41-browser-remediation-follow-up.md) | PR 41 remediation follow-up: enrichment claim lifecycle, newest-first fallback claiming, bounded filesystem diagnostics, large reorder-only grid apply policy, and source/docs cleanup. |
+| [0037](specs/0037-thumbnail-tile-redesign.md) | Thumbnail tile redesign: aspect-fit visible tile face, filename/date/video overlays, hot duration scalar, relative date policy, and current docs cleanup. |
 
 ## Planning Documents
 

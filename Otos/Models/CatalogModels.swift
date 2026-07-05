@@ -153,6 +153,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let bestCaptureDate: Date?
     let bestKind: MediaKind?
     let bestFormat: MediaFormatToken?
+    let durationSeconds: Double?
     let enrichedSourceSize: Int64?
     let enrichedSourceMTimeSeconds: Int?
 
@@ -168,6 +169,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         bestCaptureDate: Date? = nil,
         bestKind: MediaKind? = nil,
         bestFormat: MediaFormatToken? = nil,
+        durationSeconds: Double? = nil,
         enrichedSourceSize: Int64? = nil,
         enrichedSourceMTimeSeconds: Int? = nil
     ) {
@@ -182,6 +184,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.bestCaptureDate = bestCaptureDate
         self.bestKind = bestKind
         self.bestFormat = bestFormat
+        self.durationSeconds = durationSeconds
         self.enrichedSourceSize = enrichedSourceSize
         self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
         sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)

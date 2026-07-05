@@ -280,20 +280,27 @@ status, animation status, apply time, and the visible-detail request count cause
 by the apply. They do not try to count scroll-driven visible loads that merely
 happen while a long apply is running. The bridge also reports the visible
 identities upward (the **viewport**) so enrichment can prioritize what you are
-looking at. `MediaAssetTileView` is one reusable tile: it shows the thumbnail and
-capture date. It updates the small date label synchronously during configuration,
-while loading and decoding the thumbnail *off the main thread* and only assigning
-the finished image on Main, with a generation token so a load that finishes after
-the tile has been reused for another asset is discarded. The image reload key
-includes the thumbnail path plus source size and modification stamp, but not the
-date, so a date-only enrichment update does not clear or reload the image.
+looking at. `MediaAssetTileView` is one reusable tile. The collection cell stays
+transparent; the visible face is the loaded thumbnail's aspect-fit rect, or a
+full-square neutral placeholder before any image has loaded. Filename and relative
+capture date sit on a small top-left scrim inside that face. Videos, and only
+videos, add a bottom-right scrim with duration text when Store has parsed it or a
+film symbol while duration is still unknown. The tile formats those scalar labels
+synchronously during configuration, while loading and decoding the thumbnail *off
+the main thread* and only assigning the finished image on Main, with a generation
+token so a load that finishes after the tile has been reused for another asset is
+discarded. The image reload key includes the thumbnail path plus source size and
+modification stamp, but not the date or duration, so overlay-only enrichment
+updates do not clear or reload the image.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
 selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its
 `selectionIndexPaths` is the single live selection truth — there is no mirror in
-the ViewModel. Because enrichment and scans re-apply the grid structure often, each
-structural apply snapshots the selected `MediaAssetID`s first and restores the
-survivors by identity afterward, so a background update never loses your selection;
+the ViewModel. The tile draws selection on the visible thumbnail/placeholder face,
+not the whole square cell. Because enrichment and scans re-apply the grid
+structure often, each structural apply snapshots the selected `MediaAssetID`s
+first and restores the survivors by identity afterward, so a background update
+never loses your selection;
 `MediaGridSelection` holds that pure, tested membership logic. ⌘C / Edit ▸ Copy
 reaches the controller through the responder chain and `MediaGridClipboard` writes
 the selected assets' original file URLs to the pasteboard (one per asset, in display
@@ -327,8 +334,9 @@ See
 ### `Otos/Services/MediaEnricher.swift` and `Otos/Services/ThumbnailStore.swift`
 
 `MediaEnricher` does the work for one asset: it parses the file's metadata (the
-`MediaMetadata` library) and renders a 256 px thumbnail (QuickLook). It is an
-injectable value (like `CatalogScanner`), so tests substitute a fake. `ThumbnailStore`
+`MediaMetadata` library), promotes tile-visible video duration into the hot asset
+row, and renders a 256 px thumbnail (QuickLook). It is an injectable value (like
+`CatalogScanner`), so tests substitute a fake. `ThumbnailStore`
 owns the thumbnail files on disk — the directory, deterministic `.jpg` names, the
 opaque 8-bit sRGB JPEG encode, staged files, atomic promotion to the final name so
 a tile never reads a half-written image during a re-enrichment, loading via Image

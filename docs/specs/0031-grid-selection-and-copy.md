@@ -227,10 +227,10 @@ than a rework.
     are added (one action path: the standard Edit ▸ Copy item).
 - `MediaAssetCollectionItem.isSelected` (changed): `didSet` forwards to
   `MediaAssetTileView.setSelected(_:)`.
-- `MediaAssetTileView.setSelected(_:)` (new): toggles a selection ring using
-  `layer.borderWidth`/`borderColor` (`NSColor.controlAccentColor`), independent of
-  the tile's `backgroundColor` tint so `configure` and reconfigure never clobber
-  it; `prepareForReuse` clears the ring.
+- `MediaAssetTileView.setSelected(_:)` (new): toggles a selection ring on the
+  visible thumbnail/placeholder face using `layer.borderWidth`/`borderColor`
+  (`NSColor.controlAccentColor`), independent of overlay label updates so
+  `configure` and reconfigure never clobber it; `prepareForReuse` clears the ring.
 
 Actor isolation: everything is MainActor (the controller and views already are).
 Copy is synchronous, allocation-only (building URL values), no I/O, no Task, no

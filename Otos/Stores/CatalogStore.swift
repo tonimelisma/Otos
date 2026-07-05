@@ -72,6 +72,7 @@ actor CatalogStore {
         var bestCaptureDate: Date?
         var bestKind: MediaKind?
         var bestFormat: MediaFormatToken?
+        var durationSeconds: Double?
         var enrichedSourceSize: Int64?
         var enrichedSourceMTimeSeconds: Int?
     }
@@ -1210,6 +1211,9 @@ private extension CatalogStore {
         let needsCleanReset = try dbWriter.read { db in
             try Self.databaseNeedsCleanSchemaReset(db)
         }
+        if needsCleanReset {
+            try dbWriter.erase()
+        }
         try Self.migrator.migrate(dbWriter)
         performThumbnailStoreStartupMaintenance(needsCleanReset: needsCleanReset)
         self.dbWriter = dbWriter
@@ -1456,6 +1460,7 @@ private extension CatalogStore {
             bestCaptureDate: storedAsset.bestCaptureDate,
             bestKind: storedAsset.bestKind,
             bestFormat: storedAsset.bestFormat,
+            durationSeconds: storedAsset.durationSeconds,
             enrichedSourceSize: storedAsset.enrichedSourceSize,
             enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds
         )

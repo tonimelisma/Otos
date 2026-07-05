@@ -43,8 +43,8 @@ This ADR owns:
   columns plus `metadata_extra_json`, decoded on demand, and is **never resident**
   in grid publication.
 - The only enrichment data fetched with hot `MediaAsset` detail rows: the thumbnail
-  path, generated best date/kind/format values, and the `(size, mtime)` source
-  stamps.
+  path, generated best date/kind/format values, video duration seconds, and the
+  `(size, mtime)` source stamps.
 - Disjoint column ownership: the scan writes only fact columns, enrichment writes
   only enrichment columns, scan upserts preserve enrichment overlay, and a stale
   in-flight enrichment completion must revalidate the source signature in SQLite
@@ -52,7 +52,9 @@ This ADR owns:
 - Staleness is the `(size, mtime)` source signature; `needsEnrichment` derives
   from it. mtime-only changes count.
 - Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
-  supplies `bestCaptureDate` for tile display and date sort.
+  supplies `bestCaptureDate` for tile display and date sort. Video duration is a
+  hot scalar because the tile surface needs it for every visible video; other
+  metadata dimensions and details remain cold.
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
   application of ADR 0008's permission), accepting the unreclaimable disk growth.
 - The enrichment ownership split: a single `EnrichmentCoordinator` actor running
@@ -103,27 +105,36 @@ Adjacent decisions requiring separate ADRs or specs:
    Holding the full nested result inline on `MediaAsset` would ride the Projection
    publication path and cost memory whether fields are nil or not.
 
+   The permanent exception is `duration_seconds`: enrichment writes it both to the
+   cold metadata row and to nullable `media_asset.duration_seconds`. The tile uses
+   that scalar to show video duration for every visible video. Keeping duration hot
+   avoids a per-viewport metadata join while still leaving pixel dimensions,
+   frame-rate, codecs, camera fields, locations, and full metadata JSON cold.
+
 3. **There is no migration policy for pre-user metadata shape changes.** This app
    has no active users; incompatible local catalog state is destructively reset by
    the clean schema policy in ADR 0010. Originals are untouched. App-owned
    thumbnails are purged with the reset because their SQLite references were
    discarded, and metadata is rebuilt by re-enrichment.
 
-4. **Timestamp role facts are stored; SQLite generates the best date.**
+4. **Timestamp role facts and video duration are stored as hot display facts.**
    Enrichment writes timestamp role facts (original, QuickTime creation,
    digitized, and GPS) instead of a pre-resolved winner. SQLite's
    `best_capture_unix` generated column ranks those role facts ahead of
    filesystem creation and modification dates, so tile display and date sort read
    the same best value without keeping full metadata resident. The metadata
    detail row still preserves all date roles. The date is shown as a plain date
-   and is never fabricated (MED-002): `bestCaptureDate` is nil only when nothing
-   is known.
+   or relative date text and is never fabricated (MED-002): `bestCaptureDate` is
+   nil only when nothing is known. Enrichment also writes `duration_seconds` into
+   the hot row for videos, using NULL for images and duration-less videos. Duration
+   is not part of staleness, sorting, or image thumbnail identity; it is only a
+   visible tile overlay fact.
 
 5. **Disjoint column ownership; scan upserts preserve overlay.** The scan upsert
    writes only scan fact columns; enrichment writes only `asset_metadata`,
-   timestamp role facts, enriched kind/format, `thumbnail_path`, and the
-   `(size, mtime)` stamps. A re-scan never clobbers metadata or the thumbnail
-   within one record. An enrichment
+   timestamp role facts, enriched kind/format, `duration_seconds`,
+   `thumbnail_path`, and the `(size, mtime)` stamps. A re-scan never clobbers
+   metadata, duration, or the thumbnail within one record. An enrichment
    completion revalidates its source `(size, mtime)` in SQLite before writing and
    before promoting its staged thumbnail; stale overlay may remain visible as the
    best-known data, but stale work cannot mark a changed source current or replace
@@ -192,6 +203,30 @@ Adjacent decisions requiring separate ADRs or specs:
    so per-unit cancel buys nothing.
 
 ## Alternatives Considered
+
+### Video duration left only in `asset_metadata`
+
+Keep `duration_seconds` only in the cold metadata companion row and join that row
+when fetching visible tile details.
+
+Pros:
+
+- Keeps the hot media row smaller by one nullable scalar.
+- Preserves a strict "all metadata is cold" rule.
+
+Cons:
+
+- Adds a metadata join to the visible tile detail path for a permanent video-tile
+  surface.
+- Makes scrolling need cold metadata table access for every visible video.
+
+Failure modes:
+
+- A future visible-detail query could accidentally pull more cold metadata into
+  the grid path.
+
+Rejected for the owner-directed hot duration promotion in spec 0037. Duration is
+small, scalar, and needed by every visible video; other metadata remains cold.
 
 ### Metadata inline on `MediaAsset` and resident
 
