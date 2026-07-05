@@ -39,7 +39,7 @@ struct CatalogBrowserSourceHygieneTests {
         #expect(content.contains("OtosSignpost.ui"))
     }
 
-    @Test func appKitGridUsesTrueDiffingWithZeroDurationBackgroundSuppression() throws {
+    @Test func appKitGridUsesMeasuredReloadDataFallbackForLargeOrReorderApplies() throws {
         let bridge = try appSource("Otos/Views/MediaAssetCollectionView.swift")
         let support = try appSource("Otos/Views/MediaAssetCollectionSupport.swift")
         let structuralApply = try appSource("Otos/Views/MediaAssetCollectionStructuralApply.swift")
@@ -47,20 +47,38 @@ struct CatalogBrowserSourceHygieneTests {
 
         #expect(bridgeAndSupport.contains("MediaGridStructuralApplyPolicy"))
         #expect(bridgeAndSupport.contains("let reorderOnly ="))
-        #expect(bridgeAndSupport.contains("let animatingDifferences = true"))
-        #expect(bridgeAndSupport.contains("usesZeroDurationAnimation: reorderOnly || largeApply"))
-        #expect(bridge.contains("NSAnimationContext.runAnimationGroup"))
-        #expect(bridge.contains("dataSource.apply(snapshot, animatingDifferences: true"))
+        #expect(bridgeAndSupport.contains("let usesReloadDataFallback = reorderOnly || largeApply"))
+        #expect(bridgeAndSupport.contains("animatingDifferences: !usesReloadDataFallback"))
+        #expect(bridge.contains("dataSource.apply("))
+        #expect(bridge.contains("animatingDifferences: summary.animatingDifferences"))
+        #expect(!bridge.contains("NSAnimationContext.runAnimationGroup"))
         #expect(!bridge.contains("largeReorderAnimationItemLimit"))
-        #expect(!bridge.contains("animatingDifferences: !(reorderOnly"))
         #expect(!bridge.contains("countsStructuralApplyReloads"))
         #expect(!bridge.contains("structuralApplyReloadsStarted"))
         #expect(!bridge.contains("visibleReloadsStarted"))
         #expect(structuralApply.contains("\"reorderOnly\": \"\\(reorderOnly)\""))
         #expect(structuralApply.contains("\"largeApply\": \"\\(largeApply)\""))
         #expect(structuralApply.contains("\"animatingDifferences\": \"\\(animatingDifferences)\""))
-        #expect(structuralApply.contains("\"zeroDuration\": \"\\(usesZeroDurationAnimation)\""))
+        #expect(structuralApply.contains("\"reloadDataFallback\": \"\\(usesReloadDataFallback)\""))
         #expect(structuralApply.contains("\"visibleDetailRequestCount\": \"\\(visibleDetailRequestCount)\""))
+    }
+
+    @Test func preheaterCoalescesBurstsIntoOneStoreRead() throws {
+        let prefetch = try appSource("Otos/Views/MediaAssetCollectionPrefetch.swift")
+
+        #expect(prefetch.contains("detailReader.assets(for: ids)"))
+        #expect(prefetch.contains("preheatTask = Task.detached"))
+        #expect(prefetch.contains("preheatGeneration += 1"))
+        #expect(!prefetch.contains("detailReader.assets(for: [id])"))
+        #expect(!prefetch.contains("for id in ids where preheatTasks"))
+        #expect(!prefetch.contains("preheatTasks:"))
+    }
+
+    @Test func tileOverlayMasksRoundOnlyInnerCorners() throws {
+        let tile = try appSource("Otos/Views/MediaAssetTileView.swift")
+
+        #expect(tile.contains("textScrim.layer?.maskedCorners = [.layerMaxXMinYCorner]"))
+        #expect(tile.contains("videoBadge.layer?.maskedCorners = [.layerMinXMaxYCorner]"))
     }
 
     @Test func appKitGridDoesNotReloadItemsForDetailRefresh() throws {

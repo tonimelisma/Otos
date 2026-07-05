@@ -53,7 +53,7 @@ extension MediaAssetCollectionViewController {
             reorderOnly=\(context.reorderOnly, privacy: .public) \
             largeApply=\(context.largeApply, privacy: .public) \
             animating=\(context.animatingDifferences, privacy: .public) \
-            zeroDuration=\(context.usesZeroDurationAnimation, privacy: .public) \
+            reloadDataFallback=\(context.usesReloadDataFallback, privacy: .public) \
             visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
             preheatCount=\(preheatCount, privacy: .public) \
             applyMs=\(applyMs, privacy: .public)
@@ -75,7 +75,7 @@ extension MediaAssetCollectionViewController {
         let reorderOnly = context.reorderOnly
         let largeApply = context.largeApply
         let animatingDifferences = context.animatingDifferences
-        let usesZeroDurationAnimation = context.usesZeroDurationAnimation
+        let usesReloadDataFallback = context.usesReloadDataFallback
         Task {
             await diagnostics?.record(
                 operation: "ui.mediaGrid.structuralApply",
@@ -88,7 +88,7 @@ extension MediaAssetCollectionViewController {
                     "reorderOnly": "\(reorderOnly)",
                     "largeApply": "\(largeApply)",
                     "animatingDifferences": "\(animatingDifferences)",
-                    "zeroDuration": "\(usesZeroDurationAnimation)",
+                    "reloadDataFallback": "\(usesReloadDataFallback)",
                     "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
                     "preheatCount": "\(preheatCount)",
                     "applyMs": "\(applyMs)",

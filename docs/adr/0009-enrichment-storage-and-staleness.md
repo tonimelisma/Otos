@@ -101,11 +101,11 @@ Adjacent decisions requiring separate ADRs or specs:
    Spec 0038 adds a bounded decoded-thumbnail memory cache used only by the
    visible grid. It is keyed by the tile image-content key (`thumbnail_path`,
    source size, and source mtime seconds), cost-capped around 128 MB, and
-   pressure-evictable through `NSCache`. It exists so a recycled or recreated tile
-   can synchronously repaint a thumbnail that has already decoded in this process,
-   enforcing the no-blank grid invariant. It is never persisted, never used to
-   answer catalog truth, and stale entries age out naturally because re-enrichment
-   changes the key.
+   count-capped with least-recently-used eviction inside a non-main thread-safe
+   cache. It exists so a recycled or recreated tile can synchronously repaint a
+   thumbnail that has already decoded in this process, enforcing the no-blank grid
+   invariant. It is never persisted, never used to answer catalog truth, and
+   stale entries age out naturally because re-enrichment changes the key.
 
 2. **The full metadata is on-demand scalar-plus-JSON, never resident in grid
    publication.** Enrichment writes the parsed `AssetMetadata` into an

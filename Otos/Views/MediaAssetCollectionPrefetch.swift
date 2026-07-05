@@ -2,11 +2,18 @@ import AppKit
 import Foundation
 import OSLog
 
+private struct PreheatImageContext {
+    let thumbnailDirectory: URL?
+    let imageCache: MediaTileImageCache?
+}
+
 // Collection preheat guide
 //
 // AppKit prefetch callbacks and the scroll-driven look-ahead share one path:
-// fault details by identity, merge them into the sticky detail map, and warm the
-// decoded-image cache off the main actor when a thumbnail already exists.
+// fault a burst of details by identity, merge it into the sticky detail map, and
+// warm the decoded-image cache off the main actor when a thumbnail already
+// exists. Bursts are newest-value work: obsolete look-ahead is cancelled instead
+// of queued because only the next viewport is useful.
 
 extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
     func collectionView(
@@ -19,9 +26,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         }
         OtosSignpost.ui.emitEvent("MediaGridPrefetchRequested")
         OtosLog.ui.debug("Media grid prefetch requested count=\(ids.count, privacy: .public)")
-        for id in ids where preheatTasks[id] == nil {
-            startPreheat(for: id)
-        }
+        startPreheat(for: ids, reason: "prefetch")
     }
 
     func collectionView(
@@ -29,10 +34,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         cancelPrefetchingForItemsAt indexPaths: [IndexPath]
     ) {
         let ids = idsForPrefetch(indexPaths)
-        for id in ids {
-            preheatTasks[id]?.cancel()
-            preheatTasks[id] = nil
-        }
+        cancelPreheat(for: ids)
         guard !ids.isEmpty else {
             return
         }
@@ -41,48 +43,74 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
     }
 
     private func idsForPrefetch(_ indexPaths: [IndexPath]) -> [MediaAssetID] {
-        indexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
+        uniqueIDs(indexPaths.compactMap { dataSource.itemIdentifier(for: $0) })
     }
 
-    private func startPreheat(for id: MediaAssetID) {
+    private func uniqueIDs(_ ids: [MediaAssetID]) -> [MediaAssetID] {
+        var seen = Set<MediaAssetID>()
+        return ids.filter { seen.insert($0).inserted }
+    }
+
+    private func startPreheat(for ids: [MediaAssetID], reason: String) {
         guard let detailReader else {
             return
         }
-        let thumbnailDirectory = thumbnailDirectory
-        let imageCache = imageCache
-        preheatTasks[id] = Task.detached(priority: .utility) { [weak self, detailReader] in
+        let ids = uniqueIDs(ids)
+        guard !ids.isEmpty else {
+            return
+        }
+        preheatGeneration += 1
+        let generation = preheatGeneration
+        preheatTask?.cancel()
+        preheatIDs = Set(ids)
+        let imageContext = PreheatImageContext(
+            thumbnailDirectory: thumbnailDirectory,
+            imageCache: imageCache
+        )
+        preheatTask = Task.detached(priority: .utility) { [weak self, detailReader] in
             await self?.runPreheat(
-                id: id,
+                ids: ids,
+                generation: generation,
+                reason: reason,
                 detailReader: detailReader,
-                thumbnailDirectory: thumbnailDirectory,
-                imageCache: imageCache
+                imageContext: imageContext
             )
         }
     }
 
     private nonisolated func runPreheat(
-        id: MediaAssetID,
+        ids: [MediaAssetID],
+        generation: Int,
+        reason: String,
         detailReader: MediaTileDetailReader,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?
+        imageContext: PreheatImageContext
     ) async {
-        let assets = await detailReader.assets(for: [id])
-        guard !Task.isCancelled, let asset = assets[id] else {
-            await MainActor.run { self.finishPreheat(for: id) }
+        let assets = await detailReader.assets(for: ids)
+        guard !Task.isCancelled else {
+            await MainActor.run { self.finishPreheat(generation: generation) }
             return
         }
         await MainActor.run {
-            self.mergeTileDetails([id: asset], reason: "prefetch")
+            guard self.preheatGeneration == generation else {
+                return
+            }
+            self.mergeTileDetails(assets, reason: reason)
         }
-        await warmImageCache(asset: asset, thumbnailDirectory: thumbnailDirectory, imageCache: imageCache)
-        await MainActor.run { self.finishPreheat(for: id) }
+        for asset in assets.values where !Task.isCancelled {
+            Self.warmImageCache(
+                asset: asset,
+                thumbnailDirectory: imageContext.thumbnailDirectory,
+                imageCache: imageContext.imageCache
+            )
+        }
+        await MainActor.run { self.finishPreheat(generation: generation) }
     }
 
-    private nonisolated func warmImageCache(
+    private nonisolated static func warmImageCache(
         asset: MediaAsset,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?
-    ) async {
+    ) {
         guard !Task.isCancelled,
               let imageCache,
               asset.thumbnailPath != nil
@@ -90,10 +118,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
             return
         }
         let key = MediaAssetTilePresentation.imageContentKey(asset)
-        let cached = await MainActor.run {
-            imageCache.image(for: key) != nil
-        }
-        guard !cached,
+        guard imageCache.image(for: key) == nil,
               let image = MediaAssetTilePresentation.decodedThumbnailImage(
                   asset: asset,
                   thumbnailDirectory: thumbnailDirectory
@@ -102,13 +127,27 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         else {
             return
         }
-        await MainActor.run {
-            imageCache.insert(image, for: key)
-        }
+        imageCache.insert(image, for: key)
     }
 
-    private func finishPreheat(for id: MediaAssetID) {
-        preheatTasks[id] = nil
+    private func cancelPreheat(for ids: [MediaAssetID]) {
+        guard !ids.isEmpty,
+              !preheatIDs.isDisjoint(with: ids)
+        else {
+            return
+        }
+        preheatGeneration += 1
+        preheatTask?.cancel()
+        preheatTask = nil
+        preheatIDs = []
+    }
+
+    private func finishPreheat(generation: Int) {
+        guard preheatGeneration == generation else {
+            return
+        }
+        preheatTask = nil
+        preheatIDs = []
     }
 
     @discardableResult
@@ -124,9 +163,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
             return 0
         }
         let ids = idsForPrefetch(attributes.compactMap(\.indexPath))
-        for id in ids where preheatTasks[id] == nil {
-            startPreheat(for: id)
-        }
+        startPreheat(for: ids, reason: reason)
         OtosSignpost.ui.emitEvent("MediaGridManualPreheat")
         OtosLog.ui.debug(
             """

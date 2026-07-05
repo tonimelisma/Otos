@@ -110,7 +110,7 @@ struct MediaAssetCollectionTests {
         #expect(resetSelection)
     }
 
-    @Test func structuralApplyPolicyKeepsTrueDiffingForAllApplies() {
+    @Test func structuralApplyPolicyUsesReloadDataFallbackOnlyForLargeOrReorderApplies() {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
         let smallInsert = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]).orderedAssetIDs
         let smallInsertPolicy = MediaGridStructuralApplyPolicy.summarize(
@@ -118,7 +118,7 @@ struct MediaAssetCollectionTests {
             nextOrderedIDs: smallInsert
         )
         #expect(smallInsertPolicy.animatingDifferences)
-        #expect(!smallInsertPolicy.usesZeroDurationAnimation)
+        #expect(!smallInsertPolicy.usesReloadDataFallback)
 
         let reordered = [previous[2], previous[1], previous[0]]
         let reorderPolicy = MediaGridStructuralApplyPolicy.summarize(
@@ -126,20 +126,20 @@ struct MediaAssetCollectionTests {
             nextOrderedIDs: reordered
         )
         #expect(reorderPolicy.reorderOnly)
-        #expect(reorderPolicy.animatingDifferences)
-        #expect(reorderPolicy.usesZeroDurationAnimation)
+        #expect(!reorderPolicy.animatingDifferences)
+        #expect(reorderPolicy.usesReloadDataFallback)
 
         let largeApply = makeGrid(
             scope: .allMedia,
-            paths: (0 ..< MediaGridStructuralApplyPolicy.zeroDurationItemCountThreshold).map { "asset-\($0).jpg" }
+            paths: (0 ..< MediaGridStructuralApplyPolicy.reloadDataFallbackItemCountThreshold).map { "asset-\($0).jpg" }
         ).orderedAssetIDs
         let largePolicy = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: [],
             nextOrderedIDs: largeApply
         )
         #expect(largePolicy.largeApply)
-        #expect(largePolicy.animatingDifferences)
-        #expect(largePolicy.usesZeroDurationAnimation)
+        #expect(!largePolicy.animatingDifferences)
+        #expect(largePolicy.usesReloadDataFallback)
     }
 
     @Test func tileDetailCacheMergesAndEvictsLeastRecentlyUsedAssets() {

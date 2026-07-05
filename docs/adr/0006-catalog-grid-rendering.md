@@ -36,7 +36,9 @@ does not provide `applySnapshotUsingReloadData`. ReloadData tears down visible
 items, so no-blank correctness cannot rely on AppKit preserving cell instances.
 The invariant is enforced by synchronous paint from a decoded memory cache plus
 same-identity downgrade guards inside the tile; diffable apply semantics only
-affect how much work AppKit does.
+affect how much work AppKit does. Spec 0039 applied the documented fallback after
+post-0038 live diagnostics found zero-duration true diffing taking 5.1 s and
+25.2 s for large/reorder applies.
 
 ## Alternatives
 
@@ -67,12 +69,13 @@ video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
 insert/remove changes may animate so surviving items move with rendered thumbnails
-intact. Background reorder-only changes use true diffable applies wrapped in a
-zero-duration `NSAnimationContext`, so they avoid visible animation without
-requesting AppKit's `reloadData` path. If that path ever proves too expensive at
-real-library scale, the fallback is to use reloadData again; the no-blank invariant
-still holds because the tile can synchronously repaint any decoded thumbnail and
-never downgrades a painted same-asset image to placeholder content.
+intact. Large applies and background reorder-only changes use AppKit's
+reloadData-class diffable path (`animatingDifferences: false`) after measured
+true-diff apply cost at real-library scale. This is visually safe because the
+tile can synchronously repaint any decoded thumbnail and never downgrades a
+painted same-asset image to placeholder content. The fallback is an apply-policy
+choice only; it does not make the catalog, detail cache, or decoded image cache a
+source of media truth.
 
 For unchanged IDs, re-read visible details through the Store-backed detail reader
 and reconfigure the existing visible items in place. Do not call AppKit item reload
@@ -117,3 +120,4 @@ responsive columns and removes flow-layout width bookkeeping.
 - `docs/specs/0037-thumbnail-tile-redesign.md`
 - `docs/specs/0035-catalog-browser-remediation-completion.md`
 - `docs/specs/0038-no-blank-grid-invariant.md`
+- `docs/specs/0039-grid-preheat-and-apply-follow-up.md`

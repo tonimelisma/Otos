@@ -265,11 +265,9 @@ selection and structural-apply extensions (`MediaAssetCollectionSelection.swift`
 `MediaAssetCollectionApplyGate` exists so that only one structural update runs at a
 time and only the newest pending update survives — backpressure for a high-volume
 surface. Identity/order changes go through diffable data-source applies. Small and
-user-visible insert/remove changes may animate; background reorder-only changes
-use true diffable applies inside a zero-duration animation context. Do not switch
-that path back to `animatingDifferences: false` as an optimization without
-evidence: on AppKit that flag means `reloadData`, which tears down visible items.
-The grid stays visually correct even if AppKit recycles a tile because decoded
+user-visible insert/remove changes may animate; measured-large applies and
+background reorder-only changes use AppKit's reloadData-class diffable fallback.
+That flag tears down visible items, so it is allowed only because decoded
 thumbnails are cached as rendering state and repainted synchronously when a tile
 configures for a key already seen in this process.
 Detail-only changes for the same ordered IDs advance `detailRefreshGeneration`,
@@ -277,11 +275,16 @@ re-read only visible details, and reconfigure the existing visible AppKit items 
 place, so a thumbnail does not blink just because metadata for an item changed.
 Structural applies do not prune the visible-detail cache first: the controller
 keeps a bounded sticky detail map so a transient query failure or missing row does
-not erase the best detail known for a visible asset.
+not erase the best detail known for a visible asset. Manual scroll look-ahead is
+the primary preheat path because AppKit prefetch timing is opportunistic; the
+post-review smoke evidence saw it fire, but the design does not rely on it. Both
+paths share the same batched newest-burst detail read and decoded-cache warming
+code.
 Structural-apply diagnostics record aggregate insert/remove counts, reorder-only
-status, animation status, apply time, and the visible-detail request count caused
-by the apply. They do not try to count scroll-driven visible loads that merely
-happen while a long apply is running. The bridge also reports the visible
+status, animation status, reloadData fallback status, apply time, and the
+visible-detail request count caused by the apply. They do not try to count
+scroll-driven visible loads that merely happen while a long apply is running. The
+bridge also reports the visible
 identities upward (the **viewport**) so enrichment can prioritize what you are
 looking at. `MediaAssetTileView` is one reusable tile. The collection cell stays
 transparent; the visible face is the loaded thumbnail's aspect-fit rect, or a

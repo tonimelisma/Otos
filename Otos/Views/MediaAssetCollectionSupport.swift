@@ -29,8 +29,13 @@ struct MediaTileDetailReader {
 }
 
 nonisolated struct MediaTileDetailCache {
-    private var assetsByID: [MediaAssetID: MediaAsset] = [:]
-    private var recency: [MediaAssetID] = []
+    private struct CachedAsset {
+        var asset: MediaAsset
+        var accessStamp: UInt64
+    }
+
+    private var assetsByID: [MediaAssetID: CachedAsset] = [:]
+    private var accessClock: UInt64 = 0
     let limit: Int
 
     init(limit: Int = 4096) {
@@ -43,45 +48,47 @@ nonisolated struct MediaTileDetailCache {
 
     mutating func merge(_ assets: [MediaAssetID: MediaAsset]) {
         for (id, asset) in assets {
-            assetsByID[id] = asset
-            markRecent(id)
+            let stamp = nextAccessStamp()
+            assetsByID[id] = CachedAsset(asset: asset, accessStamp: stamp)
         }
         evictIfNeeded()
     }
 
     mutating func asset(for id: MediaAssetID) -> MediaAsset? {
-        guard let asset = assetsByID[id] else {
+        guard var cached = assetsByID[id] else {
             return nil
         }
-        markRecent(id)
-        return asset
+        cached.accessStamp = nextAccessStamp()
+        assetsByID[id] = cached
+        return cached.asset
     }
 
-    private mutating func markRecent(_ id: MediaAssetID) {
-        recency.removeAll { $0 == id }
-        recency.append(id)
+    private mutating func nextAccessStamp() -> UInt64 {
+        accessClock &+= 1
+        return accessClock
     }
 
     private mutating func evictIfNeeded() {
-        guard assetsByID.count > limit else {
-            return
-        }
-        while assetsByID.count > limit, !recency.isEmpty {
-            let evicted = recency.removeFirst()
+        while assetsByID.count > limit {
+            guard let evicted = assetsByID.min(by: { lhs, rhs in
+                lhs.value.accessStamp < rhs.value.accessStamp
+            })?.key else {
+                return
+            }
             assetsByID[evicted] = nil
         }
     }
 }
 
 nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
-    static let zeroDurationItemCountThreshold = 1000
+    static let reloadDataFallbackItemCountThreshold = 1000
 
     let insertedCount: Int
     let removedCount: Int
     let reorderOnly: Bool
     let largeApply: Bool
-    let animatingDifferences = true
-    let usesZeroDurationAnimation: Bool
+    let animatingDifferences: Bool
+    let usesReloadDataFallback: Bool
 
     static func summarize(
         previousOrderedIDs: [MediaAssetID],
@@ -98,13 +105,15 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
         let reorderOnly = insertedCount == 0
             && removedCount == 0
             && previousOrderedIDs != nextOrderedIDs
-        let largeApply = nextOrderedIDs.count >= zeroDurationItemCountThreshold
+        let largeApply = nextOrderedIDs.count >= reloadDataFallbackItemCountThreshold
+        let usesReloadDataFallback = reorderOnly || largeApply
         return MediaGridStructuralApplyPolicy(
             insertedCount: insertedCount,
             removedCount: removedCount,
             reorderOnly: reorderOnly,
             largeApply: largeApply,
-            usesZeroDurationAnimation: reorderOnly || largeApply
+            animatingDifferences: !usesReloadDataFallback,
+            usesReloadDataFallback: usesReloadDataFallback
         )
     }
 }

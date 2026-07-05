@@ -252,15 +252,15 @@ extension MediaAssetTileView {
         loadTask?.cancel()
         let key = MediaAssetTilePresentation.imageContentKey(asset)
         OtosSignpost.ui.emitEvent("MediaTileLoadStarted")
-        loadTask = Task.detached(priority: .userInitiated) { [weak self] in
+        loadTask = Task.detached(priority: .userInitiated) { [weak self, imageCache] in
             let loaded = MediaAssetTilePresentation.loadImage(asset: asset, thumbnailDirectory: thumbnailDirectory)
             if Task.isCancelled {
                 return
             }
+            if let image = loaded.image {
+                imageCache?.insert(image, for: key)
+            }
             await MainActor.run {
-                if let image = loaded.image {
-                    imageCache?.insert(image, for: key)
-                }
                 guard let self else {
                     return
                 }
@@ -306,7 +306,6 @@ extension MediaAssetTileView {
         contentKey: String,
         reason _: String
     ) {
-        imageView.image = nil
         imageView.layer?.contents = image
         currentAssetID = assetID
         currentImageContentKey = contentKey

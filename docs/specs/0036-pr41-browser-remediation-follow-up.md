@@ -6,10 +6,12 @@ Implemented in this increment.
 
 ## Current-State Note
 
-Spec 0038 supersedes this spec's large reorder-only apply policy. The current
-grid uses duration-zero true diffable applies for background reorders, and the
-no-blank invariant does not depend on AppKit preserving item instances because
-tiles repaint synchronously from decoded cache when possible.
+Spec 0038 superseded this spec's original large reorder-only apply policy, and
+spec 0039 supersedes the interim duration-zero true-diff path. The current grid
+uses AppKit's reloadData-class diffable fallback for measured-large or
+background reorder-only applies; the no-blank invariant does not depend on AppKit
+preserving item instances because tiles repaint synchronously from decoded cache
+when possible.
 
 ## Classification
 
@@ -245,8 +247,9 @@ Focused tests:
 - source hygiene avoids exact source spelling locks
 - query normalization does not bump or roll back generation
 - staged thumbnail cleanup deletes only app-owned temp files
-- reorder-only structural apply uses true diffing with zero-duration animation
-  suppression instead of AppKit's reloadData-class nonanimated path
+- large/reorder-only structural applies use the reloadData-class fallback from
+  spec 0039 after measured true-diff apply cost, while the tile invariant keeps
+  painted thumbnails from blanking
 - ViewModel sidebar selection routing uses deterministic Store scan input so the
   post-merge DoD test no longer depends on concurrent real filesystem scanning
 

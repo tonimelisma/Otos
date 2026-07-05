@@ -83,7 +83,8 @@ implementation history.
 | [0035](specs/0035-catalog-browser-remediation-completion.md) | Catalog browser remediation completion: Store wait/exec timing, stall operation attribution, WAL visibility, diffable structural grid applies, image-only tile reload identity, enrichment claim batching, query-intent freshness, and source/docs hygiene. |
 | [0036](specs/0036-pr41-browser-remediation-follow-up.md) | PR 41 remediation follow-up: enrichment claim lifecycle, newest-first fallback claiming, bounded filesystem diagnostics, large reorder-only grid apply policy, and source/docs cleanup. |
 | [0037](specs/0037-thumbnail-tile-redesign.md) | Thumbnail tile redesign: aspect-fit visible tile face, filename/date/video overlays, hot duration scalar, relative date policy, and current docs cleanup. |
-| [0038](specs/0038-no-blank-grid-invariant.md) | No-blank grid invariant: synchronous decoded-thumbnail paint, sticky visible details, duration-zero reorder applies, tile overlay geometry, materialization re-request, reserved download slot, and verification evidence. |
+| [0038](specs/0038-no-blank-grid-invariant.md) | No-blank grid invariant: synchronous decoded-thumbnail paint, sticky visible details, tile overlay geometry, materialization re-request, reserved download slot, and verification evidence. |
+| [0039](specs/0039-grid-preheat-and-apply-follow-up.md) | Post-review grid follow-up: batched newest-burst preheating, non-main decoded cache warming, reloadData fallback for measured-large/reorder applies, cache recency cleanup, and current docs correction. |
 
 ## Planning Documents
 

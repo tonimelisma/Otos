@@ -2,7 +2,11 @@
 
 ## Status
 
-Implemented in this increment.
+Implemented in this increment. Spec 0039 is the post-review correction for the
+grid preheater and structural-apply policy: it keeps this spec's no-blank tile
+invariant, batches look-ahead detail reads, makes decoded-cache warming
+non-main-actor, and applies the reloadData fallback after measured true-diff
+apply cost.
 
 ## Classification
 
@@ -87,9 +91,10 @@ Inspection before implementation found:
 - Keep visible-detail knowledge sticky with bounded LRU eviction and add a
   preheating path that faults details and warms decoded thumbnails ahead of the
   viewport.
-- Apply large reorder-only changes with true diffable applies under duration-zero
-  animation suppression, retaining the documented fallback that reloadData remains
-  visually correct after synchronous paint.
+- Apply large reorder-only changes without visible thumbnail blanking. The
+  initial implementation used true diffable applies under duration-zero animation
+  suppression; spec 0039 applies the documented reloadData fallback after measured
+  multi-second true-diff apply cost.
 - Move overlay scrims to the thumbnail corners and size the text scrim to text.
 - Re-issue cloud materialization requests on a cadence inside the timeout, reserve
   one download slot for viewport-dataless assets, and record materialization
@@ -189,10 +194,10 @@ Epistemic ledger — every external dependency, its status, and its fallback:
 | Dependency | Status | Probe | Fallback (invariant survives) |
 | --- | --- | --- | --- |
 | `animatingDifferences: false` = reloadData on AppKit | **Verified** (macOS 27 SDK header on this machine; docs) | — | — (this is the bug, not a dependency) |
-| Diffable `apply(animatingDifferences: true)` preserves item instances for moves | Standard AppKit batch-update semantics; not exhaustively documented for 22.5k-item snapshots | Signpost the apply wall time and `MediaTilePrepareForReuse` count per apply on the 25k library | Keep `false` (reloadData): wasteful but **visually correct once §3 paint is synchronous** |
-| `NSAnimationContext` duration 0 suppresses batch-update animation | Community-established (e.g. Dropbox pilot wraps `performBatchUpdates` in `NSAnimationContext` grouping); diffable applies via batch updates | One-off visual + signpost check in smoke run | Same as above |
-| `prefetchDataSource` fires with compositional layout + diffable on current macOS | API **verified present** (SDK header, macOS 10.13+); no public evidence about this exact configuration | Counter on `prefetchItemsAt` calls in smoke run | Manual look-ahead: fault details + warm decode for `layoutAttributesForElements(in: visibleRect ±2 pages)` on scroll ticks — implemented behind the same `TilePreheater` interface, one-line swap |
-| `NSCache` thread-safe, cost-evicting, pressure-responsive | **Documented API contract** | Hit/miss/eviction counters | — |
+| Diffable `apply(animatingDifferences: true)` preserves item instances for moves | Standard AppKit batch-update semantics, but post-0038 live evidence found true-diff large/reorder applies too expensive | Signpost the apply wall time and `MediaTilePrepareForReuse` count per apply on the 25k library | Spec 0039 uses `false` (reloadData), visually correct because §3 paint is synchronous |
+| `NSAnimationContext` duration 0 suppresses batch-update animation | Retired for the current large/reorder path by spec 0039 after measured apply cost | — | Same as above |
+| `prefetchDataSource` fires with compositional layout + diffable on current macOS | API **verified present** (SDK header, macOS 10.13+), but timing is opportunistic; the review evidence saw only one callback and the spec 0039 smoke saw 10 | Counter on `prefetchItemsAt` calls in smoke run | Manual look-ahead: fault details + warm decode for `layoutAttributesForElements(in: visibleRect ±2 pages)` on scroll ticks; spec 0039 makes this the primary batched path |
+| Decoded cache is thread-safe, cost-bounded, and usable off-main | Implemented as a `Mutex`-protected rendering cache in spec 0039 | Hit/miss/insert counters | — |
 | OneDrive honors a re-issued `startDownloadingUbiquitousItem` | **Observed twice** in traces (2–3 s success immediately after re-request) | WS6 instrumentation makes every download attempt attributable | Timeout/retry loop already exists and now costs ≤ ~30 s, not 120 s |
 
 Crucially: **the invariant depends only on the cache + paint policy (pure code
@@ -207,9 +212,9 @@ synchronously and never downgrades.
 
 ### 3.1 New file: `Otos/Views/MediaTileImageCache.swift`
 
-Single owner of decoded-thumbnail reuse. `final class`, `Sendable`
-(NSCache is thread-safe): `NSCache<NSString, CGImage>` keyed by the existing
-`imageContentKey` string; `totalCostLimit` ≈ 128 MB with cost =
+Single owner of decoded-thumbnail reuse. The current implementation is a
+nonisolated `final class`, `Sendable`, protected by `Synchronization.Mutex`, and
+keyed by the existing `imageContentKey` string. `totalCostLimit` ≈ 128 MB with cost =
 `bytesPerRow × height` (decoded 256 px bitmap ≈ 190 KB → ~650 entries ≈ many
 screenfuls at 6 columns); count limit as a secondary bound. Keys embed the
 enrichment stamp, so invalidation is automatic — a re-enriched asset produces a
@@ -281,19 +286,19 @@ as a parameter instead of reading `durationField.stringValue` view state
   paths → IDs via `dataSource.itemIdentifier(for:)`, batch-faults details
   through the existing `MediaTileDetailReader` into the sticky map, and
   warm-decodes into `MediaTileImageCache` off-main; `cancelPrefetching` cancels
-  pending decodes. Probe counter per §2; fallback preheater (same seam) faults
-  `layoutAttributesForElements(in: visibleRect ±2 pages)` from
-  `scrollBoundsChanged` (`:183`). Reorder churn can stale prefetched positions —
-  harmless, cache and map are identity-keyed.
+  pending decodes. Spec 0039 corrected the initial one-task-per-ID
+  implementation: both AppKit prefetch and manual look-ahead now share one
+  batched newest-burst task, and manual look-ahead is the primary path because
+  AppKit prefetch timing is opportunistic. Reorder churn can stale prefetched
+  positions — harmless, cache and map are identity-keyed.
 - **Apply semantics** (closes V1's wasteful half): delete
   `largeReorderAnimationItemLimit` and the `animatingDifferences` policy
-  (`:79`, `:325–344`). All applies run `animatingDifferences: true`; applies
-  classified reorder-only or large are wrapped in
-  `NSAnimationContext.runAnimationGroup { $0.duration = 0;
-  $0.allowsImplicitAnimation = false }` so the true diff applies without
-  animation (moved items keep their views and painted layers); small
-  user-visible insert/removes keep the existing animation. Measured on the 25k
-  library before commit (probe §2); fallback documented in ADR 0006.
+  (`:79`, `:325–344`). The initial implementation ran all applies with
+  `animatingDifferences: true` and wrapped reorder-only/large applies in a
+  zero-duration animation context. Spec 0039 applies the fallback after live
+  evidence showed multi-second true-diff applies: large/reorder applies now use
+  `animatingDifferences: false`, while small user-visible insert/removes keep
+  animation. ADR 0006 owns the current policy.
 - Unchanged: apply gate (`MediaAssetCollectionApplyGate` — reviewed, correct),
   selection snapshot/restore (`MediaAssetCollectionSelection.swift:69–80`),
   viewport reporting, scroll-driven detail refresh cadence, diagnostics fields
@@ -363,9 +368,9 @@ slot. Schema (nothing persisted by this increment). Thumbnail resolution
    decision + watchdog + nil-apply guard + tile review fixes. Pure tests.
 3. **WS3 — details + preheating**: sticky LRU map, `TilePreheater` +
    `prefetchDataSource`, probe counters.
-4. **WS4 — apply semantics**: duration-0 diff, remove
-   `largeReorderAnimationItemLimit`, measure on the 25k library, record the
-   branch decision in ADR 0006.
+4. **WS4 — apply semantics**: duration-0 diff was implemented first; spec 0039
+   records the post-review fallback to reloadData-class applies after measured
+   true-diff cost and updates ADR 0006.
 5. **WS5 — overlay geometry** with updated presentation tests.
 6. **WS6 — materialization**: re-request loop, reserved slot, outcome/dispatch
    instrumentation. Stub-driven coordinator tests.
@@ -380,11 +385,11 @@ Each workstream is independently landable; WS2 alone closes the blocker
 
 | # | Issue | Criterion | Baseline |
 | --- | --- | --- | --- |
-| 1 | Flicker (blocker) | Watchdog `MediaTilePaintInvariantViolation` count **= 0** during a smoke run with active re-enrichment + continuous scrolling; no visible blanking in capture | Blanking every ~3.4 s (153 reloadData applies / 8.6 min) |
+| 1 | Flicker (blocker) | Watchdog `MediaTilePaintInvariantViolation` target count **= 0** during a smoke run with active re-enrichment + continuous scrolling; a nonzero count means a same-asset clear attempt was defended and blocked, not proof of visible blanking; capture should show no visible blanking | Blanking every ~3.4 s (153 reloadData applies / 8.6 min) |
 | 2 | Text at corners | Scrim + text at 0 px from the thumbnail's top-left corner (layout unit test + screenshot) | 6 pt inset + padding |
 | 3 | Scrim width | Darkened area only under text extent (unit test: scrim frame vs text width) | Full content width |
 | 4 | Materialization | Stalled-request path costs ≤ ~30 s (re-request), never blocked behind a full eager pool; every download attempt attributable in JSONL (dispatch / slot wait / transfer / outcome case / bytes) | 40 s / 162 s / 193 s, un-attributable 120 s dead polls |
-| 5 | Scroll-back placeholders | Previously seen assets repaint with no placeholder frame within cache bounds; scroll-forward mostly pre-painted (prefetch probe > 0 or fallback preheater active) | Always placeholder-first, 2 async hops |
+| 5 | Scroll-back placeholders | Previously seen assets repaint with no placeholder frame within cache bounds; scroll-forward mostly pre-painted through the manual batched look-ahead path, with AppKit prefetch treated as opportunistic | Always placeholder-first, 2 async hops |
 | — | Responsiveness | Stall count / p50 not worse than 76 / 200 ms; expected better | 76 stalls, p50 200 ms, max 856 ms |
 | — | Regressions | Selection, ⌘C copy, sort/filter reset, date/badge text unchanged (existing tests green) | — |
 
@@ -405,10 +410,10 @@ Each workstream is independently landable; WS2 alone closes the blocker
 
 ## 8. Risks
 
-- **Duration-0 diff cost at 22.5k unmeasured** — probed in WS4; fallback
-  (reloadData + synchronous paint) is invariant-safe by construction.
-- **Prefetch may not fire in this configuration** — probed; fallback preheater
-  behind the same seam.
+- **Duration-0 diff cost at 22.5k** — spec 0039 applies the reloadData fallback
+  after live diagnostics reported multi-second true-diff apply spans.
+- **Prefetch may not fire in this configuration** — probed; spec 0039 treats
+  manual batched look-ahead as primary and AppKit prefetch as opportunistic.
 - **Cache memory ceiling** — cost-capped + OS pressure eviction; counters tuned
   once on the smoke run.
 - **OneDrive re-request behavior is empirical** — twice-observed; WS6

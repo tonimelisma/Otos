@@ -12,10 +12,11 @@ import UniformTypeIdentifiers
 ///
 /// Descriptor plus identity order is structural; tile detail is read only for the visible window.
 /// A structural change performs one diffable apply, animating small/user-visible
-/// insert/remove changes while suppressing visible motion for reorder-only background
-/// applies. Unchanged IDs re-read visible details and reconfigure existing reusable
-/// items in place. Decoded thumbnails are supplied by the ViewModel-owned
-/// `MediaTileImageCache` so recycled items can repaint synchronously.
+/// insert/remove changes while using AppKit's reloadData-class diffable fallback
+/// for measured-large or reorder-only changes. Unchanged IDs re-read visible
+/// details and reconfigure existing reusable items in place. Decoded thumbnails
+/// are supplied by the ViewModel-owned `MediaTileImageCache` so recycled items can
+/// repaint synchronously.
 /// `MediaAssetCollectionApplyGate` prevents overlapping AppKit applies and keeps
 /// only the newest pending value.
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
@@ -75,7 +76,9 @@ final class MediaAssetCollectionViewController: NSViewController {
     private var tileDetails = MediaTileDetailCache()
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
-    var preheatTasks: [MediaAssetID: Task<Void, Never>] = [:]
+    var preheatTask: Task<Void, Never>?
+    var preheatIDs = Set<MediaAssetID>()
+    var preheatGeneration = 0
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let preservedSelection: Set<MediaAssetID>
@@ -86,7 +89,7 @@ final class MediaAssetCollectionViewController: NSViewController {
         let reorderOnly: Bool
         let largeApply: Bool
         let animatingDifferences: Bool
-        let usesZeroDurationAnimation: Bool
+        let usesReloadDataFallback: Bool
         let signpost: OSSignpostIntervalState
     }
 
@@ -118,9 +121,7 @@ final class MediaAssetCollectionViewController: NSViewController {
 
     deinit {
         detailQueryTask?.cancel()
-        for task in preheatTasks.values {
-            task.cancel()
-        }
+        preheatTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -273,7 +274,7 @@ extension MediaAssetCollectionViewController {
             reorderOnly=\(summary.reorderOnly, privacy: .public) \
             largeApply=\(summary.largeApply, privacy: .public) \
             animating=\(summary.animatingDifferences, privacy: .public) \
-            zeroDuration=\(summary.usesZeroDurationAnimation, privacy: .public)
+            reloadDataFallback=\(summary.usesReloadDataFallback, privacy: .public)
             """
         )
         let stallMonitor = stallMonitor
@@ -288,7 +289,7 @@ extension MediaAssetCollectionViewController {
             reorderOnly: summary.reorderOnly,
             largeApply: summary.largeApply,
             animatingDifferences: summary.animatingDifferences,
-            usesZeroDurationAnimation: summary.usesZeroDurationAnimation,
+            usesReloadDataFallback: summary.usesReloadDataFallback,
             signpost: signpost
         )
         let completion = { [weak self, operation, stallMonitor, diagnostics, context] in
@@ -313,15 +314,11 @@ extension MediaAssetCollectionViewController {
         summary: MediaGridStructuralApplyPolicy,
         completion: @escaping () -> Void
     ) {
-        guard summary.usesZeroDurationAnimation else {
-            dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
-            return
-        }
-        NSAnimationContext.runAnimationGroup { animationContext in
-            animationContext.duration = 0
-            animationContext.allowsImplicitAnimation = false
-            dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
-        }
+        dataSource.apply(
+            snapshot,
+            animatingDifferences: summary.animatingDifferences,
+            completion: completion
+        )
     }
 
     private func mediaSnapshot(

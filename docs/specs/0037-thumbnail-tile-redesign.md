@@ -14,7 +14,9 @@ ADR changed: `docs/adr/0009-enrichment-storage-and-staleness.md`.
 Spec 0038 supersedes the overlay geometry from this redesign where it differs:
 the current text scrim is anchored at the thumbnail's top-left corner with no
 outer inset and sized to the text extent, and the video badge is anchored at the
-bottom-right thumbnail corner.
+bottom-right thumbnail corner. Spec 0039 also adds the current batched preheater
+and non-main decoded-thumbnail cache; those were deliberately out of scope for
+this earlier redesign, not rejected as current architecture.
 
 ## Problem Statement And User-Facing Goal
 
