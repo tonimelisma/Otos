@@ -85,7 +85,7 @@ extension FileMaterialization {
     /// Asks the provider to download `url` and returns immediately. Non-blocking: the
     /// transfer proceeds in the background and is observed via `status(of:)`. Throws
     /// if the provider rejects the request.
-    static func requestMaterialization(of url: URL) throws {
+    nonisolated static func requestMaterialization(of url: URL) throws {
         try FileManager.default.startDownloadingUbiquitousItem(at: url)
     }
 
@@ -94,62 +94,89 @@ extension FileMaterialization {
     /// Never reads bytes itself, so a worker awaiting this is never blocked on a
     /// transfer the way a faulting read would block a thread. Honors cancellation
     /// between polls.
-    static func materialize(
+    nonisolated static func materialize(
         _ url: URL,
         pollInterval: Duration = .milliseconds(250),
         timeout: Duration = .seconds(120),
-        requestRetryInterval: Duration = .seconds(15)
-    ) async -> MaterializationOutcome {
-        let start = Date()
-        if status(of: url) == .materialized {
-            return finishMaterialization(.alreadyMaterialized, url: url, start: start)
-        }
-        if let failed = requestDownload(url, retry: false) {
-            return finishMaterialization(failed, url: url, start: start)
-        }
-        let outcome = await pollMaterialization(
+        requestRetryInterval: Duration = .seconds(1)
+    ) async -> MaterializationResult {
+        await materialize(
             url,
             pollInterval: pollInterval,
             timeout: timeout,
-            requestRetryInterval: requestRetryInterval
+            requestRetryInterval: requestRetryInterval,
+            providers: FileMaterializationProviders(
+                status: status(of:),
+                request: requestMaterialization(of:)
+            )
         )
-        return finishMaterialization(outcome, url: url, start: start)
     }
 
-    private static func pollMaterialization(
+    nonisolated static func materialize(
+        _ url: URL,
+        pollInterval: Duration = .milliseconds(250),
+        timeout: Duration = .seconds(120),
+        requestRetryInterval: Duration = .seconds(1),
+        providers: FileMaterializationProviders
+    ) async -> MaterializationResult {
+        let start = Date()
+        if providers.status(url) == .materialized {
+            return finishMaterialization(.alreadyMaterialized, url: url, start: start, rerequestCount: 0)
+        }
+        if let failed = requestDownload(url, retry: false, requestProvider: providers.request) {
+            return finishMaterialization(failed, url: url, start: start, rerequestCount: 0)
+        }
+        let (outcome, rerequestCount) = await pollMaterialization(
+            url,
+            pollInterval: pollInterval,
+            timeout: timeout,
+            requestRetryInterval: requestRetryInterval,
+            providers: providers
+        )
+        return finishMaterialization(outcome, url: url, start: start, rerequestCount: rerequestCount)
+    }
+
+    private nonisolated static func pollMaterialization(
         _ url: URL,
         pollInterval: Duration,
         timeout: Duration,
-        requestRetryInterval: Duration
-    ) async -> MaterializationOutcome {
+        requestRetryInterval: Duration,
+        providers: FileMaterializationProviders
+    ) async -> (MaterializationOutcome, Int) {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: timeout)
         var nextRetry = clock.now.advanced(by: requestRetryInterval)
+        var rerequestCount = 0
         while clock.now < deadline {
             do {
                 try await Task.sleep(for: pollInterval)
             } catch {
-                return .cancelled
+                return (.cancelled, rerequestCount)
             }
-            switch status(of: url) {
+            switch providers.status(url) {
             case .materialized:
-                return .materialized
+                return (.materialized, rerequestCount)
             case .dataless:
                 if clock.now >= nextRetry {
-                    if let failed = requestDownload(url, retry: true) {
-                        return failed
+                    rerequestCount += 1
+                    if let failed = requestDownload(url, retry: true, requestProvider: providers.request) {
+                        return (failed, rerequestCount)
                     }
                     nextRetry = clock.now.advanced(by: requestRetryInterval)
                 }
                 continue
             case .unknown:
-                return .statusUnavailable
+                return (.statusUnavailable, rerequestCount)
             }
         }
-        return .timedOut
+        return (.timedOut, rerequestCount)
     }
 
-    private static func requestDownload(_ url: URL, retry: Bool) -> MaterializationOutcome? {
+    private nonisolated static func requestDownload(
+        _ url: URL,
+        retry: Bool,
+        requestProvider: (URL) throws -> Void
+    ) -> MaterializationOutcome? {
         let prefix = retry ? "re-" : ""
         do {
             OtosLog.fileAccess.debug(
@@ -158,7 +185,7 @@ extension FileMaterialization {
                 \(url.path(percentEncoded: false), privacy: .public)
                 """
             )
-            try requestMaterialization(of: url)
+            try requestProvider(url)
             return nil
         } catch {
             OtosLog.fileAccess.error(
@@ -172,19 +199,43 @@ extension FileMaterialization {
         }
     }
 
-    private static func finishMaterialization(
+    private nonisolated static func finishMaterialization(
         _ outcome: MaterializationOutcome,
         url: URL,
-        start: Date
-    ) -> MaterializationOutcome {
+        start: Date,
+        rerequestCount: Int
+    ) -> MaterializationResult {
+        let elapsedMs = DiagnosticsTiming.milliseconds(since: start)
         OtosLog.fileAccess.debug(
             """
             File materialization finished outcome=\(outcome.diagnosticDescription, privacy: .public) \
-            elapsedMs=\(DiagnosticsTiming.milliseconds(since: start), privacy: .public) \
+            rerequestCount=\(rerequestCount, privacy: .public) \
+            elapsedMs=\(elapsedMs, privacy: .public) \
             path=\(url.path(percentEncoded: false), privacy: .public)
             """
         )
-        return outcome
+        return MaterializationResult(
+            outcome: outcome,
+            rerequestCount: rerequestCount,
+            elapsedMs: elapsedMs
+        )
+    }
+}
+
+nonisolated struct FileMaterializationProviders {
+    let status: @Sendable (URL) -> FileMaterializationStatus
+    let request: @Sendable (URL) throws -> Void
+}
+
+/// Result of an awaited materialization request. The outcome remains the product
+/// state; the counters are transient diagnostics for attributing provider stalls.
+nonisolated struct MaterializationResult: Equatable {
+    let outcome: MaterializationOutcome
+    let rerequestCount: Int
+    let elapsedMs: Int
+
+    var isMaterialized: Bool {
+        outcome.isMaterialized
     }
 }
 

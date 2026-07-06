@@ -171,7 +171,7 @@ struct CatalogDiagnosticsTests {
         let result = try runDiagnosticsScript(diagnosticsFile: outputURL)
         #expect(result.status == 0)
         let output = result.output
-        #expect(output.contains("events: 8"))
+        #expect(output.contains("events: 13"))
         #expect(output.contains("scan starts: 1"))
         #expect(output.contains("scan batches: 1"))
         #expect(output.contains("stale scan callbacks ignored: 1"))
@@ -179,12 +179,41 @@ struct CatalogDiagnosticsTests {
         #expect(output.contains("startup callers coalesced: 1"))
         #expect(output.contains("window projections: 1"))
         #expect(output.contains("window projection detail refreshes: 1"))
+        #expect(output.contains("structural applies: 1"))
+        #expect(output.contains("tile-detail query slow single-row records: 0"))
+        #expect(output.contains("grid counter records: 1"))
+        #expect(output.contains("download lifecycle materialized: 1"))
         #expect(output.contains("main run loop stalls: 1"))
         #expect(output.contains("library availability changes: 1"))
+        #expect(output.contains("catalog diagnostics check passed"))
+    }
+
+    @Test func diagnosticsScriptCheckFailsForWatchdogCounter() async throws {
+        let temp = try makeDiagnosticsTemporaryDirectory()
+        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
+        await diagnostics.record(
+            operation: "ui.grid.counters",
+            phase: "interval",
+            fields: [
+                "watchdogCount": "1",
+                "totalWatchdogCount": "1",
+            ]
+        )
+
+        let result = try runDiagnosticsScript(diagnosticsFile: outputURL)
+        #expect(result.status == 1)
+        #expect(result.output.contains("watchdog counter is 1, expected 0"))
     }
 }
 
 private func writeSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async {
+    await writeBasicSummaryFixtureEvents(diagnostics)
+    await writeHealthyGridFixtureEvents(diagnostics)
+    await writeHealthyDownloadFixtureEvents(diagnostics)
+}
+
+private func writeBasicSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async {
     await diagnostics.record(operation: "catalog.scan", phase: "start")
     await diagnostics.record(operation: "catalog.scan.batch", phase: "finish", fields: ["count": "2"])
     await diagnostics.record(operation: "catalog.scan.staleCallback", phase: "ignored")
@@ -210,12 +239,69 @@ private func writeSummaryFixtureEvents(_ diagnostics: CatalogDiagnostics) async 
         operation: "ui.mainRunLoop.stall",
         phase: "detected",
         fields: [
-            "stallMs": "250",
+            "stallMs": "150",
             "latestUpdateID": "1",
             "latestItems": "2",
         ]
     )
     await diagnostics.record(operation: "catalog.library.availability", phase: "unavailable")
+}
+
+private func writeHealthyGridFixtureEvents(_ diagnostics: CatalogDiagnostics) async {
+    await diagnostics.record(
+        operation: "ui.mediaGrid.structuralApply",
+        phase: "finish",
+        fields: [
+            "applyMs": "80",
+            "visibleDetailRequestCount": "30",
+        ]
+    )
+    await diagnostics.record(
+        operation: "catalog.store.query.tileDetail",
+        phase: "finish",
+        fields: [
+            "requested": "30",
+            "returned": "30",
+            "queryMs": "20",
+        ]
+    )
+    await diagnostics.record(
+        operation: "ui.grid.counters",
+        phase: "interval",
+        fields: [
+            "cacheHits": "10",
+            "cacheMisses": "2",
+            "cacheInserts": "3",
+            "watchdogCount": "0",
+            "totalCacheHits": "10",
+            "totalCacheMisses": "2",
+            "totalCacheInserts": "3",
+            "totalCacheHitRatePermille": "833",
+            "totalWatchdogCount": "0",
+        ]
+    )
+}
+
+private func writeHealthyDownloadFixtureEvents(_ diagnostics: CatalogDiagnostics) async {
+    await diagnostics.record(
+        operation: "catalog.thumbnails.visibleLifecycle",
+        phase: "materialized",
+        fields: [
+            "rootPath": "/Users/example/Pictures",
+            "relativePath": "cloud.jpg",
+            "outcome": "materialized",
+            "rerequestCount": "2",
+            "requestToCompleteMs": "123",
+        ]
+    )
+    await diagnostics.record(
+        operation: "catalog.thumbnails.visibleLifecycle",
+        phase: "claimed",
+        fields: [
+            "rootPath": "/Users/example/Pictures",
+            "relativePath": "cloud.jpg",
+        ]
+    )
 }
 
 private func runDiagnosticsScript(diagnosticsFile: URL) throws -> (status: Int32, output: String) {

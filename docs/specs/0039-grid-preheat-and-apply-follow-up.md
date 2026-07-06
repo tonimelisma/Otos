@@ -65,7 +65,8 @@ Inspection before implementation found:
 - `MediaGridStructuralApplyPolicy` still encoded duration-zero true diffing for
   large/reorder applies, and docs/tests asserted that behavior as current truth.
 - `MediaAssetTileView.applyImage` still set `imageView.image = nil` even though
-  tile painting uses `imageView.layer?.contents`.
+  tile painting uses `imageView.layer?.contents`; spec 0040 removed that
+  vestigial clear.
 - Spec 0038 and ADR 0006 described zero-duration diffable applies as the current
   selected path and only listed reloadData as a future fallback.
 - The review evidence reported AppKit prefetch as effectively inert in its smoke

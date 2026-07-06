@@ -87,6 +87,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
+    @ObservationIgnored private var gridTelemetryTask: Task<Void, Never>?
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
 
@@ -146,9 +147,20 @@ final class CatalogWindowViewModel {
         mutationForwardingTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
+        gridTelemetryTask?.cancel()
         queryContinuation.finish()
         mutationContinuation.finish()
         viewportContinuation.finish()
+        let diagnostics = diagnostics
+        let finalCounters = GridTelemetry.snapshot()
+        Task.detached(priority: .utility) { [diagnostics, finalCounters] in
+            await Self.recordGridTelemetrySnapshot(
+                diagnostics: diagnostics,
+                phase: "shutdown",
+                delta: GridTelemetrySnapshot(),
+                total: finalCounters
+            )
+        }
         if let coordinator = enrichmentCoordinator {
             // The coordinator's supervisor strongly retains the coordinator, so it must be
             // told to stop or it (and the store) would outlive this window. shutdown() is
@@ -195,6 +207,7 @@ extension CatalogWindowViewModel {
             initialRequest: initialRequest
         )
         startCatalog(store: store, diagnostics: diagnostics)
+        startGridTelemetryRecording(diagnostics: diagnostics)
         if startsEnrichment {
             startEnrichment()
         }
@@ -375,6 +388,49 @@ extension CatalogWindowViewModel {
             }
             OtosSignpost.catalog.endInterval("CatalogStartIntent", signpost)
         }
+    }
+
+    private func startGridTelemetryRecording(diagnostics: CatalogDiagnostics?) {
+        let initialSnapshot = GridTelemetry.snapshot()
+        gridTelemetryTask = Task.detached(priority: .utility) { [diagnostics] in
+            var previousSnapshot = initialSnapshot
+            await Self.recordGridTelemetrySnapshot(
+                diagnostics: diagnostics,
+                phase: "start",
+                delta: GridTelemetrySnapshot(),
+                total: previousSnapshot
+            )
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(60))
+                } catch {
+                    break
+                }
+                let currentSnapshot = GridTelemetry.snapshot()
+                await Self.recordGridTelemetrySnapshot(
+                    diagnostics: diagnostics,
+                    phase: "interval",
+                    delta: currentSnapshot.delta(since: previousSnapshot),
+                    total: currentSnapshot
+                )
+                previousSnapshot = currentSnapshot
+            }
+        }
+    }
+
+    private nonisolated static func recordGridTelemetrySnapshot(
+        diagnostics: CatalogDiagnostics?,
+        phase: String,
+        delta: GridTelemetrySnapshot,
+        total: GridTelemetrySnapshot
+    ) async {
+        var fields = delta.diagnosticFields()
+        fields.merge(total.diagnosticFields(prefix: "total")) { _, new in new }
+        await diagnostics?.record(
+            operation: "ui.grid.counters",
+            phase: phase,
+            fields: fields
+        )
     }
 
     private func applyState(_ nextState: CatalogWindowState) {

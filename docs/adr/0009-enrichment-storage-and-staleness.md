@@ -212,9 +212,11 @@ Adjacent decisions requiring separate ADRs or specs:
    dataless → download) and the ADR 0008 safety gate; it is never persisted.
    Download workers issue a non-blocking provider request and then poll status
    without reading bytes. If a file remains dataless, the worker re-issues the
-   provider request on a short cadence within the same overall timeout so a stalled
+   provider request every second within the same overall timeout so a stalled
    provider request becomes attributable and bounded rather than an invisible
-   120-second wait.
+   120-second wait. `FileMaterialization` returns the outcome, re-request count,
+   and request-to-completion elapsed time so the coordinator can record durable
+   materialization lifecycle evidence.
    Enrichment writes are batched (one transaction, one detail-only notification per
    batch) because a per-asset transaction and per-asset notification would crawl and
    re-sort the catalog on every completion. Cancellation is teardown-only: eager-
@@ -415,9 +417,9 @@ query itself is measured too costly at a real large library.
 - Existing generated thumbnails from an older private format may be deleted
   manually during a development increment; the app does not carry a compatibility
   loader or migration path for generated thumbnail overlay.
-- Stalled provider materialization requests are retried within the same timeout
-  and attributed in diagnostics, but Otos still cannot guarantee a third-party
-  provider will materialize a file before the timeout.
+- Stalled provider materialization requests are retried every second within the
+  same timeout and attributed in diagnostics, but Otos still cannot guarantee a
+  third-party provider will materialize a file before the timeout.
 
 ## Retirement Proof
 
@@ -441,6 +443,8 @@ path for pre-user enrichment schema changes.
   implementation spec this ADR is the decision record for.
 - `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md` — changes the thumbnail
   private file format to JPEG and documents manual old-thumbnail deletion.
+- `docs/specs/0040-materialization-cadence-jsonl-telemetry.md` — records the
+  one-second provider re-request cadence and durable result attribution fields.
 - `docs/index.md` — register this ADR and spec 0022.
 - `docs/onboarding.md` — add the enrichment data flow and the coordinator's role.
 - `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here, in

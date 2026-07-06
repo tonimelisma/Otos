@@ -1,4 +1,11 @@
 import Foundation
+@testable import Otos
+
+extension MaterializationResult {
+    static var testMaterialized: MaterializationResult {
+        MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 0)
+    }
+}
 
 enum AsyncTestTimeoutError: Error, CustomStringConvertible {
     case timedOut(String)

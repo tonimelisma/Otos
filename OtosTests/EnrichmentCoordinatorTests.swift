@@ -50,7 +50,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: blocker.enricher(),
-            materialize: { _ in .materialized },
+            materialize: { _ in .testMaterialized },
             enrichConcurrency: 1,
             downloadConcurrency: 1,
             claimBatchSize: 3,
@@ -150,7 +150,7 @@ struct EnrichmentCoordinatorTests {
             enricher: enricher,
             materialize: { url in
                 await state.materialize(url.path(percentEncoded: false))
-                return .materialized
+                return .testMaterialized
             },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
@@ -164,6 +164,24 @@ struct EnrichmentCoordinatorTests {
 
         #expect(enriched.testAssets.allSatisfy { $0.thumbnailPath == "t.jpg" })
         #expect(enriched.testAssets.allSatisfy { $0.bestCaptureDate == captureDate })
+    }
+
+    @Test func downloadLifecycleDiagnosticsIncludeLeaseAndRequestAttribution() async throws {
+        let context = try await makeDownloadLifecycleContext()
+        await context.coordinator.updateViewport([context.id])
+        await context.coordinator.start()
+
+        _ = try await waitForCatalogStoreState(context.store) { snapshot in
+            snapshot.testAssets.first?.needsEnrichment == false
+        }
+        _ = try await waitForDiagnosticEvents(context.outputURL) { events in
+            events.contains {
+                $0.operation == "catalog.thumbnails.visibleLifecycle" && $0.phase == "batchAccepted"
+            }
+        }
+        await context.coordinator.shutdown()
+
+        try assertDownloadLifecycleDiagnostics(at: context.outputURL)
     }
 
     @Test func transientOutcomeIsRetriedUntilComplete() async throws {
@@ -195,7 +213,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            materialize: { _ in .materialized },
+            materialize: { _ in .testMaterialized },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
@@ -239,7 +257,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: enricher,
-            materialize: { _ in .materialized },
+            materialize: { _ in .testMaterialized },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
@@ -256,7 +274,7 @@ struct EnrichmentCoordinatorTests {
 
 // MARK: - Helpers
 
-private func fixedScanner(_ relativeNames: [String]) -> CatalogScanner {
+func fixedScanner(_ relativeNames: [String]) -> CatalogScanner {
     CatalogScanner { _, _, _, batchHandler in
         let files = relativeNames.map { name in
             ScannedMediaFile(
@@ -270,22 +288,6 @@ private func fixedScanner(_ relativeNames: [String]) -> CatalogScanner {
         }
         try await batchHandler(files)
         return Set(relativeNames.map { MediaRelativePath(rawValue: $0) })
-    }
-}
-
-private actor FakeMaterialization {
-    private var dataless: Set<String>
-
-    init(dataless: Set<String>) {
-        self.dataless = dataless
-    }
-
-    func isDataless(_ path: String) -> Bool {
-        dataless.contains(path)
-    }
-
-    func materialize(_ path: String) {
-        dataless.remove(path)
     }
 }
 
@@ -363,7 +365,7 @@ private func visibleLifecycleCoordinator(
     EnrichmentCoordinator(
         store: store,
         enricher: visibleLifecycleEnricher(),
-        materialize: { _ in .materialized },
+        materialize: { _ in .testMaterialized },
         enrichConcurrency: 2,
         downloadConcurrency: 1,
         claimBatchSize: 2,
@@ -399,14 +401,5 @@ private func waitForDiagnosticEvents(
             await Task.yield()
         }
         throw CancellationError()
-    }
-}
-
-private func diagnosticEvents(at url: URL) throws -> [CatalogDiagnosticEvent] {
-    let data = try Data(contentsOf: url)
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    return data.split(separator: 0x0A).compactMap { line in
-        try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
     }
 }

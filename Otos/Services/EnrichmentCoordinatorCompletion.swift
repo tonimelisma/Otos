@@ -11,7 +11,7 @@ extension EnrichmentCoordinator {
     func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
         let id = work.id
         guard !isShuttingDown else {
-            try? await store.releaseEnrichmentClaims([id])
+            await releaseClaims([id], visibleID: id)
             return
         }
         inFlightEnrich.remove(id)
@@ -19,37 +19,41 @@ extension EnrichmentCoordinator {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
         case .notMaterialized:
-            await recordVisibleThumbnailLifecycle(
-                phase: "notMaterialized",
-                id: id,
-                fields: ["sourceSize": "\(work.sourceSize ?? -1)"]
-            )
             datalessPending[id] = DownloadWork(
                 id: id,
                 url: work.url,
                 sourceSize: work.sourceSize
             )
-            try? await store.refreshEnrichmentClaims([id])
+            var fields = ["sourceSize": "\(work.sourceSize ?? -1)"]
+            if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
+                fields["leaseRefreshedUntil"] = diagnosticTimestamp(leaseRefreshedUntil)
+            }
+            await recordVisibleThumbnailLifecycle(
+                phase: "notMaterialized",
+                id: id,
+                fields: fields
+            )
         case .transient:
             await recordVisibleThumbnailLifecycle(phase: "transient", id: id)
-            try? await store.releaseEnrichmentClaims([id])
+            await releaseClaims([id], visibleID: id)
         }
         signal()
     }
 
     func finishDownload(
         _ work: DownloadWork,
-        outcome: MaterializationOutcome,
+        result: MaterializationResult,
         attemptMs: Int
     ) async {
         let id = work.id
         guard !isShuttingDown else {
-            try? await store.releaseEnrichmentClaims([id])
+            await releaseClaims([id], visibleID: id)
             return
         }
         inFlightDownload.remove(id)
         datalessPending[id] = nil
-        try? await store.releaseEnrichmentClaims([id])
+        await releaseClaims([id], visibleID: id)
+        let outcome = result.outcome
         let materialized = outcome.isMaterialized
         await recordVisibleThumbnailLifecycle(
             phase: materialized ? "materialized" : "materializationFailed",
@@ -57,6 +61,8 @@ extension EnrichmentCoordinator {
             fields: [
                 "outcome": outcome.diagnosticDescription,
                 "attemptMs": "\(attemptMs)",
+                "requestToCompleteMs": "\(result.elapsedMs)",
+                "rerequestCount": "\(result.rerequestCount)",
                 "sourceSize": "\(work.sourceSize ?? -1)",
             ]
         )
@@ -138,6 +144,47 @@ extension EnrichmentCoordinator {
             phase: phase,
             fields: diagnosticFields
         )
+    }
+
+    private func releaseClaims(_ ids: [MediaAssetID], visibleID: MediaAssetID) async {
+        do {
+            try await store.releaseEnrichmentClaims(ids)
+        } catch {
+            await recordVisibleThumbnailLifecycle(
+                phase: "claimReleaseFailed",
+                id: visibleID,
+                fields: ["error": String(describing: error)]
+            )
+            OtosLog.metadata.error(
+                """
+                Enrichment claim release failed count=\(ids.count, privacy: .public) \
+                error=\(String(describing: error), privacy: .public)
+                """
+            )
+        }
+    }
+
+    private func refreshClaims(_ ids: [MediaAssetID], visibleID: MediaAssetID) async -> Date? {
+        do {
+            return try await store.refreshEnrichmentClaims(ids)
+        } catch {
+            await recordVisibleThumbnailLifecycle(
+                phase: "claimRefreshFailed",
+                id: visibleID,
+                fields: ["error": String(describing: error)]
+            )
+            OtosLog.metadata.error(
+                """
+                Enrichment claim refresh failed count=\(ids.count, privacy: .public) \
+                error=\(String(describing: error), privacy: .public)
+                """
+            )
+            return nil
+        }
+    }
+
+    private func diagnosticTimestamp(_ date: Date) -> String {
+        ISO8601DateFormatter().string(from: date)
     }
 
     private func recordCompletedEnrichment(_ result: EnrichmentResult, id: MediaAssetID) async {

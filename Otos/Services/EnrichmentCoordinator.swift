@@ -57,7 +57,7 @@ actor EnrichmentCoordinator {
 
     let store: CatalogStore
     let enricher: MediaEnricher
-    let materialize: @Sendable (URL) async -> MaterializationOutcome
+    let materialize: @Sendable (URL) async -> MaterializationResult
     let enrichConcurrency: Int
     let downloadConcurrency: Int
     let claimBatchSize: Int
@@ -89,7 +89,7 @@ actor EnrichmentCoordinator {
     init(
         store: CatalogStore,
         enricher: MediaEnricher,
-        materialize: @escaping @Sendable (URL) async -> MaterializationOutcome = {
+        materialize: @escaping @Sendable (URL) async -> MaterializationResult = {
             await EnrichmentCoordinator.liveMaterialize($0)
         },
         enrichConcurrency: Int = 4,
@@ -117,7 +117,7 @@ actor EnrichmentCoordinator {
         signalContinuation = continuation
     }
 
-    static func liveMaterialize(_ url: URL) async -> MaterializationOutcome {
+    static func liveMaterialize(_ url: URL) async -> MaterializationResult {
         await FileMaterialization.materialize(url)
     }
 }
@@ -210,10 +210,10 @@ extension EnrichmentCoordinator {
                     let materialize = materialize
                     group.addTask {
                         let start = Date()
-                        let outcome = await materialize(work.url)
+                        let result = await materialize(work.url)
                         await self.finishDownload(
                             work,
-                            outcome: outcome,
+                            result: result,
                             attemptMs: DiagnosticsTiming.milliseconds(since: start)
                         )
                     }

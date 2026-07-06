@@ -120,6 +120,12 @@ write_summary() {
     echo "tile-detail query worst queryMs: $(diagnostic_field_max '\"operation\":\"catalog.store.query.tileDetail\"' queryMs)"
     echo "tile-detail query max requested: $(diagnostic_field_max '\"operation\":\"catalog.store.query.tileDetail\"' requested)"
     echo "tile-detail query max returned: $(diagnostic_field_max '\"operation\":\"catalog.store.query.tileDetail\"' returned)"
+    echo "tile-detail query slow single-row records: $(diagnostic_field_equals_count '\"operation\":\"catalog.store.query.tileDetail\"' requested 1)"
+    echo "grid counter records: $(diagnostic_count '\"operation\":\"ui.grid.counters\"')"
+    echo "grid counter max watchdog total: $(diagnostic_field_max '\"operation\":\"ui.grid.counters\"' totalWatchdogCount)"
+    echo "grid counter max cache hit rate permille: $(diagnostic_field_max '\"operation\":\"ui.grid.counters\"' totalCacheHitRatePermille)"
+    echo "download lifecycle materialized: $(diagnostic_count '\"operation\":\"catalog.thumbnails.visibleLifecycle\".*\"phase\":\"materialized\"')"
+    echo "download lifecycle failed: $(diagnostic_count '\"operation\":\"catalog.thumbnails.visibleLifecycle\".*\"phase\":\"materializationFailed\"')"
     echo "enrichment-candidate queries: $(diagnostic_count '\"operation\":\"catalog.store.query.enrichment\"')"
     echo "enrichment-candidate query worst queryMs: $(diagnostic_field_max '\"operation\":\"catalog.store.query.enrichment\"' queryMs)"
     echo "enrichment-candidate query max returned: $(diagnostic_field_max '\"operation\":\"catalog.store.query.enrichment\"' returned)"
@@ -143,6 +149,134 @@ write_summary() {
   } > "$output_file"
 }
 
+run_check_gates() {
+  python3 - "$DIAGNOSTICS_FILE" <<'PY'
+import json
+import statistics
+import sys
+from collections import defaultdict
+
+path = sys.argv[1]
+events = []
+with open(path, "r", encoding="utf-8") as handle:
+    for line_number, line in enumerate(handle, start=1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            events.append(json.loads(line))
+        except json.JSONDecodeError as error:
+            print(f"catalog diagnostics check failed: invalid JSON on line {line_number}: {error}", file=sys.stderr)
+            sys.exit(1)
+
+failures = []
+
+def field_int(event, name, default=None):
+    value = event.get("fields", {}).get(name)
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+def op(operation, phase=None):
+    return [
+        event for event in events
+        if event.get("operation") == operation
+        and (phase is None or event.get("phase") == phase)
+    ]
+
+counter_events = op("ui.grid.counters")
+if not counter_events:
+    failures.append("ui.grid.counters record missing")
+else:
+    watchdog_total = max(
+        field_int(event, "totalWatchdogCount", field_int(event, "watchdogCount", 0)) or 0
+        for event in counter_events
+    )
+    if watchdog_total != 0:
+        failures.append(f"watchdog counter is {watchdog_total}, expected 0")
+
+apply_values = [
+    field_int(event, "applyMs")
+    for event in op("ui.mediaGrid.structuralApply")
+]
+apply_values = [value for value in apply_values if value is not None]
+if apply_values:
+    apply_p50 = statistics.median(apply_values)
+    apply_max = max(apply_values)
+    if apply_p50 > 100:
+        failures.append(f"structural apply p50 {apply_p50}ms exceeds 100ms")
+    if apply_max > 200:
+        failures.append(f"structural apply max {apply_max}ms exceeds 200ms")
+
+stall_values = [
+    field_int(event, "stallMs")
+    for event in op("ui.mainRunLoop.stall")
+]
+stall_values = [value for value in stall_values if value is not None]
+if stall_values:
+    stall_p50 = statistics.median(stall_values)
+    stall_max = max(stall_values)
+    if stall_p50 > 200:
+        failures.append(f"main-run-loop stall p50 {stall_p50}ms exceeds 200ms")
+    if stall_max > 500:
+        failures.append(f"main-run-loop stall max {stall_max}ms exceeds 500ms")
+
+single_row_slow = [
+    event for event in op("catalog.store.query.tileDetail")
+    if event.get("fields", {}).get("requested") == "1"
+]
+if single_row_slow:
+    failures.append(f"slow single-row tile-detail records present: {len(single_row_slow)}")
+
+download_completions = [
+    event for event in op("catalog.thumbnails.visibleLifecycle")
+    if event.get("phase") in {"materialized", "materializationFailed"}
+]
+missing_download_fields = [
+    event for event in download_completions
+    if "rerequestCount" not in event.get("fields", {})
+    or "requestToCompleteMs" not in event.get("fields", {})
+]
+if missing_download_fields:
+    failures.append(
+        "download completion records missing rerequestCount/requestToCompleteMs: "
+        f"{len(missing_download_fields)}"
+    )
+
+timeline = defaultdict(list)
+for index, event in enumerate(op("catalog.thumbnails.visibleLifecycle")):
+    fields = event.get("fields", {})
+    key = (fields.get("rootPath", ""), fields.get("relativePath", ""))
+    if key[0] or key[1]:
+        timeline[key].append((index, event.get("phase")))
+
+stragglers = []
+for key, phases in timeline.items():
+    materialized_indices = [index for index, phase in phases if phase == "materialized"]
+    if not materialized_indices:
+        continue
+    last_materialized = materialized_indices[-1]
+    later_phases = [phase for index, phase in phases if index > last_materialized]
+    if not any(phase in {"claimed", "dispatched", "generated", "batchAccepted", "batchPartiallyApplied"} for phase in later_phases):
+        stragglers.append(key)
+
+if stragglers:
+    formatted = ", ".join("/".join(part for part in key if part) for key in stragglers[:5])
+    failures.append(f"materialized lifecycle stragglers without re-claim: {formatted}")
+
+if failures:
+    print("catalog diagnostics check failed:", file=sys.stderr)
+    for failure in failures:
+        print(f"- {failure}", file=sys.stderr)
+    sys.exit(1)
+
+print("catalog diagnostics check passed")
+PY
+}
+
 case "$MODE" in
   path)
     echo "$DIAGNOSTICS_FILE"
@@ -155,11 +289,14 @@ case "$MODE" in
 
     mkdir -p "$OUTPUT_DIR"
     TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-    COPY_FILE="$OUTPUT_DIR/catalog-diagnostics-$TIMESTAMP.jsonl"
-    SUMMARY_FILE="$OUTPUT_DIR/catalog-diagnostics-$TIMESTAMP.txt"
+    COPY_FILE="$OUTPUT_DIR/catalog-diagnostics-$TIMESTAMP-$$.jsonl"
+    SUMMARY_FILE="$OUTPUT_DIR/catalog-diagnostics-$TIMESTAMP-$$.txt"
     cp "$DIAGNOSTICS_FILE" "$COPY_FILE"
     write_summary "$SUMMARY_FILE"
     cat "$SUMMARY_FILE"
+    if [[ "$MODE" == "check" ]]; then
+      run_check_gates
+    fi
     echo "jsonl: $COPY_FILE"
     echo "summary: $SUMMARY_FILE"
     ;;

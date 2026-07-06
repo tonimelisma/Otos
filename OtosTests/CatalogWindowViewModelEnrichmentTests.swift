@@ -19,7 +19,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: completeEnricher(captureDate: captureDate),
-            materialize: { _ in .materialized },
+            materialize: { _ in .testMaterialized },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )
@@ -94,7 +94,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let coordinator = EnrichmentCoordinator(
             store: secondStore,
             enricher: completeEnricher(captureDate: captureDate),
-            materialize: { _ in .materialized },
+            materialize: { _ in .testMaterialized },
             applyFlushInterval: .milliseconds(1),
             diagnostics: nil
         )

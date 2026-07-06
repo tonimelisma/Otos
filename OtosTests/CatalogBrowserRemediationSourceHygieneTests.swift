@@ -26,12 +26,14 @@ struct CatalogBrowserSourceHygieneTests {
         #expect(!app.contains("if !formats.isEmpty"))
     }
 
-    @Test func appKitGridUsesNativeTelemetryWithOnlyStructuralJSONLAggregates() throws {
+    @Test func appKitGridUsesNativeTelemetryWithOnlyCoarseJSONLAggregates() throws {
         let bridge = try appSource("Otos/Views/MediaAssetCollectionView.swift")
         let structuralApply = try appSource("Otos/Views/MediaAssetCollectionStructuralApply.swift")
-        let content = bridge + structuralApply
+        let viewModel = try appSource("Otos/ViewModels/CatalogWindowViewModel.swift")
+        let content = bridge + structuralApply + viewModel
 
         #expect(content.contains("operation: \"ui.mediaGrid.structuralApply\""))
+        #expect(content.contains("operation: \"ui.grid.counters\""))
         #expect(!content.contains("operation: \"ui.mediaGrid.visible"))
         #expect(!content.contains("operation: \"ui.mediaGrid.cell"))
         #expect(content.contains("Task { [weak self, detailReader, visibleIDs]"))
@@ -68,6 +70,8 @@ struct CatalogBrowserSourceHygieneTests {
 
         #expect(prefetch.contains("detailReader.assets(for: ids)"))
         #expect(prefetch.contains("preheatTask = Task.detached"))
+        #expect(prefetch.contains("canReuseCurrentPreheat(for: requestedIDs)"))
+        #expect(prefetch.contains("requestedIDs.isSubset(of: preheatIDs)"))
         #expect(prefetch.contains("preheatGeneration += 1"))
         #expect(!prefetch.contains("detailReader.assets(for: [id])"))
         #expect(!prefetch.contains("for id in ids where preheatTasks"))
@@ -79,6 +83,27 @@ struct CatalogBrowserSourceHygieneTests {
 
         #expect(tile.contains("textScrim.layer?.maskedCorners = [.layerMaxXMinYCorner]"))
         #expect(tile.contains("videoBadge.layer?.maskedCorners = [.layerMinXMaxYCorner]"))
+        #expect(!tile.contains("imageView.image = nil"))
+    }
+
+    @Test func materializationDiagnosticsRetainResultAndClaimFailures() throws {
+        let materialization = try appSource("Otos/Services/FileMaterialization.swift")
+        let coordinator = try appSource("Otos/Services/EnrichmentCoordinator.swift")
+            + appSource("Otos/Services/EnrichmentCoordinatorCompletion.swift")
+        let script = try appSource("script/catalog-diagnostics.sh")
+
+        #expect(materialization.contains("struct MaterializationResult"))
+        #expect(materialization.contains("requestRetryInterval: Duration = .seconds(1)"))
+        #expect(coordinator.contains("MaterializationResult"))
+        #expect(coordinator.contains("\"rerequestCount\": \"\\(result.rerequestCount)\""))
+        #expect(coordinator.contains("\"requestToCompleteMs\": \"\\(result.elapsedMs)\""))
+        #expect(coordinator.contains("phase: \"claimReleaseFailed\""))
+        #expect(coordinator.contains("phase: \"claimRefreshFailed\""))
+        #expect(!coordinator.contains("try? await store.releaseEnrichmentClaims([id])"))
+        #expect(!coordinator.contains("try? await store.refreshEnrichmentClaims([id])"))
+        #expect(script.contains("ui.grid.counters record missing"))
+        #expect(script.contains("slow single-row tile-detail records present"))
+        #expect(script.contains("download completion records missing rerequestCount/requestToCompleteMs"))
     }
 
     @Test func appKitGridDoesNotReloadItemsForDetailRefresh() throws {

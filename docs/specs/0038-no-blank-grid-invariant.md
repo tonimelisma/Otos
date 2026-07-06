@@ -322,22 +322,24 @@ as a parameter instead of reading `durationField.stringValue` view state
 ### 3.5 Materialization (issue 4)
 
 - `FileMaterialization.materialize` (`FileMaterialization.swift:96–128`):
-  **re-issue `requestMaterialization` every ~15 s** while still dataless
-  (observed: a fresh request materialized both stuck files in 2–3 s). Keep the
-  120 s overall timeout as the failure boundary. Add FileAccess-category
-  logging: request, re-request count, outcome, elapsed.
+  **re-issue `requestMaterialization` while still dataless** inside the 120 s
+  overall timeout so a stuck provider request is retried without blocking a
+  worker on a read fault. Spec 0040 changed the implemented cadence from the
+  original post-0038 `~15 s` value to one second and made the returned result
+  carry outcome, re-request count, and request-to-completion elapsed time for
+  durable attribution.
 - `EnrichmentCoordinatorWorkSelection.dequeueDownloadWork`/`nextDownloadID`
   (`:39–72`): **eager (non-viewport) downloads may hold at most
   `downloadConcurrency − 1` slots**; the reserved slot serves only
   viewport-dataless files (observed 39–69 s slot waits behind a full eager
   pool).
-- `finishDownload(_:materialized:)`
+- `finishDownload(_:result:)`
   (`EnrichmentCoordinatorCompletion.swift:31–47`): signature takes the full
-  `MaterializationOutcome`; lifecycle fields record the case (`timedOut` vs
-  `requestFailed` vs `materialized`), attempt duration, and byte size (from
-  `EnrichWork.sourceSize` captured at `notMaterialized` time). New
-  `downloadDispatched` lifecycle phase in `dequeueDownloadWork` separates slot
-  wait from transfer time.
+  `MaterializationResult`; lifecycle fields record the case (`timedOut` vs
+  `requestFailed` vs `materialized`), re-request count, request-to-completion
+  duration, attempt duration, and byte size (from `EnrichWork.sourceSize`
+  captured at `notMaterialized` time). `downloadDispatched` lifecycle phase in
+  `dequeueDownloadWork` separates slot wait from transfer time.
 - Unchanged: claim leases, eager-materialization policy (ADR 0008/0009),
   enrichment ordering, retry-on-failure loop (it already works — it is what
   saved the two stuck files).

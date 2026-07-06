@@ -251,6 +251,7 @@ extension MediaAssetTileView {
         let generation = loadGeneration
         loadTask?.cancel()
         let key = MediaAssetTilePresentation.imageContentKey(asset)
+        GridTelemetry.recordTileLoadStarted()
         OtosSignpost.ui.emitEvent("MediaTileLoadStarted")
         loadTask = Task.detached(priority: .userInitiated) { [weak self, imageCache] in
             let loaded = MediaAssetTilePresentation.loadImage(asset: asset, thumbnailDirectory: thumbnailDirectory)
@@ -268,10 +269,12 @@ extension MediaAssetTileView {
                       self.currentAssetID == asset.id,
                       self.currentImageContentKey == key
                 else {
+                    GridTelemetry.recordTileLoadDropped()
                     OtosSignpost.ui.emitEvent("MediaTileLoadDropped")
                     return
                 }
                 guard let image = loaded.image else {
+                    GridTelemetry.recordTileLoadNil()
                     OtosSignpost.ui.emitEvent("MediaTileLoadNil")
                     OtosLog.ui.debug(
                         """
@@ -289,6 +292,7 @@ extension MediaAssetTileView {
                     contentKey: key,
                     reason: "asyncLoad"
                 )
+                GridTelemetry.recordTileLoadApplied()
                 OtosSignpost.ui.emitEvent("MediaTileLoadApplied")
             }
         }
@@ -320,13 +324,13 @@ extension MediaAssetTileView {
         enforcesInvariant: Bool
     ) {
         if let incomingAssetID, enforcesInvariant, currentAssetID == incomingAssetID, currentImagePixelSize != nil {
+            GridTelemetry.recordWatchdog()
             OtosSignpost.ui.emitEvent("MediaTilePaintInvariantViolation")
             OtosLog.ui.error(
                 "Media tile attempted to clear painted same-asset thumbnail reason=\(reason, privacy: .public)"
             )
             return
         }
-        imageView.image = nil
         imageView.layer?.contents = nil
         currentImagePixelSize = nil
         updatePlaceholderBackground()

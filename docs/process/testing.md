@@ -60,6 +60,12 @@ Sources:
 - Do not delegate verification to the user as a DoD condition. Run all
   agent-executable checks; record any UI interaction the environment cannot
   drive as an unverified risk and optional after-DoD task.
+- Do not treat headless layer rendering as proof of AppKit overlay-corner masks
+  when the implementation depends on `CACornerMask` or `maskedCorners`. The
+  current measured headless paths (`cacheDisplay`, `layer.render`) do not
+  faithfully expose those masks for `MediaAssetTileView`; use source/unit tests
+  for pure geometry and on-screen screenshot smoke evidence for the real AppKit
+  mask appearance.
 
 ## Local Commands
 

@@ -248,6 +248,13 @@ intent; this keeps rapid A -> B -> A user edits from being rebuilt from stale
 control state. Projection's removed-library fallback is still accepted because it
 preserves the generation of the request it resolved.
 
+The ViewModel also owns the durable grid-counter snapshot task. AppKit and tile
+paths increment cheap nonisolated counters for cache, preheat, tile-load, nil-load,
+dropped-load, and watchdog activity; the ViewModel records bounded
+`ui.grid.counters` JSONL rows at startup, periodically, and best-effort shutdown.
+That keeps hot rendering paths out of the diagnostics actor while still leaving
+post-run evidence after the app exits.
+
 ### `Otos/Views/*` — passive rendering
 
 `SidebarView`, `MediaGridView`, and `SettingsView` are small SwiftUI views that
@@ -279,7 +286,9 @@ not erase the best detail known for a visible asset. Manual scroll look-ahead is
 the primary preheat path because AppKit prefetch timing is opportunistic; the
 post-review smoke evidence saw it fire, but the design does not rely on it. Both
 paths share the same batched newest-burst detail read and decoded-cache warming
-code.
+code. If a repeated look-ahead request is already covered by the in-flight preheat
+task, the controller reuses that task instead of cancelling and restarting the
+same Store detail read.
 Structural-apply diagnostics record aggregate insert/remove counts, reorder-only
 status, animation status, reloadData fallback status, apply time, and the
 visible-detail request count caused by the apply. They do not try to count
@@ -361,24 +370,30 @@ Thumbnails are files referenced by path; the catalog never stores the bytes.
 A small helper that reports whether a file is a dataless cloud placeholder *without*
 reading its bytes, and that can trigger a non-blocking download. The enricher checks
 it immediately before any read so it never triggers a *surprise* download, and the
-coordinator uses it to deliberately materialize the library in the background. See
-`docs/specs/0016-cloud-materialization-detection.md` and
+coordinator uses it to deliberately materialize the library in the background.
+While a requested file remains dataless, the helper re-issues the provider request
+once per second inside the same timeout and returns a `MaterializationResult`
+containing the outcome, re-request count, and elapsed time for durable
+attribution. See `docs/specs/0016-cloud-materialization-detection.md`,
+`docs/specs/0040-materialization-cadence-jsonl-telemetry.md`, and
 `docs/adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md`.
 
 ### `Otos/Support/*` — observability
 
 `Instrumentation.swift` (logging + signposts), `RunContext.swift` (process
-session naming), `Diagnostics.swift` (session-scoped debug JSONL), and
+session naming), `Diagnostics.swift` (session-scoped debug JSONL),
+`GridTelemetry.swift` (cheap scalar rendering counters), and
 `UIJankDiagnostics.swift` (a monitor that catches real main-thread stalls). You do
 not need these to read the app, but they are how we *measure* it instead of
 guessing. Store diagnostics split database wait from SQLite execution, scan and
 enrichment batch diagnostics include write pressure and WAL byte-size samples,
 filesystem-event diagnostics are one decoded batch summary per debounce window
-rather than one durable row per event, and stall records include the active UI
-operation or the most recent long completed operation so a 100 ms+ main-thread
-stall has nearby owner context. Default diagnostics retention is an explicit
-lifecycle step, so disabled JSONL writing still prunes the default diagnostics
-directory without creating a new file.
+rather than one durable row per event, grid diagnostics are coarse
+`ui.grid.counters` snapshots rather than per-tile JSONL, and stall records include
+the active UI operation or the most recent long completed operation so a 100 ms+
+main-thread stall has nearby owner context. Default diagnostics retention is an
+explicit lifecycle step, so disabled JSONL writing still prunes the default
+diagnostics directory without creating a new file.
 
 ## 5. A day in the life — two narratives
 

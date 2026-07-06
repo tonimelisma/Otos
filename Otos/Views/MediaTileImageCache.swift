@@ -52,9 +52,11 @@ final nonisolated class MediaTileImageCache: Sendable {
             return cached.image
         }
         guard let image else {
+            GridTelemetry.recordCacheMiss()
             OtosSignpost.ui.emitEvent("MediaTileImageCacheMiss")
             return nil
         }
+        GridTelemetry.recordCacheHit()
         OtosSignpost.ui.emitEvent("MediaTileImageCacheHit")
         return image
     }
@@ -74,6 +76,7 @@ final nonisolated class MediaTileImageCache: Sendable {
             storage.totalCost += cost
             evictIfNeeded(from: &storage)
         }
+        GridTelemetry.recordCacheInsert()
         OtosSignpost.ui.emitEvent("MediaTileImageCacheInsert")
     }
 

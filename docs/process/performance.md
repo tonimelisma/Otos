@@ -83,6 +83,9 @@ SwiftUI/AppKit high-cardinality view jank:
   tasks or retain full catalog state, except for the bounded structural-apply
   aggregate that records scalar insert/remove counts, reorder-only status,
   animation status, apply timing, and post-apply visible-detail request count.
+  Grid cache, preheat, tile-load, nil-load, dropped-load, and watchdog activity
+  are accumulated as nonisolated scalar counters and recorded periodically as
+  `ui.grid.counters` JSONL snapshots rather than per-tile rows.
 - Use coarse JSONL diagnostics for Store/scan operations, Projection summaries,
   availability transitions, failures, Store wait/exec timing, enrichment
   write/WAL facts, scan write/WAL facts, decoded filesystem-event batch summaries,
@@ -106,7 +109,11 @@ script/catalog-diagnostics.sh summary
 By default this reads the newest session-scoped JSONL file from
 `~/Library/Application Support/net.melisma.Otos/Diagnostics/`, named
 `catalog-diagnostics-<sessionID>-<prod|test>.jsonl`. Set
-`OTOS_CATALOG_DIAGNOSTICS_FILE` to summarize a specific copied artifact.
+`OTOS_CATALOG_DIAGNOSTICS_FILE` to summarize a specific copied artifact. `check`
+is expected for jank/grid/enrichment increments and fails on missing grid counter
+rows, watchdog regressions, structural apply and stall thresholds, requested-one
+tile-detail slow queries, missing materialization attribution fields, and
+materialized lifecycle rows that never re-enter enrichment.
 
 Profiles:
 

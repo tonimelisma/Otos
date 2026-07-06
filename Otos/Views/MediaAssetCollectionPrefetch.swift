@@ -24,6 +24,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         guard !ids.isEmpty else {
             return
         }
+        GridTelemetry.recordAppKitPrefetchRequest(idCount: ids.count)
         OtosSignpost.ui.emitEvent("MediaGridPrefetchRequested")
         OtosLog.ui.debug("Media grid prefetch requested count=\(ids.count, privacy: .public)")
         startPreheat(for: ids, reason: "prefetch")
@@ -56,13 +57,17 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
             return
         }
         let ids = uniqueIDs(ids)
-        guard !ids.isEmpty else {
+        let requestedIDs = Set(ids)
+        guard !requestedIDs.isEmpty else {
+            return
+        }
+        guard !canReuseCurrentPreheat(for: requestedIDs) else {
             return
         }
         preheatGeneration += 1
         let generation = preheatGeneration
         preheatTask?.cancel()
-        preheatIDs = Set(ids)
+        preheatIDs = requestedIDs
         let imageContext = PreheatImageContext(
             thumbnailDirectory: thumbnailDirectory,
             imageCache: imageCache
@@ -78,6 +83,10 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         }
     }
 
+    private func canReuseCurrentPreheat(for requestedIDs: Set<MediaAssetID>) -> Bool {
+        preheatTask != nil && requestedIDs.isSubset(of: preheatIDs)
+    }
+
     private nonisolated func runPreheat(
         ids: [MediaAssetID],
         generation: Int,
@@ -90,6 +99,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
             await MainActor.run { self.finishPreheat(generation: generation) }
             return
         }
+        GridTelemetry.recordPreheatedIDs(assets.count)
         await MainActor.run {
             guard self.preheatGeneration == generation else {
                 return
@@ -164,6 +174,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         }
         let ids = idsForPrefetch(attributes.compactMap(\.indexPath))
         startPreheat(for: ids, reason: reason)
+        GridTelemetry.recordManualPreheatRequest(idCount: ids.count)
         OtosSignpost.ui.emitEvent("MediaGridManualPreheat")
         OtosLog.ui.debug(
             """

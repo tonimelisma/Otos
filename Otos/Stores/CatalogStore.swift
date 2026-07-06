@@ -543,9 +543,10 @@ extension CatalogStore {
         }
     }
 
-    func refreshEnrichmentClaims(_ ids: [MediaAssetID]) async throws {
+    @discardableResult
+    func refreshEnrichmentClaims(_ ids: [MediaAssetID]) async throws -> Date? {
         guard !ids.isEmpty else {
-            return
+            return nil
         }
         let rootIDsByPathBeforeWrite = rootRowIDsByPath
         let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
@@ -558,6 +559,7 @@ extension CatalogStore {
                 db: db
             )
         }
+        return Date(timeIntervalSince1970: claimedUntil)
     }
 
     private func unclaimedPriorityIDs(
