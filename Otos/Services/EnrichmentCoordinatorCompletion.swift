@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import Synchronization
 
 /// Completion/writeback extension for `EnrichmentCoordinator`.
 ///
@@ -8,6 +9,8 @@ import OSLog
 /// diagnostics, batches Store writes, and releases process-local SQLite claims on
 /// success, retryable failure, or shutdown.
 extension EnrichmentCoordinator {
+    private nonisolated static let diagnosticTimestampFormatter = Mutex(ISO8601DateFormatter())
+
     func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
         let id = work.id
         guard !isShuttingDown else {
@@ -26,7 +29,7 @@ extension EnrichmentCoordinator {
             )
             var fields = ["sourceSize": "\(work.sourceSize ?? -1)"]
             if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
-                fields["leaseRefreshedUntil"] = diagnosticTimestamp(leaseRefreshedUntil)
+                fields["leaseRefreshedUntil"] = Self.diagnosticTimestamp(leaseRefreshedUntil)
             }
             await recordVisibleThumbnailLifecycle(
                 phase: "notMaterialized",
@@ -183,8 +186,10 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func diagnosticTimestamp(_ date: Date) -> String {
-        ISO8601DateFormatter().string(from: date)
+    private nonisolated static func diagnosticTimestamp(_ date: Date) -> String {
+        diagnosticTimestampFormatter.withLock { formatter in
+            formatter.string(from: date)
+        }
     }
 
     private func recordCompletedEnrichment(_ result: EnrichmentResult, id: MediaAssetID) async {

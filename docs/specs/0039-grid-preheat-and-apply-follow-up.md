@@ -28,8 +28,9 @@ documentation or evidence so the current behavior is not overstated. Captured
 current requirements:
 
 - Functional: prefetch and manual look-ahead shall coalesce each burst into one
-  `MediaTileDetailReader.assets(for:)` call, with newer bursts cancelling older
-  bursts.
+  `MediaTileDetailReader.assets(for:)` call. New uncovered bursts cancel older
+  bursts; repeated covered bursts are reused, and partial AppKit cancellation
+  removes only cancelled IDs from the active burst.
 - Non-functional: decoded-thumbnail cache hits and inserts shall be callable
   off-main so decode-side warming does not add a main-actor hop.
 - Non-functional: large and reorder-only structural applies shall use the
@@ -143,8 +144,9 @@ No additional cache, queue, schema, or projection layer is introduced.
 ## Interfaces, Ownership, Data Flow, And Persistence
 
 - `MediaAssetCollectionViewController` owns one `preheatTask`, one
-  `preheatGeneration`, and the current burst's ID set. New bursts cancel the
-  previous task.
+  `preheatGeneration`, and the current burst's ID set. New uncovered bursts
+  cancel the previous task, covered requests reuse it, and partial AppKit
+  cancellation subtracts cancelled IDs before merge/warm.
 - `MediaTileDetailReader` remains the only Store-backed detail-read interface.
   A burst calls `assets(for: ids)` once.
 - `MediaTileImageCache` remains ViewModel-owned rendering state. It is now a
@@ -164,9 +166,10 @@ No additional cache, queue, schema, or projection layer is introduced.
   main actor for Store detail read and thumbnail decode, then briefly returns to
   the MainActor to merge details if the generation is still current.
 - Cache lookup and insert are synchronous, thread-safe, and non-main-actor.
-- Cancellation is newest-burst-wins for preheat; structural applies keep the
-  existing apply-gate semantics of one apply in flight and one newest pending
-  grid state.
+- Cancellation is newest-burst-wins for uncovered preheat requests. Partial
+  AppKit prefetch cancellation narrows the active ID set without cancelling the
+  whole task unless no IDs remain; structural applies keep the existing apply-gate
+  semantics of one apply in flight and one newest pending grid state.
 
 ## Instrumentation And Profiling Plan
 

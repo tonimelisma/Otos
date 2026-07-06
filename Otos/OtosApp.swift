@@ -5,6 +5,7 @@
 //  Created by Taylor on 6/2/26.
 //
 
+import AppKit
 import OSLog
 import SwiftUI
 
@@ -21,6 +22,11 @@ struct OtosApp: App {
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
                     catalogViewModel.start()
                     SmokeLibrarySeed.applyIfPresent(to: catalogViewModel)
+                }
+                .onReceive(NotificationCenter.default.publisher(
+                    for: NSApplication.willTerminateNotification
+                )) { _ in
+                    catalogViewModel.recordGridTelemetryForTermination()
                 }
         }
         .commands {

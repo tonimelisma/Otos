@@ -285,12 +285,14 @@ as a parameter instead of reading `durationField.stringValue` view state
   `collectionView.prefetchDataSource = self`; `prefetchItemsAt` maps index
   paths → IDs via `dataSource.itemIdentifier(for:)`, batch-faults details
   through the existing `MediaTileDetailReader` into the sticky map, and
-  warm-decodes into `MediaTileImageCache` off-main; `cancelPrefetching` cancels
-  pending decodes. Spec 0039 corrected the initial one-task-per-ID
-  implementation: both AppKit prefetch and manual look-ahead now share one
-  batched newest-burst task, and manual look-ahead is the primary path because
-  AppKit prefetch timing is opportunistic. Reorder churn can stale prefetched
-  positions — harmless, cache and map are identity-keyed.
+  warm-decodes into `MediaTileImageCache` off-main. Spec 0039 corrected the
+  initial one-task-per-ID implementation: both AppKit prefetch and manual
+  look-ahead now share one batched newest-burst task, and manual look-ahead is
+  the primary path because AppKit prefetch timing is opportunistic. Spec 0041
+  narrowed `cancelPrefetching` so partial AppKit cancellation removes cancelled
+  IDs from the active burst and filters them before merge/warm instead of
+  dropping the whole task. Reorder churn can stale prefetched positions —
+  harmless, cache and map are identity-keyed.
 - **Apply semantics** (closes V1's wasteful half): delete
   `largeReorderAnimationItemLimit` and the `animatingDifferences` policy
   (`:79`, `:325–344`). The initial implementation ran all applies with

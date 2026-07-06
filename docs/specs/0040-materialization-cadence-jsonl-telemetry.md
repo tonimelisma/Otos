@@ -122,14 +122,18 @@ grid state. Failure mode: diagnostics become part of the performance problem.
 Pros: keeps high-frequency paths cheap, makes post-run checks JSONL-readable, and
 adds only bounded scalar rows. Cons: individual cache hits and duplicate provider
 requests are not separately timestamped. Failure mode: if a future bug needs
-per-event timing, a fresh spec must add a narrow capture mode.
+per-event timing, a fresh spec must add a narrow capture mode. Spec 0041 tightens
+the grid-counter durability details by requiring an interval or termination row
+instead of accepting the startup row alone.
 
 ## Selected Approach
 
 Choose Alternative C. The product behavior stays simple: one materialization
 helper, one coordinator, one grid cache, and one diagnostics actor. The only new
 state is a set of scalar counters guarded by `Mutex`; the ViewModel records
-periodic and shutdown snapshots through the existing diagnostics owner.
+startup and periodic snapshots through the existing diagnostics owner. Spec 0041
+adds the explicit app-termination flush that supersedes this spec's original
+best-effort deinit shutdown row.
 
 ## Interfaces, Ownership, Data Flow, And Persistence
 
@@ -159,8 +163,9 @@ change.
   lifecycle rows after awaited Store operations.
 - UI/AppKit work remains MainActor-owned; grid counters are synchronous
   thread-safe increments, not actor hops.
-- The ViewModel owns the grid-counter snapshot task and cancels it in `deinit`;
-  shutdown recording is best-effort and uses the existing diagnostics actor.
+- The ViewModel owns the grid-counter snapshot task and cancels it in `deinit`.
+  Spec 0041 moves process-exit recording to an explicit app-termination hook that
+  awaits the diagnostics actor with a bounded timeout.
 
 ## Instrumentation And Profiling Plan
 
@@ -169,10 +174,11 @@ change.
   `leaseRefreshedUntil`, `rerequestCount`, `requestToCompleteMs`, `attemptMs`,
   `outcome`, and `sourceSize`.
 - Durable JSONL gains `ui.grid.counters` snapshots with cache, preheat, tile-load,
-  and watchdog totals.
-- `script/catalog-diagnostics.sh check` fails on watchdog count, apply/stall
-  thresholds, slow `requested:"1"` tile-detail records, download completions
-  missing attribution, and materialized lifecycle stragglers without re-claim.
+  and watchdog totals; spec 0041 requires a non-start row for post-run evidence.
+- `script/catalog-diagnostics.sh check` fails on missing non-start grid counter
+  evidence, watchdog count, apply/stall thresholds, slow `requested:"1"`
+  tile-detail records, download completions missing attribution, and materialized
+  lifecycle stragglers without re-claim.
 
 ## Test And Acceptance Criteria
 
@@ -194,10 +200,11 @@ Affected current docs: `docs/index.md`, `docs/requirements.md`,
 `docs/adr/0009-enrichment-storage-and-staleness.md`,
 `docs/specs/0038-no-blank-grid-invariant.md`, `docs/onboarding.md`,
 `docs/process/performance.md`, `docs/process/testing.md`, and
-`docs/process/instrumentation-review.md`. ADR 0006 and spec 0039 already
-described the implemented grid apply/preheat state; this increment only adds
-backlinks where needed. Planning docs were not used except the explicitly
-approved root `PLAN.md`, which is retired by this spec.
+`docs/process/instrumentation-review.md`. Spec 0041 later updates the grid-counter
+termination and start-only gate details. ADR 0006 and spec 0039 already described
+the implemented grid apply/preheat state; this increment only adds backlinks where
+needed. Planning docs were not used except the explicitly approved root `PLAN.md`,
+which is retired by this spec.
 
 Affected file guides and comments were checked in
 `FileMaterialization.swift`, `EnrichmentCoordinator.swift`,

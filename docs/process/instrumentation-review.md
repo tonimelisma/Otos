@@ -54,6 +54,12 @@ Build per-asset timelines from `catalog.thumbnails.visibleLifecycle` (phases:
 `materializationFailed`, `claimReleaseFailed`, `claimRefreshFailed`, `transient`,
 `batchWriteFailed`):
 
+If a smoke run has no download lifecycle rows, treat the one-second materialization
+cadence and attribution fields as test-covered but field-unexercised for that run.
+The first real dataless-region run after this checklist should explicitly inspect
+`rerequestCount`, `requestToCompleteMs`, and the post-materialization re-claim
+timeline rather than inferring provider behavior from local-file enrichment.
+
 | Check | Pass | Red flag |
 | --- | --- | --- |
 | Local-file pipeline: `claimed → batchAccepted` gap | ≤ ~2 s | Multi-second gaps for already-materialized files |
@@ -98,7 +104,8 @@ Reference baselines:
 ## 8. Automated gate coverage
 
 `script/catalog-diagnostics.sh check` is the first-line gate. It fails when the
-run has no `ui.grid.counters` record, any nonzero watchdog count,
+run has no `ui.grid.counters` record, has only a startup grid-counter row without
+an interval or app-termination row, any nonzero watchdog count,
 structural-apply or stall timing outside the current budgets, slow requested-one
 tile-detail records, materialization completion rows missing request attribution,
 or a materialized visible lifecycle with no later re-claim/generated/batch

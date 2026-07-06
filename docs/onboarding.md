@@ -251,9 +251,10 @@ preserves the generation of the request it resolved.
 The ViewModel also owns the durable grid-counter snapshot task. AppKit and tile
 paths increment cheap nonisolated counters for cache, preheat, tile-load, nil-load,
 dropped-load, and watchdog activity; the ViewModel records bounded
-`ui.grid.counters` JSONL rows at startup, periodically, and best-effort shutdown.
-That keeps hot rendering paths out of the diagnostics actor while still leaving
-post-run evidence after the app exits.
+`ui.grid.counters` JSONL rows at startup, after an early 15-second interval, every
+60 seconds after that, and through an explicit app-termination flush. That keeps
+hot rendering paths out of the diagnostics actor while still leaving post-run
+evidence after the app exits.
 
 ### `Otos/Views/*` — passive rendering
 
@@ -288,7 +289,10 @@ post-review smoke evidence saw it fire, but the design does not rely on it. Both
 paths share the same batched newest-burst detail read and decoded-cache warming
 code. If a repeated look-ahead request is already covered by the in-flight preheat
 task, the controller reuses that task instead of cancelling and restarting the
-same Store detail read.
+same Store detail read. If AppKit cancels only some prefetched IDs, the controller
+removes those IDs from the active preheat set instead of dropping the whole burst;
+when the read finishes, only still-active IDs merge into sticky details and warm
+the decoded cache.
 Structural-apply diagnostics record aggregate insert/remove counts, reorder-only
 status, animation status, reloadData fallback status, apply time, and the
 visible-detail request count caused by the apply. They do not try to count
@@ -389,7 +393,9 @@ guessing. Store diagnostics split database wait from SQLite execution, scan and
 enrichment batch diagnostics include write pressure and WAL byte-size samples,
 filesystem-event diagnostics are one decoded batch summary per debounce window
 rather than one durable row per event, grid diagnostics are coarse
-`ui.grid.counters` snapshots rather than per-tile JSONL, and stall records include
+`ui.grid.counters` snapshots rather than per-tile JSONL. The automated diagnostics
+gate requires an interval or termination grid-counter row, so a startup row alone
+does not count as post-run counter evidence. Stall records include
 the active UI operation or the most recent long completed operation so a 100 ms+
 main-thread stall has nearby owner context. Default diagnostics retention is an
 explicit lifecycle step, so disabled JSONL writing still prunes the default

@@ -13,7 +13,8 @@ private struct PreheatImageContext {
 // fault a burst of details by identity, merge it into the sticky detail map, and
 // warm the decoded-image cache off the main actor when a thumbnail already
 // exists. Bursts are newest-value work: obsolete look-ahead is cancelled instead
-// of queued because only the next viewport is useful.
+// of queued because only the next viewport is useful, while partial AppKit
+// cancellation narrows the active ID set without throwing away still-useful IDs.
 
 extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
     func collectionView(
@@ -100,13 +101,17 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
             return
         }
         GridTelemetry.recordPreheatedIDs(assets.count)
-        await MainActor.run {
+        let assetsToWarm = await MainActor.run {
             guard self.preheatGeneration == generation else {
-                return
+                return [] as [MediaAsset]
             }
-            self.mergeTileDetails(assets, reason: reason)
+            let activeAssets = assets.filter { id, _ in
+                self.preheatIDs.contains(id)
+            }
+            self.mergeTileDetails(activeAssets, reason: reason)
+            return Array(activeAssets.values)
         }
-        for asset in assets.values where !Task.isCancelled {
+        for asset in assetsToWarm where !Task.isCancelled {
             Self.warmImageCache(
                 asset: asset,
                 thumbnailDirectory: imageContext.thumbnailDirectory,
@@ -141,15 +146,19 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
     }
 
     private func cancelPreheat(for ids: [MediaAssetID]) {
-        guard !ids.isEmpty,
-              !preheatIDs.isDisjoint(with: ids)
+        let cancelledIDs = Set(ids)
+        guard !cancelledIDs.isEmpty,
+              !preheatIDs.isDisjoint(with: cancelledIDs)
         else {
+            return
+        }
+        preheatIDs.subtract(cancelledIDs)
+        guard preheatIDs.isEmpty else {
             return
         }
         preheatGeneration += 1
         preheatTask?.cancel()
         preheatTask = nil
-        preheatIDs = []
     }
 
     private func finishPreheat(generation: Int) {

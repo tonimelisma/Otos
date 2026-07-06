@@ -182,6 +182,7 @@ struct CatalogDiagnosticsTests {
         #expect(output.contains("structural applies: 1"))
         #expect(output.contains("tile-detail query slow single-row records: 0"))
         #expect(output.contains("grid counter records: 1"))
+        #expect(output.contains("grid counter durable records: 1"))
         #expect(output.contains("download lifecycle materialized: 1"))
         #expect(output.contains("main run loop stalls: 1"))
         #expect(output.contains("library availability changes: 1"))
@@ -204,6 +205,24 @@ struct CatalogDiagnosticsTests {
         let result = try runDiagnosticsScript(diagnosticsFile: outputURL)
         #expect(result.status == 1)
         #expect(result.output.contains("watchdog counter is 1, expected 0"))
+    }
+
+    @Test func diagnosticsScriptCheckFailsWhenGridCountersOnlyHaveStartRow() async throws {
+        let temp = try makeDiagnosticsTemporaryDirectory()
+        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
+        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
+        await diagnostics.record(
+            operation: "ui.grid.counters",
+            phase: "start",
+            fields: [
+                "watchdogCount": "0",
+                "totalWatchdogCount": "0",
+            ]
+        )
+
+        let result = try runDiagnosticsScript(diagnosticsFile: outputURL)
+        #expect(result.status == 1)
+        #expect(result.output.contains("ui.grid.counters interval-or-termination record missing"))
     }
 }
 

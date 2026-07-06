@@ -82,6 +82,21 @@ diagnostic_field_equals_count() {
   ' "$DIAGNOSTICS_FILE"
 }
 
+grid_counter_durable_count() {
+  if [[ ! -f "$DIAGNOSTICS_FILE" ]]; then
+    echo 0
+    return
+  fi
+
+  awk '
+    /"operation":"ui.grid.counters"/ &&
+    (/"phase":"interval"/ || /"phase":"willTerminate"/ || /"phase":"shutdown"/) {
+      count += 1
+    }
+    END { print count + 0 }
+  ' "$DIAGNOSTICS_FILE"
+}
+
 write_summary() {
   local output_file="$1"
   local line_count
@@ -122,6 +137,7 @@ write_summary() {
     echo "tile-detail query max returned: $(diagnostic_field_max '\"operation\":\"catalog.store.query.tileDetail\"' returned)"
     echo "tile-detail query slow single-row records: $(diagnostic_field_equals_count '\"operation\":\"catalog.store.query.tileDetail\"' requested 1)"
     echo "grid counter records: $(diagnostic_count '\"operation\":\"ui.grid.counters\"')"
+    echo "grid counter durable records: $(grid_counter_durable_count)"
     echo "grid counter max watchdog total: $(diagnostic_field_max '\"operation\":\"ui.grid.counters\"' totalWatchdogCount)"
     echo "grid counter max cache hit rate permille: $(diagnostic_field_max '\"operation\":\"ui.grid.counters\"' totalCacheHitRatePermille)"
     echo "download lifecycle materialized: $(diagnostic_count '\"operation\":\"catalog.thumbnails.visibleLifecycle\".*\"phase\":\"materialized\"')"
@@ -191,6 +207,12 @@ counter_events = op("ui.grid.counters")
 if not counter_events:
     failures.append("ui.grid.counters record missing")
 else:
+    durable_counter_events = [
+        event for event in counter_events
+        if event.get("phase") in {"interval", "willTerminate", "shutdown"}
+    ]
+    if not durable_counter_events:
+        failures.append("ui.grid.counters interval-or-termination record missing")
     watchdog_total = max(
         field_int(event, "totalWatchdogCount", field_int(event, "watchdogCount", 0)) or 0
         for event in counter_events
@@ -292,6 +314,7 @@ case "$MODE" in
     COPY_FILE="$OUTPUT_DIR/catalog-diagnostics-$TIMESTAMP-$$.jsonl"
     SUMMARY_FILE="$OUTPUT_DIR/catalog-diagnostics-$TIMESTAMP-$$.txt"
     cp "$DIAGNOSTICS_FILE" "$COPY_FILE"
+    DIAGNOSTICS_FILE="$COPY_FILE"
     write_summary "$SUMMARY_FILE"
     cat "$SUMMARY_FILE"
     if [[ "$MODE" == "check" ]]; then

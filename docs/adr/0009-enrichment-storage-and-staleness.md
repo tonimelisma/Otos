@@ -399,9 +399,11 @@ query itself is measured too costly at a real large library.
   generated best values, and stamps for visible IDs. Full metadata stays out of grid
   memory.
 - The grid can synchronously repaint decoded thumbnails already seen in the current
-  process without making decoded image memory a source of truth. Memory pressure may
-  evict entries, after which a never-cached path can still show placeholder until a
-  new decode succeeds.
+  process without making decoded image memory a source of truth. The decoded-image
+  cache is a fixed count/cost LRU, so entries age out only when those limits are
+  exceeded; it does not currently observe OS memory-pressure notifications. After an
+  entry ages out, a never-cached path can still show placeholder until a new decode
+  succeeds.
 - Re-enrichment is self-healing: a fact change makes the stamp mismatch, so the
   asset re-queues with no cancellation logic.
 - Local disk grows as the library materializes and that growth is unreclaimable;

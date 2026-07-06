@@ -84,7 +84,8 @@ SwiftUI/AppKit high-cardinality view jank:
   aggregate that records scalar insert/remove counts, reorder-only status,
   animation status, apply timing, and post-apply visible-detail request count.
   Grid cache, preheat, tile-load, nil-load, dropped-load, and watchdog activity
-  are accumulated as nonisolated scalar counters and recorded periodically as
+  are accumulated as nonisolated scalar counters and recorded at startup, after an
+  early 15-second interval, every 60 seconds after that, and at app termination as
   `ui.grid.counters` JSONL snapshots rather than per-tile rows.
 - Use coarse JSONL diagnostics for Store/scan operations, Projection summaries,
   availability transitions, failures, Store wait/exec timing, enrichment
@@ -111,7 +112,8 @@ By default this reads the newest session-scoped JSONL file from
 `catalog-diagnostics-<sessionID>-<prod|test>.jsonl`. Set
 `OTOS_CATALOG_DIAGNOSTICS_FILE` to summarize a specific copied artifact. `check`
 is expected for jank/grid/enrichment increments and fails on missing grid counter
-rows, watchdog regressions, structural apply and stall thresholds, requested-one
+rows, start-only grid-counter runs without interval or termination evidence,
+watchdog regressions, structural apply and stall thresholds, requested-one
 tile-detail slow queries, missing materialization attribution fields, and
 materialized lifecycle rows that never re-enter enrichment.
 

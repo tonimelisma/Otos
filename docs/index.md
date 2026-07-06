@@ -87,6 +87,7 @@ implementation history.
 | [0038](specs/0038-no-blank-grid-invariant.md) | No-blank grid invariant: synchronous decoded-thumbnail paint, sticky visible details, tile overlay geometry, materialization re-request, reserved download slot, and verification evidence. |
 | [0039](specs/0039-grid-preheat-and-apply-follow-up.md) | Post-review grid follow-up: batched newest-burst preheating, non-main decoded cache warming, reloadData fallback for measured-large/reorder applies, cache recency cleanup, and current docs correction. |
 | [0040](specs/0040-materialization-cadence-jsonl-telemetry.md) | Materialization cadence and durable telemetry: one-second provider re-requests, materialization result attribution, claim-failure lifecycle rows, coarse grid counter JSONL snapshots, diagnostics gates, and plan retirement. |
+| [0041](specs/0041-review-follow-up-telemetry-and-doc-truth.md) | Review follow-up: explicit termination and early interval grid-counter rows, start-only diagnostics gate failure, partial preheat cancellation, cache documentation truth, and formatter reuse. |
 
 ## Planning Documents
 
