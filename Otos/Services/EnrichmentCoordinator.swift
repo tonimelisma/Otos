@@ -16,10 +16,13 @@ import OSLog
 ///
 /// Scheduling is cursorless: there is no durable backlog of "what needs enrichment".
 /// Store derives that from queryable source/enrichment stamps and returns a bounded set
-/// of claimed candidates. The coordinator keeps only the runtime state it cannot
-/// derive: the viewport, a small process-local queue of already-claimed work used to
-/// avoid one SQLite claim query per worker slot, in-flight guards, the just-downloaded
-/// `freshly` hand-off, the pending dataless download work discovered so far, the pending-apply
+/// of claimed candidates. Store gives visible work priority, then connected removable
+/// sources before fixed-library fallback work. MTP devices can also seed temporary
+/// staging downloads, ordered still/image items before video, without creating a second
+/// durable queue. The coordinator keeps only the runtime state it cannot derive: the
+/// viewport, a small process-local queue of already-claimed work used to avoid one
+/// SQLite claim query per worker slot, in-flight guards, the just-downloaded `freshly`
+/// hand-off, the pending dataless download work discovered so far, the pending-apply
 /// buffer, and one `eagerMode` latch.
 ///
 /// Materialization status is not checked on this actor. The enricher checks it off-actor
@@ -53,6 +56,15 @@ actor EnrichmentCoordinator {
         let id: MediaAssetID
         let url: URL
         let sourceSize: Int64?
+        let captureDate: Date?
+        let isVideo: Bool
+    }
+
+    struct DeviceStagingSeed {
+        let id: MediaAssetID
+        let sourceSize: Int64?
+        let captureDate: Date?
+        let isVideo: Bool
     }
 
     let store: CatalogStore
@@ -164,6 +176,26 @@ extension EnrichmentCoordinator {
 
     func updateViewport(_ ids: [MediaAssetID]) {
         viewport = ids
+        signal()
+    }
+
+    func stageDevice(_ seeds: [DeviceStagingSeed]) {
+        guard !isShuttingDown else {
+            return
+        }
+        for seed in seeds {
+            guard !FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) else {
+                continue
+            }
+            datalessPending[seed.id] = DownloadWork(
+                id: seed.id,
+                url: seed.id.fileURL,
+                sourceSize: seed.sourceSize,
+                captureDate: seed.captureDate,
+                isVideo: seed.isVideo
+            )
+        }
+        eagerMode = true
         signal()
     }
 }

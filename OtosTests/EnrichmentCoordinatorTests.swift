@@ -31,6 +31,31 @@ struct EnrichmentCoordinatorTests {
         ))
     }
 
+    @Test func eagerDeviceStagingDownloadsStillItemsBeforeVideos() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let rootPath = LibraryRootPath(
+            rawValue: temp.appending(path: "DeviceStaging/Camera").path(percentEncoded: false)
+        )
+        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            downloadConcurrency: 4,
+            diagnostics: nil
+        )
+        let seeds = [
+            deviceStagingSeed(rootPath: rootPath, relativePath: "video.mov", captureDate: 50, isVideo: true),
+            deviceStagingSeed(rootPath: rootPath, relativePath: "still-b.jpg", captureDate: 200, isVideo: false),
+            deviceStagingSeed(rootPath: rootPath, relativePath: "still-a.jpg", captureDate: 100, isVideo: false),
+        ]
+
+        await coordinator.stageDevice(seeds)
+        let work = await coordinator.dequeueDownloadWork()
+
+        #expect(work.map(\.id.relativePath.rawValue) == ["still-a.jpg", "still-b.jpg", "video.mov"])
+    }
+
     @Test func shutdownReleasesQueuedAndInFlightClaims() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
@@ -289,6 +314,23 @@ func fixedScanner(_ relativeNames: [String]) -> CatalogScanner {
         try await batchHandler(files)
         return Set(relativeNames.map { MediaRelativePath(rawValue: $0) })
     }
+}
+
+private func deviceStagingSeed(
+    rootPath: LibraryRootPath,
+    relativePath: String,
+    captureDate: TimeInterval,
+    isVideo: Bool
+) -> EnrichmentCoordinator.DeviceStagingSeed {
+    EnrichmentCoordinator.DeviceStagingSeed(
+        id: MediaAssetID(
+            libraryRootPath: rootPath,
+            relativePath: MediaRelativePath(rawValue: relativePath)
+        ),
+        sourceSize: 100,
+        captureDate: Date(timeIntervalSince1970: captureDate),
+        isVideo: isVideo
+    )
 }
 
 private actor AttemptCounter {

@@ -86,6 +86,54 @@ struct CatalogStoreEnrichmentClaimTests {
 
         #expect(claims.map(\.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
     }
+
+    @Test func fallbackEnrichmentClaimsRemovableSourcesBeforeFixedLibraries() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let removableRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: removableRoot, withIntermediateDirectories: true)
+        let removableRawPath = try CatalogPath.normalizedDirectoryPath(for: removableRoot).rawValue
+        let scanner = CatalogScanner { rootPath, _, _, batchHandler in
+            let fixture = rootPath.rawValue == removableRawPath
+                ? EnrichmentClaimScanFixture(name: "card-old.jpg", modifiedAt: 1000)
+                : EnrichmentClaimScanFixture(name: "fixed-new.jpg", modifiedAt: 3000)
+            let file = ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: fixture.name),
+                name: fixture.name,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 100,
+                createdAt: Date(timeIntervalSince1970: fixture.modifiedAt),
+                contentModifiedAt: Date(timeIntervalSince1970: fixture.modifiedAt)
+            )
+            try await batchHandler([file])
+            return [file.relativePath]
+        }
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: scanner,
+            scanCadence: .milliseconds(10),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        try await store.attachRemovableVolume(
+            mountURL: removableRoot,
+            identity: "volume:claim-card",
+            displayName: "Card",
+            isEjectable: false
+        )
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning
+                && snapshot.removableSources.first?.path.rawValue == removableRawPath
+                && snapshot.removableSources.first?.availability == .available
+        }
+
+        let claims = try await store.enrichmentCandidates(prioritizing: [], limit: 2)
+
+        #expect(claims.map(\.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
+    }
 }
 
 private struct EnrichmentClaimScanFixture {

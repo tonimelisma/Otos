@@ -63,13 +63,56 @@ nonisolated struct MediaAssetID: Hashable {
 /// private to persistence.
 nonisolated struct LibraryRoot: Identifiable, Hashable {
     let path: LibraryRootPath
+    let kind: LibraryRootKind
+    let deviceIdentity: String?
+    let displayNameOverride: String?
+    let lastSeenAt: Date?
+
+    init(
+        path: LibraryRootPath,
+        kind: LibraryRootKind = .library,
+        deviceIdentity: String? = nil,
+        displayName: String? = nil,
+        lastSeenAt: Date? = nil
+    ) {
+        self.path = path
+        self.kind = kind
+        self.deviceIdentity = deviceIdentity
+        displayNameOverride = displayName
+        self.lastSeenAt = lastSeenAt
+    }
 
     var id: LibraryRootPath {
         path
     }
 
     var displayName: String {
-        path.displayName
+        displayNameOverride?.isEmpty == false ? displayNameOverride ?? path.displayName : path.displayName
+    }
+
+    var isRemovableSource: Bool {
+        kind != .library
+    }
+}
+
+/// The catalog stores every source as a root because the filesystem path remains
+/// the asset identity boundary. Kind only changes ownership semantics: fixed
+/// libraries participate in All Media and launch scans, while removable sources
+/// are event-driven and are scoped to their own sidebar rows.
+nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
+    case library
+    case removableVolume
+    case deviceMTP
+
+    var sidebarSystemImage: String {
+        switch self {
+        case .library:
+            "folder"
+        case .removableVolume:
+            "sdcard"
+        case .deviceMTP:
+            "camera"
+        }
     }
 }
 
@@ -90,6 +133,7 @@ nonisolated enum LibraryAvailability: Hashable {
 nonisolated enum CatalogLibraryActivity: Hashable {
     case idle
     case scanning
+    case enumerating
 }
 
 /// One projected library row. The durable root remains pure identity; this row
@@ -98,6 +142,7 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     let root: LibraryRoot
     let availability: LibraryAvailability
     let activity: CatalogLibraryActivity
+    let isEjectable: Bool
 
     var id: LibraryRootPath {
         root.id
@@ -111,12 +156,40 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
         root.displayName
     }
 
+    var kind: LibraryRootKind {
+        root.kind
+    }
+
+    var deviceIdentity: String? {
+        root.deviceIdentity
+    }
+
+    var lastSeenAt: Date? {
+        root.lastSeenAt
+    }
+
     var isScanning: Bool {
         activity == .scanning
     }
 
+    var isEnumerating: Bool {
+        activity == .enumerating
+    }
+
     var isAvailable: Bool {
         availability == .available
+    }
+
+    init(
+        root: LibraryRoot,
+        availability: LibraryAvailability,
+        activity: CatalogLibraryActivity,
+        isEjectable: Bool = false
+    ) {
+        self.root = root
+        self.availability = availability
+        self.activity = activity
+        self.isEjectable = isEjectable
     }
 }
 
@@ -297,59 +370,6 @@ nonisolated struct CatalogMediaGridState: Equatable {
     }
 }
 
-/// Why the media browser is empty. Projection chooses the reason so the view
-/// can stay declarative and avoid re-deriving catalog state in `body`.
-nonisolated enum CatalogMediaEmptyState: Equatable {
-    case noMedia
-    case noFilterMatches
-    case checkingLibraries
-    case noAvailableMedia
-    case libraryChecking
-    case libraryUnavailable
-
-    var diagnosticDescription: String {
-        switch self {
-        case .noMedia:
-            "noMedia"
-        case .noFilterMatches:
-            "noFilterMatches"
-        case .checkingLibraries:
-            "checkingLibraries"
-        case .noAvailableMedia:
-            "noAvailableMedia"
-        case .libraryChecking:
-            "libraryChecking"
-        case .libraryUnavailable:
-            "libraryUnavailable"
-        }
-    }
-}
-
-/// Final UI-ready catalog state. CatalogProjection builds this away from the
-/// MainActor; CatalogWindowViewModel assigns it to SwiftUI.
-nonisolated struct CatalogWindowState: Equatable {
-    var title: String
-    var libraries: [CatalogLibraryState]
-    var mediaGrid: CatalogMediaGridState
-    var filterOptions: CatalogFilterOptions
-    var resolvedSidebarSelection: SidebarSelection
-    var mediaEmptyState: CatalogMediaEmptyState
-    var queryGeneration: UInt64 = 0
-
-    var queryDescriptor: CatalogQueryDescriptor {
-        mediaGrid.descriptor
-    }
-
-    static let empty = CatalogWindowState(
-        title: "All Media",
-        libraries: [],
-        mediaGrid: .empty,
-        filterOptions: .empty,
-        resolvedSidebarSelection: .allMedia,
-        mediaEmptyState: .noMedia
-    )
-}
-
 /// Selection of a sidebar row. Media selection will be modeled separately
 /// because it answers a different question.
 nonisolated enum SidebarSelection: Hashable {
@@ -398,70 +418,12 @@ nonisolated struct ScannedMediaFile: Hashable {
     }
 }
 
-nonisolated enum CatalogPath {
-    /// Existing roots resolve symlink components before persistence so scanner
-    /// enumeration, root-relative paths, and filesystem events all use one path
-    /// spelling for the same directory.
-    static func normalizedDirectoryPath(for url: URL) throws -> LibraryRootPath {
-        let standardizedURL = url.standardizedFileURL.resolvingSymlinksInPath()
-        var path = standardizedURL.path(percentEncoded: false)
-        while path.count > 1, path.hasSuffix("/") {
-            path.removeLast()
-        }
-        return LibraryRootPath(rawValue: path)
-    }
-
-    static func normalizedExistingDirectoryPath(for url: URL) throws -> LibraryRootPath {
-        let values = try url.resourceValues(forKeys: [.isDirectoryKey])
-        guard values.isDirectory == true else {
-            throw CatalogStoreError.notDirectory
-        }
-        return try normalizedDirectoryPath(for: url)
-    }
-
-    static func relationship(candidate: LibraryRootPath, existing: LibraryRootPath) -> LibraryRootRelationship? {
-        if candidate == existing {
-            return .duplicate
-        }
-        if candidate.rawValue.hasPrefix(existing.rawValue + "/") {
-            return .descendant
-        }
-        if existing.rawValue.hasPrefix(candidate.rawValue + "/") {
-            return .ancestor
-        }
-        return nil
-    }
-
-    static func relativePath(rootPath: LibraryRootPath, fileURL: URL) -> MediaRelativePath? {
-        let filePath = fileURL.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
-        let prefix = rootPath.rawValue + "/"
-        guard filePath.hasPrefix(prefix) else {
-            return nil
-        }
-        return MediaRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
-    }
-
-    /// Maps an absolute filesystem event path to the saved root that owns it.
-    static func owningRoot(for eventPath: String, among roots: some Sequence<LibraryRootPath>) -> LibraryRootPath? {
-        var match: LibraryRootPath?
-        var matchLength = 0
-        for root in roots {
-            let raw = root.rawValue
-            if eventPath == raw || eventPath.hasPrefix(raw + "/") {
-                if raw.count > matchLength {
-                    match = root
-                    matchLength = raw.count
-                }
-            }
-        }
-        return match
-    }
-}
-
-nonisolated enum LibraryRootRelationship: Equatable {
-    case duplicate
-    case ancestor
-    case descendant
+nonisolated enum RemovableSourceDetachReason: String {
+    case unmounted
+    case ejected
+    case disconnected
+    case forgotten
+    case transientIdentityEnded
 }
 
 nonisolated enum CatalogStoreError: LocalizedError, Equatable {

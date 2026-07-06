@@ -123,6 +123,7 @@ private func selectionNormalizingProjection(
         return CatalogWindowState(
             title: "Selection",
             libraries: [],
+            removableSources: [],
             mediaGrid: CatalogMediaGridState(
                 descriptor: CatalogQueryDescriptor(
                     scope: resolved,
@@ -134,6 +135,7 @@ private func selectionNormalizingProjection(
             filterOptions: .empty,
             resolvedSidebarSelection: resolved,
             mediaEmptyState: .noMedia,
+            deviceConnectionBanner: nil,
             queryGeneration: request.generation
         )
     }

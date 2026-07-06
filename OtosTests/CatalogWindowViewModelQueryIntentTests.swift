@@ -148,6 +148,7 @@ private func testWindowState(
     CatalogWindowState(
         title: "Build \(buildNumber)",
         libraries: libraries,
+        removableSources: [],
         mediaGrid: CatalogMediaGridState(
             descriptor: request.descriptor,
             orderedAssetIDs: []
@@ -155,6 +156,7 @@ private func testWindowState(
         filterOptions: .empty,
         resolvedSidebarSelection: request.descriptor.scope,
         mediaEmptyState: .noMedia,
+        deviceConnectionBanner: nil,
         queryGeneration: request.generation
     )
 }

@@ -20,14 +20,17 @@ struct ContentView: View {
         NavigationSplitView {
             SidebarView(
                 libraries: viewModel.state.libraries,
+                removableSources: viewModel.state.removableSources,
                 sidebarSelection: viewModel.sidebarSelection,
-                selectSidebar: viewModel.selectSidebar
+                selectSidebar: viewModel.selectSidebar,
+                ejectSource: viewModel.ejectRemovableSource
             )
         } detail: {
             MediaGridView(
                 title: viewModel.state.title,
                 grid: viewModel.state.mediaGrid,
                 emptyState: viewModel.state.mediaEmptyState,
+                deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 imageCache: viewModel.tileImageCache,

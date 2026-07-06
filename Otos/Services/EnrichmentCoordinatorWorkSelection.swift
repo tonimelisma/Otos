@@ -100,7 +100,25 @@ extension EnrichmentCoordinator {
         guard eagerMode else {
             return nil
         }
-        return datalessPending.values.first { !inFlightDownload.contains($0.id) }
+        return datalessPending.values
+            .filter { !inFlightDownload.contains($0.id) }
+            .min(by: downloadWorkPrecedes)
+    }
+
+    private func downloadWorkPrecedes(_ left: DownloadWork, _ right: DownloadWork) -> Bool {
+        if left.isVideo != right.isVideo {
+            return !left.isVideo
+        }
+        switch (left.captureDate, right.captureDate) {
+        case let (leftDate?, rightDate?) where leftDate != rightDate:
+            return leftDate < rightDate
+        case (.some, nil):
+            return true
+        case (nil, .some):
+            return false
+        default:
+            return left.id.relativePath.rawValue < right.id.relativePath.rawValue
+        }
     }
 
     func hasEnrichmentWorkRemaining() -> Bool {

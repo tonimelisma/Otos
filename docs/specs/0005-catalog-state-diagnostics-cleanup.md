@@ -144,7 +144,7 @@ through OSLog and written to debug JSONL diagnostics when applicable.
 - `MediaAsset`: typed library path, typed relative path, optional name, optional
   content type identifier, optional byte size, optional creation date, optional
   content modification date.
-- Store query APIs: raw catalog values are read through current library rows,
+- Store query APIs: raw catalog values are read through current root rows,
   ordered media IDs, visible media detail, metadata detail, and enrichment
   candidate queries.
 - `CatalogWindowViewModel`: `@MainActor @Observable`, owned by the one main

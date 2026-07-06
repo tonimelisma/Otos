@@ -313,6 +313,63 @@ struct CatalogProjectionTests {
     }
 }
 
+extension CatalogProjectionTests {
+    @Test func removableSourcesAreSeparateAndExcludedFromAllMedia() async {
+        let projection = CatalogProjection(diagnostics: nil)
+        let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        let card = LibraryRoot(
+            path: LibraryRootPath(rawValue: "/Volumes/Card"),
+            kind: .removableVolume,
+            deviceIdentity: "volume:card",
+            displayName: "Card"
+        )
+        let fixture = makeProjectionFixture(
+            libraries: [
+                makeLibrary(root: pictures),
+                CatalogLibraryState(root: card, availability: .available, activity: .idle, isEjectable: true),
+            ],
+            assets: [
+                makeAsset(root: pictures, relativePath: "fixed.jpg"),
+                makeAsset(root: card, relativePath: "removable.jpg"),
+            ]
+        )
+
+        let allMedia = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
+        let selectedCard = await projection.windowState(fixture: fixture, sidebarSelection: .library(card.path))
+
+        #expect(allMedia.libraries.map(\.path) == [pictures.path])
+        #expect(allMedia.removableSources.map(\.path) == [card.path])
+        #expect(allMedia.removableSources.first?.isEjectable == true)
+        #expect(allMedia.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["fixed.jpg"])
+        #expect(selectedCard.title == "Card")
+        #expect(selectedCard.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["removable.jpg"])
+    }
+
+    @Test func mtpCameraSelectionShowsEnumeratingStateAndConnectionBanner() async {
+        let projection = CatalogProjection(diagnostics: nil)
+        let camera = LibraryRoot(
+            path: LibraryRootPath(rawValue: "/tmp/Otos/DeviceStaging/camera"),
+            kind: .deviceMTP,
+            deviceIdentity: "camera:serial",
+            displayName: "Camera"
+        )
+        let fixture = makeProjectionFixture(
+            libraries: [
+                CatalogLibraryState(root: camera, availability: .available, activity: .enumerating),
+            ],
+            assets: []
+        )
+
+        let state = await projection.windowState(fixture: fixture, sidebarSelection: .library(camera.path))
+
+        #expect(state.libraries.isEmpty)
+        #expect(state.removableSources.map(\.path) == [camera.path])
+        #expect(state.mediaEmptyState == .deviceEnumerating("Camera"))
+        #expect(state.deviceConnectionBanner?.identity == "camera:serial")
+        #expect(state.deviceConnectionBanner?.message.contains("Mass Storage") == true)
+    }
+}
+
 private func makeLibrary(
     root: LibraryRoot,
     availability: LibraryAvailability = .available,
@@ -377,6 +434,7 @@ private actor ProjectionProbe {
         return CatalogWindowState(
             title: "Call \(calls)",
             libraries: libraries,
+            removableSources: [],
             mediaGrid: CatalogMediaGridState(
                 descriptor: request.descriptor,
                 orderedAssetIDs: orderedAssetIDs
@@ -384,6 +442,7 @@ private actor ProjectionProbe {
             filterOptions: .empty,
             resolvedSidebarSelection: request.descriptor.scope,
             mediaEmptyState: .noMedia,
+            deviceConnectionBanner: nil,
             queryGeneration: request.generation
         )
     }

@@ -80,6 +80,10 @@ extension CatalogStore {
             try db.create(table: "library_root") { table in
                 table.autoIncrementedPrimaryKey("id")
                 table.column("path", .text).notNull().unique()
+                table.column("kind", .text).notNull().defaults(to: LibraryRootKind.library.rawValue)
+                table.column("device_identity", .text)
+                table.column("display_name", .text)
+                table.column("last_seen_at", .double)
             }
 
             try db.execute(sql: mediaAssetTableSQL())
@@ -142,26 +146,92 @@ extension CatalogStore {
             try db.drop(index: "idx_media_asset_needs_enrichment_root")
             try createEnrichmentClaimIndexes(db)
         }
+        migrator.registerMigration("v5_removable_source_roots") { db in
+            let columns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('library_root')"))
+            if !columns.contains("kind") {
+                try db.alter(table: "library_root") { table in
+                    table.add(column: "kind", .text).notNull().defaults(to: LibraryRootKind.library.rawValue)
+                }
+            }
+            if !columns.contains("device_identity") {
+                try db.alter(table: "library_root") { table in
+                    table.add(column: "device_identity", .text)
+                }
+            }
+            if !columns.contains("display_name") {
+                try db.alter(table: "library_root") { table in
+                    table.add(column: "display_name", .text)
+                }
+            }
+            if !columns.contains("last_seen_at") {
+                try db.alter(table: "library_root") { table in
+                    table.add(column: "last_seen_at", .double)
+                }
+            }
+            try db.execute(
+                sql: """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_library_root_device_identity
+                ON library_root(device_identity)
+                WHERE device_identity IS NOT NULL
+                """
+            )
+        }
         return migrator
     }
 
     static func fetchCatalog(_ db: Database) throws -> (roots: [StoredRoot], assetCount: Int) {
         let roots = try Row.fetchAll(
             db,
-            sql: "SELECT id, path FROM library_root ORDER BY path COLLATE NOCASE, path"
+            sql: """
+            SELECT id, path, kind, device_identity, display_name, last_seen_at
+            FROM library_root
+            ORDER BY path COLLATE NOCASE, path
+            """
         ).map { row in
-            StoredRoot(id: row["id"], path: LibraryRootPath(rawValue: row["path"]))
+            let kindRaw: String = row["kind"]
+            let lastSeenUnix: Double? = row["last_seen_at"]
+            return StoredRoot(
+                id: row["id"],
+                path: LibraryRootPath(rawValue: row["path"]),
+                kind: LibraryRootKind(rawValue: kindRaw) ?? .library,
+                deviceIdentity: row["device_identity"],
+                displayName: row["display_name"],
+                lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:))
+            )
         }
         let assetCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
         return (roots, assetCount)
     }
 
-    static func insertLibraryRoot(path: LibraryRootPath, db: Database) throws -> StoredRoot {
+    static func insertLibraryRoot(
+        path: LibraryRootPath,
+        kind: LibraryRootKind = .library,
+        deviceIdentity: String? = nil,
+        displayName: String? = nil,
+        lastSeenAt: Date? = nil,
+        db: Database
+    ) throws -> StoredRoot {
         try db.execute(
-            sql: "INSERT INTO library_root (path) VALUES (?)",
-            arguments: [path.rawValue]
+            sql: """
+            INSERT INTO library_root (path, kind, device_identity, display_name, last_seen_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            arguments: [
+                path.rawValue,
+                kind.rawValue,
+                deviceIdentity,
+                displayName,
+                lastSeenAt?.timeIntervalSince1970,
+            ]
         )
-        return StoredRoot(id: db.lastInsertedRowID, path: path)
+        return StoredRoot(
+            id: db.lastInsertedRowID,
+            path: path,
+            kind: kind,
+            deviceIdentity: deviceIdentity,
+            displayName: displayName,
+            lastSeenAt: lastSeenAt
+        )
     }
 
     static func updateLibraryRootPath(
@@ -210,6 +280,28 @@ extension CatalogStore {
             }
         }
         return thumbnailMigrations
+    }
+
+    static func updateLibraryRootSourceFacts(
+        rootRowID: Int64,
+        path: LibraryRootPath,
+        displayName: String?,
+        lastSeenAt: Date?,
+        db: Database
+    ) throws {
+        try db.execute(
+            sql: """
+            UPDATE library_root
+            SET path = ?, display_name = ?, last_seen_at = ?
+            WHERE id = ?
+            """,
+            arguments: [
+                path.rawValue,
+                displayName,
+                lastSeenAt?.timeIntervalSince1970,
+                rootRowID,
+            ]
+        )
     }
 
     static func deleteLibraryRoot(rootRowID: Int64, db: Database) throws {
@@ -268,7 +360,14 @@ extension CatalogStore {
         guard !userTables.isEmpty else {
             return false
         }
-        guard userTables.contains("media_asset") else {
+        guard userTables.contains("library_root"),
+              userTables.contains("media_asset")
+        else {
+            return true
+        }
+
+        let libraryRootColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('library_root')"))
+        guard requiredCurrentLibraryRootColumns().isSubset(of: libraryRootColumns) else {
             return true
         }
 
@@ -353,6 +452,26 @@ extension CatalogStore {
             libraryRootID: libraryRootID,
             relativePath: result.id.relativePath,
             db: db
+        )
+    }
+
+    static func updateThumbnailPath(
+        _ thumbnailPath: String,
+        libraryRootID: Int64,
+        relativePath: MediaRelativePath,
+        onlyWhenMissing: Bool,
+        db: Database
+    ) throws {
+        let missingPredicate = onlyWhenMissing ? "AND thumbnail_path IS NULL" : ""
+        try db.execute(
+            sql: """
+            UPDATE media_asset
+            SET thumbnail_path = ?
+            WHERE library_root_id = ?
+              AND relative_path = ?
+              \(missingPredicate)
+            """,
+            arguments: [thumbnailPath, libraryRootID, relativePath.rawValue]
         )
     }
 
@@ -692,6 +811,17 @@ extension CatalogStore {
                 arguments: [rootID, id.relativePath.rawValue]
             )
         }
+    }
+
+    static func releaseEnrichmentClaims(rootID: Int64, db: Database) throws {
+        try db.execute(
+            sql: """
+            UPDATE media_asset
+            SET enrichment_claimed_until = NULL
+            WHERE library_root_id = ?
+            """,
+            arguments: [rootID]
+        )
     }
 
     @discardableResult
@@ -1139,6 +1269,17 @@ private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
         "thumbnail_path",
         "duration_seconds",
         "enrichment_claimed_until",
+    ]
+}
+
+private nonisolated func requiredCurrentLibraryRootColumns() -> Set<String> {
+    [
+        "id",
+        "path",
+        "kind",
+        "device_identity",
+        "display_name",
+        "last_seen_at",
     ]
 }
 

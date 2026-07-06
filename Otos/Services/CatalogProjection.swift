@@ -3,11 +3,12 @@ import OSLog
 
 /// Catalog Projection guide
 /// This actor is the read-model boundary between catalog truth and the main window:
-/// ordering, reachability filtering, sidebar scope, title selection, and empty-state
-/// meaning. Notifications coalesce on the cadence; direct query intents wake
-/// publication immediately. `dirty` is cleared before awaited reads/build work so
-/// input survives for the next pass. Pure policy lives in
-/// `CatalogWindowPolicy`; diagnostics values live in `CatalogProjectionDiagnostics`.
+/// fixed/removable source splitting, ordering, reachability filtering, sidebar scope,
+/// title selection, camera guidance banner state, and empty-state meaning. Notifications
+/// coalesce on the cadence; direct query intents wake publication immediately. `dirty`
+/// is cleared before awaited reads/build work so input survives for the next pass. Pure
+/// policy lives in `CatalogWindowPolicy`; diagnostics values live in
+/// `CatalogProjectionDiagnostics`.
 actor CatalogProjection {
     // swiftlint:disable:next line_length
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async -> CatalogWindowState
@@ -291,9 +292,9 @@ private extension CatalogProjection {
         libraries unsortedLibraries: [CatalogLibraryState],
         request: CatalogQueryRequest
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
-        let libraries = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
-        let availableLibraryPaths = Set(libraries.filter(\.isAvailable).map(\.path))
-        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: libraries)
+        let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
+        let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
+        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: allRoots)
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
         let orderStart = Date()
@@ -311,7 +312,7 @@ private extension CatalogProjection {
             orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
         }
         return await buildWindowState(
-            libraries: libraries,
+            libraries: allRoots,
             orderedAssetIDs: orderedAssetIDs,
             request: request,
             resolvedDescriptor: resolvedDescriptor,
@@ -342,22 +343,25 @@ private extension CatalogProjection {
         defer {
             OtosSignpost.performance.endInterval("CatalogWindowStateBuild", signpost)
         }
-        let libraries = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
-        let availableLibraryPaths = providedAvailableLibraryPaths ?? Set(
-            libraries.filter(\.isAvailable).map(\.path)
-        )
+        let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
+        let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
+        let rootsByPath = CatalogWindowPolicy.rootsByPath(from: allRoots)
+        let availableLibraryPaths = providedAvailableLibraryPaths
+            ?? CatalogWindowPolicy.availablePaths(from: allRoots)
         let resolvedDescriptor = providedResolvedDescriptor
-            ?? CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: libraries)
+            ?? CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: allRoots)
         let resolvedSidebarSelection = resolvedDescriptor.scope
-        let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: libraries)
+        let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: allRoots)
         let scopedAssetIDs = CatalogWindowPolicy.assetIDs(
             for: resolvedSidebarSelection,
             orderedAssetIDs: orderedAssetIDs,
-            availableLibraryPaths: availableLibraryPaths
+            availableLibraryPaths: availableLibraryPaths,
+            rootsByPath: rootsByPath
         )
         let mediaEmptyState = await emptyStateForBuild(CatalogProjectionEmptyStateBuildInput(
             descriptor: resolvedDescriptor,
-            libraries: libraries,
+            libraries: allRoots,
+            rootsByPath: rootsByPath,
             orderedAssetIDs: orderedAssetIDs,
             scopedAssetIDs: scopedAssetIDs,
             store: store,
@@ -371,7 +375,8 @@ private extension CatalogProjection {
 
         return (catalogWindowState(CatalogProjectionWindowStateParts(
             title: title,
-            libraries: libraries,
+            libraries: sources.libraries,
+            removableSources: sources.removableSources,
             resolvedDescriptor: resolvedDescriptor,
             queryGeneration: request.generation,
             scopedAssetIDs: scopedAssetIDs,
@@ -405,18 +410,9 @@ private extension CatalogProjection {
     }
 
     private func catalogWindowState(_ parts: CatalogProjectionWindowStateParts) -> CatalogWindowState {
-        CatalogWindowState(
-            title: parts.title,
-            libraries: parts.libraries,
-            mediaGrid: CatalogMediaGridState(
-                descriptor: parts.resolvedDescriptor,
-                orderedAssetIDs: parts.scopedAssetIDs,
-                detailRefreshGeneration: detailRefreshGeneration
-            ),
-            filterOptions: parts.filterOptions,
-            resolvedSidebarSelection: parts.resolvedDescriptor.scope,
-            mediaEmptyState: parts.mediaEmptyState,
-            queryGeneration: parts.queryGeneration
+        CatalogWindowPolicy.catalogWindowState(
+            parts,
+            detailRefreshGeneration: detailRefreshGeneration
         )
     }
 

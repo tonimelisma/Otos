@@ -5,8 +5,10 @@ import UniformTypeIdentifiers
 /// rows. It can show availability without owning catalog orchestration.
 struct SettingsView: View {
     let libraries: [CatalogLibraryState]
+    let removableSources: [CatalogLibraryState]
     let addLibrary: (URL) -> Void
     let removeLibrary: (LibraryRoot) -> Void
+    let forgetRemovableSource: (LibraryRoot) -> Void
 
     var body: some View {
         TabView {
@@ -18,9 +20,100 @@ struct SettingsView: View {
             .tabItem {
                 Label("Libraries", systemImage: "folder")
             }
+
+            RemovableMediaSettingsView(
+                sources: removableSources,
+                forgetSource: forgetRemovableSource
+            )
+            .tabItem {
+                Label("Removable Media", systemImage: "sdcard")
+            }
         }
         .frame(width: 660, height: 380)
         .scenePadding()
+    }
+}
+
+private struct RemovableMediaSettingsView: View {
+    let sources: [CatalogLibraryState]
+    let forgetSource: (LibraryRoot) -> Void
+
+    @State private var selectedPath: LibraryRootPath?
+    @State private var forgetCandidate: LibraryRoot?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Removable Media")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button(role: .destructive) {
+                    forgetCandidate = selectedRoot
+                } label: {
+                    Label("Forget", systemImage: "trash")
+                }
+                .disabled(selectedRoot == nil)
+            }
+
+            Table(sources, selection: $selectedPath) {
+                TableColumn("Name") { source in
+                    Label(source.displayName, systemImage: source.kind.sidebarSystemImage)
+                        .lineLimit(1)
+                }
+                .width(min: 160, ideal: 200)
+
+                TableColumn("Kind") { source in
+                    Text(source.kind.settingsLabel)
+                        .foregroundStyle(.secondary)
+                }
+                .width(min: 100, ideal: 120)
+
+                TableColumn("Last Seen") { source in
+                    if let lastSeenAt = source.lastSeenAt {
+                        Text(RelativeDateText.string(for: lastSeenAt, now: Date()))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Unknown")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .width(min: 110, ideal: 130)
+            }
+        }
+        .alert("Forget Removable Media?", isPresented: forgetAlertBinding, presenting: forgetCandidate) { root in
+            Button("Forget", role: .destructive) {
+                forgetSource(root)
+                forgetCandidate = nil
+                selectedPath = nil
+            }
+            Button("Cancel", role: .cancel) {
+                forgetCandidate = nil
+            }
+        } message: { _ in
+            Text(
+                """
+                Otos will delete catalog rows, thumbnails, and device staging for this source. \
+                Original files on removable volumes stay where they are.
+                """
+            )
+        }
+    }
+
+    private var selectedRoot: LibraryRoot? {
+        guard let selectedPath else {
+            return nil
+        }
+        return sources.first { $0.path == selectedPath }?.root
+    }
+
+    private var forgetAlertBinding: Binding<Bool> {
+        Binding {
+            forgetCandidate != nil
+        } set: { isPresented in
+            if !isPresented {
+                forgetCandidate = nil
+            }
+        }
     }
 }
 
@@ -125,8 +218,10 @@ private struct LibrariesSettingsView: View {
                 activity: .idle
             ),
         ],
+        removableSources: [],
         addLibrary: { _ in },
-        removeLibrary: { _ in }
+        removeLibrary: { _ in },
+        forgetRemovableSource: { _ in }
     )
 }
 
@@ -139,6 +234,19 @@ private extension LibraryAvailability {
             "Available"
         case .unavailable:
             "Unavailable"
+        }
+    }
+}
+
+private extension LibraryRootKind {
+    var settingsLabel: String {
+        switch self {
+        case .library:
+            "Library"
+        case .removableVolume:
+            "Volume"
+        case .deviceMTP:
+            "Camera"
         }
     }
 }

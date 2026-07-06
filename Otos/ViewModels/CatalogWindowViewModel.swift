@@ -15,7 +15,10 @@ import OSLog
 ///
 /// The three asynchronous lanes deliberately have different delivery semantics:
 /// Projection states are consumed losslessly, query descriptor changes keep only
-/// the newest pending value, and add/remove mutations are lossless and serial.
+/// the newest pending value, and catalog mutations are lossless and serial. The
+/// mutation lane is also where platform source monitors enter the catalog: volume
+/// mount events, volume detach events, camera attach/detach, eject, and Forget all
+/// use the same Store-owned intent path as fixed-library add/remove.
 ///
 /// Why `weak self` in the state consumer: that task loops forever over the
 /// Projection's state stream, and a task strongly retains whatever it captures. If
@@ -35,6 +38,10 @@ final class CatalogWindowViewModel {
         case addLibrary(URL)
         case ensureLibrary(URL)
         case removeLibrary(LibraryRootPath)
+        case ejectRemovableSource(LibraryRoot)
+        case forgetRemovableSource(LibraryRoot)
+        case attachRemovableVolume(RemovableVolumeAttachment)
+        case detachRemovableSource(String, RemovableSourceDetachReason)
     }
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
@@ -63,9 +70,10 @@ final class CatalogWindowViewModel {
         diagnostics
     }
 
-    @ObservationIgnored private let catalogStore: CatalogStore
+    @ObservationIgnored let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
-    @ObservationIgnored private let enrichmentCoordinator: EnrichmentCoordinator?
+    @ObservationIgnored let enrichmentCoordinator: EnrichmentCoordinator?
+    @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let mediaTileImageCache = MediaTileImageCache()
     @ObservationIgnored let diagnostics: CatalogDiagnostics?
@@ -80,6 +88,9 @@ final class CatalogWindowViewModel {
     // scroll position carries no value, so an intermediate one is dropped.
     @ObservationIgnored private let viewportStream: AsyncStream<[MediaAssetID]>
     @ObservationIgnored private let viewportContinuation: AsyncStream<[MediaAssetID]>.Continuation
+    @ObservationIgnored var removableVolumeMonitor: RemovableVolumeMonitor?
+    @ObservationIgnored var cameraSourceMonitor: CameraSourceMonitor?
+    @ObservationIgnored var deviceCatalogTasks: [String: Task<Void, Never>] = [:]
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
@@ -115,6 +126,8 @@ final class CatalogWindowViewModel {
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
+        let deviceStagingRegistry = DeviceStagingRegistry()
+        self.deviceStagingRegistry = deviceStagingRegistry
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(
@@ -122,7 +135,13 @@ final class CatalogWindowViewModel {
                     enricher: .live(
                         thumbnailDirectory: catalogStore.thumbnailDirectory
                             ?? FileManager.default.temporaryDirectory
-                    )
+                    ),
+                    materialize: { url in
+                        if let result = await deviceStagingRegistry.materialize(url) {
+                            return result
+                        }
+                        return await EnrichmentCoordinator.liveMaterialize(url)
+                    }
                 )
                 : nil
         )
@@ -148,6 +167,12 @@ final class CatalogWindowViewModel {
         mutationForwardingTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
+        removableVolumeMonitor?.stop()
+        cameraSourceMonitor?.stop()
+        for task in deviceCatalogTasks.values {
+            task.cancel()
+        }
+        deviceCatalogTasks.removeAll()
         gridTelemetryTask?.cancel()
         queryContinuation.finish()
         mutationContinuation.finish()
@@ -198,6 +223,8 @@ extension CatalogWindowViewModel {
             initialRequest: initialRequest
         )
         startCatalog(store: store, diagnostics: diagnostics)
+        startRemovableVolumeMonitoring()
+        startCameraSourceMonitoring()
         startGridTelemetryRecording(diagnostics: diagnostics)
         if startsEnrichment {
             startEnrichment()
@@ -214,6 +241,14 @@ extension CatalogWindowViewModel {
 
     func removeLibrary(_ library: LibraryRoot) {
         submitCatalogMutation(.removeLibrary(library.path))
+    }
+
+    func ejectRemovableSource(_ source: LibraryRoot) {
+        submitCatalogMutation(.ejectRemovableSource(source))
+    }
+
+    func forgetRemovableSource(_ source: LibraryRoot) {
+        submitCatalogMutation(.forgetRemovableSource(source))
     }
 
     func selectSidebar(_ selection: SidebarSelection) {
@@ -396,6 +431,13 @@ extension CatalogWindowViewModel {
         if nextState.queryGeneration == queryGeneration {
             queryDescriptor = nextState.queryDescriptor
             sidebarSelection = nextState.resolvedSidebarSelection
+        } else if currentSelectionWasRemoved(in: nextState) {
+            queryDescriptor = CatalogQueryDescriptor(
+                scope: .allMedia,
+                filter: queryDescriptor.filter,
+                sort: queryDescriptor.sort
+            )
+            sidebarSelection = .allMedia
         } else {
             sidebarSelection = queryDescriptor.scope
         }
@@ -426,7 +468,17 @@ extension CatalogWindowViewModel {
         )
     }
 
-    private func submitCatalogMutation(_ intent: CatalogMutationIntent) {
+    private func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {
+        guard case let .library(path) = queryDescriptor.scope,
+              nextState.resolvedSidebarSelection == .allMedia
+        else {
+            return false
+        }
+        return !nextState.libraries.contains { $0.path == path }
+            && !nextState.removableSources.contains { $0.path == path }
+    }
+
+    func submitCatalogMutation(_ intent: CatalogMutationIntent) {
         switch mutationContinuation.yield(intent) {
         case .enqueued:
             return

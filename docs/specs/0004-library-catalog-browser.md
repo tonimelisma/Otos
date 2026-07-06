@@ -174,7 +174,7 @@ Use a `CatalogStore` actor with a `CatalogProjection` actor and a
 long-lived GRDB writer, uses `DatabasePool` for file-backed locations, keeps only
 root runtime state resident, stores the per-asset working set in SQLite,
 serializes add/remove/scan work, exposes Store-owned query APIs, and emits cheap
-change notifications. Projection asks Store for current library rows and scoped
+change notifications. Projection asks Store for current root rows and scoped
 ordered asset IDs, then emits `CatalogWindowState` for SwiftUI.
 
 This is the simplest correct approach because it has one persistence/query owner,
@@ -193,7 +193,7 @@ parallel scan pipeline, and no generated product IDs.
 - `CatalogWindowViewModel`: MainActor observable state assignment, explicit
   selection delivery, UI intents, owned tasks, and stall-monitor lifetime for the
   single main window.
-- Store query APIs: current library rows, scoped ordered media IDs, visible media
+- Store query APIs: current root rows, scoped ordered media IDs, visible media
   details, metadata detail, and enrichment candidates.
 - `SidebarSelection`: SwiftUI sidebar selection for `All Media` or one root path.
 - SQLite lives in Application Support under an Otos catalog directory.

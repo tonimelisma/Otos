@@ -9,6 +9,7 @@ nonisolated enum CatalogScannedFileReader {
         .isDirectoryKey,
         .isSymbolicLinkKey,
         .isPackageKey,
+        .isHiddenKey,
         .nameKey,
         .creationDateKey,
         .contentModificationDateKey,
@@ -21,6 +22,9 @@ nonisolated enum CatalogScannedFileReader {
         rootPath: LibraryRootPath
     ) throws -> ScannedMediaFile? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
+        guard values.isHidden != true else {
+            return nil
+        }
         if values.isSymbolicLink == true {
             return nil
         }
@@ -35,6 +39,9 @@ nonisolated enum CatalogScannedFileReader {
         }
         guard let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL) else {
             throw CatalogScannedFileReaderIssue.relativePathUnavailable
+        }
+        guard !MediaEligibility.shouldSkipRelativePath(relativePath) else {
+            return nil
         }
         return ScannedMediaFile(
             relativePath: relativePath,

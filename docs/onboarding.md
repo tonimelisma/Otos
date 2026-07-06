@@ -29,22 +29,24 @@ Everything else in the architecture follows from this. The full set of rules is 
 
 ## 2. The shape of the app in 30 seconds
 
-Otos has exactly **one window** (a sidebar of libraries on the left, a media grid on
-the right) and a separate **Settings** window for adding/removing libraries.
+Otos has exactly **one window** (a sidebar of fixed libraries and connected
+removable sources on the left, a media grid on the right) and a separate
+**Settings** window for adding/removing fixed libraries and forgetting remembered
+removable sources.
 
 Data flows in **one direction**, and that one-directional flow is the most important
 thing to internalize:
 
 ```
-  filesystem (the truth)
-        │  read-only scan
+  filesystem + removable source monitors (the truth)
+        │  read-only scan / device catalog observation
         ▼
   CatalogStore        ← the only owner of SQLite catalog truth and query APIs (an actor)
         │  cheap "something changed" signal + ordered-ID/detail queries
         ├──────────────▶ EnrichmentCoordinator  ← asks Store for enrichment candidates,
         │   writes back     produces thumbnails + metadata, writes them to the Store
         ▼
-  CatalogProjection   ← turns raw truth into a UI-ready view (a second actor, off the main thread)
+  CatalogProjection   ← splits fixed/removable roots and turns truth into a UI-ready view
         │  CatalogWindowState, immediate for user query intents and roughly 1s for background changes
         ▼
   CatalogWindowViewModel  ← the bridge to SwiftUI (lives on the main thread)
@@ -110,22 +112,31 @@ the layers. Two design choices to notice:
   details are fetched separately by ID through the Store-backed AppKit grid reader.
   The generation lets one thumbnail arrival invalidate visible detail reads without
   copying 25k asset values through a 25k-item publication.
+- **Root identity vs source facts.** `LibraryRoot` still uses the filesystem path as
+  the current asset identity boundary, but it now also carries the smallest source
+  metadata needed to distinguish fixed libraries, removable filesystem volumes, and
+  MTP cameras: source kind, optional stable device identity, raw display name, and
+  last-seen time. Availability, scan/enumeration activity, and ejectability stay on
+  `CatalogLibraryState` because they are runtime observations, not durable identity.
 
 ### `Otos/OtosApp.swift` and `Otos/ContentView.swift` — the skeleton
 
 `OtosApp` declares the single `Window` (deliberately not a `WindowGroup`, because one
 main window is a permanent product rule) and owns the one `CatalogWindowViewModel`.
-`ContentView` is intentionally *passive*: it reads `viewModel.state` and renders it.
-It does not subscribe to anything, sort anything, or call the database. If you want
-to know why a view is "dumb," that is the design — views render, the model decides.
+`ContentView` is intentionally *passive*: it reads `viewModel.state` and renders it,
+including the fixed-library rows, removable-source rows, and any selected-camera
+guidance banner. It does not subscribe to anything, sort anything, or call the
+database. If you want to know why a view is "dumb," that is the design — views
+render, the model decides.
 
 ### `Otos/Stores/CatalogStore.swift` — the single source of runtime truth
 
 This is the heart. Read its file guide at the top first. Key whys:
 
-- SQLite is the per-asset working set. The Store keeps root identity, availability,
-  scan lifecycle, and notification state resident, but asset facts and enrichment
-  overlay are read through Store-owned queries.
+- SQLite is the per-asset working set. The Store keeps root identity, source
+  metadata, availability, scan/enumeration lifecycle, and notification state
+  resident, but asset facts and enrichment overlay are read through Store-owned
+  queries.
 - It exposes a **cheap "something changed" notification** plus query APIs, rather
   than pushing big values to subscribers. Why: the Projection decides *when* to do
   background work (on its own one-second clock, with immediate wakeups for user
@@ -150,6 +161,13 @@ This is the heart. Read its file guide at the top first. Key whys:
   rows for that root and then deletes the thumbnail files those rows referenced.
   That is the same overlay lifecycle as proven deletion: when Otos no longer holds
   a row, it does not keep the row's private thumbnail file.
+- **Removable sources are roots with different lifecycle rules.** Fixed libraries
+  participate in All Media and launch-time scans. Removable volumes and MTP cameras
+  are event-driven source rows keyed by stable device identity when one exists; All
+  Media excludes them, their own sidebar rows show their media, and detach marks
+  them unavailable while preserving overlay unless the user explicitly forgets the
+  source. If the same removable source returns at a new mount or staging path, Store
+  remaps the root path instead of creating a duplicate source.
 - **Clean pre-user schema reset purges app-owned thumbnails.** When an incompatible
   local catalog schema is reset, Store recreates the current SQLite schema and then
   clears the app-owned thumbnail directory because the rows that referenced those
@@ -182,6 +200,8 @@ Walks a library folder and reports the image and video files it finds. Whys:
   metadata, never filesystem facts — FND-059.)
 - It **skips packages and symlinks** so it never descends into something like a
   `.photoslibrary` bundle or follows a link out of the library.
+- It **skips hidden files, AppleDouble files, Spotlight/trash directories, and
+  common camera helper paths** before they can become catalog rows.
 - It **skips non-media regular files** whose `contentTypeKey` is nil or does not
   conform to image or movie (`MediaEligibility`). Scan membership is decided here,
   not in Projection or the grid.
@@ -197,7 +217,7 @@ comparison and bounded JSONL field construction. Then read `CatalogProjection`,
 the actor that owns the long-running tasks, dirty flags, in-flight publication
 state, Store subscription, and stream continuation.
 
-Together these files take current library rows plus Store-ordered asset IDs and
+Together these files take current root rows plus Store-ordered asset IDs and
 produce a `CatalogWindowState`. Whys:
 
 - **Two-tier cadence.** During a scan or enrichment sweep the Store might change
@@ -216,6 +236,11 @@ produce a `CatalogWindowState`. Whys:
   visible scope is empty, Projection asks Store for separate counts so it can tell
   "no media exists," "media exists but every root is unavailable," and "the active
   filter matches nothing" apart. There is no full asset map in window state.
+- **Fixed and removable roots are different UI groups.** Projection splits fixed
+  libraries from removable sources by `LibraryRoot.kind`, resolves All Media over
+  fixed libraries only, and selects the camera-specific empty state when an MTP
+  source is still enumerating. It also constructs the selected-camera connection
+  banner so SwiftUI only renders a value it is handed.
 - **Equal-state suppression.** If a rebuild produces a state identical to the last
   one, it is not published — the UI is never disturbed by a no-op.
 
@@ -256,13 +281,25 @@ dropped-load, and watchdog activity; the ViewModel records bounded
 hot rendering paths out of the diagnostics actor while still leaving post-run
 evidence after the app exits.
 
+It is also the owner of platform source monitor lifetimes. `RemovableVolumeMonitor`
+turns macOS volume mount/unmount notifications into Store attach/detach intents.
+`CameraSourceMonitor` turns ImageCapture PTP/MTP camera sessions into per-camera
+catalog tasks. Those tasks feed device catalog batches to Store, write provisional
+thumbnails only for rows missing a final thumbnail, seed the enrichment coordinator
+with device staging work, and unregister temporary staging bytes when the device
+disconnects.
+
 ### `Otos/Views/*` — passive rendering
 
 `SidebarView`, `MediaGridView`, and `SettingsView` are small SwiftUI views that
 render the state they are handed and call back with intents (`selectSidebar`,
-`addLibrary`). They hold no catalog logic. The sidebar uses projected library
-rows for identity and selection, but renders only folder icons and library names;
-transient availability and scan activity stay out of sidebar row text.
+`addLibrary`, `ejectSource`, `forgetSource`). They hold no catalog logic. The
+sidebar uses projected root rows for identity and selection, renders fixed
+libraries separately from connected removable sources, and shows eject only when
+Projection says the source is ejectable. Settings uses the same rows for a
+Libraries tab and a Removable Media tab. The grid can show the selected-camera
+connection banner and the camera-enumerating empty state, but it still receives
+those as plain state values.
 
 `MediaAssetCollectionView` is the exception and the one place we drop to **AppKit**.
 Why: a media library can have tens of thousands of tiles, and `NSCollectionView`
@@ -339,8 +376,9 @@ dataless cloud files — and decides what to work on next by asking Store for a
 bounded set of current enrichment candidates, prioritizing the viewport and freshly
 materialized IDs. Store selects eligible candidate keys in useful order, claims
 still-free rows with `enrichment_claimed_until`, and fetches the claimed rows back
-in that order; visible priority fills past contended rows, and fallback work uses
-the same newest-best-date default as the browser before stable path tie-breakers.
+in that order; visible priority fills past contended rows, fallback work claims
+available removable-source roots before fixed roots, and roots in the same class
+use the same newest-best-date default as the browser before stable path tie-breakers.
 The coordinator's sets and small queue of already claimed work are process-local
 scheduling state, not a SQL exclusion list or durable backlog. The queue lets the
 coordinator claim a modest batch and feed future worker slots without one SQLite
@@ -348,6 +386,11 @@ write transaction per slot. Because those leases are process-local ownership, St
 clears abandoned claims during startup and coordinator shutdown releases queued,
 undispatched, in-flight, and pending claims before dropping runtime state. Its
 products are written back through `CatalogStore.applyEnrichmentBatch` in batches.
+MTP cameras add one temporary materialization route: the ViewModel registers an
+active camera session with `DeviceStagingRegistry`, which downloads a requested
+device object into app-owned staging only while the camera is connected. Staging is
+not durable overlay; on disconnect it is unregistered and deleted, while catalog
+rows and durable thumbnails/metadata follow Store's normal source lifecycle.
 See
 `docs/adr/0009-enrichment-storage-and-staleness.md`,
 `docs/adr/0010-store-owned-query-catalog-and-identity-grid.md`, and
@@ -411,21 +454,42 @@ diagnostics directory without creating a new file.
    same Store-owned mutation lane as manual library adds. This is process tooling,
    not product onboarding.
 3. The ViewModel starts its tasks and tells the Store to load.
-4. `CatalogStore` opens SQLite, reads the saved library roots, repairs reachable
+4. `CatalogStore` opens SQLite, reads the saved fixed-library and remembered
+   removable-source roots, repairs reachable
    symlink-spelled roots to their resolved provider paths, migrates any thumbnail
-   files whose deterministic names changed with the root spelling, and fires
-   "I changed."
+   files whose deterministic names changed with the root spelling, marks
+   fixed-library reachability unknown until checked, marks remembered removable
+   sources unavailable until reattached, and fires "I changed."
 5. `CatalogProjection`, already subscribed to Store invalidations, asks Store for
-   current library rows and descriptor-ordered asset IDs on its background tick,
+   current root rows and descriptor-ordered asset IDs on its background tick,
    then publishes a `CatalogWindowState`.
 6. The ViewModel assigns that to its `@Observable` `state`; SwiftUI notices and
    re-renders; the grid fills.
 7. Meanwhile the Store re-scans the libraries in the background to reconcile with
    the current filesystem. If nothing changed, it stays silent (no needless work).
 8. After load, `CatalogFilesystemWatcher` subscribes to macOS FSEvents for each
-   saved root. Changes under a root debounce (one-second quiet period). Safe single
+   available fixed library and connected removable filesystem volume. Changes
+   under a root debounce (one-second quiet period). Safe single
    regular-file events reconcile one path; ambiguous events schedule a full-root
    rescan for **that root only** through the same scan pipeline.
+
+**Connecting removable media:**
+
+1. `RemovableVolumeMonitor` reports mounted removable filesystem volumes; the
+   ViewModel sends a lossless Store attach intent with the source identity, display
+   name, mount path, and ejectability.
+2. Store inserts or updates the source row, remapping the current root path if the
+   same device identity returned somewhere else, and schedules a front scan. The
+   sidebar shows the source under Removable; All Media stays fixed-library only.
+3. ImageCapture cameras that are not mounted as mass storage come through
+   `CameraSourceMonitor` instead. The ViewModel creates a temporary staging root,
+   Store attaches the source, and a per-camera task writes catalog batches from
+   device object facts while the grid can show a camera-specific reading state.
+4. Provisional camera thumbnails fill only missing thumbnail paths. Enrichment may
+   materialize a device object through `DeviceStagingRegistry` while connected; the
+   staging file is deleted on detach.
+5. Detach marks stable sources unavailable and releases their enrichment claims.
+   Explicit Forget removes the root row and overlay just like fixed-library removal.
 
 **Filesystem changes while the app is running:**
 
@@ -480,6 +544,9 @@ diagnostics directory without creating a new file.
   (final assignment), never a view.
 - **Changing what is stored** → `CatalogStore` + a SQLite migration in
   `CatalogStorePersistence.swift`, and an ADR (see `AGENTS.md`).
+- **Adding platform source handling** → the ViewModel owns monitor/session
+  lifetimes, and Store owns catalog attachment, detachment, path remapping, source
+  state, and persistence.
 - **Adding heavy work** (more enrichment, future decode/export) → a new actor or
   service off the main thread that consults `FileMaterialization` before reading
   bytes, following `EnrichmentCoordinator`'s pattern (query bounded work from Store,

@@ -1,0 +1,171 @@
+import Foundation
+@testable import Otos
+import Testing
+
+struct CatalogStoreRemovableSourceTests {
+    @Test func removableVolumeRemountsByIdentityAndStaysOutOfAllMedia() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: "volume:test-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: firstPath, expected: ["card.jpg"])
+        let attached = try await catalogStoreTestState(store)
+        #expect(attached.libraries.map(\.path) == [fixture.fixedRootPath])
+        #expect(attached.removableSources.map(\.path) == [firstPath])
+        #expect(attached.removableSources.first?.kind == .removableVolume)
+        #expect(attached.removableSources.first?.isEjectable == true)
+        #expect(attached.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"])
+
+        try await store.detachRemovableSource(identity: "volume:test-card", reason: .unmounted)
+        let detached = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.first?.availability == .unavailable
+        }
+        #expect(detached.removableSources.first?.path == firstPath)
+        #expect(try await store.catalogedAssetCount(for: .library(firstPath)) == 1)
+
+        try await store.attachRemovableVolume(
+            mountURL: fixture.secondMount,
+            identity: "volume:test-card",
+            displayName: "Card Renamed",
+            isEjectable: false
+        )
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: fixture.secondMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: secondPath, expected: ["card.jpg"])
+        let remounted = try await catalogStoreTestState(store)
+
+        #expect(remounted.removableSources.map(\.path) == [secondPath])
+        #expect(remounted.removableSources.first?.displayName == "Card Renamed")
+        #expect(remounted.removableSources.first?.availability == .available)
+        #expect(remounted.removableSources.first?.isEjectable == false)
+        #expect(remounted.removableSources.first?.lastSeenAt != nil)
+        #expect(!remounted.allSources.map(\.path).contains(firstPath))
+        #expect(remounted.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"])
+    }
+
+    @Test func mtpCatalogRowsAreScopedToCameraAndStagingIsRemovedOnDetach() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        try await store.start(scansSavedLibraries: false)
+
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot,
+            identity: "camera:serial",
+            displayName: "Camera"
+        )
+        await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
+        try await store.recordDeviceCatalogBatch([
+            ScannedMediaFile(
+                relativePath: relativePath,
+                name: "IMG_0001.JPG",
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 42,
+                createdAt: Date(timeIntervalSince1970: 1000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ], rootPath: rootPath)
+
+        let selected = try await waitForSelectedRelativePaths(
+            store,
+            rootPath: rootPath,
+            expected: [relativePath.rawValue]
+        )
+        let enumerating = try await catalogStoreTestState(store)
+        #expect(selected == [relativePath.rawValue])
+        #expect(enumerating.libraries.isEmpty)
+        #expect(enumerating.removableSources.first?.kind == .deviceMTP)
+        #expect(enumerating.removableSources.first?.activity == .enumerating)
+        #expect(enumerating.testAssets.isEmpty)
+        #expect(try await store.catalogedAssetCount(for: .allMedia) == 0)
+        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
+        try await store.applyProvisionalThumbnails([id: "camera-thumb.jpg"])
+        let assetsByID = try await store.mediaAssets(for: [id])
+        #expect(assetsByID[id]?.thumbnailPath == "camera-thumb.jpg")
+
+        await store.completeDeviceCatalogEnumeration(rootPath: rootPath, observedPaths: [relativePath])
+        let complete = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.first?.activity == .idle
+        }
+        #expect(complete.removableSources.first?.availability == .available)
+
+        try await store.detachRemovableSource(identity: "camera:serial", reason: .disconnected)
+        let detached = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.first?.availability == .unavailable
+        }
+        #expect(detached.removableSources.first?.path == rootPath)
+        #expect(!FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
+        #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+    }
+}
+
+private struct RemovableRemountFixture {
+    let store: CatalogStore
+    let fixedRootPath: LibraryRootPath
+    let firstMount: URL
+    let secondMount: URL
+}
+
+private func makeRemountFixture() async throws -> RemovableRemountFixture {
+    let temp = try makeCatalogStoreTemporaryDirectory()
+    let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+    let firstMount = temp.appending(path: "Card-1", directoryHint: .isDirectory)
+    let secondMount = temp.appending(path: "Card-2", directoryHint: .isDirectory)
+    try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: firstMount, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: secondMount, withIntermediateDirectories: true)
+    try writeCatalogStoreFile(fixedRoot.appending(path: "fixed.jpg"), contents: "jpeg")
+    try writeCatalogStoreFile(firstMount.appending(path: "card.jpg"), contents: "jpeg")
+    try writeCatalogStoreFile(secondMount.appending(path: "card.jpg"), contents: "jpeg")
+
+    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+    try await store.start(scansSavedLibraries: false)
+    try await store.addLibrary(url: fixedRoot)
+    _ = try await waitForCatalogStoreState(store) { snapshot in
+        !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"]
+    }
+    return try RemovableRemountFixture(
+        store: store,
+        fixedRootPath: CatalogPath.normalizedDirectoryPath(for: fixedRoot),
+        firstMount: firstMount,
+        secondMount: secondMount
+    )
+}
+
+private func selectedRelativePaths(
+    _ store: CatalogStore,
+    rootPath: LibraryRootPath
+) async throws -> [String] {
+    let ids = try await store.orderedAssetIDs(for: .library(rootPath), availableLibraryPaths: [rootPath])
+    let assetsByID = try await store.mediaAssets(for: ids)
+    return ids.compactMap { assetsByID[$0]?.relativePath.rawValue }
+}
+
+private func waitForSelectedRelativePaths(
+    _ store: CatalogStore,
+    rootPath: LibraryRootPath,
+    expected: [String]
+) async throws -> [String] {
+    let changes = await store.changeNotifications()
+    let initial = try await selectedRelativePaths(store, rootPath: rootPath)
+    if initial == expected {
+        return initial
+    }
+    return try await withTestTimeout("selected removable assets") {
+        for await _ in changes {
+            let paths = try await selectedRelativePaths(store, rootPath: rootPath)
+            if paths == expected {
+                return paths
+            }
+        }
+        throw AsyncTestTimeoutError.streamEnded("selected removable assets")
+    }
+}

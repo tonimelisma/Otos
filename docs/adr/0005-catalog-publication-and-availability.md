@@ -59,7 +59,7 @@ carries its typed path through the lossless event stream. That transient fact is
 necessary because remove and same-path add can complete inside one publication
 interval, leaving a final queried state whose path membership looks unchanged.
 ADR 0010 supersedes the old raw snapshot read: Projection now asks Store for
-current library rows and ordered asset IDs, and visible grid cells fault detail by
+current root rows and ordered asset IDs, and visible grid cells fault detail by
 ID through Store queries.
 
 This keeps UI cadence out of Store mutation paths. SQLite and Store-owned root
@@ -70,7 +70,7 @@ runtime state remain catalog truth.
 `CatalogProjection` owns one coalesced dirty loop. Store changes mark the
 background loop dirty; direct sidebar, sort, and filter intents also mark dirty
 and schedule an immediate publication attempt. On a publication with pending
-work, Projection asks Store for current library rows plus descriptor-ordered
+work, Projection asks Store for current root rows plus descriptor-ordered
 asset IDs, derives one `CatalogWindowState`, and yields it.
 
 When Projection receives `.libraryRemoved(path)` for its selected root, it

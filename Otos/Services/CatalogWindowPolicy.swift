@@ -17,6 +17,23 @@ nonisolated enum CatalogWindowPolicy {
         }
     }
 
+    static func sourceRows(
+        from roots: [CatalogLibraryState]
+    ) -> (libraries: [CatalogLibraryState], removableSources: [CatalogLibraryState]) {
+        (
+            libraries: roots.filter { $0.kind == .library },
+            removableSources: roots.filter { $0.kind != .library }
+        )
+    }
+
+    static func availablePaths(from roots: [CatalogLibraryState]) -> Set<LibraryRootPath> {
+        Set(roots.filter(\.isAvailable).map(\.path))
+    }
+
+    static func rootsByPath(from roots: [CatalogLibraryState]) -> [LibraryRootPath: CatalogLibraryState] {
+        Dictionary(uniqueKeysWithValues: roots.map { ($0.path, $0) })
+    }
+
     static func resolvedSidebarSelection(
         _ sidebarSelection: SidebarSelection,
         libraries: [CatalogLibraryState]
@@ -43,7 +60,8 @@ nonisolated enum CatalogWindowPolicy {
     static func assetIDs(
         for sidebarSelection: SidebarSelection,
         orderedAssetIDs: [MediaAssetID],
-        availableLibraryPaths: Set<LibraryRootPath>
+        availableLibraryPaths: Set<LibraryRootPath>,
+        rootsByPath: [LibraryRootPath: CatalogLibraryState]
     ) -> [MediaAssetID] {
         orderedAssetIDs.filter { id in
             guard availableLibraryPaths.contains(id.libraryRootPath) else {
@@ -51,7 +69,7 @@ nonisolated enum CatalogWindowPolicy {
             }
             switch sidebarSelection {
             case .allMedia:
-                return true
+                return rootsByPath[id.libraryRootPath]?.kind == .library
             case let .library(path):
                 return id.libraryRootPath == path
             }
@@ -81,12 +99,16 @@ nonisolated enum CatalogWindowPolicy {
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
         case .allMedia:
-            if libraries.contains(where: { $0.availability == .unknown }) {
+            let fixedLibraries = libraries.filter { $0.kind == .library }
+            if fixedLibraries.contains(where: { $0.availability == .unknown }) {
                 return .checkingLibraries
             }
             return allAssetCount == 0 ? .noMedia : .noAvailableMedia
         case let .library(path):
             let library = libraries.first { $0.path == path }
+            if library?.kind == .deviceMTP, library?.isEnumerating == true {
+                return .deviceEnumerating(library?.displayName ?? "this camera")
+            }
             switch library?.availability {
             case .unknown:
                 return .libraryChecking
@@ -96,5 +118,49 @@ nonisolated enum CatalogWindowPolicy {
                 return .noMedia
             }
         }
+    }
+
+    static func catalogWindowState(
+        _ parts: CatalogProjectionWindowStateParts,
+        detailRefreshGeneration: UInt64
+    ) -> CatalogWindowState {
+        CatalogWindowState(
+            title: parts.title,
+            libraries: parts.libraries,
+            removableSources: parts.removableSources,
+            mediaGrid: CatalogMediaGridState(
+                descriptor: parts.resolvedDescriptor,
+                orderedAssetIDs: parts.scopedAssetIDs,
+                detailRefreshGeneration: detailRefreshGeneration
+            ),
+            filterOptions: parts.filterOptions,
+            resolvedSidebarSelection: parts.resolvedDescriptor.scope,
+            mediaEmptyState: parts.mediaEmptyState,
+            deviceConnectionBanner: deviceConnectionBanner(
+                for: parts.resolvedDescriptor.scope,
+                roots: parts.removableSources
+            ),
+            queryGeneration: parts.queryGeneration
+        )
+    }
+
+    private static func deviceConnectionBanner(
+        for selection: SidebarSelection,
+        roots: [CatalogLibraryState]
+    ) -> CatalogDeviceConnectionBanner? {
+        guard case let .library(path) = selection,
+              let root = roots.first(where: { $0.path == path }),
+              root.kind == .deviceMTP,
+              let identity = root.deviceIdentity
+        else {
+            return nil
+        }
+        return CatalogDeviceConnectionBanner(
+            identity: identity,
+            message: """
+            Browsing is faster when this camera's memory card is inserted directly, \
+            or when the camera's USB setting is Mass Storage.
+            """
+        )
     }
 }

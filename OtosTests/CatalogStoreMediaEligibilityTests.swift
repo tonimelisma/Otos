@@ -66,6 +66,45 @@ struct CatalogStoreMediaEligibilityTests {
         #expect(reconciled.testAssets.map(\.relativePath.rawValue) == ["photo.jpg"])
         #expect(FileManager.default.fileExists(atPath: root.appending(path: "notes.txt").path(percentEncoded: false)))
     }
+
+    @Test func scanSkipsHiddenAppleDoubleAndCameraJunkPaths() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Card", directoryHint: .isDirectory)
+        let junkDirectories = [
+            ".Trashes",
+            ".Spotlight-V100",
+            "AVF_INFO",
+            "M4ROOT/SUB",
+        ]
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for directory in junkDirectories {
+            try FileManager.default.createDirectory(
+                at: root.appending(path: directory, directoryHint: .isDirectory),
+                withIntermediateDirectories: true
+            )
+        }
+        try writeCatalogStoreFile(root.appending(path: "visible.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: ".hidden.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "._visible.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: ".Trashes/deleted.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: ".Spotlight-V100/index.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "AVF_INFO/clip.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "M4ROOT/SUB/proxy.jpg"), contents: "jpeg")
+
+        let store = CatalogStore(
+            location: .inMemory,
+            scanCadence: .milliseconds(10),
+            diagnostics: nil
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+
+        let scanned = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"]
+        }
+
+        #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"])
+    }
 }
 
 private func insertLegacyNonMediaRow(

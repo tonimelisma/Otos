@@ -29,7 +29,7 @@ Store-owned indexed enrichment-candidate queries keep scheduling out of UI
 publication; a consumer app cannot reclaim another provider's downloaded bytes
 (spec 0021).
 
-This decision supports requirements ENR-001 through ENR-010.
+This decision supports requirements ENR-001 through ENR-011.
 
 ## MECE Decision Scope
 
@@ -61,7 +61,9 @@ This ADR owns:
   application of ADR 0008's permission), accepting the unreclaimable disk growth.
 - The enrichment ownership split: a single `EnrichmentCoordinator` actor running
   two fixed worker pools (4 enrich + 4 download) by cursorless scheduling, with
-  Store-owned claim ordering and process-local lease cleanup.
+  Store-owned claim ordering and process-local lease cleanup. Connected-source
+  priority is applied at candidate/staging selection time, not through a durable
+  second queue.
 
 This ADR references, but does not own:
 
@@ -73,6 +75,8 @@ This ADR references, but does not own:
   architecture owned by ADR 0010, and descriptor/best-value query policy owned
   by ADR 0011.
 - The narrow AppKit grid rendering boundary, owned by ADR 0006.
+- Removable filesystem volume and MTP camera source identity, detach/forget
+  lifecycle, temporary device staging, and All Media exclusion, owned by ADR 0013.
 
 Adjacent decisions requiring separate ADRs or specs:
 
@@ -183,14 +187,18 @@ Adjacent decisions requiring separate ADRs or specs:
    still free with one nullable `enrichment_claimed_until` column, then fetches the
    claimed rows back in selected order. Visible priority always outranks fallback
    and fills past contended rows until the limit or eligible input is exhausted.
-   Fallback work follows the default browser's useful order — newest
-   `best_capture_unix` first, then stable path tie-breakers — rather than path
-   `sort_key` order. The coordinator maintains no durable backlog or SQL partition,
-   but it does keep one small process-local queue of already claimed work so a full
-   sweep does not become one claim transaction per free worker slot. The rest of
-   its runtime state is what it cannot derive (viewport, in-flight guards, the
-   just-downloaded `freshly` LIFO hand-off, the
-   discovered-dataless set, the pending-apply buffer, and one `eagerMode` latch).
+   Fallback claim ordering first offers available connected/removable source roots,
+   then fixed-library roots; inside each source class, work follows the default
+   browser's useful order — newest `best_capture_unix` first, then stable path
+   tie-breakers — rather than path `sort_key` order. MTP camera staging seeds use
+   the same existing download pool but are ordered still/image items before videos,
+   then capture date, then path, so short still downloads do not sit behind video
+   transfers from the same device. The coordinator maintains no durable backlog or
+   SQL partition, but it does keep one small process-local queue of already claimed
+   work so a full sweep does not become one claim transaction per free worker slot.
+   The rest of its runtime state is what it cannot derive (viewport, in-flight
+   guards, the just-downloaded `freshly` LIFO hand-off, the discovered-dataless set,
+   the pending-apply buffer, and one `eagerMode` latch).
    Those process-local sets and queued claims prevent duplicate scheduling inside
    this coordinator; the SQLite lease is the SQL query gate that prevents repeated
    dequeue of already-owned rows across queries.

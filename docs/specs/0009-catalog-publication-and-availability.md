@@ -99,7 +99,7 @@ Selected: Projection-owned publication.
 3. Explicit sidebar, sort, and filter intents arrive through the
    ViewModel-owned newest-buffered query stream and also mark Projection dirty.
 4. On the next background tick, or immediately for direct user query intents,
-   Projection requests current library rows and descriptor-ordered IDs from
+   Projection requests current root rows and descriptor-ordered IDs from
    Store.
 5. Projection filters availability and scope, selects title/empty state, advances
    the grid detail-refresh generation for Store invalidations, and emits

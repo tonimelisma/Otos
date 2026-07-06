@@ -22,10 +22,13 @@ extension EnrichmentCoordinator {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
         case .notMaterialized:
+            let existing = datalessPending[id]
             datalessPending[id] = DownloadWork(
                 id: id,
                 url: work.url,
-                sourceSize: work.sourceSize
+                sourceSize: work.sourceSize,
+                captureDate: existing?.captureDate,
+                isVideo: existing?.isVideo ?? false
             )
             var fields = ["sourceSize": "\(work.sourceSize ?? -1)"]
             if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {

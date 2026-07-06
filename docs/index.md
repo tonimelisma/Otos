@@ -43,6 +43,7 @@ implementation history.
 | [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, and clean destructive catalog reset. |
 | [0011](adr/0011-catalog-query-descriptor-best-values-and-cadence.md) | Catalog query descriptor, generated best date/kind/format values, toolbar/menu sort-filter query ownership, and two-tier publication cadence. |
 | [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy representation: original file URLs on the pasteboard (not image pixels), references only, reading no bytes and never materializing a dataless cloud original. |
+| [0013](adr/0013-removable-and-device-sources.md) | Removable volume and MTP camera source identity, root metadata, All Media exclusion, detach/forget lifecycle, temporary device staging, and connected-source enrichment priority. |
 
 ## Current Implementation Specs
 
@@ -88,6 +89,8 @@ implementation history.
 | [0039](specs/0039-grid-preheat-and-apply-follow-up.md) | Post-review grid follow-up: batched newest-burst preheating, non-main decoded cache warming, reloadData fallback for measured-large/reorder applies, cache recency cleanup, and current docs correction. |
 | [0040](specs/0040-materialization-cadence-jsonl-telemetry.md) | Materialization cadence and durable telemetry: one-second provider re-requests, materialization result attribution, claim-failure lifecycle rows, coarse grid counter JSONL snapshots, diagnostics gates, and plan retirement. |
 | [0041](specs/0041-review-follow-up-telemetry-and-doc-truth.md) | Review follow-up: explicit termination and early interval grid-counter rows, start-only diagnostics gate failure, partial preheat cancellation, cache documentation truth, and formatter reuse. |
+| [0042](specs/0042-removable-volume-sources.md) | Removable filesystem volume sources: detection, stable source identity, remount path remap, separate sidebar/settings rows, All Media exclusion, detach/forget lifecycle, scanner junk exclusions, and enrichment priority. |
+| [0043](specs/0043-mtp-camera-sources.md) | MTP camera sources: ImageCapture monitoring, mass-storage rejection, virtual staging roots, provisional thumbnails, device materialization routing, staging cleanup, camera banner, and stills-before-video staging order. |
 
 ## Planning Documents
 
@@ -102,6 +105,7 @@ user explicitly asks to use them for the current task.
 | [research/media-grid-best-practices.md](research/media-grid-best-practices.md) | Non-authoritative platform research for large media-grid identity, detail loading, prefetching, and responsiveness design. | New platform guidance or architecture research changes the media-grid design basis. |
 | [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md) | Non-authoritative storage/query research for database-backed media catalog design. | New storage/query research changes the catalog architecture design basis. |
 | [research/toolbar-sort-filter-architecture.md](research/toolbar-sort-filter-architecture.md) | Non-authoritative HIG/Liquid Glass toolbar research and end-to-end sort/filter query architecture alternatives. | New platform guidance or a sort/filter design decision changes the toolbar/query design basis. |
+| [research/removable-volume-and-camera-sources.md](research/removable-volume-and-camera-sources.md) | Non-authoritative platform research for removable volumes, ImageCapture camera browsing, and local staging constraints. | New platform guidance or source-device behavior changes the removable-device design basis. |
 | [plans/0030-toolbar-sort-filter-query-surface-plan.md](plans/0030-toolbar-sort-filter-query-surface-plan.md) | Non-authoritative implementation plan used as the explicit blueprint for the toolbar sort/filter query increment. | Historical implementation planning needs clarification or the user explicitly asks to revisit the plan. |
 
 ## Templates

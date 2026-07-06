@@ -80,8 +80,10 @@ struct OtosApp: App {
         Settings {
             SettingsView(
                 libraries: catalogViewModel.state.libraries,
+                removableSources: catalogViewModel.state.removableSources,
                 addLibrary: { catalogViewModel.addLibrary(url: $0) },
-                removeLibrary: { catalogViewModel.removeLibrary($0) }
+                removeLibrary: { catalogViewModel.removeLibrary($0) },
+                forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) }
             )
         }
     }

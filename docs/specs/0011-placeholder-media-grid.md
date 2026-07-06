@@ -163,7 +163,7 @@ custom rendering engine.
 
 1. `CatalogStore` mutates catalog truth and emits a cheap change signal.
 2. On the background cadence, or immediately for direct user query intents,
-   `CatalogProjection` requests current library rows plus descriptor-ordered IDs,
+   `CatalogProjection` requests current root rows plus descriptor-ordered IDs,
    filters for availability, and publishes `CatalogWindowState`.
 3. `CatalogWindowViewModel` assigns that state on the MainActor.
 4. `MediaGridView` renders title/empty state and forwards grid state to the

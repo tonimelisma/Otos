@@ -12,8 +12,10 @@ import UniformTypeIdentifiers
 ///
 /// Media eligibility: after structural guards, only regular files whose
 /// `contentTypeKey` conforms to `UTType.image` or `UTType.movie` become observed
-/// scan results. Nil or other types are skipped without failing the scan. See ADR
-/// 0002 and `MediaEligibility`.
+/// scan results. Nil or other types are skipped without failing the scan. Hidden
+/// files, AppleDouble files, package descendants, symlinks, Spotlight/trash folders,
+/// and common camera helper paths are structural exclusions before media eligibility
+/// is considered. See ADR 0002 and `MediaEligibility`.
 ///
 /// Why metadata only and never file bytes: most media lives in cloud-synced folders
 /// as dataless placeholders. Reading a file's resource values (name, size, dates,
@@ -123,6 +125,7 @@ private nonisolated enum LiveCatalogScanner {
         .isDirectoryKey,
         .isSymbolicLinkKey,
         .isPackageKey,
+        .isHiddenKey,
         .nameKey,
         .creationDateKey,
         .contentModificationDateKey,
@@ -155,7 +158,7 @@ private nonisolated enum LiveCatalogScanner {
             // app-owned stores such as Photos libraries. Camera package support
             // belongs in an explicit, tested media-container path rather than
             // in the regular-file scanner.
-            options: [.skipsPackageDescendants],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants],
             errorHandler: { url, error in
                 scanState.recordIssue(
                     kind: "enumeration",
@@ -260,6 +263,12 @@ private nonisolated enum LiveCatalogScanner {
         scanState: inout ScanState
     ) throws -> ScannedMediaFile? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
+        if values.isHidden == true {
+            if values.isDirectory == true {
+                enumerator.skipDescendants()
+            }
+            return nil
+        }
         if values.isSymbolicLink == true {
             if values.isDirectory == true {
                 enumerator.skipDescendants()
@@ -276,6 +285,20 @@ private nonisolated enum LiveCatalogScanner {
             if values.isDirectory == true {
                 enumerator.skipDescendants()
             }
+            return nil
+        }
+        if values.isDirectory == true {
+            let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL)
+            if MediaEligibility.shouldSkipDirectory(name: values.name)
+                || relativePath.map(MediaEligibility.shouldSkipRelativePath) == true
+            { // swiftlint:disable:this opening_brace
+                enumerator.skipDescendants()
+            }
+            return nil
+        }
+        if let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL),
+           MediaEligibility.shouldSkipRelativePath(relativePath)
+        { // swiftlint:disable:this opening_brace
             return nil
         }
         if values.isRegularFile == true,
@@ -303,8 +326,10 @@ private nonisolated enum LiveCatalogScanner {
         try await batchHandler(batch)
         await Task.yield()
     }
+}
 
-    private static func recordSkippedPackages(
+private extension LiveCatalogScanner {
+    private nonisolated static func recordSkippedPackages(
         _ skippedPackages: [SkippedPackage],
         rootPath: LibraryRootPath,
         diagnostics: CatalogDiagnostics?
@@ -331,7 +356,7 @@ private nonisolated enum LiveCatalogScanner {
         }
     }
 
-    private static func recordSkippedNonMedia(
+    private nonisolated static func recordSkippedNonMedia(
         count: Int,
         rootPath: LibraryRootPath,
         diagnostics: CatalogDiagnostics?
@@ -355,7 +380,7 @@ private nonisolated enum LiveCatalogScanner {
         )
     }
 
-    private static func recordIssues(
+    private nonisolated static func recordIssues(
         _ summaries: [CatalogScanIssueSummary],
         rootPath: LibraryRootPath
     ) {

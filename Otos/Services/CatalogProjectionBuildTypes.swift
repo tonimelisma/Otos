@@ -5,6 +5,7 @@
 nonisolated struct CatalogProjectionWindowStateParts {
     let title: String
     let libraries: [CatalogLibraryState]
+    let removableSources: [CatalogLibraryState]
     let resolvedDescriptor: CatalogQueryDescriptor
     let queryGeneration: UInt64
     let scopedAssetIDs: [MediaAssetID]
@@ -15,6 +16,7 @@ nonisolated struct CatalogProjectionWindowStateParts {
 nonisolated struct CatalogProjectionEmptyStateBuildInput {
     let descriptor: CatalogQueryDescriptor
     let libraries: [CatalogLibraryState]
+    let rootsByPath: [LibraryRootPath: CatalogLibraryState]
     let orderedAssetIDs: [MediaAssetID]
     let scopedAssetIDs: [MediaAssetID]
     let store: CatalogStore?

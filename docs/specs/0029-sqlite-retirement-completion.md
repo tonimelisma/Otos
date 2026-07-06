@@ -84,7 +84,7 @@ future ideas are being added to `docs/requirements.md`.
   measure-before-optimizing.
 - FND-019, FND-031, FND-043, FND-044: Store-owned catalog truth, identity grid, and
   detail-only refresh behavior.
-- FND-060 and ENR-001 through ENR-010: materialization, enrichment, thumbnail, and
+- FND-060 and ENR-001 through ENR-011: materialization, enrichment, thumbnail, and
   metadata ownership.
 - APP-001: current docs and user-facing summaries claim only proven behavior.
 

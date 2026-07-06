@@ -15,6 +15,7 @@ struct CatalogWindowViewModelTests {
                 return CatalogWindowState(
                     title: "Test",
                     libraries: libraries,
+                    removableSources: [],
                     mediaGrid: CatalogMediaGridState(
                         descriptor: request.descriptor,
                         orderedAssetIDs: []
@@ -22,6 +23,7 @@ struct CatalogWindowViewModelTests {
                     filterOptions: .empty,
                     resolvedSidebarSelection: request.descriptor.scope,
                     mediaEmptyState: .noMedia,
+                    deviceConnectionBanner: nil,
                     queryGeneration: request.generation
                 )
             }
