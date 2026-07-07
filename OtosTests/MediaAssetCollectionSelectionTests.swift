@@ -1,4 +1,6 @@
 import AppKit
+import Foundation
+import os
 @testable import Otos
 import Testing
 
@@ -142,6 +144,42 @@ struct MediaAssetCollectionSelectionTests {
 
         #expect(controller.selectionAnchorID == nil)
         #expect(controller.anchorBaseSelection.isEmpty)
+    }
+
+    /// Regression test for a PR #51 review finding: a descriptor-changing structural
+    /// apply (new sidebar scope/sort/filter) must clear the anchor unconditionally, even
+    /// when the previously anchored asset happens to still be present in the new scope's
+    /// results. `restoreSelection`'s anchor prune alone is not enough for this case
+    /// because it only clears an anchor whose *asset* left the new ordered IDs.
+    @Test func descriptorChangingApplyClearsAnchorEvenWhenTheAnchoredAssetSurvives() throws {
+        let controller = makeController(itemCount: 4)
+        let ids = controller.applyGate.displayedOrderedIDs
+        try setAnchor(controller, to: ids[1])
+
+        let grid = CatalogMediaGridState(
+            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
+            orderedAssetIDs: ids // the anchored asset (ids[1]) is still present
+        )
+        let context = MediaAssetCollectionViewController.StructuralApplyCompletionContext(
+            grid: grid,
+            preservedSelection: [],
+            resetSelection: true,
+            resetScroll: true,
+            applyStart: Date(),
+            insertedCount: 0,
+            removedCount: 0,
+            reorderOnly: false,
+            largeApply: false,
+            animatingDifferences: true,
+            usesReloadDataFallback: false,
+            signpost: .beginState(id: .exclusive)
+        )
+
+        controller.completeStructuralApply(context, operation: nil, stallMonitor: nil, diagnostics: nil)
+
+        #expect(controller.selectionAnchorID == nil)
+        #expect(controller.anchorBaseSelection.isEmpty)
+        #expect(controller.selectedIdentities().isEmpty)
     }
 }
 

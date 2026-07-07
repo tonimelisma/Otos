@@ -91,6 +91,7 @@ final class MediaAssetCollectionViewController: NSViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let preservedSelection: Set<MediaAssetID>
+        let resetSelection: Bool
         let resetScroll: Bool
         let applyStart: Date
         let insertedCount: Int
@@ -205,7 +206,8 @@ extension MediaAssetCollectionViewController {
         _ = item.configure(
             detail: detailForTile(assetID),
             thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache
+            imageCache: imageCache,
+            column: indexPath.item % Self.columnCount
         )
         return item
     }
@@ -275,22 +277,13 @@ extension MediaAssetCollectionViewController {
         let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
 
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
-        OtosLog.ui.debug(
-            """
-            Media grid structural apply started items=\(grid.orderedAssetIDs.count, privacy: .public) \
-            scope=\(grid.scope.diagnosticDescription, privacy: .public) \
-            resetScroll=\(resetScroll, privacy: .public) \
-            reorderOnly=\(summary.reorderOnly, privacy: .public) \
-            largeApply=\(summary.largeApply, privacy: .public) \
-            animating=\(summary.animatingDifferences, privacy: .public) \
-            reloadDataFallback=\(summary.usesReloadDataFallback, privacy: .public)
-            """
-        )
+        logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
         let stallMonitor = stallMonitor
         let diagnostics = diagnostics
         let context = StructuralApplyCompletionContext(
             grid: grid,
             preservedSelection: preservedSelection,
+            resetSelection: resetSelection,
             resetScroll: resetScroll,
             applyStart: applyStart,
             insertedCount: summary.insertedCount,
@@ -318,16 +311,42 @@ extension MediaAssetCollectionViewController {
         applySnapshot(snapshot, summary: summary, completion: completion)
     }
 
+    private func logStartedStructuralApply(
+        _ grid: CatalogMediaGridState,
+        resetScroll: Bool,
+        summary: MediaGridStructuralApplyPolicy
+    ) {
+        OtosLog.ui.debug(
+            """
+            Media grid structural apply started items=\(grid.orderedAssetIDs.count, privacy: .public) \
+            scope=\(grid.scope.diagnosticDescription, privacy: .public) \
+            resetScroll=\(resetScroll, privacy: .public) \
+            reorderOnly=\(summary.reorderOnly, privacy: .public) \
+            largeApply=\(summary.largeApply, privacy: .public) \
+            animating=\(summary.animatingDifferences, privacy: .public) \
+            reloadDataFallback=\(summary.usesReloadDataFallback, privacy: .public)
+            """
+        )
+    }
+
+    /// The `animatingDifferences: false` branch is the measured reloadData-class fallback
+    /// (spec 0039) and stays byte-for-byte as a plain `apply` call. Only the already-animating
+    /// small-apply branch gets the tuned duration/timing curve, wrapped in an explicit
+    /// `NSAnimationContext` group so it does not affect the fallback path (spec 0047).
     private func applySnapshot(
         _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
         summary: MediaGridStructuralApplyPolicy,
         completion: @escaping () -> Void
     ) {
-        dataSource.apply(
-            snapshot,
-            animatingDifferences: summary.animatingDifferences,
-            completion: completion
-        )
+        guard summary.animatingDifferences else {
+            dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
+            return
+        }
+        NSAnimationContext.beginGrouping()
+        NSAnimationContext.current.duration = MediaGridAnimation.applyDuration
+        NSAnimationContext.current.timingFunction = MediaGridAnimation.applyTimingFunction
+        dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
+        NSAnimationContext.endGrouping()
     }
 
     private func mediaSnapshot(
@@ -421,7 +440,8 @@ extension MediaAssetCollectionViewController {
             if item.configure(
                 detail: detailForTile(assetID),
                 thumbnailDirectory: thumbnailDirectory,
-                imageCache: imageCache
+                imageCache: imageCache,
+                column: indexPath.item % Self.columnCount
             ) {
                 thumbnailLoadsStarted += 1
             }

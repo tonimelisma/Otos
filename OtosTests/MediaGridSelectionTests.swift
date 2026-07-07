@@ -144,6 +144,40 @@ struct MediaGridSelectionTests {
         #expect(target == [clicked])
     }
 
+    // MARK: - selectionDelta
+
+    @Test func selectionDeltaExcludesSurvivorsFromBothSides() {
+        let idA = id("/Pictures", "a.jpg")
+        let idB = id("/Pictures", "b.jpg")
+        let idC = id("/Pictures", "c.jpg")
+        // B survives in both current and target; only A (dropped) and C (added) move.
+        let delta = MediaGridSelection.selectionDelta(current: [idA, idB], target: [idB, idC])
+        #expect(delta.toDeselect == [idA])
+        #expect(delta.toSelect == [idC])
+    }
+
+    @Test func selectionDeltaOfIdenticalSetsIsEmpty() {
+        let idA = id("/Pictures", "a.jpg")
+        let idB = id("/Pictures", "b.jpg")
+        let delta = MediaGridSelection.selectionDelta(current: [idA, idB], target: [idA, idB])
+        #expect(delta.toDeselect.isEmpty)
+        #expect(delta.toSelect.isEmpty)
+    }
+
+    @Test func selectionDeltaFromEmptyToNonEmptySelectsEverything() {
+        let idA = id("/Pictures", "a.jpg")
+        let delta = MediaGridSelection.selectionDelta(current: [], target: [idA])
+        #expect(delta.toDeselect.isEmpty)
+        #expect(delta.toSelect == [idA])
+    }
+
+    @Test func selectionDeltaToEmptyDeselectsEverything() {
+        let idA = id("/Pictures", "a.jpg")
+        let delta = MediaGridSelection.selectionDelta(current: [idA], target: [])
+        #expect(delta.toDeselect == [idA])
+        #expect(delta.toSelect.isEmpty)
+    }
+
     // MARK: - clipboard
 
     @Test func writePutsFileURLsInOrderAndReturnsCount() {

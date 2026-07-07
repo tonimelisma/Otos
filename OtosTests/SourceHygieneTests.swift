@@ -277,11 +277,15 @@ struct SourceHygieneTests {
                 contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionLayout.swift"),
                 encoding: .utf8
             )
+            + String(
+                contentsOf: repoRoot.appending(path: "Otos/Views/MediaGridAnimatedLayout.swift"),
+                encoding: .utf8
+            )
 
         #expect(content.contains("NSViewControllerRepresentable"))
         #expect(content.contains("NSCollectionView"))
         #expect(content.contains("NSCollectionViewCompositionalLayout"))
-        #expect(content.contains("count: 6"))
+        #expect(content.contains("static let columnCount = 6"))
         #expect(!content.contains("NSTableView"))
         #expect(!content.contains("NSHostingView"))
         #expect(!FileManager.default.fileExists(

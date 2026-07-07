@@ -94,6 +94,7 @@ implementation history.
 | [0044](specs/0044-thumbnail-label-removal-and-badge-centering.md) | Thumbnail label removal and badge centering: no filename/date tile overlay, tile-specific detail rows, and centered duration text in a right-aligned video badge. |
 | [0045](specs/0045-removable-media-review-remediation.md) | Removable-media review remediation: device enumeration leases, fail-closed camera reconciliation, removable-volume quiesce/eject ordering, duplicate volume disambiguation, and device-staging retry scheduling. |
 | [0046](specs/0046-grid-shift-click-range-selection.md) | Grid shift-click range selection: anchor/base correction state makes ⇧-click select a Photos/Lightroom-style contiguous range instead of AppKit's native two-item toggle. |
+| [0047](specs/0047-grid-animation-and-placeholder-polish.md) | Grid animation and placeholder polish: tuned animated-apply timing, insert/remove choreography, animated selection ring with a delta-based `restoreSelection`, thumbnail-arrival fade, and a media-kind placeholder icon. |
 
 ## Planning Documents
 

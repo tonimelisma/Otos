@@ -56,6 +56,18 @@ enum MediaGridSelection {
         let range = orderedIDs[min(anchorIndex, clickedIndex) ... max(anchorIndex, clickedIndex)]
         return base.union(range)
     }
+
+    /// The minimal delta that turns `current` into `target`: identities to deselect and
+    /// identities to select. Applying only this delta — instead of deselecting everything
+    /// and reselecting survivors — means an identity present in both sets receives no
+    /// select/deselect call at all, so its tile's `isSelected` never changes and an
+    /// animated selection ring never blinks for a survivor (spec 0047).
+    nonisolated static func selectionDelta(
+        current: Set<MediaAssetID>,
+        target: Set<MediaAssetID>
+    ) -> (toDeselect: Set<MediaAssetID>, toSelect: Set<MediaAssetID>) {
+        (current.subtracting(target), target.subtracting(current))
+    }
 }
 
 /// Media clipboard guide

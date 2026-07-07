@@ -11,6 +11,7 @@ DerivedData/
 *.ipa
 *.dSYM.zip
 *.dSYM
+*.profraw
 
 # SwiftPM and editor state
 .swiftpm/

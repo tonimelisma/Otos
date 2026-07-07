@@ -26,6 +26,9 @@ final class MediaAssetTileView: NSView {
     private let videoBadge = FlippedView()
     private let durationField = NSTextField(labelWithString: "")
     private let filmIconView = NSImageView()
+    /// Centered on the gray placeholder square while no thumbnail has painted yet
+    /// (spec 0047) — distinct from `filmIconView`, which lives inside the video badge.
+    private let placeholderIconView = NSImageView()
 
     /// Identifies the image content the async load produced (thumbnail file plus its
     /// enrichment stamp). Equal keys mean the painted thumbnail can stay in place even
@@ -33,6 +36,10 @@ final class MediaAssetTileView: NSView {
     private var currentImageContentKey: String?
     private var currentAssetID: MediaAssetID?
     private var currentImagePixelSize: CGSize?
+    private var currentBestKind: MediaKind?
+    /// This item's column in the grid at last configure, used only to stagger the
+    /// thumbnail-arrival fade per column (spec 0047); has no effect on paint decisions.
+    private var currentColumn = 0
     private var shouldShowVideoBadge = false
     /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
     /// the tile was handed to another asset is discarded instead of painting stale data.
@@ -77,6 +84,15 @@ final class MediaAssetTileView: NSView {
         filmIconView.imageScaling = .scaleProportionallyDown
         filmIconView.contentTintColor = .white
         videoBadge.addSubview(filmIconView)
+
+        placeholderIconView.imageScaling = .scaleProportionallyDown
+        placeholderIconView.contentTintColor = .secondaryLabelColor
+        placeholderIconView.alphaValue = Layout.placeholderIconAlpha
+        contentView.addSubview(placeholderIconView)
+
+        // A single opaque color; borderWidth alone (0 or 3) toggles ring visibility, so
+        // the color never needs to change and the deselect animation never fades a color.
+        contentView.layer?.borderColor = NSColor.controlAccentColor.cgColor
     }
 
     @available(*, unavailable)
@@ -90,8 +106,11 @@ extension MediaAssetTileView {
     func configure(
         detail: MediaTileDetail,
         thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?
+        imageCache: MediaTileImageCache?,
+        column: Int
     ) -> Bool {
+        currentColumn = column
+        currentBestKind = detail.bestKind
         configureBadge(for: detail)
         needsLayout = true
 
@@ -185,7 +204,7 @@ extension MediaAssetTileView {
         cancelImageLoad()
         currentAssetID = detail.id
         currentImageContentKey = key
-        applyImage(cachedImage, assetID: detail.id, contentKey: key, reason: "cacheHit")
+        applyImage(cachedImage, assetID: detail.id, contentKey: key, application: .cacheHit)
         return false
     }
 
@@ -261,7 +280,7 @@ extension MediaAssetTileView {
                     image,
                     assetID: detail.id,
                     contentKey: key,
-                    reason: "asyncLoad"
+                    application: .asyncLoad
                 )
                 GridTelemetry.recordTileLoadApplied()
                 OtosSignpost.ui.emitEvent("MediaTileLoadApplied")
@@ -275,17 +294,34 @@ extension MediaAssetTileView {
         loadGeneration += 1
     }
 
+    /// `cacheHit` applications (a scroll-back repaint, or a recycled cell's synchronous
+    /// repaint) stay instant — fading those would read as flicker and contradict the
+    /// no-blank invariant's spirit. `asyncLoad` applications add a fade: this single
+    /// mechanism covers first paint (placeholder → image) and a same-asset
+    /// newer-thumbnail replacement (old → new crossfade, invariant-safe because the old
+    /// contents persist on the layer through the transition). The fade is staggered per
+    /// column so a batch of tiles landing together ripples left-to-right instead of
+    /// popping in unison.
     private func applyImage(
         _ image: CGImage,
         assetID: MediaAssetID,
         contentKey: String,
-        reason _: String
+        application: TilePaintApplication
     ) {
+        if application == .asyncLoad, let layer = imageView.layer {
+            let stagger = Double(currentColumn) * MediaGridAnimation.thumbnailStaggerPerColumn
+            let transition = CATransition()
+            transition.type = .fade
+            transition.duration = MediaGridAnimation.thumbnailFadeDuration
+            transition.beginTime = CACurrentMediaTime() + stagger
+            transition.fillMode = .backwards
+            layer.add(transition, forKey: "thumbnailFade")
+        }
         imageView.layer?.contents = image
         currentAssetID = assetID
         currentImageContentKey = contentKey
         currentImagePixelSize = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
-        updatePlaceholderBackground()
+        updatePlaceholderPresentation()
         needsLayout = true
     }
 
@@ -304,7 +340,7 @@ extension MediaAssetTileView {
         }
         imageView.layer?.contents = nil
         currentImagePixelSize = nil
-        updatePlaceholderBackground()
+        updatePlaceholderPresentation()
         needsLayout = true
     }
 
@@ -317,14 +353,16 @@ extension MediaAssetTileView {
         currentImageContentKey = nil
         currentAssetID = nil
         currentImagePixelSize = nil
+        currentBestKind = nil
+        currentColumn = 0
         shouldShowVideoBadge = false
         clearPaintedImage(for: nil, reason: "reuse", enforcesInvariant: false)
         durationField.stringValue = ""
         durationField.isHidden = true
         filmIconView.isHidden = true
         videoBadge.isHidden = true
-        updatePlaceholderBackground()
-        setSelected(false)
+        updatePlaceholderPresentation()
+        setSelected(false, animated: false)
         setAccessibilityLabel(nil)
     }
 
@@ -335,15 +373,32 @@ extension MediaAssetTileView {
             bounds: bounds
         )
         imageView.frame = contentView.bounds
-        updatePlaceholderBackground()
+        updatePlaceholderPresentation()
         layoutVideoBadge()
     }
 
     /// Draws or clears the selection ring. The ring lives on `contentView` so it
     /// hugs the thumbnail's actual aspect-fit face, not the transparent square cell.
-    func setSelected(_ selected: Bool) {
-        contentView.layer?.borderWidth = selected ? 3 : 0
-        contentView.layer?.borderColor = selected ? NSColor.controlAccentColor.cgColor : nil
+    /// `animated` fades the ring in/out (spec 0047); `prepareForReuse` passes `false` so
+    /// a recycled item never shows a stale animation from its previous asset.
+    func setSelected(_ selected: Bool, animated: Bool) {
+        guard let layer = contentView.layer else {
+            return
+        }
+        let newWidth: CGFloat = selected ? 3 : 0
+        if animated, layer.borderWidth != newWidth {
+            let animation = CABasicAnimation(keyPath: "borderWidth")
+            animation.fromValue = layer.borderWidth
+            animation.toValue = newWidth
+            animation.duration = selected
+                ? MediaGridAnimation.selectionRingInDuration
+                : MediaGridAnimation.selectionRingOutDuration
+            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            layer.add(animation, forKey: "selectionRing")
+        } else {
+            layer.removeAnimation(forKey: "selectionRing")
+        }
+        layer.borderWidth = newWidth
     }
 
     private func layoutVideoBadge() {
@@ -379,10 +434,22 @@ extension MediaAssetTileView {
         )
     }
 
-    private func updatePlaceholderBackground() {
-        contentView.layer?.backgroundColor = currentImagePixelSize == nil
+    /// Owns the placeholder background and its centered media-kind icon together so the
+    /// two can never disagree about whether a thumbnail has painted (spec 0047).
+    private func updatePlaceholderPresentation() {
+        let isPlaceholder = currentImagePixelSize == nil
+        contentView.layer?.backgroundColor = isPlaceholder
             ? NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
             : nil
+        placeholderIconView.isHidden = !isPlaceholder
+        guard isPlaceholder else {
+            return
+        }
+        placeholderIconView.image = NSImage(
+            systemSymbolName: MediaAssetTilePresentation.placeholderIconSystemName(for: currentBestKind),
+            accessibilityDescription: nil
+        )
+        placeholderIconView.frame = Layout.placeholderIconFrame(contentBounds: contentView.bounds)
     }
 
     private func accessibilityLabel(videoBadge: String?) -> String? {

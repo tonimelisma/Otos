@@ -108,16 +108,23 @@ extension MediaAssetCollectionViewController {
         guard target != current else {
             return false
         }
-        let toDeselect = current.subtracting(target)
-        let toSelect = target.subtracting(current)
-        if !toDeselect.isEmpty {
-            collectionView.deselectItems(at: Set(toDeselect.compactMap { dataSource.indexPath(for: $0) }))
+        applySelectionDelta(from: current, to: target)
+        return true
+    }
+
+    /// Applies only the identities that actually change between `current` and `target`,
+    /// so a survivor present in both never receives a select/deselect call (spec 0047:
+    /// this is what keeps the animated selection ring from blinking on a survivor).
+    func applySelectionDelta(from current: Set<MediaAssetID>, to target: Set<MediaAssetID>) {
+        let delta = MediaGridSelection.selectionDelta(current: current, target: target)
+        if !delta.toDeselect.isEmpty {
+            let paths = Set(delta.toDeselect.compactMap { dataSource.indexPath(for: $0) })
+            collectionView.deselectItems(at: paths)
         }
-        if !toSelect.isEmpty {
-            let paths = Set(toSelect.compactMap { dataSource.indexPath(for: $0) })
+        if !delta.toSelect.isEmpty {
+            let paths = Set(delta.toSelect.compactMap { dataSource.indexPath(for: $0) })
             collectionView.selectItems(at: paths, scrollPosition: [])
         }
-        return true
     }
 }
 
@@ -157,20 +164,16 @@ extension MediaAssetCollectionViewController {
     }
 
     /// Restores selection after a structural apply: survivors are the previously
-    /// selected identities that still exist. select/deselectItems update the tiles'
-    /// rings without re-entering the delegate. The shift-click anchor is pruned by the
-    /// same identity rule: an anchor whose asset disappeared must not resurrect a stale
-    /// range on the next shift-click.
+    /// selected identities that still exist. Applying only the delta — rather than
+    /// deselecting everything and reselecting survivors — means a surviving tile's
+    /// `isSelected` never changes, so its animated selection ring (spec 0047) never
+    /// blinks on an apply that does not actually touch its selection state. The
+    /// shift-click anchor is pruned by the same identity rule: an anchor whose asset
+    /// disappeared must not resurrect a stale range on the next shift-click.
     func restoreSelection(_ preserved: Set<MediaAssetID>, in ordered: [MediaAssetID]) {
-        let current = collectionView.selectionIndexPaths
-        if !current.isEmpty {
-            collectionView.deselectItems(at: current)
-        }
+        let current = selectedIdentities()
         let survivors = MediaGridSelection.pruned(preserved, to: ordered)
-        let paths = Set(survivors.compactMap { dataSource.indexPath(for: $0) })
-        if !paths.isEmpty {
-            collectionView.selectItems(at: paths, scrollPosition: [])
-        }
+        applySelectionDelta(from: current, to: survivors)
         if let anchor = selectionAnchorID, !ordered.contains(anchor) {
             selectionAnchorID = nil
             anchorBaseSelection = []

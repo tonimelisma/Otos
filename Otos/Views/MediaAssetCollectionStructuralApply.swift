@@ -17,7 +17,17 @@ extension MediaAssetCollectionViewController {
         let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
         reportViewport()
         let preheatCount = preheatLookahead(reason: "structuralApply")
-        restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)
+        // A descriptor-changing apply is a user context change and must clear the
+        // selection and shift-click anchor unconditionally, exactly like the
+        // `.refreshVisible` descriptor-change path — `restoreSelection`'s anchor prune
+        // only clears an anchor whose *asset* left the new ordered IDs, which is not the
+        // same thing as "the descriptor changed" (the previously anchored asset can
+        // still be present in a new scope/sort/filter's results).
+        if context.resetSelection {
+            clearSelection(reason: "descriptorChange")
+        } else {
+            restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)
+        }
 
         let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)
         logFinishedStructuralApply(

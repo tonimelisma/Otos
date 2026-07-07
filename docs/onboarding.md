@@ -339,22 +339,38 @@ visible-detail request count caused by the apply. They do not try to count
 scroll-driven visible loads that merely happen while a long apply is running. The
 bridge also reports the visible
 identities upward (the **viewport**) so enrichment can prioritize what you are
-looking at. `MediaAssetTileView` is one reusable tile. The collection cell stays
+looking at. Small/user-visible animated applies get a tuned duration and
+ease-out-with-overshoot curve (`MediaGridAnimation`, spec 0047) via an explicit
+`NSAnimationContext` group around that branch only; the large/reorder-only
+reloadData-class fallback is completely unaffected. `MediaGridAnimatedLayout`
+(a `NSCollectionViewCompositionalLayout` subclass) fades and shrinks only the
+index paths a given apply batch actually inserted or deleted, tracked via
+`prepare(forCollectionViewUpdates:)`/`finalizeCollectionViewUpdates()` and cleared
+every batch — every other appearing/disappearing item (scroll dequeue, a future
+zoom swap) keeps AppKit's normal attributes untouched.
+
+`MediaAssetTileView` is one reusable tile. The collection cell stays
 transparent; the visible face is the loaded thumbnail's aspect-fit rect, or a
-full-square neutral placeholder before any image has loaded. The tile does not
-render filename or relative date text. Videos, and only videos, add a
-bottom-right dark badge with centered duration text when Store has parsed it or a
-film symbol while duration is still unknown. The visible detail path uses
-`MediaTileDetail`, which intentionally carries only thumbnail path, best kind,
-duration, and source stamps into the tile boundary. It first checks the
-ViewModel-owned `MediaTileImageCache`; a hit paints immediately, while a miss
-loads and decodes the thumbnail *off the main thread* and only assigns a non-nil
-finished image on Main, with a generation token so a load that finishes after the
-tile has been reused for another asset is discarded. The image reload key includes
-the thumbnail path plus source size and modification stamp, but not duration, so
-badge-only enrichment updates do not clear or reload the image. A same-asset
-detail downgrade or nil decode result keeps the painted thumbnail instead of
-replacing it with placeholder content.
+full-square neutral placeholder before any image has loaded. A dim, centered
+media-kind icon (film for video, photo otherwise) sits on the placeholder until
+a thumbnail paints for that tile for the first time in this process — never a
+spinner or shimmer, which would fabricate progress that is not actually
+happening. The tile does not render filename or relative date text. Videos, and
+only videos, add a bottom-right dark badge with centered duration text when
+Store has parsed it or a film symbol while duration is still unknown. The
+visible detail path uses `MediaTileDetail`, which intentionally carries only
+thumbnail path, best kind, duration, and source stamps into the tile boundary.
+It first checks the ViewModel-owned `MediaTileImageCache`; a cache hit paints
+immediately with no fade (a fade there would read as flicker), while a miss
+loads and decodes the thumbnail *off the main thread* and applies it with a
+`CATransition` fade (staggered slightly per grid column so a batch ripples in),
+only assigning a non-nil finished image on Main, with a generation token so a
+load that finishes after the tile has been reused for another asset is
+discarded. The image reload key includes the thumbnail path plus source size
+and modification stamp, but not duration, so badge-only enrichment updates do
+not clear or reload the image. A same-asset detail downgrade or nil decode
+result keeps the painted thumbnail instead of replacing it with placeholder
+content.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
 selection gives click, ⌘-click, and ⌘A for free, and its `selectionIndexPaths` is
@@ -364,12 +380,15 @@ the clicked item), so the controller keeps a small anchor/base correction state
 (`selectionAnchorID`, `anchorBaseSelection`) and applies the full Photos-style
 contiguous range as a same-turn delta after AppKit's native toggle — spec 0046
 covers the design and the platform gap it closes. The tile draws selection on the
-visible thumbnail/placeholder face, not the whole square cell. Because enrichment
-and scans re-apply the grid structure often, each structural apply snapshots the
-selected `MediaAssetID`s first and restores the survivors by identity afterward,
-pruning the anchor the same way, so a background update never loses your
-selection; `MediaGridSelection` holds that pure, tested membership and
-range-selection logic. ⌘C / Edit ▸ Copy
+visible thumbnail/placeholder face, not the whole square cell, and fades the
+ring in/out over a tuned duration rather than snapping (spec 0047). Because
+enrichment and scans re-apply the grid structure often, each structural apply
+snapshots the selected `MediaAssetID`s first and restores the survivors
+afterward through the *minimal* selection delta
+(`MediaGridSelection.selectionDelta`, shared with the shift-range correction) —
+not a deselect-everything-then-reselect — so a surviving tile's selection state
+is never reassigned and its animated ring never blinks on a background apply.
+The shift-click anchor is pruned the same way. ⌘C / Edit ▸ Copy
 reaches the controller through the responder chain and `MediaGridClipboard` writes
 the selected assets' original file URLs to the pasteboard (one per asset, in display
 order). It writes references only — no image or video bytes are read — so copy is

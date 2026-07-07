@@ -212,6 +212,41 @@ struct MediaAssetTilePresentationTests {
                 == MediaAssetTilePresentation.imageContentKey(newDuration)
         )
     }
+
+    // MARK: - Placeholder icon (spec 0047)
+
+    @Test func placeholderIconIsFilmForVideoAndPhotoOtherwise() {
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .video) == "film")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .image) == "photo")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: nil) == "photo")
+    }
+
+    @Test func placeholderIconSideIsAQuarterOfTheShorterContentDimension() {
+        #expect(MediaAssetTileLayout.placeholderIconSide(
+            contentBounds: CGRect(x: 0, y: 0, width: 120, height: 120)
+        ) == 30)
+        // Wider-than-tall content uses the shorter (height) dimension.
+        #expect(MediaAssetTileLayout.placeholderIconSide(
+            contentBounds: CGRect(x: 0, y: 0, width: 400, height: 100)
+        ) == 25)
+    }
+
+    @Test func placeholderIconSideIsClampedToALegibleRange() {
+        #expect(MediaAssetTileLayout.placeholderIconSide(
+            contentBounds: CGRect(x: 0, y: 0, width: 40, height: 40)
+        ) == 16) // 40/4 = 10, clamped up to the 16 pt minimum
+        #expect(MediaAssetTileLayout.placeholderIconSide(
+            contentBounds: CGRect(x: 0, y: 0, width: 400, height: 400)
+        ) == 40) // 400/4 = 100, clamped down to the 40 pt maximum
+    }
+
+    @Test func placeholderIconFrameIsCenteredInContentBounds() {
+        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
+        let frame = MediaAssetTileLayout.placeholderIconFrame(contentBounds: bounds)
+        #expect(frame == CGRect(x: 45, y: 45, width: 30, height: 30))
+        #expect(frame.midX == bounds.midX)
+        #expect(frame.midY == bounds.midY)
+    }
 }
 
 @MainActor

@@ -21,6 +21,27 @@ nonisolated enum MediaAssetTileLayout {
     static let badgeTextY: CGFloat = 3
     static let badgeTextHeight: CGFloat = 14
     static let filmIconSize: CGFloat = 13
+    static let placeholderIconAlpha: CGFloat = 0.35
+    static let placeholderIconMinSide: CGFloat = 16
+    static let placeholderIconMaxSide: CGFloat = 40
+
+    /// A quarter of the shorter content dimension, clamped to a legible range — big
+    /// enough to read as a deliberate kind indicator on a small tile, small enough to
+    /// stay a quiet placeholder rather than a dominant glyph.
+    static func placeholderIconSide(contentBounds: CGRect) -> CGFloat {
+        let side = min(contentBounds.width, contentBounds.height) / 4
+        return min(max(side, placeholderIconMinSide), placeholderIconMaxSide)
+    }
+
+    static func placeholderIconFrame(contentBounds: CGRect) -> CGRect {
+        let side = placeholderIconSide(contentBounds: contentBounds)
+        return CGRect(
+            x: (contentBounds.width - side) / 2,
+            y: (contentBounds.height - side) / 2,
+            width: side,
+            height: side
+        )
+    }
 
     static func videoBadgeFrame(
         contentBounds: CGRect,
@@ -77,6 +98,14 @@ nonisolated enum TilePaintDecision: Equatable {
     case placeholder
 }
 
+/// Distinguishes an instant cache-backed repaint from an async decode completion, so the
+/// tile can fade only the latter (spec 0047) without threading a stringly typed reason
+/// through `applyImage`.
+nonisolated enum TilePaintApplication {
+    case cacheHit
+    case asyncLoad
+}
+
 enum MediaAssetTilePresentation {
     static func isVideo(_ detail: MediaTileDetail) -> Bool {
         detail.bestKind == .video
@@ -99,6 +128,15 @@ enum MediaAssetTilePresentation {
 
     nonisolated static func showsVideoBadge(_ detail: MediaTileDetail) -> Bool {
         detail.bestKind == .video
+    }
+
+    /// SF Symbol name for the placeholder icon (D6/D3, spec 0047): a film reel for a
+    /// known video, a photo otherwise — this covers both a known image and a not-yet-known
+    /// kind, since a generic photo glyph is a reasonable default while kind is still
+    /// unresolved. No spinner: a spinner on a merely queued tile would fabricate progress
+    /// that is not actually happening yet.
+    nonisolated static func placeholderIconSystemName(for kind: MediaKind?) -> String {
+        kind == .video ? "film" : "photo"
     }
 
     nonisolated static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {

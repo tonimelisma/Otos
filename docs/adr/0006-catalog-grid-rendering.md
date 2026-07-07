@@ -63,22 +63,33 @@ The layout has one full-width group with exactly six square fractional items,
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. Each square collection cell is transparent; the visible tile
 face is the loaded thumbnail's native aspect-fit rect, or a full-square neutral
-placeholder before the thumbnail is known. Tiles do not render filename or
-relative date text. Only content whose generated best kind is video gets a
-bottom-right badge inside the face: centered duration text when available,
-otherwise a film symbol. The badge darkened area is right-aligned to the
-thumbnail face with no outer inset and symmetric internal horizontal padding.
-Images have no video badge, blue tint, or video-only backing color.
+placeholder before the thumbnail is known. A dim, centered media-kind icon (film
+for a known video, photo otherwise) sits on the placeholder until a thumbnail
+paints for that tile for the first time — never a spinner or shimmer, which would
+fabricate progress that is not happening (spec 0047). Tiles do not render
+filename or relative date text. Only content whose generated best kind is video
+gets a bottom-right badge inside the face: centered duration text when
+available, otherwise a film symbol. The badge darkened area is right-aligned to
+the thumbnail face with no outer inset and symmetric internal horizontal
+padding. Images have no video badge, blue tint, or video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
-insert/remove changes may animate so surviving items move with rendered thumbnails
-intact. Large applies and background reorder-only changes use AppKit's
-reloadData-class diffable path (`animatingDifferences: false`) after measured
-true-diff apply cost at real-library scale. This is visually safe because the
-tile can synchronously repaint any decoded thumbnail and never downgrades a
-painted same-asset image to placeholder content. The fallback is an apply-policy
-choice only; it does not make the catalog, detail cache, or decoded image cache a
-source of media truth.
+insert/remove changes animate with a tuned duration and ease-out-with-overshoot
+curve (`MediaGridAnimation`, spec 0047), applied through an explicit
+`NSAnimationContext` group around the animated apply branch only; a
+`MediaGridAnimatedLayout` fades and shrinks only the index paths a given apply
+batch actually inserted or deleted, leaving every other appearing/disappearing
+item (scroll dequeue, a future zoom swap) at `super`'s unmodified attributes.
+Large applies and background reorder-only changes use AppKit's reloadData-class
+diffable path (`animatingDifferences: false`) after measured true-diff apply cost
+at real-library scale, completely unaffected by the animation tuning above. This
+is visually safe because the tile can synchronously repaint any decoded
+thumbnail and never downgrades a painted same-asset image to placeholder
+content. The fallback is an apply-policy choice only; it does not make the
+catalog, detail cache, or decoded image cache a source of media truth. A
+thumbnail's arrival from an async decode (never a cache hit) fades in with a
+small per-column stagger; a cache-hit repaint (scroll-back, recycled-cell sync
+repaint) stays instant to avoid reading as flicker.
 
 For unchanged IDs, re-read visible details through the Store-backed detail reader
 and reconfigure the existing visible items in place. Do not call AppKit item reload
@@ -86,9 +97,12 @@ for a detail-only refresh: reload enters the reuse lifecycle, and reusable tile
 cleanup clears the thumbnail before the async loader repaints it. Permit one
 structural apply at a time and retain only the latest pending grid state. Reset
 scroll and selection only when the query descriptor changes; same-descriptor
-structural applies restore surviving selected identities. The selection ring is
-drawn on the visible tile face, so it follows the thumbnail aspect instead of the
-whole square cell.
+structural applies restore surviving selected identities through the minimal
+selection delta (`MediaGridSelection.selectionDelta`), so a surviving tile's
+selection state is never reassigned and its animated ring never blinks on a
+background apply. The selection ring is drawn on the visible tile face, so it
+follows the thumbnail aspect instead of the whole square cell, and fades in/out
+over a tuned duration rather than snapping.
 
 ## Why This Is Simplest Correct
 
