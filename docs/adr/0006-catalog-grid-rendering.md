@@ -13,7 +13,9 @@ It references but does not own catalog truth, publication cadence, availability,
 and ordering. ADR 0010 owns Store-executed ordering, identity-plus-generation grid
 publication, and visible detail reads. ADRs 0002, 0004, and 0005 retain
 scan/persistence, UI ownership, and publication ownership.
-Selection, preview, and zoom require separate future specs/ADRs if implemented.
+Shift-click range selection is owned by spec 0046 (anchor/base correction state
+inside this ADR's AppKit boundary). Preview and zoom still require separate
+future specs/ADRs if implemented.
 Thumbnail storage is owned by ADR 0009; this ADR owns how the visible grid
 renders and refreshes those thumbnail-backed values, including the invariant that
 a painted same-asset thumbnail never blanks while the asset remains on screen.
@@ -109,6 +111,9 @@ responsive columns and removes flow-layout width bookkeeping.
   cleared.
 - Native AppKit selection and responder-chain copy behavior live at this boundary
   so SwiftUI and the ViewModel do not mirror high-cardinality selection state.
+  Shift-click range selection (spec 0046) adds one small ephemeral
+  anchor/base correction on top of that native truth, not a second selection
+  model.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
   high-cardinality media browser.
 

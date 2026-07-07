@@ -357,14 +357,19 @@ detail downgrade or nil decode result keeps the painted thumbnail instead of
 replacing it with placeholder content.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
-selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its
-`selectionIndexPaths` is the single live selection truth — there is no mirror in
-the ViewModel. The tile draws selection on the visible thumbnail/placeholder face,
-not the whole square cell. Because enrichment and scans re-apply the grid
-structure often, each structural apply snapshots the selected `MediaAssetID`s
-first and restores the survivors by identity afterward, so a background update
-never loses your selection;
-`MediaGridSelection` holds that pure, tested membership logic. ⌘C / Edit ▸ Copy
+selection gives click, ⌘-click, and ⌘A for free, and its `selectionIndexPaths` is
+the single live selection truth — there is no mirror in the ViewModel. ⇧-click is
+not free: AppKit natively treats a mouse shift-click like a ⌘-click (toggle only
+the clicked item), so the controller keeps a small anchor/base correction state
+(`selectionAnchorID`, `anchorBaseSelection`) and applies the full Photos-style
+contiguous range as a same-turn delta after AppKit's native toggle — spec 0046
+covers the design and the platform gap it closes. The tile draws selection on the
+visible thumbnail/placeholder face, not the whole square cell. Because enrichment
+and scans re-apply the grid structure often, each structural apply snapshots the
+selected `MediaAssetID`s first and restores the survivors by identity afterward,
+pruning the anchor the same way, so a background update never loses your
+selection; `MediaGridSelection` holds that pure, tested membership and
+range-selection logic. ⌘C / Edit ▸ Copy
 reaches the controller through the responder chain and `MediaGridClipboard` writes
 the selected assets' original file URLs to the pasteboard (one per asset, in display
 order). It writes references only — no image or video bytes are read — so copy is

@@ -33,6 +33,29 @@ enum MediaGridSelection {
         }
         return ordered.filter(selected.contains)
     }
+
+    /// Corrects AppKit's native shift-click (which toggles only the clicked item, the
+    /// same as ⌘-click) into a Photos/Lightroom-style contiguous range. `base` is the
+    /// selection recorded when `anchor` was last set by a plain or ⌘-click, so a chain of
+    /// shift-clicks from the same anchor grows and shrinks the range instead of
+    /// accumulating every intermediate click. Falls back to `{clicked}` (a plain click)
+    /// when `anchor` or `clicked` is not present in the current display order — an
+    /// anchor whose asset a structural apply removed must not resurrect a stale range.
+    nonisolated static func shiftRangeSelection(
+        anchor: MediaAssetID,
+        clicked: MediaAssetID,
+        base: Set<MediaAssetID>,
+        orderedIDs: [MediaAssetID]
+    ) -> Set<MediaAssetID> {
+        guard
+            let anchorIndex = orderedIDs.firstIndex(of: anchor),
+            let clickedIndex = orderedIDs.firstIndex(of: clicked)
+        else {
+            return [clicked]
+        }
+        let range = orderedIDs[min(anchorIndex, clickedIndex) ... max(anchorIndex, clickedIndex)]
+        return base.union(range)
+    }
 }
 
 /// Media clipboard guide

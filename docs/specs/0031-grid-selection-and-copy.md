@@ -105,6 +105,12 @@ Out of scope:
 | --- | --- | --- | --- | --- |
 | SEL-click | Functional | Clicking a tile selects it and shows a highlight; clicking another tile replaces the selection. | Current | `docs/requirements.md` APP-010 (changed) |
 | SEL-multi | Functional | ⌘-click toggles a tile in/out of the selection; ⇧-click extends a contiguous range; ⌘A selects all. | Current | `docs/requirements.md` APP-010 (changed) |
+
+**Post-implementation correction:** this spec assumed `NSCollectionView`'s native
+⇧-click already produced a contiguous range. Spec 0046 found that AppKit treats
+mouse ⇧-click identically to ⌘-click (toggles only the clicked item) and added the
+anchor/base correction that makes SEL-multi's ⇧-click behavior actually true. See
+`docs/specs/0046-grid-shift-click-range-selection.md`.
 | SEL-persist | Architecture | Selection is tracked by `MediaAssetID` and survives same-descriptor structural updates; assets that disappear are dropped from the selection, and descriptor changes clear selection. | Current | `docs/requirements.md` APP-011 |
 | COPY-url | Functional | ⌘C / Edit ▸ Copy copies one original file URL per selected asset, in display order, so the media can be pasted into Finder or attached in Messages/Mail. | Current | `docs/requirements.md` APP-012 |
 | COPY-empty | Functional | Edit ▸ Copy is disabled when the selection is empty. | Current | `docs/requirements.md` APP-012 |

@@ -23,10 +23,14 @@ import UniformTypeIdentifiers
 /// cannot create file-writing tasks or retain grid state on MainActor.
 ///
 /// Selection is native: `isSelectable` + `allowsMultipleSelection` give click,
-/// ⌘-click, ⇧-click, and ⌘A for free, and `NSCollectionView.selectionIndexPaths` is
-/// the live selection truth (no separate mirror to drift). Because enrichment and
-/// scans re-apply the structure frequently, each structural apply snapshots the
-/// selected identities first and restores the survivors by identity afterward, so a
+/// ⌘-click, and ⌘A for free, and `NSCollectionView.selectionIndexPaths` is
+/// the live selection truth (no separate mirror to drift). ⇧-click is the one
+/// exception AppKit does not give for free — it natively toggles only the clicked
+/// item, the same as ⌘-click — so `MediaAssetCollectionSelection.swift` keeps a small
+/// anchor/base correction state and applies the full contiguous range as a same-turn
+/// delta (spec 0046). Because enrichment and scans re-apply the structure frequently,
+/// each structural apply snapshots the selected identities first and restores the
+/// survivors by identity afterward, pruning a dangling anchor the same way, so a
 /// background update never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches
 /// this controller through the responder chain and writes the selected assets'
 /// original file URLs to the pasteboard (ADR 0012), reading no bytes.
@@ -79,6 +83,11 @@ final class MediaAssetCollectionViewController: NSViewController {
     var preheatTask: Task<Void, Never>?
     var preheatIDs = Set<MediaAssetID>()
     var preheatGeneration = 0
+    /// Shift-click range anchor (see `MediaAssetCollectionSelection.swift`). Ephemeral,
+    /// pruned/cleared alongside the selection it corrects — never a second selection
+    /// truth.
+    var selectionAnchorID: MediaAssetID?
+    var anchorBaseSelection = Set<MediaAssetID>()
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let preservedSelection: Set<MediaAssetID>

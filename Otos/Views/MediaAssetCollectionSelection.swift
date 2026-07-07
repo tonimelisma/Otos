@@ -9,22 +9,115 @@ import OSLog
 // path for mouse selection, command validation, and Edit > Copy without mirroring
 // selected IDs into a second model.
 //
+// Shift-click range selection (spec 0046): `NSCollectionView` treats a mouse
+// shift-click identically to a ⌘-click — it toggles only the clicked item — because
+// `shouldSelectItemsAt` is documented approve/refuse-only and cannot return a superset
+// of the proposed selection. `handleUserSelectionEvent` corrects that native two-item
+// toggle into a Photos/Lightroom-style contiguous range by applying the delta
+// (`deselectItems`/`selectItems`) synchronously inside the same delegate turn, so no
+// paint happens between AppKit's native result and the correction and nothing flickers.
+// Programmatic `selectItems`/`deselectItems` do not re-enter these delegate methods, so
+// the correction cannot feed back into itself.
+//
+// Both native delegate methods route through the one handler because a single click can
+// fire either or both, and native shift/⌘-click each toggle exactly one item (no
+// collateral change to any other item), so an `indexPaths.count == 1` call is always
+// unambiguous for those two modifiers. A *plain* click is the one case where two calls
+// can fire for a single physical click — `didSelectItemsAt` for the newly clicked item
+// and, if a different single item was previously selected, `didDeselectItemsAt` for the
+// old one, in unspecified order — so plain-click anchor updates trust only the `select`
+// call and ignore the paired `deselect` call, keeping anchor assignment order-independent.
+//
+// `selectionAnchorID`/`anchorBaseSelection` are ephemeral correction state, not a second
+// selection truth: `collectionView.selectionIndexPaths` remains authoritative, and the
+// anchor is pruned or cleared everywhere the selection itself is pruned or cleared.
+//
 // Copy writes original file URLs to the pasteboard in display order. It does not read
 // media bytes, decode thumbnails, or materialize cloud placeholders; it only maps the
 // collection view's selected identities back through `MediaAssetID.fileURL`.
 
 // MARK: - Selection and copy
 
+enum UserSelectionEventKind {
+    case select
+    case deselect
+}
+
 extension MediaAssetCollectionViewController: NSCollectionViewDelegate {
-    /// User clicks drive native selection; we only observe it for telemetry. The
-    /// programmatic restore below uses select/deselectItems, which do not call these
-    /// delegate methods, so restore cannot feed back into itself.
-    func collectionView(_: NSCollectionView, didSelectItemsAt _: Set<IndexPath>) {
-        logSelection(reason: "select")
+    func collectionView(_: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) {
+        handleUserSelectionEvent(indexPaths: indexPaths, kind: .select, event: NSApp.currentEvent)
     }
 
-    func collectionView(_: NSCollectionView, didDeselectItemsAt _: Set<IndexPath>) {
-        logSelection(reason: "deselect")
+    func collectionView(_: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) {
+        handleUserSelectionEvent(indexPaths: indexPaths, kind: .deselect, event: NSApp.currentEvent)
+    }
+}
+
+extension MediaAssetCollectionViewController {
+    /// Single entry point for both native selection delegate callbacks. `event` is a
+    /// parameter (rather than read from `NSApp.currentEvent` internally) so tests can
+    /// drive this with a synthesized `NSEvent` without touching the app's live event
+    /// stream. Only single-item, left-mouse events are ever click-like; everything else
+    /// (keyboard ⇧+arrows, marquee/rubber-band drags reporting many items at once, ⌘A)
+    /// falls through to plain logging and leaves the anchor untouched, matching native
+    /// behavior for those gestures.
+    func handleUserSelectionEvent(indexPaths: Set<IndexPath>, kind: UserSelectionEventKind, event: NSEvent?) {
+        guard
+            indexPaths.count == 1,
+            let clicked = dataSource.itemIdentifier(for: indexPaths.first!),
+            let event,
+            event.type == .leftMouseDown || event.type == .leftMouseUp
+        else {
+            logSelection(reason: kind == .select ? "select" : "deselect")
+            return
+        }
+
+        if event.modifierFlags.contains(.shift), let anchor = selectionAnchorID {
+            if applyShiftRangeCorrection(anchor: anchor, clicked: clicked) {
+                OtosSignpost.ui.emitEvent("MediaGridShiftRangeApplied")
+            }
+            logSelection(reason: "shiftRange")
+            return
+        }
+
+        // A shift-click with no anchor (or a ⌘-click, which never has a collateral
+        // deselect call) is unambiguous regardless of which callback fired. Only a plain
+        // click's paired deselect-of-the-old-selection call must be ignored here.
+        let isPlainClick = !event.modifierFlags.contains(.shift) && !event.modifierFlags.contains(.command)
+        guard !isPlainClick || kind == .select else {
+            logSelection(reason: "deselect")
+            return
+        }
+
+        selectionAnchorID = clicked
+        anchorBaseSelection = selectedIdentities()
+        logSelection(reason: "anchorSet")
+    }
+
+    /// Computes the full corrected range and applies only the delta against the current
+    /// (already native-toggled) selection. Returns `false` when the computed target
+    /// already matches the current selection, so callers can skip a redundant signpost.
+    private func applyShiftRangeCorrection(anchor: MediaAssetID, clicked: MediaAssetID) -> Bool {
+        let current = selectedIdentities()
+        let target = MediaGridSelection.shiftRangeSelection(
+            anchor: anchor,
+            clicked: clicked,
+            base: anchorBaseSelection,
+            orderedIDs: applyGate.displayedOrderedIDs
+        )
+        guard target != current else {
+            return false
+        }
+        let toDeselect = current.subtracting(target)
+        let toSelect = target.subtracting(current)
+        if !toDeselect.isEmpty {
+            collectionView.deselectItems(at: Set(toDeselect.compactMap { dataSource.indexPath(for: $0) }))
+        }
+        if !toSelect.isEmpty {
+            let paths = Set(toSelect.compactMap { dataSource.indexPath(for: $0) })
+            collectionView.selectItems(at: paths, scrollPosition: [])
+        }
+        return true
     }
 }
 
@@ -65,7 +158,9 @@ extension MediaAssetCollectionViewController {
 
     /// Restores selection after a structural apply: survivors are the previously
     /// selected identities that still exist. select/deselectItems update the tiles'
-    /// rings without re-entering the delegate.
+    /// rings without re-entering the delegate. The shift-click anchor is pruned by the
+    /// same identity rule: an anchor whose asset disappeared must not resurrect a stale
+    /// range on the next shift-click.
     func restoreSelection(_ preserved: Set<MediaAssetID>, in ordered: [MediaAssetID]) {
         let current = collectionView.selectionIndexPaths
         if !current.isEmpty {
@@ -75,6 +170,10 @@ extension MediaAssetCollectionViewController {
         let paths = Set(survivors.compactMap { dataSource.indexPath(for: $0) })
         if !paths.isEmpty {
             collectionView.selectItems(at: paths, scrollPosition: [])
+        }
+        if let anchor = selectionAnchorID, !ordered.contains(anchor) {
+            selectionAnchorID = nil
+            anchorBaseSelection = []
         }
         logSelection(reason: "restore")
     }
@@ -91,6 +190,8 @@ extension MediaAssetCollectionViewController {
     }
 
     func clearSelection(reason: String) {
+        selectionAnchorID = nil
+        anchorBaseSelection = []
         let current = collectionView.selectionIndexPaths
         guard !current.isEmpty else {
             return
