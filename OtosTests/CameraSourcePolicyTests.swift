@@ -1,3 +1,4 @@
+import Foundation
 @testable import Otos
 import Testing
 
@@ -26,5 +27,26 @@ struct CameraSourcePolicyTests {
             transportType: "PTP",
             locationDescription: "USB Camera"
         ) == nil)
+    }
+
+    @Test func duplicateRemovableVolumeIdentitiesArePathDisambiguated() {
+        let attachments = RemovableVolumeMonitor.disambiguatedAttachments([
+            RemovableVolumeAttachment(
+                mountURL: URL(fileURLWithPath: "/Volumes/CardA", isDirectory: true),
+                identity: "volume:duplicate",
+                displayName: "Card A",
+                isEjectable: true
+            ),
+            RemovableVolumeAttachment(
+                mountURL: URL(fileURLWithPath: "/Volumes/CardB", isDirectory: true),
+                identity: "volume:duplicate",
+                displayName: "Card B",
+                isEjectable: true
+            ),
+        ])
+
+        #expect(Set(attachments.map(\.identity)).count == 2)
+        #expect(attachments[0].identity == "volume:duplicate")
+        #expect(attachments[1].identity == "volume:duplicate#path:/Volumes/CardB")
     }
 }

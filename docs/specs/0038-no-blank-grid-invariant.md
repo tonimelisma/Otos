@@ -308,18 +308,12 @@ as a parameter instead of reading `durationField.stringValue` view state
 
 ### 3.4 Overlay geometry (issues 2 + 3) — `MediaAssetTileView.swift`
 
-- `Layout.overlayInset` 6 → 0 (`:85`): scrim anchored exactly at the
-  thumbnail's top-left corner (`layoutTextScrim` x/y, `:298–303`), badge exactly
-  at bottom-right (`layoutVideoBadge`, `:339–344`). No padding between text
-  block and the two edges it touches; keep small internal padding only on
-  inner (away-from-corner) edges.
-- Scrim width: `max(titleField, dateField).intrinsicContentSize.width` +
-  inner padding, capped at tile width (`:294–303` currently full-width) — the
-  darkened area sits only under the text.
-- `maskedCorners` rounds only each overlay's inner corner; outer corners are
-  clipped by the tile's existing 4 pt mask.
-- `overlayVisibility` thresholds (`:451–456`) recomputed for 0 px geometry;
-  stays pure and unit-tested.
+Spec 0044 supersedes the text-scrim portion of this section. Current thumbnails
+render no filename/date label. The remaining overlay geometry is the video badge:
+its darkened area is right-aligned to the thumbnail's bottom-right face corner
+with no outer inset, and its duration text or fallback symbol is centered inside
+the badge with symmetric horizontal padding. Only the badge's inner corner is
+rounded; the outer corner is clipped by the tile's existing 4 pt mask.
 
 ### 3.5 Materialization (issue 4)
 
@@ -390,8 +384,8 @@ Each workstream is independently landable; WS2 alone closes the blocker
 | # | Issue | Criterion | Baseline |
 | --- | --- | --- | --- |
 | 1 | Flicker (blocker) | Watchdog `MediaTilePaintInvariantViolation` target count **= 0** during a smoke run with active re-enrichment + continuous scrolling; a nonzero count means a same-asset clear attempt was defended and blocked, not proof of visible blanking; capture should show no visible blanking | Blanking every ~3.4 s (153 reloadData applies / 8.6 min) |
-| 2 | Text at corners | Scrim + text at 0 px from the thumbnail's top-left corner (layout unit test + screenshot) | 6 pt inset + padding |
-| 3 | Scrim width | Darkened area only under text extent (unit test: scrim frame vs text width) | Full content width |
+| 2 | Label removal | No filename/date label renders on thumbnails; source-hygiene tests prove the old scrim and fields are absent | filename/date text at top-left |
+| 3 | Badge alignment | Video badge darkened area is right-aligned; duration text is centered inside the badge (layout unit test) | right edge cropped by insufficient badge width |
 | 4 | Materialization | Stalled-request path costs ≤ ~30 s (re-request), never blocked behind a full eager pool; every download attempt attributable in JSONL (dispatch / slot wait / transfer / outcome case / bytes) | 40 s / 162 s / 193 s, un-attributable 120 s dead polls |
 | 5 | Scroll-back placeholders | Previously seen assets repaint with no placeholder frame within cache bounds; scroll-forward mostly pre-painted through the manual batched look-ahead path, with AppKit prefetch treated as opportunistic | Always placeholder-first, 2 async hops |
 | — | Responsiveness | Stall count / p50 not worse than 76 / 200 ms; expected better | 76 stalls, p50 200 ms, max 856 ms |
@@ -400,8 +394,8 @@ Each workstream is independently landable; WS2 alone closes the blocker
 ## 7. Test plan
 
 - **Pure**: `paintDecision` table (every row of §3.2 including V3 downgrade and
-  V4 nil-apply); overlay frames at 0 px; `overlayVisibility`; LRU merge/evict
-  semantics; cache key stability across date/duration-only updates (existing
+  V4 nil-apply); badge right alignment plus centered duration text; LRU merge/
+  evict semantics; cache key stability across duration-only updates (existing
   `imageContentKey` tests).
 - **Coordinator (stubs, existing patterns)**: reserved slot (eager never takes
   the last slot while viewport-dataless pending); re-request cadence

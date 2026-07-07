@@ -3,8 +3,8 @@ import Foundation
 
 // Pure tile presentation guide
 //
-// These helpers keep content-type, fallback-title, capture-date, overlay geometry,
-// and thumbnail-load policy independent from reusable AppKit view state. The AppKit
+// These helpers keep video badge policy, thumbnail face geometry, and
+// thumbnail-load policy independent from reusable AppKit view state. The AppKit
 // tile calls into this file, and tests assert these value-level decisions directly.
 
 struct LoadedTile {
@@ -12,58 +12,15 @@ struct LoadedTile {
     let pixelSize: CGSize?
 }
 
-nonisolated struct MediaAssetTileTextScrimFrames: Equatable {
-    let scrim: CGRect
-    let title: CGRect
-    let date: CGRect?
-}
-
 nonisolated enum MediaAssetTileLayout {
     static let contentCornerRadius: CGFloat = 4
-    static let scrimCornerRadius: CGFloat = 3
-    static let overlayInset: CGFloat = 0
-    static let scrimPaddingX: CGFloat = 5
-    static let scrimPaddingY: CGFloat = 4
-    static let titleHeight: CGFloat = 14
-    static let dateHeight: CGFloat = 12
-    static let lineGap: CGFloat = 1
+    static let badgeCornerRadius: CGFloat = 3
+    static let badgeHorizontalPadding: CGFloat = 5
     static let badgeHeight: CGFloat = 20
     static let badgeMinWidth: CGFloat = 22
+    static let badgeTextY: CGFloat = 3
+    static let badgeTextHeight: CGFloat = 14
     static let filmIconSize: CGFloat = 13
-
-    static func textScrimFrames(
-        contentBounds: CGRect,
-        titleTextWidth: CGFloat,
-        dateTextWidth: CGFloat,
-        showsDate: Bool
-    ) -> MediaAssetTileTextScrimFrames? {
-        let availableWidth = max(contentBounds.width - overlayInset * 2, 0)
-        let availableHeight = max(contentBounds.height - overlayInset * 2, 0)
-        guard availableWidth > 0, availableHeight > 0 else {
-            return nil
-        }
-
-        let measuredTextWidth = ceil(max(titleTextWidth, showsDate ? dateTextWidth : 0))
-        let scrimWidth = min(max(1, measuredTextWidth + scrimPaddingX), availableWidth)
-        let desiredHeight = titleHeight
-            + (showsDate ? lineGap + dateHeight : 0)
-            + scrimPaddingY
-        let scrimHeight = min(desiredHeight, availableHeight)
-        guard scrimWidth > 0, scrimHeight > 0 else {
-            return nil
-        }
-
-        let lineWidth = max(scrimWidth - scrimPaddingX, 0)
-        let title = CGRect(x: 0, y: 0, width: lineWidth, height: titleHeight)
-        let date = showsDate
-            ? CGRect(x: 0, y: titleHeight + lineGap, width: lineWidth, height: dateHeight)
-            : nil
-        return MediaAssetTileTextScrimFrames(
-            scrim: CGRect(x: overlayInset, y: overlayInset, width: scrimWidth, height: scrimHeight),
-            title: title,
-            date: date
-        )
-    }
 
     static func videoBadgeFrame(
         contentBounds: CGRect,
@@ -82,11 +39,25 @@ nonisolated enum MediaAssetTileLayout {
             height: badgeHeight
         )
     }
-}
 
-nonisolated struct MediaAssetTileOverlayVisibility: Equatable {
-    let showsDate: Bool
-    let showsVideoBadge: Bool
+    static func videoBadgeWidth(durationTextWidth: CGFloat?) -> CGFloat {
+        guard let durationTextWidth else {
+            return badgeMinWidth
+        }
+        return max(
+            badgeMinWidth,
+            ceil(durationTextWidth) + badgeHorizontalPadding * 2
+        )
+    }
+
+    static func videoBadgeDurationFrame(badgeWidth: CGFloat) -> CGRect {
+        CGRect(
+            x: badgeHorizontalPadding,
+            y: badgeTextY,
+            width: max(badgeWidth - badgeHorizontalPadding * 2, 0),
+            height: badgeTextHeight
+        )
+    }
 }
 
 nonisolated struct TilePaintContext {
@@ -107,39 +78,13 @@ nonisolated enum TilePaintDecision: Equatable {
 }
 
 enum MediaAssetTilePresentation {
-    static func isVideo(_ asset: MediaAsset) -> Bool {
-        asset.bestKind == .video
+    static func isVideo(_ detail: MediaTileDetail) -> Bool {
+        detail.bestKind == .video
     }
 
-    static func title(_ asset: MediaAsset) -> String {
-        if let name = asset.name {
-            return name
-        }
-        return URL(fileURLWithPath: asset.relativePath.rawValue).lastPathComponent
-    }
-
-    /// Empty when nothing is known; never a fabricated capture date.
-    nonisolated static func captureDateText(_ asset: MediaAsset) -> String {
-        guard let date = asset.bestCaptureDate else {
-            return ""
-        }
-        return RelativeDateText.string(for: date)
-    }
-
-    nonisolated static func captureDateText(
-        _ asset: MediaAsset,
-        now: Date,
-        calendar: Calendar
-    ) -> String {
-        guard let date = asset.bestCaptureDate else {
-            return ""
-        }
-        return RelativeDateText.string(for: date, now: now, calendar: calendar)
-    }
-
-    nonisolated static func videoBadgeText(_ asset: MediaAsset) -> String? {
-        guard showsVideoBadge(asset),
-              let durationSeconds = asset.durationSeconds,
+    nonisolated static func videoBadgeText(_ detail: MediaTileDetail) -> String? {
+        guard showsVideoBadge(detail),
+              let durationSeconds = detail.durationSeconds,
               durationSeconds.isFinite
         else {
             return nil
@@ -152,8 +97,8 @@ enum MediaAssetTilePresentation {
         return duration.formatted(.time(pattern: .minuteSecond))
     }
 
-    nonisolated static func showsVideoBadge(_ asset: MediaAsset) -> Bool {
-        asset.bestKind == .video
+    nonisolated static func showsVideoBadge(_ detail: MediaTileDetail) -> Bool {
+        detail.bestKind == .video
     }
 
     nonisolated static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
@@ -177,11 +122,8 @@ enum MediaAssetTilePresentation {
         )
     }
 
-    nonisolated static func overlayVisibility(contentRect: CGRect) -> MediaAssetTileOverlayVisibility {
-        MediaAssetTileOverlayVisibility(
-            showsDate: contentRect.width >= 44 && contentRect.height >= 31,
-            showsVideoBadge: contentRect.width >= 56 && contentRect.height >= 56
-        )
+    nonisolated static func showsVideoBadge(contentRect: CGRect) -> Bool {
+        contentRect.width >= 56 && contentRect.height >= 56
     }
 
     nonisolated static func paintDecision(_ context: TilePaintContext) -> TilePaintDecision {
@@ -198,20 +140,20 @@ enum MediaAssetTilePresentation {
         return .loadAsync(retainsCurrentImage: sameIdentity && context.hasPaintedImage)
     }
 
-    /// Thumbnail path plus source stamp; overlay-only updates do not change image identity.
-    nonisolated static func imageContentKey(_ asset: MediaAsset) -> String {
-        let thumbnail = asset.thumbnailPath ?? ""
-        let size = asset.enrichedSourceSize ?? -1
-        let stamp = asset.enrichedSourceMTimeSeconds ?? -1
+    /// Thumbnail path plus source stamp; video-badge updates do not change image identity.
+    nonisolated static func imageContentKey(_ detail: MediaTileDetail) -> String {
+        let thumbnail = detail.thumbnailPath ?? ""
+        let size = detail.enrichedSourceSize ?? -1
+        let stamp = detail.enrichedSourceMTimeSeconds ?? -1
         return "\(thumbnail)#\(size)#\(stamp)"
     }
 
-    nonisolated static func decodedThumbnailImage(asset: MediaAsset, thumbnailDirectory: URL?) -> CGImage? {
-        loadImage(asset: asset, thumbnailDirectory: thumbnailDirectory).image
+    nonisolated static func decodedThumbnailImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> CGImage? {
+        loadImage(detail: detail, thumbnailDirectory: thumbnailDirectory).image
     }
 
-    nonisolated static func loadImage(asset: MediaAsset, thumbnailDirectory: URL?) -> LoadedTile {
-        let image = asset.thumbnailPath.flatMap { name in
+    nonisolated static func loadImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> LoadedTile {
+        let image = detail.thumbnailPath.flatMap { name in
             thumbnailDirectory.flatMap { ThumbnailStore.load(name, in: $0) }
         }
         return LoadedTile(

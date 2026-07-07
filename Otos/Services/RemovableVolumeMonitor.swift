@@ -24,6 +24,8 @@ nonisolated struct RemovableVolumeDetachedDisk {
 final class RemovableVolumeMonitor {
     private let notificationCenter: NotificationCenter
     private let onAttach: @MainActor @Sendable (RemovableVolumeAttachment) -> Void
+    private let onQuiesce: @MainActor @Sendable (String) -> Void
+    private let onResume: @MainActor @Sendable (String) -> Void
     private let onDetach: @MainActor @Sendable (String, RemovableSourceDetachReason) -> Void
 
     private var observers: [NSObjectProtocol] = []
@@ -34,10 +36,14 @@ final class RemovableVolumeMonitor {
     init(
         workspace: NSWorkspace = .shared,
         onAttach: @escaping @MainActor @Sendable (RemovableVolumeAttachment) -> Void,
+        onQuiesce: @escaping @MainActor @Sendable (String) -> Void,
+        onResume: @escaping @MainActor @Sendable (String) -> Void,
         onDetach: @escaping @MainActor @Sendable (String, RemovableSourceDetachReason) -> Void
     ) {
         notificationCenter = workspace.notificationCenter
         self.onAttach = onAttach
+        self.onQuiesce = onQuiesce
+        self.onResume = onResume
         self.onDetach = onDetach
     }
 
@@ -58,6 +64,7 @@ final class RemovableVolumeMonitor {
             notificationCenter.removeObserver(observer)
         }
         observers.removeAll()
+        diskMonitor?.stop()
         diskMonitor = nil
         attachmentsByIdentity.removeAll()
         isStarted = false
@@ -80,12 +87,11 @@ final class RemovableVolumeMonitor {
         ) { [weak self] notification in
             let volumePath = notification.userInfo?["NSDevicePath"] as? String
             Task { @MainActor in
-                self?.detach(
+                self?.quiesce(
                     matching: RemovableVolumeDetachedDisk(
                         volumePath: volumePath,
                         volumeUUID: nil
-                    ),
-                    reason: .unmounted
+                    )
                 )
             }
         }
@@ -110,7 +116,7 @@ final class RemovableVolumeMonitor {
 
     private func refresh(reason: String) {
         let attachments = Self.currentAttachments()
-        let nextByIdentity = Dictionary(uniqueKeysWithValues: attachments.map { ($0.identity, $0) })
+        let nextByIdentity = Dictionary(attachments.map { ($0.identity, $0) }) { first, _ in first }
         let currentIdentities = Set(attachmentsByIdentity.keys)
         let nextIdentities = Set(nextByIdentity.keys)
 
@@ -124,6 +130,26 @@ final class RemovableVolumeMonitor {
         OtosLog.fileAccess.info(
             "Removable volume refresh reason=\(reason, privacy: .public) count=\(attachments.count, privacy: .public)"
         )
+    }
+
+    private func quiesce(matching disk: RemovableVolumeDetachedDisk) {
+        guard let identity = identity(matching: disk) else {
+            return
+        }
+        onQuiesce(identity)
+        Task { @MainActor [weak self, identity] in
+            do {
+                try await Task.sleep(for: .seconds(2))
+            } catch {
+                return
+            }
+            guard let self,
+                  Self.currentAttachments().contains(where: { $0.identity == identity })
+            else {
+                return
+            }
+            onResume(identity)
+        }
     }
 
     private func detach(matching disk: RemovableVolumeDetachedDisk, reason: RemovableSourceDetachReason) {
@@ -149,6 +175,38 @@ final class RemovableVolumeMonitor {
         return nil
     }
 
+    nonisolated static func disambiguatedAttachments(
+        _ attachments: [RemovableVolumeAttachment]
+    ) -> [RemovableVolumeAttachment] {
+        let grouped = Dictionary(grouping: attachments, by: \.identity)
+        return attachments.map { attachment in
+            guard let duplicates = grouped[attachment.identity],
+                  duplicates.count > 1,
+                  duplicates.first != attachment
+            else {
+                return attachment
+            }
+            let mountPath = normalizedMountPath(for: attachment.mountURL)
+            return RemovableVolumeAttachment(
+                mountURL: attachment.mountURL,
+                identity: "\(attachment.identity)#path:\(mountPath)",
+                displayName: attachment.displayName,
+                isEjectable: attachment.isEjectable
+            )
+        }
+    }
+
+    private nonisolated static func normalizedMountPath(for url: URL) -> String {
+        if let path = try? CatalogPath.normalizedDirectoryPath(for: url).rawValue {
+            return path
+        }
+        var path = url.standardizedFileURL.path(percentEncoded: false)
+        while path.count > 1, path.hasSuffix("/") {
+            path.removeLast()
+        }
+        return path
+    }
+
     private nonisolated static func currentAttachments() -> [RemovableVolumeAttachment] {
         let keys: [URLResourceKey] = [
             .volumeNameKey,
@@ -162,7 +220,7 @@ final class RemovableVolumeMonitor {
         ) else {
             return []
         }
-        return urls.compactMap { url in
+        let attachments = urls.compactMap { url -> RemovableVolumeAttachment? in
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
                   values.volumeIsRemovable == true
             else {
@@ -177,31 +235,65 @@ final class RemovableVolumeMonitor {
                 isEjectable: values.volumeIsEjectable == true
             )
         }
-        .sorted { left, right in
-            left.identity.localizedStandardCompare(right.identity) == .orderedAscending
-        }
+        return disambiguatedAttachments(attachments)
+            .sorted { left, right in
+                left.identity.localizedStandardCompare(right.identity) == .orderedAscending
+            }
     }
 }
 
 private final nonisolated class RemovableDiskDisappearanceMonitor {
     private let session: DASession
     private let queue = DispatchQueue(label: "net.melisma.Otos.removable-disk-arbitration")
-    private let onDiskDisappeared: @MainActor @Sendable (RemovableVolumeDetachedDisk) -> Void
+    private let callbackContext: UnsafeMutableRawPointer
+    private var isStopped = false
 
     init?(onDiskDisappeared: @escaping @MainActor @Sendable (RemovableVolumeDetachedDisk) -> Void) {
         guard let session = DASessionCreate(kCFAllocatorDefault) else {
             return nil
         }
         self.session = session
-        self.onDiskDisappeared = onDiskDisappeared
+        callbackContext = Unmanaged.passRetained(
+            RemovableDiskDisappearanceContext(onDiskDisappeared: onDiskDisappeared)
+        ).toOpaque()
 
-        let context = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        DARegisterDiskDisappearedCallback(session, nil, removableDiskDisappearedCallback, context)
+        DARegisterDiskDisappearedCallback(
+            session,
+            nil,
+            removableDiskDisappearedCallback as DADiskDisappearedCallback,
+            callbackContext
+        )
         DASessionSetDispatchQueue(session, queue)
     }
 
     deinit {
-        DASessionSetDispatchQueue(session, nil)
+        stop()
+    }
+
+    func stop() {
+        guard !isStopped else {
+            return
+        }
+        let callback = removableDiskDisappearedCallback as DADiskDisappearedCallback
+        let callbackPointer = unsafeBitCast(callback, to: UnsafeMutableRawPointer.self)
+        queue.sync {
+            DAUnregisterCallback(
+                session,
+                callbackPointer,
+                callbackContext
+            )
+            DASessionSetDispatchQueue(session, nil)
+        }
+        Unmanaged<RemovableDiskDisappearanceContext>.fromOpaque(callbackContext).release()
+        isStopped = true
+    }
+}
+
+private final nonisolated class RemovableDiskDisappearanceContext {
+    private let onDiskDisappeared: @MainActor @Sendable (RemovableVolumeDetachedDisk) -> Void
+
+    init(onDiskDisappeared: @escaping @MainActor @Sendable (RemovableVolumeDetachedDisk) -> Void) {
+        self.onDiskDisappeared = onDiskDisappeared
     }
 
     fileprivate func handleDiskDisappeared(_ disk: DADisk) {
@@ -224,6 +316,6 @@ private nonisolated func removableDiskDisappearedCallback(_ disk: DADisk, _ cont
     guard let context else {
         return
     }
-    let monitor = Unmanaged<RemovableDiskDisappearanceMonitor>.fromOpaque(context).takeUnretainedValue()
-    monitor.handleDiskDisappeared(disk)
+    let callbackContext = Unmanaged<RemovableDiskDisappearanceContext>.fromOpaque(context).takeUnretainedValue()
+    callbackContext.handleDiskDisappeared(disk)
 }

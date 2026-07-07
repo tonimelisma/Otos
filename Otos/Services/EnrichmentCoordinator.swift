@@ -58,6 +58,29 @@ actor EnrichmentCoordinator {
         let sourceSize: Int64?
         let captureDate: Date?
         let isVideo: Bool
+        let isDeviceStaging: Bool
+        let attemptCount: Int
+        let retryNotBefore: Date?
+
+        init(
+            id: MediaAssetID,
+            url: URL,
+            sourceSize: Int64?,
+            captureDate: Date?,
+            isVideo: Bool,
+            isDeviceStaging: Bool = false,
+            attemptCount: Int = 0,
+            retryNotBefore: Date? = nil
+        ) {
+            self.id = id
+            self.url = url
+            self.sourceSize = sourceSize
+            self.captureDate = captureDate
+            self.isVideo = isVideo
+            self.isDeviceStaging = isDeviceStaging
+            self.attemptCount = attemptCount
+            self.retryNotBefore = retryNotBefore
+        }
     }
 
     struct DeviceStagingSeed {
@@ -95,6 +118,7 @@ actor EnrichmentCoordinator {
     private var changeConsumer: Task<Void, Never>?
     var applyFlushTask: Task<Void, Never>?
     var writeRetryTask: Task<Void, Never>?
+    var downloadRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -162,6 +186,8 @@ extension EnrichmentCoordinator {
         applyFlushTask = nil
         writeRetryTask?.cancel()
         writeRetryTask = nil
+        downloadRetryTask?.cancel()
+        downloadRetryTask = nil
         await releaseOutstandingClaimsForShutdown()
         claimedEnrichQueue.removeAll()
         datalessPending.removeAll()
@@ -192,11 +218,27 @@ extension EnrichmentCoordinator {
                 url: seed.id.fileURL,
                 sourceSize: seed.sourceSize,
                 captureDate: seed.captureDate,
-                isVideo: seed.isVideo
+                isVideo: seed.isVideo,
+                isDeviceStaging: true
             )
         }
-        eagerMode = true
         signal()
+    }
+
+    func drainWork(under rootPath: LibraryRootPath, timeout: Duration = .seconds(5)) async {
+        let deadline = Date().addingTimeInterval(Double(timeout.components.seconds))
+        while hasInFlightWork(under: rootPath), Date() < deadline {
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func hasInFlightWork(under rootPath: LibraryRootPath) -> Bool {
+        inFlightEnrich.contains { $0.libraryRootPath == rootPath }
+            || inFlightDownload.contains { $0.libraryRootPath == rootPath }
     }
 }
 

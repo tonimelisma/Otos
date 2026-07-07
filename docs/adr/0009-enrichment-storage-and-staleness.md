@@ -44,9 +44,10 @@ This ADR owns:
 - The full parsed metadata is persisted in `asset_metadata` as queryable scalar
   columns plus `metadata_extra_json`, decoded on demand, and is **never resident**
   in grid publication.
-- The only enrichment data fetched with hot `MediaAsset` detail rows: the thumbnail
-  path, generated best date/kind/format values, video duration seconds, and the
-  `(size, mtime)` source stamps.
+- The only enrichment data fetched with visible `MediaTileDetail` rows: the
+  thumbnail path, generated best kind, video duration seconds, and the
+  `(size, mtime)` source stamps. Generated best date and format remain hot
+  query/filter facts but are not tile display facts.
 - Disjoint column ownership: the scan writes only fact columns, enrichment writes
   only enrichment columns, scan upserts preserve enrichment overlay, and a stale
   in-flight enrichment completion must revalidate the source signature in SQLite
@@ -54,9 +55,9 @@ This ADR owns:
 - Staleness is the `(size, mtime)` source signature; `needsEnrichment` derives
   from it. mtime-only changes count.
 - Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
-  supplies `bestCaptureDate` for tile display and date sort. Video duration is a
-  hot scalar because the tile surface needs it for every visible video; other
-  metadata dimensions and details remain cold.
+  supplies Best Date sort and enrichment priority. Video duration is a hot scalar
+  because the tile surface needs it for every visible video; other metadata
+  dimensions and details remain cold.
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
   application of ADR 0008's permission), accepting the unreclaimable disk growth.
 - The enrichment ownership split: a single `EnrichmentCoordinator` actor running
@@ -115,10 +116,11 @@ Adjacent decisions requiring separate ADRs or specs:
    publication.** Enrichment writes the parsed `AssetMetadata` into an
    `asset_metadata` companion row. Common query fields are scalar columns; long-tail
    fields are preserved in `metadata_extra_json`. `fetchCatalog` loads roots and
-   counts only; tile detail reads fetch only hot media columns. Full metadata is
-   loaded only on demand, one asset at a time, for future inspector/query surfaces.
-   Holding the full nested result inline on `MediaAsset` would ride the Projection
-   publication path and cost memory whether fields are nil or not.
+   counts only; visible tile detail reads fetch only thumbnail path, generated best
+   kind, duration, and source stamps. Full metadata is loaded only on demand, one
+   asset at a time, for future inspector/query surfaces. Holding the full nested
+   result inline on `MediaAsset` would ride the Projection publication path and
+   cost memory whether fields are nil or not.
 
    The permanent exception is `duration_seconds`: enrichment writes it both to the
    cold metadata row and to nullable `media_asset.duration_seconds`. The tile uses
@@ -132,18 +134,17 @@ Adjacent decisions requiring separate ADRs or specs:
    thumbnails are purged with the reset because their SQLite references were
    discarded, and metadata is rebuilt by re-enrichment.
 
-4. **Timestamp role facts and video duration are stored as hot display facts.**
+4. **Timestamp role facts and video duration are stored as hot query/display facts.**
    Enrichment writes timestamp role facts (original, QuickTime creation,
    digitized, and GPS) instead of a pre-resolved winner. SQLite's
    `best_capture_unix` generated column ranks those role facts ahead of
-   filesystem creation and modification dates, so tile display and date sort read
-   the same best value without keeping full metadata resident. The metadata
-   detail row still preserves all date roles. The date is shown as a plain date
-   or relative date text and is never fabricated (MED-002): `bestCaptureDate` is
-   nil only when nothing is known. Enrichment also writes `duration_seconds` into
-   the hot row for videos, using NULL for images and duration-less videos. Duration
-   is not part of staleness, sorting, or image thumbnail identity; it is only a
-   visible tile overlay fact.
+   filesystem creation and modification dates, so Best Date sort and enrichment
+   priority read the same best value without keeping full metadata resident. The
+   metadata detail row still preserves all date roles, and the generated best date
+   remains nil only when nothing is known. Grid tiles do not render this date.
+   Enrichment also writes `duration_seconds` into the hot row for videos, using
+   NULL for images and duration-less videos. Duration is not part of staleness,
+   sorting, or image thumbnail identity; it is only a visible tile badge fact.
 
 5. **Disjoint column ownership; scan upserts preserve overlay.** The scan upsert
    writes only scan fact columns; enrichment writes only `asset_metadata`,
@@ -402,10 +403,10 @@ query itself is measured too costly at a real large library.
 
 ## Consequences
 
-- The grid gains thumbnails and a capture date while publication stays
-  identity-plus-generation only; hot detail reads fetch only `thumbnailPath`,
-  generated best values, and stamps for visible IDs. Full metadata stays out of grid
-  memory.
+- The grid gains thumbnails and video duration badges while publication stays
+  identity-plus-generation only; visible tile detail reads fetch only
+  `thumbnailPath`, generated best kind, duration, and stamps for visible IDs. Full
+  metadata stays out of grid memory.
 - The grid can synchronously repaint decoded thumbnails already seen in the current
   process without making decoded image memory a source of truth. The decoded-image
   cache is a fixed count/cost LRU, so entries age out only when those limits are
@@ -435,7 +436,7 @@ query itself is measured too costly at a real large library.
 
 This ADR adds enrichment storage; it retires the placeholder-grid framing that the
 grid shows no derived products. Updated, not deleted: requirements APP-001,
-APP-006, APP-009, APP-010 (the grid now renders thumbnails and a capture date),
+APP-006, APP-009, APP-010 (the grid now renders thumbnails and video badges),
 and FND-057's "bounded" materialization phrasing (eager full-library is now
 permitted, owned here). ADR 0008 point 6 is amended to permit eager full-library
 materialization and to point here for the enrichment specifics. No schema or type

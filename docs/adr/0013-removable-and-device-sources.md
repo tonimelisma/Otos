@@ -27,20 +27,22 @@ This decision supports APP-016 through APP-018 and ENR-011.
 
 This ADR owns:
 
-- Source identity for removable sources: `volume:<uuid>` for removable volumes
-  and `camera:<serial-or-persistent-id>` for MTP/PTP cameras. Transient camera
+- Source identity for removable sources: `volume:<uuid>` for removable volumes,
+  with a mount-path runtime suffix only when duplicate mounted UUIDs collide, and
+  `camera:<serial-or-persistent-id>` for MTP/PTP cameras. Transient camera
   identities are process-local and removed on detach.
 - The `library_root` source metadata columns: `kind`, `device_identity`,
   `display_name`, and `last_seen_at`.
 - The rule that removable sources are catalog roots but are excluded from All
   Media and shown in a separate sidebar/settings surface.
-- The monitor ownership split: platform monitors detect attach/detach only;
-  `CatalogStore` owns persistence, availability, scan/catalog writes, and
-  overlay lifecycle.
+- The monitor ownership split: platform monitors detect attach, quiesce, resume,
+  and detach events only; `CatalogStore` owns persistence, availability,
+  scan/catalog leases, quiesce/resume state, and overlay lifecycle.
 - The MTP staging contract: ImageCapture rows point at a local staging root;
   staged bytes are retained only while the camera is connected.
 - Connected-source enrichment priority at Store claim time, plus camera eager
-  staging order: stills before videos, then capture date, then path.
+  staging order: stills before videos, then capture date, then path, without
+  enabling cloud eager materialization.
 
 This ADR references, but does not own:
 
@@ -78,25 +80,35 @@ Adjacent decisions requiring separate ADRs or specs:
    removable source shows that source's cataloged rows; All Media queries filter to
    `kind == library`.
 
-4. **Detaches are absence, not deletion.** A stable removable source detach marks
-   the source unavailable, releases enrichment claims, stops filesystem watching,
-   and keeps catalog rows plus overlay. Explicit Forget removes the source row and
-   its overlay. Transient camera identities are removed on detach because they have
-   no durable source identity to preserve.
+4. **Quiesce/eject and detach are separate.** A user eject or `willUnmount`
+   notification first quiesces the source, drains in-flight enrichment for that
+   root, and leaves catalog rows plus overlay intact. A failed eject resumes the
+   source instead of detaching it. A confirmed unmount/disappearance marks the
+   source unavailable, releases enrichment claims, stops filesystem watching, and
+   preserves rows plus overlay. Explicit Forget removes the source row and its
+   overlay. Transient camera identities are removed on detach because they have no
+   durable source identity to preserve.
 
 5. **MTP cameras use ImageCapture plus local staging.** ImageCapture provides
    catalog item names, type, size, dates, and 160x120-ish provisional thumbnails.
    The catalog root path is an app-owned staging directory. Enrichment materializes
    that staging URL by asking the active `DeviceCameraSession` to download the
-   corresponding camera item. Staging is swept at startup and deleted when the
-   camera disconnects; the catalog rows remain for stable camera identities as
-   unavailable overlay.
+   corresponding camera item. Store issues a process-local enumeration lease for
+   each camera attach; batches can upsert observed rows only while that lease is
+   current, and deletion reconciliation runs only after a stable catalog snapshot.
+   Partial or unstable ImageCapture snapshots are fail-closed: they may make
+   observed rows visible, but they do not prove that unobserved rows were deleted.
+   Staging is swept off the MainActor at startup and deleted when the camera
+   disconnects; the catalog rows remain for stable camera identities as unavailable
+   overlay.
 
 6. **Connected sources are prioritized at claim time only.** Store's enrichment
    candidate fallback query claims available removable roots before fixed roots.
    The coordinator does not maintain a durable second queue. MTP eager staging is
-   seeded into the existing download pool and sorted stills before videos, then by
-   capture date and path.
+   seeded into the existing download pool, sorted stills before videos and then by
+   capture date and path, and marked as device staging so it can dispatch without
+   flipping the cloud eager-download latch. Low-space device staging failures pause
+   for retry rather than busy-looping as timeouts.
 
 7. **Platform monitors are thin adapters.** `RemovableVolumeMonitor` and
    `CameraSourceMonitor` translate OS events into typed attach/detach inputs.
@@ -123,4 +135,5 @@ Adjacent decisions requiring separate ADRs or specs:
 - `OtosTests/EnrichmentCoordinatorTests.swift`
 - `OtosTests/CameraSourcePolicyTests.swift`
 - `OtosTests/CatalogStoreMediaEligibilityTests.swift`
+- `OtosTests/FileMaterializationTests.swift`
 - Local `script/verify.sh` evidence is required by the increment report.

@@ -24,8 +24,9 @@ In scope:
 
 - Detect local ImageCapture camera devices and reject mass-storage devices that
   already present as mounted volumes.
-- Open a camera session, wait for the complete content catalog, and record camera
-  item filesystem-like facts into Store.
+- Open a camera session, latch open/ready/terminal ImageCapture state, wait for a
+  complete and stable catalog snapshot, and record camera item filesystem-like
+  facts into Store.
 - Use `camera:<persistent-or-serial-id>` source identity, with transient identities
   removed on detach.
 - Use an app-owned staging root as the catalog root path for the connected camera.
@@ -33,8 +34,9 @@ In scope:
   thumbnails.
 - Route enrichment materialization for staging URLs to the active camera session.
 - Eagerly seed camera rows into the existing download pool, stills before videos,
-  then capture date and path.
-- Delete staging bytes on disconnect and sweep stale staging roots on startup.
+  then capture date and path, without enabling cloud eager materialization.
+- Delete staging bytes on disconnect and sweep stale staging roots off the
+  MainActor on startup.
 - Show a dismissable camera connection banner and an enumerating empty state.
 
 Out of scope:
@@ -65,6 +67,9 @@ device download.
 | MTP-LIFETIME | Architecture | Staging bytes exist only while connected and are swept on startup or detach; stable catalog rows remain unavailable after detach. | Current | APP-018 |
 | MTP-BANNER | Functional | Selecting a connected camera shows a dismissable guidance banner recommending direct card insertion or Mass Storage mode for faster browsing. | Current | APP-018 |
 | MTP-ORDER | Architecture | Eager staging downloads still/image work before videos, then capture date, then path. | Current | ENR-011 |
+| MTP-LEASE | Architecture | Device catalog batch writes and completion reconciliation require the current Store-issued enumeration lease for the attached camera root. | Current | APP-018, FND-019 |
+| MTP-STABLE | Functional | Partial or unstable ImageCapture snapshots may upsert observed rows and provisional thumbnails but shall not reconcile-delete unobserved rows. | Current | APP-018 |
+| MTP-DETACH-ID | Functional | Camera detach uses the identity captured at attach time when ImageCapture no longer exposes the same device facts during removal. | Current | APP-018 |
 
 ## Architectural Alternatives
 
@@ -132,15 +137,19 @@ all other URLs still use the ordinary `FileMaterialization` path.
 - `CameraSourceMonitor` owns `ICDeviceBrowser` lifetime and rejects mounted or
   mass-storage camera devices.
 - `DeviceCameraSession` owns one `ICCameraDevice` session, waits for catalog
-  readiness, maps `ICCameraFile` values to `DeviceCameraCatalogItem`, requests
-  provisional thumbnails, and downloads one file to a staging destination.
+  readiness and terminal events, maps `ICCameraFile` values to
+  `DeviceCameraCatalogItem`, tests catalog stability, requests provisional
+  thumbnails, and downloads one file to a staging destination.
 - `CatalogWindowViewModel` owns monitor and per-camera task lifetimes. It
-  registers sessions in `DeviceStagingRegistry`, attaches Store roots, records
-  catalog batches, applies provisional thumbnails, and seeds enrichment staging.
+  registers sessions in `DeviceStagingRegistry`, attaches Store roots, starts a
+  Store-issued device enumeration lease, records catalog batches, applies
+  provisional thumbnails, and seeds enrichment staging before stable completion.
 - `CatalogStore.attachDeviceMTP(...)` creates or remaps the source root and marks
   it available/enumerating. `recordDeviceCatalogBatch(...)` writes filesystem-like
-  facts. `completeDeviceCatalogEnumeration(...)` reconciles missing camera rows
-  and marks the source idle.
+  facts only for the current lease. `completeDeviceCatalogEnumeration(...)`
+  reconciles missing camera rows only for the current lease and only after the
+  ViewModel has a stable snapshot; otherwise observed rows remain visible and
+  unobserved rows are preserved.
 - `DeviceStagingRegistry` is the only router from staging URLs to ImageCapture
   downloads. It enforces a free-space floor, writes via a temporary file, and
   deletes staging roots on unregister/startup sweep.
@@ -153,12 +162,16 @@ all other URLs still use the ordinary `FileMaterialization` path.
 - The ViewModel owns one cancellable task per camera identity and does not treat
   task cancellation as a deletion proof.
 - EnrichmentCoordinator remains off-main for scheduling. Device staging seeds are
-  ordinary `DownloadWork` values in the existing materialization pool.
+  marked `DownloadWork` values in the existing materialization pool, so they can
+  dispatch independently of cloud eager mode and retry separately after low local
+  space.
 
 ## Instrumentation And Profiling Plan
 
 - Store emits `catalog.device.scan.batch` diagnostics with root path, count,
   changed count, and database timings.
+- Unstable snapshots emit `catalog.device.scan` diagnostics with `phase =
+  unstable` and leave existing rows intact.
 - Attach/detach diagnostics include source kind and identity through
   `catalog.removable.attach` / `catalog.removable.detach`.
 - Provisional thumbnail failures are debug-only and bounded by relative path.
@@ -169,9 +182,12 @@ all other URLs still use the ordinary `FileMaterialization` path.
 ## Test And Acceptance Criteria
 
 - `CatalogStoreRemovableSourceTests.mtpCatalogRowsAreScopedToCameraAndStagingIsRemovedOnDetach`
+- `CatalogStoreRemovableSourceTests.staleDeviceEnumerationCannotWriteOrReconcileNewerRows`
 - `CameraSourcePolicyTests.rejectsMassStorageAndMountedCameraDevices`
 - `CatalogProjectionTests.mtpCameraSelectionShowsEnumeratingStateAndConnectionBanner`
 - `EnrichmentCoordinatorTests.eagerDeviceStagingDownloadsStillItemsBeforeVideos`
+- `FileMaterializationTests` coverage for low-space staging as a distinct
+  non-materialized retry state.
 - Local `script/verify.sh` must pass before final closure.
 - Hardware MTP smoke is a non-blocking after-DoD check when no device is available
   to the agent.

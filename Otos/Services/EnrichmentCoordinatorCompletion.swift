@@ -28,7 +28,10 @@ extension EnrichmentCoordinator {
                 url: work.url,
                 sourceSize: work.sourceSize,
                 captureDate: existing?.captureDate,
-                isVideo: existing?.isVideo ?? false
+                isVideo: existing?.isVideo ?? false,
+                isDeviceStaging: existing?.isDeviceStaging ?? false,
+                attemptCount: existing?.attemptCount ?? 0,
+                retryNotBefore: existing?.retryNotBefore
             )
             var fields = ["sourceSize": "\(work.sourceSize ?? -1)"]
             if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
@@ -57,10 +60,26 @@ extension EnrichmentCoordinator {
             return
         }
         inFlightDownload.remove(id)
-        datalessPending[id] = nil
-        await releaseClaims([id], visibleID: id)
         let outcome = result.outcome
         let materialized = outcome.isMaterialized
+        let retry = retryWorkIfNeeded(work, outcome: outcome)
+        if let retry {
+            datalessPending[id] = retry
+            scheduleDownloadRetrySignal()
+            if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
+                await recordVisibleThumbnailLifecycle(
+                    phase: "materializationRetryScheduled",
+                    id: id,
+                    fields: [
+                        "leaseRefreshedUntil": Self.diagnosticTimestamp(leaseRefreshedUntil),
+                        "attemptCount": "\(retry.attemptCount)",
+                    ]
+                )
+            }
+        } else {
+            datalessPending[id] = nil
+            await releaseClaims([id], visibleID: id)
+        }
         await recordVisibleThumbnailLifecycle(
             phase: materialized ? "materialized" : "materializationFailed",
             id: id,
@@ -76,6 +95,52 @@ extension EnrichmentCoordinator {
             freshly.append(id)
         }
         signal()
+    }
+
+    private func retryWorkIfNeeded(_ work: DownloadWork, outcome: MaterializationOutcome) -> DownloadWork? {
+        guard !outcome.isMaterialized, work.isDeviceStaging else {
+            return nil
+        }
+        let delay: TimeInterval
+        let attemptCount = work.attemptCount + 1
+        switch outcome {
+        case .insufficientLocalSpace:
+            delay = 60
+        default:
+            guard attemptCount < 3 else {
+                return nil
+            }
+            delay = Double(attemptCount) * writeFailureBackoff.timeInterval
+        }
+        return DownloadWork(
+            id: work.id,
+            url: work.url,
+            sourceSize: work.sourceSize,
+            captureDate: work.captureDate,
+            isVideo: work.isVideo,
+            isDeviceStaging: work.isDeviceStaging,
+            attemptCount: attemptCount,
+            retryNotBefore: Date().addingTimeInterval(delay)
+        )
+    }
+
+    private func scheduleDownloadRetrySignal() {
+        downloadRetryTask?.cancel()
+        let nextRetry = datalessPending.values
+            .compactMap(\.retryNotBefore)
+            .min()
+        guard let nextRetry else {
+            return
+        }
+        let delay = max(nextRetry.timeIntervalSinceNow, 0)
+        downloadRetryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            await self?.signal()
+        }
     }
 
     func scheduleApplyFlushIfNeeded() {
@@ -293,5 +358,12 @@ extension EnrichmentCoordinator {
         case .writeFailed:
             return ("batchWriteFailed", fields)
         }
+    }
+}
+
+private extension Duration {
+    nonisolated var timeInterval: TimeInterval {
+        let value = components
+        return TimeInterval(value.seconds) + TimeInterval(value.attoseconds) / 1_000_000_000_000_000_000
     }
 }

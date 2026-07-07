@@ -29,7 +29,8 @@ In scope:
   (JPEG thumbnail files).
 - `EnrichmentCoordinator`: the cursorless two-pool scheduler.
 - The viewport channel (grid → ViewModel → coordinator) and tile rendering of the
-  thumbnail and capture date.
+  thumbnail plus the video duration/fallback badge. Spec 0044 owns the current
+  tile-visible detail contract and removed filename/date labels from thumbnails.
 - Integration with `CatalogStore` (batched apply, stale-completion rejection,
   rescan merge, thumbnail purge), `CatalogProjection`, and the grid.
   Spec 0037 owns the current overlay anatomy of the tile surface.
@@ -63,10 +64,10 @@ Captured from the user across the design discussion and recorded as ENR-001…
 ENR-010 in `docs/requirements.md` (Current). Highlights:
 
 - Functional: every cataloged image/video gets a thumbnail and parsed metadata;
-  the grid shows the thumbnail, relative capture date when known, and video
-  duration/fallback badge when applicable; eager full-library
-  materialization; the viewport is prioritized; the capture date is the best
-  available real date and is never fabricated.
+  the grid shows the thumbnail and video duration/fallback badge when applicable;
+  eager full-library materialization; the viewport is prioritized; the capture
+  date is the best available real date and is never fabricated, but it is a
+  catalog/query fact rather than tile text.
 - Architecture: thumbnails are files referenced by path (256 px JPEG generated
   from QuickLook);
   the full metadata is on-demand scalar/detail JSON, never in grid publication;
@@ -77,7 +78,7 @@ ENR-010 in `docs/requirements.md` (Current). Highlights:
   by cursorless scheduling; a single SQLite claim lease column preventing repeated
   dequeue; enrichment writes batched through `CatalogStore`.
 - Non-functional: no media I/O or thumbnail decode on the MainActor; the tile
-  loads and decodes its thumbnail off-main, while small overlay labels are
+  loads and decodes its thumbnail off-main, while small video-badge text is
   formatted synchronously during configuration.
 
 ## Architectural Alternatives
@@ -159,9 +160,9 @@ applied in batches (one transaction, one notification) by `CatalogStore`. The
 products are a 256 px JPEG thumbnail file and on-demand metadata scalar/detail
 rows; only the thumbnail path, a resolved capture date, video duration, and the
 `(size, mtime)` stamps are fetched with hot asset detail rows. The tile loads and
-decodes its thumbnail off-main and updates its small overlay labels synchronously
-during configuration. See ADR 0009 and spec 0037 for why each choice is the
-simplest correct one.
+decodes its thumbnail off-main and updates its small video badge synchronously
+during configuration. See ADR 0009, spec 0037, and spec 0044 for why each choice
+is the simplest correct one.
 
 ## Interfaces, Ownership, And Data Flow
 
@@ -193,8 +194,8 @@ Modules (isolation — owns):
 - `CatalogWindowViewModel` (@MainActor, extended) — owns the coordinator's
   lifetime, the newest-value `viewportChanged` intent lane, and `startEnrichment`.
 - The grid bridge and tile (@MainActor, extended) — report visible identities;
-  load the thumbnail off-main keyed on image content; show the filename, relative
-  best date, and video badge overlays inside the visible tile face.
+  load the thumbnail off-main keyed on image content; show only the video badge
+  overlay inside the visible tile face.
 
 Data flow:
 
@@ -208,7 +209,7 @@ scan / FSEvents → Store notifies → Coordinator queries Store candidates → 
 Projection republishes (thumbnailPath / generated best values / duration now set; cheap)
   → grid refreshVisible → existing visible tiles reconfigure in place
     → tile: if content key changed, ThumbnailStore.load off-main
-    → image + overlay text assigned on Main
+    → image + video badge assigned on Main
 asset row purged (proven deletion or library removal) → ThumbnailStore.delete
 ```
 
@@ -245,7 +246,7 @@ Implementation sequence (each landed and verified on its own):
 
 - Placeholder-grid framing: APP-001 (no thumbnail/metadata claim), APP-006
   (placeholder grid), APP-009 and APP-010 (placeholder tiles) updated to current —
-  the grid now renders thumbnails and a capture date. No requirement is retired
+  the grid now renders thumbnails and video badges. No requirement is retired
   outright; they are amended.
 - FND-057's "bounded" materialization phrasing updated: eager full-library is now
   permitted (ADR 0009).

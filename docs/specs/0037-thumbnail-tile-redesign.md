@@ -11,12 +11,13 @@ ADR changed: `docs/adr/0009-enrichment-storage-and-staleness.md`.
 
 ## Current-State Note
 
-Spec 0038 supersedes the overlay geometry from this redesign where it differs:
-the current text scrim is anchored at the thumbnail's top-left corner with no
-outer inset and sized to the text extent, and the video badge is anchored at the
-bottom-right thumbnail corner. Spec 0039 also adds the current batched preheater
-and non-main decoded-thumbnail cache; those were deliberately out of scope for
-this earlier redesign, not rejected as current architecture.
+Spec 0038 supersedes the no-blank rendering mechanics from this redesign, and
+spec 0044 supersedes the tile overlay anatomy: current thumbnails render no
+filename or relative-date labels. The only tile overlay is the video badge, whose
+dark area is right-aligned to the thumbnail face while its duration text is
+centered inside the badge. Spec 0039 also adds the current batched preheater and
+non-main decoded-thumbnail cache; those were deliberately out of scope for this
+earlier redesign, not rejected as current architecture.
 
 ## Problem Statement And User-Facing Goal
 
@@ -26,10 +27,11 @@ and filename/date labels sat in the square cell rather than on the thumbnail
 itself. That framing competed with the media and made portrait and landscape
 assets feel equally boxed.
 
-The implemented goal is for the thumbnail, at its native aspect ratio, to be the
-visible tile face inside the existing six-column square cell. Filename, relative
-date, and video duration live as overlays inside that face. The unused part of the
-square cell remains plain window background, not letterbox chrome.
+The implemented goal for this increment was for the thumbnail, at its native
+aspect ratio, to be the visible tile face inside the existing six-column square
+cell. Spec 0044 later removed filename and relative-date text from that face and
+kept only the video badge. The unused part of the square cell remains plain
+window background, not letterbox chrome.
 
 ## Scope
 
@@ -39,10 +41,12 @@ In scope:
   12 pt section insets.
 - Draw an aspect-fit content rect for the thumbnail or an all-square neutral
   placeholder while no image is loaded.
-- Overlay the filename and optional relative capture date at the top-left of the
-  visible thumbnail/placeholder on a dark scrim.
-- Overlay videos only at bottom-right, using duration text when parsed or a film
-  symbol while duration is still unknown.
+- Historical in this increment: overlay the filename and optional relative
+  capture date at the top-left of the visible thumbnail/placeholder on a dark
+  scrim. Current behavior is superseded by spec 0044 and renders no filename/date
+  tile labels.
+- Overlay videos only at bottom-right, using centered duration text when parsed
+  or a centered film symbol while duration is still unknown.
 - Promote video `duration_seconds` from the cold metadata row into the hot
   `media_asset` row because every visible video tile needs it.
 - Add a small in-repo relative date helper for the exact product cascade.
@@ -71,7 +75,8 @@ Out of scope:
 - `Otos/Views/MediaAssetTileView.swift` owned one reusable AppKit tile. Before
   this increment it drew the whole square as a gray or blue-tinted backing,
   aspect-fit an image view over the square, and placed filename/date/video icon
-  directly in square-cell coordinates.
+  directly in square-cell coordinates. Current behavior no longer renders the
+  filename/date labels.
 - `MediaAssetTilePresentation` already contains pure display policy for video
   classification, fallback title, capture-date text, thumbnail content identity,
   and thumbnail load.
@@ -94,11 +99,13 @@ Functional requirements:
 - A grid tile's visible face shall be the loaded thumbnail's native aspect-fit
   rect inside the square cell. When no thumbnail has loaded yet, the visible face
   shall be a full-square neutral placeholder.
-- The top-left overlay shall contain two stacked lines: filename, then relative
-  capture date. The date line is omitted when no date is known.
-- Relative capture-date text shall use this cascade: `Today`, `Yesterday`,
-  `Last <weekday>` for dates two through six days ago, month/day for same-year
-  dates, and month/day/year for other years. Future dates use absolute forms.
+- Historical in this increment: the top-left overlay contained two stacked lines:
+  filename, then relative capture date. Spec 0044 removes both labels from the
+  tile.
+- Historical in this increment: relative capture-date text used this cascade:
+  `Today`, `Yesterday`, `Last <weekday>` for dates two through six days ago,
+  month/day for same-year dates, and month/day/year for other years. Current
+  tiles do not format or render that date text.
 - Images shall have no video differentiator overlay.
 - Videos shall have a bottom-right badge. The badge shows `m:ss` or `h:mm:ss`
   duration when parsed and a film symbol when duration is not yet known.
@@ -124,11 +131,10 @@ Non-functional and regression requirements:
 
 - Thumbnail reads and decodes stay off the MainActor; tile configuration only
   computes small scalar strings and frames.
-- `imageContentKey` must not include capture date or duration. Date/duration text
+- `imageContentKey` must not include capture date or duration. Duration-badge
   updates must not clear and reload an unchanged thumbnail.
 - Overlay layout must clamp inside the content rect. In extremely small or
-  panoramic rects, the video badge hides before the date line; the filename
-  survives longest.
+  panoramic rects, the video badge hides rather than clipping.
 - The implementation shall include focused pure-policy tests, Store persistence
   tests, schema reset coverage, and full `script/verify.sh` evidence.
 
@@ -291,8 +297,8 @@ through `StoredAsset` into `MediaAsset`. Add `RelativeDateText` as a pure helper
 Extend `MediaAssetTilePresentation` with duration-badge and content-rect policy.
 Refactor `MediaAssetTileView` so a transparent cell contains one visible
 `contentView` whose frame is the aspect-fit image rect or full-square placeholder.
-The thumbnail, top-left text scrim, video badge, and selection ring all live
-inside that content view.
+The thumbnail, video badge, and selection ring all live inside that content view;
+spec 0044 removes the former top-left text scrim.
 
 This is the simplest correct architecture: one new scalar because the tile always
 needs the fact, one pure date helper because Foundation does not offer the exact
@@ -306,7 +312,7 @@ policy, and one local AppKit view refactor inside the existing grid boundary.
 - `AssetMetadata` remains the full cold metadata record and still round-trips
   `durationSeconds`.
 - `MediaAssetTilePresentation` owns pure display policy:
-  `captureDateText`, `videoBadgeText`, `showsVideoBadge`, and `contentRect`.
+  `videoBadgeText`, `showsVideoBadge`, and `contentRect`.
 - `MediaAssetTileView` owns reusable AppKit view state, layout, off-main image
   load generation guards, accessibility label assembly, and selection-ring
   drawing on the visible content face.
@@ -325,8 +331,8 @@ Persistence effects:
 - No new actor or long-running task is added.
 - The tile's existing detached thumbnail load remains the only byte-read path in
   the tile and is still guarded by a generation token.
-- Relative-date and duration string formatting are small synchronous scalar
-  operations in configuration.
+- Duration string formatting is a small synchronous scalar operation in
+  configuration.
 - `CatalogStore.applyEnrichmentBatch` keeps its existing stale-completion
   validation and error handling.
 - Diagnostics remain scalar. No thumbnail bytes, metadata blobs, secrets, or
@@ -337,9 +343,6 @@ Persistence effects:
 
 ## Test And Acceptance Criteria
 
-- `RelativeDateTextTests` cover today, yesterday, two-through-six-day weekday
-  text, the seven-day absolute boundary, same-year absolute dates, prior-year
-  dates, future dates, and Dec/Jan year boundaries under a fixed calendar.
 - `MediaAssetCollectionTests` cover relative date text, duration-badge text,
   videos-only badge visibility, content-rect math for landscape/portrait/square/
   unknown images, overlay visibility thresholds, and unchanged image keys across

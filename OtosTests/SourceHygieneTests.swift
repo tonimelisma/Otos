@@ -161,9 +161,11 @@ struct SourceHygieneTests {
             encoding: .utf8
         )
 
-        #expect(store.contains("private struct ActiveScan"))
+        #expect(store.contains("struct ActiveScan: Equatable"))
         #expect(store.contains("let rootRowID: Int64"))
+        #expect(store.contains("let leaseGeneration: UInt64"))
         #expect(store.contains("private func owns(_ scan: ActiveScan)"))
+        #expect(store.contains("private func makeActiveScan"))
         #expect(!store.contains("currentScanRootPath"))
         #expect(!store.contains("scanUUID"))
         #expect(!persistence.contains("filesystem_scan"))

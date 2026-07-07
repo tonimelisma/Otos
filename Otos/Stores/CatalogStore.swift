@@ -44,12 +44,15 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// and owns presentation.
 /// Initial loading is represented by one finite task so every concurrent caller
 /// observes the same load instead of applying competing root sets. Awaited GRDB calls
-/// make this actor reentrant, so active scans carry the root path and private root-row
-/// instance they own and revalidate both after each database await. Completed scans
-/// reconcile missing paths; failed, cancelled, or stale scans preserve prior rows because
-/// incomplete observation cannot prove removal. A single regular-file remove event
-/// proves deletion only after Store checks that exact path is absent under an armed
-/// available root.
+/// make this actor reentrant, so active scans carry the root path, private root-row
+/// instance, and in-memory lease generation they own and revalidate them after each
+/// database await. Completed scans reconcile missing paths; failed, cancelled, or
+/// stale scans preserve prior rows because incomplete observation cannot prove
+/// removal. Device enumerations use the same process-local lease before they may
+/// reconcile missing rows, so a stale camera flow cannot delete rows written by a
+/// newer attach. A single regular-file remove
+/// event proves deletion only after Store checks that exact path is absent under an
+/// armed available root.
 actor CatalogStore {
     private nonisolated static let slowQueryDiagnosticThresholdMs = 50
 
@@ -85,17 +88,30 @@ actor CatalogStore {
         var enrichedSourceMTimeSeconds: Int?
     }
 
+    struct StoredTileDetail {
+        let libraryRootID: Int64
+        let relativePath: MediaRelativePath
+        var thumbnailPath: String?
+        var bestKind: MediaKind?
+        var durationSeconds: Double?
+        var enrichedSourceSize: Int64?
+        var enrichedSourceMTimeSeconds: Int?
+    }
+
     struct ThumbnailPathMigration {
         let oldRelativeName: String
         let newRelativeName: String
     }
 
-    /// This value is a process-local ownership lease, not scan identity. The
-    /// normalized path identifies the domain root, while the private row ID
-    /// distinguishes a removed root from a later root added at the same path.
-    private struct ActiveScan: Equatable {
+    /// This value is a process-local ownership lease, not durable scan identity.
+    /// The normalized path identifies the domain root, the private row ID
+    /// distinguishes a removed root from a later root added at the same path, and
+    /// the in-memory generation distinguishes overlapping callbacks for the same
+    /// root instance.
+    struct ActiveScan: Equatable {
         let rootPath: LibraryRootPath
         let rootRowID: Int64
+        let leaseGeneration: UInt64
     }
 
     private struct RemovableRootAttachment {
@@ -175,6 +191,8 @@ actor CatalogStore {
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
     private var activeScan: ActiveScan?
+    private var activeDeviceScans: [LibraryRootPath: ActiveScan] = [:]
+    private var nextActiveScanLeaseGeneration: UInt64 = 0
     private var currentScanTask: Task<Void, Never>?
     private var filesystemWatchingStarted = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
@@ -413,10 +431,46 @@ extension CatalogStore {
         return assetsByID
     }
 
+    func mediaTileDetails(for ids: [MediaAssetID]) async throws -> [MediaAssetID: MediaTileDetail] {
+        guard !ids.isEmpty else {
+            return [:]
+        }
+
+        let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
+        let rootIDsBeforeRead = rootRowIDsByPath
+        let dbWriter = try database()
+        let timedDetails = try await timedRead(dbWriter) { db in
+            try Self.fetchStoredTileDetails(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
+        }
+        OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
+
+        var detailsByID: [MediaAssetID: MediaTileDetail] = [:]
+        detailsByID.reserveCapacity(timedDetails.value.count)
+        for storedDetail in timedDetails.value {
+            guard let rootPath = rootPathsByRowID[storedDetail.libraryRootID],
+                  rootRowIDsByPath[rootPath] == storedDetail.libraryRootID
+            else {
+                continue
+            }
+            let detail = mediaTileDetail(from: storedDetail, rootPath: rootPath)
+            detailsByID[detail.id] = detail
+        }
+
+        let queryMs = timedDetails.totalMs
+        if queryMs > Self.slowQueryDiagnosticThresholdMs {
+            await recordSlowTileDetailQuery(
+                requestedCount: ids.count,
+                returnedCount: detailsByID.count,
+                timing: timedDetails
+            )
+        }
+        return detailsByID
+    }
+
     private func recordSlowTileDetailQuery(
         requestedCount: Int,
         returnedCount: Int,
-        timing: DatabaseTimedValue<[StoredAsset]>
+        timing: DatabaseTimedValue<some Any>
     ) async {
         OtosLog.catalog.debug(
             """
@@ -1146,6 +1200,7 @@ extension CatalogStore {
         availabilityByRootPath.removeValue(forKey: path)
         activityByRootPath.removeValue(forKey: path)
         isEjectableByRootPath.removeValue(forKey: path)
+        activeDeviceScans.removeValue(forKey: path)
         rootRowIDsByPath.removeValue(forKey: path)
         rootPathsByRowID.removeValue(forKey: rootRowID)
     }
@@ -1155,7 +1210,9 @@ extension CatalogStore {
     }
 
     private func isTransientDeviceIdentity(_ identity: String) -> Bool {
-        identity.hasPrefix("volume:path:") || identity.hasPrefix("camera:transient:")
+        identity.hasPrefix("volume:path:")
+            || identity.contains("#path:")
+            || identity.hasPrefix("camera:transient:")
     }
 
     private func cancelRuntimeWork(for path: LibraryRootPath) {
@@ -1163,6 +1220,7 @@ extension CatalogStore {
         cancelFilesystemDebounce(for: path)
         rescanAfterCurrentScan.remove(path)
         pendingScanPaths.removeAll { $0 == path }
+        activeDeviceScans.removeValue(forKey: path)
         if activeScan?.rootPath == path {
             currentScanTask?.cancel()
             currentScanTask = nil
@@ -1431,19 +1489,73 @@ extension CatalogStore {
         startNextScanIfNeeded()
     }
 
-    func beginDeviceCatalogEnumeration(rootPath: LibraryRootPath) async {
-        guard rootsByPath[rootPath]?.kind == .deviceMTP else {
+    func quiesceRemovableSource(identity: String) async throws {
+        try await ensureStartedForMutation()
+        guard let root = rootForDeviceIdentity(identity),
+              root.kind != .library,
+              let rootRowID = rootRowIDsByPath[root.path]
+        else {
             return
         }
-        activityByRootPath[rootPath] = .enumerating
-        notifyCatalogChanged()
+        cancelRuntimeWork(for: root.path)
+        activityByRootPath[root.path] = .idle
+        await releaseEnrichmentClaimsForRoot(rootRowID)
+        let changed = setAvailability(.unavailable, for: root.path)
+        if changed {
+            notifyCatalogChanged()
+        }
+        await diagnostics?.record(
+            operation: "catalog.removable.quiesce",
+            phase: "finish",
+            fields: [
+                "identity": identity,
+                "rootPath": root.path.rawValue,
+                "kind": root.kind.rawValue,
+            ]
+        )
     }
 
-    func recordDeviceCatalogBatch(_ batch: [ScannedMediaFile], rootPath: LibraryRootPath) async throws {
+    func resumeRemovableSource(identity: String) async throws {
         try await ensureStartedForMutation()
+        guard let root = rootForDeviceIdentity(identity),
+              root.kind != .library
+        else {
+            return
+        }
+        let changed = setAvailability(.available, for: root.path)
+        if changed {
+            notifyCatalogChanged()
+        }
+        await diagnostics?.record(
+            operation: "catalog.removable.resume",
+            phase: "finish",
+            fields: [
+                "identity": identity,
+                "rootPath": root.path.rawValue,
+                "kind": root.kind.rawValue,
+            ]
+        )
+    }
+
+    func beginDeviceCatalogEnumeration(rootPath: LibraryRootPath) async throws -> ActiveScan {
         guard rootsByPath[rootPath]?.kind == .deviceMTP,
               availabilityByRootPath[rootPath] == .available,
               let rootRowID = rootRowIDsByPath[rootPath]
+        else {
+            throw CancellationError()
+        }
+        let scan = makeActiveScan(rootPath: rootPath, rootRowID: rootRowID)
+        activeDeviceScans[rootPath] = scan
+        activityByRootPath[rootPath] = .enumerating
+        notifyCatalogChanged()
+        return scan
+    }
+
+    func recordDeviceCatalogBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
+        try await ensureStartedForMutation()
+        guard owns(scan),
+              rootsByPath[scan.rootPath]?.kind == .deviceMTP,
+              availabilityByRootPath[scan.rootPath] == .available
         else {
             throw CancellationError()
         }
@@ -1453,8 +1565,8 @@ extension CatalogStore {
             for file in batch {
                 let changed = try Self.upsertScannedFile(
                     file,
-                    libraryRootPath: rootPath,
-                    libraryRootID: rootRowID,
+                    libraryRootPath: scan.rootPath,
+                    libraryRootID: scan.rootRowID,
                     db: db
                 )
                 if changed {
@@ -1463,6 +1575,9 @@ extension CatalogStore {
             }
             return count
         }
+        guard owns(scan) else {
+            throw CancellationError()
+        }
         if timedChangedCount.value > 0 {
             notifyCatalogChanged()
         }
@@ -1470,7 +1585,7 @@ extension CatalogStore {
             operation: "catalog.device.scan.batch",
             phase: "finish",
             fields: [
-                "rootPath": rootPath.rawValue,
+                "rootPath": scan.rootPath.rawValue,
                 "count": "\(batch.count)",
                 "changedCount": "\(timedChangedCount.value)",
                 "waitMs": "\(timedChangedCount.waitMs)",
@@ -1480,29 +1595,38 @@ extension CatalogStore {
     }
 
     func completeDeviceCatalogEnumeration(
-        rootPath: LibraryRootPath,
+        scan: ActiveScan,
         observedPaths: Set<MediaRelativePath>
-    ) async {
-        guard rootsByPath[rootPath]?.kind == .deviceMTP,
-              availabilityByRootPath[rootPath] == .available,
-              let rootRowID = rootRowIDsByPath[rootPath]
+    ) async throws {
+        guard owns(scan),
+              rootsByPath[scan.rootPath]?.kind == .deviceMTP,
+              availabilityByRootPath[scan.rootPath] == .available
         else {
-            return
+            throw CancellationError()
         }
-        let scan = ActiveScan(rootPath: rootPath, rootRowID: rootRowID)
         do {
             _ = try await reconcileMissingAssets(
                 scan: scan,
-                observedPaths: observedPaths,
-                requiresOwnership: false
+                observedPaths: observedPaths
             )
         } catch {
             OtosLog.catalog.error(
                 "Device catalog reconciliation failed error=\(String(describing: error), privacy: .public)"
             )
+            throw error
         }
-        activityByRootPath[rootPath] = .idle
-        notifyCatalogChanged()
+        await endDeviceCatalogEnumeration(scan: scan)
+    }
+
+    func endDeviceCatalogEnumeration(scan: ActiveScan) async {
+        guard activeDeviceScans[scan.rootPath] == scan else {
+            return
+        }
+        activeDeviceScans.removeValue(forKey: scan.rootPath)
+        if rootsByPath[scan.rootPath]?.kind == .deviceMTP {
+            activityByRootPath[scan.rootPath] = .idle
+            notifyCatalogChanged()
+        }
     }
 
     func applyProvisionalThumbnails(_ thumbnailsByID: [MediaAssetID: String]) async throws {
@@ -1537,6 +1661,7 @@ extension CatalogStore {
         currentScanTask?.cancel()
         currentScanTask = nil
         activeScan = nil
+        activeDeviceScans.removeAll()
         pendingScanPaths.removeAll()
         cancelAllFilesystemDebounces()
         filesystemWatcher.stop()
@@ -1886,6 +2011,18 @@ private extension CatalogStore {
         )
     }
 
+    private func mediaTileDetail(from storedDetail: StoredTileDetail, rootPath: LibraryRootPath) -> MediaTileDetail {
+        MediaTileDetail(
+            libraryRootPath: rootPath,
+            relativePath: storedDetail.relativePath,
+            thumbnailPath: storedDetail.thumbnailPath,
+            bestKind: storedDetail.bestKind,
+            durationSeconds: storedDetail.durationSeconds,
+            enrichedSourceSize: storedDetail.enrichedSourceSize,
+            enrichedSourceMTimeSeconds: storedDetail.enrichedSourceMTimeSeconds
+        )
+    }
+
     private func activity(for path: LibraryRootPath) -> CatalogLibraryActivity {
         if activeScan?.rootPath == path {
             return .scanning
@@ -1996,7 +2133,7 @@ private extension CatalogStore {
                 continue
             }
             setAvailability(.available, for: nextPath)
-            let scan = ActiveScan(rootPath: nextPath, rootRowID: rootRowID)
+            let scan = makeActiveScan(rootPath: nextPath, rootRowID: rootRowID)
             activeScan = scan
             notifyCatalogChanged()
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
@@ -2059,8 +2196,8 @@ private extension CatalogStore {
 
         let visibleChange = changedCount > 0
         // SQLite reported whether this batch inserted a new row or changed existing
-        // filesystem facts. Identical rescans publish nothing; changed dates now count
-        // because tile detail exposes the best filesystem date when metadata is absent.
+        // filesystem facts. Identical rescans publish nothing; changed dates still
+        // count because Best Date sort and enrichment priority fall back to them.
         if visibleChange {
             notifyCatalogChanged()
         }
@@ -2158,17 +2295,16 @@ private extension CatalogStore {
     /// maintain a second per-asset cache-invalidation fact alongside SQLite.
     private func reconcileMissingAssets(
         scan: ActiveScan,
-        observedPaths: Set<MediaRelativePath>,
-        requiresOwnership: Bool = true
+        observedPaths: Set<MediaRelativePath>
     ) async throws -> Int {
-        guard !requiresOwnership || owns(scan) else {
+        guard owns(scan) else {
             throw CancellationError()
         }
         let dbQueue = try database()
         let existingRows = try await dbQueue.read { db in
             try Self.fetchExistingAssetRows(libraryRootID: scan.rootRowID, db: db)
         }
-        guard !requiresOwnership || owns(scan) else {
+        guard owns(scan) else {
             throw CancellationError()
         }
         let missingRows = existingRows.filter { !observedPaths.contains($0.relativePath) }
@@ -2189,7 +2325,7 @@ private extension CatalogStore {
         }
         // Removal and same-path replacement can run while GRDB owns the writer.
         // Never treat an old row's reconciliation as proof about the replacement root.
-        guard !requiresOwnership || owns(scan) else {
+        guard owns(scan) else {
             throw CancellationError()
         }
         if let thumbnailDirectory {
@@ -2355,15 +2491,25 @@ private extension CatalogStore {
             return
         }
         filesystemWatchingStarted = true
-        let roots = rootsByPath.compactMap { path, root in
-            root.kind == .library ? path : nil
-        }
-        filesystemWatcher.start(roots) { [weak self] event in
+        filesystemWatcher.start(watchedRootPaths) { [weak self] event in
             // FSEvents reaches us through a synchronous C callback. The Store
             // actor is still the owner of debounce and scan scheduling, so the
             // callback performs only this actor hop.
             Task {
                 await self?.handleFilesystemEvent(event)
+            }
+        }
+    }
+
+    private var watchedRootPaths: [LibraryRootPath] {
+        rootsByPath.compactMap { path, root in
+            switch root.kind {
+            case .library:
+                path
+            case .removableVolume:
+                availabilityByRootPath[path] == .available ? path : nil
+            case .deviceMTP:
+                nil
             }
         }
     }
@@ -2735,10 +2881,19 @@ private extension CatalogStore {
     }
 
     private func owns(_ scan: ActiveScan) -> Bool {
-        activeScan == scan
+        (activeScan == scan || activeDeviceScans[scan.rootPath] == scan)
             && rootsByPath[scan.rootPath] != nil
             && rootRowIDsByPath[scan.rootPath] == scan.rootRowID
             && rootPathsByRowID[scan.rootRowID] == scan.rootPath
+    }
+
+    private func makeActiveScan(rootPath: LibraryRootPath, rootRowID: Int64) -> ActiveScan {
+        nextActiveScanLeaseGeneration &+= 1
+        return ActiveScan(
+            rootPath: rootPath,
+            rootRowID: rootRowID,
+            leaseGeneration: nextActiveScanLeaseGeneration
+        )
     }
 
     private func recordIgnoredStaleCallback(_ scan: ActiveScan, callback: String) async {

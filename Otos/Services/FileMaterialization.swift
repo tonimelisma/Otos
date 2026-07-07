@@ -249,6 +249,8 @@ nonisolated enum MaterializationOutcome: Equatable {
     case requestFailed
     /// The file did not become local before the timeout elapsed.
     case timedOut
+    /// A device staging download was deferred because local free space is below the safety floor.
+    case insufficientLocalSpace
     /// The awaiting task was cancelled before completion.
     case cancelled
     /// The file's status could not be read (for example it disappeared).
@@ -258,7 +260,7 @@ nonisolated enum MaterializationOutcome: Equatable {
         switch self {
         case .alreadyMaterialized, .materialized:
             true
-        case .requestFailed, .timedOut, .cancelled, .statusUnavailable:
+        case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable:
             false
         }
     }
@@ -273,6 +275,8 @@ nonisolated enum MaterializationOutcome: Equatable {
             "requestFailed"
         case .timedOut:
             "timedOut"
+        case .insufficientLocalSpace:
+            "insufficientLocalSpace"
         case .cancelled:
             "cancelled"
         case .statusUnavailable:

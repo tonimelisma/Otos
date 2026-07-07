@@ -125,13 +125,13 @@ Pros:
 
 Cons:
 
-- duplicates best-date ranking between tile display and SQL sorting
+- duplicates best-date ranking between Swift callers and SQL sorting
 - requires loading asset values instead of ordered IDs for query work
 - reintroduces projection-side full-catalog sort/filter work
 
 Failure modes:
 
-- tile date disagrees with sort order
+- generated best-date policy disagrees with sort order
 - metadata enrichment changes are missed or require ad hoc invalidation flags
 - MainActor pressure returns through larger state assignments
 

@@ -133,8 +133,8 @@ round is needed before implementation.
   derivation, and coalesced publication.
 - `MediaAssetCollectionView` remains the narrow AppKit boundary.
 - `MediaAssetTilePresentation.imageContentKey` remains the tile's guard for
-  whether thumbnail image work must reload. Date and duration are overlay text,
-  not image identity.
+  whether thumbnail image work must reload. Duration is badge text, not image
+  identity; spec 0044 removes date text from the tile.
 - `ThumbnailStore` owns the private thumbnail file format and extension.
 
 ### Privacy
@@ -197,7 +197,7 @@ Pros:
   views.
 - Preserves the tile instance and therefore does not call `prepareForReuse()`.
 - Lets `MediaAssetTilePresentation.imageContentKey` suppress redundant thumbnail
-  work on unchanged image content while overlay text can still update.
+  work on unchanged image content while video-badge text can still update.
 
 Cons:
 
@@ -331,9 +331,9 @@ data-structure change from after-fix measurements.
 - `MediaAssetCollectionViewController.refreshVisible` now re-queries visible
   details through the Store-backed detail reader and calls an in-place visible
   reconfigure helper.
-- `MediaAssetTileView.configure` still handles title, date, badge, and visible
-  face layout while only reloading the thumbnail image when `imageContentKey`
-  changes.
+- `MediaAssetTileView.configure` still handles badge and visible face layout
+  while only reloading the thumbnail image when `imageContentKey` changes; spec
+  0044 removes the former title/date label path.
 - `ThumbnailStore.relativeName` now returns `.jpg`; `write` encodes JPEG;
   `load` remains extension-agnostic through Image I/O.
 
@@ -341,8 +341,8 @@ data-structure change from after-fix measurements.
 
 - Grid in-place reconfiguration is MainActor-bound because it touches AppKit
   views.
-- Thumbnail reads remain off-main in detached tile tasks; small overlay labels
-  format synchronously during tile configuration.
+- Thumbnail reads remain off-main in detached tile tasks; small video-badge text
+  formats synchronously during tile configuration.
 - Thumbnail generation remains off-main in the enrichment workers.
 - No new long-lived tasks are added.
 - Existing tile generation guards reject stale thumbnail loads after reuse.

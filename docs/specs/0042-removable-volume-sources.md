@@ -25,13 +25,18 @@ In scope:
 - Store removable volumes as catalog roots with `kind = removableVolume`, stable
   `volume:<uuid>` identity when available, raw display name, ejectability, and
   `lastSeenAt`.
+- Disambiguate simultaneously mounted duplicate volume UUIDs by mount path
+  without adding content fingerprints or a second source table.
 - Reuse/remap an existing source row when the same source identity returns at a
   new mount path.
 - Scan attached removable volumes immediately at the front of the scan queue.
+- Include already-attached available removable volumes when filesystem watching
+  starts.
 - Exclude removable volume rows from All Media while allowing explicit source
   selection.
-- Mark detach as unavailable and preserve rows/overlay; Settings Forget removes
-  the source and overlay.
+- Quiesce on pre-unmount/eject, resume after failed eject, and mark confirmed
+  detach as unavailable while preserving rows/overlay; Settings Forget removes the
+  source and overlay.
 - Skip hidden, AppleDouble, `.Spotlight-V100`, `.Trashes`, `AVF_INFO`, and
   `M4ROOT/SUB` paths during scan.
 - Prioritize available removable roots before fixed roots in fallback enrichment
@@ -63,6 +68,9 @@ regular files, but not the removable-media junk path families named above.
 | REM-IDENTITY | Architecture | A stable removable volume source is identified by `volume:<uuid>` and remaps to the current mount path on reattach. | Current | ADR 0013, APP-017 |
 | REM-DETACH | Architecture | Detach marks the source unavailable and preserves catalog rows/overlay; Forget removes the source and overlay. | Current | APP-017 |
 | REM-SCAN | Functional | Attach scans immediately and is inserted at the front of pending scans. | Current | APP-017 |
+| REM-DUPUUID | Functional | Simultaneously mounted removable volumes with the same UUID are kept as distinct runtime identities by adding the mount path to colliding identities. | Current | APP-017, FND-071 |
+| REM-EJECT | Functional | Eject quiesces and drains the source before off-main unmount; failed unmount resumes the source rather than detaching it. | Current | APP-017 |
+| REM-WATCH | Functional | Filesystem watching starts with all available fixed libraries and available removable volumes already attached at watcher startup. | Current | APP-017 |
 | REM-JUNK | Functional | Hidden, AppleDouble, Finder/Spotlight trash, and camera helper paths are excluded from catalog scans. | Current | APP-017 |
 | REM-ENRICH | Architecture | Available removable roots are offered before fixed roots during fallback enrichment candidate claiming. | Current | ENR-011 |
 
@@ -127,12 +135,17 @@ the only UI-state builder and splits fixed libraries from removable sources.
 
 ## Interfaces, Ownership, Data Flow, And Persistence
 
-- `RemovableVolumeMonitor` is `@MainActor` and listens to workspace mount/unmount
-  notifications plus Disk Arbitration disappearance callbacks. It emits
-  `RemovableVolumeAttachment` and detach identity/reason events.
+- `RemovableVolumeMonitor` is `@MainActor` and listens to workspace mount,
+  pre-unmount/unmount notifications plus Disk Arbitration disappearance
+  callbacks. It emits attachment, quiesce, resume, and detach identity/reason
+  events, and disambiguates duplicate mounted UUIDs by mount path.
 - `CatalogStore.attachRemovableVolume(...)` normalizes the mount path, inserts or
   remaps a `library_root` row, marks it available, adds filesystem watching, and
   queues a front scan.
+- `CatalogStore.quiesceRemovableSource(...)` and
+  `resumeRemovableSource(...)` own pre-unmount/eject availability changes. User
+  eject drains coordinator work for that root and requests OS unmount off the
+  MainActor before waiting for platform detach confirmation.
 - `CatalogStore.detachRemovableSource(...)` cancels runtime work, removes the
   watcher root, releases enrichment claims, marks availability unavailable, and
   preserves catalog rows for stable identities.
@@ -148,10 +161,13 @@ the only UI-state builder and splits fixed libraries from removable sources.
 
 - Platform notifications stay on the main actor only long enough to create typed
   values. Store mutations cross one lossless serial ViewModel mutation stream.
-- Store scan ownership remains the existing process-local path plus row-id lease.
-- Detach releases enrichment claims for that root and starts the next queued scan.
+- Store scan ownership remains the existing process-local path plus row-id plus
+  in-memory generation lease.
+- Quiesce/resume/detach events cross the lossless mutation stream. Detach releases
+  enrichment claims for that root and starts the next queued scan.
 - Disk Arbitration runs on a private dispatch queue and hops to the main actor for
-  the event callback.
+  the event callback; callback registration uses an explicit retained context that
+  is unregistered and released during monitor stop.
 
 ## Instrumentation And Profiling Plan
 
@@ -165,6 +181,8 @@ the only UI-state builder and splits fixed libraries from removable sources.
 ## Test And Acceptance Criteria
 
 - `CatalogStoreRemovableSourceTests.removableVolumeRemountsByIdentityAndStaysOutOfAllMedia`
+- `CatalogStoreRemovableSourceTests.startWatchingIncludesAlreadyAttachedRemovableVolumes`
+- `CameraSourcePolicyTests.duplicateRemovableVolumeIdentitiesArePathDisambiguated`
 - `CatalogProjectionTests.removableSourcesAreSeparateAndExcludedFromAllMedia`
 - `CatalogStoreMediaEligibilityTests.scanSkipsHiddenAppleDoubleAndCameraJunkPaths`
 - `CatalogStoreEnrichmentClaimTests.fallbackEnrichmentClaimsRemovableSourcesBeforeFixedLibraries`

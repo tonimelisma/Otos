@@ -14,6 +14,12 @@ extension CatalogWindowViewModel {
             onAttach: { [weak self] attachment in
                 self?.submitCatalogMutation(.attachRemovableVolume(attachment))
             },
+            onQuiesce: { [weak self] identity in
+                self?.submitCatalogMutation(.quiesceRemovableSource(identity))
+            },
+            onResume: { [weak self] identity in
+                self?.submitCatalogMutation(.resumeRemovableSource(identity))
+            },
             onDetach: { [weak self] identity, reason in
                 self?.submitCatalogMutation(.detachRemovableSource(identity, reason))
             }
@@ -35,6 +41,18 @@ extension CatalogWindowViewModel {
         monitor.start()
     }
 
+    func startDeviceStagingSweepThenCameraMonitoring() {
+        deviceStagingSweepTask = Task { [weak self] in
+            await DeviceStagingRegistry.sweepAbsentDeviceStaging()
+            guard !Task.isCancelled else {
+                return
+            }
+            await MainActor.run {
+                self?.startCameraSourceMonitoring()
+            }
+        }
+    }
+
     private func attachCameraSession(_ session: DeviceCameraSession) {
         deviceStagingRegistry.register(session)
         deviceCatalogTasks[session.identity]?.cancel()
@@ -50,27 +68,41 @@ extension CatalogWindowViewModel {
     }
 
     private func runCameraCatalogFlow(_ session: DeviceCameraSession) async {
+        var activeScan: CatalogStore.ActiveScan?
         do {
             let rootPath = try await catalogStore.attachDeviceMTP(
                 stagingRootURL: session.stagingRootURL,
                 identity: session.identity,
                 displayName: session.displayName
             )
-            await catalogStore.beginDeviceCatalogEnumeration(rootPath: rootPath)
-            let items = try await session.catalogItems()
+            activeScan = try await catalogStore.beginDeviceCatalogEnumeration(rootPath: rootPath)
+            let snapshot = try await session.catalogSnapshot()
+            let items = snapshot.items
             try Task.checkCancellation()
+            guard let scan = activeScan else {
+                throw CancellationError()
+            }
             try await catalogStore.recordDeviceCatalogBatch(
                 scannedFiles(for: items),
-                rootPath: rootPath
+                scan: scan
             )
-            await catalogStore.completeDeviceCatalogEnumeration(
-                rootPath: rootPath,
-                observedPaths: Set(items.map(\.relativePath))
-            )
-            await applyProvisionalThumbnails(for: items, rootPath: rootPath, session: session)
             await enrichmentCoordinator?.stageDevice(stagingSeeds(for: items, rootPath: rootPath))
+            if snapshot.isStable {
+                try await catalogStore.completeDeviceCatalogEnumeration(
+                    scan: scan,
+                    observedPaths: Set(items.map(\.relativePath))
+                )
+            } else {
+                await diagnostics?.record(
+                    operation: "catalog.device.scan",
+                    phase: "unstable",
+                    fields: ["identity": session.identity, "count": "\(items.count)"]
+                )
+            }
+            await applyProvisionalThumbnails(for: items, rootPath: rootPath, session: session)
         } catch is CancellationError {
-            return
+            // The cleanup below ends the current enumeration lease if this task still
+            // owns it; detach or reconnect may already have superseded it.
         } catch {
             OtosLog.fileAccess.error(
                 "Camera catalog flow failed identity=\(session.identity, privacy: .public)"
@@ -80,6 +112,9 @@ extension CatalogWindowViewModel {
                 phase: "error",
                 fields: ["identity": session.identity, "error": String(describing: error)]
             )
+        }
+        if let activeScan {
+            await catalogStore.endDeviceCatalogEnumeration(scan: activeScan)
         }
     }
 
@@ -104,9 +139,11 @@ extension CatalogWindowViewModel {
         guard let thumbnailDirectory else {
             return
         }
+        let batchSize = 24
         var thumbnailsByID: [MediaAssetID: String] = [:]
         for item in items {
-            guard !Task.isCancelled else {
+            if Task.isCancelled {
+                try? await catalogStore.applyProvisionalThumbnails(thumbnailsByID)
                 return
             }
             await writeProvisionalThumbnail(
@@ -116,6 +153,10 @@ extension CatalogWindowViewModel {
                 thumbnailDirectory: thumbnailDirectory,
                 thumbnailsByID: &thumbnailsByID
             )
+            if thumbnailsByID.count >= batchSize {
+                try? await catalogStore.applyProvisionalThumbnails(thumbnailsByID)
+                thumbnailsByID.removeAll(keepingCapacity: true)
+            }
         }
         try? await catalogStore.applyProvisionalThumbnails(thumbnailsByID)
     }

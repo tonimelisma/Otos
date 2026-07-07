@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 /// The catalog database must always store the latest scanned filesystem facts. A
-/// whole-second date change is itself a visible change now that the tile shows the
-/// capture date, so it also republishes (FND-062).
+/// whole-second date change affects Best Date sort and enrichment priority, so it
+/// also republishes (FND-062).
 struct CatalogStoreScanFreshnessTests {
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
@@ -33,8 +33,7 @@ struct CatalogStoreScanFreshnessTests {
         )
 
         // A fresh store reloads the stale date from SQLite, then the launch scan
-        // re-observes the file and must refresh the row (and, since the changed
-        // second is now a visible change, also republish).
+        // re-observes the file and must refresh the row and republish.
         let secondStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
         try await secondStore.start()
         let reScanned = try await waitForCatalogStoreState(secondStore) { snapshot in

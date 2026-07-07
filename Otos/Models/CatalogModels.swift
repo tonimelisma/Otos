@@ -212,8 +212,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let sortKey: String
 
     // Enrichment overlay and SQLite-derived best values. The best date/kind/format
-    // fields are generated in SQLite from scan and enrichment facts, so display,
-    // sort, and filter use the same policy without a Swift fallback chain.
+    // fields are generated in SQLite from scan and enrichment facts, so query,
+    // sort, filter, and the video badge use the same policy without a Swift
+    // fallback chain. Capture dates remain catalog facts, not tile labels.
     // Full parsed metadata lives in the `asset_metadata` companion table as queryable
     // scalar columns plus JSON for long-tail fields, and is not loaded by the grid.
     //
@@ -283,6 +284,41 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         }
         return enrichedSourceSize != (byteSize ?? -1)
             || enrichedSourceMTimeSeconds != Self.mtimeSeconds(contentModifiedAt)
+    }
+}
+
+/// The narrow detail value a visible grid tile needs after structure publishes
+/// only identities. It intentionally omits filename and capture-date facts so the
+/// thumbnail boundary cannot accidentally keep rendering removed labels.
+nonisolated struct MediaTileDetail: Identifiable, Hashable {
+    let libraryRootPath: LibraryRootPath
+    let relativePath: MediaRelativePath
+    let thumbnailPath: String?
+    let bestKind: MediaKind?
+    let durationSeconds: Double?
+    let enrichedSourceSize: Int64?
+    let enrichedSourceMTimeSeconds: Int?
+
+    init(
+        libraryRootPath: LibraryRootPath,
+        relativePath: MediaRelativePath,
+        thumbnailPath: String? = nil,
+        bestKind: MediaKind? = nil,
+        durationSeconds: Double? = nil,
+        enrichedSourceSize: Int64? = nil,
+        enrichedSourceMTimeSeconds: Int? = nil
+    ) {
+        self.libraryRootPath = libraryRootPath
+        self.relativePath = relativePath
+        self.thumbnailPath = thumbnailPath
+        self.bestKind = bestKind
+        self.durationSeconds = durationSeconds
+        self.enrichedSourceSize = enrichedSourceSize
+        self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
+    }
+
+    var id: MediaAssetID {
+        MediaAssetID(libraryRootPath: libraryRootPath, relativePath: relativePath)
     }
 }
 

@@ -14,9 +14,9 @@ struct MediaTileDetailReader {
         self.store = store
     }
 
-    func assets(for ids: [MediaAssetID]) async -> [MediaAssetID: MediaAsset] {
+    func details(for ids: [MediaAssetID]) async -> [MediaAssetID: MediaTileDetail] {
         do {
-            return try await store.mediaAssets(for: ids)
+            return try await store.mediaTileDetails(for: ids)
         } catch is CancellationError {
             return [:]
         } catch {
@@ -29,12 +29,12 @@ struct MediaTileDetailReader {
 }
 
 nonisolated struct MediaTileDetailCache {
-    private struct CachedAsset {
-        var asset: MediaAsset
+    private struct CachedDetail {
+        var detail: MediaTileDetail
         var accessStamp: UInt64
     }
 
-    private var assetsByID: [MediaAssetID: CachedAsset] = [:]
+    private var detailsByID: [MediaAssetID: CachedDetail] = [:]
     private var accessClock: UInt64 = 0
     let limit: Int
 
@@ -43,24 +43,24 @@ nonisolated struct MediaTileDetailCache {
     }
 
     var count: Int {
-        assetsByID.count
+        detailsByID.count
     }
 
-    mutating func merge(_ assets: [MediaAssetID: MediaAsset]) {
-        for (id, asset) in assets {
+    mutating func merge(_ details: [MediaAssetID: MediaTileDetail]) {
+        for (id, detail) in details {
             let stamp = nextAccessStamp()
-            assetsByID[id] = CachedAsset(asset: asset, accessStamp: stamp)
+            detailsByID[id] = CachedDetail(detail: detail, accessStamp: stamp)
         }
         evictIfNeeded()
     }
 
-    mutating func asset(for id: MediaAssetID) -> MediaAsset? {
-        guard var cached = assetsByID[id] else {
+    mutating func detail(for id: MediaAssetID) -> MediaTileDetail? {
+        guard var cached = detailsByID[id] else {
             return nil
         }
         cached.accessStamp = nextAccessStamp()
-        assetsByID[id] = cached
-        return cached.asset
+        detailsByID[id] = cached
+        return cached.detail
     }
 
     private mutating func nextAccessStamp() -> UInt64 {
@@ -69,13 +69,13 @@ nonisolated struct MediaTileDetailCache {
     }
 
     private mutating func evictIfNeeded() {
-        while assetsByID.count > limit {
-            guard let evicted = assetsByID.min(by: { lhs, rhs in
+        while detailsByID.count > limit {
+            guard let evicted = detailsByID.min(by: { lhs, rhs in
                 lhs.value.accessStamp < rhs.value.accessStamp
             })?.key else {
                 return
             }
-            assetsByID[evicted] = nil
+            detailsByID[evicted] = nil
         }
     }
 }

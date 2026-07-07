@@ -194,7 +194,7 @@ extension MediaAssetCollectionViewController {
             return nil
         }
         _ = item.configure(
-            asset: assetForTile(assetID),
+            detail: detailForTile(assetID),
             thumbnailDirectory: thumbnailDirectory,
             imageCache: imageCache
         )
@@ -260,9 +260,9 @@ extension MediaAssetCollectionViewController {
         // start from an empty selection instead of restoring surviving identities.
         let preservedSelection = resetSelection ? [] : selectedIdentities()
 
-        // Identity order is the complete structural contract. Details are read
-        // for visible identities after the structural apply, so a filename or
-        // thumbnail change never requires this O(n) diffable snapshot path.
+        // Identity order is the complete structural contract. Tile details are
+        // read for visible identities after the structural apply, so thumbnail
+        // or video-badge changes never require this O(n) diffable snapshot path.
         let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
 
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
@@ -354,7 +354,7 @@ extension MediaAssetCollectionViewController {
             """
         )
         detailQueryTask = Task { [weak self, detailReader, visibleIDs] in
-            let assets = await detailReader.assets(for: visibleIDs)
+            let details = await detailReader.details(for: visibleIDs)
             if Task.isCancelled {
                 OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
                 return
@@ -364,13 +364,13 @@ extension MediaAssetCollectionViewController {
                 OtosSignpost.ui.emitEvent("MediaGridVisibleDetailQueryDropped")
                 return
             }
-            mergeTileDetails(assets, reason: reason)
+            mergeTileDetails(details, reason: reason)
             OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
             let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
             OtosLog.ui.debug(
                 """
                 Media grid visible detail query finished requested=\(visibleIDs.count, privacy: .public) \
-                returned=\(assets.count, privacy: .public) reason=\(reason, privacy: .public) \
+                returned=\(details.count, privacy: .public) reason=\(reason, privacy: .public) \
                 queryMs=\(queryMs, privacy: .public)
                 """
             )
@@ -410,7 +410,7 @@ extension MediaAssetCollectionViewController {
                 continue
             }
             if item.configure(
-                asset: assetForTile(assetID),
+                detail: detailForTile(assetID),
                 thumbnailDirectory: thumbnailDirectory,
                 imageCache: imageCache
             ) {
@@ -445,29 +445,24 @@ extension MediaAssetCollectionViewController {
             .compactMap { dataSource.itemIdentifier(for: $0) }
     }
 
-    func assetForTile(_ id: MediaAssetID) -> MediaAsset {
-        tileDetails.asset(for: id) ?? MediaAsset(
+    func detailForTile(_ id: MediaAssetID) -> MediaTileDetail {
+        tileDetails.detail(for: id) ?? MediaTileDetail(
             libraryRootPath: id.libraryRootPath,
-            relativePath: id.relativePath,
-            name: nil,
-            contentTypeIdentifier: nil,
-            byteSize: nil,
-            createdAt: nil,
-            contentModifiedAt: nil
+            relativePath: id.relativePath
         )
     }
 
-    func mergeTileDetails(_ assets: [MediaAssetID: MediaAsset], reason: String) {
-        guard !assets.isEmpty else {
+    func mergeTileDetails(_ details: [MediaAssetID: MediaTileDetail], reason: String) {
+        guard !details.isEmpty else {
             OtosSignpost.ui.emitEvent("MediaGridTileDetailsMergeEmpty")
             return
         }
-        tileDetails.merge(assets)
+        tileDetails.merge(details)
         let storedCount = tileDetails.count
         OtosSignpost.ui.emitEvent("MediaGridTileDetailsMerged")
         OtosLog.ui.debug(
             """
-            Media grid tile details merged incoming=\(assets.count, privacy: .public) \
+            Media grid tile details merged incoming=\(details.count, privacy: .public) \
             stored=\(storedCount, privacy: .public) reason=\(reason, privacy: .public)
             """
         )

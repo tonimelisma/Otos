@@ -75,23 +75,27 @@ struct CatalogBrowserSourceHygieneTests {
     @Test func preheaterCoalescesBurstsIntoOneStoreRead() throws {
         let prefetch = try appSource("Otos/Views/MediaAssetCollectionPrefetch.swift")
 
-        #expect(prefetch.contains("detailReader.assets(for: ids)"))
+        #expect(prefetch.contains("detailReader.details(for: ids)"))
         #expect(prefetch.contains("preheatTask = Task.detached"))
         #expect(prefetch.contains("canReuseCurrentPreheat(for: requestedIDs)"))
         #expect(prefetch.contains("requestedIDs.isSubset(of: preheatIDs)"))
         #expect(prefetch.contains("preheatIDs.subtract(cancelledIDs)"))
-        #expect(prefetch.contains("let activeAssets = assets.filter"))
+        #expect(prefetch.contains("let activeDetails = details.filter"))
         #expect(prefetch.contains("preheatGeneration += 1"))
-        #expect(!prefetch.contains("detailReader.assets(for: [id])"))
+        #expect(!prefetch.contains("detailReader.details(for: [id])"))
         #expect(!prefetch.contains("for id in ids where preheatTasks"))
         #expect(!prefetch.contains("preheatTasks:"))
     }
 
-    @Test func tileOverlayMasksRoundOnlyInnerCorners() throws {
+    @Test func tileOverlayRemovesFilenameDateLabelsAndKeepsVideoBadgeCornerMask() throws {
         let tile = try appSource("Otos/Views/MediaAssetTileView.swift")
+        let presentation = try appSource("Otos/Views/MediaAssetTilePresentation.swift")
 
-        #expect(tile.contains("textScrim.layer?.maskedCorners = [.layerMaxXMinYCorner]"))
         #expect(tile.contains("videoBadge.layer?.maskedCorners = [.layerMinXMaxYCorner]"))
+        #expect(!tile.contains("textScrim"))
+        #expect(!tile.contains("titleField"))
+        #expect(!tile.contains("dateField"))
+        #expect(!presentation.contains("captureDateText"))
         #expect(!tile.contains("imageView.image = nil"))
     }
 

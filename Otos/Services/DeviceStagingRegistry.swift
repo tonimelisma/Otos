@@ -13,9 +13,7 @@ final class DeviceStagingRegistry {
     private let freeSpaceFloorBytes: Int64 = 10 * 1024 * 1024 * 1024
     private var sessionsByIdentity: [String: DeviceCameraSession] = [:]
 
-    init() {
-        sweepAbsentDeviceStaging()
-    }
+    init() {}
 
     func register(_ session: DeviceCameraSession) {
         sessionsByIdentity[session.identity] = session
@@ -40,7 +38,7 @@ final class DeviceStagingRegistry {
                 "Device staging paused for low free space identity=\(route.session.identity, privacy: .public)"
             )
             return MaterializationResult(
-                outcome: .timedOut,
+                outcome: .insufficientLocalSpace,
                 rerequestCount: 0,
                 elapsedMs: DiagnosticsTiming.milliseconds(since: start)
             )
@@ -115,8 +113,15 @@ final class DeviceStagingRegistry {
         return available >= freeSpaceFloorBytes
     }
 
-    private func sweepAbsentDeviceStaging() {
+    static func sweepAbsentDeviceStaging(exceptIdentities: Set<String> = []) async {
+        await Task.detached(priority: .utility) {
+            sweepAbsentDeviceStagingSynchronously(exceptIdentities: exceptIdentities)
+        }.value
+    }
+
+    private nonisolated static func sweepAbsentDeviceStagingSynchronously(exceptIdentities: Set<String>) {
         let root = Self.deviceStagingRootURL()
+        let skippedNames = Set(exceptIdentities.map(CameraSourceMonitor.sanitize))
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: root,
             includingPropertiesForKeys: [.isDirectoryKey]
@@ -124,6 +129,10 @@ final class DeviceStagingRegistry {
             return
         }
         for url in contents {
+            let identity = url.lastPathComponent
+            guard !skippedNames.contains(identity) else {
+                continue
+            }
             try? FileManager.default.removeItem(at: url)
         }
     }
@@ -134,7 +143,7 @@ final class DeviceStagingRegistry {
         try? FileManager.default.removeItem(at: url)
     }
 
-    private static func deviceStagingRootURL() -> URL {
+    private nonisolated static func deviceStagingRootURL() -> URL {
         let caches = (try? FileManager.default.url(
             for: .cachesDirectory,
             in: .userDomainMask,

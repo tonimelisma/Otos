@@ -36,7 +36,7 @@ implementation history.
 | [0003](adr/0003-library-root-selection-and-access.md) | Unsandboxed folder selection, normalized path identity, and overlap rules. |
 | [0004](adr/0004-catalog-ui-ownership.md) | Permanent single-window Store/Projection/ViewModel/View ownership. |
 | [0005](adr/0005-catalog-publication-and-availability.md) | Projection publication, explicit selection delivery, and transient availability. |
-| [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering, aspect-fit tile face overlays, no-blank synchronous paint, and structural/detail update mechanics. |
+| [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering, aspect-fit tile face, video badge overlay, no-blank synchronous paint, and structural/detail update mechanics. |
 | [0007](adr/0007-catalog-order-reuse.md) | Superseded ordering/materialization decision retained for precomputed sort-key and order-cache-removal evidence. |
 | [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
 | [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files plus bounded decoded rendering cache, metadata as scalar columns plus JSON, hot video duration), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
@@ -84,13 +84,15 @@ implementation history.
 | [0034](specs/0034-session-scoped-diagnostics-and-log-hygiene.md) | Session-scoped diagnostics, ignored run/test log captures, JSONL de-spamming, scan issue aggregation, and cancellation-aware tile-detail errors. |
 | [0035](specs/0035-catalog-browser-remediation-completion.md) | Catalog browser remediation completion: Store wait/exec timing, stall operation attribution, WAL visibility, diffable structural grid applies, image-only tile reload identity, enrichment claim batching, query-intent freshness, and source/docs hygiene. |
 | [0036](specs/0036-pr41-browser-remediation-follow-up.md) | PR 41 remediation follow-up: enrichment claim lifecycle, newest-first fallback claiming, bounded filesystem diagnostics, large reorder-only grid apply policy, and source/docs cleanup. |
-| [0037](specs/0037-thumbnail-tile-redesign.md) | Thumbnail tile redesign: aspect-fit visible tile face, filename/date/video overlays, hot duration scalar, relative date policy, and current docs cleanup. |
+| [0037](specs/0037-thumbnail-tile-redesign.md) | Thumbnail tile redesign baseline; current tile anatomy is superseded by specs 0038 and 0044. |
 | [0038](specs/0038-no-blank-grid-invariant.md) | No-blank grid invariant: synchronous decoded-thumbnail paint, sticky visible details, tile overlay geometry, materialization re-request, reserved download slot, and verification evidence. |
 | [0039](specs/0039-grid-preheat-and-apply-follow-up.md) | Post-review grid follow-up: batched newest-burst preheating, non-main decoded cache warming, reloadData fallback for measured-large/reorder applies, cache recency cleanup, and current docs correction. |
 | [0040](specs/0040-materialization-cadence-jsonl-telemetry.md) | Materialization cadence and durable telemetry: one-second provider re-requests, materialization result attribution, claim-failure lifecycle rows, coarse grid counter JSONL snapshots, diagnostics gates, and plan retirement. |
 | [0041](specs/0041-review-follow-up-telemetry-and-doc-truth.md) | Review follow-up: explicit termination and early interval grid-counter rows, start-only diagnostics gate failure, partial preheat cancellation, cache documentation truth, and formatter reuse. |
 | [0042](specs/0042-removable-volume-sources.md) | Removable filesystem volume sources: detection, stable source identity, remount path remap, separate sidebar/settings rows, All Media exclusion, detach/forget lifecycle, scanner junk exclusions, and enrichment priority. |
 | [0043](specs/0043-mtp-camera-sources.md) | MTP camera sources: ImageCapture monitoring, mass-storage rejection, virtual staging roots, provisional thumbnails, device materialization routing, staging cleanup, camera banner, and stills-before-video staging order. |
+| [0044](specs/0044-thumbnail-label-removal-and-badge-centering.md) | Thumbnail label removal and badge centering: no filename/date tile overlay, tile-specific detail rows, and centered duration text in a right-aligned video badge. |
+| [0045](specs/0045-removable-media-review-remediation.md) | Removable-media review remediation: device enumeration leases, fail-closed camera reconciliation, removable-volume quiesce/eject ordering, duplicate volume disambiguation, and device-staging retry scheduling. |
 
 ## Planning Documents
 

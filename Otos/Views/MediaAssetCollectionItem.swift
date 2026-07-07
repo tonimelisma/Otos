@@ -29,7 +29,7 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
 
     @discardableResult
     func configure(
-        asset: MediaAsset,
+        detail: MediaTileDetail,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?
     ) -> Bool {
@@ -41,7 +41,7 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
 
         let start = Date()
         let startedLoad = tileView.configure(
-            asset: asset,
+            detail: detail,
             thumbnailDirectory: thumbnailDirectory,
             imageCache: imageCache
         )
@@ -52,8 +52,8 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         OtosSignpost.ui.emitEvent("MediaGridSlowCellConfiguration")
         OtosLog.ui.debug(
             """
-            Media grid slow cell assetID=\(asset.libraryRootPath.rawValue, privacy: .public)/\
-            \(asset.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
+            Media grid slow cell assetID=\(detail.libraryRootPath.rawValue, privacy: .public)/\
+            \(detail.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
             """
         )
         return startedLoad

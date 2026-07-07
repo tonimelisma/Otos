@@ -559,8 +559,8 @@ The selected pattern constrains implementation:
   cadence when pending changes exist
 - concurrent initial-load callers share one Store-owned startup task
 - database-restored roots receive one automatic launch scan request
-- scan callbacks must still own the same root path and private root-row instance
-  before changing durable or in-memory state
+- scan callbacks must still own the same root path, private root-row instance,
+  and process-local lease generation before changing durable or in-memory state
 
 ## Retirement Proof
 

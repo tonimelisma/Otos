@@ -11,7 +11,9 @@ applies are a no-blank fix. On AppKit, `animatingDifferences: false` is a
 reloadData-class path; the current invariant is enforced by synchronous tile
 paint from decoded cache plus same-identity downgrade guards. Spec 0039 uses that
 reloadData-class path again for measured-large or reorder-only applies because
-the tile invariant now owns visual correctness.
+the tile invariant now owns visual correctness. Spec 0044 later removed the tile
+capture-date label, but the image-reload identity split from this spec remains
+current.
 
 ## Classification
 
@@ -38,8 +40,8 @@ In scope:
 - expose enrichment write pressure and WAL byte-size facts
 - change structural collection applies to the diffable path and remove manual
   scroll-origin restoration
-- split tile image reload identity from capture-date text so date-only changes do
-  not clear thumbnails
+- split tile image reload identity from capture-date text so date-only changes did
+  not clear thumbnails; current tiles no longer render that date label
 - batch enrichment candidate claims when timing evidence confirms writer-queue
   pressure dominates
 - keep query-intent generation semantics value-independent for rapid toggles

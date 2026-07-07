@@ -9,9 +9,28 @@ import OSLog
 /// Store remains the only catalog writer and every mutation records the same
 /// bounded diagnostics/error shape.
 extension CatalogWindowViewModel {
+    func submitCatalogMutation(_ intent: CatalogMutationIntent) {
+        switch mutationContinuation.yield(intent) {
+        case .enqueued:
+            return
+        case .dropped:
+            // The stream is unbounded, so dropping indicates that its declared
+            // lossless contract has been broken rather than normal backpressure.
+            assertionFailure("Unbounded catalog mutation stream dropped an intent")
+            OtosLog.ui.error("Catalog mutation intent was unexpectedly dropped")
+        case .terminated:
+            assertionFailure("Catalog mutation submitted after stream termination")
+            OtosLog.ui.error("Catalog mutation intent submitted after termination")
+        @unknown default:
+            assertionFailure("Unknown catalog mutation stream yield result")
+            OtosLog.ui.error("Catalog mutation intent returned an unknown yield result")
+        }
+    }
+
     nonisolated static func performCatalogMutation(
         _ intent: CatalogMutationIntent,
         store: CatalogStore,
+        coordinator: EnrichmentCoordinator?,
         diagnostics: CatalogDiagnostics?
     ) async {
         switch intent {
@@ -22,11 +41,15 @@ extension CatalogWindowViewModel {
         case let .removeLibrary(path):
             await performRemoveLibrary(path, store: store, diagnostics: diagnostics)
         case let .ejectRemovableSource(root):
-            await performEjectRemovableSource(root, store: store, diagnostics: diagnostics)
+            await performEjectRemovableSource(root, store: store, coordinator: coordinator, diagnostics: diagnostics)
         case let .forgetRemovableSource(root):
             await performForgetRemovableSource(root, store: store, diagnostics: diagnostics)
         case let .attachRemovableVolume(attachment):
             await performAttachRemovableVolume(attachment, store: store, diagnostics: diagnostics)
+        case let .quiesceRemovableSource(identity):
+            await performQuiesceRemovableSource(identity, store: store, diagnostics: diagnostics)
+        case let .resumeRemovableSource(identity):
+            await performResumeRemovableSource(identity, store: store, diagnostics: diagnostics)
         case let .detachRemovableSource(identity, reason):
             await performDetachRemovableSource(identity, reason: reason, store: store, diagnostics: diagnostics)
         }
@@ -97,17 +120,20 @@ private extension CatalogWindowViewModel {
     nonisolated static func performEjectRemovableSource(
         _ root: LibraryRoot,
         store: CatalogStore,
+        coordinator: EnrichmentCoordinator?,
         diagnostics: CatalogDiagnostics?
     ) async {
         let signpost = OtosSignpost.ui.beginInterval("CatalogEjectRemovableSourceIntent")
+        guard let identity = root.deviceIdentity else {
+            OtosSignpost.ui.endInterval("CatalogEjectRemovableSourceIntent", signpost)
+            return
+        }
         do {
-            if let identity = root.deviceIdentity {
-                try await store.detachRemovableSource(identity: identity, reason: .ejected)
-            }
-            try await MainActor.run {
-                try NSWorkspace.shared.unmountAndEjectDevice(at: root.path.url)
-            }
+            try await store.quiesceRemovableSource(identity: identity)
+            await coordinator?.drainWork(under: root.path)
+            try await unmountAndEjectDeviceOffMain(root.path.url)
         } catch {
+            try? await store.resumeRemovableSource(identity: identity)
             await recordMutationError(
                 "Catalog eject removable source failed",
                 operation: "catalog.removable.eject",
@@ -117,6 +143,12 @@ private extension CatalogWindowViewModel {
             )
         }
         OtosSignpost.ui.endInterval("CatalogEjectRemovableSourceIntent", signpost)
+    }
+
+    nonisolated static func unmountAndEjectDeviceOffMain(_ url: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+        }.value
     }
 
     nonisolated static func performForgetRemovableSource(
@@ -165,6 +197,42 @@ private extension CatalogWindowViewModel {
             )
         }
         OtosSignpost.ui.endInterval("CatalogAttachRemovableVolumeIntent", signpost)
+    }
+
+    nonisolated static func performQuiesceRemovableSource(
+        _ identity: String,
+        store: CatalogStore,
+        diagnostics: CatalogDiagnostics?
+    ) async {
+        do {
+            try await store.quiesceRemovableSource(identity: identity)
+        } catch {
+            await recordMutationError(
+                "Catalog quiesce removable source failed",
+                operation: "catalog.removable.quiesce",
+                fields: ["identity": identity],
+                error: error,
+                diagnostics: diagnostics
+            )
+        }
+    }
+
+    nonisolated static func performResumeRemovableSource(
+        _ identity: String,
+        store: CatalogStore,
+        diagnostics: CatalogDiagnostics?
+    ) async {
+        do {
+            try await store.resumeRemovableSource(identity: identity)
+        } catch {
+            await recordMutationError(
+                "Catalog resume removable source failed",
+                operation: "catalog.removable.resume",
+                fields: ["identity": identity],
+                error: error,
+                diagnostics: diagnostics
+            )
+        }
     }
 
     nonisolated static func performDetachRemovableSource(

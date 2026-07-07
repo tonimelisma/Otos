@@ -38,8 +38,9 @@ extension EnrichmentCoordinator {
 
         do {
             let claimLimit = max(claimBatchSize, availableSlots - items.count)
-            let candidates = try await claimEnrichmentCandidates(limit: claimLimit)
-            enqueueClaimedCandidates(candidates, currentItems: items)
+            let priorityIDs = prioritizedEnrichmentIDs()
+            let candidates = try await claimEnrichmentCandidates(prioritizing: priorityIDs, limit: claimLimit)
+            enqueueClaimedCandidates(candidates, submittedPriorityIDs: priorityIDs, currentItems: items)
             items.append(contentsOf: drainClaimedEnrichmentQueue(limit: availableSlots - items.count))
             await recordDispatchedWork(items)
             logClaimBatch(claimedCount: candidates.count, dispatchedCount: items.count, limit: claimLimit)
@@ -56,7 +57,7 @@ extension EnrichmentCoordinator {
         }
         var items: [DownloadWork] = []
         while inFlightDownload.count < downloadConcurrency, let work = nextDownloadWork() {
-            let isViewportWork = viewport.contains(work.id)
+            let isViewportWork = viewport.contains(work.id) || work.isDeviceStaging
             guard EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
                 isViewportWork: isViewportWork,
                 inFlightDownloadCount: inFlightDownload.count,
@@ -72,6 +73,7 @@ extension EnrichmentCoordinator {
                 fields: [
                     "sourceSize": "\(work.sourceSize ?? -1)",
                     "viewport": "\(isViewportWork)",
+                    "deviceStaging": "\(work.isDeviceStaging)",
                 ]
             )
         }
@@ -93,16 +95,26 @@ extension EnrichmentCoordinator {
 
     func nextDownloadWork() -> DownloadWork? {
         for id in viewport.reversed() where !inFlightDownload.contains(id) {
-            if let work = datalessPending[id] {
+            if let work = datalessPending[id], work.isReadyForRetry {
                 return work
             }
+        }
+        let deviceWork = datalessPending.values
+            .filter { readyDownloadWork($0) && $0.isDeviceStaging }
+            .min(by: downloadWorkPrecedes)
+        if let deviceWork {
+            return deviceWork
         }
         guard eagerMode else {
             return nil
         }
         return datalessPending.values
-            .filter { !inFlightDownload.contains($0.id) }
+            .filter { readyDownloadWork($0) && !$0.isDeviceStaging }
             .min(by: downloadWorkPrecedes)
+    }
+
+    private func readyDownloadWork(_ work: DownloadWork) -> Bool {
+        !inFlightDownload.contains(work.id) && work.isReadyForRetry
     }
 
     private func downloadWorkPrecedes(_ left: DownloadWork, _ right: DownloadWork) -> Bool {
@@ -125,9 +137,12 @@ extension EnrichmentCoordinator {
         !inFlightEnrich.isEmpty
     }
 
-    private func claimEnrichmentCandidates(limit: Int) async throws -> [MediaAsset] {
+    private func claimEnrichmentCandidates(
+        prioritizing priorityIDs: [MediaAssetID],
+        limit: Int
+    ) async throws -> [MediaAsset] {
         let candidates = try await store.enrichmentCandidates(
-            prioritizing: prioritizedEnrichmentIDs(),
+            prioritizing: priorityIDs,
             limit: limit
         )
         for asset in candidates {
@@ -147,12 +162,16 @@ extension EnrichmentCoordinator {
         )
     }
 
-    private func enqueueClaimedCandidates(_ candidates: [MediaAsset], currentItems: [EnrichWork]) {
+    private func enqueueClaimedCandidates(
+        _ candidates: [MediaAsset],
+        submittedPriorityIDs: [MediaAssetID],
+        currentItems: [EnrichWork]
+    ) {
         if candidates.isEmpty, claimedEnrichQueue.isEmpty, currentItems.isEmpty {
             eagerMode = true
         }
-        let claimedIDs = Set(candidates.map(\.id))
-        freshly.removeAll { claimedIDs.contains($0) }
+        let submittedPriorityIDs = Set(submittedPriorityIDs)
+        freshly.removeAll { submittedPriorityIDs.contains($0) }
         for asset in candidates where !inFlightEnrich.contains(asset.id) {
             claimedEnrichQueue.append(makeWork(asset))
         }
@@ -210,5 +229,14 @@ extension EnrichmentCoordinator {
             phase: "queryError",
             fields: ["error": String(describing: error)]
         )
+    }
+}
+
+private extension EnrichmentCoordinator.DownloadWork {
+    nonisolated var isReadyForRetry: Bool {
+        guard let retryNotBefore else {
+            return true
+        }
+        return retryNotBefore <= Date()
     }
 }

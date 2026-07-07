@@ -61,11 +61,12 @@ The layout has one full-width group with exactly six square fractional items,
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. Each square collection cell is transparent; the visible tile
 face is the loaded thumbnail's native aspect-fit rect, or a full-square neutral
-placeholder before the thumbnail is known. Filename and optional relative capture
-date are drawn on a top-left scrim inside that face. Only content conforming to
-`UTType.movie` gets a bottom-right badge inside the face: duration text when
-available, otherwise a film symbol. Images have no video badge, blue tint, or
-video-only backing color.
+placeholder before the thumbnail is known. Tiles do not render filename or
+relative date text. Only content whose generated best kind is video gets a
+bottom-right badge inside the face: centered duration text when available,
+otherwise a film symbol. The badge darkened area is right-aligned to the
+thumbnail face with no outer inset and symmetric internal horizontal padding.
+Images have no video badge, blue tint, or video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
 insert/remove changes may animate so surviving items move with rendered thumbnails
@@ -101,8 +102,8 @@ responsive columns and removes flow-layout width bookkeeping.
 - Collection updates are imperative but isolated and state-machine tested.
 - Same-identity background enrichment or fact-detail updates do not recycle
   visible cells; if AppKit does recycle a visible cell for structural reasons, the
-  tile synchronously repaints from the decoded cache when available. Date and
-  duration overlay updates do not participate in image identity.
+  tile synchronously repaints from the decoded cache when available. Video badge
+  updates do not participate in image identity.
 - Missing detail rows, detail-query failures, and nil thumbnail decode results
   are information loss, not proof that a painted same-asset thumbnail should be
   cleared.
@@ -121,3 +122,4 @@ responsive columns and removes flow-layout width bookkeeping.
 - `docs/specs/0035-catalog-browser-remediation-completion.md`
 - `docs/specs/0038-no-blank-grid-invariant.md`
 - `docs/specs/0039-grid-preheat-and-apply-follow-up.md`
+- `docs/specs/0044-thumbnail-label-removal-and-badge-centering.md`

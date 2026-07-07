@@ -1,6 +1,5 @@
 @testable import Otos
 import Testing
-import UniformTypeIdentifiers
 
 @MainActor
 struct MediaAssetCollectionTests {
@@ -143,50 +142,45 @@ struct MediaAssetCollectionTests {
     }
 
     @Test func tileDetailCacheMergesAndEvictsLeastRecentlyUsedAssets() {
-        let firstAsset = makeAsset(path: "a.jpg", type: UTType.jpeg.identifier)
-        let secondAsset = makeAsset(path: "b.jpg", type: UTType.jpeg.identifier)
-        let thirdAsset = makeAsset(path: "c.jpg", type: UTType.jpeg.identifier)
+        let firstDetail = makeDetail(path: "a.jpg")
+        let secondDetail = makeDetail(path: "b.jpg")
+        let thirdDetail = makeDetail(path: "c.jpg")
         var cache = MediaTileDetailCache(limit: 2)
 
-        cache.merge([firstAsset.id: firstAsset, secondAsset.id: secondAsset])
+        cache.merge([firstDetail.id: firstDetail, secondDetail.id: secondDetail])
         #expect(cache.count == 2)
-        #expect(cache.asset(for: firstAsset.id) == firstAsset)
+        #expect(cache.detail(for: firstDetail.id) == firstDetail)
 
-        cache.merge([thirdAsset.id: thirdAsset])
+        cache.merge([thirdDetail.id: thirdDetail])
         #expect(cache.count == 2)
-        #expect(cache.asset(for: firstAsset.id) == firstAsset)
-        #expect(cache.asset(for: secondAsset.id) == nil)
-        #expect(cache.asset(for: thirdAsset.id) == thirdAsset)
+        #expect(cache.detail(for: firstDetail.id) == firstDetail)
+        #expect(cache.detail(for: secondDetail.id) == nil)
+        #expect(cache.detail(for: thirdDetail.id) == thirdDetail)
     }
 }
 
 @MainActor
 private func makeGrid(scope: SidebarSelection, paths: [String]) -> CatalogMediaGridState {
-    let assets = paths.map { makeAsset(path: $0, type: UTType.jpeg.identifier) }
+    let assets = paths.map { makeAssetID(path: $0) }
     return CatalogMediaGridState(
         scope: scope,
-        orderedAssetIDs: assets.map(\.id)
+        orderedAssetIDs: assets
     )
 }
 
 @MainActor
-private func makeAsset(
-    path: String,
-    type: String?,
-    name: String? = "asset",
-    kind: MediaKind? = nil,
-    durationSeconds: Double? = nil
-) -> MediaAsset {
-    MediaAsset(
+private func makeAssetID(path: String) -> MediaAssetID {
+    MediaAssetID(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-        relativePath: MediaRelativePath(rawValue: path),
-        name: name,
-        contentTypeIdentifier: type,
-        byteSize: 1,
-        createdAt: nil,
-        contentModifiedAt: nil,
-        bestKind: kind,
-        durationSeconds: durationSeconds
+        relativePath: MediaRelativePath(rawValue: path)
+    )
+}
+
+@MainActor
+private func makeDetail(path: String) -> MediaTileDetail {
+    MediaTileDetail(
+        libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+        relativePath: MediaRelativePath(rawValue: path)
     )
 }
 

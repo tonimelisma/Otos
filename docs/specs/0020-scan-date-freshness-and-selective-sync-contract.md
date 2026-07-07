@@ -55,12 +55,13 @@ Out of scope (deferred, with rationale):
 - A selective-sync exclusion detector. It is provider-specific and only matters once
   user-authored, non-rebuildable overlay exists (ADR 0008 reversal plan). Today
   purge is lossless, so there is no data-loss bug to fix in code.
-- Date-aware sort and scope. (Date *display* arrived with enrichment: the tile shows
-  the capture date, which falls back to the filesystem dates — ENR-003. As this spec
-  anticipated, that made the notification policy revisit-worthy, so spec 0022 extended
-  FND-062's suppression key to include the `createdAt`/`contentModifiedAt` dates at
-  whole-second resolution, waking the pipeline on a real date change. Date-aware
-  sorting and scoping remain unbuilt.)
+- Date-aware sort and scope. (Capture-date facts arrived with enrichment and
+  initially drove tile date display; spec 0044 removed that tile label, but the
+  same generated best-date facts still drive query policy and enrichment
+  priority. As this spec anticipated, that made the notification policy
+  revisit-worthy, so spec 0022 extended FND-062's suppression key to include the
+  `createdAt`/`contentModifiedAt` dates at whole-second resolution, waking the
+  pipeline on a real date change. Date-aware sorting and scoping remain unbuilt.)
 
 ## Definition Of Ready
 

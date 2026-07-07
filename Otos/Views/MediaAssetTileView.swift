@@ -11,7 +11,7 @@ private final class FlippedView: NSView {
 
 private struct TilePaintRequest {
     let decision: TilePaintDecision
-    let asset: MediaAsset
+    let detail: MediaTileDetail
     let contentKey: String
     let cachedImage: CGImage?
     let thumbnailDirectory: URL?
@@ -23,16 +23,13 @@ final class MediaAssetTileView: NSView {
 
     private let contentView = FlippedView()
     private let imageView = NSImageView()
-    private let textScrim = FlippedView()
-    private let titleField = NSTextField(labelWithString: "")
-    private let dateField = NSTextField(labelWithString: "")
     private let videoBadge = FlippedView()
     private let durationField = NSTextField(labelWithString: "")
     private let filmIconView = NSImageView()
 
     /// Identifies the image content the async load produced (thumbnail file plus its
     /// enrichment stamp). Equal keys mean the painted thumbnail can stay in place even
-    /// when overlay text changes.
+    /// when video badge text changes.
     private var currentImageContentKey: String?
     private var currentAssetID: MediaAssetID?
     private var currentImagePixelSize: CGSize?
@@ -62,36 +59,16 @@ final class MediaAssetTileView: NSView {
         imageView.layer?.contentsGravity = .resizeAspect
         contentView.addSubview(imageView)
 
-        textScrim.wantsLayer = true
-        textScrim.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
-        textScrim.layer?.cornerRadius = Layout.scrimCornerRadius
-        textScrim.layer?.maskedCorners = [.layerMaxXMinYCorner]
-        textScrim.layer?.masksToBounds = true
-        contentView.addSubview(textScrim)
-
-        titleField.font = .systemFont(ofSize: 11, weight: .medium)
-        titleField.textColor = .white
-        titleField.usesSingleLineMode = true
-        titleField.lineBreakMode = .byTruncatingMiddle
-        titleField.cell?.truncatesLastVisibleLine = true
-        textScrim.addSubview(titleField)
-
-        dateField.font = .systemFont(ofSize: 9, weight: .regular)
-        dateField.textColor = .white
-        dateField.usesSingleLineMode = true
-        dateField.lineBreakMode = .byTruncatingTail
-        textScrim.addSubview(dateField)
-
         videoBadge.wantsLayer = true
         videoBadge.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
-        videoBadge.layer?.cornerRadius = Layout.scrimCornerRadius
+        videoBadge.layer?.cornerRadius = Layout.badgeCornerRadius
         videoBadge.layer?.maskedCorners = [.layerMinXMaxYCorner]
         videoBadge.layer?.masksToBounds = true
         contentView.addSubview(videoBadge)
 
         durationField.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         durationField.textColor = .white
-        durationField.alignment = .right
+        durationField.alignment = .center
         durationField.usesSingleLineMode = true
         durationField.lineBreakMode = .byClipping
         videoBadge.addSubview(durationField)
@@ -111,27 +88,27 @@ final class MediaAssetTileView: NSView {
 extension MediaAssetTileView {
     @discardableResult
     func configure(
-        asset: MediaAsset,
+        detail: MediaTileDetail,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?
     ) -> Bool {
-        configureOverlayText(for: asset)
+        configureBadge(for: detail)
         needsLayout = true
 
-        let key = MediaAssetTilePresentation.imageContentKey(asset)
-        let cachedImage = asset.thumbnailPath.flatMap { _ in imageCache?.image(for: key) }
+        let key = MediaAssetTilePresentation.imageContentKey(detail)
+        let cachedImage = detail.thumbnailPath.flatMap { _ in imageCache?.image(for: key) }
         let decision = MediaAssetTilePresentation.paintDecision(TilePaintContext(
             incomingKey: key,
-            incomingThumbnailPath: asset.thumbnailPath,
+            incomingThumbnailPath: detail.thumbnailPath,
             currentKey: currentImageContentKey,
             currentAssetID: currentAssetID,
-            incomingAssetID: asset.id,
+            incomingAssetID: detail.id,
             cacheHasImage: cachedImage != nil,
             hasPaintedImage: currentImagePixelSize != nil
         ))
         return applyPaintDecision(TilePaintRequest(
             decision: decision,
-            asset: asset,
+            detail: detail,
             contentKey: key,
             cachedImage: cachedImage,
             thumbnailDirectory: thumbnailDirectory,
@@ -139,11 +116,9 @@ extension MediaAssetTileView {
         ))
     }
 
-    private func configureOverlayText(for asset: MediaAsset) {
-        titleField.stringValue = MediaAssetTilePresentation.title(asset)
-        dateField.stringValue = MediaAssetTilePresentation.captureDateText(asset)
-        shouldShowVideoBadge = MediaAssetTilePresentation.showsVideoBadge(asset)
-        let badgeText = MediaAssetTilePresentation.videoBadgeText(asset)
+    private func configureBadge(for detail: MediaTileDetail) {
+        shouldShowVideoBadge = MediaAssetTilePresentation.showsVideoBadge(detail)
+        let badgeText = MediaAssetTilePresentation.videoBadgeText(detail)
         if let badgeText {
             durationField.stringValue = badgeText
             durationField.isHidden = false
@@ -153,11 +128,7 @@ extension MediaAssetTileView {
             durationField.isHidden = true
             filmIconView.isHidden = !shouldShowVideoBadge
         }
-        setAccessibilityLabel(accessibilityLabel(
-            title: titleField.stringValue,
-            date: dateField.stringValue,
-            videoBadge: badgeText ?? (shouldShowVideoBadge ? "Video" : "")
-        ))
+        setAccessibilityLabel(accessibilityLabel(videoBadge: badgeText))
     }
 
     private func applyPaintDecision(_ request: TilePaintRequest) -> Bool {
@@ -165,18 +136,18 @@ extension MediaAssetTileView {
         case .paintCached:
             return paintCachedImage(
                 request.cachedImage,
-                asset: request.asset,
+                detail: request.detail,
                 contentKey: request.contentKey,
                 thumbnailDirectory: request.thumbnailDirectory,
                 imageCache: request.imageCache
             )
         case .keepCurrent:
             OtosSignpost.ui.emitEvent("MediaTileContentUnchanged")
-            currentAssetID = request.asset.id
+            currentAssetID = request.detail.id
             return false
         case let .loadAsync(retainsCurrentImage):
             return startAsyncLoad(
-                asset: request.asset,
+                detail: request.detail,
                 contentKey: request.contentKey,
                 thumbnailDirectory: request.thumbnailDirectory,
                 imageCache: request.imageCache,
@@ -184,8 +155,8 @@ extension MediaAssetTileView {
             )
         case .placeholder:
             cancelImageLoad()
-            clearPaintedImage(for: request.asset.id, reason: "placeholder", enforcesInvariant: true)
-            currentAssetID = request.asset.id
+            clearPaintedImage(for: request.detail.id, reason: "placeholder", enforcesInvariant: true)
+            currentAssetID = request.detail.id
             currentImageContentKey = request.contentKey
             return false
         }
@@ -193,18 +164,18 @@ extension MediaAssetTileView {
 
     private func paintCachedImage(
         _ cachedImage: CGImage?,
-        asset: MediaAsset,
+        detail: MediaTileDetail,
         contentKey key: String,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?
     ) -> Bool {
         guard let cachedImage else {
             OtosLog.ui.error("Media tile paint decision had cache hit without image")
-            let retainsCurrentImage = currentAssetID == asset.id
-            currentAssetID = asset.id
+            let retainsCurrentImage = currentAssetID == detail.id
+            currentAssetID = detail.id
             currentImageContentKey = key
             loadThumbnailImage(
-                asset: asset,
+                detail: detail,
                 thumbnailDirectory: thumbnailDirectory,
                 imageCache: imageCache,
                 retainsCurrentImage: retainsCurrentImage
@@ -212,26 +183,26 @@ extension MediaAssetTileView {
             return true
         }
         cancelImageLoad()
-        currentAssetID = asset.id
+        currentAssetID = detail.id
         currentImageContentKey = key
-        applyImage(cachedImage, assetID: asset.id, contentKey: key, reason: "cacheHit")
+        applyImage(cachedImage, assetID: detail.id, contentKey: key, reason: "cacheHit")
         return false
     }
 
     private func startAsyncLoad(
-        asset: MediaAsset,
+        detail: MediaTileDetail,
         contentKey key: String,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?,
         retainsCurrentImage: Bool
     ) -> Bool {
         if !retainsCurrentImage {
-            clearPaintedImage(for: asset.id, reason: "newIdentityLoad", enforcesInvariant: true)
+            clearPaintedImage(for: detail.id, reason: "newIdentityLoad", enforcesInvariant: true)
         }
-        currentAssetID = asset.id
+        currentAssetID = detail.id
         currentImageContentKey = key
         loadThumbnailImage(
-            asset: asset,
+            detail: detail,
             thumbnailDirectory: thumbnailDirectory,
             imageCache: imageCache,
             retainsCurrentImage: retainsCurrentImage
@@ -242,7 +213,7 @@ extension MediaAssetTileView {
     /// Reads the thumbnail file off the main actor, then applies the result on the main
     /// actor only if this tile still represents the same image content.
     private func loadThumbnailImage(
-        asset: MediaAsset,
+        detail: MediaTileDetail,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?,
         retainsCurrentImage: Bool
@@ -250,11 +221,11 @@ extension MediaAssetTileView {
         loadGeneration += 1
         let generation = loadGeneration
         loadTask?.cancel()
-        let key = MediaAssetTilePresentation.imageContentKey(asset)
+        let key = MediaAssetTilePresentation.imageContentKey(detail)
         GridTelemetry.recordTileLoadStarted()
         OtosSignpost.ui.emitEvent("MediaTileLoadStarted")
         loadTask = Task.detached(priority: .userInitiated) { [weak self, imageCache] in
-            let loaded = MediaAssetTilePresentation.loadImage(asset: asset, thumbnailDirectory: thumbnailDirectory)
+            let loaded = MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
             if Task.isCancelled {
                 return
             }
@@ -266,7 +237,7 @@ extension MediaAssetTileView {
                     return
                 }
                 guard self.loadGeneration == generation,
-                      self.currentAssetID == asset.id,
+                      self.currentAssetID == detail.id,
                       self.currentImageContentKey == key
                 else {
                     GridTelemetry.recordTileLoadDropped()
@@ -279,8 +250,8 @@ extension MediaAssetTileView {
                     OtosLog.ui.debug(
                         """
                         Media tile thumbnail load returned nil assetID=\
-                        \(asset.libraryRootPath.rawValue, privacy: .public)/\
-                        \(asset.relativePath.rawValue, privacy: .public) \
+                        \(detail.libraryRootPath.rawValue, privacy: .public)/\
+                        \(detail.relativePath.rawValue, privacy: .public) \
                         retainedCurrent=\(retainsCurrentImage, privacy: .public)
                         """
                     )
@@ -288,7 +259,7 @@ extension MediaAssetTileView {
                 }
                 self.applyImage(
                     image,
-                    assetID: asset.id,
+                    assetID: detail.id,
                     contentKey: key,
                     reason: "asyncLoad"
                 )
@@ -348,13 +319,10 @@ extension MediaAssetTileView {
         currentImagePixelSize = nil
         shouldShowVideoBadge = false
         clearPaintedImage(for: nil, reason: "reuse", enforcesInvariant: false)
-        titleField.stringValue = ""
-        dateField.stringValue = ""
         durationField.stringValue = ""
         durationField.isHidden = true
         filmIconView.isHidden = true
         videoBadge.isHidden = true
-        textScrim.isHidden = true
         updatePlaceholderBackground()
         setSelected(false)
         setAccessibilityLabel(nil)
@@ -368,7 +336,6 @@ extension MediaAssetTileView {
         )
         imageView.frame = contentView.bounds
         updatePlaceholderBackground()
-        layoutTextScrim()
         layoutVideoBadge()
     }
 
@@ -379,45 +346,18 @@ extension MediaAssetTileView {
         contentView.layer?.borderColor = selected ? NSColor.controlAccentColor.cgColor : nil
     }
 
-    private func layoutTextScrim() {
-        let contentBounds = contentView.bounds
-        let visibility = MediaAssetTilePresentation.overlayVisibility(contentRect: contentBounds)
-        guard !titleField.stringValue.isEmpty,
-              contentBounds.width > 0,
-              contentBounds.height > 0
-        else {
-            textScrim.isHidden = true
-            return
-        }
-
-        let showsDate = !dateField.stringValue.isEmpty && visibility.showsDate
-        dateField.isHidden = !showsDate
-        guard let frames = Layout.textScrimFrames(
-            contentBounds: contentBounds,
-            titleTextWidth: titleField.intrinsicContentSize.width,
-            dateTextWidth: dateField.intrinsicContentSize.width,
-            showsDate: showsDate
-        ) else {
-            textScrim.isHidden = true
-            return
-        }
-        textScrim.isHidden = false
-        textScrim.frame = frames.scrim
-        titleField.frame = frames.title
-        dateField.frame = frames.date ?? .zero
-    }
-
     private func layoutVideoBadge() {
         let contentBounds = contentView.bounds
-        let visibility = MediaAssetTilePresentation.overlayVisibility(contentRect: contentBounds)
-        guard shouldShowVideoBadge, visibility.showsVideoBadge else {
+        guard shouldShowVideoBadge,
+              MediaAssetTilePresentation.showsVideoBadge(contentRect: contentBounds)
+        else {
             videoBadge.isHidden = true
             return
         }
 
         let hasDuration = !durationField.isHidden
         let badgeWidth = hasDuration
-            ? max(Layout.badgeMinWidth, ceil(durationField.intrinsicContentSize.width) + Layout.scrimPaddingX)
+            ? Layout.videoBadgeWidth(durationTextWidth: durationField.intrinsicContentSize.width)
             : Layout.badgeMinWidth
         let badgeHeight = Layout.badgeHeight
         guard let badgeFrame = Layout.videoBadgeFrame(
@@ -430,12 +370,7 @@ extension MediaAssetTileView {
         }
         videoBadge.isHidden = false
         videoBadge.frame = badgeFrame
-        durationField.frame = NSRect(
-            x: Layout.scrimPaddingX,
-            y: 3,
-            width: max(badgeWidth - Layout.scrimPaddingX, 0),
-            height: 14
-        )
+        durationField.frame = Layout.videoBadgeDurationFrame(badgeWidth: badgeWidth)
         filmIconView.frame = NSRect(
             x: (badgeWidth - Layout.filmIconSize) / 2,
             y: (badgeHeight - Layout.filmIconSize) / 2,
@@ -450,14 +385,10 @@ extension MediaAssetTileView {
             : nil
     }
 
-    private func accessibilityLabel(title: String, date: String, videoBadge: String) -> String {
-        var parts = [title]
-        if !date.isEmpty {
-            parts.append(date)
+    private func accessibilityLabel(videoBadge: String?) -> String? {
+        if let videoBadge, !videoBadge.isEmpty {
+            return "Video, \(videoBadge)"
         }
-        if !videoBadge.isEmpty {
-            parts.append(videoBadge)
-        }
-        return parts.joined(separator: ", ")
+        return shouldShowVideoBadge ? "Video" : nil
     }
 }

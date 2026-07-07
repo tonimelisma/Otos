@@ -15,6 +15,8 @@ struct FileMaterializationTests {
         #expect(MaterializationOutcome.materialized.isMaterialized)
         #expect(!MaterializationOutcome.requestFailed.isMaterialized)
         #expect(!MaterializationOutcome.timedOut.isMaterialized)
+        #expect(!MaterializationOutcome.insufficientLocalSpace.isMaterialized)
+        #expect(MaterializationOutcome.insufficientLocalSpace.diagnosticDescription == "insufficientLocalSpace")
         #expect(MaterializationOutcome.statusUnavailable.diagnosticDescription == "statusUnavailable")
 
         let result = MaterializationResult(outcome: .materialized, rerequestCount: 2, elapsedMs: 123)

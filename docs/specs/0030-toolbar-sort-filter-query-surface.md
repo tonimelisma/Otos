@@ -13,12 +13,13 @@
 
 ## Problem
 
-The current browser repeats the selected library name inside the content pane,
-shows a file count the user does not want, and has no user-facing sort/filter
-controls. Ordering is fixed to the path-oriented `sort_key`, while the displayed
-date is a Swift fallback chain over a pre-resolved metadata winner and filesystem
-dates. That makes date sorting unsafe because the tile and SQL would need
-parallel definitions.
+The browser before this increment repeated the selected library name inside the
+content pane, showed a file count the user did not want, and had no user-facing
+sort/filter controls. Ordering was fixed to the path-oriented `sort_key`, while
+the then-displayed tile date was a Swift fallback chain over a pre-resolved
+metadata winner and filesystem dates. That made date sorting unsafe because Swift
+callers and SQL would need parallel definitions. Spec 0044 later removed tile
+date display; the generated best-date policy remains the Store-owned query fact.
 
 Before implementation, repo inspection for this increment found:
 
@@ -123,7 +124,7 @@ Cons:
 
 Failure modes:
 
-- tile date and sort position drift
+- generated best-date policy and sort position drift
 - MainActor or Projection hot paths grow with full asset values
 - enrichment-driven membership changes need special invalidation cases
 

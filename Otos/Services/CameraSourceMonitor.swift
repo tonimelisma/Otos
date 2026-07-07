@@ -4,12 +4,19 @@ import Foundation
 import OSLog
 import UniformTypeIdentifiers
 
+// swiftlint:disable file_length
+
 nonisolated struct DeviceCameraCatalogItem: Hashable {
     let relativePath: MediaRelativePath
     let name: String
     let contentTypeIdentifier: String?
     let byteSize: Int64?
     let captureDate: Date?
+}
+
+nonisolated struct DeviceCameraCatalogSnapshot: Hashable {
+    let items: [DeviceCameraCatalogItem]
+    let isStable: Bool
 }
 
 nonisolated enum ImageCaptureCameraRejectionReason: String {
@@ -56,6 +63,7 @@ final class CameraSourceMonitor: NSObject {
     private let onAttach: @MainActor @Sendable (DeviceCameraSession) -> Void
     private let onDetach: @MainActor @Sendable (String) -> Void
     private var sessionsByIdentity: [String: DeviceCameraSession] = [:]
+    private var identitiesByDevice: [ObjectIdentifier: String] = [:]
     private var isStarted = false
 
     init(
@@ -88,6 +96,7 @@ final class CameraSourceMonitor: NSObject {
             session.close()
         }
         sessionsByIdentity.removeAll()
+        identitiesByDevice.removeAll()
         isStarted = false
     }
 
@@ -112,11 +121,13 @@ final class CameraSourceMonitor: NSObject {
             device: device
         )
         sessionsByIdentity[identity] = session
+        identitiesByDevice[ObjectIdentifier(device)] = identity
         onAttach(session)
     }
 
     private func detach(_ device: ICCameraDevice) {
-        let identity = Self.identity(for: device)
+        let identity = identitiesByDevice.removeValue(forKey: ObjectIdentifier(device))
+            ?? Self.identity(for: device)
         sessionsByIdentity.removeValue(forKey: identity)?.close()
         onDetach(identity)
     }
@@ -178,8 +189,21 @@ final class DeviceCameraSession: NSObject {
     let stagingRootURL: URL
 
     private let device: ICCameraDevice
-    private var openContinuation: CheckedContinuation<Void, Error>?
-    private var readyContinuation: CheckedContinuation<Void, Error>?
+    private enum WaitCondition {
+        case open
+        case catalogReady
+    }
+
+    private struct Waiter {
+        let condition: WaitCondition
+        let continuation: CheckedContinuation<Void, Error>
+    }
+
+    private var sessionOpenResult: Result<Void, Error>?
+    private var isCatalogReady = false
+    private var terminalFailure: Error?
+    private var waiters: [UUID: Waiter] = [:]
+    private var didAddItemCount = 0
     private var filesByRelativePath: [MediaRelativePath: ICCameraFile] = [:]
     private var isClosed = false
 
@@ -192,8 +216,13 @@ final class DeviceCameraSession: NSObject {
         device.delegate = self
     }
 
-    func catalogItems() async throws -> [DeviceCameraCatalogItem] {
-        try await openAndWaitForCatalog()
+    func catalogSnapshot() async throws -> DeviceCameraCatalogSnapshot {
+        try await openAndWaitForCatalogReady()
+        let isStable = await waitForCatalogStability(timeout: .seconds(30))
+        return DeviceCameraCatalogSnapshot(items: currentCatalogItems(), isStable: isStable)
+    }
+
+    private func currentCatalogItems() -> [DeviceCameraCatalogItem] {
         let files = (device.mediaFiles ?? []).compactMap { $0 as? ICCameraFile }
         var collisionCounts: [String: Int] = [:]
         var items: [DeviceCameraCatalogItem] = []
@@ -263,13 +292,13 @@ final class DeviceCameraSession: NSObject {
     }
 
     func close() {
-        isClosed = true
+        failAllWaiters(DeviceCameraSessionError.disconnected)
         if device.hasOpenSession {
             device.requestCloseSession()
         }
     }
 
-    private func openAndWaitForCatalog() async throws {
+    private func openAndWaitForCatalogReady() async throws {
         if isClosed {
             throw DeviceCameraSessionError.disconnected
         }
@@ -277,57 +306,118 @@ final class DeviceCameraSession: NSObject {
             try await requestOpenSession(timeout: .seconds(10))
         }
         try await waitForCatalogReady(timeout: .seconds(240))
-        try await Task.sleep(for: .milliseconds(250))
     }
 
     private func requestOpenSession(timeout: Duration) async throws {
         let timeoutTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: timeout)
-                self?.resumeOpenContinuation(.failure(DeviceCameraSessionError.openTimedOut))
+                self?.resolveWaiters(condition: .open, result: .failure(DeviceCameraSessionError.openTimedOut))
             } catch is CancellationError {
                 return
             }
         }
         defer { timeoutTask.cancel() }
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            openContinuation = continuation
-            device.requestOpenSession()
+        try await wait(for: .open) {
+            self.device.requestOpenSession()
         }
     }
 
     private func waitForCatalogReady(timeout: Duration) async throws {
-        if !(device.mediaFiles ?? []).isEmpty {
-            return
-        }
         let timeoutTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: timeout)
-                self?.resumeReadyContinuation(.failure(DeviceCameraSessionError.catalogTimedOut))
+                self?.resolveWaiters(
+                    condition: .catalogReady,
+                    result: .failure(DeviceCameraSessionError.catalogTimedOut)
+                )
             } catch is CancellationError {
                 return
             }
         }
         defer { timeoutTask.cancel() }
+        try await wait(for: .catalogReady)
+    }
+
+    private func wait(for condition: WaitCondition, start: (() -> Void)? = nil) async throws {
+        if let terminalFailure {
+            throw terminalFailure
+        }
+        if conditionIsSatisfied(condition) {
+            return
+        }
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            readyContinuation = continuation
+            if let terminalFailure {
+                continuation.resume(throwing: terminalFailure)
+                return
+            }
+            if conditionIsSatisfied(condition) {
+                continuation.resume()
+                return
+            }
+            waiters[UUID()] = Waiter(condition: condition, continuation: continuation)
+            start?()
         }
     }
 
-    private func resumeOpenContinuation(_ result: Result<Void, Error>) {
-        guard let continuation = openContinuation else {
-            return
+    private func conditionIsSatisfied(_ condition: WaitCondition) -> Bool {
+        switch condition {
+        case .open:
+            if case .success = sessionOpenResult {
+                return true
+            }
+            return device.hasOpenSession
+        case .catalogReady:
+            return isCatalogReady
         }
-        openContinuation = nil
-        continuation.resume(with: result)
     }
 
-    private func resumeReadyContinuation(_ result: Result<Void, Error>) {
-        guard let continuation = readyContinuation else {
-            return
+    private func resolveWaiters(condition: WaitCondition, result: Result<Void, Error>) {
+        var remaining: [UUID: Waiter] = [:]
+        for (id, waiter) in waiters {
+            if waiter.condition == condition {
+                waiter.continuation.resume(with: result)
+            } else {
+                remaining[id] = waiter
+            }
         }
-        readyContinuation = nil
-        continuation.resume(with: result)
+        waiters = remaining
+    }
+
+    private func failAllWaiters(_ error: Error) {
+        terminalFailure = error
+        isClosed = true
+        let currentWaiters = waiters
+        waiters.removeAll()
+        for waiter in currentWaiters.values {
+            waiter.continuation.resume(throwing: error)
+        }
+    }
+
+    private func markCatalogReady() {
+        isCatalogReady = true
+        resolveWaiters(condition: .catalogReady, result: .success(()))
+    }
+
+    private func waitForCatalogStability(timeout: Duration) async -> Bool {
+        let startedAt = Date()
+        var previous: (didAdd: Int, media: Int)?
+        while !Task.isCancelled {
+            let sample = (didAddItemCount, (device.mediaFiles ?? []).count)
+            if let previous, previous == sample {
+                return true
+            }
+            previous = sample
+            if DiagnosticsTiming.milliseconds(since: startedAt) >= timeout.milliseconds {
+                return false
+            }
+            do {
+                try await Task.sleep(for: .milliseconds(500))
+            } catch {
+                return false
+            }
+        }
+        return false
     }
 
     private func catalogItem(
@@ -426,14 +516,16 @@ extension DeviceCameraSession: @preconcurrency ICCameraDeviceDelegate {
 
     func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
         if let error {
-            resumeOpenContinuation(.failure(error))
+            sessionOpenResult = .failure(error)
+            resolveWaiters(condition: .open, result: .failure(error))
         } else {
-            resumeOpenContinuation(.success(()))
+            sessionOpenResult = .success(())
+            resolveWaiters(condition: .open, result: .success(()))
         }
     }
 
     func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
-        isClosed = true
+        failAllWaiters(error ?? DeviceCameraSessionError.disconnected)
     }
 
     func device(_ device: ICDevice, didReceiveStatusInformation status: [ICDeviceStatus: Any]) {}
@@ -441,14 +533,16 @@ extension DeviceCameraSession: @preconcurrency ICCameraDeviceDelegate {
     func device(_ device: ICDevice, didEncounterError error: (any Error)?) {}
 
     func didRemove(_ device: ICDevice) {
-        isClosed = true
-        resumeOpenContinuation(.failure(DeviceCameraSessionError.disconnected))
-        resumeReadyContinuation(.failure(DeviceCameraSessionError.disconnected))
+        failAllWaiters(DeviceCameraSessionError.disconnected)
     }
 
-    func cameraDevice(_ camera: ICCameraDevice, didAdd item: ICCameraItem) {}
+    func cameraDevice(_ camera: ICCameraDevice, didAdd item: ICCameraItem) {
+        didAddItemCount += 1
+    }
 
-    func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {}
+    func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
+        didAddItemCount += items.count
+    }
 
     func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
 
@@ -477,6 +571,13 @@ extension DeviceCameraSession: @preconcurrency ICCameraDeviceDelegate {
     func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
 
     func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
-        resumeReadyContinuation(.success(()))
+        markCatalogReady()
+    }
+}
+
+private extension Duration {
+    var milliseconds: Int {
+        let value = components
+        return Int(value.seconds * 1000 + value.attoseconds / 1_000_000_000_000_000)
     }
 }

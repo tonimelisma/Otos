@@ -644,6 +644,42 @@ extension CatalogStore {
         return assets
     }
 
+    static func fetchStoredTileDetails(
+        ids: [MediaAssetID],
+        rootIDsByPath: [LibraryRootPath: Int64],
+        db: Database
+    ) throws -> [StoredTileDetail] {
+        guard !ids.isEmpty else {
+            return []
+        }
+        let idsByRootPath = Dictionary(grouping: ids, by: \.libraryRootPath)
+        var details: [StoredTileDetail] = []
+        details.reserveCapacity(ids.count)
+
+        for (rootPath, idsForRoot) in idsByRootPath {
+            guard let rootID = rootIDsByPath[rootPath] else {
+                continue
+            }
+            let relativePaths = idsForRoot.map(\.relativePath.rawValue)
+            let placeholders = sqlPlaceholders(count: relativePaths.count)
+            var argumentValues: [any DatabaseValueConvertible] = [rootID]
+            argumentValues.append(contentsOf: relativePaths)
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT library_root_id, relative_path,
+                       enriched_source_size, enriched_source_mtime, thumbnail_path,
+                       duration_seconds, best_kind
+                FROM media_asset
+                WHERE library_root_id = ? AND relative_path IN (\(placeholders))
+                """,
+                arguments: StatementArguments(argumentValues)
+            )
+            details.append(contentsOf: rows.map(storedTileDetail(from:)))
+        }
+        return details
+    }
+
     static func fetchExistingAssetRows(
         libraryRootID: Int64,
         db: Database
@@ -1362,6 +1398,19 @@ private nonisolated func storedAsset(from row: Row) -> CatalogStore.StoredAsset 
         bestCaptureDate: bestCaptureUnix.map(Date.init(timeIntervalSince1970:)),
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
+        durationSeconds: row["duration_seconds"],
+        enrichedSourceSize: row["enriched_source_size"],
+        enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
+    )
+}
+
+private nonisolated func storedTileDetail(from row: Row) -> CatalogStore.StoredTileDetail {
+    let bestKindRaw: String? = row["best_kind"]
+    return CatalogStore.StoredTileDetail(
+        libraryRootID: row["library_root_id"],
+        relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+        thumbnailPath: row["thumbnail_path"],
+        bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],
         enrichedSourceMTimeSeconds: row["enriched_source_mtime"]

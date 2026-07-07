@@ -95,25 +95,25 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         detailReader: MediaTileDetailReader,
         imageContext: PreheatImageContext
     ) async {
-        let assets = await detailReader.assets(for: ids)
+        let details = await detailReader.details(for: ids)
         guard !Task.isCancelled else {
             await MainActor.run { self.finishPreheat(generation: generation) }
             return
         }
-        GridTelemetry.recordPreheatedIDs(assets.count)
-        let assetsToWarm = await MainActor.run {
+        GridTelemetry.recordPreheatedIDs(details.count)
+        let detailsToWarm = await MainActor.run {
             guard self.preheatGeneration == generation else {
-                return [] as [MediaAsset]
+                return [] as [MediaTileDetail]
             }
-            let activeAssets = assets.filter { id, _ in
+            let activeDetails = details.filter { id, _ in
                 self.preheatIDs.contains(id)
             }
-            self.mergeTileDetails(activeAssets, reason: reason)
-            return Array(activeAssets.values)
+            self.mergeTileDetails(activeDetails, reason: reason)
+            return Array(activeDetails.values)
         }
-        for asset in assetsToWarm where !Task.isCancelled {
+        for detail in detailsToWarm where !Task.isCancelled {
             Self.warmImageCache(
-                asset: asset,
+                detail: detail,
                 thumbnailDirectory: imageContext.thumbnailDirectory,
                 imageCache: imageContext.imageCache
             )
@@ -122,20 +122,20 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
     }
 
     private nonisolated static func warmImageCache(
-        asset: MediaAsset,
+        detail: MediaTileDetail,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?
     ) {
         guard !Task.isCancelled,
               let imageCache,
-              asset.thumbnailPath != nil
+              detail.thumbnailPath != nil
         else {
             return
         }
-        let key = MediaAssetTilePresentation.imageContentKey(asset)
+        let key = MediaAssetTilePresentation.imageContentKey(detail)
         guard imageCache.image(for: key) == nil,
               let image = MediaAssetTilePresentation.decodedThumbnailImage(
-                  asset: asset,
+                  detail: detail,
                   thumbnailDirectory: thumbnailDirectory
               ),
               !Task.isCancelled

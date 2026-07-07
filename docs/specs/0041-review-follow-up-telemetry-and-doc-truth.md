@@ -61,10 +61,11 @@ Inspection found:
   DispatchSource memory-pressure mechanism.
 - `cancelPreheat` cancelled the whole preheat task when any cancelled AppKit ID
   intersected the current burst.
-- The tile code places the text scrim at the top-left face corner and uses
-  `.layerMaxXMinYCorner`; it places the video badge at the bottom-right face
-  corner and uses `.layerMinXMaxYCorner`. Source tests already pin those exact
-  masks, while screenshot capture remained environment-blocked in spec 0040.
+- The tile code now omits the former top-left text scrim. The remaining video
+  badge sits at the bottom-right face corner, uses `.layerMinXMaxYCorner`, and
+  centers its duration text or fallback symbol inside the right-aligned darkened
+  area. Source tests pin that mask and layout policy, while screenshot capture
+  remained environment-blocked in spec 0040.
 - `EnrichmentCoordinatorCompletion` created a new `ISO8601DateFormatter` inside
   each `diagnosticTimestamp` call.
 - No post-merge smoke session had live materialization completions; unit and

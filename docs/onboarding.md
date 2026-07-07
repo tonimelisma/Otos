@@ -185,8 +185,8 @@ The rest of the app identifies things by filesystem path, never by database id, 
 the database is an implementation detail you could swap out. The current browser
 query is one `CatalogQueryDescriptor` over generated best-value columns:
 `best_capture_unix`, `best_kind`, and `best_format`. Scan and enrichment persist
-facts; SQLite owns the current best-value ranking used by tile dates, sort order,
-and filter membership.
+facts; SQLite owns the current best-value ranking used by sort order, enrichment
+priority, and filter membership.
 
 ### `Otos/Services/CatalogScanner.swift` — read-only filesystem observation
 
@@ -282,12 +282,15 @@ hot rendering paths out of the diagnostics actor while still leaving post-run
 evidence after the app exits.
 
 It is also the owner of platform source monitor lifetimes. `RemovableVolumeMonitor`
-turns macOS volume mount/unmount notifications into Store attach/detach intents.
+turns macOS volume mount, pre-unmount, resume, and disappearance signals into
+Store attach, quiesce, resume, and detach intents.
 `CameraSourceMonitor` turns ImageCapture PTP/MTP camera sessions into per-camera
-catalog tasks. Those tasks feed device catalog batches to Store, write provisional
+catalog tasks. Session open, ready, close, removal, timeout, and explicit close are
+latched so late waiters observe the current state instead of missing a delegate
+callback. The tasks feed leased device catalog batches to Store, write provisional
 thumbnails only for rows missing a final thumbnail, seed the enrichment coordinator
-with device staging work, and unregister temporary staging bytes when the device
-disconnects.
+with device staging work, reconcile only after a stable snapshot, and unregister
+temporary staging bytes when the device disconnects.
 
 ### `Otos/Views/*` — passive rendering
 
@@ -338,19 +341,20 @@ bridge also reports the visible
 identities upward (the **viewport**) so enrichment can prioritize what you are
 looking at. `MediaAssetTileView` is one reusable tile. The collection cell stays
 transparent; the visible face is the loaded thumbnail's aspect-fit rect, or a
-full-square neutral placeholder before any image has loaded. Filename and relative
-capture date sit on a top-left scrim anchored to the thumbnail corner and sized to
-the text. Videos, and only videos, add a bottom-right scrim with duration text
-when Store has parsed it or a film symbol while duration is still unknown. The
-tile formats those scalar labels synchronously during configuration. It first
-checks the ViewModel-owned `MediaTileImageCache`; a hit paints immediately, while
-a miss loads and decodes the thumbnail *off the main thread* and only assigns a
-non-nil finished image on Main, with a generation token so a load that finishes
-after the tile has been reused for another asset is discarded. The image reload
-key includes the thumbnail path plus source size and modification stamp, but not
-the date or duration, so overlay-only enrichment updates do not clear or reload
-the image. A same-asset detail downgrade or nil decode result keeps the painted
-thumbnail instead of replacing it with placeholder content.
+full-square neutral placeholder before any image has loaded. The tile does not
+render filename or relative date text. Videos, and only videos, add a
+bottom-right dark badge with centered duration text when Store has parsed it or a
+film symbol while duration is still unknown. The visible detail path uses
+`MediaTileDetail`, which intentionally carries only thumbnail path, best kind,
+duration, and source stamps into the tile boundary. It first checks the
+ViewModel-owned `MediaTileImageCache`; a hit paints immediately, while a miss
+loads and decodes the thumbnail *off the main thread* and only assigns a non-nil
+finished image on Main, with a generation token so a load that finishes after the
+tile has been reused for another asset is discarded. The image reload key includes
+the thumbnail path plus source size and modification stamp, but not duration, so
+badge-only enrichment updates do not clear or reload the image. A same-asset
+detail downgrade or nil decode result keeps the painted thumbnail instead of
+replacing it with placeholder content.
 
 Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
 selection gives click, ⌘-click, ⇧-click, and ⌘A for free, and its
@@ -388,9 +392,12 @@ undispatched, in-flight, and pending claims before dropping runtime state. Its
 products are written back through `CatalogStore.applyEnrichmentBatch` in batches.
 MTP cameras add one temporary materialization route: the ViewModel registers an
 active camera session with `DeviceStagingRegistry`, which downloads a requested
-device object into app-owned staging only while the camera is connected. Staging is
-not durable overlay; on disconnect it is unregistered and deleted, while catalog
-rows and durable thumbnails/metadata follow Store's normal source lifecycle.
+device object into app-owned staging only while the camera is connected. Device
+staging work is marked separately from cloud dataless work, so it can dispatch
+without turning on the cloud eager-download latch; low-space staging failures pause
+for retry instead of spinning. Staging is not durable overlay; on disconnect it is
+unregistered and deleted, while catalog rows and durable thumbnails/metadata follow
+Store's normal source lifecycle.
 See
 `docs/adr/0009-enrichment-storage-and-staleness.md`,
 `docs/adr/0010-store-owned-query-catalog-and-identity-grid.md`, and
@@ -399,8 +406,8 @@ See
 ### `Otos/Services/MediaEnricher.swift` and `Otos/Services/ThumbnailStore.swift`
 
 `MediaEnricher` does the work for one asset: it parses the file's metadata (the
-`MediaMetadata` library), promotes tile-visible video duration into the hot asset
-row, and renders a 256 px thumbnail (QuickLook). It is an injectable value (like
+`MediaMetadata` library), promotes video duration into the hot asset row for the
+tile badge, and renders a 256 px thumbnail (QuickLook). It is an injectable value (like
 `CatalogScanner`), so tests substitute a fake. `ThumbnailStore`
 owns the thumbnail files on disk — the directory, deterministic `.jpg` names, the
 opaque 8-bit sRGB JPEG encode, staged files, atomic promotion to the final name so
@@ -453,7 +460,8 @@ diagnostics directory without creating a new file.
    then submits that path through `viewModel.ensureLibrary(url:)`, which uses the
    same Store-owned mutation lane as manual library adds. This is process tooling,
    not product onboarding.
-3. The ViewModel starts its tasks and tells the Store to load.
+3. The ViewModel starts its tasks, schedules an off-MainActor sweep of stale
+   device-staging roots before camera monitoring, and tells the Store to load.
 4. `CatalogStore` opens SQLite, reads the saved fixed-library and remembered
    removable-source roots, repairs reachable
    symlink-spelled roots to their resolved provider paths, migrates any thumbnail
@@ -481,15 +489,29 @@ diagnostics directory without creating a new file.
 2. Store inserts or updates the source row, remapping the current root path if the
    same device identity returned somewhere else, and schedules a front scan. The
    sidebar shows the source under Removable; All Media stays fixed-library only.
-3. ImageCapture cameras that are not mounted as mass storage come through
+3. If two mounted removable volumes report the same UUID, the monitor keeps both
+   events by adding the mount path to the colliding runtime identity instead of
+   trapping or inventing a content fingerprint.
+4. Eject and pre-unmount notifications quiesce the source first. Store marks it
+   unavailable for new work, the coordinator drains in-flight enrichment for that
+   root, and the OS unmount request runs off the MainActor. If the unmount fails,
+   Store resumes the source; only a confirmed unmount/disappearance is treated as
+   detach.
+5. ImageCapture cameras that are not mounted as mass storage come through
    `CameraSourceMonitor` instead. The ViewModel creates a temporary staging root,
-   Store attaches the source, and a per-camera task writes catalog batches from
-   device object facts while the grid can show a camera-specific reading state.
-4. Provisional camera thumbnails fill only missing thumbnail paths. Enrichment may
+   Store attaches the source and issues a device-enumeration lease, and a
+   per-camera task writes catalog batches from device object facts while the grid
+   can show a camera-specific reading state.
+6. Provisional camera thumbnails fill only missing thumbnail paths. A stable camera
+   snapshot completes the enumeration and reconciles missing rows only while the
+   Store-issued lease is still current; partial or unstable snapshots may show
+   observed rows but preserve unobserved rows and overlay. Enrichment may
    materialize a device object through `DeviceStagingRegistry` while connected; the
    staging file is deleted on detach.
-5. Detach marks stable sources unavailable and releases their enrichment claims.
-   Explicit Forget removes the root row and overlay just like fixed-library removal.
+7. Detach uses the source identity recorded at attach time when ImageCapture still
+   provides it, marks stable sources unavailable, and releases their enrichment
+   claims. Explicit Forget removes the root row and overlay just like fixed-library
+   removal.
 
 **Filesystem changes while the app is running:**
 

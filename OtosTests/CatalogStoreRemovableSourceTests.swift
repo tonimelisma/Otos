@@ -59,7 +59,7 @@ struct CatalogStoreRemovableSourceTests {
             identity: "camera:serial",
             displayName: "Camera"
         )
-        await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
         let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
         try await store.recordDeviceCatalogBatch([
             ScannedMediaFile(
@@ -70,7 +70,7 @@ struct CatalogStoreRemovableSourceTests {
                 createdAt: Date(timeIntervalSince1970: 1000),
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
-        ], rootPath: rootPath)
+        ], scan: scan)
 
         let selected = try await waitForSelectedRelativePaths(
             store,
@@ -91,7 +91,7 @@ struct CatalogStoreRemovableSourceTests {
         let assetsByID = try await store.mediaAssets(for: [id])
         #expect(assetsByID[id]?.thumbnailPath == "camera-thumb.jpg")
 
-        await store.completeDeviceCatalogEnumeration(rootPath: rootPath, observedPaths: [relativePath])
+        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
         let complete = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.removableSources.first?.activity == .idle
         }
@@ -104,6 +104,88 @@ struct CatalogStoreRemovableSourceTests {
         #expect(detached.removableSources.first?.path == rootPath)
         #expect(!FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
         #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
+    }
+
+    @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        try await store.start(scansSavedLibraries: false)
+
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot,
+            identity: "camera:serial",
+            displayName: "Camera"
+        )
+        let staleScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let currentScan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let currentPath = MediaRelativePath(rawValue: "DCIM/current.JPG")
+        try await store.recordDeviceCatalogBatch([
+            ScannedMediaFile(
+                relativePath: currentPath,
+                name: "current.JPG",
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 42,
+                createdAt: Date(timeIntervalSince1970: 1000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ], scan: currentScan)
+
+        var staleBatchThrew = false
+        do {
+            try await store.recordDeviceCatalogBatch([
+                ScannedMediaFile(
+                    relativePath: MediaRelativePath(rawValue: "DCIM/stale.JPG"),
+                    name: "stale.JPG",
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 1,
+                    createdAt: nil,
+                    contentModifiedAt: nil
+                ),
+            ], scan: staleScan)
+        } catch is CancellationError {
+            staleBatchThrew = true
+        }
+        #expect(staleBatchThrew)
+
+        var staleCompleteThrew = false
+        do {
+            try await store.completeDeviceCatalogEnumeration(scan: staleScan, observedPaths: [])
+        } catch is CancellationError {
+            staleCompleteThrew = true
+        }
+        #expect(staleCompleteThrew)
+
+        let selected = try await selectedRelativePaths(store, rootPath: rootPath)
+        #expect(selected == [currentPath.rawValue])
+        try await store.completeDeviceCatalogEnumeration(scan: currentScan, observedPaths: [currentPath])
+    }
+
+    @Test func startWatchingIncludesAlreadyAttachedRemovableVolumes() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+
+        let watcherHarness = CatalogFilesystemWatcher.testingWithRootInspection()
+        let store = CatalogStore(
+            location: .inMemory,
+            filesystemWatcher: watcherHarness.watcher,
+            diagnostics: nil
+        )
+        try await store.addLibrary(url: fixedRoot)
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        try await store.start(scansSavedLibraries: false)
+
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        #expect(Set(watcherHarness.roots()) == Set([fixedPath, cardPath]))
     }
 }
 

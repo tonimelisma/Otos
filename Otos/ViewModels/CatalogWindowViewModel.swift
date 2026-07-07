@@ -41,6 +41,8 @@ final class CatalogWindowViewModel {
         case ejectRemovableSource(LibraryRoot)
         case forgetRemovableSource(LibraryRoot)
         case attachRemovableVolume(RemovableVolumeAttachment)
+        case quiesceRemovableSource(String)
+        case resumeRemovableSource(String)
         case detachRemovableSource(String, RemovableSourceDetachReason)
     }
 
@@ -83,7 +85,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
-    @ObservationIgnored private let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
+    @ObservationIgnored let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
     // Newest-value: only the latest viewport is a useful priority hint; an obsolete
     // scroll position carries no value, so an intermediate one is dropped.
     @ObservationIgnored private let viewportStream: AsyncStream<[MediaAssetID]>
@@ -98,6 +100,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
+    @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
     @ObservationIgnored var gridTelemetryTask: Task<Void, Never>?
     @ObservationIgnored var didRecordTerminationGridTelemetry = false
     @ObservationIgnored private var hasStarted = false
@@ -167,6 +170,7 @@ final class CatalogWindowViewModel {
         mutationForwardingTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
+        deviceStagingSweepTask?.cancel()
         removableVolumeMonitor?.stop()
         cameraSourceMonitor?.stop()
         for task in deviceCatalogTasks.values {
@@ -216,7 +220,7 @@ extension CatalogWindowViewModel {
         )
 
         startQueryForwarding(projection: projection)
-        startMutationForwarding(store: store, diagnostics: diagnostics)
+        startMutationForwarding(store: store, coordinator: enrichmentCoordinator, diagnostics: diagnostics)
         startStateConsumption(
             projection: projection,
             store: store,
@@ -224,7 +228,7 @@ extension CatalogWindowViewModel {
         )
         startCatalog(store: store, diagnostics: diagnostics)
         startRemovableVolumeMonitoring()
-        startCameraSourceMonitoring()
+        startDeviceStagingSweepThenCameraMonitoring()
         startGridTelemetryRecording(diagnostics: diagnostics)
         if startsEnrichment {
             startEnrichment()
@@ -360,17 +364,26 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func startMutationForwarding(store: CatalogStore, diagnostics: CatalogDiagnostics?) {
+    private func startMutationForwarding(
+        store: CatalogStore,
+        coordinator: EnrichmentCoordinator?,
+        diagnostics: CatalogDiagnostics?
+    ) {
         // Mutations use one lossless consumer so Store sees the user's commands
         // in submission order. Cancellation is checked between commands: an
         // already-started SQLite transaction may finish, but the next queued
         // command must not begin after this owner is gone.
-        mutationForwardingTask = Task { [mutationStream, store, diagnostics] in
+        mutationForwardingTask = Task { [mutationStream, store, coordinator, diagnostics] in
             for await intent in mutationStream {
                 guard !Task.isCancelled else {
                     break
                 }
-                await Self.performCatalogMutation(intent, store: store, diagnostics: diagnostics)
+                await Self.performCatalogMutation(
+                    intent,
+                    store: store,
+                    coordinator: coordinator,
+                    diagnostics: diagnostics
+                )
             }
         }
     }
@@ -476,23 +489,5 @@ extension CatalogWindowViewModel {
         }
         return !nextState.libraries.contains { $0.path == path }
             && !nextState.removableSources.contains { $0.path == path }
-    }
-
-    func submitCatalogMutation(_ intent: CatalogMutationIntent) {
-        switch mutationContinuation.yield(intent) {
-        case .enqueued:
-            return
-        case .dropped:
-            // The stream is unbounded, so dropping indicates that its declared
-            // lossless contract has been broken rather than normal backpressure.
-            assertionFailure("Unbounded catalog mutation stream dropped an intent")
-            OtosLog.ui.error("Catalog mutation intent was unexpectedly dropped")
-        case .terminated:
-            assertionFailure("Catalog mutation submitted after stream termination")
-            OtosLog.ui.error("Catalog mutation intent submitted after termination")
-        @unknown default:
-            assertionFailure("Unknown catalog mutation stream yield result")
-            OtosLog.ui.error("Catalog mutation intent returned an unknown yield result")
-        }
     }
 }
