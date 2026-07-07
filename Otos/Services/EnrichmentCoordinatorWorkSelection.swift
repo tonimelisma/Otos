@@ -111,7 +111,7 @@ extension EnrichmentCoordinator {
         }
         switch (left.captureDate, right.captureDate) {
         case let (leftDate?, rightDate?) where leftDate != rightDate:
-            return leftDate < rightDate
+            return leftDate > rightDate
         case (.some, nil):
             return true
         case (nil, .some):

@@ -53,7 +53,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.stageDevice(seeds)
         let work = await coordinator.dequeueDownloadWork()
 
-        #expect(work.map(\.id.relativePath.rawValue) == ["still-a.jpg", "still-b.jpg", "video.mov"])
+        #expect(work.map(\.id.relativePath.rawValue) == ["still-b.jpg", "still-a.jpg", "video.mov"])
     }
 
     @Test func shutdownReleasesQueuedAndInFlightClaims() async throws {
