@@ -29,14 +29,17 @@ import UniformTypeIdentifiers
 /// ⌘-click, and ⌘A for free, and `NSCollectionView.selectionIndexPaths` is
 /// the live selection truth (no separate mirror to drift). ⇧-click is the one
 /// exception AppKit does not give for free — it natively toggles only the clicked
-/// item, the same as ⌘-click — so `MediaAssetCollectionSelection.swift` keeps a small
-/// anchor/base correction state and applies the full contiguous range as a same-turn
-/// delta (spec 0046). Because enrichment and scans re-apply the structure frequently,
-/// each structural apply snapshots the selected identities first and restores the
-/// survivors by identity afterward, pruning a dangling anchor the same way, so a
-/// background update never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches
-/// this controller through the responder chain and writes the selected assets'
-/// original file URLs to the pasteboard (ADR 0012), reading no bytes.
+/// item, the same as ⌘-click. `MediaGridCollectionView` (the one collection-view
+/// subclass) captures the click at `mouseDown` and, after the native tracking loop
+/// settles selection, hands the clicked item and modifiers to
+/// `MediaAssetCollectionSelection.swift`, which keeps a small anchor/base correction
+/// state and applies the full contiguous range as a same-turn delta (spec 0046).
+/// Because enrichment and scans re-apply the structure frequently, each structural apply
+/// snapshots the selected identities first and restores the survivors by identity
+/// afterward, pruning a dangling anchor and its base the same way, so a background update
+/// never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller through
+/// the responder chain and writes the selected assets' original file URLs to the
+/// pasteboard (ADR 0012), reading no bytes.
 struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
@@ -82,7 +85,7 @@ final class MediaAssetCollectionViewController: NSViewController {
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaAssetCollectionItem")
 
     let scrollView = NSScrollView()
-    let collectionView = NSCollectionView()
+    let collectionView = MediaGridCollectionView()
     /// The single arbiter for both exclusive collection-view mutations (structural applies
     /// and zoom swaps) and the sole owner of column-count truth (`installedColumnCount`,
     /// `requestedColumnCount`). The controller holds no separate column-count state.
@@ -200,6 +203,9 @@ extension MediaAssetCollectionViewController {
         collectionView.allowsEmptySelection = true
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
+        collectionView.onMouseSelectionFinished = { [weak self] hit, modifiers in
+            self?.mouseSelectionFinished(hit: hit, modifiers: modifiers)
+        }
         collectionView.register(
             MediaAssetCollectionItem.self,
             forItemWithIdentifier: Self.itemIdentifier

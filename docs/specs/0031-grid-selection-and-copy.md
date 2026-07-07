@@ -220,8 +220,11 @@ than a rework.
   - owns `private var selectedAssetIDs: Set<MediaAssetID>`; the ordered ID list it
     already tracks via the apply gate is the display order used for pruning and
     copy order.
-  - `collectionView(_:didSelectItemsAt:)` / `didDeselectItemsAt:` sync
-    `selectedAssetIDs` from `collectionView.selectionIndexPaths`.
+  - `collectionView(_:didSelectItemsAt:)` / `didDeselectItemsAt:` synced selection in
+    this increment. Superseded: `selectionIndexPaths` is now the sole live truth (the
+    `selectedAssetIDs` mirror was later removed), and mouse selection semantics live in
+    `mouseSelectionFinished(hit:modifiers:)`, driven by `MediaGridCollectionView`'s
+    mouseDown capture (spec 0046); these delegate methods are telemetry-only.
   - after `applyStructure`, prune `selectedAssetIDs` to the new ordered IDs and set
     `collectionView.selectionIndexPaths` from the survivors (programmatic
     selection does not re-enter the delegate, so no feedback loop).

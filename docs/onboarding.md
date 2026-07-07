@@ -396,10 +396,16 @@ Selection and copy also live at this AppKit boundary. `NSCollectionView`'s nativ
 selection gives click, ⌘-click, and ⌘A for free, and its `selectionIndexPaths` is
 the single live selection truth — there is no mirror in the ViewModel. ⇧-click is
 not free: AppKit natively treats a mouse shift-click like a ⌘-click (toggle only
-the clicked item), so the controller keeps a small anchor/base correction state
-(`selectionAnchorID`, `anchorBaseSelection`) and applies the full Photos-style
-contiguous range as a same-turn delta after AppKit's native toggle — spec 0046
-covers the design and the platform gap it closes. The tile draws selection on the
+the clicked item). The one `NSCollectionView` subclass, `MediaGridCollectionView`,
+captures the hit-tested item and modifier flags at `mouseDown` and — after the native
+tracking loop settles selection — hands them to `mouseSelectionFinished(hit:modifiers:)`,
+so the controller knows exactly what was clicked even in the one case the delegate
+callbacks cannot report (a plain click collapsing a multi-selection onto an
+already-selected item fires no `didSelectItemsAt` for it). That handler keeps a small
+anchor/base correction state (`selectionAnchorID`, `anchorBaseSelection`) and applies the
+full Photos-style contiguous range as a same-turn delta after the native toggle; the
+`didSelect`/`didDeselect` delegate methods are telemetry-only — spec 0046 covers the
+design and the platform gap it closes. The tile draws selection on the
 visible thumbnail/placeholder face, not the whole square cell, and fades the
 ring in/out over a tuned duration rather than snapping (spec 0047). Because
 enrichment and scans re-apply the grid structure often, each structural apply
