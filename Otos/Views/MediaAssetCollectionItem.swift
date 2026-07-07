@@ -34,8 +34,7 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
     func configure(
         detail: MediaTileDetail,
         thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?,
-        column: Int
+        imageCache: MediaTileImageCache?
     ) -> Bool {
         guard let tileView else {
             return false
@@ -47,8 +46,7 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         let startedLoad = tileView.configure(
             detail: detail,
             thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache,
-            column: column
+            imageCache: imageCache
         )
         let elapsedMs = DiagnosticsTiming.milliseconds(since: start)
         guard elapsedMs >= 5 else {

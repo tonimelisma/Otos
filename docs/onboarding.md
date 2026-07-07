@@ -346,8 +346,24 @@ reloadData-class fallback is completely unaffected. `MediaGridAnimatedLayout`
 (a `NSCollectionViewCompositionalLayout` subclass) fades and shrinks only the
 index paths a given apply batch actually inserted or deleted, tracked via
 `prepare(forCollectionViewUpdates:)`/`finalizeCollectionViewUpdates()` and cleared
-every batch — every other appearing/disappearing item (scroll dequeue, a future
-zoom swap) keeps AppKit's normal attributes untouched.
+every batch — every other appearing/disappearing item (scroll dequeue, a zoom
+swap) keeps AppKit's normal attributes untouched.
+
+Grid density (3–9 columns, default 6, spec 0048) is owned by
+`CatalogWindowViewModel.gridColumnCount`, not the AppKit boundary: the View menu
+and toolbar slider call `setGridColumnCount(_:)` directly, and the pinch gesture
+(`MediaAssetCollectionZoom.swift`) calls it indirectly through an
+`onColumnCountChangeRequested` callback bridged back up through the
+representable. The published value round-trips into `updateNSViewController`,
+which is the *only* place that calls `setColumnCount(_:)` on the controller —
+one path for all three surfaces regardless of where the request originated. A
+zoom in flight during a diffable structural apply is stashed and drained
+exactly once after that apply completes, so a layout swap never overlaps an
+apply. The swap itself installs a freshly built `MediaGridAnimatedLayout`
+inside an `NSAnimationContext` group and scrolls back to whichever visible tile
+is nearest the viewport's center (`MediaGridZoomPolicy.nearestToCenter`, or the
+pinch gesture's captured anchor tile), so the middle of what you were looking
+at stays roughly put as tiles grow or shrink.
 
 `MediaAssetTileView` is one reusable tile. The collection cell stays
 transparent; the visible face is the loaded thumbnail's aspect-fit rect, or a
@@ -363,10 +379,9 @@ thumbnail path, best kind, duration, and source stamps into the tile boundary.
 It first checks the ViewModel-owned `MediaTileImageCache`; a cache hit paints
 immediately with no fade (a fade there would read as flicker), while a miss
 loads and decodes the thumbnail *off the main thread* and applies it with a
-`CATransition` fade (staggered slightly per grid column so a batch ripples in),
-only assigning a non-nil finished image on Main, with a generation token so a
-load that finishes after the tile has been reused for another asset is
-discarded. The image reload key includes the thumbnail path plus source size
+`CATransition` fade, only assigning a non-nil finished image on Main, with a
+generation token so a load that finishes after the tile has been reused for
+another asset is discarded. The image reload key includes the thumbnail path plus source size
 and modification stamp, but not duration, so badge-only enrichment updates do
 not clear or reload the image. A same-asset detail downgrade or nil decode
 result keeps the painted thumbnail instead of replacing it with placeholder

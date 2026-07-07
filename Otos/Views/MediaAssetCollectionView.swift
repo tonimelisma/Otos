@@ -42,6 +42,13 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     var stallMonitor: MainRunLoopStallMonitor?
     var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
+    /// User-adjustable grid density (spec 0048); the ViewModel is the source of truth,
+    /// this representable only round-trips it into `setColumnCount(_:)`.
+    var columnCount: Int = GridColumnCount.defaultValue
+    /// The pinch gesture never mutates the layout itself — it requests a new count
+    /// through this closure, which the caller wires to the same ViewModel intent the
+    /// View menu and toolbar slider call directly.
+    var onColumnCountChangeRequested: (Int) -> Void = { _ in }
 
     func makeNSViewController(context _: Context) -> MediaAssetCollectionViewController {
         MediaAssetCollectionViewController()
@@ -57,6 +64,8 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
         controller.stallMonitor = stallMonitor
         controller.diagnostics = diagnostics
         controller.onViewportChanged = onViewportChanged
+        controller.onColumnCountChangeRequested = onColumnCountChangeRequested
+        controller.setColumnCount(columnCount)
         controller.receive(grid)
     }
 }
@@ -88,20 +97,21 @@ final class MediaAssetCollectionViewController: NSViewController {
     /// truth.
     var selectionAnchorID: MediaAssetID?
     var anchorBaseSelection = Set<MediaAssetID>()
-    struct StructuralApplyCompletionContext {
-        let grid: CatalogMediaGridState
-        let preservedSelection: Set<MediaAssetID>
-        let resetSelection: Bool
-        let resetScroll: Bool
-        let applyStart: Date
-        let insertedCount: Int
-        let removedCount: Int
-        let reorderOnly: Bool
-        let largeApply: Bool
-        let animatingDifferences: Bool
-        let usesReloadDataFallback: Bool
-        let signpost: OSSignpostIntervalState
-    }
+    /// User-adjustable grid density (spec 0048), 3–9, owned by `CatalogWindowViewModel`
+    /// and round-tripped here through `setColumnCount(_:)`. Never mutated directly by
+    /// the pinch gesture — see `MediaAssetCollectionZoom.swift`.
+    var columnCount = GridColumnCount.defaultValue
+    /// A zoom requested while a diffable apply is in flight; drained exactly once by
+    /// `completeStructuralApply` after that apply finishes (never run a layout swap and
+    /// a diffable apply concurrently).
+    var pendingColumnCount: Int?
+    /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
+    /// gesture never mutates `columnCount` or the layout itself.
+    var onColumnCountChangeRequested: (Int) -> Void = { _ in }
+    /// The item under the gesture location at pinch start, held for the gesture's
+    /// duration so a chain of pinch steps all anchor to the same tile.
+    var pinchAnchorIndexPath: IndexPath?
+    var pinchAccumulatedMagnification: CGFloat = 0
 
     /// Set by the representable each SwiftUI update. Tiles resolve `thumbnailPath`
     /// against this directory; the scroll observer reports visible identities here.
@@ -120,13 +130,15 @@ final class MediaAssetCollectionViewController: NSViewController {
             }
         }
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
-        collectionView.collectionViewLayout = Self.makeLayout()
+        collectionView.collectionViewLayout = Self.makeLayout(columnCount: columnCount)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
 
         configureCollectionView()
         configureScrollView()
         installScrollObserver()
-        OtosLog.ui.info("Media grid layout installed columns=6")
+        configurePinchZoomGesture()
+        let installedColumnCount = columnCount
+        OtosLog.ui.info("Media grid layout installed columns=\(installedColumnCount, privacy: .public)")
     }
 
     deinit {
@@ -206,8 +218,7 @@ extension MediaAssetCollectionViewController {
         _ = item.configure(
             detail: detailForTile(assetID),
             thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache,
-            column: indexPath.item % Self.columnCount
+            imageCache: imageCache
         )
         return item
     }
@@ -253,109 +264,6 @@ extension MediaAssetCollectionViewController {
         case let .apply(grid, resetScroll, resetSelection):
             applyStructure(grid, resetScroll: resetScroll, resetSelection: resetSelection)
         }
-    }
-
-    func applyStructure(
-        _ grid: CatalogMediaGridState,
-        resetScroll: Bool,
-        resetSelection: Bool
-    ) {
-        let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.applyStructure")
-        let applyStart = Date()
-        let summary = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: applyGate.displayedOrderedIDs,
-            nextOrderedIDs: grid.orderedAssetIDs
-        )
-        // Snapshot the selected identities before the diffable apply can drop or shift
-        // them. Query-descriptor changes are user context changes, so they intentionally
-        // start from an empty selection instead of restoring surviving identities.
-        let preservedSelection = resetSelection ? [] : selectedIdentities()
-
-        // Identity order is the complete structural contract. Tile details are
-        // read for visible identities after the structural apply, so thumbnail
-        // or video-badge changes never require this O(n) diffable snapshot path.
-        let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
-
-        let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
-        logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
-        let stallMonitor = stallMonitor
-        let diagnostics = diagnostics
-        let context = StructuralApplyCompletionContext(
-            grid: grid,
-            preservedSelection: preservedSelection,
-            resetSelection: resetSelection,
-            resetScroll: resetScroll,
-            applyStart: applyStart,
-            insertedCount: summary.insertedCount,
-            removedCount: summary.removedCount,
-            reorderOnly: summary.reorderOnly,
-            largeApply: summary.largeApply,
-            animatingDifferences: summary.animatingDifferences,
-            usesReloadDataFallback: summary.usesReloadDataFallback,
-            signpost: signpost
-        )
-        let completion = { [weak self, operation, stallMonitor, diagnostics, context] in
-            guard let self else {
-                if let operation {
-                    stallMonitor?.endOperation(operation)
-                }
-                return
-            }
-            completeStructuralApply(
-                context,
-                operation: operation,
-                stallMonitor: stallMonitor,
-                diagnostics: diagnostics
-            )
-        }
-        applySnapshot(snapshot, summary: summary, completion: completion)
-    }
-
-    private func logStartedStructuralApply(
-        _ grid: CatalogMediaGridState,
-        resetScroll: Bool,
-        summary: MediaGridStructuralApplyPolicy
-    ) {
-        OtosLog.ui.debug(
-            """
-            Media grid structural apply started items=\(grid.orderedAssetIDs.count, privacy: .public) \
-            scope=\(grid.scope.diagnosticDescription, privacy: .public) \
-            resetScroll=\(resetScroll, privacy: .public) \
-            reorderOnly=\(summary.reorderOnly, privacy: .public) \
-            largeApply=\(summary.largeApply, privacy: .public) \
-            animating=\(summary.animatingDifferences, privacy: .public) \
-            reloadDataFallback=\(summary.usesReloadDataFallback, privacy: .public)
-            """
-        )
-    }
-
-    /// The `animatingDifferences: false` branch is the measured reloadData-class fallback
-    /// (spec 0039) and stays byte-for-byte as a plain `apply` call. Only the already-animating
-    /// small-apply branch gets the tuned duration/timing curve, wrapped in an explicit
-    /// `NSAnimationContext` group so it does not affect the fallback path (spec 0047).
-    private func applySnapshot(
-        _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
-        summary: MediaGridStructuralApplyPolicy,
-        completion: @escaping () -> Void
-    ) {
-        guard summary.animatingDifferences else {
-            dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
-            return
-        }
-        NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = MediaGridAnimation.applyDuration
-        NSAnimationContext.current.timingFunction = MediaGridAnimation.applyTimingFunction
-        dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
-        NSAnimationContext.endGrouping()
-    }
-
-    private func mediaSnapshot(
-        for orderedIDs: [MediaAssetID]
-    ) -> NSDiffableDataSourceSnapshot<Section, MediaAssetID> {
-        var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
-        snapshot.appendSections([.media])
-        snapshot.appendItems(orderedIDs, toSection: .media)
-        return snapshot
     }
 
     @discardableResult
@@ -440,8 +348,7 @@ extension MediaAssetCollectionViewController {
             if item.configure(
                 detail: detailForTile(assetID),
                 thumbnailDirectory: thumbnailDirectory,
-                imageCache: imageCache,
-                column: indexPath.item % Self.columnCount
+                imageCache: imageCache
             ) {
                 thumbnailLoadsStarted += 1
             }

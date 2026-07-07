@@ -37,7 +37,9 @@ struct ContentView: View {
                 stallMonitor: viewModel.uiStallMonitor,
                 diagnostics: viewModel.catalogDiagnostics,
                 onViewportChanged: viewModel.viewportChanged,
-                clearFilters: viewModel.clearMediaFilter
+                clearFilters: viewModel.clearMediaFilter,
+                gridColumnCount: viewModel.gridColumnCount,
+                onGridColumnCountChangeRequested: viewModel.setGridColumnCount
             )
         }
         .toolbar {
@@ -53,6 +55,10 @@ struct ContentView: View {
                     sort: viewModel.queryDescriptor.sort,
                     setField: viewModel.setSortField,
                     setDirection: viewModel.setSortDirection
+                )
+                CatalogZoomSlider(
+                    columnCount: viewModel.gridColumnCount,
+                    setColumnCount: viewModel.setGridColumnCount
                 )
             }
         }

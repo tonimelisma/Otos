@@ -114,3 +114,36 @@ struct CatalogSortMenu: View {
         .help("Sort")
     }
 }
+
+/// Grid zoom slider (spec 0048). Right = zoom in (Photos convention): the slider's own
+/// `0...6` value is only a display detail, converted at the boundary so this view's
+/// public contract is the same `columnCount` every other zoom surface uses.
+struct CatalogZoomSlider: View {
+    let columnCount: Int
+    let setColumnCount: (Int) -> Void
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { Double(GridColumnCount.sliderValue(forColumnCount: columnCount)) },
+            set: { setColumnCount(GridColumnCount.columnCount(forSliderValue: Int($0.rounded()))) }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "photo")
+                .imageScale(.small)
+                .foregroundStyle(.secondary)
+            Slider(
+                value: sliderValue,
+                in: 0 ... Double(GridColumnCount.maximum - GridColumnCount.minimum),
+                step: 1
+            )
+            .frame(width: 100)
+            Image(systemName: "photo")
+                .imageScale(.large)
+                .foregroundStyle(.secondary)
+        }
+        .help("Grid Zoom")
+    }
+}

@@ -35,8 +35,13 @@ nonisolated enum MediaGridAnimation {
     static let insertShrinkFraction: CGFloat = 0.06
 
     static let thumbnailFadeDuration: TimeInterval = 0.18
-    static let thumbnailStaggerPerColumn: TimeInterval = 0.02
 
     static let selectionRingInDuration: TimeInterval = 0.12
     static let selectionRingOutDuration: TimeInterval = 0.10
+
+    /// Duration for an animated grid-zoom column-count swap (spec 0048).
+    static let zoomDuration: TimeInterval = 0.30
+    static var zoomTimingFunction: CAMediaTimingFunction {
+        CAMediaTimingFunction(name: .easeInEaseOut)
+    }
 }

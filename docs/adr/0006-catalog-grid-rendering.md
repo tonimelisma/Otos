@@ -14,8 +14,9 @@ and ordering. ADR 0010 owns Store-executed ordering, identity-plus-generation gr
 publication, and visible detail reads. ADRs 0002, 0004, and 0005 retain
 scan/persistence, UI ownership, and publication ownership.
 Shift-click range selection is owned by spec 0046 (anchor/base correction state
-inside this ADR's AppKit boundary). Preview and zoom still require separate
-future specs/ADRs if implemented.
+inside this ADR's AppKit boundary). Grid zoom (column-count ownership, the zoom
+transition mechanism, and its surfaces) is owned by spec 0048. Preview still
+requires a separate future spec/ADR if implemented.
 Thumbnail storage is owned by ADR 0009; this ADR owns how the visible grid
 renders and refreshes those thumbnail-backed values, including the invariant that
 a painted same-asset thumbnail never blanks while the asset remains on screen.
@@ -46,10 +47,10 @@ post-0038 live diagnostics found zero-duration true diffing taking 5.1 s and
 
 1. SwiftUI `LazyVGrid`: smallest source surface, but preserves large SwiftUI view
    graph risk and offers weak explicit backpressure.
-2. `NSCollectionViewFlowLayout`: reusable cells, but requires manual six-column
+2. `NSCollectionViewFlowLayout`: reusable cells, but requires manual column
    sizing and resize invalidation.
-3. `NSCollectionViewCompositionalLayout`: reusable cells plus native six-item
-   fractional groups and diffable identity.
+3. `NSCollectionViewCompositionalLayout`: reusable cells plus native fractional
+   groups and diffable identity.
 4. Custom AppKit tiler: maximum control, but needlessly rebuilds scrolling,
    reuse, layout, and accessibility.
 
@@ -57,8 +58,18 @@ post-0038 live diagnostics found zero-duration true diffing taking 5.1 s and
 
 Use a narrow `NSViewControllerRepresentable` containing `NSCollectionView`,
 `NSCollectionViewCompositionalLayout`, and `NSCollectionViewDiffableDataSource`.
-The layout has one full-width group with exactly six square fractional items,
-12-point section insets, and 8-point effective gaps.
+The layout has one full-width group with square fractional items sized from the
+current column count, 12-point section insets, and 8-point effective gaps.
+Column count is user-selected, 3–9, default 6 (spec 0048) — not an invariant six
+— owned by `CatalogWindowViewModel.gridColumnCount` and persisted across
+launches; the AppKit controller only ever renders the published value through
+one `setColumnCount(_:)` path, whether the request came from the View menu, a
+toolbar slider, or a pinch gesture. Zoom uses discrete animated layout swaps
+(`NSAnimationContext` plus `NSCollectionView.animator().collectionViewLayout`),
+never a continuous interactive transition: macOS exposes
+`NSCollectionViewTransitionLayout` but no `startInteractiveTransition` driver
+(that API is UIKit-only, verified against the Xcode 27 beta SDK), so there is no
+documented way to drive a transition incrementally from a pinch gesture.
 
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. Each square collection cell is transparent; the visible tile
@@ -87,9 +98,13 @@ is visually safe because the tile can synchronously repaint any decoded
 thumbnail and never downgrades a painted same-asset image to placeholder
 content. The fallback is an apply-policy choice only; it does not make the
 catalog, detail cache, or decoded image cache a source of media truth. A
-thumbnail's arrival from an async decode (never a cache hit) fades in with a
-small per-column stagger; a cache-hit repaint (scroll-back, recycled-cell sync
-repaint) stays instant to avoid reading as flicker.
+thumbnail's arrival from an async decode (never a cache hit) fades in; a
+cache-hit repaint (scroll-back, recycled-cell sync repaint) stays instant to
+avoid reading as flicker. A per-column stagger flourish was attempted and
+retired: a delayed, backwards-filled `CATransition` held first-paint tiles at
+their prior (`nil`) contents during the delay, showing a transparent gap
+instead of the placeholder — a no-blank-invariant violation the owner's own
+plan had pre-authorized dropping rather than fixing with async machinery.
 
 For unchanged IDs, re-read visible details through the Store-backed detail reader
 and reconfigure the existing visible items in place. Do not call AppKit item reload
@@ -108,8 +123,10 @@ over a tuned duration rather than snapping.
 
 The verified table failure justifies leaving SwiftUI for this one rendering
 surface. Collection view supplies the required bounded reuse and identity
-lifecycle without a custom renderer. Compositional layout directly expresses six
-responsive columns and removes flow-layout width bookkeeping.
+lifecycle without a custom renderer. Compositional layout directly expresses a
+responsive column count and removes flow-layout width bookkeeping; rebuilding
+the same layout type with a new column count is what makes zoom a small,
+data-driven change rather than a new rendering mechanism.
 
 ## Consequences
 

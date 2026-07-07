@@ -74,6 +74,17 @@ struct OtosApp: App {
                         clearFilters: catalogViewModel.clearMediaFilter
                     )
                 }
+                Divider()
+                Button("Zoom In") {
+                    catalogViewModel.zoomInGrid()
+                }
+                .keyboardShortcut("+", modifiers: .command)
+                .disabled(catalogViewModel.gridColumnCount <= GridColumnCount.minimum)
+                Button("Zoom Out") {
+                    catalogViewModel.zoomOutGrid()
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(catalogViewModel.gridColumnCount >= GridColumnCount.maximum)
             }
         }
 

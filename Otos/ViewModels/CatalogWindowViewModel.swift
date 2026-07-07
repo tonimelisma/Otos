@@ -49,6 +49,11 @@ final class CatalogWindowViewModel {
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
     var state: CatalogWindowState = .empty
+    /// User-adjustable grid density (spec 0048), 3–9; see `CatalogWindowViewModelGridZoom.swift`
+    /// for the `setGridColumnCount(_:)` intent every zoom surface shares. Set in `init`,
+    /// not a property default, because its initial value depends on the injected
+    /// `gridColumnCountDefaults`.
+    var gridColumnCount: Int
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.
@@ -82,6 +87,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
+    @ObservationIgnored let gridColumnCountDefaults: UserDefaults // used by CatalogWindowViewModelGridZoom.swift
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
@@ -113,7 +119,8 @@ final class CatalogWindowViewModel {
         diagnostics: CatalogDiagnostics? = .shared,
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
-        startsEnrichment: Bool = true
+        startsEnrichment: Bool = true,
+        gridColumnCountDefaults: UserDefaults = .standard
     ) {
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
@@ -126,6 +133,9 @@ final class CatalogWindowViewModel {
         let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
+        self.gridColumnCountDefaults = gridColumnCountDefaults
+        let storedColumns = gridColumnCountDefaults.integer(forKey: Self.gridColumnCountDefaultsKey)
+        gridColumnCount = GridColumnCount.validated(storedColumns)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
@@ -233,26 +243,6 @@ extension CatalogWindowViewModel {
         if startsEnrichment {
             startEnrichment()
         }
-    }
-
-    func addLibrary(url: URL) {
-        submitCatalogMutation(.addLibrary(url))
-    }
-
-    func ensureLibrary(url: URL) {
-        submitCatalogMutation(.ensureLibrary(url))
-    }
-
-    func removeLibrary(_ library: LibraryRoot) {
-        submitCatalogMutation(.removeLibrary(library.path))
-    }
-
-    func ejectRemovableSource(_ source: LibraryRoot) {
-        submitCatalogMutation(.ejectRemovableSource(source))
-    }
-
-    func forgetRemovableSource(_ source: LibraryRoot) {
-        submitCatalogMutation(.forgetRemovableSource(source))
     }
 
     func selectSidebar(_ selection: SidebarSelection) {

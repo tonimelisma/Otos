@@ -37,9 +37,6 @@ final class MediaAssetTileView: NSView {
     private var currentAssetID: MediaAssetID?
     private var currentImagePixelSize: CGSize?
     private var currentBestKind: MediaKind?
-    /// This item's column in the grid at last configure, used only to stagger the
-    /// thumbnail-arrival fade per column (spec 0047); has no effect on paint decisions.
-    private var currentColumn = 0
     private var shouldShowVideoBadge = false
     /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
     /// the tile was handed to another asset is discarded instead of painting stale data.
@@ -106,10 +103,8 @@ extension MediaAssetTileView {
     func configure(
         detail: MediaTileDetail,
         thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?,
-        column: Int
+        imageCache: MediaTileImageCache?
     ) -> Bool {
-        currentColumn = column
         currentBestKind = detail.bestKind
         configureBadge(for: detail)
         needsLayout = true
@@ -299,9 +294,16 @@ extension MediaAssetTileView {
     /// no-blank invariant's spirit. `asyncLoad` applications add a fade: this single
     /// mechanism covers first paint (placeholder → image) and a same-asset
     /// newer-thumbnail replacement (old → new crossfade, invariant-safe because the old
-    /// contents persist on the layer through the transition). The fade is staggered per
-    /// column so a batch of tiles landing together ripples left-to-right instead of
-    /// popping in unison.
+    /// contents persist on the layer through the transition).
+    ///
+    /// The per-column stagger flourish (spec 0047 D2/6e) was dropped per the owner's
+    /// pre-authorized fallback: a review finding on spec 0047 (PR #52) showed that a
+    /// future `beginTime` with `fillMode = .backwards` holds the layer at its *prior*
+    /// contents until the delay elapses, while the placeholder is cleared synchronously
+    /// below — for first paint, prior contents is nil, so the tile shows a transparent
+    /// gap instead of either the placeholder or the thumbnail for the stagger interval,
+    /// violating the no-blank invariant's spirit. `UI.md`'s own spec accepted losing
+    /// this flourish rather than building async delay machinery to fix it properly.
     private func applyImage(
         _ image: CGImage,
         assetID: MediaAssetID,
@@ -309,12 +311,9 @@ extension MediaAssetTileView {
         application: TilePaintApplication
     ) {
         if application == .asyncLoad, let layer = imageView.layer {
-            let stagger = Double(currentColumn) * MediaGridAnimation.thumbnailStaggerPerColumn
             let transition = CATransition()
             transition.type = .fade
             transition.duration = MediaGridAnimation.thumbnailFadeDuration
-            transition.beginTime = CACurrentMediaTime() + stagger
-            transition.fillMode = .backwards
             layer.add(transition, forKey: "thumbnailFade")
         }
         imageView.layer?.contents = image
@@ -354,7 +353,6 @@ extension MediaAssetTileView {
         currentAssetID = nil
         currentImagePixelSize = nil
         currentBestKind = nil
-        currentColumn = 0
         shouldShowVideoBadge = false
         clearPaintedImage(for: nil, reason: "reuse", enforcesInvariant: false)
         durationField.stringValue = ""

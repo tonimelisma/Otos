@@ -4,10 +4,11 @@ import Testing
 @Suite(.serialized)
 struct CatalogBrowserSourceHygieneTests {
     @Test func appKitGridDoesNotPruneTileDetailsDuringStructuralApply() throws {
-        let content = try appSource("Otos/Views/MediaAssetCollectionView.swift")
+        // `applyStructure` lives in MediaAssetCollectionStructuralApply.swift (spec 0048).
+        let content = try appSource("Otos/Views/MediaAssetCollectionStructuralApply.swift")
         let applyStart = try #require(content.range(of: "func applyStructure("))
-        let visibleDetailStart = try #require(content.range(of: "func requestVisibleDetails("))
-        let applyBody = content[applyStart.lowerBound ..< visibleDetailStart.lowerBound]
+        let nextFunctionStart = try #require(content.range(of: "private func logStartedStructuralApply("))
+        let applyBody = content[applyStart.lowerBound ..< nextFunctionStart.lowerBound]
 
         #expect(!applyBody.contains("tileDetailsByID = tileDetailsByID.filter"))
         #expect(!applyBody.contains("grid.orderedAssetIDs.contains($0.key)"))
@@ -58,9 +59,12 @@ struct CatalogBrowserSourceHygieneTests {
         #expect(bridgeAndSupport.contains("let reorderOnly ="))
         #expect(bridgeAndSupport.contains("let usesReloadDataFallback = reorderOnly || largeApply"))
         #expect(bridgeAndSupport.contains("animatingDifferences: !usesReloadDataFallback"))
-        #expect(bridge.contains("dataSource.apply("))
-        #expect(bridge.contains("animatingDifferences: summary.animatingDifferences"))
-        #expect(!bridge.contains("NSAnimationContext.runAnimationGroup"))
+        // `applyStructure`/`applySnapshot` moved into MediaAssetCollectionStructuralApply.swift
+        // alongside `completeStructuralApply` (spec 0048) to keep the bridge file under the
+        // repo's file-length lint budget; the apply call site lives there now.
+        #expect(structuralApply.contains("dataSource.apply("))
+        #expect(structuralApply.contains("animatingDifferences: summary.animatingDifferences"))
+        #expect(!structuralApply.contains("NSAnimationContext.runAnimationGroup"))
         #expect(!bridge.contains("largeReorderAnimationItemLimit"))
         #expect(!bridge.contains("countsStructuralApplyReloads"))
         #expect(!bridge.contains("structuralApplyReloadsStarted"))

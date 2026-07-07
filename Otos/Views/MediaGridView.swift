@@ -15,6 +15,8 @@ struct MediaGridView: View {
     var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     var clearFilters: () -> Void = {}
+    var gridColumnCount: Int = GridColumnCount.defaultValue
+    var onGridColumnCountChangeRequested: (Int) -> Void = { _ in }
     @AppStorage("dismissedCameraConnectionBannerIdentities") private var dismissedCameraBannerIdentities = ""
 
     var body: some View {
@@ -51,7 +53,9 @@ struct MediaGridView: View {
                         imageCache: imageCache,
                         stallMonitor: stallMonitor,
                         diagnostics: diagnostics,
-                        onViewportChanged: onViewportChanged
+                        onViewportChanged: onViewportChanged,
+                        columnCount: gridColumnCount,
+                        onColumnCountChangeRequested: onGridColumnCountChangeRequested
                     )
                 }
             }

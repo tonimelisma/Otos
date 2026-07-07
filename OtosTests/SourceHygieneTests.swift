@@ -207,11 +207,16 @@ struct SourceHygieneTests {
         #expect(!content.contains("private var startTask:"))
         #expect(!content.contains("private var selectionTask:"))
 
-        let addMethod = try #require(content.range(of: "func addLibrary(url: URL)"))
-        let removeMethod = try #require(content.range(of: "func removeLibrary(_ library: LibraryRoot)"))
-        let selectMethod = try #require(content.range(of: "func selectSidebar(_ selection: SidebarSelection)"))
-        let addBody = content[addMethod.lowerBound ..< removeMethod.lowerBound]
-        let removeBody = content[removeMethod.lowerBound ..< selectMethod.lowerBound]
+        // addLibrary/removeLibrary moved into CatalogWindowViewModelMutation.swift (spec
+        // 0048) alongside the other thin submitCatalogMutation wrappers.
+        let mutationURL = repoRoot.appending(path: "Otos/ViewModels/CatalogWindowViewModelMutation.swift")
+        let mutationContent = try String(contentsOf: mutationURL, encoding: .utf8)
+        let addMethod = try #require(mutationContent.range(of: "func addLibrary(url: URL)"))
+        let ensureMethod = try #require(mutationContent.range(of: "func ensureLibrary(url: URL)"))
+        let removeMethod = try #require(mutationContent.range(of: "func removeLibrary(_ library: LibraryRoot)"))
+        let ejectMethod = try #require(mutationContent.range(of: "func ejectRemovableSource(_ source: LibraryRoot)"))
+        let addBody = mutationContent[addMethod.lowerBound ..< ensureMethod.lowerBound]
+        let removeBody = mutationContent[removeMethod.lowerBound ..< ejectMethod.lowerBound]
         #expect(!addBody.contains("Task {"))
         #expect(!removeBody.contains("Task {"))
         #expect(!addBody.contains("catalogStore"))
@@ -263,34 +268,6 @@ struct SourceHygieneTests {
                 #expect(!content.contains(label), "\(label) should not appear in \(file)")
             }
         }
-    }
-
-    @Test func mediaBrowserUsesReusableSixColumnAppKitGrid() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let content = try String(
-            contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionView.swift"),
-            encoding: .utf8
-        )
-            + String(
-                contentsOf: repoRoot.appending(path: "Otos/Views/MediaAssetCollectionLayout.swift"),
-                encoding: .utf8
-            )
-            + String(
-                contentsOf: repoRoot.appending(path: "Otos/Views/MediaGridAnimatedLayout.swift"),
-                encoding: .utf8
-            )
-
-        #expect(content.contains("NSViewControllerRepresentable"))
-        #expect(content.contains("NSCollectionView"))
-        #expect(content.contains("NSCollectionViewCompositionalLayout"))
-        #expect(content.contains("static let columnCount = 6"))
-        #expect(!content.contains("NSTableView"))
-        #expect(!content.contains("NSHostingView"))
-        #expect(!FileManager.default.fileExists(
-            atPath: repoRoot.appending(path: "Otos/Views/MediaTableView.swift").path(percentEncoded: false)
-        ))
     }
 
     @Test func livingDocumentationHasNoKnownRetiredCurrentStateClaims() throws {

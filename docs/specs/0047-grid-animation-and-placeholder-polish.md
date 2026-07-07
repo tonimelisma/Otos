@@ -30,8 +30,9 @@ In scope:
   diffable apply batch actually inserted or deleted.
 - Animated (fade in/out) selection ring, gated on making `restoreSelection` delta-based
   so a surviving tile's `isSelected` is never reassigned.
-- Fade/crossfade on async-decoded thumbnail arrival only (never on a cache-hit repaint),
-  with a per-column stagger.
+- Fade/crossfade on async-decoded thumbnail arrival only (never on a cache-hit repaint).
+  A per-column stagger was attempted and retired — see the Post-Merge Correction note
+  below.
 - A centered media-kind placeholder icon (film/photo) on the existing gray placeholder
   square, visible only before a thumbnail has ever painted for that tile.
 - One `MediaGridAnimation` namespace holding every new duration/curve/geometry constant.
@@ -101,7 +102,7 @@ Out of scope (unchanged in this increment):
 | --- | --- | --- | --- | --- |
 | D2 | Functional/non-functional | Grid change animations (insert/remove/apply) should be visibly prettier on the already-animating path; the reloadData-fallback policy stays untouched. | Current | This spec |
 | D6 | Functional | Placeholder tiles get a media-kind icon (film for video, photo otherwise) on the existing gray square; no spinner. | Current | This spec |
-| D7 | Functional | Thumbnail arrival animates: fade/crossfade on first decode and same-asset replacement, with a small per-column stagger on a batch landing. | Current | This spec |
+| D7 | Functional | Thumbnail arrival animates: fade/crossfade on first decode and same-asset replacement, with a small per-column stagger on a batch landing. | Retired (stagger only; see Post-Merge Correction) | This spec |
 
 ## Architectural Alternatives
 
@@ -161,10 +162,9 @@ replace the already-unused `reason: String` on `applyImage` with a typed
 (`.fade`) before setting `imageView.layer.contents`. This single mechanism covers both
 first paint (placeholder → image) and a same-asset newer-thumbnail replacement (old → new
 crossfade — invariant-safe because the old contents stay on the layer through the
-transition). A per-column stagger (`beginTime` + `.backwards` fill mode) is included as
-the lowest-priority flourish (D2/6e); it is a decorative `CATransition` timing detail, not
-new async machinery, so there is nothing to "drop back to" if it proves unreliable beyond
-removing these two lines.
+transition). A per-column stagger (`beginTime` + `.backwards` fill mode) was attempted as
+the lowest-priority flourish (D2/6e) and retired after landing — see Post-Merge
+Correction.
 
 ### D6 — Placeholder icon
 
@@ -209,12 +209,9 @@ every duration/curve/geometry value has one source of truth for tests and review
   `MediaAssetTileLayout.placeholderIconSide(contentBounds:)` /
   `placeholderIconFrame(contentBounds:)` are pure geometry/policy helpers.
 - `MediaAssetTileView` (AppKit, MainActor): gains `placeholderIconView`,
-  `currentBestKind`, `currentColumn` and an `animated` parameter on `setSelected`.
+  `currentBestKind`, and an `animated` parameter on `setSelected`.
   `updatePlaceholderBackground()` is renamed `updatePlaceholderPresentation()` and now
   owns background + icon together.
-- `MediaAssetCollectionItem.configure` and `MediaAssetTileView.configure` gain a
-  `column: Int` parameter (`indexPath.item % MediaAssetCollectionViewController.columnCount`),
-  read only for the thumbnail-fade stagger.
 - No persistence, network, or privacy surface changes. No new actor boundary: all new
   code runs on the existing MainActor AppKit boundary or is `nonisolated` pure logic.
 
@@ -285,14 +282,15 @@ every duration/curve/geometry value has one source of truth for tests and review
 2. A large or reorder-only apply → instant reloadData-class apply exactly as before
    (unchanged `MediaGridStructuralApplyPolicy` behavior and tests).
 3. Scrolling back to a previously painted row → instant repaint, no fade (`cacheHit`).
-4. A visible row's first thumbnail decode → tiles fade in with a per-column stagger.
+4. A visible row's first thumbnail decode → tiles fade in (simultaneously — the
+   per-column stagger flourish was retired, see Post-Merge Correction).
 5. An unloaded video tile shows a dim film icon; an unloaded image tile (or a tile whose
    kind is not yet known) shows a dim photo icon; both sit on the existing gray square;
    the icon disappears the instant a thumbnail paints.
 6. Selecting a tile fades its accent ring in over ~120 ms; a background enrichment apply
    while a tile is selected causes zero ring blink on that survivor.
 
-## Outstanding Review Follow-Up
+## Outstanding Review Follow-Up And Post-Merge Corrections
 
 Scanning the last five PRs before this increment's PR found one unclaimed finding on
 PR #51 (spec 0046): a descriptor-changing structural apply cleared the visible selection
@@ -307,6 +305,20 @@ of relying on `restoreSelection`'s identity-based anchor prune.
 `descriptorChangingApplyClearsAnchorEvenWhenTheAnchoredAssetSurvives` (in
 `OtosTests/MediaAssetCollectionSelectionTests.swift`) regression-tests exactly the
 scenario the finding described.
+
+**Post-merge correction (spec 0048's increment, review of this spec's own PR #52):** the
+per-column stagger (D2/6e, `MediaGridAnimation.thumbnailStaggerPerColumn`) used a future
+`CATransition.beginTime` with `fillMode = .backwards`. That fill mode holds the layer at
+its *prior* contents until the delay elapses, while `applyImage` clears the placeholder
+and hides the placeholder icon synchronously in the same call — for first paint, prior
+contents is `nil`, so a staggered tile showed a transparent gap (neither placeholder nor
+thumbnail) for the stagger interval, violating the no-blank invariant's spirit and this
+spec's own D6/D7 intent. `UI.md`'s original text pre-authorized exactly this fallback
+("if `beginTime`/`fillMode` behavior proves unreliable during verification, drop the
+stagger entirely rather than building async delay machinery"); the stagger, `currentColumn`,
+and the `column:` parameter threaded through `MediaAssetCollectionItem`/`MediaAssetTileView`
+configure calls were fully retired rather than patched. First-paint and same-asset
+crossfade behavior (the parts of D7 that do not depend on the stagger) are unaffected.
 
 ## Verification
 

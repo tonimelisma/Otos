@@ -27,6 +27,26 @@ extension CatalogWindowViewModel {
         }
     }
 
+    func addLibrary(url: URL) {
+        submitCatalogMutation(.addLibrary(url))
+    }
+
+    func ensureLibrary(url: URL) {
+        submitCatalogMutation(.ensureLibrary(url))
+    }
+
+    func removeLibrary(_ library: LibraryRoot) {
+        submitCatalogMutation(.removeLibrary(library.path))
+    }
+
+    func ejectRemovableSource(_ source: LibraryRoot) {
+        submitCatalogMutation(.ejectRemovableSource(source))
+    }
+
+    func forgetRemovableSource(_ source: LibraryRoot) {
+        submitCatalogMutation(.forgetRemovableSource(source))
+    }
+
     nonisolated static func performCatalogMutation(
         _ intent: CatalogMutationIntent,
         store: CatalogStore,
