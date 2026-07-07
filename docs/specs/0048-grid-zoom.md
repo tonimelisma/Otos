@@ -31,8 +31,13 @@ In scope:
   (spec 0047) unchanged.
 - An animated column-count swap on the AppKit controller that never overlaps a diffable
   structural apply, with the viewport-center tile kept anchored.
-- View menu Zoom In/Out (⌘+/⌘−, disabled at the bounds), a toolbar slider, and a pinch
-  gesture, all driving the one ViewModel intent.
+- View menu Zoom In/Out (⌘=/⌘−, disabled at the bounds), a toolbar slider, and a pinch
+  gesture, all driving the one ViewModel intent. Zoom In binds `KeyEquivalent("=")`, not
+  `"+"`: AppKit matches menu key-equivalents by typed character, and on a US layout "+" is
+  ⇧=, so `"+"` would only fire on ⌘⇧=; `"="` makes the physical ⌘= (the zoom-in key in
+  Preview/Safari/Photos) work and the menu render ⌘=, at the cost of the ⌘+/⌘− glyph
+  symmetry (F3). No duplicate menu item and no AppKit `NSMenuItem` alternates are added —
+  machinery the benefit does not justify.
 - Fixing the hardcoded `columns=6` startup log to report the actual count.
 
 Out of scope:
@@ -96,7 +101,7 @@ Out of scope:
 | ID or label | Type | Captured requirement | Current or candidate | Storage location |
 | --- | --- | --- | --- | --- |
 | D3 | Functional | Grid zoom: 9 columns min zoom, 3 columns max zoom, default 6; discrete levels, animated reflow, the viewport-center item stays anchored. | Current | This spec |
-| D4 | Functional | Zoom surfaces: ⌘+/⌘− menu commands, pinch gesture, and a toolbar slider; all drive one intent. | Current | This spec |
+| D4 | Functional | Zoom surfaces: ⌘=/⌘− menu commands, pinch gesture, and a toolbar slider; all drive one intent. | Current | This spec |
 | D5 | Product / accepted limitation | Thumbnails stay 256 px and will look soft at 3–4 columns on Retina; accepted for now, no thumbnail regeneration or second preview tier in this increment. | Candidate (future idea, not a requirement) | This spec; a larger-thumbnail tier is future work outside `docs/requirements.md` |
 
 ## Architectural Alternatives
@@ -116,7 +121,7 @@ and unrelated coupling to a value that never needs to touch SQLite. **Alternativ
 `setGridColumnCount(_:)` intent** that every surface — View menu and toolbar slider
 directly, the AppKit pinch gesture through an `onColumnCountChangeRequested` callback —
 calls. The published value round-trips back into `updateNSViewController`, which is the
-only place that calls `setColumnCount(_:)` on the controller. This mirrors how sort and
+only place that calls `receiveColumnCount(_:)` on the controller. This mirrors how sort and
 filter intents already work and keeps the AppKit boundary a pure renderer of ViewModel
 state, per the existing selection/apply ownership split.
 
@@ -169,17 +174,21 @@ action lists the controller executes through `perform(_:)`; on completion,
 `MediaAssetCollectionStructuralApply.swift` and `MediaAssetCollectionZoom.swift` call
 `mutationGate.completeStructuralApply(applied:)`/`completeZoomSwap(installed:)` to adopt
 the new state and drain any work parked while the mutation ran, so a swap and an apply
-never overlap in either direction. `CatalogWindowViewModelGridZoom.swift`
-(new) holds the `setGridColumnCount`/`zoomInGrid`/`zoomOutGrid` intents, split out of
-`CatalogWindowViewModel.swift` for the same file-length reason (that main file's
-`addLibrary`/`ensureLibrary`/`removeLibrary`/`ejectRemovableSource`/`forgetRemovableSource`
-wrappers were also consolidated into the existing `CatalogWindowViewModelMutation.swift`
-in the same pass, since they already thematically belonged there).
+never overlap in either direction. The `setGridColumnCount`/`zoomInGrid`/`zoomOutGrid`
+intents live in `CatalogWindowViewModel.swift` beside the `gridColumnCount` property they
+mutate, which is `private(set)` so the single clamp/persist/publish path is
+compiler-enforced (the setter of a `private(set)` property is file-scoped, so the intent
+must be co-located with the property). To keep that file under the repo's file-length
+budget, the sidebar-scope/filter/sort query-intent wrappers were factored into
+`CatalogWindowViewModelQuery.swift`, mirroring the existing
+`CatalogWindowViewModelMutation`/`…SourceMonitoring`/`…GridTelemetry` splits; the single
+`setQueryDescriptor(_:)` writer stays in the main file beside the `private(set)`
+`queryDescriptor`/`sidebarSelection` it changes.
 
 ## Interfaces, Ownership, And Data Flow
 
 ```
-⌘+/⌘− menu ─┐
+⌘=/⌘− menu ─┐
 toolbar slider ─┼→ CatalogWindowViewModel.setGridColumnCount(Int) ── clamps 3…9,
 pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
  (AppKit → callback up)  publishes gridColumnCount
@@ -283,8 +292,11 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
   completion, ending with the gate completion drain), `MediaAssetCollectionZoom.swift`
   (pinch gesture and the animated swap that ends with `completeZoomSwap`), and the
   `MediaGridMutationGate.swift` guide (the single arbiter for both exclusive mutations).
-  Other new guides in `MediaGridZoomPolicy.swift`, `GridColumnCount.swift`, and
-  `CatalogWindowViewModelGridZoom.swift`.
+  Other new guides in `MediaGridZoomPolicy.swift` and `GridColumnCount.swift`. The grid
+  zoom intent is documented by the `// MARK: - Grid zoom intent` section guide in
+  `CatalogWindowViewModel.swift` (the intents were folded back in and `gridColumnCount`
+  made `private(set)`), and the query-intent split is guided in
+  `CatalogWindowViewModelQuery.swift`.
 
 ## Instrumentation And Performance
 
@@ -325,8 +337,8 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
 
 ## Acceptance Criteria
 
-1. ⌘+ three times from default → 6 → 5 → 4 → 3 columns, each an animated reflow; a
-   fourth ⌘+ does nothing (menu item disabled at the minimum).
+1. ⌘= three times from default → 6 → 5 → 4 → 3 columns, each an animated reflow; a
+   fourth ⌘= does nothing (menu item disabled at the minimum).
 2. Pinch out over a specific tile → that tile's row stays anchored near the gesture
    location; edge tiles slide out of the viewport as columns shrink.
 3. Slider dragged fully left → 9 columns; relaunching the app still shows 9 columns.

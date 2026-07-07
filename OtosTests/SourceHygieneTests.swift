@@ -186,7 +186,10 @@ struct SourceHygieneTests {
         #expect(!content.contains("projectionTask"))
         #expect(!content.contains("applyCatalogSnapshot"))
         #expect(!content.contains("didSet"))
-        #expect(content.contains("func selectSidebar("))
+        // The single query-descriptor writer stays in the main file beside the
+        // `private(set)` queryDescriptor/sidebarSelection it mutates; the thin sidebar/
+        // filter/sort intent wrappers live in `CatalogWindowViewModelQuery.swift`.
+        #expect(content.contains("func setQueryDescriptor("))
         #expect(content.contains("bufferingPolicy: .bufferingNewest(1)"))
     }
 

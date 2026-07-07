@@ -49,11 +49,12 @@ final class CatalogWindowViewModel {
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
     var state: CatalogWindowState = .empty
-    /// User-adjustable grid density (spec 0048), 3–9; see `CatalogWindowViewModelGridZoom.swift`
-    /// for the `setGridColumnCount(_:)` intent every zoom surface shares. Set in `init`,
-    /// not a property default, because its initial value depends on the injected
+    /// User-adjustable grid density (spec 0048), 3–9. `private(set)` so the only way to
+    /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish
+    /// path every zoom surface shares (compiler-enforced single owner). Set in `init`, not a
+    /// property default, because its initial value depends on the injected
     /// `gridColumnCountDefaults`.
-    var gridColumnCount: Int
+    private(set) var gridColumnCount: Int
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.
@@ -87,7 +88,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
-    @ObservationIgnored let gridColumnCountDefaults: UserDefaults // used by CatalogWindowViewModelGridZoom.swift
+    @ObservationIgnored private let gridColumnCountDefaults: UserDefaults
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
@@ -245,61 +246,11 @@ extension CatalogWindowViewModel {
         }
     }
 
-    func selectSidebar(_ selection: SidebarSelection) {
-        setQueryDescriptor(CatalogQueryDescriptor(
-            scope: selection,
-            filter: queryDescriptor.filter,
-            sort: queryDescriptor.sort
-        ))
-    }
-
-    func setMediaFilter(_ filter: MediaFilter) {
-        setQueryDescriptor(CatalogQueryDescriptor(
-            scope: queryDescriptor.scope,
-            filter: filter,
-            sort: queryDescriptor.sort
-        ))
-    }
-
-    func clearMediaFilter() {
-        setMediaFilter(.all)
-    }
-
-    func toggleMediaKind(_ kind: MediaKind, formatsInKind: [MediaFormatToken]) {
-        var filter = queryDescriptor.filter
-        if filter.kinds.remove(kind) == nil {
-            filter.kinds.insert(kind)
-        }
-        filter.formats.subtract(formatsInKind)
-        setMediaFilter(filter)
-    }
-
-    func toggleMediaFormat(_ format: MediaFormatToken, kind: MediaKind) {
-        var filter = queryDescriptor.filter
-        filter.kinds.remove(kind)
-        if filter.formats.remove(format) == nil {
-            filter.formats.insert(format)
-        }
-        setMediaFilter(filter)
-    }
-
-    func setSortField(_ field: MediaSortField) {
-        setSortOrder(.defaultForField(field))
-    }
-
-    func setSortDirection(_ direction: MediaSortDirection) {
-        setSortOrder(MediaSortOrder(field: queryDescriptor.sort.field, direction: direction))
-    }
-
-    func setSortOrder(_ sort: MediaSortOrder) {
-        setQueryDescriptor(CatalogQueryDescriptor(
-            scope: queryDescriptor.scope,
-            filter: queryDescriptor.filter,
-            sort: sort
-        ))
-    }
-
-    private func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
+    /// Not `private`: the sidebar/filter/sort intent wrappers live in
+    /// `CatalogWindowViewModelQuery.swift` and funnel through this one writer, which is the
+    /// only place `queryDescriptor`/`sidebarSelection` (both `private(set)`) change on a
+    /// user intent. Kept here beside those properties so their private setters stay valid.
+    func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
         guard queryDescriptor != descriptor else { return }
         queryGeneration &+= 1
         queryDescriptor = descriptor
@@ -479,5 +430,36 @@ extension CatalogWindowViewModel {
         }
         return !nextState.libraries.contains { $0.path == path }
             && !nextState.removableSources.contains { $0.path == path }
+    }
+}
+
+// MARK: - Grid zoom intent
+
+/// User-adjustable grid density (spec 0048), 3–9. This is rendering/UI state, not catalog
+/// truth, so it never touches the query-descriptor stream or Store/Projection: it is a
+/// plain published property with a persistence side effect. Every zoom surface — the View
+/// menu and toolbar slider directly, the AppKit pinch gesture through a callback — calls
+/// `setGridColumnCount(_:)`, and `gridColumnCount` is `private(set)`, so there is exactly
+/// one clamp/persist/publish path regardless of which surface originated the request.
+extension CatalogWindowViewModel {
+    /// Not `private`: `init` also reads this key to load the stored preference.
+    static let gridColumnCountDefaultsKey = "mediaGridColumnCount"
+
+    /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
+    func setGridColumnCount(_ requested: Int) {
+        let clamped = GridColumnCount.clamped(requested)
+        guard clamped != gridColumnCount else {
+            return
+        }
+        gridColumnCount = clamped
+        gridColumnCountDefaults.set(clamped, forKey: Self.gridColumnCountDefaultsKey)
+    }
+
+    func zoomInGrid() {
+        setGridColumnCount(gridColumnCount - 1)
+    }
+
+    func zoomOutGrid() {
+        setGridColumnCount(gridColumnCount + 1)
     }
 }

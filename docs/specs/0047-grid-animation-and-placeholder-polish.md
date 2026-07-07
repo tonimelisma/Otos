@@ -320,6 +320,31 @@ and the `column:` parameter threaded through `MediaAssetCollectionItem`/`MediaAs
 configure calls were fully retired rather than patched. First-paint and same-asset
 crossfade behavior (the parts of D7 that do not depend on the stagger) are unaffected.
 
+**Top-up (grid-UI review of PRs #51–#53, increment C):**
+
+- Selection-ring-on-scroll-in (F4): a *selected* tile scrolling back into view re-fades
+  its ring, because `NSCollectionViewItem.prepareForReuse` resets `isSelected` to `false`
+  and AppKit then reassigns `isSelected = true` when binding the recycled item to a
+  selected asset. This is *accepted as polish* (owner decision), not a defect; the prior
+  code comment claiming "every call here represents a real selection change" was wrong and
+  is corrected in `MediaAssetCollectionItem.swift`. The delta-based `restoreSelection`
+  guarantee still holds separately: a *surviving on-screen* tile never re-fades during a
+  structural apply because its `isSelected` is never reassigned. Distinguishing binding
+  from selection would require a hook AppKit does not expose, and the accepted behavior
+  needs none.
+- First-paint fade flash (F9): `applyImage` clears the gray placeholder background and
+  hides the placeholder icon synchronously while the image fades in over
+  `thumbnailFadeDuration`, so on a genuine `.asyncLoad` first paint the image fades over
+  the window background rather than over the gray placeholder — the "possible flash" this
+  spec flagged. Code-level assessment finds it *plausible* but subtle; confirming whether
+  it reads as a flash requires cold-launch by-eye observation the agent environment cannot
+  drive (frame-accurate capture of a ~0.18 s transient is not achievable via screenshots).
+  The `CATransaction` completion-deferral fallback (hide the icon immediately, keep the
+  gray background, and clear it via `updatePlaceholderPresentation()` in the transaction
+  completion so the image fades over the gray) remains specced but **unimplemented**,
+  pending that visual verification — a non-blocking after-DoD task, not built speculatively
+  (Rule 2: no machinery without evidence).
+
 ## Verification
 
 - Local checks: `script/verify.sh` (Xcode 27 beta) from the increment worktree.

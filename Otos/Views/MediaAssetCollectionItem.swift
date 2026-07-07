@@ -13,10 +13,15 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         view as? MediaAssetTileView
     }
 
-    /// AppKit drives selection from `NSCollectionView`; the tile only renders it. Every
-    /// call here represents a real selection change (`restoreSelection` is delta-based —
-    /// spec 0047), so animating unconditionally is correct: a survivor's `isSelected`
-    /// never gets reassigned, so this never fires for it.
+    /// AppKit drives selection from `NSCollectionView`; the tile only renders it. This is
+    /// reassigned both for a real selection change and when binding a recycled item to an
+    /// already-selected asset — `prepareForReuse` resets to unselected, then AppKit sets
+    /// `isSelected = true` again as the tile scrolls back into view — so a selected tile
+    /// re-fades its ring on scroll-in. That is accepted as polish (spec 0047), not a
+    /// defect: distinguishing the two would need a hook AppKit does not expose, and the
+    /// fade reads as intentional. During a *structural apply* a surviving on-screen tile
+    /// still never re-fades, because `restoreSelection` is delta-based and never reassigns
+    /// a survivor's `isSelected`.
     override var isSelected: Bool {
         didSet { tileView?.setSelected(isSelected, animated: true) }
     }

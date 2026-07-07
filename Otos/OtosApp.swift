@@ -78,7 +78,11 @@ struct OtosApp: App {
                 Button("Zoom In") {
                     catalogViewModel.zoomInGrid()
                 }
-                .keyboardShortcut("+", modifiers: .command)
+                // Physical ⌘= (the zoom-in key in Preview/Safari/Photos). AppKit matches
+                // menu key-equivalents by typed character, and "+" is ⇧= on a US layout, so
+                // "+" here would only fire on ⌘⇧=. Using "=" makes the physical ⌘= work and
+                // the menu render ⌘= honestly; the ⌘+/⌘− glyph symmetry is sacrificed (F3).
+                .keyboardShortcut("=", modifiers: .command)
                 .disabled(catalogViewModel.gridColumnCount <= GridColumnCount.minimum)
                 Button("Zoom Out") {
                     catalogViewModel.zoomOutGrid()
