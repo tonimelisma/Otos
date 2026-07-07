@@ -161,10 +161,15 @@ clamp-a-deliberate-request rule, and the slider-value mapping. `MediaGridZoomPol
 (new, `Otos/Views/MediaGridZoomPolicy.swift`) holds the pure "nearest tile to viewport
 center" anchor pick and the pinch-step coalescing, both fully unit-testable without
 `NSCollectionView`. `MediaAssetCollectionZoom.swift` (new) is the AppKit-boundary file
-for the pinch gesture and the animated swap; `MediaAssetCollectionStructuralApply.swift`
-(spec 0047's completion-side file, which also now holds the apply-starting side moved
-here in this increment to keep file lengths under the repo's lint budget) drains a
-zoom deferred by an in-flight structural apply. `CatalogWindowViewModelGridZoom.swift`
+for the pinch gesture and the animated swap. Exclusive access to the collection view —
+diffable structural applies and animated zoom swaps — is arbitrated by one owner,
+`MediaGridMutationGate` (`Otos/Views/MediaGridMutationGate.swift`), which owns
+column-count truth (`installedColumnCount`/`requestedColumnCount`) and returns ordered
+action lists the controller executes through `perform(_:)`; on completion,
+`MediaAssetCollectionStructuralApply.swift` and `MediaAssetCollectionZoom.swift` call
+`mutationGate.completeStructuralApply(applied:)`/`completeZoomSwap(installed:)` to adopt
+the new state and drain any work parked while the mutation ran, so a swap and an apply
+never overlap in either direction. `CatalogWindowViewModelGridZoom.swift`
 (new) holds the `setGridColumnCount`/`zoomInGrid`/`zoomOutGrid` intents, split out of
 `CatalogWindowViewModel.swift` for the same file-length reason (that main file's
 `addLibrary`/`ensureLibrary`/`removeLibrary`/`ejectRemovableSource`/`forgetRemovableSource`
@@ -181,7 +186,7 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
                               │
               MediaGridView → MediaAssetCollectionView(columnCount:)
                               │ updateNSViewController (every SwiftUI update)
-              controller.setColumnCount(_:) → animated layout swap (or deferred)
+              controller.receiveColumnCount(_:) → mutationGate → .zoomSwap (or deferred)
 ```
 
 - `CatalogWindowViewModel.gridColumnCount: Int` (published, `@Observable`), loaded in
@@ -192,14 +197,26 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
 - `MediaAssetCollectionView` (representable) gains `columnCount: Int` and
   `onColumnCountChangeRequested: (Int) -> Void`, threaded from `ContentView` through
   `MediaGridView`.
-- `MediaAssetCollectionViewController.setColumnCount(_:)` is the *only* place that ever
-  installs a new column-count layout. No-ops if unchanged; if
-  `applyGate.isApplyInFlight`, stores the request in `pendingColumnCount` and returns
-  (never a layout swap concurrent with a diffable apply); otherwise swaps immediately.
-  `completeStructuralApply` drains `pendingColumnCount` exactly once, right after its
-  own `performApplyGateAction(applyGate.complete(...))` call — if that call already
-  started a new apply from a pending grid state, `setColumnCount`'s own in-flight check
-  re-defers correctly with no extra bookkeeping needed.
+- `MediaAssetCollectionViewController.receiveColumnCount(_:)` is the controller's single
+  entry point for a requested column count (input, not command). It forwards the request
+  to `MediaGridMutationGate.receiveColumnCount(_:)`, which always overwrites
+  `requestedColumnCount` first (so a superseded request has nothing to leave stale — the
+  F1 fix), then returns a `.zoomSwap` action only when idle and the count actually
+  differs from `installedColumnCount`; otherwise the request converges at the next
+  completion drain. `perform(_:)` realizes a `.zoomSwap` through `performZoomSwap(to:)`.
+- `MediaGridMutationGate` is the *only* owner of both exclusive collection-view mutations.
+  A grid state arriving while a zoom swap animates parks as `pendingGrid` (because
+  `receive` checks `inFlight` for *any* mutation kind — the F2 fix), and drains as an
+  apply when `completeZoomSwap` runs; a zoom requested while an apply runs parks as
+  `requestedColumnCount` and drains as a `.zoomSwap` when `completeStructuralApply` runs.
+  The drain evaluates a parked grid first (content correctness), then appends a trailing
+  `.zoomSwap` only if `requestedColumnCount != installedColumnCount` at drain time, so a
+  zoom superseded back to the installed count converges to no swap.
+- Pre-window special case: if `collectionView.window == nil` when a `.zoomSwap` executes
+  (the first SwiftUI update installing a persisted count before the view is in a window),
+  `performZoomSwap` installs the layout directly without an animation group and calls
+  `completeZoomSwap` synchronously — animating a not-yet-visible view is pointless work
+  and makes launch timing test-hostile.
 - The swap picks an anchor index path (the pinch-gesture's captured item if a pinch is
   in progress, else `MediaGridZoomPolicy.nearestToCenter` over the currently visible
   tiles' frames, else `nil` for an empty grid), then runs
@@ -209,10 +226,12 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
   Completion re-requests visible details, reports the viewport, and re-preheats — the
   viewport now holds a different identity set at a different tile size.
 - The pinch gesture (`NSMagnificationGestureRecognizer`, added in
-  `configurePinchZoomGesture()`) never mutates `columnCount` or the layout; it only
-  calls `onColumnCountChangeRequested`. Its accumulated magnification and captured
-  anchor index path are controller-local ephemeral state, reset on `.began`/
-  `.ended`/`.cancelled`/`.failed`.
+  `configurePinchZoomGesture()`) never mutates column-count truth or the layout; it only
+  calls `onColumnCountChangeRequested`, computing the request from the gate's newest
+  `requestedColumnCount` plus the net pinch delta (not an already-installed value) so a
+  rapid burst of steps accumulates correctly before the ViewModel round-trip lands. Its
+  accumulated magnification and captured anchor index path are controller-local ephemeral
+  state, reset on `.began`/`.ended`/`.cancelled`/`.failed`.
 - Concurrency/actor ownership: everything in this spec is MainActor AppKit/SwiftUI
   state, matching the existing grid boundary; `GridColumnCount` and
   `MediaGridZoomPolicy` are `nonisolated` pure value/function namespaces with no actor
@@ -220,9 +239,18 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
 
 ## Retirement Proof
 
+- Column-count truth and the structural-apply/zoom arbitration live in one owner,
+  `MediaGridMutationGate` (renamed from the former `MediaAssetCollectionApplyGate`, file
+  `Otos/Views/MediaGridMutationGate.swift`). The controller's former stored `columnCount`
+  and `pendingColumnCount` properties, the `setColumnCount(_:)`/`performColumnCountSwap`
+  methods, the apply gate's `complete(applied:)`/`isApplyInFlight`/`Action.none`, and the
+  controller's `performApplyGateAction` executor no longer exist; a repository-wide grep
+  proves zero references across code, tests, specs, ADR 0006, onboarding, and file guides.
+  The controller now holds only `mutationGate` and executes its ordered action lists via
+  `perform(_:)`; the pinch request is computed from `mutationGate.requestedColumnCount`.
 - The prior `static let columnCount = 6` constant on the controller no longer exists;
-  every reference (`makeLayout()`, the startup log) uses the instance `columnCount` or
-  the new `makeLayout(columnCount:)` parameter. The `indexPath.item % columnCount`
+  every reference (`makeLayout()`, the startup log) uses the gate's `installedColumnCount`
+  or the new `makeLayout(columnCount:)` parameter. The `indexPath.item % columnCount`
   computation at both `configure` call sites was retired in the same pass: it only ever
   fed spec 0047's per-column thumbnail-fade stagger, which a review finding proved
   unsafe (see spec 0047's Post-Merge Correction) and which this increment's own work
@@ -249,12 +277,13 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
 - `docs/onboarding.md`: the grid section gains the zoom intent/data-flow path — this is
   an ownership/data-flow change and is updated in this increment.
 - `docs/index.md`: add this spec.
-- File guides updated in place: `MediaAssetCollectionView.swift` (representable
-  contract), `MediaAssetCollectionLayout.swift` (parametrized layout factory),
-  `MediaAssetCollectionStructuralApply.swift` (now owns both apply start and
-  completion, plus the pending-zoom drain), `CatalogWindowViewModel.swift` (points to
-  the split-out zoom file). New guides in `MediaAssetCollectionZoom.swift`,
-  `MediaGridZoomPolicy.swift`, `GridColumnCount.swift`, and
+- File guides updated in place: `MediaAssetCollectionView.swift` (representable contract
+  plus the mutation-gate executor), `MediaAssetCollectionLayout.swift` (parametrized
+  layout factory), `MediaAssetCollectionStructuralApply.swift` (owns apply start and
+  completion, ending with the gate completion drain), `MediaAssetCollectionZoom.swift`
+  (pinch gesture and the animated swap that ends with `completeZoomSwap`), and the
+  `MediaGridMutationGate.swift` guide (the single arbiter for both exclusive mutations).
+  Other new guides in `MediaGridZoomPolicy.swift`, `GridColumnCount.swift`, and
   `CatalogWindowViewModelGridZoom.swift`.
 
 ## Instrumentation And Performance
@@ -277,15 +306,19 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
 
 - MainActor gravity: none added — the animated swap is one Core Animation transaction
   per user zoom action, not per-frame work.
-- State duplication: `pendingColumnCount`/pinch state are ephemeral controller-local
-  state with a single drain path, not a second source of column-count truth;
-  `gridColumnCount` has exactly one owner (`CatalogWindowViewModel`).
+- State duplication: column-count truth on the AppKit side has exactly one owner,
+  `MediaGridMutationGate` (`installedColumnCount`/`requestedColumnCount`) — the controller
+  keeps no separate copy, so there is no second value to desync (the F1 class of bug is
+  unrepresentable). Pinch magnification/anchor state is ephemeral gesture-local state.
+  `gridColumnCount` has exactly one owner on the ViewModel side (`CatalogWindowViewModel`).
 - Stringly typed domain facts: none introduced (`trigger` in the log line is a
   diagnostic string, consistent with existing `reason:` log parameters elsewhere in
   this boundary, not a domain fact requiring a typed enum).
 - Test coupling: `MediaGridZoomPolicyTests` and `GridColumnCountTests` exercise pure
-  functions; `MediaAssetCollectionZoomTests` asserts observable controller state
-  (`columnCount`, `pendingColumnCount`), not animation internals.
+  functions; the `MediaGridMutationGate` state-machine cases in
+  `MediaAssetCollectionTests` are pure (no AppKit); `MediaAssetCollectionZoomTests`
+  asserts observable gate/controller state (`installedColumnCount`, `requestedColumnCount`,
+  `inFlight`), not animation internals.
 - File length: three files that grew past the repo's 500-line lint budget while
   implementing this spec were reorganized along existing thematic boundaries (see
   Selected Approach) rather than suppressing the lint rule.
@@ -316,9 +349,14 @@ pinch gesture ─┘        persists UserDefaults "mediaGridColumnCount",
     clamp+persist+publish, a fresh ViewModel instance reading back a persisted value,
     zoom in/out bounds — every test uses an isolated `UserDefaults` suite, never
     `.standard`.
-  - `MediaAssetCollectionZoomTests` (new): immediate swap with no apply in flight,
-    no-op on an unchanged request, and the pending-zoom deferral/exactly-once-drain
-    behavior driven through the real `completeStructuralApply` path.
+  - `MediaAssetCollectionTests` (`MediaGridMutationGate` state-machine cases): the F1
+    regression (a zoom superseded back to the installed count during an apply produces no
+    swap), the F2 regression (a grid arriving during a zoom swap parks then applies on
+    completion), newest-wins for both mutation kinds, compound drains, and chained
+    apply-before-parked-zoom ordering.
+  - `MediaAssetCollectionZoomTests`: immediate pre-window swap with no apply in flight,
+    no-op on an unchanged request, and the defer/exactly-once-install behavior driven
+    through the real `receiveColumnCount`/`completeStructuralApply` controller path.
   - `MediaGridZoomSourceHygieneTests` (renamed/moved): still AppKit
     `NSCollectionView`/`NSCollectionViewCompositionalLayout`-based, still not a table,
     now asserting the `GridColumnCount` 3–9 bounds instead of a hardcoded six.

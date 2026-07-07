@@ -22,7 +22,7 @@ Before implementation, repo inspection found:
 - `Otos/Views/MediaAssetCollectionView.swift` is the single AppKit boundary. It
   sets `collectionView.isSelectable = false` and installs no delegate, so there
   is no selection, click handling, or copy path. It owns the diffable data
-  source, a newest-value apply gate (`MediaAssetCollectionApplyGate`), viewport
+  source, a newest-value apply gate (`MediaGridMutationGate`), viewport
   reporting, and visible-detail faulting through `MediaTileDetailReader`.
 - `Otos/Views/MediaAssetTileView.swift` draws one reusable tile. `NSCollectionViewItem`
   already receives `isSelected` from the collection view; nothing reads it, so no

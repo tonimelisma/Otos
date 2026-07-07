@@ -103,7 +103,7 @@ extension MediaAssetCollectionViewController {
             anchor: anchor,
             clicked: clicked,
             base: anchorBaseSelection,
-            orderedIDs: applyGate.displayedOrderedIDs
+            orderedIDs: mutationGate.displayedOrderedIDs
         )
         guard target != current else {
             return false
@@ -148,7 +148,7 @@ extension MediaAssetCollectionViewController {
     @objc func copy(_: Any?) {
         let ordered = MediaGridSelection.orderedSelection(
             selectedIdentities(),
-            in: applyGate.displayedOrderedIDs
+            in: mutationGate.displayedOrderedIDs
         )
         let signpost = OtosSignpost.ui.beginInterval("MediaGridCopy")
         let count = MediaGridClipboard.write(ordered, to: .general)

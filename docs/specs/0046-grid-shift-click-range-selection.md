@@ -62,18 +62,18 @@ Verified by inspection:
 - `completeStructuralApply` ([MediaAssetCollectionStructuralApply.swift](../../Otos/Views/MediaAssetCollectionStructuralApply.swift):20) calls
   `restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)`
   once per structural apply — the anchor prune must happen in the same call.
-- `performApplyGateAction` ([MediaAssetCollectionView.swift](../../Otos/Views/MediaAssetCollectionView.swift):233-236) calls `clearSelection(reason:
+- `perform(_:)` ([MediaAssetCollectionView.swift](../../Otos/Views/MediaAssetCollectionView.swift):233-236) calls `clearSelection(reason:
   "descriptorChange")` when `resetSelection` is true — anchor must clear there
   too.
 - `MediaGridSelection` ([MediaGridSelection.swift](../../Otos/Views/MediaGridSelection.swift)) is a `nonisolated enum` of pure helpers
   (`pruned`, `orderedSelection`) already unit tested without AppKit lifecycle
   in `OtosTests/MediaGridSelectionTests.swift` — the natural home for the new
   pure range function.
-- `applyGate.displayedOrderedIDs` ([MediaAssetCollectionApplyGate.swift](../../Otos/Views/MediaAssetCollectionApplyGate.swift)) is the live display-order
+- `mutationGate.displayedOrderedIDs` ([MediaGridMutationGate.swift](../../Otos/Views/MediaGridMutationGate.swift)) is the live display-order
   source already used by `copy()`.
 - No test today instantiates a live `MediaAssetCollectionViewController`
   (`OtosTests/MediaAssetCollectionTests.swift` only exercises the pure
-  `MediaAssetCollectionApplyGate` and `MediaGridStructuralApplyPolicy` types).
+  `MediaGridMutationGate` and `MediaGridStructuralApplyPolicy` types).
   `UI.md`'s reference to an existing controller-hosting test pattern does not
   match the repo; this spec introduces that pattern instead of reusing one.
 
@@ -191,7 +191,7 @@ absent from display order).
     read inside the callback).
   - ⇧-click on X, single index path, `NSApp.currentEvent` is a left-mouse
     event with `.shift`: handler computes
-    `target = MediaGridSelection.shiftRangeSelection(anchor:, clicked: X, base:, orderedIDs: applyGate.displayedOrderedIDs)`
+    `target = MediaGridSelection.shiftRangeSelection(anchor:, clicked: X, base:, orderedIDs: mutationGate.displayedOrderedIDs)`
     and applies `deselectItems(at: current − target)` then
     `selectItems(at: target − current, scrollPosition: [])`. Anchor is
     unchanged (the base and anchor persist across a chain of shift-clicks);
@@ -213,7 +213,7 @@ absent from display order).
     prunes selection survivors: if `selectionAnchorID` is not in the new
     `ordered` array, clear both anchor and base.
   - `clearSelection(reason:)` and the `resetSelection == true` branch of
-    `performApplyGateAction` clear anchor and base (already call
+    `perform(_:)` clear anchor and base (already call
     `clearSelection`, which now also clears anchor state).
 
 ## Retirement Proof
@@ -271,7 +271,7 @@ Not applicable — additive fix, nothing removed.
 
 ## Acceptance Criteria
 
-Grid shows assets A…Z in display order (`applyGate.displayedOrderedIDs`).
+Grid shows assets A…Z in display order (`mutationGate.displayedOrderedIDs`).
 
 1. Click C, then ⇧-click H → {C, D, E, F, G, H} selected.
 2. Then ⇧-click F (same anchor C) → {C, D, E, F} selected — range contracted.

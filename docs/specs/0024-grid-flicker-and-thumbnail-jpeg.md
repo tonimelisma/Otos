@@ -326,7 +326,7 @@ data-structure change from after-fix measurements.
   stream.
 - `SidebarView` continues receiving `[CatalogLibraryState]` for identity and
   selection but renders no status subtitle from `availability` or `activity`.
-- `MediaAssetCollectionApplyGate` continues to classify same ordered IDs as
+- `MediaGridMutationGate` continues to classify same ordered IDs as
   `refreshVisible`.
 - `MediaAssetCollectionViewController.refreshVisible` now re-queries visible
   details through the Store-backed detail reader and calls an in-place visible
@@ -384,7 +384,7 @@ enrichment writes `.jpg` paths.
 
 ## Tests And Acceptance
 
-- Existing `MediaAssetCollectionApplyGate` tests continue to prove same IDs choose
+- Existing `MediaGridMutationGate` tests continue to prove same IDs choose
   `refreshVisible`.
 - Source hygiene proves `refreshVisible` no longer calls `reloadItems(at:)`.
 - Source hygiene proves `SidebarView` does not render `Checking`, `Scanning`, or

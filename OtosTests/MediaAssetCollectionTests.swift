@@ -3,111 +3,186 @@ import Testing
 
 @MainActor
 struct MediaAssetCollectionTests {
-    @Test func applyGateKeepsOnlyNewestPendingGrid() {
-        let gate = MediaAssetCollectionApplyGate()
+    // MARK: - Structural apply arbitration (migrated to MediaGridMutationGate)
+
+    @Test func mutationGateKeepsOnlyNewestPendingGrid() {
+        let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
         let intermediate = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
         let newest = makeGrid(scope: .allMedia, paths: ["c.jpg"])
 
-        guard case let .apply(started, resetScroll, resetSelection) = gate.receive(first) else {
-            Issue.record("The first structural state should start an apply")
-            return
-        }
-        #expect(started == first)
-        #expect(resetScroll == false)
-        #expect(resetSelection == false)
-
-        guard case let .pending(replacedFirstPending) = gate.receive(intermediate) else {
-            Issue.record("An update during an apply should become pending")
-            return
-        }
-        #expect(replacedFirstPending == false)
-
-        guard case let .pending(replacedExisting) = gate.receive(newest) else {
-            Issue.record("A newer update should replace the pending state")
-            return
-        }
-        #expect(replacedExisting)
-
-        guard case let .apply(next, nextResetScroll, nextResetSelection) = gate.complete(applied: first) else {
-            Issue.record("Completing the first apply should start the newest pending state")
-            return
-        }
-        #expect(next == newest)
-        #expect(nextResetScroll == false)
-        #expect(nextResetSelection == false)
+        #expect(gate.receive(first) == [.apply(first, resetScroll: false, resetSelection: false)])
+        #expect(gate.receive(intermediate) == [.pending(replacedExisting: false)])
+        #expect(gate.receive(newest) == [.pending(replacedExisting: true)])
+        #expect(
+            gate.completeStructuralApply(applied: first)
+                == [.apply(newest, resetScroll: false, resetSelection: false)]
+        )
     }
 
     @Test func identicalIDsRefreshVisibleWithoutStructuralApply() {
-        let gate = MediaAssetCollectionApplyGate()
+        let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        guard case .apply = gate.receive(first) else {
-            Issue.record("Expected initial structural apply")
-            return
-        }
-        #expect(isNone(gate.complete(applied: first)))
 
-        guard case let .refreshVisible(refreshed, resetScroll, resetSelection) = gate.receive(first) else {
-            Issue.record("Unchanged identities should refresh visible item details")
-            return
-        }
-        #expect(refreshed == first)
-        #expect(resetScroll == false)
-        #expect(resetSelection == false)
+        #expect(gate.receive(first) == [.apply(first, resetScroll: false, resetSelection: false)])
+        #expect(gate.completeStructuralApply(applied: first) == [])
+        #expect(
+            gate.receive(first)
+                == [.refreshVisible(first, resetScroll: false, resetSelection: false)]
+        )
     }
 
     @Test func descriptorChangeResetsScrollAndSelectionAndSameDescriptorStructurePreservesThem() {
-        let gate = MediaAssetCollectionApplyGate()
+        let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        guard case .apply = gate.receive(allMedia) else {
-            Issue.record("Expected initial structural apply")
-            return
-        }
-        _ = gate.complete(applied: allMedia)
+        #expect(gate.receive(allMedia) == [.apply(allMedia, resetScroll: false, resetSelection: false)])
+        #expect(gate.completeStructuralApply(applied: allMedia) == [])
 
         let sameDescriptor = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
-        let sameDescriptorAction = gate.receive(sameDescriptor)
-        guard case let .apply(_, sameResetScroll, sameResetSelection) = sameDescriptorAction else {
-            Issue.record("Expected same-descriptor structural apply")
-            return
-        }
-        #expect(sameResetScroll == false)
-        #expect(sameResetSelection == false)
-        _ = gate.complete(applied: sameDescriptor)
+        #expect(gate.receive(sameDescriptor) == [.apply(sameDescriptor, resetScroll: false, resetSelection: false)])
+        #expect(gate.completeStructuralApply(applied: sameDescriptor) == [])
 
-        let libraryPath = LibraryRootPath(rawValue: "/Pictures")
-        let differentScope = makeGrid(scope: .library(libraryPath), paths: ["a.jpg"])
-        let differentScopeAction = gate.receive(differentScope)
-        guard case let .apply(_, scopeResetScroll, scopeResetSelection) = differentScopeAction else {
-            Issue.record("Expected scope-changing structural apply")
-            return
-        }
-        #expect(scopeResetScroll)
-        #expect(scopeResetSelection)
+        let differentScope = makeGrid(scope: .library(LibraryRootPath(rawValue: "/Pictures")), paths: ["a.jpg"])
+        #expect(gate.receive(differentScope) == [.apply(differentScope, resetScroll: true, resetSelection: true)])
     }
 
     @Test func descriptorChangeWithSameIDsRefreshClearsSelection() {
-        let gate = MediaAssetCollectionApplyGate()
+        let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        guard case .apply = gate.receive(allMedia) else {
-            Issue.record("Expected initial structural apply")
-            return
-        }
-        _ = gate.complete(applied: allMedia)
+        #expect(gate.receive(allMedia) == [.apply(allMedia, resetScroll: false, resetSelection: false)])
+        #expect(gate.completeStructuralApply(applied: allMedia) == [])
 
         let sameIDsInLibraryScope = makeGrid(
             scope: .library(LibraryRootPath(rawValue: "/Pictures")),
             paths: ["a.jpg"]
         )
-        let scopeRefreshAction = gate.receive(sameIDsInLibraryScope)
-        guard case let .refreshVisible(refreshed, resetScroll, resetSelection) = scopeRefreshAction else {
-            Issue.record("Expected descriptor-changing refresh when IDs are unchanged")
-            return
-        }
-        #expect(refreshed == sameIDsInLibraryScope)
-        #expect(resetScroll)
-        #expect(resetSelection)
+        #expect(
+            gate.receive(sameIDsInLibraryScope)
+                == [.refreshVisible(sameIDsInLibraryScope, resetScroll: true, resetSelection: true)]
+        )
     }
+
+    // MARK: - Zoom / apply cross-arbitration (F1 and F2 regressions)
+
+    /// F1: a zoom that is superseded back to the currently installed count while an apply
+    /// is in flight must produce no swap — the grid must not silently change columns.
+    @Test func zoomSupersededToInstalledCountDuringApplyProducesNoSwap() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let grid = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = gate.receive(grid) // apply in flight
+
+        #expect(gate.receiveColumnCount(5) == []) // parked while in flight
+        #expect(gate.receiveColumnCount(6) == []) // superseded back to the installed count
+
+        #expect(gate.completeStructuralApply(applied: grid) == [])
+        #expect(gate.installedColumnCount == 6)
+        #expect(gate.requestedColumnCount == 6)
+    }
+
+    @Test func zoomRequestedDuringApplyConvergesExactlyOnce() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let grid = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = gate.receive(grid) // apply in flight
+
+        #expect(gate.receiveColumnCount(4) == [])
+        #expect(gate.completeStructuralApply(applied: grid) == [.zoomSwap(columnCount: 4)])
+        #expect(gate.completeZoomSwap(installed: 4) == [])
+        #expect(gate.installedColumnCount == 4)
+    }
+
+    /// F2: a grid state arriving while a zoom swap animates must park as pending — it must
+    /// never start a diffable apply concurrently with the swap — and drain as `.apply`
+    /// only when the swap completes.
+    @Test func gridArrivingDuringZoomSwapParksThenAppliesOnCompletion() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = gate.receive(base)
+        _ = gate.completeStructuralApply(applied: base)
+
+        #expect(gate.receiveColumnCount(4) == [.zoomSwap(columnCount: 4)]) // swap starts
+
+        let gridPrime = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
+        #expect(gate.receive(gridPrime) == [.pending(replacedExisting: false)])
+
+        #expect(
+            gate.completeZoomSwap(installed: 4)
+                == [.apply(gridPrime, resetScroll: false, resetSelection: false)]
+        )
+    }
+
+    /// A completion drain can legitimately emit a non-exclusive `.refreshVisible` (a
+    /// same-identity, new-descriptor grid parked mid-swap) followed by a trailing
+    /// `.zoomSwap` for a column count that changed again mid-swap.
+    @Test func completionDrainsRefreshVisibleThenTrailingZoomSwap() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = gate.receive(base)
+        _ = gate.completeStructuralApply(applied: base)
+
+        #expect(gate.receiveColumnCount(4) == [.zoomSwap(columnCount: 4)]) // installed still 6
+
+        let sameIDsNewScope = makeGrid(scope: .library(LibraryRootPath(rawValue: "/Pictures")), paths: ["a.jpg"])
+        #expect(gate.receive(sameIDsNewScope) == [.pending(replacedExisting: false)])
+        #expect(gate.receiveColumnCount(5) == []) // requested changes again mid-swap
+
+        #expect(
+            gate.completeZoomSwap(installed: 4) == [
+                .refreshVisible(sameIDsNewScope, resetScroll: true, resetSelection: true),
+                .zoomSwap(columnCount: 5),
+            ]
+        )
+    }
+
+    @Test func newestValueWinsForBothMutationKinds() {
+        let swapGate = MediaGridMutationGate(columnCount: 6)
+        let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = swapGate.receive(base)
+        _ = swapGate.completeStructuralApply(applied: base)
+
+        _ = swapGate.receiveColumnCount(4) // swap in flight
+        let firstGrid = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
+        let secondGrid = makeGrid(scope: .allMedia, paths: ["c.jpg"])
+        #expect(swapGate.receive(firstGrid) == [.pending(replacedExisting: false)])
+        #expect(swapGate.receive(secondGrid) == [.pending(replacedExisting: true)])
+        #expect(
+            swapGate.completeZoomSwap(installed: 4)
+                == [.apply(secondGrid, resetScroll: false, resetSelection: false)]
+        )
+
+        let applyInFlightGate = MediaGridMutationGate(columnCount: 6)
+        let grid = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = applyInFlightGate.receive(grid) // apply in flight
+        #expect(applyInFlightGate.receiveColumnCount(4) == [])
+        #expect(applyInFlightGate.receiveColumnCount(5) == [])
+        #expect(applyInFlightGate.completeStructuralApply(applied: grid) == [.zoomSwap(columnCount: 5)])
+    }
+
+    /// Chained: an apply that starts from a parked grid runs before the parked zoom; only
+    /// after that apply completes does the zoom finally drain.
+    @Test func chainedApplyDrainsBeforeParkedZoom() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = gate.receive(base)
+        _ = gate.completeStructuralApply(applied: base)
+
+        let second = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
+        #expect(gate.receive(second) == [.apply(second, resetScroll: false, resetSelection: false)])
+
+        #expect(gate.receiveColumnCount(4) == []) // parked
+        let third = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"])
+        #expect(gate.receive(third) == [.pending(replacedExisting: false)])
+
+        // The parked grid applies first (content correctness); the zoom stays deferred.
+        #expect(
+            gate.completeStructuralApply(applied: second)
+                == [.apply(third, resetScroll: false, resetSelection: false)]
+        )
+        // Only once that apply completes does the parked zoom drain.
+        #expect(gate.completeStructuralApply(applied: third) == [.zoomSwap(columnCount: 4)])
+        #expect(gate.completeZoomSwap(installed: 4) == [])
+    }
+
+    // MARK: - Structural apply policy and tile detail cache (unchanged)
 
     @Test func structuralApplyPolicyUsesReloadDataFallbackOnlyForLargeOrReorderApplies() {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
@@ -182,12 +257,4 @@ private func makeDetail(path: String) -> MediaTileDetail {
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path)
     )
-}
-
-@MainActor
-private func isNone(_ action: MediaAssetCollectionApplyGate.Action) -> Bool {
-    if case .none = action {
-        return true
-    }
-    return false
 }

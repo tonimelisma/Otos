@@ -58,7 +58,7 @@ struct ContentView: View {
                 )
                 CatalogZoomSlider(
                     columnCount: viewModel.gridColumnCount,
-                    setColumnCount: viewModel.setGridColumnCount
+                    requestColumnCount: viewModel.setGridColumnCount
                 )
             }
         }

@@ -310,9 +310,11 @@ reuses cells (it only creates views for what is on screen), which SwiftUI's grid
 not do as well at that scale. Read `MediaAssetCollectionView.swift` with its focused
 selection and structural-apply extensions (`MediaAssetCollectionSelection.swift` and
 `MediaAssetCollectionStructuralApply.swift`) as one AppKit boundary. The small
-`MediaAssetCollectionApplyGate` exists so that only one structural update runs at a
-time and only the newest pending update survives — backpressure for a high-volume
-surface. Identity/order changes go through diffable data-source applies. Small and
+`MediaGridMutationGate` is the single arbiter for both exclusive collection-view
+mutations — diffable structural applies and animated zoom swaps — so only one runs at a
+time in either direction and only the newest pending grid (or requested column count)
+survives; the controller is a pure executor of the ordered action lists the gate returns
+(`perform(_:)`). Identity/order changes go through diffable data-source applies. Small and
 user-visible insert/remove changes may animate; measured-large applies and
 background reorder-only changes use AppKit's reloadData-class diffable fallback.
 That flag tears down visible items, so it is allowed only because decoded
@@ -355,11 +357,14 @@ and toolbar slider call `setGridColumnCount(_:)` directly, and the pinch gesture
 (`MediaAssetCollectionZoom.swift`) calls it indirectly through an
 `onColumnCountChangeRequested` callback bridged back up through the
 representable. The published value round-trips into `updateNSViewController`,
-which is the *only* place that calls `setColumnCount(_:)` on the controller —
-one path for all three surfaces regardless of where the request originated. A
-zoom in flight during a diffable structural apply is stashed and drained
-exactly once after that apply completes, so a layout swap never overlaps an
-apply. The swap itself installs a freshly built `MediaGridAnimatedLayout`
+which is the *only* place that calls `receiveColumnCount(_:)` on the controller —
+one path for all three surfaces regardless of where the request originated. That
+request feeds the same `MediaGridMutationGate` that arbitrates structural applies,
+which owns column-count truth (`installedColumnCount`/`requestedColumnCount`) and
+guarantees a zoom and an apply never overlap in either direction: a zoom requested
+during an apply, or a grid state arriving during a zoom swap, parks and drains once
+the in-flight mutation completes. The swap itself installs a freshly built
+`MediaGridAnimatedLayout`
 inside an `NSAnimationContext` group and scrolls back to whichever visible tile
 is nearest the viewport's center (`MediaGridZoomPolicy.nearestToCenter`, or the
 pinch gesture's captured anchor tile), so the middle of what you were looking

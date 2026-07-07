@@ -6,8 +6,8 @@ import Testing
 
 /// Controller-level tests for shift-click range selection (spec 0046). These are the
 /// first tests in the repo to host a live `MediaAssetCollectionViewController`: setup
-/// applies a snapshot directly to `dataSource` and drives `applyGate` through its own
-/// pure `receive`/`complete` calls rather than the full async structural-apply pipeline,
+/// applies a snapshot directly to `dataSource` and drives `mutationGate` through its own
+/// pure `receive`/`completeStructuralApply` calls rather than the full async pipeline,
 /// so tests stay synchronous and do not depend on AppKit's diffable-apply animation
 /// timing. Selection events are driven through `handleUserSelectionEvent` with a
 /// synthesized `NSEvent`, matching what the real delegate callbacks forward.
@@ -15,7 +15,7 @@ import Testing
 struct MediaAssetCollectionSelectionTests {
     @Test func plainClickSetsAnchorAndBase() throws {
         let controller = makeController(itemCount: 4)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
 
         try selectNatively(controller, ids[2]) // plain click on the item at index 2
         try controller.handleUserSelectionEvent(
@@ -31,7 +31,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func shiftClickExtendsAContiguousRangeFromTheAnchor() throws {
         let controller = makeController(itemCount: 8)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[2]) // click item 2
 
         // Native shift-click on an unselected item only adds that item.
@@ -49,7 +49,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func secondShiftClickFromTheSameAnchorContractsTheRange() throws {
         let controller = makeController(itemCount: 8)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[2])
         try selectNatively(controller, ids[6])
         try controller.handleUserSelectionEvent(
@@ -73,7 +73,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func commandClickThenShiftClickUnionsTheBaseWithTheNewRange() throws {
         let controller = makeController(itemCount: 13)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[2]) // click item 2
 
         // ⌘-click item 10: native ⌘-click adds it alongside the existing selection.
@@ -100,7 +100,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func shiftClickWithNoAnchorBehavesAsAPlainClick() throws {
         let controller = makeController(itemCount: 6)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
 
         try selectNatively(controller, ids[3])
         try controller.handleUserSelectionEvent(
@@ -116,7 +116,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func structuralApplyPrunesAnAnchorWhoseAssetWasRemoved() throws {
         let controller = makeController(itemCount: 4)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[1])
 
         controller.restoreSelection([], in: [ids[0], ids[2], ids[3]])
@@ -127,7 +127,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func structuralApplyKeepsAnchorWhenItsAssetSurvives() throws {
         let controller = makeController(itemCount: 4)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[1])
 
         controller.restoreSelection([ids[1]], in: [ids[0], ids[1], ids[2], ids[3]])
@@ -137,7 +137,7 @@ struct MediaAssetCollectionSelectionTests {
 
     @Test func descriptorChangeClearsTheAnchor() throws {
         let controller = makeController(itemCount: 4)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[1])
 
         controller.clearSelection(reason: "descriptorChange")
@@ -153,7 +153,7 @@ struct MediaAssetCollectionSelectionTests {
     /// because it only clears an anchor whose *asset* left the new ordered IDs.
     @Test func descriptorChangingApplyClearsAnchorEvenWhenTheAnchoredAssetSurvives() throws {
         let controller = makeController(itemCount: 4)
-        let ids = controller.applyGate.displayedOrderedIDs
+        let ids = controller.mutationGate.displayedOrderedIDs
         try setAnchor(controller, to: ids[1])
 
         let grid = CatalogMediaGridState(
@@ -197,8 +197,8 @@ private func makeController(itemCount: Int) -> MediaAssetCollectionViewControlle
     controller.dataSource.apply(snapshot, animatingDifferences: false)
 
     let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: assetIDs)
-    _ = controller.applyGate.receive(grid)
-    _ = controller.applyGate.complete(applied: grid)
+    _ = controller.mutationGate.receive(grid)
+    _ = controller.mutationGate.completeStructuralApply(applied: grid)
 
     return controller
 }

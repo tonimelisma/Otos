@@ -63,9 +63,14 @@ current column count, 12-point section insets, and 8-point effective gaps.
 Column count is user-selected, 3–9, default 6 (spec 0048) — not an invariant six
 — owned by `CatalogWindowViewModel.gridColumnCount` and persisted across
 launches; the AppKit controller only ever renders the published value through
-one `setColumnCount(_:)` path, whether the request came from the View menu, a
-toolbar slider, or a pinch gesture. Zoom uses discrete animated layout swaps
-(`NSAnimationContext` plus `NSCollectionView.animator().collectionViewLayout`),
+one `receiveColumnCount(_:)` path, whether the request came from the View menu, a
+toolbar slider, or a pinch gesture. That path and the diffable structural-apply
+path are arbitrated by a single owner, `MediaGridMutationGate`, which holds
+column-count truth (`installedColumnCount`/`requestedColumnCount`) and guarantees a
+zoom swap and a structural apply never run concurrently in either direction: a zoom
+requested during an apply, or a grid state arriving during a zoom swap, parks and
+drains once the in-flight mutation completes. Zoom uses discrete animated layout
+swaps (`NSAnimationContext` plus `NSCollectionView.animator().collectionViewLayout`),
 never a continuous interactive transition: macOS exposes
 `NSCollectionViewTransitionLayout` but no `startInteractiveTransition` driver
 (that API is UIKit-only, verified against the Xcode 27 beta SDK), so there is no

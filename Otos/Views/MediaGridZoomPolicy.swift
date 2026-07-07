@@ -44,11 +44,12 @@ nonisolated enum MediaGridZoomPolicy {
 /// began; the controller resets it to 0 after each read, so `accumulated` here is the
 /// incremental magnification since the last consume call. Returns the *net* column-count
 /// delta for every whole threshold crossing rather than one delta per crossing, because
-/// the controller's own `columnCount` does not update until the round trip through
-/// `onColumnCountChangeRequested` → the ViewModel intent → SwiftUI → `setColumnCount(_:)`
-/// completes; requesting several deltas against that same not-yet-updated `columnCount`
-/// in one synchronous burst would otherwise request the same target repeatedly instead
-/// of accumulating.
+/// the installed column count does not update until the round trip through
+/// `onColumnCountChangeRequested` → the ViewModel intent → SwiftUI →
+/// `receiveColumnCount(_:)` completes; the controller therefore adds this net delta to the
+/// mutation gate's newest `requestedColumnCount` (not an already-installed value) so a
+/// synchronous burst of crossings accumulates instead of requesting the same target
+/// repeatedly.
 nonisolated enum MediaGridPinchZoomPolicy {
     static func consumeSteps(
         accumulated: CGFloat,

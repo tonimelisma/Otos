@@ -120,12 +120,12 @@ struct CatalogSortMenu: View {
 /// public contract is the same `columnCount` every other zoom surface uses.
 struct CatalogZoomSlider: View {
     let columnCount: Int
-    let setColumnCount: (Int) -> Void
+    let requestColumnCount: (Int) -> Void
 
     private var sliderValue: Binding<Double> {
         Binding(
             get: { Double(GridColumnCount.sliderValue(forColumnCount: columnCount)) },
-            set: { setColumnCount(GridColumnCount.columnCount(forSliderValue: Int($0.rounded()))) }
+            set: { requestColumnCount(GridColumnCount.columnCount(forSliderValue: Int($0.rounded()))) }
         )
     }
 

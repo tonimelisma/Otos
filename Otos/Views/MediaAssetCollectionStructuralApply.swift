@@ -26,7 +26,7 @@ extension MediaAssetCollectionViewController {
         let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.applyStructure")
         let applyStart = Date()
         let summary = MediaGridStructuralApplyPolicy.summarize(
-            previousOrderedIDs: applyGate.displayedOrderedIDs,
+            previousOrderedIDs: mutationGate.displayedOrderedIDs,
             nextOrderedIDs: grid.orderedAssetIDs
         )
         // Snapshot the selected identities before the diffable apply can drop or shift
@@ -165,15 +165,12 @@ extension MediaAssetCollectionViewController {
         if let operation {
             stallMonitor?.endOperation(operation)
         }
-        performApplyGateAction(applyGate.complete(applied: context.grid))
-        // A zoom requested while this apply was in flight is deferred exactly once here
-        // (spec 0048) — never run a layout swap concurrently with a diffable apply.
-        // `setColumnCount` re-defers on its own if `applyGate.complete` just started
-        // another apply from a pending grid state.
-        if let pendingColumnCount {
-            self.pendingColumnCount = nil
-            setColumnCount(pendingColumnCount)
-        }
+        // Adopt this apply's identities/descriptor and drain any work parked while it ran:
+        // a newer grid state (applied next, content-first) and/or a zoom requested during
+        // the apply (a `.zoomSwap` the gate emits once the count actually differs). The
+        // gate guarantees a layout swap never runs concurrently with a diffable apply in
+        // either direction (spec 0048).
+        perform(mutationGate.completeStructuralApply(applied: context.grid))
     }
 
     private func logFinishedStructuralApply(

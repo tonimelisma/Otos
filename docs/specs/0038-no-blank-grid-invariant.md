@@ -301,7 +301,7 @@ as a parameter instead of reading `durationField.stringValue` view state
   evidence showed multi-second true-diff applies: large/reorder applies now use
   `animatingDifferences: false`, while small user-visible insert/removes keep
   animation. ADR 0006 owns the current policy.
-- Unchanged: apply gate (`MediaAssetCollectionApplyGate` — reviewed, correct),
+- Unchanged: apply gate (`MediaGridMutationGate` — reviewed, correct),
   selection snapshot/restore (`MediaAssetCollectionSelection.swift:69–80`),
   viewport reporting, scroll-driven detail refresh cadence, diagnostics fields
   (gain `preheatCount`).

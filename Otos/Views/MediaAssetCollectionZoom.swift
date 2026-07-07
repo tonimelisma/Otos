@@ -6,17 +6,20 @@ import OSLog
 // User-adjustable column count (3–9, spec 0048). All zoom surfaces — the View menu,
 // the toolbar slider, and this file's pinch gesture — drive one ViewModel intent
 // (`CatalogWindowViewModel.setGridColumnCount`). The pinch gesture never mutates
-// `columnCount` or the collection view's layout directly: it only calls
+// column-count truth or the collection view's layout directly: it only calls
 // `onColumnCountChangeRequested`, and the swap happens only when the ViewModel's
 // published value round-trips back into `updateNSViewController`, which calls
-// `setColumnCount(_:)` on every SwiftUI update — the same call the menu and slider's
+// `receiveColumnCount(_:)` on every SwiftUI update — the same call the menu and slider's
 // requests arrive through. That one path is what keeps pinch, menu, and slider, and
 // any future automation, from diverging.
 //
-// A zoom swap never overlaps a diffable structural apply: `setColumnCount` stashes a
-// request that arrives mid-apply in `pendingColumnCount`, which
-// `MediaAssetCollectionStructuralApply.swift` drains exactly once after that apply's
-// own completion work.
+// A zoom swap never overlaps a diffable structural apply, in either direction: the
+// arbitration lives entirely in `MediaGridMutationGate`, which owns `installedColumnCount`
+// and `requestedColumnCount` and hands back a `.zoomSwap` action only when no other
+// exclusive mutation is in flight. `performZoomSwap(to:)` runs the animated layout swap
+// and, on completion, calls `mutationGate.completeZoomSwap(installed:)` to drain any grid
+// state that arrived mid-animation — that completion is what closes the reverse window
+// (an apply requested during a swap).
 
 extension MediaAssetCollectionViewController {
     func configurePinchZoomGesture() {
@@ -49,37 +52,44 @@ extension MediaAssetCollectionViewController {
     /// Requests the net column-count delta for every whole threshold crossing since the
     /// last consume, in one call — see `MediaGridPinchZoomPolicy` for why a burst of
     /// crossings is coalesced into one request rather than one request per crossing.
-    /// This method never touches `columnCount` itself.
+    /// The base is the gate's `requestedColumnCount` (the newest value the gate has
+    /// accepted), not a controller-local count, so a rapid burst of steps accumulates
+    /// correctly even before the ViewModel round-trip lands. This method never installs a
+    /// layout itself.
     private func consumePinchSteps() {
         let result = MediaGridPinchZoomPolicy.consumeSteps(accumulated: pinchAccumulatedMagnification)
         pinchAccumulatedMagnification = result.remainder
         guard result.netSteps != 0 else {
             return
         }
-        onColumnCountChangeRequested(columnCount + result.netSteps)
+        onColumnCountChangeRequested(mutationGate.requestedColumnCount + result.netSteps)
     }
 
-    /// The one path that ever installs a new column-count layout. Called by the
-    /// representable on every SwiftUI update (mirroring `receive(_:)`'s always-called
-    /// pattern) and by the pending-zoom drain after a structural apply completes.
-    /// No-ops when the requested count already matches.
-    func setColumnCount(_ requested: Int) {
-        guard requested != columnCount else {
-            return
-        }
-        guard !applyGate.isApplyInFlight else {
-            pendingColumnCount = requested
-            return
-        }
-        performColumnCountSwap(to: requested)
-    }
-
-    private func performColumnCountSwap(to requested: Int) {
+    /// Installs a new column-count layout. Only ever reached through the gate's
+    /// `.zoomSwap` action (via `perform(_:)`), so it never runs concurrently with a
+    /// structural apply. On completion it calls `mutationGate.completeZoomSwap(installed:)`
+    /// and executes whatever that drain returns.
+    func performZoomSwap(to requested: Int) {
         let anchor = pinchAnchorIndexPath ?? centerAnchorIndexPath()
         let trigger = pinchAnchorIndexPath != nil ? "pinch" : "external"
-        let oldCount = columnCount
-        columnCount = requested
+        let oldCount = mutationGate.installedColumnCount
         let signpost = OtosSignpost.ui.beginInterval("MediaGridZoomApply")
+
+        // Before the view is in a window (the first SwiftUI update installing a persisted
+        // count), animating a not-yet-visible view is pointless work and makes launch
+        // timing test-hostile: install the layout directly and complete synchronously.
+        guard collectionView.window != nil else {
+            collectionView.collectionViewLayout = Self.makeLayout(columnCount: requested)
+            finishZoomSwap(
+                signpost: signpost,
+                oldCount: oldCount,
+                newCount: requested,
+                anchorPresent: anchor != nil,
+                trigger: trigger
+            )
+            return
+        }
+
         NSAnimationContext.runAnimationGroup { [weak self] context in
             guard let self else {
                 return
@@ -91,7 +101,7 @@ extension MediaAssetCollectionViewController {
                 collectionView.animator().scrollToItems(at: [anchor], scrollPosition: .centeredVertically)
             }
         } completionHandler: { [weak self] in
-            self?.completeColumnCountSwap(
+            self?.finishZoomSwap(
                 signpost: signpost,
                 oldCount: oldCount,
                 newCount: requested,
@@ -101,7 +111,7 @@ extension MediaAssetCollectionViewController {
         }
     }
 
-    private func completeColumnCountSwap(
+    private func finishZoomSwap(
         signpost: OSSignpostIntervalState,
         oldCount: Int,
         newCount: Int,
@@ -119,6 +129,9 @@ extension MediaAssetCollectionViewController {
         _ = requestVisibleDetails(reason: "zoom")
         reportViewport()
         preheatLookahead(reason: "zoom")
+        // Adopt the installed count and drain any grid state (or further zoom) that
+        // arrived while this swap was animating — this closes the apply-during-zoom window.
+        perform(mutationGate.completeZoomSwap(installed: newCount))
     }
 
     /// The visible tile whose frame center is nearest the viewport's center — "the

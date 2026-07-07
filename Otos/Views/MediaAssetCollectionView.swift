@@ -17,8 +17,11 @@ import UniformTypeIdentifiers
 /// details and reconfigure existing reusable items in place. Decoded thumbnails
 /// are supplied by the ViewModel-owned `MediaTileImageCache` so recycled items can
 /// repaint synchronously.
-/// `MediaAssetCollectionApplyGate` prevents overlapping AppKit applies and keeps
-/// only the newest pending value.
+/// `MediaGridMutationGate` is the single arbiter for both exclusive collection-view
+/// mutations — diffable structural applies and animated zoom swaps — so the two never
+/// overlap in either direction; it keeps only the newest pending grid and the newest
+/// requested column count, and the controller is a pure executor of the ordered action
+/// lists the gate returns (`perform(_:)`).
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
 /// cannot create file-writing tasks or retain grid state on MainActor.
 ///
@@ -43,7 +46,7 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     /// User-adjustable grid density (spec 0048); the ViewModel is the source of truth,
-    /// this representable only round-trips it into `setColumnCount(_:)`.
+    /// this representable only round-trips it into `receiveColumnCount(_:)`.
     var columnCount: Int = GridColumnCount.defaultValue
     /// The pinch gesture never mutates the layout itself — it requests a new count
     /// through this closure, which the caller wires to the same ViewModel intent the
@@ -65,7 +68,7 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
         controller.diagnostics = diagnostics
         controller.onViewportChanged = onViewportChanged
         controller.onColumnCountChangeRequested = onColumnCountChangeRequested
-        controller.setColumnCount(columnCount)
+        controller.receiveColumnCount(columnCount)
         controller.receive(grid)
     }
 }
@@ -80,7 +83,10 @@ final class MediaAssetCollectionViewController: NSViewController {
 
     let scrollView = NSScrollView()
     let collectionView = NSCollectionView()
-    let applyGate = MediaAssetCollectionApplyGate()
+    /// The single arbiter for both exclusive collection-view mutations (structural applies
+    /// and zoom swaps) and the sole owner of column-count truth (`installedColumnCount`,
+    /// `requestedColumnCount`). The controller holds no separate column-count state.
+    let mutationGate = MediaGridMutationGate()
     var dataSource: NSCollectionViewDiffableDataSource<Section, MediaAssetID>!
     /// Sticky, bounded tile details. Identity order lives in the diffable data source;
     /// this cache preserves best-known rows across scroll, reloadData-class recycling,
@@ -97,16 +103,9 @@ final class MediaAssetCollectionViewController: NSViewController {
     /// truth.
     var selectionAnchorID: MediaAssetID?
     var anchorBaseSelection = Set<MediaAssetID>()
-    /// User-adjustable grid density (spec 0048), 3–9, owned by `CatalogWindowViewModel`
-    /// and round-tripped here through `setColumnCount(_:)`. Never mutated directly by
-    /// the pinch gesture — see `MediaAssetCollectionZoom.swift`.
-    var columnCount = GridColumnCount.defaultValue
-    /// A zoom requested while a diffable apply is in flight; drained exactly once by
-    /// `completeStructuralApply` after that apply finishes (never run a layout swap and
-    /// a diffable apply concurrently).
-    var pendingColumnCount: Int?
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
-    /// gesture never mutates `columnCount` or the layout itself.
+    /// gesture never mutates column-count truth or the layout itself — see
+    /// `MediaAssetCollectionZoom.swift`. Column-count truth lives in `mutationGate`.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
     /// The item under the gesture location at pinch start, held for the gesture's
     /// duration so a chain of pinch steps all anchor to the same tile.
@@ -129,15 +128,15 @@ final class MediaAssetCollectionViewController: NSViewController {
                 stallMonitor?.endOperation(operation)
             }
         }
+        let installedColumnCount = mutationGate.installedColumnCount
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
-        collectionView.collectionViewLayout = Self.makeLayout(columnCount: columnCount)
+        collectionView.collectionViewLayout = Self.makeLayout(columnCount: installedColumnCount)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
 
         configureCollectionView()
         configureScrollView()
         installScrollObserver()
         configurePinchZoomGesture()
-        let installedColumnCount = columnCount
         OtosLog.ui.info("Media grid layout installed columns=\(installedColumnCount, privacy: .public)")
     }
 
@@ -166,21 +165,30 @@ final class MediaAssetCollectionViewController: NSViewController {
     }
 
     /// Projection coalesces incoming background state. This method adds only AppKit
-    /// backpressure: one structural apply may run, and any intermediate pending
-    /// value is replaced by the newest value rather than queued.
+    /// backpressure: while any exclusive mutation (structural apply or zoom swap) is in
+    /// flight the newest grid is parked rather than queued; otherwise the gate decides
+    /// whether to refresh visible details in place or run one structural apply.
     func receive(_ grid: CatalogMediaGridState) {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStateReceive")
         defer { OtosSignpost.ui.endInterval("MediaGridStateReceive", signpost) }
 
-        let action = applyGate.receive(grid)
+        let actions = mutationGate.receive(grid)
         OtosLog.ui.debug(
             """
             Media grid state received items=\(grid.orderedAssetIDs.count, privacy: .public) \
             scope=\(grid.scope.diagnosticDescription, privacy: .public) \
-            action=\(action.diagnosticDescription, privacy: .public)
+            actions=\(actions.map(\.diagnosticDescription).joined(separator: ","), privacy: .public)
             """
         )
-        performApplyGateAction(action)
+        perform(actions)
+    }
+
+    /// Requests a new column count from any zoom surface (the ViewModel round-trips its
+    /// published value here on every SwiftUI update, and the pinch gesture routes through
+    /// the same intent). Input, not command: the gate decides whether a swap runs now,
+    /// converges at the next completion, or is a no-op.
+    func receiveColumnCount(_ requested: Int) {
+        perform(mutationGate.receiveColumnCount(requested))
     }
 }
 
@@ -243,26 +251,33 @@ extension MediaAssetCollectionViewController {
         )
     }
 
-    func performApplyGateAction(_ action: MediaAssetCollectionApplyGate.Action) {
-        switch action {
-        case .none:
-            return
-        case let .pending(replacedExisting):
-            OtosSignpost.ui.emitEvent("MediaGridPendingState")
-            OtosLog.ui.debug(
-                "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
-            )
-        case let .refreshVisible(_, resetScroll, resetSelection):
-            if resetSelection {
-                clearSelection(reason: "descriptorChange")
+    /// The one executor for the gate's ordered action lists. Every gate method
+    /// (`receive`, `receiveColumnCount`, `completeStructuralApply`, `completeZoomSwap`)
+    /// funnels through here, so there is a single place each action kind is realized.
+    /// The list is already ordered so that a non-exclusive `.refreshVisible` precedes any
+    /// trailing exclusive `.apply`/`.zoomSwap`.
+    func perform(_ actions: [MediaGridMutationGate.Action]) {
+        for action in actions {
+            switch action {
+            case let .pending(replacedExisting):
+                OtosSignpost.ui.emitEvent("MediaGridPendingState")
+                OtosLog.ui.debug(
+                    "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
+                )
+            case let .refreshVisible(_, resetScroll, resetSelection):
+                if resetSelection {
+                    clearSelection(reason: "descriptorChange")
+                }
+                if resetScroll {
+                    scrollToTop()
+                }
+                _ = requestVisibleDetails(reason: "detailRefresh")
+                reportViewport()
+            case let .apply(grid, resetScroll, resetSelection):
+                applyStructure(grid, resetScroll: resetScroll, resetSelection: resetSelection)
+            case let .zoomSwap(columnCount):
+                performZoomSwap(to: columnCount)
             }
-            if resetScroll {
-                scrollToTop()
-            }
-            _ = requestVisibleDetails(reason: "detailRefresh")
-            reportViewport()
-        case let .apply(grid, resetScroll, resetSelection):
-            applyStructure(grid, resetScroll: resetScroll, resetSelection: resetSelection)
         }
     }
 
