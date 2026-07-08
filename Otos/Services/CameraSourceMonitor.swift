@@ -4,8 +4,6 @@ import Foundation
 import OSLog
 import UniformTypeIdentifiers
 
-// swiftlint:disable file_length
-
 nonisolated struct DeviceCameraCatalogItem: Hashable {
     let relativePath: MediaRelativePath
     let name: String

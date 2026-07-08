@@ -2,8 +2,6 @@ import Foundation
 import GRDB
 import OSLog
 
-// swiftlint:disable file_length
-
 /// Store notifications remain cheap invalidation signals. Most changes carry no
 /// payload; root removal carries its typed path because a remove followed by a
 /// same-path add can otherwise coalesce into a queried state where Projection cannot

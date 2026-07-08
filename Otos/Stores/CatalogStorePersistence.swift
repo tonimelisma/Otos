@@ -1,8 +1,6 @@
 import Foundation
 import GRDB
 
-// swiftlint:disable file_length
-
 /// Persistence guide
 ///
 /// This extension is the SQLite edge of CatalogStore. It translates between the

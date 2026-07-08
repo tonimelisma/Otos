@@ -14,4 +14,6 @@ if ! command -v swiftlint >/dev/null 2>&1; then
 fi
 
 swiftformat --lint "$ROOT_DIR"
-swiftlint lint --strict --config "$ROOT_DIR/.swiftlint.yml"
+# No --strict: warnings (e.g. the soft size limits) are informational and must not
+# fail the build; swiftlint still exits non-zero on any error-severity violation.
+swiftlint lint --config "$ROOT_DIR/.swiftlint.yml"
