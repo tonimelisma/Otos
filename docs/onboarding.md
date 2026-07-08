@@ -208,11 +208,13 @@ Walks a library folder and reports the image and video files it finds. Whys:
 - It is a pure, idempotent *observation* — it makes no decisions about deletion or
   UI. The Store decides what to do with what the scanner saw.
 
-### `CatalogProjection`, `CatalogWindowPolicy`, and `CatalogProjectionDiagnostics` — truth → view
+### `CatalogProjection`, `CatalogWindowPolicy`, `SidebarSelectionPolicy`, and `CatalogProjectionDiagnostics` — truth → view
 
 Read `CatalogWindowPolicy` first if you want the pure rules: library sorting,
 selection fallback, descriptor resolution, title lookup, scope membership, and
-empty-state choice. Read `CatalogProjectionDiagnostics` next for equal-state
+empty-state choice. Read `SidebarSelectionPolicy` for startup/attach default
+selection and All Media visibility (2+ fixed libraries). Read
+`CatalogProjectionDiagnostics` next for equal-state
 comparison and bounded JSONL field construction. Then read `CatalogProjection`,
 the actor that owns the long-running tasks, dirty flags, in-flight publication
 state, Store subscription, and stream continuation.
@@ -297,9 +299,12 @@ temporary staging bytes when the device disconnects.
 `SidebarView`, `MediaGridView`, and `SettingsView` are small SwiftUI views that
 render the state they are handed and call back with intents (`selectSidebar`,
 `addLibrary`, `ejectSource`, `forgetSource`). They hold no catalog logic. The
-sidebar uses projected root rows for identity and selection, renders fixed
-libraries separately from connected removable sources, and shows eject only when
-Projection says the source is ejectable. Settings uses the same rows for a
+sidebar uses projected root rows for identity and selection, hides `All Media`
+when only one fixed library exists, applies `SidebarSelectionPolicy` through the
+ViewModel for startup/attach defaults, renders every row through one shared
+`SidebarRow` layout (20pt icon rail), shows connected removable sources separately
+from fixed libraries, and shows an eject spinner or button only when Projection
+says the source is ejectable. Settings uses the same rows for a
 Libraries tab and a Removable Media tab. The grid can show the selected-camera
 connection banner and the camera-enumerating empty state, but it still receives
 those as plain state values.

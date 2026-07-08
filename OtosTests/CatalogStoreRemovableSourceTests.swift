@@ -3,6 +3,21 @@ import Foundation
 import Testing
 
 struct CatalogStoreRemovableSourceTests {
+    @Test func quiesceKeepsRemovableSourceAvailableForSidebar() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: "volume:test-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        try await store.quiesceRemovableSource(identity: "volume:test-card")
+        let quiesced = try await catalogStoreTestState(store)
+        #expect(quiesced.removableSources.first?.availability == .available)
+    }
+
     @Test func removableVolumeRemountsByIdentityAndStaysOutOfAllMedia() async throws {
         let fixture = try await makeRemountFixture()
         let store = fixture.store

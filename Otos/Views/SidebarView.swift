@@ -4,54 +4,41 @@ import SwiftUI
 /// intents. The local Binding exists only to adapt SwiftUI List's control API;
 /// selection ownership and asynchronous delivery remain in the ViewModel.
 struct SidebarView: View {
+    let showsAllMedia: Bool
     let libraries: [CatalogLibraryState]
     let removableSources: [CatalogLibraryState]
     let sidebarSelection: SidebarSelection
+    let ejectingSourceIdentities: Set<String>
     let selectSidebar: @MainActor @Sendable (SidebarSelection) -> Void
     let ejectSource: @MainActor @Sendable (LibraryRoot) -> Void
 
     var body: some View {
         List(selection: selectionBinding) {
-            Label("All Media", systemImage: "square.grid.2x2")
+            if showsAllMedia {
+                SidebarRow(systemImage: "square.grid.2x2", title: "All Media") {
+                    EmptyView()
+                }
                 .tag(SidebarSelection.allMedia)
+            }
 
             Section("Libraries") {
                 ForEach(libraries) { library in
-                    HStack(spacing: 10) {
-                        Image(systemName: "folder")
-                            .foregroundStyle(.secondary)
-                            .frame(width: 16)
-
-                        Text(library.displayName)
-                            .lineLimit(1)
+                    SidebarRow(systemImage: "folder", title: library.displayName) {
+                        EmptyView()
                     }
                     .tag(SidebarSelection.library(library.path))
                 }
             }
 
-            let connectedSources = removableSources.filter(\.isAvailable)
+            let connectedSources = SidebarSelectionPolicy.sidebarVisibleRemovableSources(removableSources)
             if !connectedSources.isEmpty {
                 Section("Removable") {
                     ForEach(connectedSources) { source in
-                        HStack(spacing: 10) {
-                            Image(systemName: source.kind.sidebarSystemImage)
-                                .foregroundStyle(.secondary)
-                                .frame(width: 16)
-
-                            Text(source.displayName)
-                                .lineLimit(1)
-
-                            Spacer(minLength: 4)
-
-                            if source.isEjectable {
-                                Button {
-                                    ejectSource(source.root)
-                                } label: {
-                                    Image(systemName: "eject.fill")
-                                }
-                                .buttonStyle(.borderless)
-                                .help("Eject")
-                            }
+                        SidebarRow(
+                            systemImage: source.kind.sidebarSystemImage,
+                            title: source.displayName
+                        ) {
+                            removableTrailingAccessory(for: source)
                         }
                         .tag(SidebarSelection.library(source.path))
                     }
@@ -62,6 +49,22 @@ struct SidebarView: View {
         .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
     }
 
+    @ViewBuilder
+    private func removableTrailingAccessory(for source: CatalogLibraryState) -> some View {
+        if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
+            ProgressView()
+                .controlSize(.small)
+        } else if source.isEjectable {
+            Button {
+                ejectSource(source.root)
+            } label: {
+                Image(systemName: "eject.fill")
+            }
+            .buttonStyle(.borderless)
+            .help("Eject")
+        }
+    }
+
     private var selectionBinding: Binding<SidebarSelection> {
         Binding(
             get: { sidebarSelection },
@@ -70,8 +73,27 @@ struct SidebarView: View {
     }
 }
 
+private struct SidebarRow<Trailing: View>: View {
+    let systemImage: String
+    let title: String
+    @ViewBuilder var trailing: () -> Trailing
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .foregroundStyle(.secondary)
+                .frame(width: 20, alignment: .center)
+            Text(title)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            trailing()
+        }
+    }
+}
+
 #Preview {
     SidebarView(
+        showsAllMedia: true,
         libraries: [
             CatalogLibraryState(
                 root: LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures")),
@@ -99,6 +121,7 @@ struct SidebarView: View {
             ),
         ],
         sidebarSelection: .allMedia,
+        ejectingSourceIdentities: [],
         selectSidebar: { _ in },
         ejectSource: { _ in }
     )

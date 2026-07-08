@@ -113,7 +113,10 @@ struct CatalogWindowViewModelTests {
         model.addLibrary(url: archiveURL)
         _ = try await waitForWindowState(model) { state in
             Set(state.libraries.map(\.path)) == [picturesPath, archivePath]
-                && state.mediaGrid.orderedAssetIDs.count == 2
+        }
+        model.selectSidebar(.allMedia)
+        _ = try await waitForWindowState(model) { state in
+            state.mediaGrid.orderedAssetIDs.count == 2
         }
 
         model.selectSidebar(.library(picturesPath))

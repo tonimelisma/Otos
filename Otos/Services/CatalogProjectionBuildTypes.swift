@@ -13,6 +13,15 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let mediaEmptyState: CatalogMediaEmptyState
 }
 
+nonisolated struct CatalogProjectionSupplementaryBuildInput {
+    let resolvedDescriptor: CatalogQueryDescriptor
+    let allRoots: [CatalogLibraryState]
+    let orderedAssetIDs: [MediaAssetID]
+    let scopedAssetIDs: [MediaAssetID]
+    let store: CatalogStore?
+    let availableLibraryPaths: Set<LibraryRootPath>
+}
+
 nonisolated struct CatalogProjectionEmptyStateBuildInput {
     let descriptor: CatalogQueryDescriptor
     let libraries: [CatalogLibraryState]

@@ -175,8 +175,8 @@ synthetic decoded image so `currentImagePixelSize` is set and the letterbox exis
 
 ## Stale-Document Audit
 
-- `docs/product/PLAN-grid-selection-and-sidebar-fixes.md`: update Part 2 status to
-  implemented.
+- `docs/product/PLAN-grid-selection-and-sidebar-fixes.md`: deleted after all plan parts
+  landed (Parts 1–5).
 - `docs/onboarding.md`: review the grid selection paragraph; update if it describes the
   whole cell as the hit area.
 - `docs/specs/0046-grid-shift-click-range-selection.md`: no change; selection semantics

@@ -35,9 +35,9 @@ struct CatalogProjectionLifecycleTests {
 
         let readded = try await recorder.waitForLast { state in
             state.libraries.map(\.path) == [rootPath]
-                && state.resolvedSidebarSelection == .allMedia
+                && state.resolvedSidebarSelection == .library(rootPath)
         }
-        #expect(readded.mediaGrid.scope == .allMedia)
+        #expect(readded.mediaGrid.scope == .library(rootPath))
     }
 
     @Test func removedSelectionRemainsAllMediaWhenSamePathIsReadded() async throws {
@@ -73,8 +73,8 @@ struct CatalogProjectionLifecycleTests {
         let readded = try await recorder.waitForLast { state in
             state.libraries.map(\.path) == [rootPath]
         }
-        #expect(readded.resolvedSidebarSelection == .allMedia)
-        #expect(readded.mediaGrid.scope == .allMedia)
+        #expect(readded.resolvedSidebarSelection == .library(rootPath))
+        #expect(readded.mediaGrid.scope == .library(rootPath))
     }
 
     @Test func normalizationDoesNotOverwriteNewerSidebarIntent() async throws {
