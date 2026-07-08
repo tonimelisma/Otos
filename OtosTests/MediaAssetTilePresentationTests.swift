@@ -72,6 +72,43 @@ struct MediaAssetTilePresentationTests {
         #expect(MediaAssetTilePresentation.contentRect(imagePixelSize: nil, bounds: bounds) == bounds)
     }
 
+    // MARK: - Thumbnail-only hit area (spec 0049)
+
+    @Test func thumbnailFaceRectMatchesContentRect() {
+        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
+        #expect(MediaAssetTilePresentation.thumbnailFaceRect(
+            imagePixelSize: CGSize(width: 400, height: 200),
+            bounds: bounds
+        ) == CGRect(x: 0, y: 30, width: 120, height: 60))
+    }
+
+    @Test func thumbnailFaceRectIsFullBoundsForPlaceholder() {
+        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
+        #expect(MediaAssetTilePresentation.thumbnailFaceRect(imagePixelSize: nil, bounds: bounds) == bounds)
+    }
+
+    @Test func landscapeThumbnailLetterboxIsMissAndFaceIsHit() {
+        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
+        let face = MediaAssetTilePresentation.thumbnailFaceRect(
+            imagePixelSize: CGSize(width: 400, height: 200),
+            bounds: bounds
+        )
+        #expect(!face.contains(CGPoint(x: 60, y: 10)))
+        #expect(!face.contains(CGPoint(x: 60, y: 110)))
+        #expect(face.contains(CGPoint(x: 60, y: 60)))
+    }
+
+    @Test func portraitThumbnailLetterboxIsMissAndFaceIsHit() {
+        let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
+        let face = MediaAssetTilePresentation.thumbnailFaceRect(
+            imagePixelSize: CGSize(width: 200, height: 400),
+            bounds: bounds
+        )
+        #expect(!face.contains(CGPoint(x: 10, y: 60)))
+        #expect(!face.contains(CGPoint(x: 110, y: 60)))
+        #expect(face.contains(CGPoint(x: 60, y: 60)))
+    }
+
     @Test func badgeVisibilityHidesOnSmallRects() {
         #expect(MediaAssetTilePresentation.showsVideoBadge(
             contentRect: CGRect(x: 0, y: 0, width: 80, height: 80)

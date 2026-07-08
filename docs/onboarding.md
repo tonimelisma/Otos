@@ -393,14 +393,17 @@ result keeps the painted thumbnail instead of replacing it with placeholder
 content.
 
 Selection and copy also live at this AppKit boundary. Mouse selection is
-**model-owned** (spec 0046): a pure `GridSelection` value — the selected set, the
-⇧-range anchor, and the base "islands" a ⇧-range unions with — is the single source of
+**model-owned** (specs 0046 and 0049): a pure `GridSelection` value — the selected set,
+the ⇧-range anchor, and the base "islands" a ⇧-range unions with — is the single source of
 truth, and `NSCollectionView.selectionIndexPaths` is a render *output* the controller
 writes from it. The one `NSCollectionView` subclass, `MediaGridCollectionView`,
 overrides `mouseDown` and does **not** call `super.mouseDown`, so AppKit's native
-mouse-selection tracking loop never runs and there is no commit to race; it captures the
-hit-tested item and modifier flags, preserves keyboard focus, and hands them to
-`applyMouseSelection(hit:modifiers:)`. That handler computes the next `GridSelection`
+mouse-selection tracking loop never runs and there is no commit to race; it finds the
+candidate item under the click, confirms the point is inside the tile's aspect-fit
+thumbnail face (letterbox padding around a decoded thumbnail is treated as empty space),
+preserves keyboard focus, and hands the item and modifier flags to
+`applyMouseSelection(hit:modifiers:)`. The shared face geometry lives in
+`MediaAssetTilePresentation` so the renderer and the hit-test cannot drift. That handler computes the next `GridSelection`
 from the model alone (never from `selectionIndexPaths`), then writes
 `selectionIndexPaths` from the model as the last operation of the gesture via the minimal
 selection delta. Because the model is the truth and the write is last, the

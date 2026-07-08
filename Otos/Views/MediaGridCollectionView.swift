@@ -7,15 +7,16 @@ import AppKit
 /// `mouseDown` runs a mouse-tracking loop whose selection-commit timing across the mouse
 /// event sequence is not a stable, documented contract; the prior design read
 /// `selectionIndexPaths` after `super.mouseDown` to correct the result and lost the race
-/// (spec 0046). Instead this subclass captures the hit-tested item and modifier flags,
-/// preserves keyboard focus (the one thing `super.mouseDown` would otherwise handle), and
-/// forwards `(hit, modifiers)` to the controller, which computes the gesture against its
-/// own `GridSelection` and writes `selectionIndexPaths` itself. Because AppKit's native
-/// selection tracking loop never runs, there is no competing commit to overwrite the
-/// model's write, and the mouseDown-vs-mouseUp timing is irrelevant. The grid uses neither
-/// rubber-band marquee nor drag-reorder (grep-verified), so not calling `super` loses no
-/// functionality. Programmatic `selectionIndexPaths =` / `selectItems` / `deselectItems`
-/// do not re-enter `mouseDown`, so there is no feedback loop.
+/// (spec 0046). Instead this subclass finds the candidate item, confirms the click is
+/// inside the tile's aspect-fit thumbnail face (spec 0049), preserves keyboard focus (the
+/// one thing `super.mouseDown` would otherwise handle), and forwards `(hit, modifiers)` to
+/// the controller, which computes the gesture against its own `GridSelection` and writes
+/// `selectionIndexPaths` itself. Because AppKit's native selection tracking loop never
+/// runs, there is no competing commit to overwrite the model's write, and the
+/// mouseDown-vs-mouseUp timing is irrelevant. The grid uses neither rubber-band marquee
+/// nor drag-reorder (grep-verified), so not calling `super` loses no functionality.
+/// Programmatic `selectionIndexPaths =` / `selectItems` / `deselectItems` do not re-enter
+/// `mouseDown`, so there is no feedback loop.
 ///
 /// The controller is the only thing that owns selection semantics; this subclass forwards
 /// the observed click and nothing else, keeping the AppKit boundary a thin renderer.
@@ -27,7 +28,19 @@ final class MediaGridCollectionView: NSCollectionView {
     var onMouseSelection: ((IndexPath?, NSEvent.ModifierFlags) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
-        let hit = indexPathForItem(at: convert(event.locationInWindow, from: nil))
+        let pointInCollectionView = convert(event.locationInWindow, from: nil)
+        var hit = indexPathForItem(at: pointInCollectionView)
+        if let candidate = hit,
+           let item = item(at: candidate) as? MediaAssetCollectionItem,
+           let tileView = item.view as? MediaAssetTileView
+        { // swiftlint:disable:this opening_brace
+            // Only clicks inside the aspect-fit thumbnail face select a tile; letterbox
+            // padding around a decoded thumbnail is treated as empty space (spec 0049).
+            if !tileView.hitTestsThumbnailFace(at: event.locationInWindow) {
+                hit = nil
+            }
+        }
+
         let modifiers = event.modifierFlags
         // `super.mouseDown` is intentionally not called: AppKit's native selection tracking
         // loop is the exact race the model-owned design removes. `makeFirstResponder`

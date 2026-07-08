@@ -66,10 +66,9 @@ In scope:
   call `super.mouseDown`, captures `(hit, modifiers)`, and asks the controller to compute
   the gesture against the controller's `GridSelection` (never `collectionView.selectionIndexPaths`)
   and write `selectionIndexPaths` as the last operation. `window?.makeFirstResponder(self)`
-  preserves keyboard focus that `super.mouseDown` would otherwise have handled.
-- Thumbnail-only hit area (PLAN.md Part 2) is a separate increment. Until it lands, the
-  `hit` passed to the selection model is the raw `indexPathForItem(at:)` result; clicks in
-  a tile's letterbox still select that tile, as today.
+  preserves keyboard focus that `super.mouseDown` would otherwise have handled. After
+  spec 0049, `MediaGridCollectionView` confirms the click is inside the tile's aspect-fit
+  thumbnail face before forwarding the hit; letterbox clicks are treated as empty space.
 - The controller owns a single `GridSelection` value, replacing
   `selectionAnchorID`/`anchorBaseSelection`. `applySelectionDelta` remains the one place
   that mutates `selectionIndexPaths`, now driven by `gridSelection.selection`.
@@ -87,8 +86,6 @@ In scope:
 
 Out of scope:
 
-- Thumbnail-only hit area (PLAN.md Part 2 — separate spec). Until that lands, `hit` is the
-  raw `indexPathForItem(at:)` result.
 - Marquee/rubber-band drag selection. The grid has none (verified: no drag-source or
   marquee delegate methods exist), which is what makes "do not call `super.mouseDown`"
   safe.
