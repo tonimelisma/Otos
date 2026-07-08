@@ -96,7 +96,7 @@ failure a first-class, user-visible result instead of a swallowed error.
   `Otos/ViewModels/CatalogWindowViewModelMutation.swift`,
   `Otos/Services/CatalogWindowPolicy.swift`, `Otos/Views/SidebarView.swift`.
 - Tested by `OtosTests/SidebarSelectionPolicyTests.swift`,
-  `OtosTests/ViewModelDefaultSelectionTests.swift`,
+  `OtosTests/CatalogWindowViewModelDefaultSelectionTests.swift`,
   `OtosTests/RemovableEjectOutcomeTests.swift`.
 - Requirements ARC (ViewModel ownership) and the APP sidebar rows.
 - ADR 0013 (removable and device sources); prior-app reference:
