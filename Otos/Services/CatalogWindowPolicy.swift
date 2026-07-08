@@ -36,22 +36,44 @@ nonisolated enum CatalogWindowPolicy {
 
     static func resolvedSidebarSelection(
         _ sidebarSelection: SidebarSelection,
-        libraries: [CatalogLibraryState]
+        libraries: [CatalogLibraryState],
+        removableSources: [CatalogLibraryState]
     ) -> SidebarSelection {
         switch sidebarSelection {
         case .allMedia:
-            .allMedia
+            if SidebarSelectionPolicy.showsAllMedia(libraries: libraries) {
+                return .allMedia
+            } else {
+                return SidebarSelectionPolicy.defaultSelection(
+                    libraries: libraries,
+                    removableSources: removableSources
+                )
+            }
         case let .library(path):
-            libraries.contains { $0.path == path } ? sidebarSelection : .allMedia
+            let pathIsValid = libraries.contains { $0.path == path }
+                || removableSources.contains { $0.path == path }
+            if pathIsValid {
+                return sidebarSelection
+            } else {
+                return SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
+                    libraries: libraries,
+                    removableSources: removableSources
+                )
+            }
         }
     }
 
     static func resolvedDescriptor(
         _ descriptor: CatalogQueryDescriptor,
-        libraries: [CatalogLibraryState]
+        libraries: [CatalogLibraryState],
+        removableSources: [CatalogLibraryState]
     ) -> CatalogQueryDescriptor {
         CatalogQueryDescriptor(
-            scope: resolvedSidebarSelection(descriptor.scope, libraries: libraries),
+            scope: resolvedSidebarSelection(
+                descriptor.scope,
+                libraries: libraries,
+                removableSources: removableSources
+            ),
             filter: descriptor.filter,
             sort: descriptor.sort
         )

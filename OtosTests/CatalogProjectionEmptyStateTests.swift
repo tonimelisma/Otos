@@ -48,10 +48,10 @@ struct CatalogProjectionEmptyStateTests {
             states.contains { state in
                 state.libraries.first?.availability == .unavailable
                     && state.mediaGrid.orderedAssetIDs.isEmpty
-                    && state.mediaEmptyState == .noAvailableMedia
+                    && state.mediaEmptyState == .libraryUnavailable
             }
         }
-        #expect(states.contains { $0.mediaEmptyState == .noAvailableMedia })
+        #expect(states.contains { $0.mediaEmptyState == .libraryUnavailable })
         await secondStore.shutdown()
     }
 }

@@ -19,9 +19,11 @@ struct ContentView: View {
     var body: some View {
         NavigationSplitView {
             SidebarView(
+                showsAllMedia: SidebarSelectionPolicy.showsAllMedia(libraries: viewModel.state.libraries),
                 libraries: viewModel.state.libraries,
                 removableSources: viewModel.state.removableSources,
                 sidebarSelection: viewModel.sidebarSelection,
+                ejectingSourceIdentities: viewModel.ejectingSourceIdentities,
                 selectSidebar: viewModel.selectSidebar,
                 ejectSource: viewModel.ejectRemovableSource
             )
@@ -60,6 +62,25 @@ struct ContentView: View {
                     columnCount: viewModel.gridColumnCount,
                     requestColumnCount: viewModel.setGridColumnCount
                 )
+            }
+        }
+        .alert(
+            "Could Not Eject Disk",
+            isPresented: Binding(
+                get: { viewModel.ejectAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissEjectAlert()
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                viewModel.dismissEjectAlert()
+            }
+        } message: {
+            if let message = viewModel.ejectAlertMessage {
+                Text(message)
             }
         }
     }

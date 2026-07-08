@@ -40,6 +40,10 @@ extension CatalogWindowViewModel {
     }
 
     func ejectRemovableSource(_ source: LibraryRoot) {
+        guard let identity = source.deviceIdentity else {
+            return
+        }
+        beginEjectingSource(identity)
         submitCatalogMutation(.ejectRemovableSource(source))
     }
 
@@ -52,26 +56,71 @@ extension CatalogWindowViewModel {
         store: CatalogStore,
         coordinator: EnrichmentCoordinator?,
         diagnostics: CatalogDiagnostics?
-    ) async {
+    ) async -> RemovableEjectOutcome? {
         switch intent {
         case let .addLibrary(url):
             await performAddLibrary(url, store: store, diagnostics: diagnostics)
+            return nil
         case let .ensureLibrary(url):
             await performEnsureLibrary(url, store: store, diagnostics: diagnostics)
+            return nil
         case let .removeLibrary(path):
             await performRemoveLibrary(path, store: store, diagnostics: diagnostics)
+            return nil
         case let .ejectRemovableSource(root):
-            await performEjectRemovableSource(root, store: store, coordinator: coordinator, diagnostics: diagnostics)
+            return await performEjectRemovableSource(
+                root,
+                store: store,
+                coordinator: coordinator,
+                diagnostics: diagnostics
+            )
         case let .forgetRemovableSource(root):
             await performForgetRemovableSource(root, store: store, diagnostics: diagnostics)
+            return nil
         case let .attachRemovableVolume(attachment):
             await performAttachRemovableVolume(attachment, store: store, diagnostics: diagnostics)
+            return nil
         case let .quiesceRemovableSource(identity):
             await performQuiesceRemovableSource(identity, store: store, diagnostics: diagnostics)
+            return nil
         case let .resumeRemovableSource(identity):
             await performResumeRemovableSource(identity, store: store, diagnostics: diagnostics)
+            return nil
         case let .detachRemovableSource(identity, reason):
             await performDetachRemovableSource(identity, reason: reason, store: store, diagnostics: diagnostics)
+            return nil
+        }
+    }
+}
+
+extension CatalogWindowViewModel {
+    nonisolated static func removableEjectOutcome(for error: Error, displayName: String) -> RemovableEjectOutcome {
+        let nsError = error as NSError
+        if isVolumeBusyError(nsError) {
+            return .busy(displayName: displayName)
+        }
+        return .failed(description: nsError.localizedDescription)
+    }
+
+    nonisolated static func isVolumeBusyError(_ error: NSError) -> Bool {
+        let isCocoaBusy = error.domain == NSCocoaErrorDomain
+            && (error.code == NSUserCancelledError || error.code == 512)
+        if isCocoaBusy {
+            return true
+        }
+        let description = error.localizedDescription
+        return description.localizedCaseInsensitiveContains("in use")
+            || description.localizedCaseInsensitiveContains("busy")
+    }
+
+    nonisolated static func outcomeDiagnosticCase(_ outcome: RemovableEjectOutcome) -> String {
+        switch outcome {
+        case .ejected:
+            "ejected"
+        case .busy:
+            "busy"
+        case .failed:
+            "failed"
         }
     }
 }
@@ -142,27 +191,41 @@ private extension CatalogWindowViewModel {
         store: CatalogStore,
         coordinator: EnrichmentCoordinator?,
         diagnostics: CatalogDiagnostics?
-    ) async {
+    ) async -> RemovableEjectOutcome {
         let signpost = OtosSignpost.ui.beginInterval("CatalogEjectRemovableSourceIntent")
-        guard let identity = root.deviceIdentity else {
+        defer {
             OtosSignpost.ui.endInterval("CatalogEjectRemovableSourceIntent", signpost)
-            return
+        }
+        guard let identity = root.deviceIdentity else {
+            return .failed(description: "The disk could not be ejected.")
         }
         do {
             try await store.quiesceRemovableSource(identity: identity)
             await coordinator?.drainWork(under: root.path)
             try await unmountAndEjectDeviceOffMain(root.path.url)
+            await diagnostics?.record(
+                operation: "catalog.removable.eject",
+                phase: "finish",
+                fields: [
+                    "rootPath": root.path.rawValue,
+                    "outcome": "ejected",
+                ]
+            )
+            return .ejected
         } catch {
-            try? await store.resumeRemovableSource(identity: identity)
+            let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
             await recordMutationError(
                 "Catalog eject removable source failed",
                 operation: "catalog.removable.eject",
-                fields: ["rootPath": root.path.rawValue],
+                fields: [
+                    "rootPath": root.path.rawValue,
+                    "outcome": outcomeDiagnosticCase(outcome),
+                ],
                 error: error,
                 diagnostics: diagnostics
             )
+            return outcome
         }
-        OtosSignpost.ui.endInterval("CatalogEjectRemovableSourceIntent", signpost)
     }
 
     nonisolated static func unmountAndEjectDeviceOffMain(_ url: URL) async throws {

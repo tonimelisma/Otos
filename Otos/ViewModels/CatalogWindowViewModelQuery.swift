@@ -12,6 +12,7 @@ import Foundation
 
 extension CatalogWindowViewModel {
     func selectSidebar(_ selection: SidebarSelection) {
+        userHasChosenSource = true
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: selection,
             filter: queryDescriptor.filter,

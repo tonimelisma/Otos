@@ -1500,10 +1500,6 @@ extension CatalogStore {
         cancelRuntimeWork(for: root.path)
         activityByRootPath[root.path] = .idle
         await releaseEnrichmentClaimsForRoot(rootRowID)
-        let changed = setAvailability(.unavailable, for: root.path)
-        if changed {
-            notifyCatalogChanged()
-        }
         await diagnostics?.record(
             operation: "catalog.removable.quiesce",
             phase: "finish",

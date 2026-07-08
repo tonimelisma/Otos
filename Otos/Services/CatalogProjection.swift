@@ -15,7 +15,7 @@ actor CatalogProjection {
 
     private let cadence: Duration
     private let diagnostics: CatalogDiagnostics?
-    private let stateBuilder: WindowStateBuilder?
+    let stateBuilder: WindowStateBuilder?
 
     private var queryRequest: CatalogQueryRequest = .initial
     private var dirty = false
@@ -26,7 +26,7 @@ actor CatalogProjection {
     private var immediatePublicationTask: Task<Void, Never>?
     private var publicationStore: CatalogStore?
     private var lastPublishedState: CatalogWindowState?
-    private var detailRefreshGeneration: UInt64 = 0
+    var detailRefreshGeneration: UInt64 = 0
 
     init(
         cadence: Duration = .seconds(1),
@@ -293,8 +293,13 @@ private extension CatalogProjection {
         request: CatalogQueryRequest
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
+        let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
-        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: allRoots)
+        let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(
+            request.descriptor,
+            libraries: sources.libraries,
+            removableSources: sources.removableSources
+        )
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
         let orderStart = Date()
@@ -349,7 +354,11 @@ private extension CatalogProjection {
         let availableLibraryPaths = providedAvailableLibraryPaths
             ?? CatalogWindowPolicy.availablePaths(from: allRoots)
         let resolvedDescriptor = providedResolvedDescriptor
-            ?? CatalogWindowPolicy.resolvedDescriptor(request.descriptor, libraries: allRoots)
+            ?? CatalogWindowPolicy.resolvedDescriptor(
+                request.descriptor,
+                libraries: sources.libraries,
+                removableSources: sources.removableSources
+            )
         let resolvedSidebarSelection = resolvedDescriptor.scope
         let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: allRoots)
         let scopedAssetIDs = CatalogWindowPolicy.assetIDs(
@@ -358,19 +367,15 @@ private extension CatalogProjection {
             availableLibraryPaths: availableLibraryPaths,
             rootsByPath: rootsByPath
         )
-        let mediaEmptyState = await emptyStateForBuild(CatalogProjectionEmptyStateBuildInput(
-            descriptor: resolvedDescriptor,
-            libraries: allRoots,
-            rootsByPath: rootsByPath,
-            orderedAssetIDs: orderedAssetIDs,
-            scopedAssetIDs: scopedAssetIDs,
-            store: store,
-            availableLibraryPaths: availableLibraryPaths
-        ))
-        let filterOptions = await filterOptions(
-            for: resolvedDescriptor.scope,
-            store: store,
-            availableLibraryPaths: availableLibraryPaths
+        let (mediaEmptyState, filterOptions) = await supplementaryWindowStateFields(
+            CatalogProjectionSupplementaryBuildInput(
+                resolvedDescriptor: resolvedDescriptor,
+                allRoots: allRoots,
+                orderedAssetIDs: orderedAssetIDs,
+                scopedAssetIDs: scopedAssetIDs,
+                store: store,
+                availableLibraryPaths: availableLibraryPaths
+            )
         )
 
         return (catalogWindowState(CatalogProjectionWindowStateParts(
@@ -385,112 +390,23 @@ private extension CatalogProjection {
         )), CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs))
     }
 
-    private func emptyStateForBuild(
-        _ input: CatalogProjectionEmptyStateBuildInput
-    ) async -> CatalogMediaEmptyState {
-        let unfilteredVisibleAssetCount = await unfilteredVisibleAssetCountForEmptyState(
-            descriptor: input.descriptor,
+    private func supplementaryWindowStateFields(
+        _ input: CatalogProjectionSupplementaryBuildInput
+    ) async -> (CatalogMediaEmptyState, CatalogFilterOptions) {
+        async let mediaEmptyState = emptyStateForBuild(CatalogProjectionEmptyStateBuildInput(
+            descriptor: input.resolvedDescriptor,
+            libraries: input.allRoots,
+            rootsByPath: CatalogWindowPolicy.rootsByPath(from: input.allRoots),
+            orderedAssetIDs: input.orderedAssetIDs,
             scopedAssetIDs: input.scopedAssetIDs,
             store: input.store,
             availableLibraryPaths: input.availableLibraryPaths
+        ))
+        async let filterOptions = filterOptions(
+            for: input.resolvedDescriptor.scope,
+            store: input.store,
+            availableLibraryPaths: input.availableLibraryPaths
         )
-        let allAssetCount = await catalogedAssetCountForEmptyState(
-            resolvedSidebarSelection: input.descriptor.scope,
-            scopedAssetIDs: input.scopedAssetIDs,
-            orderedAssetIDs: input.orderedAssetIDs,
-            store: input.store
-        )
-        return CatalogWindowPolicy.mediaEmptyState(
-            for: input.descriptor,
-            libraries: input.libraries,
-            allAssetCount: allAssetCount,
-            unfilteredVisibleAssetCount: unfilteredVisibleAssetCount,
-            selectedAssetCount: input.scopedAssetIDs.count
-        )
-    }
-
-    private func catalogWindowState(_ parts: CatalogProjectionWindowStateParts) -> CatalogWindowState {
-        CatalogWindowPolicy.catalogWindowState(
-            parts,
-            detailRefreshGeneration: detailRefreshGeneration
-        )
-    }
-
-    private func catalogedAssetCountForEmptyState(
-        resolvedSidebarSelection: SidebarSelection,
-        scopedAssetIDs: [MediaAssetID],
-        orderedAssetIDs: [MediaAssetID],
-        store: CatalogStore?
-    ) async -> Int {
-        guard scopedAssetIDs.isEmpty, let store else {
-            return orderedAssetIDs.count
-        }
-        do {
-            return try await store.catalogedAssetCount(for: resolvedSidebarSelection)
-        } catch {
-            OtosLog.catalog.error(
-                "Catalog asset count query failed error=\(String(describing: error), privacy: .public)"
-            )
-            return orderedAssetIDs.count
-        }
-    }
-
-    private func unfilteredVisibleAssetCountForEmptyState(
-        descriptor: CatalogQueryDescriptor,
-        scopedAssetIDs: [MediaAssetID],
-        store: CatalogStore?,
-        availableLibraryPaths: Set<LibraryRootPath>
-    ) async -> Int {
-        guard descriptor.filter.isActive, scopedAssetIDs.isEmpty, let store else {
-            return scopedAssetIDs.count
-        }
-        do {
-            return try await store.visibleAssetCount(
-                for: descriptor.scope,
-                availableLibraryPaths: availableLibraryPaths
-            )
-        } catch {
-            OtosLog.catalog.error(
-                """
-                Catalog unfiltered visible count query failed \
-                error=\(String(describing: error), privacy: .public)
-                """
-            )
-            return 0
-        }
-    }
-
-    private func filterOptions(
-        for selection: SidebarSelection,
-        store: CatalogStore?,
-        availableLibraryPaths: Set<LibraryRootPath>
-    ) async -> CatalogFilterOptions {
-        guard let store else {
-            return .empty
-        }
-        do {
-            return try await store.filterOptions(
-                for: selection,
-                availableLibraryPaths: availableLibraryPaths
-            )
-        } catch {
-            OtosLog.catalog.error(
-                "Catalog filter option query failed error=\(String(describing: error), privacy: .public)"
-            )
-            return .empty
-        }
-    }
-
-    /// Tests inject controlled derivation while keeping the real publication loop.
-    private func injectedWindowState(
-        _ libraries: [CatalogLibraryState],
-        orderedAssetIDs: [MediaAssetID],
-        request: CatalogQueryRequest
-    ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics)? {
-        guard let stateBuilder else {
-            return nil
-        }
-        let state = await stateBuilder(libraries, orderedAssetIDs, request)
-        return (state, CatalogProjectionBuildMetrics(orderQueryMs: 0))
+        return await (mediaEmptyState, filterOptions)
     }
 }

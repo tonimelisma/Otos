@@ -48,6 +48,8 @@ final class CatalogWindowViewModel {
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
+    private(set) var ejectingSourceIdentities: Set<String> = []
+    var ejectAlertMessage: String?
     var state: CatalogWindowState = .empty
     /// User-adjustable grid density (spec 0048), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish
@@ -112,6 +114,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var didRecordTerminationGridTelemetry = false
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
+    @ObservationIgnored var userHasChosenSource = false
+    @ObservationIgnored var hasAppliedInitialDefault = false
 
     init(
         catalogStore: CatalogStore = CatalogStore(),
@@ -314,17 +318,20 @@ extension CatalogWindowViewModel {
         // in submission order. Cancellation is checked between commands: an
         // already-started SQLite transaction may finish, but the next queued
         // command must not begin after this owner is gone.
-        mutationForwardingTask = Task { [mutationStream, store, coordinator, diagnostics] in
+        mutationForwardingTask = Task { [weak self, mutationStream, store, coordinator, diagnostics] in
             for await intent in mutationStream {
                 guard !Task.isCancelled else {
                     break
                 }
-                await Self.performCatalogMutation(
+                let ejectOutcome = await Self.performCatalogMutation(
                     intent,
                     store: store,
                     coordinator: coordinator,
                     diagnostics: diagnostics
                 )
+                if let ejectOutcome {
+                    await self?.handleEjectOutcome(ejectOutcome, for: intent)
+                }
             }
         }
     }
@@ -372,6 +379,8 @@ extension CatalogWindowViewModel {
 
     private func applyState(_ nextState: CatalogWindowState) {
         let previousState = state
+        applySidebarSelectionPolicy(previous: previousState, next: nextState)
+
         let updateID = stallMonitor.reserveUpdateID()
         let applyStart = Date()
         let operation = stallMonitor.beginOperation("CatalogWindowViewModel.applyState")
@@ -386,12 +395,12 @@ extension CatalogWindowViewModel {
             queryDescriptor = nextState.queryDescriptor
             sidebarSelection = nextState.resolvedSidebarSelection
         } else if currentSelectionWasRemoved(in: nextState) {
-            queryDescriptor = CatalogQueryDescriptor(
-                scope: .allMedia,
-                filter: queryDescriptor.filter,
-                sort: queryDescriptor.sort
+            applyAutomaticSidebarSelection(
+                SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
+                    libraries: nextState.libraries,
+                    removableSources: nextState.removableSources
+                )
             )
-            sidebarSelection = .allMedia
         } else {
             sidebarSelection = queryDescriptor.scope
         }
@@ -422,14 +431,12 @@ extension CatalogWindowViewModel {
         )
     }
 
-    private func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {
-        guard case let .library(path) = queryDescriptor.scope,
-              nextState.resolvedSidebarSelection == .allMedia
-        else {
-            return false
-        }
-        return !nextState.libraries.contains { $0.path == path }
-            && !nextState.removableSources.contains { $0.path == path }
+    func clearEjectingSourceIdentity(_ identity: String) {
+        ejectingSourceIdentities.remove(identity)
+    }
+
+    func beginEjectingSource(_ identity: String) {
+        ejectingSourceIdentities.insert(identity)
     }
 }
 

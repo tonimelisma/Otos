@@ -69,8 +69,8 @@ struct CatalogProjectionTests {
             sidebarSelection: .library(archive.path)
         )
 
-        #expect(state.title == "All Media")
-        #expect(state.resolvedSidebarSelection == .allMedia)
+        #expect(state.title == "Pictures")
+        #expect(state.resolvedSidebarSelection == .library(pictures.path))
         #expect(state.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["one.jpg"])
     }
 
@@ -103,8 +103,12 @@ struct CatalogProjectionTests {
     @Test func windowStateHidesUnknownAssetsAndReportsCheckingStates() async {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
-            libraries: [makeLibrary(root: pictures, availability: .unknown)],
+            libraries: [
+                makeLibrary(root: pictures, availability: .unknown),
+                makeLibrary(root: archive, availability: .available),
+            ],
             assets: [makeAsset(root: pictures, relativePath: "cached.jpg")]
         )
 
@@ -152,7 +156,7 @@ struct CatalogProjectionTests {
         let state = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
 
         #expect(state.mediaGrid.orderedAssetIDs.isEmpty)
-        #expect(state.mediaEmptyState == .noAvailableMedia)
+        #expect(state.mediaEmptyState == .libraryUnavailable)
     }
 
     @Test func publicationLoopCoalescesStoreAndSidebarChanges() async throws {
@@ -317,6 +321,7 @@ extension CatalogProjectionTests {
     @Test func removableSourcesAreSeparateAndExcludedFromAllMedia() async {
         let projection = CatalogProjection(diagnostics: nil)
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
+        let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let card = LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/Card"),
             kind: .removableVolume,
@@ -326,6 +331,7 @@ extension CatalogProjectionTests {
         let fixture = makeProjectionFixture(
             libraries: [
                 makeLibrary(root: pictures),
+                makeLibrary(root: archive),
                 CatalogLibraryState(root: card, availability: .available, activity: .idle, isEjectable: true),
             ],
             assets: [
@@ -337,7 +343,7 @@ extension CatalogProjectionTests {
         let allMedia = await projection.windowState(fixture: fixture, sidebarSelection: .allMedia)
         let selectedCard = await projection.windowState(fixture: fixture, sidebarSelection: .library(card.path))
 
-        #expect(allMedia.libraries.map(\.path) == [pictures.path])
+        #expect(Set(allMedia.libraries.map(\.path)) == [pictures.path, archive.path])
         #expect(allMedia.removableSources.map(\.path) == [card.path])
         #expect(allMedia.removableSources.first?.isEjectable == true)
         #expect(allMedia.mediaGrid.orderedAssetIDs.map(\.relativePath.rawValue) == ["fixed.jpg"])
