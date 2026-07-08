@@ -237,7 +237,7 @@ struct MediaAssetCollectionSelectionTests {
     @Test func clickInsideLandscapeThumbnailFaceSelects() throws {
         let harness = try makeHarness(itemCount: 8)
         let target = harness.ids[2]
-        try harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+        harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
 
         try harness.clickItem(target, target: .thumbnailFaceCenter, modifiers: [])
 
@@ -251,7 +251,7 @@ struct MediaAssetCollectionSelectionTests {
         #expect(!harness.selectedIDs().isEmpty)
 
         let target = harness.ids[3]
-        try harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+        harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
 
         try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [])
 
@@ -269,7 +269,7 @@ struct MediaAssetCollectionSelectionTests {
         #expect(before == [first, second])
 
         let target = harness.ids[4]
-        try harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+        harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
 
         try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [.shift])
 
