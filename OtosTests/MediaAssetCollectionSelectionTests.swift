@@ -231,6 +231,50 @@ struct MediaAssetCollectionSelectionTests {
         #expect(harness.controller.gridSelection == .empty)
         #expect(harness.selectedIDs().isEmpty)
     }
+
+    // MARK: - Thumbnail-only hit area (spec 0049)
+
+    @Test func clickInsideLandscapeThumbnailFaceSelects() throws {
+        let harness = try makeHarness(itemCount: 8)
+        let target = harness.ids[2]
+        try harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+
+        try harness.clickItem(target, target: .thumbnailFaceCenter, modifiers: [])
+
+        #expect(harness.selectedIDs() == [target])
+        #expect(harness.controller.gridSelection.anchor == target)
+    }
+
+    @Test func clickInLandscapeLetterboxDeselects() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: []) // establish a selection
+        #expect(!harness.selectedIDs().isEmpty)
+
+        let target = harness.ids[3]
+        try harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+
+        try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [])
+
+        #expect(harness.selectedIDs().isEmpty)
+        #expect(harness.controller.gridSelection.anchor == nil)
+    }
+
+    @Test func modifiedClickInLetterboxIsNoOp() throws {
+        let harness = try makeHarness(itemCount: 8)
+        let first = harness.ids[1]
+        let second = harness.ids[3]
+        try harness.click(first, modifiers: [])
+        try harness.click(second, modifiers: [.command])
+        let before = harness.selectedIDs()
+        #expect(before == [first, second])
+
+        let target = harness.ids[4]
+        try harness.configureItemWithThumbnail(target, pixelSize: CGSize(width: 400, height: 200))
+
+        try harness.clickItem(target, target: .topLetterboxCenter, modifiers: [.shift])
+
+        #expect(harness.selectedIDs() == before)
+    }
 }
 
 // MARK: - Test harness
@@ -240,10 +284,17 @@ private final class GridSelectionTestHarness {
     let controller: MediaAssetCollectionViewController
     let ids: [MediaAssetID]
     private let window: NSWindow
+    private let imageCache = MediaTileImageCache()
+
+    enum ClickTarget {
+        case thumbnailFaceCenter
+        case topLetterboxCenter
+    }
 
     init(itemCount: Int) throws {
         controller = MediaAssetCollectionViewController()
         _ = controller.view // forces loadView()
+        controller.imageCache = imageCache
 
         ids = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
         var snapshot = NSDiffableDataSourceSnapshot<MediaAssetCollectionViewController.Section, MediaAssetID>()
@@ -271,6 +322,31 @@ private final class GridSelectionTestHarness {
         // Run a run-loop pass so AppKit completes layout and the data source reflects
         // the applied snapshot for hit-testing.
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+
+    /// Seeds a cached decoded thumbnail for `id` so its tile has a real pixel size and an
+    /// aspect-fit face with letterbox zones. The detail is merged and the visible item is
+    /// reconfigured so the test can click the actual rendered face.
+    func configureItemWithThumbnail(_ id: MediaAssetID, pixelSize: CGSize) {
+        let thumbnailPath = "test-\(id.relativePath.rawValue)"
+        let detail = MediaTileDetail(
+            libraryRootPath: id.libraryRootPath,
+            relativePath: id.relativePath,
+            thumbnailPath: thumbnailPath,
+            bestKind: .image,
+            durationSeconds: nil,
+            enrichedSourceSize: Int64(pixelSize.width * pixelSize.height),
+            enrichedSourceMTimeSeconds: 1
+        )
+        let key = MediaAssetTilePresentation.imageContentKey(detail)
+        imageCache.insert(makeTestCGImage(width: Int(pixelSize.width), height: Int(pixelSize.height)), for: key)
+        controller.mergeTileDetails([id: detail], reason: "test")
+
+        if let indexPath = controller.dataSource.indexPath(for: id),
+           let item = controller.collectionView.item(at: indexPath) as? MediaAssetCollectionItem
+        { // swiftlint:disable:this opening_brace
+            _ = item.configure(detail: detail, thumbnailDirectory: nil, imageCache: imageCache)
+        }
     }
 
     /// The center point of the tile for `id`, in window coordinates for the synthetic
@@ -324,6 +400,48 @@ private final class GridSelectionTestHarness {
     func selectedIDs() -> Set<MediaAssetID> {
         controller.selectedIdentities()
     }
+
+    /// Clicks `id` at a position relative to its rendered thumbnail face.
+    func clickItem(
+        _ id: MediaAssetID,
+        target: ClickTarget,
+        modifiers: NSEvent.ModifierFlags
+    ) throws {
+        let point = try windowPoint(for: id, target: target)
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: point,
+            modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        controller.collectionView.mouseDown(with: event)
+    }
+
+    private func windowPoint(for id: MediaAssetID, target: ClickTarget) throws -> NSPoint {
+        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let item = try #require(controller.collectionView.item(at: indexPath) as? MediaAssetCollectionItem)
+        let tileView = try #require(item.view as? MediaAssetTileView)
+        let pixelSize = try #require(tileView.currentImagePixelSize, "Tile has no decoded thumbnail")
+        let face = MediaAssetTilePresentation.thumbnailFaceRect(
+            imagePixelSize: pixelSize,
+            bounds: tileView.bounds
+        )
+
+        let pointInTile = switch target {
+        case .thumbnailFaceCenter:
+            NSPoint(x: face.midX, y: face.midY)
+        case .topLetterboxCenter:
+            NSPoint(x: face.midX, y: tileView.bounds.minY + 2)
+        }
+
+        let pointInCollectionView = tileView.convert(pointInTile, to: controller.collectionView)
+        return controller.collectionView.convert(pointInCollectionView, to: nil)
+    }
 }
 
 @MainActor
@@ -337,4 +455,17 @@ private func makeAssetID(path: String) -> MediaAssetID {
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path)
     )
+}
+
+private func makeTestCGImage(width: Int, height: Int) -> CGImage {
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    return context.makeImage()!
 }

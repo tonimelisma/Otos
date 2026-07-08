@@ -223,6 +223,9 @@ AppKit. Items `A B C D E F G H` in display order; `▓` = selected.
 
 ## Part 2 — Thumbnail-only hit area (fixes bug 3)
 
+> **Status: implemented** (spec 0049, `Otos/Views/MediaAssetTilePresentation.swift`,
+> `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/MediaGridCollectionView.swift`).
+
 ### 2.1 Symptom & decision
 
 Clicking the **whitespace/letterbox** inside a tile's square cell (the padding around an

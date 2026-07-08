@@ -35,7 +35,7 @@ final class MediaAssetTileView: NSView {
     /// when video badge text changes.
     private var currentImageContentKey: String?
     private var currentAssetID: MediaAssetID?
-    private var currentImagePixelSize: CGSize?
+    private(set) var currentImagePixelSize: CGSize?
     private var currentBestKind: MediaKind?
     private var shouldShowVideoBadge = false
     /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
@@ -341,6 +341,18 @@ extension MediaAssetTileView {
         currentImagePixelSize = nil
         updatePlaceholderPresentation()
         needsLayout = true
+    }
+
+    /// Returns `true` if `pointInWindow` lies inside the aspect-fit thumbnail face.
+    /// For a not-yet-decoded placeholder the face is the full tile, so the whole square is
+    /// a hit; only decoded thumbnails with real letterbox create dead zones (spec 0049).
+    func hitTestsThumbnailFace(at pointInWindow: CGPoint) -> Bool {
+        let pointInTile = convert(pointInWindow, from: nil)
+        let face = MediaAssetTilePresentation.thumbnailFaceRect(
+            imagePixelSize: currentImagePixelSize,
+            bounds: bounds
+        )
+        return face.contains(pointInTile)
     }
 
     override func prepareForReuse() {

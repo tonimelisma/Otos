@@ -160,6 +160,13 @@ enum MediaAssetTilePresentation {
         )
     }
 
+    /// The aspect-fit thumbnail face inside `bounds`, used for both rendering and mouse
+    /// hit-testing. For a not-yet-decoded placeholder (`imagePixelSize == nil`) the face is
+    /// the full bounds, so the whole tile remains selectable.
+    nonisolated static func thumbnailFaceRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
+        contentRect(imagePixelSize: imagePixelSize, bounds: bounds)
+    }
+
     nonisolated static func showsVideoBadge(contentRect: CGRect) -> Bool {
         contentRect.width >= 56 && contentRect.height >= 56
     }
