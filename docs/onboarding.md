@@ -392,29 +392,32 @@ not clear or reload the image. A same-asset detail downgrade or nil decode
 result keeps the painted thumbnail instead of replacing it with placeholder
 content.
 
-Selection and copy also live at this AppKit boundary. `NSCollectionView`'s native
-selection gives click, ⌘-click, and ⌘A for free, and its `selectionIndexPaths` is
-the single live selection truth — there is no mirror in the ViewModel. ⇧-click is
-not free: AppKit natively treats a mouse shift-click like a ⌘-click (toggle only
-the clicked item). The one `NSCollectionView` subclass, `MediaGridCollectionView`,
-captures the hit-tested item and modifier flags at `mouseDown` and — after the native
-tracking loop settles selection — hands them to `mouseSelectionFinished(hit:modifiers:)`,
-so the controller knows exactly what was clicked even in the one case the delegate
-callbacks cannot report (a plain click collapsing a multi-selection onto an
-already-selected item fires no `didSelectItemsAt` for it). That handler keeps a small
-anchor/base correction state (`selectionAnchorID`, `anchorBaseSelection`) and applies the
-full Photos-style contiguous range as a same-turn delta after the native toggle; the
-`didSelect`/`didDeselect` delegate methods are telemetry-only — spec 0046 covers the
-design and the platform gap it closes. The tile draws selection on the
+Selection and copy also live at this AppKit boundary. Mouse selection is
+**model-owned** (spec 0046): a pure `GridSelection` value — the selected set, the
+⇧-range anchor, and the base "islands" a ⇧-range unions with — is the single source of
+truth, and `NSCollectionView.selectionIndexPaths` is a render *output* the controller
+writes from it. The one `NSCollectionView` subclass, `MediaGridCollectionView`,
+overrides `mouseDown` and does **not** call `super.mouseDown`, so AppKit's native
+mouse-selection tracking loop never runs and there is no commit to race; it captures the
+hit-tested item and modifier flags, preserves keyboard focus, and hands them to
+`applyMouseSelection(hit:modifiers:)`. That handler computes the next `GridSelection`
+from the model alone (never from `selectionIndexPaths`), then writes
+`selectionIndexPaths` from the model as the last operation of the gesture via the minimal
+selection delta. Because the model is the truth and the write is last, the
+mouseDown-vs-mouseUp timing that broke the prior read-then-correct design is irrelevant.
+`selectionIndexPaths` is read only to compute the write delta and to reconcile the model
+after native *keyboard* selection (⌘A, ⇧-arrows), which stays native; the
+`didSelect`/`didDeselect` delegate methods are telemetry-only. ⌘⇧-click extends the
+range while keeping existing islands. The tile draws selection on the
 visible thumbnail/placeholder face, not the whole square cell, and fades the
 ring in/out over a tuned duration rather than snapping (spec 0047). Because
 enrichment and scans re-apply the grid structure often, each structural apply
 snapshots the selected `MediaAssetID`s first and restores the survivors
 afterward through the *minimal* selection delta
-(`MediaGridSelection.selectionDelta`, shared with the shift-range correction) —
+(`MediaGridSelection.selectionDelta`, shared with the gesture write) —
 not a deselect-everything-then-reselect — so a surviving tile's selection state
 is never reassigned and its animated ring never blinks on a background apply.
-The shift-click anchor is pruned the same way. ⌘C / Edit ▸ Copy
+The model's anchor/base is pruned the same way. ⌘C / Edit ▸ Copy
 reaches the controller through the responder chain and `MediaGridClipboard` writes
 the selected assets' original file URLs to the pasteboard (one per asset, in display
 order). It writes references only — no image or video bytes are read — so copy is

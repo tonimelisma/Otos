@@ -13,10 +13,11 @@ It references but does not own catalog truth, publication cadence, availability,
 and ordering. ADR 0010 owns Store-executed ordering, identity-plus-generation grid
 publication, and visible detail reads. ADRs 0002, 0004, and 0005 retain
 scan/persistence, UI ownership, and publication ownership.
-Shift-click range selection is owned by spec 0046 (anchor/base correction state
-inside this ADR's AppKit boundary). Grid zoom (column-count ownership, the zoom
-transition mechanism, and its surfaces) is owned by spec 0048. Preview still
-requires a separate future spec/ADR if implemented.
+Shift-click range selection is owned by spec 0046 (the model-owned `GridSelection`
+inside this ADR's AppKit boundary: the model is the single selection truth and
+`selectionIndexPaths` is a render output the controller writes from it). Grid zoom
+(column-count ownership, the zoom transition mechanism, and its surfaces) is owned by
+spec 0048. Preview still requires a separate future spec/ADR if implemented.
 Thumbnail storage is owned by ADR 0009; this ADR owns how the visible grid
 renders and refreshes those thumbnail-backed values, including the invariant that
 a painted same-asset thumbnail never blanks while the asset remains on screen.
@@ -147,9 +148,11 @@ data-driven change rather than a new rendering mechanism.
   cleared.
 - Native AppKit selection and responder-chain copy behavior live at this boundary
   so SwiftUI and the ViewModel do not mirror high-cardinality selection state.
-  Shift-click range selection (spec 0046) adds one small ephemeral
-  anchor/base correction on top of that native truth, not a second selection
-  model.
+  Mouse selection (spec 0046) is model-owned: a pure `GridSelection` value is the
+  single selection truth, `MediaGridCollectionView.mouseDown` does not call
+  `super.mouseDown` (AppKit's native mouse-selection tracking loop never runs), and
+  `selectionIndexPaths` is a render output written from the model — not a second
+  selection model.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
   high-cardinality media browser.
 

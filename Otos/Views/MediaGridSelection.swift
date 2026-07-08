@@ -1,27 +1,14 @@
 import AppKit
 import Foundation
 
-/// Grid selection policy guide
+/// Grid selection helpers guide
 ///
-/// Pure, `nonisolated` helpers that decide selection membership independently of any
-/// live `NSCollectionView`, so the grid's selection behavior is unit-testable without
-/// AppKit lifecycle. The collection view owns the live selection
-/// (`selectionIndexPaths`); these functions answer only "which selected identities
-/// survive a structural change" and "in what order should a copy emit them".
+/// Pure, `nonisolated` helpers for the model-owned selection (spec 0046). The selection
+/// model itself — selection set, ⇧-range anchor, and base "islands" — lives in
+/// `GridSelection`; this enum keeps only the two operations that do not need model state:
+/// the minimal write delta (`selectionDelta`) and copy's display-order projection
+/// (`orderedSelection`). Both are value-level and unit-testable without AppKit lifecycle.
 enum MediaGridSelection {
-    /// Drops identities that are no longer present after a structural apply, so a
-    /// selected asset that disappeared (deleted, filtered out, scope changed) is never
-    /// resurrected. `ordered` is the new display order; set membership is the contract.
-    nonisolated static func pruned(
-        _ selected: Set<MediaAssetID>,
-        to ordered: [MediaAssetID]
-    ) -> Set<MediaAssetID> {
-        guard !selected.isEmpty else {
-            return []
-        }
-        return selected.intersection(ordered)
-    }
-
     /// The selected identities in display order. Copy emits URLs in the order the user
     /// sees tiles, not in hash order, so a pasted multi-selection is stable.
     nonisolated static func orderedSelection(
@@ -32,29 +19,6 @@ enum MediaGridSelection {
             return []
         }
         return ordered.filter(selected.contains)
-    }
-
-    /// Corrects AppKit's native shift-click (which toggles only the clicked item, the
-    /// same as ⌘-click) into a Photos/Lightroom-style contiguous range. `base` is the
-    /// selection recorded when `anchor` was last set by a plain or ⌘-click, so a chain of
-    /// shift-clicks from the same anchor grows and shrinks the range instead of
-    /// accumulating every intermediate click. Falls back to `{clicked}` (a plain click)
-    /// when `anchor` or `clicked` is not present in the current display order — an
-    /// anchor whose asset a structural apply removed must not resurrect a stale range.
-    nonisolated static func shiftRangeSelection(
-        anchor: MediaAssetID,
-        clicked: MediaAssetID,
-        base: Set<MediaAssetID>,
-        orderedIDs: [MediaAssetID]
-    ) -> Set<MediaAssetID> {
-        guard
-            let anchorIndex = orderedIDs.firstIndex(of: anchor),
-            let clickedIndex = orderedIDs.firstIndex(of: clicked)
-        else {
-            return [clicked]
-        }
-        let range = orderedIDs[min(anchorIndex, clickedIndex) ... max(anchorIndex, clickedIndex)]
-        return base.union(range)
     }
 
     /// The minimal delta that turns `current` into `target`: identities to deselect and

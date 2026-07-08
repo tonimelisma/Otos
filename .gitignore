@@ -25,3 +25,6 @@ run.log
 lldb.log
 *.log
 *.trace
+
+# Local git worktrees
+.worktrees/

@@ -6,35 +6,27 @@ import OSLog
 // This file contains the AppKit-only selection and copy surface for the media grid.
 // SwiftUI provides the surrounding commands and window state, but AppKit owns the
 // live collection selection and responder chain. Keeping that bridge here gives one
-// path for mouse selection, command validation, and Edit > Copy without mirroring
-// selected IDs into a second model.
+// path for mouse selection, command validation, and Edit > Copy.
 //
-// Shift-click range selection (spec 0046): `NSCollectionView` treats a mouse shift-click
-// identically to a ⌘-click — it toggles only the clicked item — because
-// `shouldSelectItemsAt` is documented approve/refuse-only and cannot return a superset of
-// the proposed selection. The click itself is the authoritative event, so we capture it
-// where AppKit consumes it: `MediaGridCollectionView.mouseDown(with:)` records the
-// hit-tested item and modifier flags, runs the native selection tracking loop
-// (`super.mouseDown`), and then calls `mouseSelectionFinished(hit:modifiers:)` — at which
-// point native selection is final. That handler corrects a native shift-toggle into a
-// Photos/Lightroom-style contiguous range by applying only the delta
-// (`deselectItems`/`selectItems`) within the same event turn, so no paint happens between
-// the native result and the correction and nothing flickers. Programmatic
-// `selectItems`/`deselectItems` do not re-enter the tracking loop, so the correction
-// cannot feed back into itself.
+// Mouse selection is model-owned (spec 0046). The grid owns a pure `GridSelection`
+// value — selection, ⇧-range anchor, and base "islands" — as the single source of
+// truth. `MediaGridCollectionView.mouseDown(with:)` does **not** call `super.mouseDown`,
+// so AppKit's native mouse-selection tracking loop never runs and there is no commit to
+// race; it forwards `(hit, modifiers)` here. `applyMouseSelection(hit:modifiers:)`
+// computes the next `GridSelection` from the model alone (never from
+// `collectionView.selectionIndexPaths`), then writes `selectionIndexPaths` from the
+// model as the last operation of the gesture via `applySelectionDelta`. Because the model
+// is the truth and the write is last, the mouseDown-vs-mouseUp timing that broke the
+// prior read-then-correct design is irrelevant. Programmatic `selectItems`/`deselectItems`
+// do not re-enter `mouseDown`, so there is no feedback loop.
 //
-// Capturing at mouseDown is what fixes the case delegate inference cannot: a *plain* click
-// that collapses a multi-selection onto an already-selected item fires **no**
-// `didSelectItemsAt` for the clicked item (only `didDeselectItemsAt` for the ones
-// dropped), so a delegate-only handler never learns what was clicked and leaves a stale
-// anchor. Because `mouseSelectionFinished` is handed the clicked item directly and reads
-// the settled selection, the anchor is set correctly even in that case. The native
-// `didSelectItemsAt`/`didDeselectItemsAt` delegate methods are therefore pure telemetry.
+// `selectedIdentities()` (a read of `selectionIndexPaths`) is used only to (a) reconcile
+// the model's `selection` field after native *keyboard* selection (⌘A, ⇧-arrows — which
+// stay native and write `selectionIndexPaths` directly) and (b) compute the minimal write
+// delta. It is never used to *decide* a gesture: the gesture is computed solely from
+// `gridSelection`.
 //
-// `selectionAnchorID`/`anchorBaseSelection` are ephemeral correction state, not a second
-// selection truth: `collectionView.selectionIndexPaths` remains authoritative, and the
-// anchor and its base are pruned or cleared everywhere the selection itself is pruned or
-// cleared. Keyboard ⇧+arrow selection stays native and never touches the anchor.
+// The `didSelectItemsAt`/`didDeselectItemsAt` delegate methods are pure telemetry.
 //
 // Copy writes original file URLs to the pasteboard in display order. It does not read
 // media bytes, decode thumbnails, or materialize cloud placeholders; it only maps the
@@ -43,9 +35,9 @@ import OSLog
 // MARK: - Selection and copy
 
 extension MediaAssetCollectionViewController: NSCollectionViewDelegate {
-    /// Telemetry only: mouse selection semantics live in `mouseSelectionFinished`, driven
-    /// by `MediaGridCollectionView`'s mouseDown capture, and programmatic selection changes
-    /// (structural-apply restore, shift-range correction) also route through these.
+    /// Telemetry only: mouse selection semantics live in `applyMouseSelection`, driven by
+    /// `MediaGridCollectionView`'s mouseDown capture, and programmatic selection changes
+    /// (structural-apply restore, gesture writes) also route through these.
     func collectionView(_: NSCollectionView, didSelectItemsAt _: Set<IndexPath>) {
         logSelection(reason: "select")
     }
@@ -56,53 +48,64 @@ extension MediaAssetCollectionViewController: NSCollectionViewDelegate {
 }
 
 extension MediaAssetCollectionViewController {
-    /// Called by `MediaGridCollectionView` after `super.mouseDown` returns, i.e. once
-    /// native selection is final. `hit` is the item under the click location (`nil` for
-    /// empty space); `modifiers` are the click's modifier flags. This is the single owner
-    /// of the shift-range anchor. When both ⇧ and ⌘ are held, ⇧ wins (a range extension
-    /// takes precedence over a toggle).
-    func mouseSelectionFinished(hit: IndexPath?, modifiers: NSEvent.ModifierFlags) {
+    /// Called by `MediaGridCollectionView.mouseDown(with:)` (which does not call
+    /// `super.mouseDown`, so AppKit's native mouse selection never runs). `hit` is the item
+    /// under the click location (`nil` for empty space); `modifiers` are the click's flags.
+    /// This is the single owner of the gesture: it computes the next `GridSelection` from
+    /// the model alone and writes `selectionIndexPaths` from it as the last operation.
+    func applyMouseSelection(hit: IndexPath?, modifiers: NSEvent.ModifierFlags) {
         let shift = modifiers.contains(.shift)
         let command = modifiers.contains(.command)
 
+        // Reconcile the model's selection field with any native keyboard change (⌘A,
+        // ⇧-arrows) since the last gesture, so the model observes keyboard selection
+        // without ever being read as input to its own computation. Anchor/base are left
+        // as-is on keyboard selection (native behavior).
+        gridSelection = gridSelection.reconcilingSelection(selectedIdentities())
+
+        let orderedIDs = mutationGate.displayedOrderedIDs
+
         guard let hit, let clicked = dataSource.itemIdentifier(for: hit) else {
-            // Empty-space click. A plain empty-space click natively clears the selection,
-            // so the anchor is meaningless and is cleared; a ⇧/⌘ empty-space click can
-            // begin a marquee, so the anchor and base are left intact.
+            // Empty-space click. A plain empty-space click clears selection, anchor, and
+            // base; a ⇧/⌘ empty-space click would begin a marquee in native AppKit, but the
+            // grid has no marquee, so it is a no-op that leaves the selection and anchor.
             if !shift, !command {
-                selectionAnchorID = nil
-                anchorBaseSelection = []
+                gridSelection = gridSelection.clearedBySpace()
+                applySelectionDelta(from: selectedIdentities(), to: gridSelection.selection)
+                logSelection(reason: "emptySpace")
+            } else {
+                logSelection(reason: "shiftEmptySpace")
             }
-            logSelection(reason: "mouseEmpty")
             return
         }
 
-        // ⇧ with an existing anchor: extend the contiguous range from the anchor. The
-        // anchor and base are unchanged so a chain of shift-clicks keeps recomputing from
-        // the same origin (grows and shrinks instead of accumulating intermediate clicks).
-        if shift, let anchor = selectionAnchorID {
-            let current = selectedIdentities()
-            let target = MediaGridSelection.shiftRangeSelection(
-                anchor: anchor,
-                clicked: clicked,
-                base: anchorBaseSelection,
-                orderedIDs: mutationGate.displayedOrderedIDs
-            )
-            if target != current {
-                applySelectionDelta(from: current, to: target)
-                OtosSignpost.ui.emitEvent("MediaGridShiftRangeApplied")
-            }
-            logSelection(reason: "shiftRange")
-            return
+        let reason: String
+        let rangeChanged: Bool
+        switch (shift, command) {
+        case (false, false):
+            gridSelection = gridSelection.plainClick(clicked)
+            rangeChanged = false
+            reason = "plainClick"
+        case (false, true):
+            gridSelection = gridSelection.commandClick(clicked)
+            rangeChanged = false
+            reason = "commandClick"
+        case (true, false):
+            let before = gridSelection.selection
+            gridSelection = gridSelection.shiftClick(clicked, orderedIDs: orderedIDs)
+            rangeChanged = gridSelection.selection != before
+            reason = "shiftRange"
+        case (true, true):
+            let before = gridSelection.selection
+            gridSelection = gridSelection.commandShiftClick(clicked, orderedIDs: orderedIDs)
+            rangeChanged = gridSelection.selection != before
+            reason = "commandShiftRange"
         }
-
-        // Plain click, ⌘-click, or ⇧-click with no anchor: the clicked item becomes the
-        // new anchor and the current (post native-toggle/collapse) selection becomes the
-        // base. The clicked item is known here even when a plain multi-selection collapse
-        // fired no `didSelectItemsAt` for it (the F5 fix).
-        selectionAnchorID = clicked
-        anchorBaseSelection = selectedIdentities()
-        logSelection(reason: "anchorSet")
+        if rangeChanged {
+            OtosSignpost.ui.emitEvent("MediaGridShiftRangeApplied")
+        }
+        applySelectionDelta(from: selectedIdentities(), to: gridSelection.selection)
+        logSelection(reason: reason)
     }
 
     /// Applies only the identities that actually change between `current` and `target`,
@@ -151,31 +154,28 @@ extension MediaAssetCollectionViewController {
     }
 
     /// The live selection as stable identities, read from the collection view's own
-    /// selection so there is no second copy of selection state to keep in sync.
+    /// selection. This is a *render output* read: used only to compute the minimal write
+    /// delta and to reconcile the model after native keyboard selection — never to decide
+    /// a gesture.
     func selectedIdentities() -> Set<MediaAssetID> {
         Set(collectionView.selectionIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) })
     }
 
-    /// Restores selection after a structural apply: survivors are the previously
-    /// selected identities that still exist. Applying only the delta — rather than
+    /// Restores selection after a structural apply by pruning the model to the surviving
+    /// identities, then writing the delta. Applying only the delta — rather than
     /// deselecting everything and reselecting survivors — means a surviving tile's
-    /// `isSelected` never changes, so its animated selection ring (spec 0047) never
-    /// blinks on an apply that does not actually touch its selection state. The
-    /// shift-click anchor and its base follow the same identity rule: an anchor whose
-    /// asset disappeared clears both, and an anchor that survives keeps a base pruned of
-    /// any dead identities so a later shift-range target never contains an identity the
-    /// grid no longer has (F6) — that would otherwise make the computed target never equal
-    /// the live selection and misfire the shift-range signpost on every shift-click.
+    /// `isSelected` never changes, so its animated selection ring (spec 0047) never blinks
+    /// on an apply that does not actually touch its selection state. The model's anchor and
+    /// base follow the same identity rule: an anchor whose asset disappeared clears both,
+    /// and an anchor that survives keeps a base pruned of dead identities so a later
+    /// shift-range target never contains an identity the grid no longer has (F6).
     func restoreSelection(_ preserved: Set<MediaAssetID>, in ordered: [MediaAssetID]) {
-        let current = selectedIdentities()
-        let survivors = MediaGridSelection.pruned(preserved, to: ordered)
-        applySelectionDelta(from: current, to: survivors)
-        if let anchor = selectionAnchorID, ordered.contains(anchor) {
-            anchorBaseSelection = MediaGridSelection.pruned(anchorBaseSelection, to: ordered)
-        } else {
-            selectionAnchorID = nil
-            anchorBaseSelection = []
-        }
+        // `preserved` is the pre-apply selection snapshot; reconcile the model's selection
+        // to it, then prune to survivors. (They are normally equal — the model is the
+        // truth — but reconcile defensively in case a native keyboard change happened
+        // between snapshot and completion.)
+        gridSelection = gridSelection.reconcilingSelection(preserved).pruned(to: ordered)
+        applySelectionDelta(from: selectedIdentities(), to: gridSelection.selection)
         logSelection(reason: "restore")
     }
 
@@ -191,8 +191,7 @@ extension MediaAssetCollectionViewController {
     }
 
     func clearSelection(reason: String) {
-        selectionAnchorID = nil
-        anchorBaseSelection = []
+        gridSelection = .empty
         let current = collectionView.selectionIndexPaths
         guard !current.isEmpty else {
             return

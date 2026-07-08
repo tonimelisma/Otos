@@ -4,217 +4,212 @@ import os
 @testable import Otos
 import Testing
 
-/// Controller-level tests for shift-click range selection (spec 0046). Setup applies a
-/// snapshot directly to `dataSource` and drives `mutationGate` through its own pure
-/// `receive`/`completeStructuralApply` calls. Selection is driven through
-/// `mouseSelectionFinished(hit:modifiers:)` — the same entry point
-/// `MediaGridCollectionView`'s mouseDown capture calls once the native tracking loop has
-/// settled selection — with `selectItems`/`deselectItems` first to mimic that settled
-/// native result. No `NSEvent` construction is needed.
+/// Controller-level tests for the model-owned mouse selection (spec 0046).
+///
+/// These drive the **real** `MediaGridCollectionView.mouseDown(with:)` override — the same
+/// path a real click takes — with synthesized `NSEvent`s positioned at the center of a
+/// known item's frame. Because the override does not call `super.mouseDown`, there is no
+/// AppKit tracking loop to drive, so the test does not pre-settle the selection the way
+/// the prior (broken) test harness did: it exercises the actual gesture classification →
+/// `GridSelection` computation → `selectionIndexPaths` write. `CGEvent` posting (real HID
+/// events) was considered for hit-test fidelity but rejected for a test process: it posts
+/// to absolute screen coordinates, moves the real cursor, and needs an on-screen focused
+/// window plus accessibility grants. Driving `mouseDown(with:)` with a synthetic `NSEvent`
+/// is deterministic, runs headless, and still exercises the owned path end-to-end — the
+/// only thing it skips is AppKit's native selection tracking loop, which the design
+/// deliberately never calls.
 @MainActor
 struct MediaAssetCollectionSelectionTests {
-    @Test func plainClickSetsAnchorAndBase() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
+    // MARK: - Acceptance matrix (rows 1–14)
 
-        try selectNatively(controller, ids[2]) // plain click on the item at index 2
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[2]), modifiers: [])
+    @Test func row1_plainClickSelectsOnlyTheClickedItem() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
 
-        #expect(controller.selectionAnchorID == ids[2])
-        #expect(controller.anchorBaseSelection == [ids[2]])
-        #expect(controller.selectedIdentities() == [ids[2]])
+        #expect(harness.selectedIDs() == [harness.ids[2]])
+        #expect(harness.controller.gridSelection.anchor == harness.ids[2])
+        #expect(harness.controller.gridSelection.base == [harness.ids[2]])
     }
 
-    @Test func shiftClickExtendsAContiguousRangeFromTheAnchor() throws {
-        let controller = makeController(itemCount: 8)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[2]) // click item 2
+    @Test func row2_shiftClickExtendsAForwardRange() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[5], modifiers: [.shift])
 
-        // Native shift-click on an unselected item only adds that item.
-        try selectNatively(controller, ids[5]) // shift-click item 5
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[5]), modifiers: [.shift])
-
-        #expect(controller.selectedIdentities() == Set(ids[2 ... 5]))
-        #expect(controller.selectionAnchorID == ids[2])
-        #expect(controller.anchorBaseSelection == [ids[2]])
+        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
+        #expect(harness.controller.gridSelection.anchor == harness.ids[2])
     }
 
-    @Test func secondShiftClickFromTheSameAnchorContractsTheRange() throws {
-        let controller = makeController(itemCount: 8)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[2])
-        try selectNatively(controller, ids[6])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[6]), modifiers: [.shift])
-        #expect(controller.selectedIdentities() == Set(ids[2 ... 6]))
+    @Test func row3_secondShiftClickContractsAndKeepsTheClickedTile() throws {
+        // B1: click 1, ⇧-click 4 → {1,2,3,4}; ⇧-click 3 → {1,2,3} (not {1,2}).
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
+        try harness.click(harness.ids[4], modifiers: [.shift])
+        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
 
-        // Shift-clicking an already-selected item (ids[4]) natively toggles it OFF; the
-        // handler still recomputes the contiguous range from the same anchor.
-        try deselectNatively(controller, ids[4])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[4]), modifiers: [.shift])
-
-        #expect(controller.selectedIdentities() == Set(ids[2 ... 4]))
+        try harness.click(harness.ids[3], modifiers: [.shift])
+        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
     }
 
-    @Test func commandClickThenShiftClickUnionsTheBaseWithTheNewRange() throws {
-        let controller = makeController(itemCount: 13)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[2]) // click item 2
+    @Test func row4_shiftClickExtendsABackwardRange() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[5], modifiers: [])
+        try harness.click(harness.ids[2], modifiers: [.shift])
 
-        // ⌘-click item 10: native ⌘-click adds it alongside the existing selection.
-        try selectNatively(controller, ids[10])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[10]), modifiers: [.command])
-        #expect(controller.selectionAnchorID == ids[10])
-        #expect(controller.anchorBaseSelection == [ids[2], ids[10]])
-
-        // ⇧-click item 12: range extends from the new anchor (item 10) to item 12,
-        // unioned with the base recorded at the ⌘-click.
-        try selectNatively(controller, ids[12])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[12]), modifiers: [.shift])
-
-        #expect(controller.selectedIdentities() == Set([ids[2]] + ids[10 ... 12]))
+        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 5]))
     }
 
-    @Test func shiftClickWithNoAnchorBehavesAsAPlainClick() throws {
-        let controller = makeController(itemCount: 6)
-        let ids = controller.mutationGate.displayedOrderedIDs
+    @Test func row5_commandClickAddsAnIslandAndMovesTheAnchor() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
+        try harness.click(harness.ids[4], modifiers: [.command])
 
-        try selectNatively(controller, ids[3])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[3]), modifiers: [.shift])
-
-        #expect(controller.selectedIdentities() == [ids[3]])
-        #expect(controller.selectionAnchorID == ids[3])
-        #expect(controller.anchorBaseSelection == [ids[3]])
+        #expect(harness.selectedIDs() == [harness.ids[1], harness.ids[4]])
+        #expect(harness.controller.gridSelection.anchor == harness.ids[4])
     }
 
-    @Test func shiftCommandClickBehavesAsShift() throws {
-        let controller = makeController(itemCount: 8)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[2])
+    @Test func row6_shiftClickAfterCommandClickRangesFromNewAnchorKeepingIsland() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
+        try harness.click(harness.ids[4], modifiers: [.command])
+        try harness.click(harness.ids[6], modifiers: [.shift])
 
-        try selectNatively(controller, ids[5])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[5]), modifiers: [.shift, .command])
-
-        #expect(controller.selectedIdentities() == Set(ids[2 ... 5])) // range wins over toggle
-        #expect(controller.selectionAnchorID == ids[2]) // anchor unchanged, as for a plain ⇧-click
+        #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 6]))
     }
 
-    /// F5 regression: a plain click that collapses a multi-selection onto an
-    /// already-selected member fires no `didSelectItemsAt` for the clicked item, yet the
-    /// anchor must move to it. A following ⇧-click then ranges from the clicked item, not
-    /// the old anchor.
-    @Test func plainClickCollapsingAMultiSelectionMovesTheAnchorToTheClickedItem() throws {
-        let controller = makeController(itemCount: 8)
-        let ids = controller.mutationGate.displayedOrderedIDs
+    @Test func row7_commandClickInsideARangeRemovesOnlyThatItem() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[5], modifiers: [.shift]) // {C,D,E,F}
+        try harness.click(harness.ids[3], modifiers: [.command]) // remove D
 
-        // Build {ids0, ids1, ids2}: plain ids0, ⌘ ids1, ⌘ ids2.
-        try selectNatively(controller, ids[0])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[0]), modifiers: [])
-        try selectNatively(controller, ids[1])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[1]), modifiers: [.command])
-        try selectNatively(controller, ids[2])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[2]), modifiers: [.command])
-        #expect(controller.selectedIdentities() == Set(ids[0 ... 2]))
-
-        // A plain click on already-selected ids1 natively collapses to {ids1} and fires no
-        // didSelect for ids1. Mimic that settled native result, then run the handler.
-        try controller.collectionView.selectItems(at: [indexPath(controller, ids[1])], scrollPosition: [])
-        try controller.collectionView.deselectItems(
-            at: [indexPath(controller, ids[0]), indexPath(controller, ids[2])]
-        )
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[1]), modifiers: [])
-
-        #expect(controller.selectionAnchorID == ids[1])
-        #expect(controller.anchorBaseSelection == [ids[1]])
-        #expect(controller.selectedIdentities() == [ids[1]])
-
-        // A following ⇧-click on ids4 ranges ids1…ids4, not ids0…ids4.
-        try selectNatively(controller, ids[4])
-        try controller.mouseSelectionFinished(hit: indexPath(controller, ids[4]), modifiers: [.shift])
-        #expect(controller.selectedIdentities() == Set(ids[1 ... 4]))
+        #expect(harness.selectedIDs() == [harness.ids[2], harness.ids[4], harness.ids[5]])
     }
 
-    @Test func emptySpacePlainClickClearsTheAnchorAndBase() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[1])
+    @Test func row8_plainClickCollapsingAMultiSelectionReanchors() throws {
+        // B2: select {C,D,E}, plain-click D → {D}; base becomes {D}.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[3], modifiers: [.command])
+        try harness.click(harness.ids[4], modifiers: [.command])
+        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
 
-        // A plain empty-space click natively clears the selection.
-        controller.collectionView.deselectItems(at: controller.collectionView.selectionIndexPaths)
-        controller.mouseSelectionFinished(hit: nil, modifiers: [])
+        try harness.click(harness.ids[3], modifiers: [])
 
-        #expect(controller.selectionAnchorID == nil)
-        #expect(controller.anchorBaseSelection.isEmpty)
+        #expect(harness.selectedIDs() == [harness.ids[3]])
+        #expect(harness.controller.gridSelection.base == [harness.ids[3]])
     }
 
-    @Test func emptySpaceShiftClickLeavesTheAnchorIntact() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[1])
+    @Test func row9_shiftClickAfterCollapseDoesNotReAddPriorSelection() throws {
+        // B2: …then ⇧-click G → {D,E,F,G}, not {C,D,E,F,G}.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[3], modifiers: [.command])
+        try harness.click(harness.ids[4], modifiers: [.command])
+        try harness.click(harness.ids[3], modifiers: []) // collapse to D
+        try harness.click(harness.ids[6], modifiers: [.shift])
 
-        controller.mouseSelectionFinished(hit: nil, modifiers: [.shift])
-
-        #expect(controller.selectionAnchorID == ids[1])
-        #expect(controller.anchorBaseSelection == [ids[1]])
+        #expect(harness.selectedIDs() == Set(harness.ids[3 ... 6]))
     }
 
-    @Test func structuralApplyPrunesAnAnchorWhoseAssetWasRemoved() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[1])
+    @Test func row10_commandClickDeselectingTheSoleSelectionLeavesAnchorAsPivot() throws {
+        // B3 setup: click B, ⌘-click B → ∅; anchor stays B, base ∅.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
+        try harness.click(harness.ids[1], modifiers: [.command])
 
-        controller.restoreSelection([], in: [ids[0], ids[2], ids[3]])
-
-        #expect(controller.selectionAnchorID == nil)
-        #expect(controller.anchorBaseSelection.isEmpty)
+        #expect(harness.selectedIDs().isEmpty)
+        #expect(harness.controller.gridSelection.anchor == harness.ids[1])
+        #expect(harness.controller.gridSelection.base.isEmpty)
     }
 
-    @Test func structuralApplyKeepsAnchorWhenItsAssetSurvives() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[1])
+    @Test func row11_shiftClickAfterCommandDeselectRangesFromPivotWithNothingStale() throws {
+        // B3: …then ⇧-click E → {B,C,D,E}.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
+        try harness.click(harness.ids[1], modifiers: [.command])
+        try harness.click(harness.ids[4], modifiers: [.shift])
 
-        controller.restoreSelection([ids[1]], in: [ids[0], ids[1], ids[2], ids[3]])
-
-        #expect(controller.selectionAnchorID == ids[1])
+        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
     }
 
-    /// F6 regression: when the anchor survives a structural apply, dead identities are
-    /// pruned from the anchor base too — otherwise the next shift-range target keeps a
-    /// removed identity and never equals the live selection, misfiring the shift-range
-    /// signpost on every shift-click after a removal.
-    @Test func structuralApplyPrunesDeadIdentitiesFromTheAnchorBaseWhenAnchorSurvives() {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        controller.selectionAnchorID = ids[0]
-        controller.anchorBaseSelection = [ids[0], ids[2]] // ids[2] is about to be removed
+    @Test func row12_emptySpaceClickClearsSelectionAndAnchor() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
 
-        controller.restoreSelection([], in: [ids[0], ids[1], ids[3]])
+        try harness.clickEmptySpace(modifiers: [])
 
-        #expect(controller.selectionAnchorID == ids[0])
-        #expect(controller.anchorBaseSelection == [ids[0]])
+        #expect(harness.selectedIDs().isEmpty)
+        #expect(harness.controller.gridSelection.anchor == nil)
     }
 
-    @Test func descriptorChangeClearsTheAnchor() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[1])
+    @Test func row13_shiftClickWithEmptySelectionFallsBackToClicked() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[3], modifiers: [.shift])
 
-        controller.clearSelection(reason: "descriptorChange")
-
-        #expect(controller.selectionAnchorID == nil)
-        #expect(controller.anchorBaseSelection.isEmpty)
+        #expect(harness.selectedIDs() == [harness.ids[3]])
+        #expect(harness.controller.gridSelection.anchor == harness.ids[3])
     }
 
-    /// A descriptor-changing structural apply must clear the anchor unconditionally, even
-    /// when the previously anchored asset is still present in the new scope's results.
+    @Test func row14_commandShiftClickExtendsRangeKeepingIslands() throws {
+        // {B,E} (anchor E), ⌘⇧-click H → {B,E,F,G,H}.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[4], modifiers: []) // E
+        try harness.click(harness.ids[1], modifiers: [.command]) // + B, anchor→B
+        try harness.click(harness.ids[4], modifiers: [.command]) // pivot back to E
+        try harness.click(harness.ids[7], modifiers: [.shift, .command]) // ⌘⇧ H
+
+        #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 7]))
+    }
+
+    // MARK: - Structural-apply prune (rows 15–16)
+
+    @Test func row15_structuralApplyRemovingAnItemPrunesItFromSelectionAndBase() throws {
+        // F6: click C, ⇧-click D → {C,D} (anchor C, base {C}); apply removes D → {C}, base {C}.
+        // ⇧-click (not ⌘-click) is used so the anchor stays on C while the range covers D.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[3], modifiers: [.shift])
+
+        let survivors = [harness.ids[0], harness.ids[1], harness.ids[2]] + Array(harness.ids[4 ... 7])
+        harness.controller.restoreSelection([harness.ids[2], harness.ids[3]], in: survivors)
+
+        #expect(harness.controller.gridSelection.selection == [harness.ids[2]])
+        #expect(harness.controller.gridSelection.anchor == harness.ids[2])
+        #expect(harness.controller.gridSelection.base == [harness.ids[2]])
+    }
+
+    @Test func row16_structuralApplyRemovingTheAnchorClearsAnchorAndBase() throws {
+        // click C, ⇧-click D → {C,D} (anchor C, base {C}); apply removes C → {D}, anchor nil.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[3], modifiers: [.shift])
+
+        let survivors = [harness.ids[0], harness.ids[1]] + Array(harness.ids[3 ... 7]) // C removed
+        harness.controller.restoreSelection([harness.ids[2], harness.ids[3]], in: survivors)
+
+        #expect(harness.controller.gridSelection.selection == [harness.ids[3]])
+        #expect(harness.controller.gridSelection.anchor == nil)
+        #expect(harness.controller.gridSelection.base.isEmpty)
+    }
+
+    @Test func descriptorChangeClearsSelectionAnchorAndBase() throws {
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+
+        harness.controller.clearSelection(reason: "descriptorChange")
+
+        #expect(harness.controller.gridSelection == .empty)
+        #expect(harness.selectedIDs().isEmpty)
+    }
+
     @Test func descriptorChangingApplyClearsAnchorEvenWhenTheAnchoredAssetSurvives() throws {
-        let controller = makeController(itemCount: 4)
-        let ids = controller.mutationGate.displayedOrderedIDs
-        try setAnchor(controller, to: ids[1])
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
 
         let grid = CatalogMediaGridState(
             scope: .library(LibraryRootPath(rawValue: "/Pictures")),
-            orderedAssetIDs: ids // the anchored asset (ids[1]) is still present
+            orderedAssetIDs: harness.ids // the anchored asset is still present
         )
         let context = MediaAssetCollectionViewController.StructuralApplyCompletionContext(
             grid: grid,
@@ -231,58 +226,109 @@ struct MediaAssetCollectionSelectionTests {
             signpost: .beginState(id: .exclusive)
         )
 
-        controller.completeStructuralApply(context, operation: nil, stallMonitor: nil, diagnostics: nil)
+        harness.controller.completeStructuralApply(context, operation: nil, stallMonitor: nil, diagnostics: nil)
 
-        #expect(controller.selectionAnchorID == nil)
-        #expect(controller.anchorBaseSelection.isEmpty)
-        #expect(controller.selectedIdentities().isEmpty)
+        #expect(harness.controller.gridSelection == .empty)
+        #expect(harness.selectedIDs().isEmpty)
     }
 }
 
-// MARK: - Test support
+// MARK: - Test harness
 
 @MainActor
-private func makeController(itemCount: Int) -> MediaAssetCollectionViewController {
-    let controller = MediaAssetCollectionViewController()
-    _ = controller.view // forces loadView(), which installs the collection view and data source
+private final class GridSelectionTestHarness {
+    let controller: MediaAssetCollectionViewController
+    let ids: [MediaAssetID]
+    private let window: NSWindow
 
-    let assetIDs = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
-    var snapshot = NSDiffableDataSourceSnapshot<MediaAssetCollectionViewController.Section, MediaAssetID>()
-    snapshot.appendSections([.media])
-    snapshot.appendItems(assetIDs, toSection: .media)
-    controller.dataSource.apply(snapshot, animatingDifferences: false)
+    init(itemCount: Int) throws {
+        controller = MediaAssetCollectionViewController()
+        _ = controller.view // forces loadView()
 
-    let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: assetIDs)
-    _ = controller.mutationGate.receive(grid)
-    _ = controller.mutationGate.completeStructuralApply(applied: grid)
+        ids = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
+        var snapshot = NSDiffableDataSourceSnapshot<MediaAssetCollectionViewController.Section, MediaAssetID>()
+        snapshot.appendSections([.media])
+        snapshot.appendItems(ids, toSection: .media)
+        controller.dataSource.apply(snapshot, animatingDifferences: false)
 
-    return controller
+        let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
+        _ = controller.mutationGate.receive(grid)
+        _ = controller.mutationGate.completeStructuralApply(applied: grid)
+
+        // A real window (off-screen) is required for layout, hit-testing, and first
+        // responder. `indexPathForItem(at:)` and `layoutAttributesForItem(at:)` only
+        // return non-nil after the collection view has been laid out in a window.
+        window = NSWindow(
+            contentRect: NSRect(x: -4000, y: -4000, width: 800, height: 600),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = controller.view
+        window.makeKeyAndOrderFront(nil)
+        controller.view.layoutSubtreeIfNeeded()
+        controller.collectionView.layoutSubtreeIfNeeded()
+        // Run a run-loop pass so AppKit completes layout and the data source reflects
+        // the applied snapshot for hit-testing.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+
+    /// The center point of the tile for `id`, in window coordinates for the synthetic
+    /// event's `locationInWindow`.
+    private func windowPoint(for id: MediaAssetID) throws -> NSPoint {
+        let indexPath = try #require(controller.dataSource.indexPath(for: id))
+        let attrs = try #require(controller.collectionView.layoutAttributesForItem(at: indexPath))
+        let centerInCollectionView = NSPoint(x: attrs.frame.midX, y: attrs.frame.midY)
+        let centerInContentView = controller.collectionView.convert(centerInCollectionView, to: controller.view)
+        return controller.view.convert(centerInContentView, to: nil)
+    }
+
+    /// Drives the real `mouseDown(with:)` override with a synthetic event at the tile's
+    /// center. `super.mouseDown` is not called by the override, so this exercises the full
+    /// owned path (hit-test → `applyMouseSelection` → `selectionIndexPaths` write) without
+    /// AppKit's tracking loop.
+    func click(_ id: MediaAssetID, modifiers: NSEvent.ModifierFlags) throws {
+        let point = try windowPoint(for: id)
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: point,
+            modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        controller.collectionView.mouseDown(with: event)
+    }
+
+    /// Clicks a point outside any item frame (empty space) — the top-left gutter inside
+    /// the section inset where no item frame lives.
+    func clickEmptySpace(modifiers: NSEvent.ModifierFlags) throws {
+        let point = NSPoint(x: 2, y: 2)
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: point,
+            modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 1,
+            pressure: 1.0
+        )!
+        controller.collectionView.mouseDown(with: event)
+    }
+
+    func selectedIDs() -> Set<MediaAssetID> {
+        controller.selectedIdentities()
+    }
 }
 
 @MainActor
-private func indexPath(_ controller: MediaAssetCollectionViewController, _ id: MediaAssetID) throws -> IndexPath {
-    try #require(controller.dataSource.indexPath(for: id))
-}
-
-/// Sets the anchor the way a real plain click would: select the item natively, then run
-/// it through the handler with no modifiers.
-@MainActor
-private func setAnchor(_ controller: MediaAssetCollectionViewController, to id: MediaAssetID) throws {
-    try selectNatively(controller, id)
-    try controller.mouseSelectionFinished(hit: indexPath(controller, id), modifiers: [])
-}
-
-/// Mimics what AppKit's native selection tracking loop already did before
-/// `mouseSelectionFinished` runs: `selectionIndexPaths` reflects the native (uncorrected)
-/// result by the time the handler is called.
-@MainActor
-private func selectNatively(_ controller: MediaAssetCollectionViewController, _ id: MediaAssetID) throws {
-    try controller.collectionView.selectItems(at: [indexPath(controller, id)], scrollPosition: [])
-}
-
-@MainActor
-private func deselectNatively(_ controller: MediaAssetCollectionViewController, _ id: MediaAssetID) throws {
-    try controller.collectionView.deselectItems(at: [indexPath(controller, id)])
+private func makeHarness(itemCount: Int) throws -> GridSelectionTestHarness {
+    try GridSelectionTestHarness(itemCount: itemCount)
 }
 
 @MainActor

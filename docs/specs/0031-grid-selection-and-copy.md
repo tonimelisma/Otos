@@ -104,12 +104,16 @@ Out of scope:
 | ID or label | Type | Captured requirement | Current or candidate | Storage location |
 | --- | --- | --- | --- | --- |
 | SEL-click | Functional | Clicking a tile selects it and shows a highlight; clicking another tile replaces the selection. | Current | `docs/requirements.md` APP-010 (changed) |
-| SEL-multi | Functional | ⌘-click toggles a tile in/out of the selection; ⇧-click extends a contiguous range; ⌘A selects all. | Current | `docs/requirements.md` APP-010 (changed) |
+| SEL-multi | Functional | ⌘-click toggles a tile in/out of the selection; ⇧-click extends a contiguous range from the anchor; ⌘⇧-click extends that range while keeping existing selected islands; ⌘A selects all. | Current | `docs/requirements.md` APP-010 (changed) |
 
 **Post-implementation correction:** this spec assumed `NSCollectionView`'s native
 ⇧-click already produced a contiguous range. Spec 0046 found that AppKit treats
-mouse ⇧-click identically to ⌘-click (toggles only the clicked item) and added the
-anchor/base correction that makes SEL-multi's ⇧-click behavior actually true. See
+mouse ⇧-click identically to ⌘-click (toggles only the clicked item). The current
+design is **model-owned**: a pure `GridSelection` value (selection, anchor, base) is the
+single source of truth, `MediaGridCollectionView.mouseDown` does not call
+`super.mouseDown` (so AppKit's native mouse-selection tracking loop never runs and there
+is no commit to race), and the controller writes `selectionIndexPaths` from the model as
+the last operation of each gesture — never reading it as an input to the gesture. See
 `docs/specs/0046-grid-shift-click-range-selection.md`.
 | SEL-persist | Architecture | Selection is tracked by `MediaAssetID` and survives same-descriptor structural updates; assets that disappear are dropped from the selection, and descriptor changes clear selection. | Current | `docs/requirements.md` APP-011 |
 | COPY-url | Functional | ⌘C / Edit ▸ Copy copies one original file URL per selected asset, in display order, so the media can be pasted into Finder or attached in Messages/Mail. | Current | `docs/requirements.md` APP-012 |
@@ -217,17 +221,17 @@ than a rework.
 - `MediaAssetCollectionViewController` (changed):
   - enables `isSelectable`, `allowsMultipleSelection`, `allowsEmptySelection`;
     becomes the collection view `delegate`.
-  - owns `private var selectedAssetIDs: Set<MediaAssetID>`; the ordered ID list it
-    already tracks via the apply gate is the display order used for pruning and
-    copy order.
-  - `collectionView(_:didSelectItemsAt:)` / `didDeselectItemsAt:` synced selection in
-    this increment. Superseded: `selectionIndexPaths` is now the sole live truth (the
-    `selectedAssetIDs` mirror was later removed), and mouse selection semantics live in
-    `mouseSelectionFinished(hit:modifiers:)`, driven by `MediaGridCollectionView`'s
-    mouseDown capture (spec 0046); these delegate methods are telemetry-only.
-  - after `applyStructure`, prune `selectedAssetIDs` to the new ordered IDs and set
-    `collectionView.selectionIndexPaths` from the survivors (programmatic
-    selection does not re-enter the delegate, so no feedback loop).
+  - owns the mouse-selection model `var gridSelection: GridSelection` (selection, anchor,
+    base); the ordered ID list it tracks via the apply gate is the display order used for
+    pruning, range math, and copy order. `selectionIndexPaths` is a render output written
+    from `gridSelection.selection`, never read to decide a gesture.
+  - `collectionView(_:didSelectItemsAt:)` / `didDeselectItemsAt:` are telemetry-only.
+    Mouse selection semantics live in `applyMouseSelection(hit:modifiers:)`, driven by
+    `MediaGridCollectionView`'s `mouseDown` (which does not call `super.mouseDown`, so
+    AppKit's native mouse selection never runs — spec 0046).
+  - after `applyStructure`, prune `gridSelection` to the new ordered IDs and write
+    `collectionView.selectionIndexPaths` from the survivors via the minimal delta
+    (programmatic selection does not re-enter `mouseDown`, so no feedback loop).
   - `@objc func copy(_ sender: Any?)` writes `MediaGridClipboard.write(orderedSelection, to: .general)`.
   - `validateUserInterfaceItem(_:)` returns `!selectedAssetIDs.isEmpty` for
     `copy:`. The controller sits in the responder chain between its scroll view

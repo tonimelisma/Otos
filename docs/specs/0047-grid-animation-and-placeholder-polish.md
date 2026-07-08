@@ -304,7 +304,10 @@ a descriptor-changing apply, mirroring the already-correct `.refreshVisible` pat
 of relying on `restoreSelection`'s identity-based anchor prune.
 `descriptorChangingApplyClearsAnchorEvenWhenTheAnchoredAssetSurvives` (in
 `OtosTests/MediaAssetCollectionSelectionTests.swift`) regression-tests exactly the
-scenario the finding described.
+scenario the finding described. (The `selectionAnchorID`/`anchorBaseSelection`
+correction state named here was later superseded entirely by the model-owned
+`GridSelection` in spec 0046; the descriptor-change clear still applies, now as
+`gridSelection = .empty`.)
 
 **Post-merge correction (spec 0048's increment, review of this spec's own PR #52):** the
 per-column stagger (D2/6e, `MediaGridAnimation.thumbnailStaggerPerColumn`) used a future

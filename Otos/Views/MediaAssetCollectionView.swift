@@ -25,20 +25,21 @@ import UniformTypeIdentifiers
 /// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
 /// cannot create file-writing tasks or retain grid state on MainActor.
 ///
-/// Selection is native: `isSelectable` + `allowsMultipleSelection` give click,
-/// ⌘-click, and ⌘A for free, and `NSCollectionView.selectionIndexPaths` is
-/// the live selection truth (no separate mirror to drift). ⇧-click is the one
-/// exception AppKit does not give for free — it natively toggles only the clicked
-/// item, the same as ⌘-click. `MediaGridCollectionView` (the one collection-view
-/// subclass) captures the click at `mouseDown` and, after the native tracking loop
-/// settles selection, hands the clicked item and modifiers to
-/// `MediaAssetCollectionSelection.swift`, which keeps a small anchor/base correction
-/// state and applies the full contiguous range as a same-turn delta (spec 0046).
-/// Because enrichment and scans re-apply the structure frequently, each structural apply
-/// snapshots the selected identities first and restores the survivors by identity
-/// afterward, pruning a dangling anchor and its base the same way, so a background update
-/// never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller through
-/// the responder chain and writes the selected assets' original file URLs to the
+/// Mouse selection is model-owned (spec 0046). `MediaGridCollectionView` (the one
+/// collection-view subclass) captures the click at `mouseDown` and does **not** call
+/// `super.mouseDown`, so AppKit's native mouse-selection tracking loop never runs and
+/// there is no commit to race. It forwards `(hit, modifiers)` to
+/// `MediaAssetCollectionSelection.swift`, which computes the gesture against a pure
+/// `GridSelection` value (selection + anchor + base) — the single source of truth — and
+/// writes `selectionIndexPaths` from the model as the last operation of the gesture. The
+/// model is never read from `selectionIndexPaths` to *decide* a gesture;
+/// `selectionIndexPaths` is an output, read only to compute the minimal write delta and
+/// to reconcile after native keyboard selection (⌘A, ⇧-arrows). Keyboard ⇧+arrow / ⌘A
+/// stay native. Because enrichment and scans re-apply the structure frequently, each
+/// structural apply snapshots the selected identities first and restores the survivors by
+/// identity afterward, pruning the model's anchor/base the same way, so a background
+/// update never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller
+/// through the responder chain and writes the selected assets' original file URLs to the
 /// pasteboard (ADR 0012), reading no bytes.
 struct MediaAssetCollectionView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
@@ -101,11 +102,12 @@ final class MediaAssetCollectionViewController: NSViewController {
     var preheatTask: Task<Void, Never>?
     var preheatIDs = Set<MediaAssetID>()
     var preheatGeneration = 0
-    /// Shift-click range anchor (see `MediaAssetCollectionSelection.swift`). Ephemeral,
-    /// pruned/cleared alongside the selection it corrects — never a second selection
-    /// truth.
-    var selectionAnchorID: MediaAssetID?
-    var anchorBaseSelection = Set<MediaAssetID>()
+    /// The model-owned mouse-selection truth (see `MediaAssetCollectionSelection.swift`):
+    /// the selected set, the ⇧-range anchor, and the base "islands" a ⇧-range unions with.
+    /// `collectionView.selectionIndexPaths` is a render output written from
+    /// `gridSelection.selection`, never an input to a gesture computation. Ephemeral,
+    /// pruned/cleared alongside the selection — the single selection truth.
+    var gridSelection = GridSelection.empty
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaAssetCollectionZoom.swift`. Column-count truth lives in `mutationGate`.
@@ -203,8 +205,8 @@ extension MediaAssetCollectionViewController {
         collectionView.allowsEmptySelection = true
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
-        collectionView.onMouseSelectionFinished = { [weak self] hit, modifiers in
-            self?.mouseSelectionFinished(hit: hit, modifiers: modifiers)
+        collectionView.onMouseSelection = { [weak self] hit, modifiers in
+            self?.applyMouseSelection(hit: hit, modifiers: modifiers)
         }
         collectionView.register(
             MediaAssetCollectionItem.self,

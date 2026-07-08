@@ -3,6 +3,10 @@ import Foundation
 @testable import Otos
 import Testing
 
+/// Pure-helper tests for the remnants of `MediaGridSelection` (`orderedSelection`,
+/// `selectionDelta`) and `MediaGridClipboard`. The selection-model operations
+/// (`plainClick`/`commandClick`/`shiftClick`/`commandShiftClick`/`pruned`/`clearedBySpace`)
+/// moved to `GridSelection` and are covered by `GridSelectionTests` (spec 0046).
 @MainActor
 struct MediaGridSelectionTests {
     // MARK: - Identity → URL
@@ -10,20 +14,6 @@ struct MediaGridSelectionTests {
     @Test func fileURLIsBuiltFromRootAndRelativePath() {
         #expect(id("/Pictures", "a.jpg").fileURL.path == "/Pictures/a.jpg")
         #expect(id("/Pictures", "Nested/b.mov").fileURL.path == "/Pictures/Nested/b.mov")
-    }
-
-    // MARK: - pruned
-
-    @Test func prunedKeepsOnlySurvivingIdentities() {
-        let idA = id("/Pictures", "a.jpg")
-        let idB = id("/Pictures", "b.jpg")
-        let gone = id("/Pictures", "gone.jpg")
-        let survivors = MediaGridSelection.pruned([idA, idB, gone], to: [idB, idA])
-        #expect(survivors == [idA, idB])
-    }
-
-    @Test func prunedOfEmptySelectionIsEmpty() {
-        #expect(MediaGridSelection.pruned([], to: [id("/Pictures", "a.jpg")]).isEmpty)
     }
 
     // MARK: - orderedSelection
@@ -39,109 +29,6 @@ struct MediaGridSelectionTests {
 
     @Test func orderedSelectionOfEmptySelectionIsEmpty() {
         #expect(MediaGridSelection.orderedSelection([], in: [id("/Pictures", "a.jpg")]).isEmpty)
-    }
-
-    // MARK: - shiftRangeSelection
-
-    @Test func shiftRangeSelectionCoversForwardRange() {
-        let ordered = (0 ..< 8).map { id("/Pictures", "\($0).jpg") }
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[2],
-            clicked: ordered[5],
-            base: [ordered[2]],
-            orderedIDs: ordered
-        )
-        #expect(target == Set(ordered[2 ... 5]))
-    }
-
-    @Test func shiftRangeSelectionCoversBackwardRange() {
-        let ordered = (0 ..< 8).map { id("/Pictures", "\($0).jpg") }
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[5],
-            clicked: ordered[2],
-            base: [ordered[5]],
-            orderedIDs: ordered
-        )
-        #expect(target == Set(ordered[2 ... 5]))
-    }
-
-    @Test func shiftRangeSelectionOfAnchorEqualToClickedIsSingleItem() {
-        let ordered = (0 ..< 4).map { id("/Pictures", "\($0).jpg") }
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[1],
-            clicked: ordered[1],
-            base: [ordered[1]],
-            orderedIDs: ordered
-        )
-        #expect(target == [ordered[1]])
-    }
-
-    @Test func shiftRangeSelectionUnionsBaseOutsideTheRange() {
-        let ordered = (0 ..< 8).map { id("/Pictures", "\($0).jpg") }
-        // Base carries an earlier ⌘-clicked item that the new range does not cover.
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[5],
-            clicked: ordered[7],
-            base: [ordered[2], ordered[5]],
-            orderedIDs: ordered
-        )
-        #expect(target == Set([ordered[2]] + ordered[5 ... 7]))
-    }
-
-    @Test func shiftRangeSelectionContractsOnASecondShiftClickFromTheSameAnchor() {
-        let ordered = (0 ..< 8).map { id("/Pictures", "\($0).jpg") }
-        let firstRange = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[2],
-            clicked: ordered[6],
-            base: [ordered[2]],
-            orderedIDs: ordered
-        )
-        #expect(firstRange == Set(ordered[2 ... 6]))
-
-        // Same anchor/base as before, not the grown selection — the range contracts
-        // instead of accumulating every intermediate shift-click.
-        let contracted = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[2],
-            clicked: ordered[4],
-            base: [ordered[2]],
-            orderedIDs: ordered
-        )
-        #expect(contracted == Set(ordered[2 ... 4]))
-    }
-
-    @Test func shiftRangeSelectionFallsBackToClickedWhenAnchorIsMissing() {
-        let ordered = (0 ..< 4).map { id("/Pictures", "\($0).jpg") }
-        let goneAnchor = id("/Pictures", "gone.jpg")
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: goneAnchor,
-            clicked: ordered[2],
-            base: [goneAnchor],
-            orderedIDs: ordered
-        )
-        #expect(target == [ordered[2]])
-    }
-
-    @Test func shiftRangeSelectionFallsBackToClickedWhenClickedIsMissing() {
-        let ordered = (0 ..< 4).map { id("/Pictures", "\($0).jpg") }
-        let goneClicked = id("/Pictures", "gone.jpg")
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: ordered[0],
-            clicked: goneClicked,
-            base: [ordered[0]],
-            orderedIDs: ordered
-        )
-        #expect(target == [goneClicked])
-    }
-
-    @Test func shiftRangeSelectionOfEmptyOrderedListFallsBackToClicked() {
-        let clicked = id("/Pictures", "a.jpg")
-        let target = MediaGridSelection.shiftRangeSelection(
-            anchor: id("/Pictures", "b.jpg"),
-            clicked: clicked,
-            base: [],
-            orderedIDs: []
-        )
-        #expect(target == [clicked])
     }
 
     // MARK: - selectionDelta
