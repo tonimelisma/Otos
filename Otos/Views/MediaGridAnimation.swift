@@ -8,8 +8,9 @@ import QuartzCore
 /// (spec 0047) lives here so tests and code review reference one source of exact
 /// values instead of magic numbers scattered across the AppKit boundary.
 nonisolated enum MediaGridAnimation {
-    /// Duration for a tuned animated diffable apply (small inserts/removes only —
-    /// the reloadData-class fallback for large/reorder-only applies is unaffected).
+    /// Duration for a tuned animated diffable apply (small inserts/removes and
+    /// same-descriptor reorder-only applies). Descriptor-changed reorders and
+    /// large membership applies keep the unanimated reloadData-class path.
     static let applyDuration: TimeInterval = 0.35
 
     /// Ease-out with a mild overshoot. AppKit's `NSAnimationContext` has no spring

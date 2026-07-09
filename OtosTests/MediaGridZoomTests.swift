@@ -40,7 +40,7 @@ struct MediaGridZoomTests {
             orderedAssetIDs: ids + [makeAssetID(path: "extra.jpg")]
         )
         // Mark a structural apply in flight on the gate (differing identities).
-        guard controller.mutationGate.receive(newGrid) == [.apply(newGrid, resetScroll: false, resetSelection: false)]
+        guard controller.mutationGate.receive(newGrid) == [.apply(newGrid, descriptorChanged: false)]
         else {
             Issue.record("Expected the differing grid to start a structural apply")
             return

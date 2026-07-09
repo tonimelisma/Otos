@@ -24,14 +24,16 @@ extension MediaGridViewController {
     func applyStructure(
         _ grid: CatalogMediaGridState,
         resetScroll: Bool,
-        resetSelection: Bool
+        resetSelection: Bool,
+        descriptorChanged: Bool
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
         let applyStart = Date()
         let policyStart = applyStart
         let summary = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: mutationGate.displayedOrderedIDs,
-            nextOrderedIDs: grid.orderedAssetIDs
+            nextOrderedIDs: grid.orderedAssetIDs,
+            descriptorChanged: descriptorChanged
         )
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
         // Snapshot the selected identities before the diffable apply can drop or shift
@@ -101,11 +103,16 @@ extension MediaGridViewController {
         )
     }
 
-    /// The `animatingDifferences: false` branch is the reloadData-class path for
-    /// large/reorder applies (ADR 0006). Live ~23k measurement puts that path and
-    /// zero-duration true-diff in the same ~110–250 ms ballpark. Only the already-animating
-    /// small-apply branch gets the tuned duration/timing curve, wrapped in an explicit
-    /// `NSAnimationContext` group so it does not affect the large/reorder path.
+    /// Animated branch (`animatingDifferences: true`): small insert/remove and
+    /// same-descriptor reorder-only applies (enrichment trickle). Tuned duration/
+    /// timing via an explicit `NSAnimationContext` group. Moves surviving items
+    /// instead of recreating them (ADR 0006).
+    ///
+    /// Unanimated branch (`false`): descriptor-changed reorders and large
+    /// membership applies — AppKit's reloadData-class path. Scroll resets on
+    /// descriptor change anyway; large membership diffs stay off the quadratic
+    /// true-diff cliff (research harness: ~23–28 ms call-to-return for K = 1–3
+    /// moves at n = 23k; cliff above ~1k movers).
     private func applySnapshot(
         _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
         summary: MediaGridStructuralApplyPolicy,

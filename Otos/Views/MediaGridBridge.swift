@@ -380,8 +380,13 @@ extension MediaGridViewController {
                 }
                 _ = requestVisibleDetails(reason: "detailRefresh")
                 reportViewport()
-            case let .apply(grid, resetScroll, resetSelection):
-                applyStructure(grid, resetScroll: resetScroll, resetSelection: resetSelection)
+            case let .apply(grid, descriptorChanged):
+                applyStructure(
+                    grid,
+                    resetScroll: descriptorChanged,
+                    resetSelection: descriptorChanged,
+                    descriptorChanged: descriptorChanged
+                )
             case let .zoomSwap(columnCount):
                 performZoomSwap(to: columnCount)
             }

@@ -41,12 +41,14 @@ no-blank correctness cannot rely on AppKit preserving cell instances. The invari
 is enforced by `TileContentStore` (cost-bounded decoded images, visible IDs pinned
 against prune and budget eviction) so a painted thumbnail never regresses to nil
 for a visible asset; tiles are pure renderers of that store value. Diffable apply
-semantics only affect how much work AppKit does. Large and reorder-only applies use
-AppKit's reloadData-class path (`animatingDifferences: false`). Live measurement on a
-~23k library (2026-07-09) shows that path and zero-duration true-diff in the same
-ballpark (~110–250 ms `applyMs`), not the older multi-second true-diff spans that once
-motivated treating true-diff as pathological. The remaining scroll hitch under Best Date
-enrichment is how often those applies run, not a multi-second Diffable cost.
+semantics only affect how much work AppKit does. Same-descriptor same-membership
+reorders (the enrichment trickle that publishes ~1/s while Best Date enrichment
+runs) animate with `animatingDifferences: true`, which moves surviving items
+instead of recreating them — measured `applyCallMs` for K = 1–3 movers at n ≈ 23k
+is in the low tens of milliseconds (`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`).
+Descriptor-changed reorders and large membership applies keep the reloadData-class
+path. The once-per-second reorder cadence is intentional; the hitch was the
+reloadData teardown, not how often applies run.
 
 ## Alternatives
 
@@ -95,21 +97,24 @@ the thumbnail face with no outer inset and symmetric internal horizontal
 padding. Images have no video badge, blue tint, or video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
-insert/remove changes animate with a tuned duration and ease-out-with-overshoot
-curve (`MediaGridAnimation`, spec 0047), applied through an explicit
+insert/remove changes, and same-descriptor same-membership reorders (enrichment
+trickle), animate with a tuned duration and ease-out-with-overshoot curve
+(`MediaGridAnimation`, spec 0047), applied through an explicit
 `NSAnimationContext` group around the animated apply branch only; a
 `MediaGridAnimatedLayout` fades and shrinks only the index paths a given apply
 batch actually inserted or deleted, leaving every other appearing/disappearing
-item (scroll dequeue, a future zoom swap) at `super`'s unmodified attributes.
-Large applies and background reorder-only changes use AppKit's reloadData-class
-diffable path (`animatingDifferences: false`), completely unaffected by the
-animation tuning above. At current ~23k library scale that apply costs roughly
-one to a few hundred milliseconds on MainActor — acceptable as a single apply,
-and not evidence that true-diff is uniquely multi-second. This is visually safe
-because `TileContentStore` holds any decoded thumbnail for a visible (pinned)
-asset and never drops it under budget pressure, so a recycled tile can
-synchronously repaint and never downgrades a painted same-asset image to
-placeholder content. The fallback is an apply-policy choice only; it does not
+item (scroll dequeue, a future zoom swap) — and every moved item in a move-only
+batch — at `super`'s unmodified attributes so moves animate as plain position
+changes. Descriptor-changed reorders (sort/scope/filter flips) and large
+membership applies (`n ≥ 1000`) use AppKit's reloadData-class diffable path
+(`animatingDifferences: false`), completely unaffected by the animation tuning
+above. Same-descriptor reorders are structurally bounded to small mover counts
+by enrichment batch caps within one projection tick; do not add LIS/mover-count
+gating without a fresh measurement against the research harness table. This is
+visually safe because `TileContentStore` holds any decoded thumbnail for a
+visible (pinned) asset and never drops it under budget pressure, so a recycled
+tile can synchronously repaint and never downgrades a painted same-asset image
+to placeholder content. The fallback is an apply-policy choice only; it does not
 make the catalog or `TileContentStore` a source of media truth. A thumbnail's
 arrival from an async decode (never a store hit) fades in; a store-hit repaint
 (scroll-back, recycled-cell sync repaint) stays instant to
