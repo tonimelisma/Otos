@@ -63,7 +63,7 @@ nonisolated enum EnrichmentLeaseGateway {
         claimNotAfter: TimeInterval,
         limit: Int,
         db: Database
-    ) throws -> [CatalogStore.StoredAsset] {
+    ) throws -> [StoredAsset] {
         let now = Date().timeIntervalSince1970
         guard let query = enrichmentClaimQuery(
             rootIDs: rootIDs,
@@ -95,7 +95,7 @@ nonisolated enum EnrichmentLeaseGateway {
         now: TimeInterval,
         claimNotAfter _: TimeInterval,
         limit: Int
-    ) -> CatalogStore.SQLQuery? {
+    ) -> SQLQuery? {
         guard !rootIDs.isEmpty, limit > 0 else {
             return nil
         }
@@ -219,8 +219,8 @@ private nonisolated func rootEnrichmentClaimQuery(
     rootID: Int64,
     now: TimeInterval,
     limit: Int
-) -> CatalogStore.SQLQuery {
-    CatalogStore.SQLQuery(
+) -> SQLQuery {
+    SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
@@ -241,12 +241,12 @@ private nonisolated func globalEnrichmentClaimQuery(
     rootIDs: [Int64],
     now: TimeInterval,
     limit: Int
-) -> CatalogStore.SQLQuery {
+) -> SQLQuery {
     let placeholders = sqlPlaceholders(count: rootIDs.count)
     var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
     arguments.append(now)
     arguments.append(limit)
-    return CatalogStore.SQLQuery(
+    return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
@@ -293,7 +293,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
 private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
     _ keys: [EnrichmentCandidateKey],
     db: Database
-) throws -> [CatalogStore.StoredAsset] {
+) throws -> [StoredAsset] {
     guard !keys.isEmpty else {
         return []
     }
@@ -312,13 +312,13 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
     ).map(enrichmentCandidateStoredAsset(from:))
 }
 
-private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> CatalogStore.StoredAsset {
+private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> StoredAsset {
     let createdUnix: Double? = row["created_at_unix"]
     let modifiedUnix: Double? = row["content_modified_at_unix"]
     let bestCaptureUnix: Double? = row["best_capture_unix"]
     let bestKindRaw: String? = row["best_kind"]
     let bestFormatRaw: String? = row["best_format"]
-    return CatalogStore.StoredAsset(
+    return StoredAsset(
         libraryRootID: row["library_root_id"],
         relativePath: MediaRelativePath(rawValue: row["relative_path"]),
         name: row["name"],

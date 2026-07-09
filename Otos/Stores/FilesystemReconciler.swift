@@ -51,42 +51,4 @@ nonisolated enum FilesystemReconciler {
 
         return .targeted(events: events)
     }
-
-    /// Scalar diagnostic summary for a batch — never retains catalog state.
-    static func batchFields(
-        root: LibraryRootPath,
-        events: [FilesystemEvent],
-        mode: String,
-        catalogChanged: Bool
-    ) -> [String: String] {
-        var actionCounts: [String: Int] = [:]
-        var flagCounts: [String: Int] = [:]
-        for event in events {
-            let flags = FilesystemEventFlags(event: event)
-            let action = if flags.requiresFullRootScan {
-                "fullRoot"
-            } else {
-                flags.singleFileAction?.diagnosticDescription ?? "unknown"
-            }
-            actionCounts[action, default: 0] += 1
-            for name in flags.diagnosticNames {
-                flagCounts[name, default: 0] += 1
-            }
-        }
-        let samplePaths = events.prefix(3).map(\.path).joined(separator: "|")
-        return [
-            "rootPath": root.rawValue,
-            "mode": mode,
-            "eventCount": "\(events.count)",
-            "uniquePathCount": "\(Set(events.map(\.path)).count)",
-            "catalogChanged": "\(catalogChanged)",
-            "actions": diagnosticCounts(actionCounts),
-            "flags": diagnosticCounts(flagCounts),
-            "samplePaths": samplePaths,
-        ]
-    }
-
-    private static func diagnosticCounts(_ counts: [String: Int]) -> String {
-        counts.keys.sorted().map { "\($0):\(counts[$0] ?? 0)" }.joined(separator: ",")
-    }
 }

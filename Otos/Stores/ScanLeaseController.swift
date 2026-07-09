@@ -151,18 +151,4 @@ nonisolated struct ScanLeaseController {
         }
         return pendingScanPaths.removeFirst()
     }
-
-    /// Pops the next pending path that still has a known root row. Returns nil
-    /// when the queue is empty or only unknown paths remain.
-    mutating func dequeueNextKnownRoot(
-        rootRowID: (LibraryRootPath) -> Int64?
-    ) -> (path: LibraryRootPath, rootRowID: Int64)? {
-        while let nextPath = popPending() {
-            guard let rowID = rootRowID(nextPath) else {
-                continue
-            }
-            return (nextPath, rowID)
-        }
-        return nil
-    }
 }

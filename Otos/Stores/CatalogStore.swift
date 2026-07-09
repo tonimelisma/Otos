@@ -71,33 +71,6 @@ actor CatalogStore {
         let lastSeenAt: Date?
     }
 
-    struct StoredAsset {
-        let libraryRootID: Int64
-        let relativePath: MediaRelativePath
-        let name: String?
-        let contentTypeIdentifier: String?
-        let byteSize: Int64?
-        let createdAt: Date?
-        let contentModifiedAt: Date?
-        var thumbnailPath: String?
-        var bestCaptureDate: Date?
-        var bestKind: MediaKind?
-        var bestFormat: MediaFormatToken?
-        var durationSeconds: Double?
-        var enrichedSourceSize: Int64?
-        var enrichedSourceMTimeSeconds: Int?
-    }
-
-    struct StoredTileDetail {
-        let libraryRootID: Int64
-        let relativePath: MediaRelativePath
-        var thumbnailPath: String?
-        var bestKind: MediaKind?
-        var durationSeconds: Double?
-        var enrichedSourceSize: Int64?
-        var enrichedSourceMTimeSeconds: Int?
-    }
-
     struct ThumbnailPathMigration {
         let oldRelativeName: String
         let newRelativeName: String
@@ -243,7 +216,7 @@ extension CatalogStore {
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
         let timedRows = try await timedRead(dbWriter) { db in
-            try Self.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: rootIDs, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
@@ -289,7 +262,7 @@ extension CatalogStore {
         }
         let dbWriter = try database()
         let timedCount = try await timedRead(dbWriter) { db in
-            try Self.countAssets(rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.countAssets(rootIDs: rootIDs, db: db)
         }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -308,7 +281,7 @@ extension CatalogStore {
         }
         let dbWriter = try database()
         let timedCount = try await timedRead(dbWriter) { db in
-            try Self.countAssets(rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.countAssets(rootIDs: rootIDs, db: db)
         }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -327,7 +300,7 @@ extension CatalogStore {
         }
         let dbWriter = try database()
         let timedOptions = try await timedRead(dbWriter) { db in
-            try Self.filterOptions(rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.filterOptions(rootIDs: rootIDs, db: db)
         }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -345,7 +318,7 @@ extension CatalogStore {
         let rootIDsBeforeRead = roots.rowIDSnapshot()
         let dbWriter = try database()
         let timedAssets = try await timedRead(dbWriter) { db in
-            try Self.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
+            try CatalogQueryGateway.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
 
@@ -381,7 +354,7 @@ extension CatalogStore {
         let rootIDsBeforeRead = roots.rowIDSnapshot()
         let dbWriter = try database()
         let timedDetails = try await timedRead(dbWriter) { db in
-            try Self.fetchStoredTileDetails(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
+            try CatalogQueryGateway.fetchStoredTileDetails(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreTileDetailQuery", signpost)
 
@@ -437,7 +410,7 @@ extension CatalogStore {
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreMetadataQuery")
         let dbWriter = try database()
         let timedMetadata = try await timedRead(dbWriter) { db in
-            try Self.metadataExtra(libraryRootID: rootID, relativePath: id.relativePath, db: db)
+            try CatalogQueryGateway.metadataExtra(libraryRootID: rootID, relativePath: id.relativePath, db: db)
         }
         OtosSignpost.persistence.endInterval("CatalogStoreMetadataQuery", signpost)
 
@@ -997,7 +970,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogRemoveRoot", state)
 
-        removeRootRuntimeState(path: path, rootRowID: rootRowID)
+        removeRoot(path: path)
         if let thumbnailDirectory {
             for name in purgedThumbnails {
                 ThumbnailStore.delete(name, in: thumbnailDirectory)
@@ -1034,14 +1007,6 @@ extension CatalogStore {
             )
             throw error
         }
-    }
-
-    private func removeRootRuntimeState(path: LibraryRootPath, rootRowID: Int64) {
-        guard let state = roots[path], state.rowID == rootRowID else {
-            removeRoot(path: path)
-            return
-        }
-        removeRoot(path: path)
     }
 
     private func rootForDeviceIdentity(_ identity: String) -> LibraryRoot? {

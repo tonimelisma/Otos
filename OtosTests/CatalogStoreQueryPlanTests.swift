@@ -25,7 +25,7 @@ struct CatalogStoreQueryPlanTests {
         )
 
         let ids = try await dbQueue.read { db in
-            try CatalogStore.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: [rootID], db: db)
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: [rootID], db: db)
         }
 
         #expect(ids.map(\.1.rawValue) == ["alpha.jpg", "raw-original.nef", "retagged.mov"])
@@ -43,8 +43,8 @@ struct CatalogStoreQueryPlanTests {
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let now = Date().timeIntervalSince1970
-        let rootOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(descriptor: .default, rootIDs: [rootID1]))
-        let globalOrderQuery = try #require(CatalogStore.orderedAssetIDQuery(
+        let rootOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, rootIDs: [rootID1]))
+        let globalOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
             rootIDs: [rootID1, rootID2]
         ))
@@ -352,9 +352,9 @@ private func legacyExclusionArguments(rootID: Int64, excludedCount: Int) -> [any
     }
 }
 
-private func legacyNotInEnrichmentQuery(rootID: Int64, excludedCount: Int) -> CatalogStore.SQLQuery {
+private func legacyNotInEnrichmentQuery(rootID: Int64, excludedCount: Int) -> SQLQuery {
     let exclusionPlaceholders = Array(repeating: "(?, ?)", count: excludedCount).joined(separator: ", ")
-    return CatalogStore.SQLQuery(
+    return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
         FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
@@ -391,7 +391,7 @@ private func explainPlan(
         .joined(separator: "\n")
 }
 
-private func explainPlan(_ db: Database, query: CatalogStore.SQLQuery) throws -> String {
+private func explainPlan(_ db: Database, query: SQLQuery) throws -> String {
     try explainPlan(db, sql: query.sql, arguments: query.arguments)
 }
 

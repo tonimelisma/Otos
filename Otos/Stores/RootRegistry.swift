@@ -73,14 +73,6 @@ nonisolated struct RootRegistry {
         return true
     }
 
-    mutating func update(_ path: LibraryRootPath, _ body: (inout RootRuntimeState) -> Void) {
-        guard var state = statesByPath[path] else {
-            return
-        }
-        body(&state)
-        upsert(state)
-    }
-
     func rootForDeviceIdentity(_ identity: String) -> LibraryRoot? {
         statesByPath.values.map(\.root).first { $0.deviceIdentity == identity }
     }

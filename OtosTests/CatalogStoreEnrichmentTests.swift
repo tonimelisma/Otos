@@ -365,7 +365,7 @@ private func persistedMetadataRow(
             cameraModel: row["camera_model"] as String?,
             pixelWidth: row["pixel_width"] as Int?,
             durationSeconds: row["duration_seconds"] as Double?,
-            metadata: CatalogStore.metadataExtra(libraryRootID: rootID, relativePath: relativePath, db: db)
+            metadata: CatalogQueryGateway.metadataExtra(libraryRootID: rootID, relativePath: relativePath, db: db)
         )
     }
 }
