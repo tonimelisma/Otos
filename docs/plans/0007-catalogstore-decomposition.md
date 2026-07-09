@@ -74,8 +74,14 @@ same actor.
 
 **Shipped.** `RootRegistry` owns the two maps + mutators + query-id/priority/
 overlap/watched-path helpers. `CatalogStore` keeps `.scanning` overlay,
-orchestration, and the public API. **Stop here for owner reassessment** before
-phases 2–4 (`FilesystemReconciler`, `ScanLeaseController`, `EnrichmentLeaseGateway`).
+orchestration, and the public API.
+
+### Phase 2 status (2026-07-09)
+
+**Shipped.** `FilesystemReconciler` is the pure batch classifier
+(`FilesystemReconcileDecision`); Store keeps debounce tasks and effectful
+execution. Focused unit tests cover drop/defer/rescan/targeted; existing
+`CatalogStoreFilesystemEventTests` remain the integration gate.
 
 1. **`RootRegistry`** — mechanically follows plan 0006: promote the two maps +
    mutators + query-id/priority helpers into a `RootRegistry` value the actor

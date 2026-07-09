@@ -23,9 +23,10 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// membership, launch scans, detach, and Forget. Filesystem scans and device catalog
 /// batches write SQLite and notify consumers only when those writes actually inserted,
 /// updated, or deleted rows. While the app runs, `CatalogFilesystemWatcher` forwards
-/// macOS events to per-root debounced reconciliation: safe single-file events update
-/// one row and unsafe events fall back to the full scan pipeline. Views never access
-/// persistence directly.
+/// macOS events to per-root debounced reconciliation via `FilesystemReconciler`
+/// (pure batch classification) plus Store-owned debounce/execution: safe single-file
+/// events update one row and unsafe events fall back to the full scan pipeline. Views
+/// never access persistence directly.
 ///
 /// Why an actor: the database handle, root runtime state, scan lifecycle, and
 /// background scans all touch the same catalog authority, and a scan streams in
@@ -2395,31 +2396,28 @@ private extension CatalogStore {
         return size.int64Value
     }
 
-    // swiftlint:disable:next function_body_length
     private func processFilesystemEventBatch(for root: LibraryRootPath) async {
         let signpost = OtosSignpost.catalog.beginInterval("FilesystemEventBatch")
         defer {
             OtosSignpost.catalog.endInterval("FilesystemEventBatch", signpost)
         }
 
-        guard roots[root] != nil else {
-            filesystemEventBatches.removeValue(forKey: root)
-            await recordFilesystemEventDrop(root: root, reason: "removed")
-            return
-        }
-        guard filesystemWatchingArmed.contains(root) else {
-            filesystemEventBatches.removeValue(forKey: root)
-            await recordFilesystemEventDrop(root: root, reason: "unarmed")
-            return
-        }
-        guard rootIsAvailable(root) else {
-            filesystemEventBatches.removeValue(forKey: root)
-            await recordFilesystemEventDrop(root: root, reason: "unavailable")
-            return
-        }
+        let pendingEvents = filesystemEventBatches[root] ?? []
+        let decision = FilesystemReconciler.decide(
+            events: pendingEvents,
+            rootExists: roots[root] != nil,
+            isArmed: filesystemWatchingArmed.contains(root),
+            isAvailable: rootIsAvailable(root),
+            hasActiveScanForRoot: activeScan?.rootPath == root
+        )
 
-        if activeScan?.rootPath == root {
-            let events = filesystemEventBatches[root] ?? []
+        switch decision {
+        case let .drop(reason):
+            filesystemEventBatches.removeValue(forKey: root)
+            await recordFilesystemEventDrop(root: root, reason: reason)
+        case .noop:
+            filesystemEventBatches.removeValue(forKey: root)
+        case let .deferUntilScanCompletes(eventCount):
             rescanAfterCurrentScan.insert(root)
             filesystemEventBatches.removeValue(forKey: root)
             OtosLog.catalog.debug(
@@ -2427,77 +2425,33 @@ private extension CatalogStore {
             )
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
-                "op=catalog.filesystemEvent phase=schedule mode=deferred rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public)"
+                "op=catalog.filesystemEvent phase=schedule mode=deferred rootPath=\(root.rawValue, privacy: .public) eventCount=\(eventCount, privacy: .public)"
             )
-            return
-        }
-
-        let events = filesystemEventBatches.removeValue(forKey: root) ?? []
-        guard !events.isEmpty else {
-            return
-        }
-
-        if events.contains(where: { FilesystemEventFlags(event: $0).requiresFullRootScan }) {
+        case let .rescanRoot(eventCount):
+            filesystemEventBatches.removeValue(forKey: root)
             enqueueScans([root])
             OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
-                "op=catalog.filesystemEvent phase=schedule mode=fullRoot rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public)"
+                "op=catalog.filesystemEvent phase=schedule mode=fullRoot rootPath=\(root.rawValue, privacy: .public) eventCount=\(eventCount, privacy: .public)"
             )
-            return
-        }
-
-        var catalogChanged = false
-        for event in events {
-            guard await reconcileFilesystemEvent(event, root: root) else {
-                continue
+        case let .targeted(events):
+            filesystemEventBatches.removeValue(forKey: root)
+            var catalogChanged = false
+            for event in events {
+                guard await reconcileFilesystemEvent(event, root: root) else {
+                    continue
+                }
+                catalogChanged = true
             }
-            catalogChanged = true
-        }
-        if catalogChanged {
-            notifyCatalogChanged()
-        }
-        OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
-            "op=catalog.filesystemEvent phase=reconcile mode=targeted rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public) catalogChanged=\(catalogChanged, privacy: .public)"
-        )
-    }
-
-    private func filesystemEventBatchFields(
-        root: LibraryRootPath,
-        events: [FilesystemEvent],
-        mode: String,
-        catalogChanged: Bool
-    ) -> [String: String] {
-        var actionCounts: [String: Int] = [:]
-        var flagCounts: [String: Int] = [:]
-        for event in events {
-            let flags = FilesystemEventFlags(event: event)
-            let action = if flags.requiresFullRootScan {
-                "fullRoot"
-            } else {
-                flags.singleFileAction?.diagnosticDescription ?? "unknown"
+            if catalogChanged {
+                notifyCatalogChanged()
             }
-            actionCounts[action, default: 0] += 1
-            for name in flags.diagnosticNames {
-                flagCounts[name, default: 0] += 1
-            }
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.filesystemEvent phase=reconcile mode=targeted rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public) catalogChanged=\(catalogChanged, privacy: .public)"
+            )
         }
-        let samplePaths = events.prefix(3).map(\.path).joined(separator: "|")
-        return [
-            "rootPath": root.rawValue,
-            "mode": mode,
-            "eventCount": "\(events.count)",
-            "uniquePathCount": "\(Set(events.map(\.path)).count)",
-            "catalogChanged": "\(catalogChanged)",
-            "actions": diagnosticCounts(actionCounts),
-            "flags": diagnosticCounts(flagCounts),
-            "samplePaths": samplePaths,
-        ]
-    }
-
-    private func diagnosticCounts(_ counts: [String: Int]) -> String {
-        counts.keys.sorted().map { "\($0):\(counts[$0] ?? 0)" }.joined(separator: ",")
     }
 
     @discardableResult
