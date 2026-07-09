@@ -45,7 +45,7 @@ struct MediaGridView: View {
                 if grid.orderedAssetIDs.isEmpty {
                     emptyContent
                 } else {
-                    MediaAssetCollectionView(
+                    MediaGridBridgeView(
                         grid: grid,
                         thumbnailDirectory: thumbnailDirectory,
                         detailReader: detailReader,

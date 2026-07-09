@@ -1,10 +1,11 @@
+import AppKit
 import Foundation
 @testable import Otos
 import Testing
 
-/// Pure-model tests for `GridSelection` (spec 0046). No AppKit, no collection view:
-/// these assert the value-level selection/anchor/base transitions that the controller
-/// relies on. Items `A B C D E F G H` are in display order throughout.
+/// Pure-model tests for `GridSelection` — selection/anchor/base transitions plus the
+/// `orderedSelection` / `selectionDelta` helpers — and `MediaGridClipboard`. Items
+/// `A B C D E F G H` are in display order throughout.
 @MainActor
 struct GridSelectionTests {
     // MARK: - plainClick
@@ -235,6 +236,78 @@ struct GridSelectionTests {
         #expect(after.selection == before.selection)
         #expect(after.anchor == before.anchor)
         #expect(after.base == before.base)
+    }
+
+    // MARK: - orderedSelection
+
+    @Test func orderedSelectionFollowsDisplayOrderAndFiltersUnselected() {
+        let idA = id("/Pictures", "a.jpg")
+        let idB = id("/Pictures", "b.jpg")
+        let idC = id("/Pictures", "c.jpg")
+        let ordered = GridSelection.orderedSelection([idA, idC], in: [idC, idB, idA])
+        #expect(ordered == [idC, idA])
+    }
+
+    @Test func orderedSelectionOfEmptySelectionIsEmpty() {
+        #expect(GridSelection.orderedSelection([], in: [id("/Pictures", "a.jpg")]).isEmpty)
+    }
+
+    // MARK: - selectionDelta
+
+    @Test func selectionDeltaExcludesSurvivorsFromBothSides() {
+        let idA = id("/Pictures", "a.jpg")
+        let idB = id("/Pictures", "b.jpg")
+        let idC = id("/Pictures", "c.jpg")
+        let delta = GridSelection.selectionDelta(current: [idA, idB], target: [idB, idC])
+        #expect(delta.toDeselect == [idA])
+        #expect(delta.toSelect == [idC])
+    }
+
+    @Test func selectionDeltaOfIdenticalSetsIsEmpty() {
+        let idA = id("/Pictures", "a.jpg")
+        let idB = id("/Pictures", "b.jpg")
+        let delta = GridSelection.selectionDelta(current: [idA, idB], target: [idA, idB])
+        #expect(delta.toDeselect.isEmpty)
+        #expect(delta.toSelect.isEmpty)
+    }
+
+    @Test func selectionDeltaFromEmptyToNonEmptySelectsEverything() {
+        let idA = id("/Pictures", "a.jpg")
+        let delta = GridSelection.selectionDelta(current: [], target: [idA])
+        #expect(delta.toDeselect.isEmpty)
+        #expect(delta.toSelect == [idA])
+    }
+
+    @Test func selectionDeltaToEmptyDeselectsEverything() {
+        let idA = id("/Pictures", "a.jpg")
+        let delta = GridSelection.selectionDelta(current: [idA], target: [])
+        #expect(delta.toDeselect == [idA])
+        #expect(delta.toSelect.isEmpty)
+    }
+
+    // MARK: - clipboard
+
+    @Test func writePutsFileURLsInOrderAndReturnsCount() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-\(UUID().uuidString)"))
+        let idA = id("/Pictures", "a.jpg")
+        let idB = id("/Pictures", "Nested/b.mov")
+
+        let count = MediaGridClipboard.write([idA, idB], to: pasteboard)
+
+        #expect(count == 2)
+        let urls = (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        #expect(urls.map(\.path) == ["/Pictures/a.jpg", "/Pictures/Nested/b.mov"])
+    }
+
+    @Test func writeClearsPriorContentsAndEmptySelectionWritesNothing() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("test-\(UUID().uuidString)"))
+        _ = MediaGridClipboard.write([id("/Pictures", "a.jpg")], to: pasteboard)
+
+        let count = MediaGridClipboard.write([], to: pasteboard)
+
+        #expect(count == 0)
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]
+        #expect(urls == nil || urls?.isEmpty == true)
     }
 }
 

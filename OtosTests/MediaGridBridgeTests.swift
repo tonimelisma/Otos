@@ -2,7 +2,7 @@
 import Testing
 
 @MainActor
-struct MediaAssetCollectionTests {
+struct MediaGridBridgeTests {
     // MARK: - Structural apply arbitration (migrated to MediaGridMutationGate)
 
     @Test func mutationGateKeepsOnlyNewestPendingGrid() {

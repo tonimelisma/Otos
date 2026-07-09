@@ -34,7 +34,7 @@ import OSLog
 
 // MARK: - Selection and copy
 
-extension MediaAssetCollectionViewController: NSCollectionViewDelegate {
+extension MediaGridViewController: NSCollectionViewDelegate {
     /// Telemetry only: mouse selection semantics live in `applyMouseSelection`, driven by
     /// `MediaGridCollectionView`'s mouseDown capture, and programmatic selection changes
     /// (structural-apply restore, gesture writes) also route through these.
@@ -47,7 +47,7 @@ extension MediaAssetCollectionViewController: NSCollectionViewDelegate {
     }
 }
 
-extension MediaAssetCollectionViewController {
+extension MediaGridViewController {
     /// Called by `MediaGridCollectionView.mouseDown(with:)` (which does not call
     /// `super.mouseDown`, so AppKit's native mouse selection never runs). `hit` is the item
     /// under the click location (`nil` for empty space); `modifiers` are the click's flags.
@@ -110,7 +110,7 @@ extension MediaAssetCollectionViewController {
     /// so a survivor present in both never receives a select/deselect call (spec 0047:
     /// this is what keeps the animated selection ring from blinking on a survivor).
     func applySelectionDelta(from current: Set<MediaAssetID>, to target: Set<MediaAssetID>) {
-        let delta = MediaGridSelection.selectionDelta(current: current, target: target)
+        let delta = GridSelection.selectionDelta(current: current, target: target)
         if !delta.toDeselect.isEmpty {
             let paths = Set(delta.toDeselect.compactMap { dataSource.indexPath(for: $0) })
             collectionView.deselectItems(at: paths)
@@ -122,7 +122,7 @@ extension MediaAssetCollectionViewController {
     }
 }
 
-extension MediaAssetCollectionViewController: NSUserInterfaceValidations {
+extension MediaGridViewController: NSUserInterfaceValidations {
     /// Edit > Copy and its command-key equivalent are enabled only when something is
     /// selected. AppKit asks this controller because it is the responder-chain object
     /// that implements `copy(_:)`.
@@ -134,13 +134,13 @@ extension MediaAssetCollectionViewController: NSUserInterfaceValidations {
     }
 }
 
-extension MediaAssetCollectionViewController {
+extension MediaGridViewController {
     /// Copy arrives here through the responder chain: the collection view is first
     /// responder but does not implement copy:, so the action travels to this
     /// controller. We write the selected assets' original file URLs to the general
     /// pasteboard in display order (ADR 0012). No image or video bytes are read.
     @objc func copy(_: Any?) {
-        let ordered = MediaGridSelection.orderedSelection(
+        let ordered = GridSelection.orderedSelection(
             selectedIdentities(),
             in: mutationGate.displayedOrderedIDs
         )

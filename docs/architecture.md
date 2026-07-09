@@ -27,7 +27,7 @@ rebuildable projection. When they disagree, the filesystem wins.
   CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; assigns @Observable state
         │
         ▼
-  SwiftUI views  →  MediaAssetCollectionView (AppKit NSCollectionView, the grid)
+  SwiftUI views  →  MediaGridBridgeView (AppKit NSCollectionView, the grid)
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a
@@ -49,7 +49,7 @@ everything expensive happens on an actor off the main thread.
 
 - **Identity** is typed: `LibraryRootPath` + `MediaRelativePath` = `MediaAssetID`. No
   invented durable IDs; the filesystem path is the identity (ADR 0003/0008).
-- **The grid** is the one AppKit boundary (`MediaAssetCollectionView` +
+- **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps. Mouse selection is
   model-owned (`GridSelection`; the subclass never calls `super.mouseDown`). Tiles
@@ -70,7 +70,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
-| grid rendering/selection/zoom | the `MediaAssetCollection*`/`MediaGrid*` boundary (ADR 0006) |
+| grid rendering/selection/zoom | the `MediaGrid*`/`MediaGrid*` boundary (ADR 0006) |
 
 Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main

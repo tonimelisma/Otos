@@ -202,7 +202,7 @@ The implementation removes or proves unreachable:
 - `CatalogProjection.sortAssetIDs` and snapshot-based `buildWindowState`
 - `CatalogProjectionChangeSummary` full-map equality
 - `CatalogMediaGridState.assetsByID`
-- `MediaAssetCollectionViewController.assetsByID`
+- `MediaGridViewController.assetsByID`
 - asset-value-based tile configuration
 - resident-map enrichment scheduling
 - `metadata_blob`, `encodeMetadata`, `decodeMetadata`, and blob-specific tests
@@ -220,7 +220,7 @@ Updated by the implementing increment:
   superseded
 - file guides in `CatalogModels.swift`, `CatalogStore.swift`,
   `CatalogStorePersistence.swift`, `CatalogProjection.swift`,
-  `CatalogWindowViewModel.swift`, `MediaAssetCollectionView.swift`,
+  `CatalogWindowViewModel.swift`, `MediaGridBridge.swift`,
   `MediaAssetTileView.swift`, and `EnrichmentCoordinator.swift`
 
 Planning documents may remain non-authoritative, but must not be cited as current

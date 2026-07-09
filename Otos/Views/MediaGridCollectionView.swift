@@ -34,11 +34,7 @@ final class MediaGridCollectionView: NSCollectionView {
         // accept the full-square hit rather than treating it as a face miss — a miss would
         // make clicks during scroll feel dead. Letterbox rejection only applies once the
         // tile view is resolvable.
-        if let candidate = hit,
-           let item = item(at: candidate) as? MediaAssetCollectionItem,
-           let tileView = item.view as? MediaAssetTileView,
-           !tileView.hitTestsThumbnailFace(at: event.locationInWindow)
-        {
+        if let candidate = hit, !clickHitsThumbnailFace(candidate, event: event) {
             hit = nil
         }
 
@@ -48,5 +44,16 @@ final class MediaGridCollectionView: NSCollectionView {
         // preserves the keyboard focus that `super` would otherwise have handled.
         window?.makeFirstResponder(self)
         onMouseSelection?(hit, modifiers)
+    }
+
+    /// Returns `true` when the click is inside the tile's aspect-fit thumbnail face, or
+    /// when the tile view is not yet resolvable (mid-scroll) so the full-square hit stands.
+    private func clickHitsThumbnailFace(_ candidate: IndexPath, event: NSEvent) -> Bool {
+        guard let item = item(at: candidate) as? MediaGridItem,
+              let tileView = item.view as? MediaAssetTileView
+        else {
+            return true
+        }
+        return tileView.hitTestsThumbnailFace(at: event.locationInWindow)
     }
 }

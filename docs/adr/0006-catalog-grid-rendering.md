@@ -172,6 +172,6 @@ data-driven change rather than a new rendering mechanism.
 - Apple, [UTType.movie](https://developer.apple.com/documentation/uniformtypeidentifiers/uttype-swift.struct/movie)
 - `NSDiffableDataSource.h` (macOS 27 SDK): `animatingDifferences: false` applies via
   `reloadData`; there is no `applySnapshotUsingReloadData`.
-- Implemented in `Otos/Views/MediaAssetCollection*.swift`, `Otos/Views/MediaGrid*.swift`,
+- Implemented in `Otos/Views/MediaGrid*.swift`, `Otos/Views/MediaGrid*.swift`,
   `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`;
   requirements APP-006/010/011/015.
