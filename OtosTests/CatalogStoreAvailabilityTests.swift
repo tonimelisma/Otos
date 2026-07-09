@@ -9,12 +9,12 @@ struct CatalogStoreAvailabilityTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let firstStore = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        let firstStore = CatalogStore(location: .databaseFile(databaseURL))
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
         _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning }
 
-        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
         try await reloadedStore.start(scansSavedLibraries: false)
         let loaded = try await catalogStoreTestState(reloadedStore)
 
@@ -62,7 +62,7 @@ struct CatalogStoreAvailabilityTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
-        let disappearingScanner = CatalogScanner { rootPath, _, _, _ in
+        let disappearingScanner = CatalogScanner { rootPath, _, _ in
             try FileManager.default.removeItem(at: rootPath.url)
             throw CatalogScanError.filesystemErrorsEncountered(count: 1, summaries: [])
         }

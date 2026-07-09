@@ -5,11 +5,10 @@ import Testing
 struct CatalogWindowViewModelTests {
     @MainActor
     @Test func activeStateSubscriptionDoesNotRetainViewModel() async throws {
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let store = CatalogStore(location: .inMemory)
         let buildProbe = WindowStateBuildProbe()
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
-            diagnostics: nil,
             stateBuilder: { libraries, _, request in
                 await buildProbe.recordBuild()
                 return CatalogWindowState(
@@ -31,7 +30,6 @@ struct CatalogWindowViewModelTests {
         var model: CatalogWindowViewModel? = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: projection,
-            diagnostics: nil,
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -59,11 +57,10 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -97,13 +94,11 @@ struct CatalogWindowViewModelTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -134,11 +129,10 @@ struct CatalogWindowViewModelTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -167,11 +161,10 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -202,12 +195,11 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
-        let scanner = CatalogScanner { _, _, _, _ in [] }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
+        let scanner = CatalogScanner { _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner)
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -234,12 +226,11 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
-        let scanner = CatalogScanner { _, _, _, _ in [] }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
+        let scanner = CatalogScanner { _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner)
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -267,19 +258,17 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
         let loadGate = ViewModelInitialLoadGate()
-        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in [] }
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
-            diagnostics: nil,
             initialLoadDidRead: {
                 await loadGate.pause()
             }
         )
         var model: CatalogWindowViewModel? = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -310,11 +299,10 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: picturesURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )

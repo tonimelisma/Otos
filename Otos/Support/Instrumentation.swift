@@ -41,3 +41,34 @@ nonisolated enum OtosSignpost {
     static let rendering = OSSignposter(logger: OtosLog.rendering)
     static let performance = OSSignposter(logger: OtosLog.performance)
 }
+
+extension Logger {
+    /// Boundary log with stable `op=` / `phase=` / `key=value` shape for agent grepping.
+    nonisolated func noticeOperation(_ operation: String, phase: String, fields: [String: String] = [:]) {
+        if fields.isEmpty {
+            notice("op=\(operation, privacy: .public) phase=\(phase, privacy: .public)")
+            return
+        }
+        let pairs = fields
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: " ")
+        notice(
+            "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)"
+        )
+    }
+
+    nonisolated func errorOperation(_ operation: String, phase: String, fields: [String: String] = [:]) {
+        if fields.isEmpty {
+            error("op=\(operation, privacy: .public) phase=\(phase, privacy: .public)")
+            return
+        }
+        let pairs = fields
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: " ")
+        error(
+            "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)"
+        )
+    }
+}

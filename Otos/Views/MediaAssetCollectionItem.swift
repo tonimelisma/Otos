@@ -57,7 +57,6 @@ final class MediaAssetCollectionItem: NSCollectionViewItem {
         guard elapsedMs >= 5 else {
             return startedLoad
         }
-        OtosSignpost.ui.emitEvent("MediaGridSlowCellConfiguration")
         OtosLog.ui.debug(
             """
             Media grid slow cell assetID=\(detail.libraryRootPath.rawValue, privacy: .public)/\

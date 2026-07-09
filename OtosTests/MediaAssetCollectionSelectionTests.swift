@@ -226,7 +226,7 @@ struct MediaAssetCollectionSelectionTests {
             signpost: .beginState(id: .exclusive)
         )
 
-        harness.controller.completeStructuralApply(context, operation: nil, stallMonitor: nil, diagnostics: nil)
+        harness.controller.completeStructuralApply(context, operation: nil, stallMonitor: nil)
 
         #expect(harness.controller.gridSelection == .empty)
         #expect(harness.selectedIDs().isEmpty)

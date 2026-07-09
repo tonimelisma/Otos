@@ -8,11 +8,10 @@ struct CatalogStoreLifecycleRaceTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let gate = InitialLoadGate()
-        let scanner = CatalogScanner { _, _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in [] }
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
-            diagnostics: nil,
             initialLoadDidRead: {
                 await gate.pause()
             }
@@ -48,26 +47,24 @@ struct CatalogStoreLifecycleRaceTests {
         try FileManager.default.createDirectory(at: savedRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let emptyScanner = CatalogScanner { _, _, _, _ in [] }
+        let emptyScanner = CatalogScanner { _, _, _ in [] }
 
         let firstStore = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanner: emptyScanner,
-            diagnostics: nil
+            scanner: emptyScanner
         )
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: savedRoot)
         _ = try await waitForCatalogStoreState(firstStore) { !$0.isScanning }
 
         let recorder = ScanInvocationRecorder()
-        let recordingScanner = CatalogScanner { rootPath, _, _, _ in
+        let recordingScanner = CatalogScanner { rootPath, _, _ in
             await recorder.record(rootPath)
             return []
         }
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanner: recordingScanner,
-            diagnostics: nil
+            scanner: recordingScanner
         )
 
         // Mutation initialization must not consume the saved root's launch scan.
@@ -88,10 +85,8 @@ struct CatalogStoreLifecycleRaceTests {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let diagnosticsURL = temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
         let probe = ControlledScanProbe()
-        let scanner = CatalogScanner { _, _, _, batchHandler in
+        let scanner = CatalogScanner { _, _, batchHandler in
             let invocation = await probe.beginInvocation()
             await probe.waitForRelease(invocation)
             let name = invocation == 1 ? "old.jpg" : "replacement.jpg"
@@ -111,8 +106,7 @@ struct CatalogStoreLifecycleRaceTests {
         }
         let store = CatalogStore(
             location: .inMemory,
-            scanner: scanner,
-            diagnostics: diagnostics
+            scanner: scanner
         )
 
         try await store.start(scansSavedLibraries: false)
@@ -125,10 +119,6 @@ struct CatalogStoreLifecycleRaceTests {
         try await probe.waitForInvocationCount(2)
 
         await probe.release(1)
-        _ = try await waitForCatalogDiagnostics(diagnosticsURL) { contents in
-            contents.contains("\"operation\":\"catalog.scan.staleCallback\"")
-                && contents.contains("\"callback\":\"completion\"")
-        }
         let replacementStillActive = try await catalogStoreTestState(store)
         #expect(replacementStillActive.isScanning)
         #expect(replacementStillActive.testAssets.isEmpty)
@@ -281,21 +271,4 @@ private func assertArrivalCountStays(
 ) async throws {
     try await Task.sleep(for: duration)
     #expect(await gate.arrivalCount() == expectedCount)
-}
-
-private func waitForCatalogDiagnostics(
-    _ url: URL,
-    matching predicate: @escaping @Sendable (String) -> Bool
-) async throws -> String {
-    try await withTestTimeout("catalog diagnostics") {
-        while !Task.isCancelled {
-            let data = try? Data(contentsOf: url)
-            let contents = data.flatMap { String(data: $0, encoding: .utf8) }
-            if let contents, predicate(contents) {
-                return contents
-            }
-            await Task.yield()
-        }
-        throw CancellationError()
-    }
 }

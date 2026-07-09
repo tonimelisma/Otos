@@ -42,7 +42,6 @@ extension MediaAssetCollectionViewController {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
         let stallMonitor = stallMonitor
-        let diagnostics = diagnostics
         let context = StructuralApplyCompletionContext(
             grid: grid,
             preservedSelection: preservedSelection,
@@ -57,7 +56,7 @@ extension MediaAssetCollectionViewController {
             usesReloadDataFallback: summary.usesReloadDataFallback,
             signpost: signpost
         )
-        let completion = { [weak self, operation, stallMonitor, diagnostics, context] in
+        let completion = { [weak self, operation, stallMonitor, context] in
             guard let self else {
                 if let operation {
                     stallMonitor?.endOperation(operation)
@@ -67,8 +66,7 @@ extension MediaAssetCollectionViewController {
             completeStructuralApply(
                 context,
                 operation: operation,
-                stallMonitor: stallMonitor,
-                diagnostics: diagnostics
+                stallMonitor: stallMonitor
             )
         }
         applySnapshot(snapshot, summary: summary, completion: completion)
@@ -124,11 +122,9 @@ extension MediaAssetCollectionViewController {
     func completeStructuralApply(
         _ context: StructuralApplyCompletionContext,
         operation: MainRunLoopOperationToken?,
-        stallMonitor: MainRunLoopStallMonitor?,
-        diagnostics: CatalogDiagnostics?
+        stallMonitor: MainRunLoopStallMonitor?
     ) {
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
-        OtosSignpost.ui.emitEvent("MediaGridStructuralApplyCompleted")
 
         if context.resetScroll {
             scrollToTop()
@@ -157,7 +153,6 @@ extension MediaAssetCollectionViewController {
         )
         recordStructuralApplyDiagnostics(
             context,
-            diagnostics: diagnostics,
             applyMs: applyMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
@@ -197,7 +192,6 @@ extension MediaAssetCollectionViewController {
 
     private func recordStructuralApplyDiagnostics(
         _ context: StructuralApplyCompletionContext,
-        diagnostics: CatalogDiagnostics?,
         applyMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
@@ -211,22 +205,9 @@ extension MediaAssetCollectionViewController {
         let animatingDifferences = context.animatingDifferences
         let usesReloadDataFallback = context.usesReloadDataFallback
         Task {
-            await diagnostics?.record(
-                operation: "ui.mediaGrid.structuralApply",
-                phase: "finish",
-                fields: [
-                    "items": "\(itemCount)",
-                    "scope": scopeDescription,
-                    "inserted": "\(insertedCount)",
-                    "removed": "\(removedCount)",
-                    "reorderOnly": "\(reorderOnly)",
-                    "largeApply": "\(largeApply)",
-                    "animatingDifferences": "\(animatingDifferences)",
-                    "reloadDataFallback": "\(usesReloadDataFallback)",
-                    "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
-                    "preheatCount": "\(preheatCount)",
-                    "applyMs": "\(applyMs)",
-                ]
+            OtosLog.ui.notice(
+                // swiftlint:disable:next line_length
+                "op=ui.mediaGrid.structuralApply phase=finish items=\(itemCount, privacy: .public) scope=\(scopeDescription, privacy: .public) inserted=\(insertedCount, privacy: .public) removed=\(removedCount, privacy: .public) reorderOnly=\(reorderOnly, privacy: .public) largeApply=\(largeApply, privacy: .public) animatingDifferences=\(animatingDifferences, privacy: .public) reloadDataFallback=\(usesReloadDataFallback, privacy: .public) visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) preheatCount=\(preheatCount, privacy: .public) applyMs=\(applyMs, privacy: .public)"
             )
         }
     }

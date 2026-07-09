@@ -79,8 +79,7 @@ struct CatalogWindowViewModelGridZoomTests {
 @MainActor
 private func makeViewModel(defaults: UserDefaults) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
-        catalogStore: CatalogStore(location: .inMemory, diagnostics: nil),
-        diagnostics: nil,
+        catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         gridColumnCountDefaults: defaults

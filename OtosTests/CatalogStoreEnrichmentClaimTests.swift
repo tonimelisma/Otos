@@ -13,8 +13,7 @@ struct CatalogStoreEnrichmentClaimTests {
 
         let store = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanner: claimTestSingleFileScanner(rel),
-            diagnostics: nil
+            scanner: claimTestSingleFileScanner(rel)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -26,7 +25,7 @@ struct CatalogStoreEnrichmentClaimTests {
         #expect(blockedByLease.isEmpty)
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
 
-        let reloaded = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
 
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 0)
@@ -43,8 +42,7 @@ struct CatalogStoreEnrichmentClaimTests {
                 EnrichmentClaimScanFixture(name: "visible-second.jpg", modifiedAt: 3000),
                 EnrichmentClaimScanFixture(name: "visible-third.jpg", modifiedAt: 2000),
                 EnrichmentClaimScanFixture(name: "fallback-newest.jpg", modifiedAt: 4000),
-            ]),
-            diagnostics: nil
+            ])
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -75,8 +73,7 @@ struct CatalogStoreEnrichmentClaimTests {
                 EnrichmentClaimScanFixture(name: "old.jpg", modifiedAt: 1000),
                 EnrichmentClaimScanFixture(name: "newest.jpg", modifiedAt: 3000),
                 EnrichmentClaimScanFixture(name: "middle.jpg", modifiedAt: 2000),
-            ]),
-            diagnostics: nil
+            ])
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -94,7 +91,7 @@ struct CatalogStoreEnrichmentClaimTests {
         try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: removableRoot, withIntermediateDirectories: true)
         let removableRawPath = try CatalogPath.normalizedDirectoryPath(for: removableRoot).rawValue
-        let scanner = CatalogScanner { rootPath, _, _, batchHandler in
+        let scanner = CatalogScanner { rootPath, _, batchHandler in
             let fixture = rootPath.rawValue == removableRawPath
                 ? EnrichmentClaimScanFixture(name: "card-old.jpg", modifiedAt: 1000)
                 : EnrichmentClaimScanFixture(name: "fixed-new.jpg", modifiedAt: 3000)
@@ -112,8 +109,7 @@ struct CatalogStoreEnrichmentClaimTests {
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: fixedRoot)
@@ -155,7 +151,7 @@ private func enrichmentClaimedRowCount(databaseURL: URL) async throws -> Int {
 }
 
 private func claimTestSingleFileScanner(_ rel: MediaRelativePath) -> CatalogScanner {
-    CatalogScanner { _, _, _, batchHandler in
+    CatalogScanner { _, _, batchHandler in
         try await batchHandler([
             ScannedMediaFile(
                 relativePath: rel,
@@ -171,7 +167,7 @@ private func claimTestSingleFileScanner(_ rel: MediaRelativePath) -> CatalogScan
 }
 
 private func claimTestMultiFileScanner(_ fixtures: [EnrichmentClaimScanFixture]) -> CatalogScanner {
-    CatalogScanner { _, _, _, batchHandler in
+    CatalogScanner { _, _, batchHandler in
         let files = fixtures.map { fixture in
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: fixture.name),

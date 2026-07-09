@@ -13,12 +13,9 @@ struct CatalogStoreMediaEligibilityTests {
         try writeCatalogStoreFile(root.appending(path: "notes.txt"), contents: "text")
         try writeCatalogStoreFile(root.appending(path: "track.mp3"), contents: "mp3")
 
-        let diagnosticsURL = temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
         let store = CatalogStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
-            scanCadence: .milliseconds(10),
-            diagnostics: diagnostics
+            scanCadence: .milliseconds(10)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -29,11 +26,6 @@ struct CatalogStoreMediaEligibilityTests {
         #expect(
             Set(scanned.testAssets.map(\.relativePath.rawValue)) == ["clip.mp4", "photo.jpg"]
         )
-
-        let diagnosticsData = try Data(contentsOf: diagnosticsURL)
-        let diagnosticsText = try String.decodedUTF8(diagnosticsData)
-        #expect(diagnosticsText.contains("\"operation\":\"catalog.scan.skippedNonMedia\""))
-        #expect(diagnosticsText.contains("\"count\":\"2\""))
     }
 
     @Test func completedScanRemovesPreviouslyCatalogedNonMediaRows() async throws {
@@ -93,8 +85,7 @@ struct CatalogStoreMediaEligibilityTests {
 
         let store = CatalogStore(
             location: .inMemory,
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)

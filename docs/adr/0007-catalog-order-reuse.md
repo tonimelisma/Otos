@@ -107,7 +107,7 @@ trace at much larger scale proves the full re-sort is a bottleneck.
 Removed in the implementing increment: `cachedOrderedAssetIDs` and its validation,
 the scoped-map helper, the `assetOrderCacheHit` / `assetOrderSorted` /
 `assetMembershipChanged` / `membershipUs` / `scopedBuildUs` diagnostic fields, the
-matching `script/catalog-diagnostics.sh` summary lines, and the tests that asserted
+matching unified-log `op=` boundaries, and the tests that asserted
 cache-hit reuse. FND-043 is rewritten. Git history owns the prior cache decision.
 
 ## Living Documentation Impact

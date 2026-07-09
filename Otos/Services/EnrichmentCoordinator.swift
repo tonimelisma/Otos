@@ -98,7 +98,6 @@ actor EnrichmentCoordinator {
     let claimBatchSize: Int
     let applyFlushInterval: Duration
     let applyFlushSleep: @Sendable (Duration) async -> Void
-    let diagnostics: CatalogDiagnostics?
 
     var viewport: [MediaAssetID] = []
     var freshly: [MediaAssetID] = []
@@ -135,8 +134,7 @@ actor EnrichmentCoordinator {
         applyFlushSleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
-        writeFailureBackoff: Duration = .seconds(5),
-        diagnostics: CatalogDiagnostics? = .shared
+        writeFailureBackoff: Duration = .seconds(5)
     ) {
         self.store = store
         self.enricher = enricher
@@ -147,7 +145,6 @@ actor EnrichmentCoordinator {
         self.applyFlushInterval = applyFlushInterval
         self.applyFlushSleep = applyFlushSleep
         self.writeFailureBackoff = writeFailureBackoff
-        self.diagnostics = diagnostics
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signalStream = stream
         signalContinuation = continuation

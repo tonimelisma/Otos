@@ -40,7 +40,6 @@ final class MainRunLoopStallMonitor {
 
     private var timer: Timer?
     private var expectedFireDate: Date?
-    private var diagnostics: CatalogDiagnostics?
     private var nextUpdateID = 0
     private var nextOperationID = 0
     private var latestHandoff: CatalogGridHandoff?
@@ -86,13 +85,12 @@ final class MainRunLoopStallMonitor {
         )
     }
 
-    func start(diagnostics: CatalogDiagnostics? = .shared) {
+    func start() {
         #if DEBUG
             guard timer == nil else {
                 return
             }
 
-            self.diagnostics = diagnostics
             expectedFireDate = Date().addingTimeInterval(interval)
             let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
                 Task { @MainActor in
@@ -103,7 +101,7 @@ final class MainRunLoopStallMonitor {
             RunLoop.main.add(timer, forMode: .common)
             OtosLog.performance.debug("Main run loop stall monitor started")
         #else
-            _ = diagnostics
+            return
         #endif
     }
 
@@ -111,7 +109,6 @@ final class MainRunLoopStallMonitor {
         timer?.invalidate()
         timer = nil
         expectedFireDate = nil
-        diagnostics = nil
         latestHandoff = nil
         operationStack.removeAll()
         lastLongOperation = nil
@@ -208,16 +205,10 @@ final class MainRunLoopStallMonitor {
     }
 
     private func recordStallDiagnostic(_ fields: [String: String]) {
-        let diagnostics = diagnostics
-        // Stalls are rare boundary events rather than the high-frequency UI path. Capture
-        // only the completed scalar payload so this best-effort diagnostic task
-        // cannot retain catalog state while waiting for the JSONL actor.
-        Task {
-            await diagnostics?.record(
-                operation: "ui.mainRunLoop.stall",
-                phase: "detected",
-                fields: fields
-            )
-        }
+        let stallMs = fields["stallMs"] ?? "?"
+        let lastOp = fields["currentOperation"] ?? fields["lastLongOperation"] ?? "none"
+        OtosLog.performance.fault(
+            "op=mainThreadStall stallMs=\(stallMs, privacy: .public) lastOp=\(lastOp, privacy: .public) fields=\(String(describing: fields), privacy: .public)"
+        )
     }
 }

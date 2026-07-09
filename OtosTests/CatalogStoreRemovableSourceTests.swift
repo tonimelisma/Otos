@@ -66,7 +66,7 @@ struct CatalogStoreRemovableSourceTests {
     @Test func mtpCatalogRowsAreScopedToCameraAndStagingIsRemovedOnDetach() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
 
         let rootPath = try await store.attachDeviceMTP(
@@ -124,7 +124,7 @@ struct CatalogStoreRemovableSourceTests {
     @Test func staleDeviceEnumerationCannotWriteOrReconcileNewerRows() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
 
         let rootPath = try await store.attachDeviceMTP(
@@ -186,8 +186,7 @@ struct CatalogStoreRemovableSourceTests {
         let watcherHarness = CatalogFilesystemWatcher.testingWithRootInspection()
         let store = CatalogStore(
             location: .inMemory,
-            filesystemWatcher: watcherHarness.watcher,
-            diagnostics: nil
+            filesystemWatcher: watcherHarness.watcher
         )
         try await store.addLibrary(url: fixedRoot)
         try await store.attachRemovableVolume(
@@ -223,7 +222,7 @@ private func makeRemountFixture() async throws -> RemovableRemountFixture {
     try writeCatalogStoreFile(firstMount.appending(path: "card.jpg"), contents: "jpeg")
     try writeCatalogStoreFile(secondMount.appending(path: "card.jpg"), contents: "jpeg")
 
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
     try await store.start(scansSavedLibraries: false)
     try await store.addLibrary(url: fixedRoot)
     _ = try await waitForCatalogStoreState(store) { snapshot in

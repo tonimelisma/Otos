@@ -195,8 +195,7 @@ private func makeThumbnailLifecycleFixture() async throws -> ThumbnailLifecycleF
         location: .databaseFile(databaseURL),
         scanner: thumbnailLifecycleScanner(rel, mtime: mtime),
         filesystemWatcher: watcher,
-        filesystemEventDebounce: .milliseconds(20),
-        diagnostics: nil
+        filesystemEventDebounce: .milliseconds(20)
     )
     try await store.start(scansSavedLibraries: false)
     try await store.addLibrary(url: root)
@@ -228,7 +227,7 @@ private func thumbnailLifecycleScanner(
     _ rel: MediaRelativePath,
     mtime: ThumbnailLifecycleSeconds
 ) -> CatalogScanner {
-    CatalogScanner { _, _, _, batchHandler in
+    CatalogScanner { _, _, batchHandler in
         let seconds = await mtime.value
         try await batchHandler([
             ScannedMediaFile(

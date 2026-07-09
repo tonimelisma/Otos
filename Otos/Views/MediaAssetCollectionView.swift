@@ -47,7 +47,6 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     var detailReader: MediaTileDetailReader?
     var imageCache: MediaTileImageCache?
     var stallMonitor: MainRunLoopStallMonitor?
-    var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     /// User-adjustable grid density (spec 0048); the ViewModel is the source of truth,
     /// this representable only round-trips it into `receiveColumnCount(_:)`.
@@ -69,7 +68,6 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
         controller.detailReader = detailReader
         controller.imageCache = imageCache
         controller.stallMonitor = stallMonitor
-        controller.diagnostics = diagnostics
         controller.onViewportChanged = onViewportChanged
         controller.onColumnCountChangeRequested = onColumnCountChangeRequested
         controller.receiveColumnCount(columnCount)
@@ -123,7 +121,6 @@ final class MediaAssetCollectionViewController: NSViewController {
     var detailReader: MediaTileDetailReader?
     var imageCache: MediaTileImageCache?
     var stallMonitor: MainRunLoopStallMonitor?
-    var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     override func loadView() {
@@ -268,7 +265,6 @@ extension MediaAssetCollectionViewController {
         for action in actions {
             switch action {
             case let .pending(replacedExisting):
-                OtosSignpost.ui.emitEvent("MediaGridPendingState")
                 OtosLog.ui.debug(
                     "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
                 )
@@ -320,7 +316,6 @@ extension MediaAssetCollectionViewController {
             }
             guard let self, detailQueryGeneration == generation else {
                 OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
-                OtosSignpost.ui.emitEvent("MediaGridVisibleDetailQueryDropped")
                 return
             }
             mergeTileDetails(details, reason: reason)
@@ -413,12 +408,10 @@ extension MediaAssetCollectionViewController {
 
     func mergeTileDetails(_ details: [MediaAssetID: MediaTileDetail], reason: String) {
         guard !details.isEmpty else {
-            OtosSignpost.ui.emitEvent("MediaGridTileDetailsMergeEmpty")
             return
         }
         tileDetails.merge(details)
         let storedCount = tileDetails.count
-        OtosSignpost.ui.emitEvent("MediaGridTileDetailsMerged")
         OtosLog.ui.debug(
             """
             Media grid tile details merged incoming=\(details.count, privacy: .public) \

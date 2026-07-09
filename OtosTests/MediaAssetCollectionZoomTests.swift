@@ -69,7 +69,7 @@ struct MediaAssetCollectionZoomTests {
             usesReloadDataFallback: false,
             signpost: .beginState(id: .exclusive)
         )
-        controller.completeStructuralApply(context, operation: nil, stallMonitor: nil, diagnostics: nil)
+        controller.completeStructuralApply(context, operation: nil, stallMonitor: nil)
 
         #expect(controller.mutationGate.installedColumnCount == 3)
         #expect(controller.mutationGate.inFlight == .none)

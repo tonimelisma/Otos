@@ -14,20 +14,18 @@ struct CatalogWindowViewModelEnrichmentTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         let captureDate = Date(timeIntervalSince1970: 900)
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in .testMaterialized },
-            applyFlushInterval: .milliseconds(1),
-            diagnostics: nil
+            applyFlushInterval: .milliseconds(1)
         )
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
-            diagnostics: nil,
             startsStallMonitor: false
             // startsEnrichment defaults true: start() must start the injected coordinator.
         )
@@ -70,8 +68,7 @@ struct CatalogWindowViewModelEnrichmentTests {
             location: .databaseFile(databaseURL),
             scanner: fixedOneFileScanner("one.jpg"),
             filesystemWatcher: firstWatcher,
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
@@ -87,22 +84,19 @@ struct CatalogWindowViewModelEnrichmentTests {
             location: .databaseFile(databaseURL),
             scanner: fixedOneFileScanner("one.jpg"),
             filesystemWatcher: secondWatcher,
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
         let captureDate = Date(timeIntervalSince1970: 800)
         let coordinator = EnrichmentCoordinator(
             store: secondStore,
             enricher: completeEnricher(captureDate: captureDate),
             materialize: { _ in .testMaterialized },
-            applyFlushInterval: .milliseconds(1),
-            diagnostics: nil
+            applyFlushInterval: .milliseconds(1)
         )
         let model = CatalogWindowViewModel(
             catalogStore: secondStore,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
-            diagnostics: nil,
             startsStallMonitor: false
         )
 
@@ -122,7 +116,7 @@ struct CatalogWindowViewModelEnrichmentTests {
 /// A scanner that reports one media file with fixed facts and reads no real directory, so
 /// the test persists/loads deterministically without filesystem-enumeration load.
 private func fixedOneFileScanner(_ name: String) -> CatalogScanner {
-    CatalogScanner { _, _, _, batchHandler in
+    CatalogScanner { _, _, batchHandler in
         try await batchHandler([
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: name),

@@ -6,7 +6,7 @@ struct CatalogProjectionTests {
     @Test func windowStateSortsLibrariesAndAssets() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let fixture = makeProjectionFixture(
             libraries: [
                 makeLibrary(root: pictures, activity: .scanning),
@@ -32,7 +32,7 @@ struct CatalogProjectionTests {
     @Test func windowStateFiltersAssetsInSelectedScope() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let fixture = makeProjectionFixture(
             libraries: [makeLibrary(root: pictures), makeLibrary(root: archive)],
             assets: [
@@ -52,7 +52,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func windowStateFallsBackWhenSelectedLibraryIsMissing() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
 
@@ -73,7 +73,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func windowStateHidesUnavailableLibraryAssets() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
@@ -99,7 +99,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func windowStateHidesUnknownAssetsAndReportsCheckingStates() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
@@ -123,7 +123,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func availableAssetsRemainVisibleWhileAnotherLibraryIsUnknown() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let fixture = makeProjectionFixture(
@@ -144,7 +144,7 @@ struct CatalogProjectionTests {
     }
 
     @Test func allMediaEmptyStateDistinguishesUnavailableCatalogedMedia() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let fixture = makeProjectionFixture(
             libraries: [makeLibrary(root: pictures, availability: .unavailable)],
@@ -162,8 +162,8 @@ struct CatalogProjectionTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
-        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = StateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -188,11 +188,10 @@ struct CatalogProjectionTests {
     }
 
     @Test func publicationLoopRunsOneProjectionAtATimeAndRerunsWhenDirtyDuringRun() async throws {
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let store = CatalogStore(location: .inMemory)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
-            diagnostics: nil,
             stateBuilder: { libraries, orderedAssetIDs, request in
                 await probe.build(
                     libraries: libraries,
@@ -219,36 +218,6 @@ struct CatalogProjectionTests {
         _ = try await recorder.waitForCount(2)
         #expect(await probe.maximumInFlight() == 1)
         #expect(await probe.callCount() >= 2)
-    }
-
-    @Test func publicationDiagnosticsIncludeTimingFields() async throws {
-        let temp = try makeTemporaryDirectory()
-        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
-        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
-        let stream = await projection.states(store: store, initialDescriptor: .default)
-        let recordingTask = Task {
-            for await _ in stream {}
-        }
-        defer {
-            recordingTask.cancel()
-        }
-
-        try await store.start(scansSavedLibraries: false)
-        let contents = try await waitForDiagnostics(outputURL) { contents in
-            contents.contains("\"operation\":\"catalog.projection.window\"")
-                && contents.contains("\"storeReadMs\"")
-                && contents.contains("\"projectionMs\"")
-                && contents.contains("\"totalMs\"")
-                && contents.contains("\"assetOrderQueryMs\"")
-                && contents.contains("\"equalityUs\"")
-                && contents.contains("\"detailRefreshGeneration\"")
-                && contents.contains("\"detailRefreshChanged\"")
-        }
-
-        #expect(contents.contains("\"dirtyAfterPublication\""))
-        #expect(contents.contains("\"stateChanged\""))
     }
 
     @Test func detailOnlyStoreChangePublishesGridRefreshGeneration() async throws {
@@ -289,10 +258,9 @@ struct CatalogProjectionTests {
     }
 
     @Test func publicationLoopDoesNotYieldUnchangedWindowState() async throws {
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let store = CatalogStore(location: .inMemory)
         let projection = CatalogProjection(
             cadence: .milliseconds(10),
-            diagnostics: nil,
             stateBuilder: { _, _, _ in .empty }
         )
         let recorder = StateRecorder()
@@ -317,7 +285,7 @@ struct CatalogProjectionTests {
 
 extension CatalogProjectionTests {
     @Test func removableSourcesAreSeparateAndExcludedFromAllMedia() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))
         let card = LibraryRoot(
@@ -350,7 +318,7 @@ extension CatalogProjectionTests {
     }
 
     @Test func mtpCameraSelectionShowsEnumeratingStateAndConnectionBanner() async {
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let camera = LibraryRoot(
             path: LibraryRootPath(rawValue: "/tmp/Otos/DeviceStaging/camera"),
             kind: .deviceMTP,
@@ -513,8 +481,8 @@ private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
 
-    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
-    let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
+    let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+    let projection = CatalogProjection(cadence: .milliseconds(10))
     let recorder = StateRecorder()
     let stream = await projection.states(store: store, initialDescriptor: .default)
     let recordingTask = Task {

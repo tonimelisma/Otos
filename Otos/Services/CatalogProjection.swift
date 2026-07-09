@@ -14,7 +14,6 @@ actor CatalogProjection {
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async -> CatalogWindowState
 
     private let cadence: Duration
-    private let diagnostics: CatalogDiagnostics?
     let stateBuilder: WindowStateBuilder?
 
     private var queryRequest: CatalogQueryRequest = .initial
@@ -30,11 +29,9 @@ actor CatalogProjection {
 
     init(
         cadence: Duration = .seconds(1),
-        diagnostics: CatalogDiagnostics? = .shared,
         stateBuilder: WindowStateBuilder? = nil
     ) {
         self.cadence = cadence
-        self.diagnostics = diagnostics
         self.stateBuilder = stateBuilder
     }
 
@@ -239,7 +236,7 @@ private extension CatalogProjection {
             totalMs: publication.timing.totalMs,
             dirtyAfter: dirty,
             stateChanged: stateChanged
-        ).emit(to: diagnostics)
+        ).emit()
 
         if stateChanged {
             yield(publication.state)

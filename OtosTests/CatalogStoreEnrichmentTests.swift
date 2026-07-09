@@ -72,8 +72,7 @@ struct CatalogStoreEnrichmentTests {
             location: .inMemory,
             scanner: singleFileScanner(rel, mtime: mtime),
             filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20),
-            diagnostics: nil
+            filesystemEventDebounce: .milliseconds(20)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -182,8 +181,7 @@ struct CatalogStoreEnrichmentTests {
             location: .databaseFile(databaseURL),
             scanner: singleFileScanner(rel, mtime: mtime),
             filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20),
-            diagnostics: nil
+            filesystemEventDebounce: .milliseconds(20)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -214,7 +212,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(current.enrichedSourceMTimeSeconds == nil)
         #expect(current.needsEnrichment)
 
-        let reloaded = CatalogStore(location: .databaseFile(databaseURL), diagnostics: nil)
+        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
         let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first { $0.id == id })
         #expect(persisted.thumbnailPath == nil)
@@ -243,8 +241,7 @@ struct CatalogStoreEnrichmentTests {
             location: .databaseFile(databaseURL),
             scanner: presenceScanner(rel, present: present),
             filesystemWatcher: watcher,
-            filesystemEventDebounce: .milliseconds(20),
-            diagnostics: nil
+            filesystemEventDebounce: .milliseconds(20)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -287,8 +284,7 @@ struct CatalogStoreEnrichmentTests {
 
         let store = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanner: singleFileScanner(rel, mtime: MutableSeconds(1000)),
-            diagnostics: nil
+            scanner: singleFileScanner(rel, mtime: MutableSeconds(1000))
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -432,7 +428,7 @@ private actor MutablePresence {
 }
 
 private func singleFileScanner(_ rel: MediaRelativePath, mtime: MutableSeconds) -> CatalogScanner {
-    CatalogScanner { _, _, _, batchHandler in
+    CatalogScanner { _, _, batchHandler in
         let seconds = await mtime.value
         try await batchHandler([
             ScannedMediaFile(
@@ -449,7 +445,7 @@ private func singleFileScanner(_ rel: MediaRelativePath, mtime: MutableSeconds) 
 }
 
 private func presenceScanner(_ rel: MediaRelativePath, present: MutablePresence) -> CatalogScanner {
-    CatalogScanner { _, _, _, batchHandler in
+    CatalogScanner { _, _, batchHandler in
         if await present.value {
             try await batchHandler([
                 ScannedMediaFile(

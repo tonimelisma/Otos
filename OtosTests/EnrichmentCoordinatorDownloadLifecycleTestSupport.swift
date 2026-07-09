@@ -3,7 +3,6 @@ import Foundation
 import Testing
 
 struct DownloadLifecycleContext {
-    let outputURL: URL
     let store: CatalogStore
     let coordinator: EnrichmentCoordinator
     let id: MediaAssetID
@@ -11,12 +10,10 @@ struct DownloadLifecycleContext {
 
 func makeDownloadLifecycleContext() async throws -> DownloadLifecycleContext {
     let temp = try makeCatalogStoreTemporaryDirectory()
-    let outputURL = temp.appending(path: "download-lifecycle.jsonl")
-    let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
     let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
-    let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]), diagnostics: nil)
+    let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["a.jpg"]))
     try await store.start(scansSavedLibraries: false)
     try await store.addLibrary(url: root)
     let scanned = try await waitForCatalogStoreState(store) {
@@ -30,10 +27,9 @@ func makeDownloadLifecycleContext() async throws -> DownloadLifecycleContext {
         store: store,
         enricher: datalessLifecycleEnricher(state: state),
         materialize: datalessLifecycleMaterializer(state: state),
-        applyFlushInterval: .milliseconds(1),
-        diagnostics: diagnostics
+        applyFlushInterval: .milliseconds(1)
     )
-    return DownloadLifecycleContext(outputURL: outputURL, store: store, coordinator: coordinator, id: id)
+    return DownloadLifecycleContext(store: store, coordinator: coordinator, id: id)
 }
 
 private func datalessLifecycleEnricher(state: FakeMaterialization) -> MediaEnricher {
@@ -62,27 +58,6 @@ private func datalessLifecycleMaterializer(
     }
 }
 
-func assertDownloadLifecycleDiagnostics(at outputURL: URL) throws {
-    let lifecycleEvents = try diagnosticEvents(at: outputURL).filter {
-        $0.operation == "catalog.thumbnails.visibleLifecycle"
-            && $0.fields["relativePath"] == "a.jpg"
-    }
-    let phases = lifecycleEvents.map(\.phase)
-    let notMaterialized = try #require(lifecycleEvents.first { $0.phase == "notMaterialized" })
-    let materialized = try #require(lifecycleEvents.first { $0.phase == "materialized" })
-    let materializedIndex = try #require(phases.firstIndex(of: "materialized"))
-    let laterClaimIndex = try #require(phases[(materializedIndex + 1)...].firstIndex(of: "claimed"))
-
-    #expect(notMaterialized.fields["leaseRefreshedUntil"] != nil)
-    #expect(materialized.fields["outcome"] == "materialized")
-    #expect(materialized.fields["rerequestCount"] == "2")
-    #expect(materialized.fields["requestToCompleteMs"] == "123")
-    #expect(materialized.fields["sourceSize"] == "100")
-    #expect(laterClaimIndex > materializedIndex)
-    #expect(phases.contains("generated"))
-    #expect(phases.contains("batchAccepted"))
-}
-
 actor FakeMaterialization {
     private var dataless: Set<String>
 
@@ -96,14 +71,5 @@ actor FakeMaterialization {
 
     func materialize(_ path: String) {
         dataless.remove(path)
-    }
-}
-
-func diagnosticEvents(at url: URL) throws -> [CatalogDiagnosticEvent] {
-    let data = try Data(contentsOf: url)
-    let decoder = JSONDecoder()
-    decoder.dateDecodingStrategy = .iso8601
-    return data.split(separator: 0x0A).compactMap { line in
-        try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
     }
 }
