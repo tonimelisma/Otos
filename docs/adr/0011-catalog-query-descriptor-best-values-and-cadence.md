@@ -193,7 +193,9 @@ definition, and keeps the UI passive.
 - Query request generations make stale-publication rejection independent of
   descriptor equality.
 - Background enrichment may visibly reorder assets or change filter membership;
-  this is correct behavior, not a special-case animation path.
+  this is correct behavior. Same-descriptor reorders render as animated moves
+  per ADR 0006; they are ordinary truth adopted every background tick, not a
+  special-case animation path outside the structural-apply policy.
 - Query-plan tests must cover production SQL builders for the default and
   user-facing sort directions.
 - If residual filter scans prove slow, the next step is measured composite

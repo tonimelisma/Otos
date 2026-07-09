@@ -60,7 +60,10 @@ final class MediaGridMutationGate {
         /// descriptor-change resets. Not exclusive — never occupies `inFlight`.
         case refreshVisible(CatalogMediaGridState, resetScroll: Bool, resetSelection: Bool)
         /// Exclusive: run one diffable structural apply for a new identity order.
-        case apply(CatalogMediaGridState, resetScroll: Bool, resetSelection: Bool)
+        /// `descriptorChanged` is the single fact that drives scroll/selection reset
+        /// and the apply-policy choice (same-descriptor reorders animate; descriptor
+        /// flips keep the reloadData-class path).
+        case apply(CatalogMediaGridState, descriptorChanged: Bool)
         /// Exclusive: install a new column-count layout (animated swap).
         case zoomSwap(columnCount: Int)
 
@@ -163,11 +166,7 @@ final class MediaGridMutationGate {
             )
         }
         inFlight = .structuralApply
-        return .apply(
-            grid,
-            resetScroll: descriptorChanged,
-            resetSelection: descriptorChanged
-        )
+        return .apply(grid, descriptorChanged: descriptorChanged)
     }
 
     /// Runs after every completion, in order: parked grid first (content correctness),

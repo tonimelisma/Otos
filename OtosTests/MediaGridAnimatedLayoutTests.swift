@@ -54,6 +54,17 @@ struct MediaGridAnimatedLayoutTests {
         #expect(tracked.inserted == [path(5)])
         #expect(tracked.deleted == [path(2)])
     }
+
+    @Test func moveOnlyBatchRegistersNoDecoratedIndexPaths() {
+        let items = [
+            MediaGridUpdateItem(action: .move, indexPathBeforeUpdate: path(0), indexPathAfterUpdate: path(2)),
+            MediaGridUpdateItem(action: .move, indexPathBeforeUpdate: path(1), indexPathAfterUpdate: path(0)),
+            MediaGridUpdateItem(action: .move, indexPathBeforeUpdate: path(2), indexPathAfterUpdate: path(1)),
+        ]
+        let tracked = MediaGridAnimatedLayoutPolicy.trackedIndexPaths(for: items)
+        #expect(tracked.inserted.isEmpty)
+        #expect(tracked.deleted.isEmpty)
+    }
 }
 
 private func path(_ item: Int) -> IndexPath {

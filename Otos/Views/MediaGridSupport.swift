@@ -40,9 +40,18 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     let animatingDifferences: Bool
     let usesReloadDataFallback: Bool
 
+    /// Chooses animated true-diff vs reloadData-class fallback.
+    ///
+    /// - Same-descriptor same-membership reorder (enrichment trickle): animate —
+    ///   moves surviving items instead of recreating them.
+    /// - Descriptor-changed reorder (sort/scope/filter flip): reloadData fallback;
+    ///   scroll resets anyway and whole-list moves hit the quadratic cliff.
+    /// - Large insert/remove (`n ≥ 1000`): reloadData fallback.
+    /// - Small insert/remove: animate (existing behavior).
     static func summarize(
         previousOrderedIDs: [MediaAssetID],
-        nextOrderedIDs: [MediaAssetID]
+        nextOrderedIDs: [MediaAssetID],
+        descriptorChanged: Bool
     ) -> MediaGridStructuralApplyPolicy {
         let previousIDs = Set(previousOrderedIDs)
         let retainedCount = nextOrderedIDs.reduce(into: 0) { count, id in
@@ -56,7 +65,13 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
             && removedCount == 0
             && previousOrderedIDs != nextOrderedIDs
         let largeApply = nextOrderedIDs.count >= reloadDataFallbackItemCountThreshold
-        let usesReloadDataFallback = reorderOnly || largeApply
+        let usesReloadDataFallback = if reorderOnly {
+            descriptorChanged
+        } else if largeApply {
+            true
+        } else {
+            false
+        }
         return MediaGridStructuralApplyPolicy(
             insertedCount: insertedCount,
             removedCount: removedCount,
