@@ -129,6 +129,8 @@ extension MediaGridViewController {
         if context.resetScroll {
             scrollToTop()
         }
+        tileContents.prune(to: Set(context.grid.orderedAssetIDs))
+        tileContents.pinVisible(Set(visibleAssetIDs()))
         let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
         reportViewport()
         let preheatCount = preheatLookahead(reason: "structuralApply")

@@ -9,14 +9,13 @@ private final class FlippedView: NSView {
     }
 }
 
-private struct TilePaintRequest {
-    let decision: TilePaintDecision
-    let detail: MediaTileDetail
-    let contentKey: String
-    let cachedImage: CGImage?
-    let thumbnailDirectory: URL?
-    let imageCache: MediaTileImageCache?
-}
+// Media tile view guide
+//
+// Pure renderer for controller-owned `TileContent`. The tile paints `content.image` when
+// present and otherwise shows the placeholder face; it holds no asset-identity paint
+// state and never clears a painted image while an asset stays bound — the no-blank
+// invariant is structural in `TileContentStore`, not defended here. `prepareForReuse`
+// only clears the layer for AppKit recycling; the next `render` repaints from the store.
 
 final class MediaAssetTileView: NSView {
     private typealias Layout = MediaAssetTileLayout
@@ -26,22 +25,14 @@ final class MediaAssetTileView: NSView {
     private let videoBadge = FlippedView()
     private let durationField = NSTextField(labelWithString: "")
     private let filmIconView = NSImageView()
-    /// Centered on the gray placeholder square while no thumbnail has painted yet
-    /// (spec 0047) — distinct from `filmIconView`, which lives inside the video badge.
     private let placeholderIconView = NSImageView()
 
-    /// Identifies the image content the async load produced (thumbnail file plus its
-    /// enrichment stamp). Equal keys mean the painted thumbnail can stay in place even
-    /// when video badge text changes.
-    private var currentImageContentKey: String?
-    private var currentAssetID: MediaAssetID?
-    private(set) var currentImagePixelSize: CGSize?
-    private var currentBestKind: MediaKind?
+    /// Aspect-fit face size for the currently painted image; nil while placeholder.
+    private(set) var paintedImagePixelSize: CGSize?
+    private var renderedBestKind: MediaKind?
     private var shouldShowVideoBadge = false
-    /// Bumped on every (re)configure and reuse so an in-flight load that resolves after
-    /// the tile was handed to another asset is discarded instead of painting stale data.
-    private var loadGeneration = 0
-    private var loadTask: Task<Void, Never>?
+    private var renderedAssetID: MediaAssetID?
+    private var renderedImageKey: String?
 
     override var isFlipped: Bool {
         true
@@ -87,8 +78,6 @@ final class MediaAssetTileView: NSView {
         placeholderIconView.alphaValue = Layout.placeholderIconAlpha
         contentView.addSubview(placeholderIconView)
 
-        // A single opaque color; borderWidth alone (0 or 3) toggles ring visibility, so
-        // the color never needs to change and the deselect animation never fades a color.
         contentView.layer?.borderColor = NSColor.controlAccentColor.cgColor
     }
 
@@ -99,35 +88,33 @@ final class MediaAssetTileView: NSView {
 }
 
 extension MediaAssetTileView {
-    @discardableResult
-    func configure(
-        detail: MediaTileDetail,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?
-    ) -> Bool {
-        currentBestKind = detail.bestKind
-        configureBadge(for: detail)
-        needsLayout = true
+    /// Idempotent render from store content. Fade only when the store reports a first
+    /// async paint or a same-asset image replacement.
+    func render(_ content: TileContent?, change: TileContentChange) {
+        guard let content else {
+            clearLayerForReuse()
+            return
+        }
+        renderedBestKind = content.detail.bestKind
+        configureBadge(for: content.detail)
 
-        let key = MediaAssetTilePresentation.imageContentKey(detail)
-        let cachedImage = detail.thumbnailPath.flatMap { _ in imageCache?.image(for: key) }
-        let decision = MediaAssetTilePresentation.paintDecision(TilePaintContext(
-            incomingKey: key,
-            incomingThumbnailPath: detail.thumbnailPath,
-            currentKey: currentImageContentKey,
-            currentAssetID: currentAssetID,
-            incomingAssetID: detail.id,
-            cacheHasImage: cachedImage != nil,
-            hasPaintedImage: currentImagePixelSize != nil
-        ))
-        return applyPaintDecision(TilePaintRequest(
-            decision: decision,
-            detail: detail,
-            contentKey: key,
-            cachedImage: cachedImage,
-            thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache
-        ))
+        let fade = change == .firstImage || change == .replacedImage
+        if let image = content.image {
+            applyImage(image, fade: fade)
+            renderedAssetID = content.detail.id
+            renderedImageKey = content.imageKey
+        } else if renderedAssetID == content.detail.id, paintedImagePixelSize != nil {
+            // Store still awaiting decode but this view already shows the prior image —
+            // keep layer contents (monotonic). Badge/layout may still update above.
+            renderedImageKey = content.imageKey
+        } else {
+            imageView.layer?.contents = nil
+            paintedImagePixelSize = nil
+            renderedAssetID = content.detail.id
+            renderedImageKey = content.imageKey
+            updatePlaceholderPresentation()
+        }
+        needsLayout = true
     }
 
     private func configureBadge(for detail: MediaTileDetail) {
@@ -145,217 +132,25 @@ extension MediaAssetTileView {
         setAccessibilityLabel(accessibilityLabel(videoBadge: badgeText))
     }
 
-    private func applyPaintDecision(_ request: TilePaintRequest) -> Bool {
-        switch request.decision {
-        case .paintCached:
-            return paintCachedImage(
-                request.cachedImage,
-                detail: request.detail,
-                contentKey: request.contentKey,
-                thumbnailDirectory: request.thumbnailDirectory,
-                imageCache: request.imageCache
-            )
-        case .keepCurrent:
-            currentAssetID = request.detail.id
-            return false
-        case let .loadAsync(retainsCurrentImage):
-            return startAsyncLoad(
-                detail: request.detail,
-                contentKey: request.contentKey,
-                thumbnailDirectory: request.thumbnailDirectory,
-                imageCache: request.imageCache,
-                retainsCurrentImage: retainsCurrentImage
-            )
-        case .placeholder:
-            cancelImageLoad()
-            clearPaintedImage(for: request.detail.id, reason: "placeholder", enforcesInvariant: true)
-            currentAssetID = request.detail.id
-            currentImageContentKey = request.contentKey
-            return false
-        }
-    }
-
-    private func paintCachedImage(
-        _ cachedImage: CGImage?,
-        detail: MediaTileDetail,
-        contentKey key: String,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?
-    ) -> Bool {
-        guard let cachedImage else {
-            OtosLog.ui.error("Media tile paint decision had cache hit without image")
-            let retainsCurrentImage = currentAssetID == detail.id
-            currentAssetID = detail.id
-            currentImageContentKey = key
-            loadThumbnailImage(
-                detail: detail,
-                thumbnailDirectory: thumbnailDirectory,
-                imageCache: imageCache,
-                retainsCurrentImage: retainsCurrentImage
-            )
-            return true
-        }
-        cancelImageLoad()
-        currentAssetID = detail.id
-        currentImageContentKey = key
-        applyImage(cachedImage, assetID: detail.id, contentKey: key, application: .cacheHit)
-        return false
-    }
-
-    private func startAsyncLoad(
-        detail: MediaTileDetail,
-        contentKey key: String,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?,
-        retainsCurrentImage: Bool
-    ) -> Bool {
-        if !retainsCurrentImage {
-            clearPaintedImage(for: detail.id, reason: "newIdentityLoad", enforcesInvariant: true)
-        }
-        currentAssetID = detail.id
-        currentImageContentKey = key
-        loadThumbnailImage(
-            detail: detail,
-            thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache,
-            retainsCurrentImage: retainsCurrentImage
-        )
-        return true
-    }
-
-    /// Reads the thumbnail file off the main actor, then applies the result on the main
-    /// actor only if this tile still represents the same image content.
-    private func loadThumbnailImage(
-        detail: MediaTileDetail,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?,
-        retainsCurrentImage: Bool
-    ) {
-        loadGeneration += 1
-        let generation = loadGeneration
-        loadTask?.cancel()
-        let key = MediaAssetTilePresentation.imageContentKey(detail)
-        loadTask = Task.detached(priority: .userInitiated) { [weak self, imageCache] in
-            let loaded = MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
-            if Task.isCancelled {
-                return
-            }
-            if let image = loaded.image {
-                imageCache?.insert(image, for: key)
-            }
-            await MainActor.run {
-                guard let self else {
-                    return
-                }
-                guard self.loadGeneration == generation,
-                      self.currentAssetID == detail.id,
-                      self.currentImageContentKey == key
-                else {
-                    return
-                }
-                guard let image = loaded.image else {
-                    OtosLog.ui.debug(
-                        """
-                        Media tile thumbnail load returned nil assetID=\
-                        \(detail.libraryRootPath.rawValue, privacy: .public)/\
-                        \(detail.relativePath.rawValue, privacy: .public) \
-                        retainedCurrent=\(retainsCurrentImage, privacy: .public)
-                        """
-                    )
-                    return
-                }
-                self.applyImage(
-                    image,
-                    assetID: detail.id,
-                    contentKey: key,
-                    application: .asyncLoad
-                )
-            }
-        }
-    }
-
-    private func cancelImageLoad() {
-        loadTask?.cancel()
-        loadTask = nil
-        loadGeneration += 1
-    }
-
-    /// `cacheHit` applications (a scroll-back repaint, or a recycled cell's synchronous
-    /// repaint) stay instant — fading those would read as flicker and contradict the
-    /// no-blank invariant's spirit. `asyncLoad` applications add a fade: this single
-    /// mechanism covers first paint (placeholder → image) and a same-asset
-    /// newer-thumbnail replacement (old → new crossfade, invariant-safe because the old
-    /// contents persist on the layer through the transition).
-    ///
-    /// The per-column stagger flourish (spec 0047 D2/6e) was dropped per the owner's
-    /// pre-authorized fallback: a review finding on spec 0047 (PR #52) showed that a
-    /// future `beginTime` with `fillMode = .backwards` holds the layer at its *prior*
-    /// contents until the delay elapses, while the placeholder is cleared synchronously
-    /// below — for first paint, prior contents is nil, so the tile shows a transparent
-    /// gap instead of either the placeholder or the thumbnail for the stagger interval,
-    /// violating the no-blank invariant's spirit. `UI.md`'s own spec accepted losing
-    /// this flourish rather than building async delay machinery to fix it properly.
-    private func applyImage(
-        _ image: CGImage,
-        assetID: MediaAssetID,
-        contentKey: String,
-        application: TilePaintApplication
-    ) {
-        if application == .asyncLoad, let layer = imageView.layer {
+    private func applyImage(_ image: CGImage, fade: Bool) {
+        if fade, let layer = imageView.layer {
             let transition = CATransition()
             transition.type = .fade
             transition.duration = MediaGridAnimation.thumbnailFadeDuration
             layer.add(transition, forKey: "thumbnailFade")
         }
         imageView.layer?.contents = image
-        currentAssetID = assetID
-        currentImageContentKey = contentKey
-        currentImagePixelSize = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
+        paintedImagePixelSize = CGSize(width: CGFloat(image.width), height: CGFloat(image.height))
         updatePlaceholderPresentation()
-        needsLayout = true
     }
 
-    private func clearPaintedImage(
-        for incomingAssetID: MediaAssetID?,
-        reason: String,
-        enforcesInvariant: Bool
-    ) {
-        if let incomingAssetID, enforcesInvariant, currentAssetID == incomingAssetID, currentImagePixelSize != nil {
-            OtosLog.ui.error("op=paintWatchdog")
-            OtosLog.ui.error(
-                "Media tile attempted to clear painted same-asset thumbnail reason=\(reason, privacy: .public)"
-            )
-            return
-        }
+    private func clearLayerForReuse() {
         imageView.layer?.contents = nil
-        currentImagePixelSize = nil
-        updatePlaceholderPresentation()
-        needsLayout = true
-    }
-
-    /// Returns `true` if `pointInWindow` lies inside the aspect-fit thumbnail face.
-    /// For a not-yet-decoded placeholder the face is the full tile, so the whole square is
-    /// a hit; only decoded thumbnails with real letterbox create dead zones (spec 0049).
-    func hitTestsThumbnailFace(at pointInWindow: CGPoint) -> Bool {
-        let pointInTile = convert(pointInWindow, from: nil)
-        let face = MediaAssetTilePresentation.thumbnailFaceRect(
-            imagePixelSize: currentImagePixelSize,
-            bounds: bounds
-        )
-        return face.contains(pointInTile)
-    }
-
-    override func prepareForReuse() {
-        super.prepareForReuse()
-        loadTask?.cancel()
-        loadTask = nil
-        loadGeneration += 1
-        currentImageContentKey = nil
-        currentAssetID = nil
-        currentImagePixelSize = nil
-        currentBestKind = nil
+        paintedImagePixelSize = nil
+        renderedAssetID = nil
+        renderedImageKey = nil
+        renderedBestKind = nil
         shouldShowVideoBadge = false
-        clearPaintedImage(for: nil, reason: "reuse", enforcesInvariant: false)
         durationField.stringValue = ""
         durationField.isHidden = true
         filmIconView.isHidden = true
@@ -365,10 +160,24 @@ extension MediaAssetTileView {
         setAccessibilityLabel(nil)
     }
 
+    func hitTestsThumbnailFace(at pointInWindow: CGPoint) -> Bool {
+        let pointInTile = convert(pointInWindow, from: nil)
+        let face = MediaAssetTilePresentation.thumbnailFaceRect(
+            imagePixelSize: paintedImagePixelSize,
+            bounds: bounds
+        )
+        return face.contains(pointInTile)
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        clearLayerForReuse()
+    }
+
     override func layout() {
         super.layout()
         contentView.frame = MediaAssetTilePresentation.contentRect(
-            imagePixelSize: currentImagePixelSize,
+            imagePixelSize: paintedImagePixelSize,
             bounds: bounds
         )
         imageView.frame = contentView.bounds
@@ -376,10 +185,6 @@ extension MediaAssetTileView {
         layoutVideoBadge()
     }
 
-    /// Draws or clears the selection ring. The ring lives on `contentView` so it
-    /// hugs the thumbnail's actual aspect-fit face, not the transparent square cell.
-    /// `animated` fades the ring in/out (spec 0047); `prepareForReuse` passes `false` so
-    /// a recycled item never shows a stale animation from its previous asset.
     func setSelected(_ selected: Bool, animated: Bool) {
         guard let layer = contentView.layer else {
             return
@@ -433,10 +238,8 @@ extension MediaAssetTileView {
         )
     }
 
-    /// Owns the placeholder background and its centered media-kind icon together so the
-    /// two can never disagree about whether a thumbnail has painted (spec 0047).
     private func updatePlaceholderPresentation() {
-        let isPlaceholder = currentImagePixelSize == nil
+        let isPlaceholder = paintedImagePixelSize == nil
         contentView.layer?.backgroundColor = isPlaceholder
             ? NSColor.secondaryLabelColor.withAlphaComponent(0.12).cgColor
             : nil
@@ -445,7 +248,7 @@ extension MediaAssetTileView {
             return
         }
         placeholderIconView.image = NSImage(
-            systemSymbolName: MediaAssetTilePresentation.placeholderIconSystemName(for: currentBestKind),
+            systemSymbolName: MediaAssetTilePresentation.placeholderIconSystemName(for: renderedBestKind),
             accessibilityDescription: nil
         )
         placeholderIconView.frame = Layout.placeholderIconFrame(contentBounds: contentView.bounds)

@@ -4,8 +4,8 @@ import OSLog
 // Collection support guide
 //
 // These value helpers back the AppKit collection bridge without belonging to the
-// bridge's view-controller lifecycle. Keeping them separate lets tests cover sticky
-// detail caching and structural-apply policy directly.
+// bridge's view-controller lifecycle. Sticky paint truth lives in `TileContentStore`;
+// this file keeps the detail reader and structural-apply policy.
 
 struct MediaTileDetailReader {
     private let store: CatalogStore
@@ -24,58 +24,6 @@ struct MediaTileDetailReader {
                 "Media tile detail query failed error=\(String(describing: error), privacy: .public)"
             )
             return [:]
-        }
-    }
-}
-
-nonisolated struct MediaTileDetailCache {
-    private struct CachedDetail {
-        var detail: MediaTileDetail
-        var accessStamp: UInt64
-    }
-
-    private var detailsByID: [MediaAssetID: CachedDetail] = [:]
-    private var accessClock: UInt64 = 0
-    let limit: Int
-
-    init(limit: Int = 4096) {
-        self.limit = limit
-    }
-
-    var count: Int {
-        detailsByID.count
-    }
-
-    mutating func merge(_ details: [MediaAssetID: MediaTileDetail]) {
-        for (id, detail) in details {
-            let stamp = nextAccessStamp()
-            detailsByID[id] = CachedDetail(detail: detail, accessStamp: stamp)
-        }
-        evictIfNeeded()
-    }
-
-    mutating func detail(for id: MediaAssetID) -> MediaTileDetail? {
-        guard var cached = detailsByID[id] else {
-            return nil
-        }
-        cached.accessStamp = nextAccessStamp()
-        detailsByID[id] = cached
-        return cached.detail
-    }
-
-    private mutating func nextAccessStamp() -> UInt64 {
-        accessClock &+= 1
-        return accessClock
-    }
-
-    private mutating func evictIfNeeded() {
-        while detailsByID.count > limit {
-            guard let evicted = detailsByID.min(by: { lhs, rhs in
-                lhs.value.accessStamp < rhs.value.accessStamp
-            })?.key else {
-                return
-            }
-            detailsByID[evicted] = nil
         }
     }
 }

@@ -5,8 +5,8 @@ import OSLog
 // Collection item guide
 //
 // One reusable AppKit item hosts one `MediaAssetTileView`. The collection bridge
-// owns structure and reuse; the item simply forwards AppKit lifecycle events and
-// records slow synchronous configuration spans.
+// owns structure, sticky `TileContentStore`, and decode; the item forwards AppKit
+// lifecycle and records slow synchronous configuration spans.
 
 final class MediaGridItem: NSCollectionViewItem {
     private var tileView: MediaAssetTileView? {
@@ -17,9 +17,9 @@ final class MediaGridItem: NSCollectionViewItem {
     /// reassigned both for a real selection change and when binding a recycled item to an
     /// already-selected asset — `prepareForReuse` resets to unselected, then AppKit sets
     /// `isSelected = true` again as the tile scrolls back into view — so a selected tile
-    /// re-fades its ring on scroll-in. That is accepted as polish (spec 0047), not a
-    /// defect: distinguishing the two would need a hook AppKit does not expose, and the
-    /// fade reads as intentional. During a *structural apply* a surviving on-screen tile
+    /// re-fades its ring on scroll-in. That is accepted as polish, not a defect:
+    /// distinguishing the two would need a hook AppKit does not expose, and the fade
+    /// reads as intentional. During a *structural apply* a surviving on-screen tile
     /// still never re-fades, because `restoreSelection` is delta-based and never reassigns
     /// a survivor's `isSelected`.
     override var isSelected: Bool {
@@ -35,34 +35,24 @@ final class MediaGridItem: NSCollectionViewItem {
         tileView?.prepareForReuse()
     }
 
-    @discardableResult
-    func configure(
-        detail: MediaTileDetail,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?
-    ) -> Bool {
+    func render(content: TileContent?, change: TileContentChange) {
         guard let tileView else {
-            return false
+            return
         }
         let signpost = OtosSignpost.ui.beginInterval("MediaGridCellConfiguration")
         defer { OtosSignpost.ui.endInterval("MediaGridCellConfiguration", signpost) }
 
         let start = Date()
-        let startedLoad = tileView.configure(
-            detail: detail,
-            thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache
-        )
+        tileView.render(content, change: change)
         let elapsedMs = DiagnosticsTiming.milliseconds(since: start)
-        guard elapsedMs >= 5 else {
-            return startedLoad
+        guard elapsedMs >= 5, let content else {
+            return
         }
         OtosLog.ui.debug(
             """
-            Media grid slow cell assetID=\(detail.libraryRootPath.rawValue, privacy: .public)/\
-            \(detail.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
+            Media grid slow cell assetID=\(content.detail.libraryRootPath.rawValue, privacy: .public)/\
+            \(content.detail.relativePath.rawValue, privacy: .public) configureMs=\(elapsedMs, privacy: .public)
             """
         )
-        return startedLoad
     }
 }

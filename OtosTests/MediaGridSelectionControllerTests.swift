@@ -342,10 +342,14 @@ private final class GridSelectionTestHarness {
         imageCache.insert(makeTestCGImage(width: Int(pixelSize.width), height: Int(pixelSize.height)), for: key)
         controller.mergeTileDetails([id: detail], reason: "test")
 
+        _ = controller.ensureContentAndMaybeDecode(for: id)
         if let indexPath = controller.dataSource.indexPath(for: id),
            let item = controller.collectionView.item(at: indexPath) as? MediaGridItem
-        { // swiftlint:disable:this opening_brace
-            _ = item.configure(detail: detail, thumbnailDirectory: nil, imageCache: imageCache)
+        {
+            item.render(
+                content: controller.tileContents.content(for: id),
+                change: .unchanged
+            )
         }
     }
 
@@ -426,7 +430,7 @@ private final class GridSelectionTestHarness {
         let indexPath = try #require(controller.dataSource.indexPath(for: id))
         let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
         let tileView = try #require(item.view as? MediaAssetTileView)
-        let pixelSize = try #require(tileView.currentImagePixelSize, "Tile has no decoded thumbnail")
+        let pixelSize = try #require(tileView.paintedImagePixelSize, "Tile has no decoded thumbnail")
         let face = MediaAssetTilePresentation.thumbnailFaceRect(
             imagePixelSize: pixelSize,
             bounds: tileView.bounds
