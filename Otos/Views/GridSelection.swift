@@ -84,12 +84,17 @@ nonisolated struct GridSelection: Equatable {
 
     /// Reconcile the selection field with an external truth (the live AppKit selection)
     /// after native *keyboard* selection (⌘A, ⇧-arrows), which writes
-    /// `selectionIndexPaths` directly and bypasses the model. Anchor and base are left
-    /// as-is (native keyboard behavior). This is the only place the model adopts a value
-    /// read from `selectionIndexPaths` — and it is a one-way adoption into the `selection`
-    /// field, never an input to a gesture computation.
+    /// `selectionIndexPaths` directly and bypasses the model. When the live selection
+    /// differs from the model's, `base` becomes the live set so a later ⇧-click unions
+    /// against the keyboard result (⌘A + ⇧-click keeps everything) instead of a stale
+    /// pre-keyboard base. Anchor is unchanged. This is the only place the model adopts a
+    /// value read from `selectionIndexPaths` — and it is a one-way adoption into the
+    /// `selection`/`base` fields, never an input to a gesture computation.
     func reconcilingSelection(_ liveSelection: Set<MediaAssetID>) -> GridSelection {
-        GridSelection(selection: liveSelection, anchor: anchor, base: base)
+        if liveSelection == selection {
+            return self
+        }
+        return GridSelection(selection: liveSelection, anchor: anchor, base: liveSelection)
     }
 
     /// Structural-apply survivor prune (same descriptor): drop identities that left the

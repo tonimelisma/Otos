@@ -19,12 +19,17 @@ extension CatalogWindowViewModel {
     }
 
     func applySidebarSelectionPolicy(previous: CatalogWindowState, next: CatalogWindowState) {
-        let previousIdentities = Set(previous.removableSources.compactMap(\.deviceIdentity))
+        // Compare against previously *available* identities so a remembered card that
+        // flips unavailable → available (the common re-insert case) still counts as
+        // newly attached and auto-selects.
+        let previousAvailableIdentities = Set(
+            previous.removableSources.filter(\.isAvailable).compactMap(\.deviceIdentity)
+        )
         let newlyAttached = next.removableSources.filter { source in
             guard source.isAvailable, let identity = source.deviceIdentity else {
                 return false
             }
-            return !previousIdentities.contains(identity)
+            return !previousAvailableIdentities.contains(identity)
         }
         if let attached = newlyAttached.max(by: { left, right in
             (left.lastSeenAt ?? .distantPast) < (right.lastSeenAt ?? .distantPast)
@@ -33,7 +38,12 @@ extension CatalogWindowViewModel {
             return
         }
 
-        guard !userHasChosenSource, !hasAppliedInitialDefault else {
+        // Do not latch the initial default on a pre-load empty world (zero roots of
+        // both kinds). That state can publish before `store.start()` finishes; latching
+        // there would skip the real startup default once libraries/cards appear.
+        guard !userHasChosenSource, !hasAppliedInitialDefault,
+              !(next.libraries.isEmpty && next.removableSources.isEmpty)
+        else {
             return
         }
         hasAppliedInitialDefault = true
@@ -53,7 +63,7 @@ extension CatalogWindowViewModel {
         }
         clearEjectingSourceIdentity(identity)
         switch outcome {
-        case .ejected:
+        case .ejected, .cancelled:
             return
         case let .busy(displayName):
             ejectAlertMessage =

@@ -211,6 +211,31 @@ struct GridSelectionTests {
 
         #expect(sel == .empty)
     }
+
+    // MARK: - reconcilingSelection
+
+    @Test func reconcilingSelectionAdoptsLiveSelectionAsBaseWhenItDiffers() {
+        // After ⌘A the live AppKit selection is everything; the model still held a
+        // stale pre-keyboard base. Reconcile adopts the live set as the new base so a
+        // later ⇧-click unions against "everything" instead of contracting to the
+        // stale base ∪ range.
+        let before = GridSelection(selection: [itemC], anchor: itemC, base: [itemC])
+        let live = Set(ordered)
+        let after = before.reconcilingSelection(live)
+
+        #expect(after.selection == live)
+        #expect(after.anchor == itemC)
+        #expect(after.base == live)
+    }
+
+    @Test func reconcilingSelectionIsNoOpWhenLiveMatchesModel() {
+        let before = GridSelection(selection: [itemC, itemD], anchor: itemC, base: [itemC])
+        let after = before.reconcilingSelection([itemC, itemD])
+
+        #expect(after.selection == before.selection)
+        #expect(after.anchor == before.anchor)
+        #expect(after.base == before.base)
+    }
 }
 
 // MARK: - Fixtures

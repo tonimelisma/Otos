@@ -30,15 +30,16 @@ final class MediaGridCollectionView: NSCollectionView {
     override func mouseDown(with event: NSEvent) {
         let pointInCollectionView = convert(event.locationInWindow, from: nil)
         var hit = indexPathForItem(at: pointInCollectionView)
+        // When the item is not yet materialized as a MediaAssetTileView (rare mid-scroll),
+        // accept the full-square hit rather than treating it as a face miss — a miss would
+        // make clicks during scroll feel dead. Letterbox rejection only applies once the
+        // tile view is resolvable.
         if let candidate = hit,
            let item = item(at: candidate) as? MediaAssetCollectionItem,
-           let tileView = item.view as? MediaAssetTileView
-        { // swiftlint:disable:this opening_brace
-            // Only clicks inside the aspect-fit thumbnail face select a tile; letterbox
-            // padding around a decoded thumbnail is treated as empty space (spec 0049).
-            if !tileView.hitTestsThumbnailFace(at: event.locationInWindow) {
-                hit = nil
-            }
+           let tileView = item.view as? MediaAssetTileView,
+           !tileView.hitTestsThumbnailFace(at: event.locationInWindow)
+        {
+            hit = nil
         }
 
         let modifiers = event.modifierFlags
