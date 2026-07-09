@@ -170,6 +170,46 @@ struct TileContentStoreTests {
         #expect(change == .detailOnly)
         #expect(store.content(for: detail.id)?.image == nil)
     }
+
+    @Test func additivePinProtectsImageFromBudgetEvictionAndPrune() {
+        let image = makeImage(width: 8)
+        let cost = TileContentStore.byteCost(of: image)
+        let store = TileContentStore(imageByteBudget: cost)
+        let additive = makeDetail(path: "additive.jpg", thumbnailPath: "a.jpg")
+        let pressure = makeDetail(path: "pressure.jpg", thumbnailPath: "p.jpg")
+        _ = store.mergeDetail(additive)
+        _ = store.mergeDetail(pressure)
+        store.pin(additive.id)
+        _ = store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(additive), for: additive.id)
+        _ = store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(pressure), for: pressure.id)
+
+        #expect(store.content(for: additive.id)?.image != nil)
+        #expect(store.content(for: pressure.id)?.image == nil)
+
+        store.prune(to: [pressure.id])
+        #expect(store.content(for: additive.id)?.image != nil)
+    }
+
+    @Test func pinVisibleReplacementMakesPreviouslyAdditiveIdEvictable() {
+        let image = makeImage(width: 8)
+        let cost = TileContentStore.byteCost(of: image)
+        let store = TileContentStore(imageByteBudget: cost)
+        let wasAdditive = makeDetail(path: "was.jpg", thumbnailPath: "w.jpg")
+        let keep = makeDetail(path: "keep.jpg", thumbnailPath: "k.jpg")
+        _ = store.mergeDetail(wasAdditive)
+        _ = store.mergeDetail(keep)
+        store.pin(wasAdditive.id)
+        _ = store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(wasAdditive), for: wasAdditive.id)
+        store.pinVisible([keep.id])
+        _ = store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(keep), for: keep.id)
+
+        #expect(store.content(for: keep.id)?.image != nil)
+        #expect(store.content(for: wasAdditive.id)?.image == nil)
+
+        store.prune(to: [keep.id])
+        #expect(store.content(for: wasAdditive.id) == nil)
+        #expect(store.content(for: keep.id) != nil)
+    }
 }
 
 @MainActor
