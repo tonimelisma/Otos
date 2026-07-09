@@ -14,8 +14,11 @@ private final class FlippedView: NSView {
 // Pure renderer for controller-owned `TileContent`. The tile paints `content.image` when
 // present and otherwise shows the placeholder face; it holds no asset-identity paint
 // state and never clears a painted image while an asset stays bound — the no-blank
-// invariant is structural in `TileContentStore`, not defended here. `prepareForReuse`
-// only clears the layer for AppKit recycling; the next `render` repaints from the store.
+// invariant is structural in `TileContentStore`, not defended here. A nil image means
+// the store has never painted this id (or budget-dropped an unpinned off-screen entry);
+// for a visible pinned id the store guarantees a non-nil image after first paint.
+// `prepareForReuse` only clears the layer for AppKit recycling; the next `render`
+// repaints from the store.
 
 final class MediaAssetTileView: NSView {
     private typealias Layout = MediaAssetTileLayout
@@ -31,8 +34,6 @@ final class MediaAssetTileView: NSView {
     private(set) var paintedImagePixelSize: CGSize?
     private var renderedBestKind: MediaKind?
     private var shouldShowVideoBadge = false
-    private var renderedAssetID: MediaAssetID?
-    private var renderedImageKey: String?
 
     override var isFlipped: Bool {
         true
@@ -89,7 +90,8 @@ final class MediaAssetTileView: NSView {
 
 extension MediaAssetTileView {
     /// Idempotent render from store content. Fade only when the store reports a first
-    /// async paint or a same-asset image replacement.
+    /// async paint or a same-asset image replacement. Decision-free: nil image →
+    /// placeholder; non-nil image → paint. The store owns the no-blank invariant.
     func render(_ content: TileContent?, change: TileContentChange) {
         guard let content else {
             clearLayerForReuse()
@@ -98,20 +100,11 @@ extension MediaAssetTileView {
         renderedBestKind = content.detail.bestKind
         configureBadge(for: content.detail)
 
-        let fade = change == .firstImage || change == .replacedImage
         if let image = content.image {
-            applyImage(image, fade: fade)
-            renderedAssetID = content.detail.id
-            renderedImageKey = content.imageKey
-        } else if renderedAssetID == content.detail.id, paintedImagePixelSize != nil {
-            // Store still awaiting decode but this view already shows the prior image —
-            // keep layer contents (monotonic). Badge/layout may still update above.
-            renderedImageKey = content.imageKey
+            applyImage(image, fade: change == .firstImage || change == .replacedImage)
         } else {
             imageView.layer?.contents = nil
             paintedImagePixelSize = nil
-            renderedAssetID = content.detail.id
-            renderedImageKey = content.imageKey
             updatePlaceholderPresentation()
         }
         needsLayout = true
@@ -147,8 +140,6 @@ extension MediaAssetTileView {
     private func clearLayerForReuse() {
         imageView.layer?.contents = nil
         paintedImagePixelSize = nil
-        renderedAssetID = nil
-        renderedImageKey = nil
         renderedBestKind = nil
         shouldShowVideoBadge = false
         durationField.stringValue = ""

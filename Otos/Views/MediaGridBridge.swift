@@ -15,16 +15,17 @@ import UniformTypeIdentifiers
 /// insert/remove changes while using AppKit's reloadData-class diffable fallback
 /// for measured-large or reorder-only changes. Unchanged IDs re-read visible
 /// details and reconfigure existing reusable items in place. Paint truth lives in
-/// `TileContentStore` (monotonic detail + image); `MediaTileImageCache` is the
-/// decoded-byte LRU that preheat and decode share so recycled items can repaint
-/// synchronously from the store.
+/// `TileContentStore` alone (monotonic detail + cost-bounded decoded image); the
+/// controller owns decode dedup via `inFlightDecodes` and pins visible IDs before
+/// every store mutation so a painted thumbnail cannot be budget-dropped.
 /// `MediaGridMutationGate` is the single arbiter for both exclusive collection-view
 /// mutations — diffable structural applies and animated zoom swaps — so the two never
 /// overlap in either direction; it keeps only the newest pending grid and the newest
 /// requested column count, and the controller is a pure executor of the ordered action
 /// lists the gate returns (`perform(_:)`).
-/// Frequent bridge activity uses Logger/signposts rather than JSONL so telemetry
-/// cannot create file-writing tasks or retain grid state on MainActor.
+/// Frequent bridge activity uses OSLog (`op=`/`key=value`) for the agent and interval
+/// signposts for Instruments; telemetry must not create file-writing tasks or retain
+/// grid state on MainActor.
 ///
 /// Mouse selection is model-owned (spec 0046). `MediaGridCollectionView` (the one
 /// collection-view subclass) captures the click at `mouseDown` and does **not** call
@@ -46,7 +47,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
-    var imageCache: MediaTileImageCache?
     var stallMonitor: MainRunLoopStallMonitor?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     /// User-adjustable grid density (spec 0048); the ViewModel is the source of truth,
@@ -67,7 +67,6 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     ) {
         controller.thumbnailDirectory = thumbnailDirectory
         controller.detailReader = detailReader
-        controller.imageCache = imageCache
         controller.stallMonitor = stallMonitor
         controller.onViewportChanged = onViewportChanged
         controller.onColumnCountChangeRequested = onColumnCountChangeRequested
@@ -121,7 +120,6 @@ final class MediaGridViewController: NSViewController {
     /// against this directory; the scroll observer reports visible identities here.
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
-    var imageCache: MediaTileImageCache?
     var stallMonitor: MainRunLoopStallMonitor?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
@@ -404,14 +402,11 @@ extension MediaGridViewController {
         guard !details.isEmpty else {
             return
         }
+        pinVisibleIDs()
         let changes = tileContents.mergeDetails(details)
-        // Seed images already in the byte cache so recycle/reconfigure can paint sync;
-        // otherwise start a controller-owned decode for the new key.
         for (id, change) in changes {
             if case .awaitingDecode = change {
-                if !seedImageFromCacheIfAvailable(for: id) {
-                    startDecode(for: id)
-                }
+                startDecode(for: id)
             }
         }
         let storedCount = tileContents.count
@@ -429,8 +424,8 @@ extension MediaGridViewController {
     }
 
     /// Ensures a store entry exists (empty detail stub if needed), pins visible IDs,
-    /// seeds or starts decode when a thumbnail is known without an image, and returns
-    /// the change classification for fade.
+    /// starts decode when a thumbnail is known without an image, and returns the
+    /// change classification for fade.
     @discardableResult
     func ensureContentAndMaybeDecode(for id: MediaAssetID) -> TileContentChange {
         pinVisibleIDs()
@@ -453,9 +448,6 @@ extension MediaGridViewController {
             }
             return .unchanged
         }
-        if seedImageFromCacheIfAvailable(for: id) {
-            return .unchanged
-        }
         startDecode(for: id)
         return .awaitingDecode(retainsImage: false)
     }
@@ -475,18 +467,6 @@ extension MediaGridViewController {
         tileContents.pinVisible(Set(visibleAssetIDs()))
     }
 
-    @discardableResult
-    private func seedImageFromCacheIfAvailable(for id: MediaAssetID) -> Bool {
-        guard let content = tileContents.content(for: id),
-              content.detail.thumbnailPath != nil,
-              let image = imageCache?.image(for: content.imageKey)
-        else {
-            return false
-        }
-        _ = tileContents.applyDecoded(image, key: content.imageKey, for: id)
-        return true
-    }
-
     private func startDecode(for id: MediaAssetID) {
         guard let content = tileContents.content(for: id),
               content.detail.thumbnailPath != nil
@@ -500,12 +480,8 @@ extension MediaGridViewController {
         }
         let detail = content.detail
         let directory = thumbnailDirectory
-        let cache = imageCache
         Task.detached(priority: .userInitiated) { [weak self] in
             let loaded = MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: directory)
-            if let image = loaded.image {
-                cache?.insert(image, for: key)
-            }
             await MainActor.run {
                 guard let self else {
                     return

@@ -35,7 +35,6 @@ struct ContentView: View {
                 deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
-                imageCache: viewModel.tileImageCache,
                 stallMonitor: viewModel.uiStallMonitor,
                 onViewportChanged: viewModel.viewportChanged,
                 clearFilters: viewModel.clearMediaFilter,

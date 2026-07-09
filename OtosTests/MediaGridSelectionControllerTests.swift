@@ -284,7 +284,6 @@ private final class GridSelectionTestHarness {
     let controller: MediaGridViewController
     let ids: [MediaAssetID]
     private let window: NSWindow
-    private let imageCache = MediaTileImageCache()
 
     enum ClickTarget {
         case thumbnailFaceCenter
@@ -294,7 +293,6 @@ private final class GridSelectionTestHarness {
     init(itemCount: Int) throws {
         controller = MediaGridViewController()
         _ = controller.view // forces loadView()
-        controller.imageCache = imageCache
 
         ids = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
         var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
@@ -324,9 +322,9 @@ private final class GridSelectionTestHarness {
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
 
-    /// Seeds a cached decoded thumbnail for `id` so its tile has a real pixel size and an
-    /// aspect-fit face with letterbox zones. The detail is merged and the visible item is
-    /// reconfigured so the test can click the actual rendered face.
+    /// Seeds a decoded thumbnail in `TileContentStore` for `id` so its tile has a real
+    /// pixel size and an aspect-fit face with letterbox zones. The detail is merged and
+    /// the visible item is reconfigured so the test can click the actual rendered face.
     func configureItemWithThumbnail(_ id: MediaAssetID, pixelSize: CGSize) {
         let thumbnailPath = "test-\(id.relativePath.rawValue)"
         let detail = MediaTileDetail(
@@ -339,8 +337,12 @@ private final class GridSelectionTestHarness {
             enrichedSourceMTimeSeconds: 1
         )
         let key = MediaAssetTilePresentation.imageContentKey(detail)
-        imageCache.insert(makeTestCGImage(width: Int(pixelSize.width), height: Int(pixelSize.height)), for: key)
         controller.mergeTileDetails([id: detail], reason: "test")
+        _ = controller.tileContents.applyDecoded(
+            makeTestCGImage(width: Int(pixelSize.width), height: Int(pixelSize.height)),
+            key: key,
+            for: id
+        )
 
         _ = controller.ensureContentAndMaybeDecode(for: id)
         if let indexPath = controller.dataSource.indexPath(for: id),

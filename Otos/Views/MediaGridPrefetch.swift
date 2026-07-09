@@ -4,17 +4,16 @@ import OSLog
 
 private struct PreheatImageContext {
     let thumbnailDirectory: URL?
-    let imageCache: MediaTileImageCache?
 }
 
 // Collection preheat guide
 //
 // AppKit prefetch callbacks and the scroll-driven look-ahead share one path:
 // fault a burst of details by identity, merge it into the sticky detail map, and
-// warm the decoded-image cache off the main actor when a thumbnail already
-// exists. Bursts are newest-value work: obsolete look-ahead is cancelled instead
-// of queued because only the next viewport is useful, while partial AppKit
-// cancellation narrows the active ID set without throwing away still-useful IDs.
+// decode thumbnails off the main actor straight into `TileContentStore`. Bursts
+// are newest-value work: obsolete look-ahead is cancelled instead of queued
+// because only the next viewport is useful, while partial AppKit cancellation
+// narrows the active ID set without throwing away still-useful IDs.
 
 extension MediaGridViewController: NSCollectionViewPrefetching {
     func collectionView(
@@ -66,10 +65,7 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
         let generation = preheatGeneration
         preheatTask?.cancel()
         preheatIDs = requestedIDs
-        let imageContext = PreheatImageContext(
-            thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache
-        )
+        let imageContext = PreheatImageContext(thumbnailDirectory: thumbnailDirectory)
         preheatTask = Task.detached(priority: .utility) { [weak self, detailReader] in
             await self?.runPreheat(
                 ids: ids,
@@ -109,10 +105,9 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
         }
         var warmed: [(MediaAssetID, String, CGImage)] = []
         for detail in detailsToWarm where !Task.isCancelled {
-            if let result = Self.warmImageCache(
+            if let result = Self.decodePreheatImage(
                 detail: detail,
-                thumbnailDirectory: imageContext.thumbnailDirectory,
-                imageCache: imageContext.imageCache
+                thumbnailDirectory: imageContext.thumbnailDirectory
             ) {
                 warmed.append(result)
             }
@@ -128,28 +123,22 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
         }
     }
 
-    private nonisolated static func warmImageCache(
+    private nonisolated static func decodePreheatImage(
         detail: MediaTileDetail,
-        thumbnailDirectory: URL?,
-        imageCache: MediaTileImageCache?
+        thumbnailDirectory: URL?
     ) -> (MediaAssetID, String, CGImage)? {
         guard !Task.isCancelled,
-              let imageCache,
               detail.thumbnailPath != nil
         else {
             return nil
         }
         let key = MediaAssetTilePresentation.imageContentKey(detail)
-        if let existing = imageCache.image(for: key) {
-            return (detail.id, key, existing)
-        }
         guard let image = MediaAssetTilePresentation.decodedThumbnailImage(
             detail: detail,
             thumbnailDirectory: thumbnailDirectory
         ), !Task.isCancelled else {
             return nil
         }
-        imageCache.insert(image, for: key)
         return (detail.id, key, image)
     }
 

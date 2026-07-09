@@ -5,7 +5,7 @@ import Testing
 @MainActor
 struct TileContentStoreTests {
     @Test func mergeDetailInsertsAndRequestsDecodeWhenThumbnailExists() throws {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let detail = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg")
 
         let change = store.mergeDetail(detail)
@@ -18,7 +18,7 @@ struct TileContentStoreTests {
     }
 
     @Test func mergeDetailNeverClearsExistingImageWhenKeyAdvances() throws {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let first = makeDetail(path: "a.jpg", thumbnailPath: "t1.jpg", size: 10, mtime: 1)
         let second = makeDetail(path: "a.jpg", thumbnailPath: "t2.jpg", size: 20, mtime: 2)
         _ = store.mergeDetail(first)
@@ -35,7 +35,7 @@ struct TileContentStoreTests {
     }
 
     @Test func mergeDetailSameKeyUpdatesBadgeFieldsAsDetailOnly() {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let first = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", kind: .video, duration: nil)
         let second = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", kind: .video, duration: 12)
         _ = store.mergeDetail(first)
@@ -46,8 +46,23 @@ struct TileContentStoreTests {
         #expect(store.content(for: first.id)?.detail.durationSeconds == 12)
     }
 
+    @Test func mergeDetailNilThumbnailAfterPaintedImageReturnsDetailOnly() throws {
+        let store = TileContentStore()
+        let first = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg")
+        let second = makeDetail(path: "a.jpg", thumbnailPath: nil)
+        _ = store.mergeDetail(first)
+        let image = makeImage()
+        _ = store.applyDecoded(image, key: MediaAssetTilePresentation.imageContentKey(first), for: first.id)
+
+        let change = store.mergeDetail(second)
+
+        #expect(change == .detailOnly)
+        let content = try #require(store.content(for: first.id))
+        #expect(content.image === image)
+    }
+
     @Test func applyDecodedRejectsStaleKey() {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let first = makeDetail(path: "a.jpg", thumbnailPath: "t1.jpg", size: 1, mtime: 1)
         let second = makeDetail(path: "a.jpg", thumbnailPath: "t2.jpg", size: 2, mtime: 2)
         _ = store.mergeDetail(first)
@@ -65,7 +80,7 @@ struct TileContentStoreTests {
     }
 
     @Test func applyDecodedClassifiesFirstAndReplacement() {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let detail = makeDetail(path: "a.jpg", thumbnailPath: "t.jpg")
         let key = MediaAssetTilePresentation.imageContentKey(detail)
         _ = store.mergeDetail(detail)
@@ -78,7 +93,7 @@ struct TileContentStoreTests {
     }
 
     @Test func pruneRemovesNonLiveNonPinnedAndPreservesPinned() {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let keep = makeDetail(path: "keep.jpg", thumbnailPath: "k.jpg")
         let drop = makeDetail(path: "drop.jpg", thumbnailPath: "d.jpg")
         let pinned = makeDetail(path: "pin.jpg", thumbnailPath: "p.jpg")
@@ -94,26 +109,60 @@ struct TileContentStoreTests {
         #expect(store.content(for: drop.id) == nil)
     }
 
-    @Test func lruEvictionSkipsPinnedEntries() {
-        let store = TileContentStore(limit: 2)
+    @Test func imageBudgetDropsLRUUnpinnedImagesButNeverPinned() {
+        let small = makeImage(width: 8)
+        let cost = TileContentStore.byteCost(of: small)
+        let store = TileContentStore(imageByteBudget: cost * 2)
+        let pinned = makeDetail(path: "pin.jpg", thumbnailPath: "p.jpg")
+        let older = makeDetail(path: "older.jpg", thumbnailPath: "o.jpg")
+        let newer = makeDetail(path: "newer.jpg", thumbnailPath: "n.jpg")
+        _ = store.mergeDetail(pinned)
+        _ = store.mergeDetail(older)
+        _ = store.mergeDetail(newer)
+        store.pinVisible([pinned.id])
+        _ = store.applyDecoded(small, key: MediaAssetTilePresentation.imageContentKey(pinned), for: pinned.id)
+        _ = store.applyDecoded(small, key: MediaAssetTilePresentation.imageContentKey(older), for: older.id)
+        // Touch older so it is LRU among unpinned when newer arrives over budget.
+        _ = store.content(for: older.id)
+        _ = store.applyDecoded(small, key: MediaAssetTilePresentation.imageContentKey(newer), for: newer.id)
+
+        #expect(store.content(for: pinned.id)?.image != nil)
+        #expect(store.content(for: older.id)?.image == nil)
+        #expect(store.content(for: older.id)?.detail.thumbnailPath == "o.jpg")
+        #expect(store.content(for: newer.id)?.image != nil)
+        #expect(store.imageBytes == cost * 2)
+    }
+
+    @Test func imageBytesAccountingIsExactAcrossReplaceAndBudgetDrop() {
+        let first = makeImage(width: 8)
+        let second = makeImage(width: 16)
+        let firstCost = TileContentStore.byteCost(of: first)
+        let secondCost = TileContentStore.byteCost(of: second)
+        let store = TileContentStore(imageByteBudget: firstCost + secondCost)
         let a = makeDetail(path: "a.jpg", thumbnailPath: "a.jpg")
         let b = makeDetail(path: "b.jpg", thumbnailPath: "b.jpg")
-        let c = makeDetail(path: "c.jpg", thumbnailPath: "c.jpg")
         _ = store.mergeDetail(a)
         _ = store.mergeDetail(b)
-        store.pinVisible([a.id])
-        // Touch b so a is older among unpinned… a is pinned so b should leave when c arrives.
-        _ = store.content(for: b.id)
-        _ = store.mergeDetail(c)
+        _ = store.applyDecoded(first, key: MediaAssetTilePresentation.imageContentKey(a), for: a.id)
+        #expect(store.imageBytes == firstCost)
+        _ = store.applyDecoded(second, key: MediaAssetTilePresentation.imageContentKey(a), for: a.id)
+        #expect(store.imageBytes == secondCost)
+        _ = store.applyDecoded(first, key: MediaAssetTilePresentation.imageContentKey(b), for: b.id)
+        #expect(store.imageBytes == secondCost + firstCost)
 
-        #expect(store.content(for: a.id) != nil)
-        #expect(store.content(for: c.id) != nil)
-        #expect(store.count == 2)
-        #expect(store.content(for: b.id) == nil)
+        let tight = TileContentStore(imageByteBudget: firstCost)
+        _ = tight.mergeDetail(a)
+        _ = tight.mergeDetail(b)
+        tight.pinVisible([b.id])
+        _ = tight.applyDecoded(first, key: MediaAssetTilePresentation.imageContentKey(b), for: b.id)
+        _ = tight.applyDecoded(second, key: MediaAssetTilePresentation.imageContentKey(a), for: a.id)
+        #expect(tight.content(for: a.id)?.image == nil)
+        #expect(tight.content(for: b.id)?.image != nil)
+        #expect(tight.imageBytes == firstCost)
     }
 
     @Test func nilThumbnailMergeDoesNotRequestDecode() {
-        let store = TileContentStore(limit: 8)
+        let store = TileContentStore()
         let detail = makeDetail(path: "a.jpg", thumbnailPath: nil)
 
         let change = store.mergeDetail(detail)

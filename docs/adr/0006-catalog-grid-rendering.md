@@ -38,9 +38,11 @@ Baseline diagnostics showed large reorder-only snapshots being applied with
 path applies by calling `reloadData` (`NSDiffableDataSource.h`), and AppKit does not
 provide `applySnapshotUsingReloadData`. ReloadData tears down visible items, so
 no-blank correctness cannot rely on AppKit preserving cell instances. The invariant
-is enforced by synchronous paint from a decoded memory cache plus same-identity
-downgrade guards inside the tile; diffable apply semantics only affect how much work
-AppKit does. The documented reloadData-class fallback for large/reorder applies was
+is enforced by `TileContentStore` (cost-bounded decoded images, visible IDs pinned
+against prune and budget eviction) so a painted thumbnail never regresses to nil
+for a visible asset; tiles are pure renderers of that store value. Diffable apply
+semantics only affect how much work AppKit does. The documented reloadData-class
+fallback for large/reorder applies was
 adopted after live diagnostics found zero-duration true diffing taking 5.1 s and
 25.2 s for large/reorder applies at real-library scale.
 
@@ -100,12 +102,13 @@ item (scroll dequeue, a future zoom swap) at `super`'s unmodified attributes.
 Large applies and background reorder-only changes use AppKit's reloadData-class
 diffable path (`animatingDifferences: false`) after measured true-diff apply cost
 at real-library scale, completely unaffected by the animation tuning above. This
-is visually safe because the tile can synchronously repaint any decoded
-thumbnail and never downgrades a painted same-asset image to placeholder
-content. The fallback is an apply-policy choice only; it does not make the
-catalog, detail cache, or decoded image cache a source of media truth. A
-thumbnail's arrival from an async decode (never a cache hit) fades in; a
-cache-hit repaint (scroll-back, recycled-cell sync repaint) stays instant to
+is visually safe because `TileContentStore` holds any decoded thumbnail for a
+visible (pinned) asset and never drops it under budget pressure, so a recycled
+tile can synchronously repaint and never downgrades a painted same-asset image
+to placeholder content. The fallback is an apply-policy choice only; it does not
+make the catalog or `TileContentStore` a source of media truth. A thumbnail's
+arrival from an async decode (never a store hit) fades in; a store-hit repaint
+(scroll-back, recycled-cell sync repaint) stays instant to
 avoid reading as flicker. A per-column stagger flourish was attempted and
 retired: a delayed, backwards-filled `CATransition` held first-paint tiles at
 their prior (`nil`) contents during the delay, showing a transparent gap
@@ -141,7 +144,7 @@ data-driven change rather than a new rendering mechanism.
 - Collection updates are imperative but isolated and state-machine tested.
 - Same-identity background enrichment or fact-detail updates do not recycle
   visible cells; if AppKit does recycle a visible cell for structural reasons, the
-  tile synchronously repaints from the decoded cache when available. Video badge
+  tile synchronously repaints from `TileContentStore` when available. Video badge
   updates do not participate in image identity.
 - Missing detail rows, detail-query failures, and nil thumbnail decode results
   are information loss, not proof that a painted same-asset thumbnail should be

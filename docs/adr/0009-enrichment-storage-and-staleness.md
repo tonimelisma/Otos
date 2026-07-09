@@ -103,14 +103,15 @@ Adjacent decisions requiring separate ADRs or specs:
    none). The catalog stores `thumbnail_path`. 256 px is a true grid thumbnail;
    the max-zoom path that loads originals is a separate future decision.
 
-   Spec 0038 adds a bounded decoded-thumbnail memory cache used only by the
-   visible grid. It is keyed by the tile image-content key (`thumbnail_path`,
-   source size, and source mtime seconds), cost-capped around 128 MB, and
-   count-capped with least-recently-used eviction inside a non-main thread-safe
-   cache. It exists so a recycled or recreated tile can synchronously repaint a
-   thumbnail that has already decoded in this process, enforcing the no-blank grid
-   invariant. It is never persisted, never used to answer catalog truth, and
-   stale entries age out naturally because re-enrichment changes the key.
+   Spec 0038's no-blank grid invariant is owned by `TileContentStore`: it is the
+   sole decoded-image owner for the grid, keyed by asset identity and image-
+   content key (`thumbnail_path`, source size, and source mtime seconds),
+   cost-capped (default 256 MB) with pin-aware LRU image eviction. Visible IDs
+   are pinned so a painted thumbnail cannot disappear under budget pressure.
+   Unpinned images may be dropped and re-decoded on rebind. The store is never
+   persisted, never used to answer catalog truth, and a re-enrichment that
+   advances the image key keeps any prior painted image until the newer decode
+   lands.
 
 2. **The full metadata is on-demand scalar-plus-JSON, never resident in grid
    publication.** Enrichment writes the parsed `AssetMetadata` into an

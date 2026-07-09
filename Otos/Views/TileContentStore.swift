@@ -4,14 +4,18 @@ import Foundation
 // Controller-owned tile content guide
 //
 // `TileContentStore` is the single source of truth for what any on-screen tile showing
-// a given `MediaAssetID` must display. The monotonic rule lives here: `image` only
-// advances to a newer decode for the same asset and never regresses to `nil` while the
-// entry remains. Tiles render a `TileContent` value idempotently and hold no asset-
-// identity paint logic of their own — the no-blank grid invariant holds by construction.
+// a given `MediaAssetID` must display, and the only decoded-image owner in the grid
+// paint path. The monotonic rule lives here: `image` only advances to a newer decode
+// for the same asset and never regresses to `nil` while the entry remains pinned.
+// Unpinned images may be dropped under the byte budget (re-decoded on rebind — the
+// allowed miss path); pinned (visible) images are never dropped. Tiles render a
+// `TileContent` value idempotently and hold no asset-identity paint logic of their
+// own — the no-blank grid invariant holds by construction.
 //
-// `MediaTileImageCache` remains the decoded-byte LRU; store entries reference the same
-// `CGImage` instances. Visible IDs are pinned against prune eviction so a painted
-// thumbnail cannot disappear merely because the sticky map trimmed an off-screen row.
+// Entry count is bounded by scope via `prune(to:)`. Decoded-image memory is bounded by
+// `imageByteBudget` via pin-aware `enforceImageBudget()`. Visible IDs are pinned
+// against both prune and budget eviction so a painted thumbnail cannot disappear
+// merely because an off-screen row was trimmed or the budget was under pressure.
 
 nonisolated struct TileContent: Equatable {
     var detail: MediaTileDetail
@@ -41,15 +45,18 @@ final class TileContentStore {
     private struct Entry {
         var content: TileContent
         var accessStamp: UInt64
+        /// Exact byte cost of `content.image` when non-nil; 0 when image is nil.
+        var imageCost: Int
     }
 
     private var entries: [MediaAssetID: Entry] = [:]
     private var accessClock: UInt64 = 0
     private var pinnedIDs: Set<MediaAssetID> = []
-    let limit: Int
+    private(set) var imageBytes: Int = 0
+    let imageByteBudget: Int
 
-    init(limit: Int = 4096) {
-        self.limit = limit
+    init(imageByteBudget: Int = 256 * 1024 * 1024) {
+        self.imageByteBudget = max(1, imageByteBudget)
     }
 
     var count: Int {
@@ -65,7 +72,7 @@ final class TileContentStore {
         return entry.content
     }
 
-    /// Pins currently visible identities so prune/LRU cannot drop their painted images.
+    /// Pins currently visible identities so prune/budget cannot drop their painted images.
     func pinVisible(_ ids: Set<MediaAssetID>) {
         pinnedIDs = ids
     }
@@ -79,9 +86,9 @@ final class TileContentStore {
         guard var entry = entries[id] else {
             entries[id] = Entry(
                 content: TileContent(detail: detail, imageKey: key, image: nil),
-                accessStamp: stamp
+                accessStamp: stamp,
+                imageCost: 0
             )
-            evictIfNeeded()
             if detail.thumbnailPath != nil {
                 return .awaitingDecode(retainsImage: false)
             }
@@ -100,9 +107,8 @@ final class TileContentStore {
         // Key advanced: keep any painted image (monotonic) and ask the caller to decode.
         entry.content.imageKey = key
         entries[id] = entry
-        evictIfNeeded()
         if detail.thumbnailPath == nil {
-            return previous.image == nil ? .detailOnly : .detailOnly
+            return .detailOnly
         }
         return .awaitingDecode(retainsImage: previous.image != nil)
     }
@@ -133,18 +139,50 @@ final class TileContentStore {
             entries[id] = entry
             return .unchanged
         }
+        imageBytes -= entry.imageCost
+        let cost = Self.byteCost(of: image)
         entry.content.image = image
+        entry.imageCost = cost
+        imageBytes += cost
         entry.accessStamp = nextAccessStamp()
         entries[id] = entry
+        enforceImageBudget()
         return hadImage ? .replacedImage : .firstImage
     }
 
-    /// Drops entries whose IDs are neither live nor pinned, then LRU-trims to `limit`
-    /// without evicting pinned IDs.
+    /// Drops entries whose IDs are neither live nor pinned. Subtracts image bytes for
+    /// any dropped images, then enforces the remaining budget.
     func prune(to liveIDs: Set<MediaAssetID>) {
         let keep = liveIDs.union(pinnedIDs)
-        entries = entries.filter { keep.contains($0.key) }
-        evictIfNeeded()
+        var next: [MediaAssetID: Entry] = [:]
+        next.reserveCapacity(min(entries.count, keep.count))
+        for (id, entry) in entries {
+            if keep.contains(id) {
+                next[id] = entry
+            } else {
+                imageBytes -= entry.imageCost
+            }
+        }
+        entries = next
+        enforceImageBudget()
+    }
+
+    /// While over budget, nils the LRU unpinned entry that still has an image (keeps
+    /// detail + imageKey). Never touches a pinned entry's image.
+    func enforceImageBudget() {
+        while imageBytes > imageByteBudget {
+            guard let evicted = entries
+                .filter({ !pinnedIDs.contains($0.key) && $0.value.content.image != nil })
+                .min(by: { $0.value.accessStamp < $1.value.accessStamp })
+            else {
+                return
+            }
+            var entry = evicted.value
+            imageBytes -= entry.imageCost
+            entry.content.image = nil
+            entry.imageCost = 0
+            entries[evicted.key] = entry
+        }
     }
 
     private func nextAccessStamp() -> UInt64 {
@@ -152,16 +190,11 @@ final class TileContentStore {
         return accessClock
     }
 
-    private func evictIfNeeded() {
-        while entries.count > limit {
-            guard let evicted = entries
-                .filter({ !pinnedIDs.contains($0.key) })
-                .min(by: { $0.value.accessStamp < $1.value.accessStamp })?
-                .key
-            else {
-                return
-            }
-            entries[evicted] = nil
+    static func byteCost(of image: CGImage) -> Int {
+        let rowCost = image.bytesPerRow * image.height
+        if rowCost > 0 {
+            return rowCost
         }
+        return max(1, image.width * image.height * 4)
     }
 }

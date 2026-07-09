@@ -52,8 +52,9 @@ everything expensive happens on an actor off the main thread.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps. Mouse selection is
-  model-owned (`GridSelection`; the subclass never calls `super.mouseDown`). Tiles
-  never blank a painted same-asset thumbnail (ADR 0006).
+  model-owned (`GridSelection`; the subclass never calls `super.mouseDown`). Paint
+  truth lives in `TileContentStore` (sole decoded-image owner; visible IDs pinned;
+  cost-bounded); tiles never blank a painted same-asset thumbnail (ADR 0006).
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
 - **Enrichment** reads bytes and may materialize cloud placeholders; the scanner
