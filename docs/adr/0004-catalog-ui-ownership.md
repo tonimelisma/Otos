@@ -3,8 +3,6 @@
 - Status: Accepted
 - Date: 2026-06-15
 - Last updated: 2026-06-22
-- Specs: `docs/specs/0007-catalog-window-model.md`,
-  `docs/specs/0014-catalog-task-and-mutation-ownership.md`
 
 ## Context
 

@@ -222,7 +222,6 @@ Update:
 
 - `docs/requirements.md`
 - `docs/index.md`
-- `docs/onboarding.md`
 - ADRs 0002, 0005, 0009, and 0010
 - specs 0004, 0007, 0009, 0011, 0012, 0014, 0022, and 0025 where they describe
   current cadence, ordering, enrichment hot columns, or future sort/filter status

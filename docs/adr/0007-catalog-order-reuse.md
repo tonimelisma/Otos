@@ -2,10 +2,6 @@
 
 - Status: Superseded by ADR 0010 for current order execution and value materialization
 - Last updated: 2026-06-30
-- Specs: `docs/specs/0011-placeholder-media-grid.md`,
-  `docs/specs/0012-catalog-state-robustness.md`,
-  `docs/specs/0017-catalog-publication-performance.md`,
-  `docs/specs/0018-catalog-order-cache-and-scoped-map-removal.md`
 
 ## Context
 
@@ -119,7 +115,6 @@ cache-hit reuse. FND-043 is rewritten. Git history owns the prior cache decision
 - FND-043 rewritten to the sort-every-publication, full-map contract.
 - `CatalogProjection` file guide and comments updated.
 - `CatalogMediaGridState` comment updated (full map, not scoped).
-- `docs/specs/0018-catalog-order-cache-and-scoped-map-removal.md` records the
   increment; spec 0017 introduced the sort key this decision depends on.
 
 ## Verification

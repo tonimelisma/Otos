@@ -2,30 +2,23 @@
 
 - <item>
 
-## Spec, Requirements, And ADRs
+## Requirements And ADRs
 
-- Spec:
 - Current requirement IDs:
-- Captured requirements restated to the user:
-- Planning or idea docs used only by explicit user request:
-- ADRs:
-- Definition of Ready complete:
+- ADRs added/updated:
+- Plan (if any; delete when done):
 
 ## Architecture
 
-- Alternatives considered:
+- Alternatives considered (when a real decision was made):
 - Selected approach:
-- Why this is correct:
-- Retirement proof, if applicable:
-- Repository-wide stale-document audit:
-- Code-comment accuracy audit:
+- Why this is correct / simplest:
 
 ## Verification
 
 - Local `script/verify.sh`:
 - Xcode version:
 - Focused tests:
-- Additional tests:
 
 ## Performance And Instrumentation
 
@@ -48,7 +41,7 @@
 
 ## Docs And Privacy
 
-- Docs updated:
+- Docs updated (`requirements.md` / ADRs / `architecture.md` / research / plans):
 - Obsolete docs/comments deleted:
 - Logs contain only bounded diagnostic payloads; secrets, credentials,
   thumbnails, binary media, and unbounded metadata are absent:
@@ -69,7 +62,8 @@ pre-merge, or ready-for-review DoD report.
 After the PR is merged, local `main` is updated, required post-merge verification
 is complete, branch/worktree cleanup is complete, increment stashes are cleared,
 stale branches/worktrees are reviewed, and the final working tree is clean, post
-the single final green/red DoD report as a PR comment and send it to the user.
+the single final green/red DoD report as a PR comment **and send the same full
+report to the user** (never a summary with a link).
 
 ## Foundation Checklist
 
@@ -79,10 +73,12 @@ the single final green/red DoD report as a PR comment and send it to the user.
 - [ ] No effort-based compromise.
 - [ ] No fabricated user-visible or domain facts.
 - [ ] One user action has one implementation path.
-- [ ] Reviewed against `docs/process/code-review.md`; blockers and majors resolved.
-- [ ] Affected current docs and backlinks describe the landed design; obsolete
-      documents were deleted.
+- [ ] Self-reviewed against the AGENTS.md review bar; blockers and majors resolved.
+- [ ] Affected requirements, ADRs, and `docs/architecture.md` describe the landed
+      design; obsolete documents were deleted.
 - [ ] Affected file guides and comments explain current mechanics and rationale,
       with no stale increment history.
+- [ ] No new `docs/specs/` files; no process rows added to `requirements.md`;
+      no source-text tests.
 - [ ] Meaningful paths are instrumented with OSLog/signposts.
 - [ ] Main-actor work stays under the 100 ms hang threshold, with stricter review for continuous interactions.

@@ -2,8 +2,6 @@ import Foundation
 @testable import Otos
 import Testing
 
-// swiftlint:disable file_length
-
 struct CatalogProjectionTests {
     @Test func windowStateSortsLibrariesAndAssets() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))

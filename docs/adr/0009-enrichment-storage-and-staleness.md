@@ -450,14 +450,13 @@ path for pre-user enrichment schema changes.
 - `AGENTS.md` — the cloud-materialization baseline paragraph amended the same way.
 - `docs/requirements.md` — add ENR-001…ENR-010 (Current); update APP-001, APP-006,
   APP-009, APP-010, and FND-057.
-- `docs/specs/0022-metadata-and-thumbnail-enrichment.md` — the enrichment
+-  — the enrichment
   implementation spec this ADR is the decision record for.
-- `docs/specs/0024-grid-flicker-and-thumbnail-jpeg.md` — changes the thumbnail
+-  — changes the thumbnail
   private file format to JPEG and documents manual old-thumbnail deletion.
-- `docs/specs/0040-materialization-cadence-jsonl-telemetry.md` — records the
   one-second provider re-request cadence and durable result attribution fields.
 - `docs/index.md` — register this ADR and spec 0022.
-- `docs/onboarding.md` — add the enrichment data flow and the coordinator's role.
+-  — add the enrichment data flow and the coordinator's role.
 - `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here, in
   spec 0022, and in requirements).
 

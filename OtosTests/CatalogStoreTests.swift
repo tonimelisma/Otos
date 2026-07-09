@@ -313,34 +313,6 @@ struct CatalogStoreTests {
         let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
-
-    @Test func noManualScanControlsAreExposedInSwiftUISurfaces() throws {
-        let repoRoot = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-        let files = [
-            "Otos/ContentView.swift",
-            "Otos/OtosApp.swift",
-            "Otos/Views/MediaGridView.swift",
-            "Otos/Views/MediaAssetCollectionView.swift",
-            "Otos/Views/SettingsView.swift",
-            "Otos/Views/SidebarView.swift",
-        ]
-        let disallowedLabels = [
-            "Scan Library",
-            "Scan Libraries",
-            "Rescan",
-            "Refresh Library",
-            "Refresh Libraries",
-        ]
-
-        for file in files {
-            let content = try String(contentsOf: repoRoot.appending(path: file), encoding: .utf8)
-            for label in disallowedLabels {
-                #expect(!content.contains(label), "\(label) should not appear in \(file)")
-            }
-        }
-    }
 }
 
 private extension CatalogStoreTests {

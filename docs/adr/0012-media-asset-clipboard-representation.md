@@ -7,7 +7,7 @@ Proposed
 ## Context
 
 The media grid is gaining selection and a ⌘C / Edit ▸ Copy command
-(`docs/specs/0031-grid-selection-and-copy.md`). We must decide what a copied
+. We must decide what a copied
 image or video actually places on `NSPasteboard.general`, so it can be pasted or
 attached in other apps.
 
@@ -131,7 +131,7 @@ spec, not this ADR.
 - `docs/index.md`: add this ADR to the decisions table.
 - `docs/requirements.md`: APP-012 references this ADR for the copy representation
   and the no-materialization-on-copy property.
-- `docs/specs/0031-grid-selection-and-copy.md`: links this ADR.
+- : links this ADR.
 - No existing document currently describes clipboard behavior, so nothing is
   rewritten or deleted.
 

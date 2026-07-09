@@ -98,10 +98,24 @@ check_head_tree() {
   check_conflict_markers_for_tree "$head_sha"
 }
 
+# Source-text tests are forbidden: a test that reads a .swift file and asserts on its
+# text breaks on harmless refactors and tests structure, not behavior. Tests must
+# assert observable behavior. See AGENTS.md "Boundaries".
+check_no_source_text_tests() {
+  local head_sha="$1"
+
+  if git grep -n -F 'String(contentsOf' "$head_sha" -- OtosTests; then
+    echo "Forbidden source-text test: OtosTests must not read .swift source as text via String(contentsOf:). Assert observable behavior instead (AGENTS.md Boundaries)." >&2
+    exit 1
+  fi
+}
+
 check() {
   local event_name="${EVENT_NAME:-${GITHUB_EVENT_NAME:-workflow_dispatch}}"
   local base_sha="${BASE_SHA:-}"
   local head_sha="${HEAD_SHA:-${GITHUB_SHA:-HEAD}}"
+
+  check_no_source_text_tests "$head_sha"
 
   case "$event_name" in
     pull_request)

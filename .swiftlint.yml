@@ -14,13 +14,14 @@ line_length:
   ignores_comments: true
   ignores_urls: true
 
+# Size limits are soft warnings, not hard errors: cohesion sets file/type
+# boundaries, not an arithmetic cap. Do not re-add `error:` here, and do not split
+# a cohesive type only to satisfy these (docs/plans/0001-docs-and-process-reset.md).
 type_body_length:
-  warning: 300
-  error: 500
+  warning: 400
 
 file_length:
-  warning: 500
-  error: 800
+  warning: 600
 
 identifier_name:
   min_length:

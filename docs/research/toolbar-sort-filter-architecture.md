@@ -539,10 +539,9 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
 
 Implementation requires: a new ADR (user-facing catalog query surface:
 descriptor ownership, best-value schema, index and cadence policy — the
-adjacent decision ADR 0010 named), a decision-complete spec, and updates to
-FND-038 (cadence), FND-040, FND-043 (detail-only reuse changes), FND-061/062
-(new sort keys and suppression key), ADR 0006, `docs/onboarding.md`, and
-APP-001.
+adjacent decision ADR 0010 named), and updates to the corresponding
+architecture/product requirement rows, ADR 0006, `docs/architecture.md`, and
+APP-001. (Landed as ADR 0011 + APP-013/014.)
 
 ## Local Evidence: Filesystem Date Quality (OneDrive Library)
 

@@ -2,12 +2,6 @@
 
 - Status: Accepted
 - Last updated: 2026-07-01
-- Specs: `docs/specs/0004-library-catalog-browser.md`,
-  `docs/specs/0005-catalog-state-diagnostics-cleanup.md`,
-  `docs/specs/0008-package-descendant-scan-skip.md`,
-  `docs/specs/0013-catalog-lifecycle-race-safety.md`,
-  `docs/specs/0023-filesystem-event-rescan-v1.md`,
-  `docs/specs/0025-store-owned-query-catalog-and-identity-grid.md`
 
 ## Context
 
