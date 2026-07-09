@@ -69,4 +69,17 @@ struct RemovableEjectOutcomeTests {
         )
         #expect(outcome == .failed(description: "Unmount failed for an unknown reason."))
     }
+
+    @Test func unknownCocoaWriteErrorWithoutBusyUnderlyingMapsToFailed() {
+        let error = NSError(
+            domain: NSCocoaErrorDomain,
+            code: NSFileWriteUnknownError,
+            userInfo: [NSLocalizedDescriptionKey: "The operation couldn’t be completed."]
+        )
+        let outcome = CatalogWindowViewModel.removableEjectOutcome(
+            for: error,
+            displayName: "CARD"
+        )
+        #expect(outcome == .failed(description: "The operation couldn’t be completed."))
+    }
 }

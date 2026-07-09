@@ -169,6 +169,25 @@ state crossing actors without an owner); stringly-typed domain facts; ambiguous 
 names; test coupling (asserting implementation details instead of observable
 behavior); diagnostic payload sprawl.
 
+## Code Review
+
+Two lenses on every PR:
+
+- **(A) Implementation fidelity.** Establish the oracle first: behavior-preserving
+  work keeps existing tests green *unmodified* plus a runtime differential where
+  useful; bug-fixes reproduce then verify; invariants get an adversarial "can I
+  construct a violation?" pass. Diff against the plan, check blast radius, run
+  every agent-owned check, then invert every "this is fine."
+- **(B) Architecture.** Is this the simplest correct design? One owner per
+  question? Would a blank-slate build arrive here, or is this a patch around a
+  wrong boundary?
+
+Review from the diff, not the author's intent. Prefer a cold `/code-review` (up
+to `ultra` for hot-path or store work). Rank findings by severity; each finding
+is a concrete failure scenario plus `file:line`. A confirmed correctness bug or a
+lost invariant/requirement blocks merge; smells and Lens-B notes are logged on
+the PR.
+
 ## Toolchain
 
 Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The

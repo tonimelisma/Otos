@@ -144,10 +144,6 @@ extension CatalogWindowViewModel {
         if error.domain == "com.apple.DiskArbitration.DADissenterError" {
             return true
         }
-        // Historical Cocoa shape sometimes seen for busy unmounts (not user-cancelled).
-        if error.domain == NSCocoaErrorDomain, error.code == NSFileWriteUnknownError {
-            return true
-        }
         return false
     }
 

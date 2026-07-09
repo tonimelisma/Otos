@@ -1,11 +1,13 @@
 import Foundation
 import OSLog
 
-// Collection support guide
+// Media grid support guide
 //
 // These value helpers back the AppKit collection bridge without belonging to the
 // bridge's view-controller lifecycle. Sticky paint truth lives in `TileContentStore`;
-// this file keeps the detail reader and structural-apply policy.
+// this file keeps the detail reader and structural-apply policy. `MediaAssetTile*`
+// types intentionally keep the per-asset prefix — they are not grid-level and are
+// not part of this rename.
 
 struct MediaTileDetailReader {
     private let store: CatalogStore

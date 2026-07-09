@@ -56,7 +56,10 @@ optional "All Media" aggregate. Two problems motivated this decision:
   **always** selected (camera-import intent), even over a current selection.
   "Newly attached" means the identity was not among previously *available*
   removable sources, so a remembered card flipping unavailable → available still
-  auto-selects.
+  auto-selects. Always jumping to a newly-available card deliberately re-selects
+  a card that flaps unavailable→available, accepting that it can interrupt a user
+  who has navigated elsewhere — chosen over tracking per-card "already visited"
+  state.
 - `selectionOnSelectedSourceRemoved(...)` — if the selected source disappears, fall
   back to `defaultSelection` instead of leaving a dead selection.
 
