@@ -155,7 +155,9 @@ data-driven change rather than a new rendering mechanism.
   second selection model. The prior read-AppKit-then-correct design coupled the
   computation to AppKit's undocumented mouseDown/mouseUp commit timing and lost the
   race; owning the model removes that class of bug. Keyboard selection (⌘A, ⇧-arrows)
-  stays native and the model reconciles from `selectionIndexPaths` afterward.
+  stays native and the model reconciles from `selectionIndexPaths` afterward: when the
+  live selection differs, `base` becomes the live set (anchor unchanged) so a later
+  ⇧-click unions against the keyboard result instead of a stale pre-keyboard base.
 - Only a click inside the tile's aspect-fit thumbnail *face* selects the tile;
   letterbox padding around a decoded thumbnail is treated as empty space (matching
   Photos). The face geometry is shared with the renderer through

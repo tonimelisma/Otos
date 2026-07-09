@@ -49,10 +49,14 @@ optional "All Media" aggregate. Two problems motivated this decision:
   removable/camera), so its visibility depends solely on the fixed-library count.
 - `defaultSelection(libraries:removableSources:)` — priority: most-recently-attached
   connected removable/camera source → the single fixed library → All Media. Applied
-  once at startup after the first *loaded* state, before any explicit user choice
-  (`userHasChosenSource`).
+  once at startup after the first *loaded* state (at least one library or removable
+  root), before any explicit user choice (`userHasChosenSource`). An empty pre-load
+  publication must not latch the default.
 - `selectionOnAttach(attached:)` — a newly-attached removable/camera source is
   **always** selected (camera-import intent), even over a current selection.
+  "Newly attached" means the identity was not among previously *available*
+  removable sources, so a remembered card flipping unavailable → available still
+  auto-selects.
 - `selectionOnSelectedSourceRemoved(...)` — if the selected source disappears, fall
   back to `defaultSelection` instead of leaving a dead selection.
 
@@ -69,8 +73,11 @@ single `setQueryDescriptor` writer, so automatic and manual selection share one 
   `NSWorkspace.unmountAndEjectDevice`. Success unmounts the volume, and the row
   disappears because the real `didUnmountNotification` → detach removes it — UI and
   reality never diverge. Failure returns a typed `RemovableEjectOutcome`
-  (`.ejected` / `.busy(displayName)` / `.failed(description)`); busy/failed surface a
+  (`.ejected` / `.cancelled` / `.busy(displayName)` / `.failed(description)`).
+  User-cancelled eject clears the spinner with no alert. Busy/failed surface a
   localized alert, the spinner clears, and the source stays mounted and visible.
+  Busy detection prefers typed underlying errors (POSIX `EBUSY`, DiskArbitration
+  dissenter) over English substring matching.
 
 ## Why This Is Simplest Correct
 

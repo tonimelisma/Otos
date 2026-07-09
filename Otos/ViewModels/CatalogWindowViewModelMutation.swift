@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import Foundation
 import OSLog
 
@@ -96,16 +97,39 @@ extension CatalogWindowViewModel {
 extension CatalogWindowViewModel {
     nonisolated static func removableEjectOutcome(for error: Error, displayName: String) -> RemovableEjectOutcome {
         let nsError = error as NSError
+        if isUserCancelledEjectError(nsError) {
+            return .cancelled
+        }
         if isVolumeBusyError(nsError) {
             return .busy(displayName: displayName)
         }
+        OtosLog.catalog.error(
+            "op=removableEject unrecognizedError domain=\(nsError.domain, privacy: .public) code=\(nsError.code, privacy: .public)"
+        )
         return .failed(description: nsError.localizedDescription)
     }
 
+    /// User declined the system eject UI — not a busy failure.
+    nonisolated static func isUserCancelledEjectError(_ error: NSError) -> Bool {
+        if error.domain == NSCocoaErrorDomain, error.code == NSUserCancelledError {
+            return true
+        }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isUserCancelledEjectError(underlying)
+        }
+        return false
+    }
+
+    /// Prefer typed underlying errors (DiskArbitration dissenter / POSIX EBUSY) over
+    /// English substring matching on `localizedDescription`. The substring check remains
+    /// only as a last-chance fallback for unrecognized shapes.
     nonisolated static func isVolumeBusyError(_ error: NSError) -> Bool {
-        let isCocoaBusy = error.domain == NSCocoaErrorDomain
-            && (error.code == NSUserCancelledError || error.code == 512)
-        if isCocoaBusy {
+        if isTypedBusyError(error) {
+            return true
+        }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError,
+           isTypedBusyError(underlying) || isVolumeBusyError(underlying)
+        {
             return true
         }
         let description = error.localizedDescription
@@ -113,10 +137,28 @@ extension CatalogWindowViewModel {
             || description.localizedCaseInsensitiveContains("busy")
     }
 
+    nonisolated static func isTypedBusyError(_ error: NSError) -> Bool {
+        if error.domain == NSPOSIXErrorDomain, error.code == EBUSY {
+            return true
+        }
+        // DiskArbitration dissenter domain; busy/in-use dissent codes vary by OS, so any
+        // dissenter error is treated as busy rather than a generic failure.
+        if error.domain == "com.apple.DiskArbitration.DADissenterError" {
+            return true
+        }
+        // Historical Cocoa shape sometimes seen for busy unmounts (not user-cancelled).
+        if error.domain == NSCocoaErrorDomain, error.code == NSFileWriteUnknownError {
+            return true
+        }
+        return false
+    }
+
     nonisolated static func outcomeDiagnosticCase(_ outcome: RemovableEjectOutcome) -> String {
         switch outcome {
         case .ejected:
             "ejected"
+        case .cancelled:
+            "cancelled"
         case .busy:
             "busy"
         case .failed:
@@ -201,7 +243,14 @@ private extension CatalogWindowViewModel {
         }
         do {
             try await store.quiesceRemovableSource(identity: identity)
-            await coordinator?.drainWork(under: root.path)
+            if let coordinator {
+                let drained = await coordinator.drainWork(under: root.path)
+                if !drained {
+                    OtosLog.catalog.error(
+                        "op=removableEject drainTimedOut rootPath=\(root.path.rawValue, privacy: .public)"
+                    )
+                }
+            }
             try await unmountAndEjectDeviceOffMain(root.path.url)
             await diagnostics?.record(
                 operation: "catalog.removable.eject",

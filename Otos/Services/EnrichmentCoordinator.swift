@@ -225,15 +225,20 @@ extension EnrichmentCoordinator {
         signal()
     }
 
-    func drainWork(under rootPath: LibraryRootPath, timeout: Duration = .seconds(5)) async {
+    /// Waits until no enrichment/download work remains under `rootPath`, or until
+    /// `timeout`. Returns `true` when drained, `false` when work was still in flight
+    /// at the deadline (callers log the timeout; eject still proceeds and may fail busy).
+    @discardableResult
+    func drainWork(under rootPath: LibraryRootPath, timeout: Duration = .seconds(5)) async -> Bool {
         let deadline = Date().addingTimeInterval(Double(timeout.components.seconds))
         while hasInFlightWork(under: rootPath), Date() < deadline {
             do {
                 try await Task.sleep(for: .milliseconds(100))
             } catch {
-                return
+                return !hasInFlightWork(under: rootPath)
             }
         }
+        return !hasInFlightWork(under: rootPath)
     }
 
     private func hasInFlightWork(under rootPath: LibraryRootPath) -> Bool {
