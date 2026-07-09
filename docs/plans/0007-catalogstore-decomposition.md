@@ -70,6 +70,13 @@ same actor.
 
 ## 5. Phasing (each phase is its own PR, independently shippable)
 
+### Phase 1 status (2026-07-09)
+
+**Shipped.** `RootRegistry` owns the two maps + mutators + query-id/priority/
+overlap/watched-path helpers. `CatalogStore` keeps `.scanning` overlay,
+orchestration, and the public API. **Stop here for owner reassessment** before
+phases 2–4 (`FilesystemReconciler`, `ScanLeaseController`, `EnrichmentLeaseGateway`).
+
 1. **`RootRegistry`** — mechanically follows plan 0006: promote the two maps +
    mutators + query-id/priority helpers into a `RootRegistry` value the actor
    owns (`private var roots = RootRegistry()`), calling it synchronously.
