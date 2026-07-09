@@ -16,7 +16,7 @@ nonisolated enum CatalogStoreChange: Equatable {
 ///
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
 /// overlay storage and the per-asset working set; the actor keeps only root identity,
-/// source metadata, root availability, scan/enumeration lifecycle, and notification
+/// source metadata, per-root `RootRuntimeState` (availability/activity/ejectability/row ID), scan/enumeration lifecycle, and notification
 /// state resident. Fixed libraries, removable volumes, and MTP cameras share the root
 /// table because the current filesystem or staging path remains the asset identity
 /// boundary, while `LibraryRootKind` controls lifecycle rules such as All Media
@@ -179,12 +179,8 @@ actor CatalogStore {
     private var started = false
     private var startupTask: Task<Void, Error>?
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
-    private var rootsByPath: [LibraryRootPath: LibraryRoot] = [:]
-    private var rootRowIDsByPath: [LibraryRootPath: Int64] = [:]
-    private var rootPathsByRowID: [Int64: LibraryRootPath] = [:]
-    private var availabilityByRootPath: [LibraryRootPath: LibraryAvailability] = [:]
-    private var activityByRootPath: [LibraryRootPath: CatalogLibraryActivity] = [:]
-    private var isEjectableByRootPath: [LibraryRootPath: Bool] = [:]
+    private var rootStatesByPath: [LibraryRootPath: RootRuntimeState] = [:]
+    private var pathsByRowID: [Int64: LibraryRootPath] = [:]
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var pendingScanPaths: [LibraryRootPath] = []
     private var activeScan: ActiveScan?
@@ -242,14 +238,7 @@ extension CatalogStore {
     }
 
     func currentLibraries() -> [CatalogLibraryState] {
-        rootsByPath.values.map { root in
-            CatalogLibraryState(
-                root: root,
-                availability: availabilityByRootPath[root.path] ?? .unknown,
-                activity: activity(for: root.path),
-                isEjectable: isEjectableByRootPath[root.path] ?? false
-            )
-        }
+        rootStatesByPath.values.map { catalogLibraryState(from: $0) }
     }
 
     func orderedAssetIDs(
@@ -268,7 +257,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
-        let validRootPathsByRowID = rootPathsByRowID.filter { rowID, path in
+        let validRootPathsByRowID = pathsByRowID.filter { rowID, path in
             rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
         let ids = timedRows.value.compactMap { rootRowID, relativePath -> MediaAssetID? in
@@ -304,7 +293,7 @@ extension CatalogStore {
     }
 
     func catalogedAssetCount(for selection: SidebarSelection) async throws -> Int {
-        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: Set(rootsByPath.keys))
+        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: Set(rootStatesByPath.keys))
         guard !rootIDs.isEmpty else {
             return 0
         }
@@ -363,7 +352,7 @@ extension CatalogStore {
         }
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
-        let rootIDsBeforeRead = rootRowIDsByPath
+        let rootIDsBeforeRead = rootRowIDSnapshot()
         let dbWriter = try database()
         let timedAssets = try await timedRead(dbWriter) { db in
             try Self.fetchStoredAssets(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
@@ -373,8 +362,8 @@ extension CatalogStore {
         var assetsByID: [MediaAssetID: MediaAsset] = [:]
         assetsByID.reserveCapacity(timedAssets.value.count)
         for storedAsset in timedAssets.value {
-            guard let rootPath = rootPathsByRowID[storedAsset.libraryRootID],
-                  rootRowIDsByPath[rootPath] == storedAsset.libraryRootID
+            guard let rootPath = pathsByRowID[storedAsset.libraryRootID],
+                  rootStatesByPath[rootPath]?.rowID == storedAsset.libraryRootID
             else {
                 continue
             }
@@ -399,7 +388,7 @@ extension CatalogStore {
         }
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreTileDetailQuery")
-        let rootIDsBeforeRead = rootRowIDsByPath
+        let rootIDsBeforeRead = rootRowIDSnapshot()
         let dbWriter = try database()
         let timedDetails = try await timedRead(dbWriter) { db in
             try Self.fetchStoredTileDetails(ids: ids, rootIDsByPath: rootIDsBeforeRead, db: db)
@@ -409,8 +398,8 @@ extension CatalogStore {
         var detailsByID: [MediaAssetID: MediaTileDetail] = [:]
         detailsByID.reserveCapacity(timedDetails.value.count)
         for storedDetail in timedDetails.value {
-            guard let rootPath = rootPathsByRowID[storedDetail.libraryRootID],
-                  rootRowIDsByPath[rootPath] == storedDetail.libraryRootID
+            guard let rootPath = pathsByRowID[storedDetail.libraryRootID],
+                  rootStatesByPath[rootPath]?.rowID == storedDetail.libraryRootID
             else {
                 continue
             }
@@ -451,7 +440,7 @@ extension CatalogStore {
     /// On-demand metadata read retained for the future tile/inspector metadata surface
     /// owned by ADR 0009. It is test-exercised today but stays out of the hot grid path.
     func metadata(for id: MediaAssetID) async throws -> AssetMetadata? {
-        guard let rootID = rootRowIDsByPath[id.libraryRootPath] else {
+        guard let rootID = rootStatesByPath[id.libraryRootPath]?.rowID else {
             return nil
         }
 
@@ -462,7 +451,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogStoreMetadataQuery", signpost)
 
-        guard rootRowIDsByPath[id.libraryRootPath] == rootID else {
+        guard rootStatesByPath[id.libraryRootPath]?.rowID == rootID else {
             return nil
         }
         let queryMs = timedMetadata.totalMs
@@ -565,7 +554,7 @@ extension CatalogStore {
         guard !ids.isEmpty else {
             return
         }
-        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let rootIDsByPathBeforeWrite = rootRowIDSnapshot()
         let dbWriter = try database()
         try await dbWriter.write { db in
             try Self.releaseEnrichmentClaims(ids: ids, rootIDsByPath: rootIDsByPathBeforeWrite, db: db)
@@ -577,7 +566,7 @@ extension CatalogStore {
         guard !ids.isEmpty else {
             return nil
         }
-        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let rootIDsByPathBeforeWrite = rootRowIDSnapshot()
         let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
         let dbWriter = try database()
         try await dbWriter.write { db in
@@ -609,7 +598,7 @@ extension CatalogStore {
         limit: Int
     ) async throws -> DatabaseTimedValue<[MediaAsset]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
-        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let rootIDsByPathBeforeWrite = rootRowIDSnapshot()
         let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
         let dbWriter = try database()
         let eligibleClaims = priorityEnrichmentClaimInputs(
@@ -660,7 +649,7 @@ extension CatalogStore {
         for id in ids {
             guard let asset = assetsByID[id],
                   asset.needsEnrichment,
-                  availabilityByRootPath[asset.libraryRootPath] == .available,
+                  rootStatesByPath[asset.libraryRootPath]?.availability == .available,
                   let rootID = rootIDsByPath[asset.libraryRootPath]
             else {
                 continue
@@ -707,9 +696,9 @@ extension CatalogStore {
             return storedAssets
         }
         let candidates: [MediaAsset] = timedStoredAssets.value.compactMap { storedAsset -> MediaAsset? in
-            guard let rootPath = rootPathsByRowID[storedAsset.libraryRootID],
-                  rootRowIDsByPath[rootPath] == storedAsset.libraryRootID,
-                  availabilityByRootPath[rootPath] == .available
+            guard let rootPath = pathsByRowID[storedAsset.libraryRootID],
+                  rootStatesByPath[rootPath]?.rowID == storedAsset.libraryRootID,
+                  rootStatesByPath[rootPath]?.availability == .available
             else {
                 return nil
             }
@@ -851,7 +840,7 @@ extension CatalogStore {
         guard !results.isEmpty else {
             return .applied(count: 0)
         }
-        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let rootIDsByPathBeforeWrite = rootRowIDSnapshot()
         guard results.contains(where: { rootIDsByPathBeforeWrite[$0.id.libraryRootPath] != nil }) else {
             discardGeneratedThumbnails(results.compactMap(\.generatedThumbnail))
             return .applied(count: 0)
@@ -1004,7 +993,7 @@ extension CatalogStore {
         OtosLog.catalog.notice(
             "op=catalog.library.ensure phase=start rootPath=\(path.rawValue, privacy: .public)"
         )
-        if rootsByPath[path] != nil {
+        if rootStatesByPath[path] != nil {
             OtosLog.catalog.info("Smoke library root already saved path=\(path.rawValue, privacy: .public)")
             OtosLog.catalog.notice(
                 "op=catalog.library.ensure phase=exists rootPath=\(path.rawValue, privacy: .public)"
@@ -1021,11 +1010,11 @@ extension CatalogStore {
 
     func removeLibrary(path: LibraryRootPath) async throws {
         try await ensureStartedForMutation()
-        guard let root = rootsByPath[path],
-              let rootRowID = rootRowIDsByPath[path]
-        else {
+        guard let rootState = rootStatesByPath[path] else {
             return
         }
+        let root = rootState.root
+        let rootRowID = rootState.rowID
 
         cancelRuntimeWork(for: path)
         filesystemWatcher.removeRoot(path)
@@ -1075,8 +1064,8 @@ extension CatalogStore {
             let deletionFacts = try await dbWriter.read { db in
                 try Self.fetchExistingAssetRows(libraryRootID: rootRowID, db: db)
             }
-            guard rootsByPath[path] == root,
-                  rootRowIDsByPath[path] == rootRowID
+            guard rootStatesByPath[path]?.root == root,
+                  rootStatesByPath[path]?.rowID == rootRowID
             else {
                 return nil
             }
@@ -1090,17 +1079,15 @@ extension CatalogStore {
     }
 
     private func removeRootRuntimeState(path: LibraryRootPath, rootRowID: Int64) {
-        rootsByPath.removeValue(forKey: path)
-        availabilityByRootPath.removeValue(forKey: path)
-        activityByRootPath.removeValue(forKey: path)
-        isEjectableByRootPath.removeValue(forKey: path)
-        activeDeviceScans.removeValue(forKey: path)
-        rootRowIDsByPath.removeValue(forKey: path)
-        rootPathsByRowID.removeValue(forKey: rootRowID)
+        guard let state = rootStatesByPath[path], state.rowID == rootRowID else {
+            removeRoot(path: path)
+            return
+        }
+        removeRoot(path: path)
     }
 
     private func rootForDeviceIdentity(_ identity: String) -> LibraryRoot? {
-        rootsByPath.values.first { $0.deviceIdentity == identity }
+        rootStatesByPath.values.map(\.root).first { $0.deviceIdentity == identity }
     }
 
     private func isTransientDeviceIdentity(_ identity: String) -> Bool {
@@ -1148,7 +1135,7 @@ extension CatalogStore {
         let lastSeenAt = Date()
         let dbQueue = try database()
         if let existingRoot = rootForDeviceIdentity(attachment.identity),
-           let rootRowID = rootRowIDsByPath[existingRoot.path]
+           let rootRowID = rootStatesByPath[existingRoot.path]?.rowID
         { // swiftlint:disable:this opening_brace
             try await updateExistingRemovableRoot(
                 attachment,
@@ -1211,15 +1198,23 @@ extension CatalogStore {
             )
         }
         let root = libraryRoot(from: storedRoot)
-        rootsByPath[root.path] = root
-        rootRowIDsByPath[root.path] = storedRoot.id
-        rootPathsByRowID[storedRoot.id] = root.path
+        upsert(RootRuntimeState(
+            root: root,
+            rowID: storedRoot.id,
+            availability: .unknown,
+            activity: .idle,
+            isEjectable: false
+        ))
     }
 
     private func finishRemovableRootAttachment(_ attachment: RemovableRootAttachment) async {
-        availabilityByRootPath[attachment.path] = .available
-        activityByRootPath[attachment.path] = attachment.activity
-        isEjectableByRootPath[attachment.path] = attachment.isEjectable
+        guard var state = rootStatesByPath[attachment.path] else {
+            return
+        }
+        state.availability = .available
+        state.activity = attachment.activity
+        state.isEjectable = attachment.isEjectable
+        upsert(state)
         if attachment.kind == .removableVolume {
             filesystemWatcher.addRoot(attachment.path)
         }
@@ -1240,20 +1235,18 @@ extension CatalogStore {
     }
 
     private func moveRootRuntimeState(oldPath: LibraryRootPath, newRoot: LibraryRoot, rootRowID: Int64) {
-        let previousAvailability = availabilityByRootPath.removeValue(forKey: oldPath)
-        let previousActivity = activityByRootPath.removeValue(forKey: oldPath)
-        let previousEjectable = isEjectableByRootPath.removeValue(forKey: oldPath)
-        rootsByPath.removeValue(forKey: oldPath)
-        rootRowIDsByPath.removeValue(forKey: oldPath)
+        let previous = rootStatesByPath[oldPath]
+        removeRoot(path: oldPath)
         filesystemWatchingArmed.remove(oldPath)
         rescanAfterCurrentScan.remove(oldPath)
         filesystemEventBatches.removeValue(forKey: oldPath)
-        rootsByPath[newRoot.path] = newRoot
-        rootRowIDsByPath[newRoot.path] = rootRowID
-        rootPathsByRowID[rootRowID] = newRoot.path
-        availabilityByRootPath[newRoot.path] = previousAvailability
-        activityByRootPath[newRoot.path] = previousActivity
-        isEjectableByRootPath[newRoot.path] = previousEjectable
+        upsert(RootRuntimeState(
+            root: newRoot,
+            rowID: rootRowID,
+            availability: previous?.availability ?? .unknown,
+            activity: previous?.activity ?? .idle,
+            isEjectable: previous?.isEjectable ?? false
+        ))
     }
 
     private func insertLibraryRootAndStartScan(
@@ -1277,10 +1270,13 @@ extension CatalogStore {
         }
 
         let root = libraryRoot(from: storedRoot)
-        rootsByPath[root.path] = root
-        availabilityByRootPath[root.path] = .available
-        rootRowIDsByPath[root.path] = storedRoot.id
-        rootPathsByRowID[storedRoot.id] = root.path
+        upsert(RootRuntimeState(
+            root: root,
+            rowID: storedRoot.id,
+            availability: .available,
+            activity: .idle,
+            isEjectable: false
+        ))
         OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
         OtosLog.catalog.notice(
             "op=\(operation, privacy: .public) phase=finish rootPath=\(root.path.rawValue, privacy: .public)"
@@ -1334,7 +1330,7 @@ extension CatalogStore {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
               root.kind != .library,
-              let rootRowID = rootRowIDsByPath[root.path]
+              let rootRowID = rootStatesByPath[root.path]?.rowID
         else {
             return
         }
@@ -1346,8 +1342,11 @@ extension CatalogStore {
         cancelRuntimeWork(for: root.path)
         filesystemWatcher.removeRoot(root.path)
         filesystemWatchingArmed.remove(root.path)
-        isEjectableByRootPath[root.path] = false
-        activityByRootPath[root.path] = .idle
+        if var state = rootStatesByPath[root.path] {
+            state.isEjectable = false
+            state.activity = .idle
+            upsert(state)
+        }
         await releaseEnrichmentClaimsForRoot(rootRowID)
         setAvailability(.unavailable, for: root.path)
         if root.kind == .deviceMTP {
@@ -1371,12 +1370,15 @@ extension CatalogStore {
         try await ensureStartedForMutation()
         guard let root = rootForDeviceIdentity(identity),
               root.kind != .library,
-              let rootRowID = rootRowIDsByPath[root.path]
+              let rootRowID = rootStatesByPath[root.path]?.rowID
         else {
             return
         }
         cancelRuntimeWork(for: root.path)
-        activityByRootPath[root.path] = .idle
+        if var state = rootStatesByPath[root.path] {
+            state.activity = .idle
+            upsert(state)
+        }
         await releaseEnrichmentClaimsForRoot(rootRowID)
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -1402,15 +1404,18 @@ extension CatalogStore {
     }
 
     func beginDeviceCatalogEnumeration(rootPath: LibraryRootPath) async throws -> ActiveScan {
-        guard rootsByPath[rootPath]?.kind == .deviceMTP,
-              availabilityByRootPath[rootPath] == .available,
-              let rootRowID = rootRowIDsByPath[rootPath]
+        guard rootStatesByPath[rootPath]?.root.kind == .deviceMTP,
+              rootStatesByPath[rootPath]?.availability == .available,
+              let rootRowID = rootStatesByPath[rootPath]?.rowID
         else {
             throw CancellationError()
         }
         let scan = makeActiveScan(rootPath: rootPath, rootRowID: rootRowID)
         activeDeviceScans[rootPath] = scan
-        activityByRootPath[rootPath] = .enumerating
+        if var state = rootStatesByPath[rootPath] {
+            state.activity = .enumerating
+            upsert(state)
+        }
         notifyCatalogChanged()
         return scan
     }
@@ -1418,8 +1423,8 @@ extension CatalogStore {
     func recordDeviceCatalogBatch(_ batch: [ScannedMediaFile], scan: ActiveScan) async throws {
         try await ensureStartedForMutation()
         guard owns(scan),
-              rootsByPath[scan.rootPath]?.kind == .deviceMTP,
-              availabilityByRootPath[scan.rootPath] == .available
+              rootStatesByPath[scan.rootPath]?.root.kind == .deviceMTP,
+              rootStatesByPath[scan.rootPath]?.availability == .available
         else {
             throw CancellationError()
         }
@@ -1456,8 +1461,8 @@ extension CatalogStore {
         observedPaths: Set<MediaRelativePath>
     ) async throws {
         guard owns(scan),
-              rootsByPath[scan.rootPath]?.kind == .deviceMTP,
-              availabilityByRootPath[scan.rootPath] == .available
+              rootStatesByPath[scan.rootPath]?.root.kind == .deviceMTP,
+              rootStatesByPath[scan.rootPath]?.availability == .available
         else {
             throw CancellationError()
         }
@@ -1480,8 +1485,9 @@ extension CatalogStore {
             return
         }
         activeDeviceScans.removeValue(forKey: scan.rootPath)
-        if rootsByPath[scan.rootPath]?.kind == .deviceMTP {
-            activityByRootPath[scan.rootPath] = .idle
+        if var state = rootStatesByPath[scan.rootPath], state.root.kind == .deviceMTP {
+            state.activity = .idle
+            upsert(state)
             notifyCatalogChanged()
         }
     }
@@ -1490,7 +1496,7 @@ extension CatalogStore {
         guard !thumbnailsByID.isEmpty else {
             return
         }
-        let rootIDsByPathBeforeWrite = rootRowIDsByPath
+        let rootIDsByPathBeforeWrite = rootRowIDSnapshot()
         let dbQueue = try database()
         let changed = try await timedWrite(dbQueue) { db in
             var count = 0
@@ -1715,22 +1721,21 @@ private extension CatalogStore {
     }
 
     private func applyLoadedCatalog(roots: [StoredRoot]) {
-        rootsByPath = [:]
-        rootRowIDsByPath = [:]
-        rootPathsByRowID = [:]
-        availabilityByRootPath = [:]
-        activityByRootPath = [:]
-        isEjectableByRootPath = [:]
+        rootStatesByPath = [:]
+        pathsByRowID = [:]
 
         for storedRoot in roots {
             let root = libraryRoot(from: storedRoot)
-            rootsByPath[root.path] = root
             // SQLite proves that a root was saved, not that it is reachable now.
             // Fixed libraries are checked by launch scans; removable roots are
             // event-driven and start unavailable until a monitor re-attaches them.
-            availabilityByRootPath[root.path] = root.kind == .library ? .unknown : .unavailable
-            rootRowIDsByPath[root.path] = storedRoot.id
-            rootPathsByRowID[storedRoot.id] = root.path
+            upsert(RootRuntimeState(
+                root: root,
+                rowID: storedRoot.id,
+                availability: root.kind == .library ? .unknown : .unavailable,
+                activity: .idle,
+                isEjectable: false
+            ))
         }
     }
 
@@ -1870,11 +1875,47 @@ private extension CatalogStore {
         )
     }
 
+    private func upsert(_ state: RootRuntimeState) {
+        if let previousPath = pathsByRowID[state.rowID], previousPath != state.path {
+            rootStatesByPath.removeValue(forKey: previousPath)
+        }
+        if let existing = rootStatesByPath[state.path], existing.rowID != state.rowID {
+            pathsByRowID.removeValue(forKey: existing.rowID)
+        }
+        rootStatesByPath[state.path] = state
+        pathsByRowID[state.rowID] = state.path
+    }
+
+    private func removeRoot(path: LibraryRootPath) {
+        guard let state = rootStatesByPath.removeValue(forKey: path) else {
+            activeDeviceScans.removeValue(forKey: path)
+            return
+        }
+        if pathsByRowID[state.rowID] == path {
+            pathsByRowID.removeValue(forKey: state.rowID)
+        }
+        activeDeviceScans.removeValue(forKey: path)
+    }
+
+    private func catalogLibraryState(from state: RootRuntimeState) -> CatalogLibraryState {
+        CatalogLibraryState(
+            root: state.root,
+            availability: state.availability,
+            activity: activity(for: state.path),
+            isEjectable: state.isEjectable
+        )
+    }
+
+    /// Snapshot of path → rowID for stale-completion checks across awaits.
+    private func rootRowIDSnapshot() -> [LibraryRootPath: Int64] {
+        Dictionary(uniqueKeysWithValues: rootStatesByPath.map { ($0.key, $0.value.rowID) })
+    }
+
     private func activity(for path: LibraryRootPath) -> CatalogLibraryActivity {
         if activeScan?.rootPath == path {
             return .scanning
         }
-        return activityByRootPath[path] ?? .idle
+        return rootStatesByPath[path]?.activity ?? .idle
     }
 
     private func libraryRoot(from storedRoot: StoredRoot) -> LibraryRoot {
@@ -1894,14 +1935,14 @@ private extension CatalogStore {
         switch selection {
         case .allMedia:
             return availableLibraryPaths.compactMap { path in
-                guard rootsByPath[path]?.kind == .library else {
+                guard rootStatesByPath[path]?.root.kind == .library else {
                     return nil
                 }
-                return rootRowIDsByPath[path]
+                return rootStatesByPath[path]?.rowID
             }.sorted()
         case let .library(path):
             guard availableLibraryPaths.contains(path),
-                  let rootID = rootRowIDsByPath[path]
+                  let rootID = rootStatesByPath[path]?.rowID
             else {
                 return []
             }
@@ -1909,48 +1950,32 @@ private extension CatalogStore {
         }
     }
 
-    private func availableLibraryRootIDs() -> [Int64] {
-        rootsByPath.keys.compactMap { path in
-            guard availabilityByRootPath[path] == .available,
-                  rootsByPath[path]?.kind == .library
-            else {
-                return nil
-            }
-            return rootRowIDsByPath[path]
-        }.sorted()
-    }
-
     private func availableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {
         var removable: [Int64] = []
         var fixed: [Int64] = []
-        for (path, root) in rootsByPath where availabilityByRootPath[path] == .available {
-            guard let rootID = rootRowIDsByPath[path] else {
-                continue
-            }
-            if root.kind == .library {
-                fixed.append(rootID)
+        for state in rootStatesByPath.values where state.availability == .available {
+            if state.root.kind == .library {
+                fixed.append(state.rowID)
             } else {
-                removable.append(rootID)
+                removable.append(state.rowID)
             }
         }
         return (removable.sorted(), fixed.sorted())
     }
 
     private func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {
-        for (existingPath, root) in rootsByPath {
-            if let existingRootRowID,
-               rootRowIDsByPath[root.path] == existingRootRowID
-            { // swiftlint:disable:this opening_brace
+        for state in rootStatesByPath.values {
+            if let existingRootRowID, state.rowID == existingRootRowID {
                 continue
             }
-            if let relationship = CatalogPath.relationship(candidate: path, existing: existingPath) {
-                throw CatalogStoreError.overlappingRoot(existingPath: existingPath, relationship: relationship)
+            if let relationship = CatalogPath.relationship(candidate: path, existing: state.path) {
+                throw CatalogStoreError.overlappingRoot(existingPath: state.path, relationship: relationship)
             }
         }
     }
 
     private func enqueueScans(_ paths: [LibraryRootPath], priority: ScanQueuePriority = .normal) {
-        for path in paths where rootsByPath[path] != nil {
+        for path in paths where rootStatesByPath[path] != nil {
             if activeScan?.rootPath == path || pendingScanPaths.contains(path) {
                 continue
             }
@@ -1970,8 +1995,8 @@ private extension CatalogStore {
         }
         while let nextPath = pendingScanPaths.first {
             pendingScanPaths.removeFirst()
-            guard rootsByPath[nextPath] != nil,
-                  let rootRowID = rootRowIDsByPath[nextPath]
+            guard rootStatesByPath[nextPath] != nil,
+                  let rootRowID = rootStatesByPath[nextPath]?.rowID
             else {
                 continue
             }
@@ -2233,7 +2258,7 @@ private extension CatalogStore {
         activeScan = nil
         currentScanTask = nil
 
-        if armFilesystemWatching, rootsByPath[rootPath] != nil {
+        if armFilesystemWatching, rootStatesByPath[rootPath] != nil {
             filesystemWatchingArmed.insert(rootPath)
         }
 
@@ -2275,12 +2300,13 @@ private extension CatalogStore {
 
     @discardableResult
     private func setAvailability(_ availability: LibraryAvailability, for path: LibraryRootPath) -> Bool {
-        guard rootsByPath[path] != nil,
-              availabilityByRootPath[path] != availability
+        guard var state = rootStatesByPath[path],
+              state.availability != availability
         else {
             return false
         }
-        availabilityByRootPath[path] = availability
+        state.availability = availability
+        upsert(state)
         return true
     }
 
@@ -2325,12 +2351,12 @@ private extension CatalogStore {
     }
 
     private var watchedRootPaths: [LibraryRootPath] {
-        rootsByPath.compactMap { path, root in
-            switch root.kind {
+        rootStatesByPath.values.compactMap { state in
+            switch state.root.kind {
             case .library:
-                path
+                state.path
             case .removableVolume:
-                availabilityByRootPath[path] == .available ? path : nil
+                state.availability == .available ? state.path : nil
             case .deviceMTP:
                 nil
             }
@@ -2343,7 +2369,7 @@ private extension CatalogStore {
             OtosSignpost.catalog.endInterval("FilesystemEventDebounce", signpost)
         }
 
-        guard let root = CatalogPath.owningRoot(for: event.path, among: rootsByPath.keys) else {
+        guard let root = CatalogPath.owningRoot(for: event.path, among: rootStatesByPath.keys) else {
             recordFilesystemEventDrop(path: event.path, root: nil, reason: "outsideRoots")
             return
         }
@@ -2443,7 +2469,7 @@ private extension CatalogStore {
             OtosSignpost.catalog.endInterval("FilesystemEventBatch", signpost)
         }
 
-        guard rootsByPath[root] != nil else {
+        guard rootStatesByPath[root] != nil else {
             filesystemEventBatches.removeValue(forKey: root)
             await recordFilesystemEventDrop(root: root, reason: "removed")
             return
@@ -2545,7 +2571,7 @@ private extension CatalogStore {
     private func reconcileFilesystemEvent(_ event: FilesystemEvent, root: LibraryRootPath) async -> Bool {
         let flags = FilesystemEventFlags(event: event)
         guard let action = flags.singleFileAction,
-              let rootRowID = rootRowIDsByPath[root]
+              let rootRowID = rootStatesByPath[root]?.rowID
         else {
             return false
         }
@@ -2673,9 +2699,8 @@ private extension CatalogStore {
 
     private func owns(_ scan: ActiveScan) -> Bool {
         (activeScan == scan || activeDeviceScans[scan.rootPath] == scan)
-            && rootsByPath[scan.rootPath] != nil
-            && rootRowIDsByPath[scan.rootPath] == scan.rootRowID
-            && rootPathsByRowID[scan.rootRowID] == scan.rootPath
+            && rootStatesByPath[scan.rootPath]?.rowID == scan.rootRowID
+            && pathsByRowID[scan.rootRowID] == scan.rootPath
     }
 
     private func makeActiveScan(rootPath: LibraryRootPath, rootRowID: Int64) -> ActiveScan {
