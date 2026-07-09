@@ -333,7 +333,7 @@ extension MediaGridViewController {
         ) as? MediaGridItem else {
             return nil
         }
-        pinVisibleIDs()
+        tileContents.pin(assetID)
         let change = ensureContentAndMaybeDecode(for: assetID)
         renderItem(item, assetID: assetID, change: change)
         return item
@@ -573,8 +573,8 @@ extension MediaGridViewController {
 
     /// Ensures a store entry exists (empty detail stub if needed), starts decode when a
     /// thumbnail is known without an image, and returns the change classification for fade.
-    /// Callers must pin the current visible set before mutating the store when painting
-    /// visible tiles (reconfigure, merge, dequeue).
+    /// Callers own pinning: pass boundaries use `pinVisibleIDs()` / `pinVisible(_:)`;
+    /// dequeue binds use additive `tileContents.pin(_:)` for the single asset being bound.
     @discardableResult
     func ensureContentAndMaybeDecode(for id: MediaAssetID) -> TileContentChange {
         if tileContents.content(for: id) == nil {

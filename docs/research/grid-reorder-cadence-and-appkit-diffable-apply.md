@@ -1,0 +1,249 @@
+# Grid Reorder Cadence, AppKit Diffable Apply, And Placeholder Symbol Cost
+
+Status: non-authoritative research note.
+
+Date: 2026-07-09
+
+This document records the evidence and API research behind plan 0008 (grid jank
+remediation). It is design input, not proof that current behavior exists and not
+a commitment to implement a specific option.
+
+## Questions
+
+1. Why did the media grid start hanging during scrolling, and what exactly is on
+   the main thread?
+2. What is AppKit's `NSCollectionViewDiffableDataSource` actually capable of —
+   specifically, can a background reorder be applied *animated* at real-library
+   scale (23k items)?
+3. Is creating `NSImage(systemSymbolName:)` per call expensive enough to matter,
+   and what is the accepted practice?
+4. What do platform best practices say about frequent snapshot applies driven by
+   background metadata ingest?
+
+## Evidence: instrumented run (2026-07-09)
+
+Debug build, 23,043-asset OneDrive library, ~55 s of user scrolling while
+background enrichment ran. Artifacts:
+
+- Instruments trace: `build/Profiles/SwiftUI-jank-20260709-114428.trace`
+  (SwiftUI template: Time Profiler, Hangs, hitches).
+- Unified log capture: `logs/run-20260709T184420Z-p77645-prod.log`.
+
+Findings, cross-confirmed between the Hangs table, the debug
+`MainRunLoopStallMonitor` fault lines, and the `op=` log records:
+
+- 11 main-thread hangs of 266–510 ms in 55 s; every stall-monitor fault is
+  tagged `lastOp=MediaGridViewController.applyStructure`.
+- 31 projection publications in ~60 s (one per enrichment flush);
+  18 had `mediaIdentityChanged=true` and each produced one structural apply with
+  `inserted=0 removed=0 reorderOnly=true reloadDataFallback=true` and
+  `applyMs=173–226` on 23,011 items. The identity changes are genuine: the sort
+  is `bestDate:descending`, enrichment writes EXIF timestamps
+  (`ts_original_unix` → generated `best_capture_unix`), so each 1–3-asset flush
+  reorders the whole list. The ORDER BY has a deterministic `relative_path`
+  tiebreaker, so this is not query nondeterminism.
+- Catalog state at capture time: 23,043 assets, 4,836 enriched. The enrichment
+  tail is hours long (cloud materialization bound), so every session hits this
+  storm until enrichment completes.
+- Time profile, main thread, 17.7 s running over 55 s (deepest app frame):
+  - 2.79 s `MediaAssetTileView.updatePlaceholderPresentation()`, of which
+    1.60 s is `NSImage(systemSymbolName:accessibilityDescription:)` — a fresh
+    SF-Symbol `NSImage` per layout pass per placeholder tile.
+  - 2.19 s `MediaGridViewController.visibleAssetIDs()` plus ~0.55 s
+    `pinVisibleIDs()`/hashing satellites — `ensureContentAndMaybeDecode` re-pins
+    the *entire* visible set once per tile bind, making every reconfigure/reload
+    pass O(visible²).
+  - ~6.0 s in stacks whose only app frame is `OtosApp.$main` — AppKit layout,
+    item instantiation, and render work, dominated by the per-second
+    reloadData-class applies.
+- Both hot app paths (`ensureContentAndMaybeDecode`/`pinVisible`) were
+  introduced by plan 0005 (PR #65) and reshaped by plan 0001 Part 2 (PR #74),
+  which is why the jank surfaced in this PR window. The placeholder symbol
+  allocation predates it (PR #52) and was amplified by the apply storm plus a
+  79 %-placeholder library.
+
+## Local API capability findings (macOS 27 SDK, Xcode 27 beta)
+
+Verified directly in
+`MacOSX27.0.sdk/System/Library/Frameworks/AppKit.framework`:
+
+- `Headers/NSDiffableDataSource.h` — AppKit's diffable API is still the
+  macOS 10.15 surface. The only apply is
+  `applySnapshot:animatingDifferences:`, documented in the header as:
+  "To perform an animated diff of the changes: animatingDifferences == YES.
+  For non-animated update (i.e. reloadData) without the diff overhead:
+  animatingDifferences == NO."
+  There is **no** `applySnapshotUsingReloadData`, **no**
+  `reconfigureItems(_:)` on the snapshot (only `reloadItemsWithIdentifiers:`),
+  and no section snapshots. The Swift overlay
+  (`Modules/AppKit.swiftmodule/arm64e-apple-macos.swiftinterface`) adds only a
+  `completion:` parameter — no async or reload-style variants.
+- `Headers/NSCollectionView.h` — the classic data-source path has
+  `performBatchUpdates(_:completionHandler:)` and animatable
+  `moveItem(at:to:)`/`insertItems`/`deleteItems` via the `animator()` proxy.
+  These are **not** combinable with an installed diffable data source (the
+  diffable data source owns index-path truth; imperative moves desync its
+  snapshot). Using them would mean replacing the diffable data source with a
+  hand-rolled `NSCollectionViewDataSource`.
+- UIKit divergence (context for readers of UIKit-era advice): since iOS 15,
+  UIKit's `apply(_:animatingDifferences:)` *always diffs* (optionally without
+  animation) and offloads diffing off-main, and UIKit gained
+  `applySnapshotUsingReloadData` + `reconfigureItems`. **None of that applies to
+  AppKit.** On macOS, `animatingDifferences: false` is reloadData, and
+  `animatingDifferences: true` is a main-thread diff.
+
+## Prior in-repo measurement: withdrawn
+
+ADR 0006 previously justified the reloadData-class fallback
+(`reorderOnly || items ≥ 1000` in `MediaGridStructuralApplyPolicy`) with a
+spec-0039-era true-diff timing. The owner declared that measurement **stale**
+on 2026-07-09 and it has been removed from the ADR; no prior in-repo number
+constrains the animation question. The current fallback's measured cost in this
+run's signposts is ~90 ms for the apply call plus ~100 ms of completion work at
+23k items, up to once per second.
+
+Fresh measurements of `apply(_:animatingDifferences: true)` at real-library
+scale are recorded in the "Spike results" section below and are the only
+apply-cost numbers that should be cited going forward.
+
+## Spike results (2026-07-09): animated diffable apply cost at n = 23,043
+
+Standalone harness (`script/poc-diffable-apply-bench.swift`, compiled `-O` via
+`xcrun swiftc`; env knobs `BENCH_N`, `BENCH_KLIST` (−1 = full reversal),
+`BENCH_REPS`, `BENCH_SPIN`; Apple-silicon MacBook Pro, macOS 27 beta): NSCollectionView in a 1200×800
+window, the production compositional layout (6 columns, square cells, same
+insets), an `NSCollectionViewDiffableDataSource<Int, BenchID>` where `BenchID`
+is a two-string Hashable struct with realistic path contents mimicking
+`MediaAssetID`, 24 items visible. K items were moved to random positions
+between same-membership snapshots (K = −1 denotes full order reversal); worst
+of the repetitions shown, call-to-return on the main thread:
+
+| Case | `animatingDifferences: true` | `animatingDifferences: false` |
+| --- | --- | --- |
+| initial load 0 → 23k | — | 3–6 ms |
+| K = 0 (identical order) | 10.7 ms | — |
+| K = 1 | 27.0 ms | — |
+| K = 3 | 28.1 ms | 1.9 ms |
+| K = 10 | 28.3 ms | — |
+| K = 50 | 28.9 ms | — |
+| K = 200 | 33.1 ms | 1.6 ms |
+| K = 1,000 | 88.3 ms | — |
+| K = 5,000 | 1,041 ms | — |
+| full reversal (K ≈ 23k) | 30,245 ms | — |
+
+Readings:
+
+- **The enrichment trickle case (K = 1–3, once per second) costs ~23–28 ms
+  animated** — well under the 100 ms hang threshold, affordable at a 1 s
+  cadence. There is an ~10 ms O(n) diff floor (K = 0) plus a cost that grows
+  roughly quadratically in the moved-item count: ~90 ms at K = 1,000, ~1 s at
+  K = 5,000, ~30 s for a full reversal. Whole-list reorders (e.g. a sort-
+  direction flip) must never take the animated path; small-delta reorders are
+  cheap.
+- The ~30 s full-reversal figure plausibly explains the withdrawn spec-0039-era
+  measurement: a pathological whole-list case was generalized to all reorders.
+- `animatingDifferences: false` is 1–2 ms *in the harness* because the harness
+  item provider is trivial. In production the same call measures ~90 ms
+  (signposts) plus ~100 ms completion work, because reloadData tears down and
+  recreates every visible item, and each recreation runs the app's bind path
+  (which plan 0008 Parts A/B make cheap, but which can never be free ×90 ×1/s).
+  The apply mechanics were never the bottleneck — the visible-item teardown is.
+- **Caveat — completion handler:** in this harness the `completion:` closure
+  never fired for `animatingDifferences: true` (any K, key window, 3 s of run
+  loop), while it fired immediately for `false`. In the production app,
+  animated small insert/remove applies (spec 0047) demonstrably complete —the
+  mutation gate would jam otherwise — so this is presumed a harness-environment
+  artifact (no display-synced animation commit in a bare CLI app). Any adoption
+  of animated *move-only* applies must verify in-app that
+  `op=ui.mediaGrid.structuralApply phase=finish` keeps firing (it is logged
+  from the completion) before shipping.
+
+## SF Symbol image creation
+
+- The AppKit header (`NSImage.h`) documents
+  `imageWithSystemSymbolName:accessibilityDescription:` as "Creates a system
+  symbol image…" — a new instance per call; no caching promise is documented.
+- Our trace attributes 1.6 s / 55 s of main-thread time to these initializers
+  when called from `layout()` per placeholder tile.
+- Community practice for symbol-heavy UIs is to resolve the symbol once per
+  (name, configuration) and reuse the instance; e.g. symbol-rendering libraries
+  cache resolved images per configuration.
+- Otos needs exactly two placeholder icons (photo, film). A static per-kind
+  cache removes the allocation entirely; assignment can additionally be skipped
+  when the rendered kind did not change.
+
+## Best-practice synthesis for frequent background-driven snapshots
+
+From Apple's diffable-data-source guidance, WWDC 2021 "Make blazing fast lists
+and collection views", the existing repo research
+(`docs/research/media-grid-best-practices.md`), and the measurements above:
+
+- Structural identity changes and detail changes need different paths (already
+  the case in Otos); *detail* arrival must never force structural applies
+  (already the case — thumbnail arrival flows through `detailRefreshGeneration`
+  and visible reconfigure).
+- Apple's guidance — prefer applying snapshots (diffing) over reloading,
+  because reload throws away existing cells — holds on AppKit too, per the
+  spike: a small-delta animated diff costs ~25 ms at 23k while the
+  reloadData-class path costs ~200 ms in production, entirely because it tears
+  down and recreates every visible item and re-runs the app's bind path for
+  each. The per-second reorder *cadence* is affordable; the reload *mechanics*
+  are what janks.
+- The animated diff has a quadratic-in-moves cliff (spike table). Policy must
+  distinguish the small-delta reorder (enrichment trickle, K = 1–3/s — animate)
+  from whole-list reorders (sort flips — keep the unanimated reloadData-class
+  path; they reset scroll anyway and have no animation value).
+- Visible-set bookkeeping must be O(visible) per pass, not O(visible²): compute
+  the visible set once per pass boundary and pass it down; per-item binds may do
+  O(1) additive work only.
+
+## Status update (2026-07-09, later the same day)
+
+PR #78 landed on `main` independently: scroll-bounds coalescing (~16 ms
+trailing edge, unchanged-ID detail-query skip), once-per-pass pinning for the
+reconfigure path, per-phase apply diagnostics
+(`diffPolicyMs`/`snapshotBuildMs`/`applyCallMs`/`completionMs`), and its own
+in-app measurement — at ~23k the reloadData-class apply and a zero-duration
+true-diff both land in a ~110–250 ms `applyMs` ballpark — corroborating this
+doc's finding that true-diff is not pathological (in-app `applyMs` folds in
+completion work and the dequeue-pass pin walk that plan 0008 Part A removes;
+the harness isolates the bare apply call). The dequeue path still pins the
+whole visible set per item (`makeCollectionItem`), and the placeholder-icon
+allocation and unanimated reorder policy are unchanged — those remain plan
+0008's Parts A (residual), B, and C.
+
+## Conclusions
+
+1. The jank is the product of three multiplying factors: per-second
+   same-membership reorder publications during enrichment (~18/min), a
+   ~200 ms reloadData-class apply at 23k items each, and O(visible²) + per-tile
+   symbol-allocation overhead added/amplified in the recent tile-store PRs.
+2. The reorder cadence is **not** the problem and stays at once per second
+   (owner decision, 2026-07-09: fix the jank, do not make it rarer). The fix is
+   the apply policy plus the bind-path costs: (a) visible-set bookkeeping
+   O(visible) per pass, (b) cached placeholder icons, (c) route same-descriptor
+   small-delta reorders through `apply(animatingDifferences: true)` — measured
+   ~25 ms at 23k for the K = 1–3 trickle — which both removes the visible-item
+   teardown that causes the jank and animates the moves, matching the owner's
+   preference. Whole-list reorders and descriptor changes keep the unanimated
+   reloadData-class path (quadratic cliff, spike table).
+3. Adoption must verify in-app that animated move-only applies fire their
+   completion (see spike caveat); if AppKit's completion proves unreliable
+   there, the finding goes back to the owner before any workaround is designed.
+
+## Sources
+
+- Local SDK headers (primary): `NSDiffableDataSource.h`, `NSCollectionView.h`,
+  `NSImage.h`, and `AppKit.swiftmodule/arm64e-apple-macos.swiftinterface` in
+  `MacOSX27.0.sdk` (paths above).
+- In-repo primary evidence: trace and log artifacts listed above; ADR 0011
+  (publication cadence ownership); `docs/research/media-grid-best-practices.md`.
+- [Apple: Updating collection views using diffable data sources](https://developer.apple.com/documentation/uikit/updating-collection-views-using-diffable-data-sources)
+- [Apple: NSImage.SymbolConfiguration](https://developer.apple.com/documentation/appkit/nsimage/symbolconfiguration)
+- [Apple: init(systemSymbolName:accessibilityDescription:)](https://developer.apple.com/documentation/appkit/nsimage/3622472-imagewithsystemsymbolname)
+- [Apple WWDC 2021: Make blazing fast lists and collection views](https://developer.apple.com/videos/play/wwdc2021/10252/)
+- [Jesse Squires: Diffable data source behavior changes and reconfiguring cells in iOS 15](https://www.jessesquires.com/blog/2021/07/08/diffable-data-source-behavior-changes-and-reconfiguring-cells-in-ios-15/)
+  (documents the iOS 15 divergence; AppKit did not receive these changes)
+- [Apple Developer Forums: Applying new snapshot to diffable data source in iOS 15](https://developer.apple.com/forums/thread/683775)
+- [eon.codes: Diffable collection view for macOS](https://eon.codes/blog/2021/08/25/diffable-collection-view-for-macOS/)
+  (community AppKit diffable notes; no large-scale performance data)

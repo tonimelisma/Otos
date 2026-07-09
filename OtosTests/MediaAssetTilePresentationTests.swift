@@ -192,6 +192,17 @@ struct MediaAssetTilePresentationTests {
         #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: nil) == "photo")
     }
 
+    @Test func placeholderIconCacheReturnsSameInstanceForSameKind() throws {
+        let photoA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .image))
+        let photoB = try #require(MediaAssetTilePresentation.placeholderIcon(for: nil))
+        let filmA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .video))
+        let filmB = try #require(MediaAssetTilePresentation.placeholderIcon(for: .video))
+
+        #expect(photoA === photoB)
+        #expect(filmA === filmB)
+        #expect(photoA !== filmA)
+    }
+
     @Test func placeholderIconSideIsAQuarterOfTheShorterContentDimension() {
         #expect(MediaAssetTileLayout.placeholderIconSide(
             contentBounds: CGRect(x: 0, y: 0, width: 120, height: 120)

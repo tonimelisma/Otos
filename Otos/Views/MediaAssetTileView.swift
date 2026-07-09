@@ -34,6 +34,8 @@ final class MediaAssetTileView: NSView {
     private(set) var paintedImagePixelSize: CGSize?
     private var renderedBestKind: MediaKind?
     private var shouldShowVideoBadge = false
+    /// Last SF Symbol name assigned to `placeholderIconView`; skip re-assign when unchanged.
+    private var appliedPlaceholderIconName: String?
 
     override var isFlipped: Bool {
         true
@@ -69,7 +71,7 @@ final class MediaAssetTileView: NSView {
         durationField.lineBreakMode = .byClipping
         videoBadge.addSubview(durationField)
 
-        filmIconView.image = NSImage(systemSymbolName: "film", accessibilityDescription: "Video")
+        filmIconView.image = MediaAssetTilePresentation.placeholderIcon(for: .video)
         filmIconView.imageScaling = .scaleProportionallyDown
         filmIconView.contentTintColor = .white
         videoBadge.addSubview(filmIconView)
@@ -142,6 +144,7 @@ extension MediaAssetTileView {
         paintedImagePixelSize = nil
         renderedBestKind = nil
         shouldShowVideoBadge = false
+        appliedPlaceholderIconName = nil
         durationField.stringValue = ""
         durationField.isHidden = true
         filmIconView.isHidden = true
@@ -238,10 +241,11 @@ extension MediaAssetTileView {
         guard isPlaceholder else {
             return
         }
-        placeholderIconView.image = NSImage(
-            systemSymbolName: MediaAssetTilePresentation.placeholderIconSystemName(for: renderedBestKind),
-            accessibilityDescription: nil
-        )
+        let iconName = MediaAssetTilePresentation.placeholderIconSystemName(for: renderedBestKind)
+        if appliedPlaceholderIconName != iconName {
+            placeholderIconView.image = MediaAssetTilePresentation.placeholderIcon(for: renderedBestKind)
+            appliedPlaceholderIconName = iconName
+        }
         placeholderIconView.frame = Layout.placeholderIconFrame(contentBounds: contentView.bounds)
     }
 

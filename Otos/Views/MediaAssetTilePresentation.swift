@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -113,6 +114,23 @@ enum MediaAssetTilePresentation {
     nonisolated static func placeholderIconSystemName(for kind: MediaKind?) -> String {
         kind == .video ? "film" : "photo"
     }
+
+    /// Cached SF Symbol image for placeholder tiles. `NSImage(systemSymbolName:)` creates
+    /// a new image per call; there are only two icons (photo, film), so resolve once and
+    /// reuse. Main-actor confined — tiles are `@MainActor` AppKit views.
+    @MainActor
+    static func placeholderIcon(for kind: MediaKind?) -> NSImage? {
+        let name = placeholderIconSystemName(for: kind)
+        if let cached = placeholderIconCache[name] {
+            return cached
+        }
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
+        placeholderIconCache[name] = image
+        return image
+    }
+
+    @MainActor
+    private static var placeholderIconCache: [String: NSImage?] = [:]
 
     nonisolated static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
         guard bounds.width > 0, bounds.height > 0 else {

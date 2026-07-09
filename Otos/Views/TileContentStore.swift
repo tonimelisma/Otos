@@ -16,6 +16,9 @@ import Foundation
 // `imageByteBudget` via pin-aware `enforceImageBudget()`. Visible IDs are pinned
 // against both prune and budget eviction so a painted thumbnail cannot disappear
 // merely because an off-screen row was trimmed or the budget was under pressure.
+// Pinning has two shapes: `pinVisible(_:)` replaces the whole set at pass boundaries
+// (reconfigure, merge, structural-apply completion); `pin(_:)` additively pins one id
+// while a tile is being bound mid-pass (dequeue / makeItem).
 
 nonisolated struct TileContent: Equatable {
     var detail: MediaTileDetail
@@ -72,9 +75,16 @@ final class TileContentStore {
         return entry.content
     }
 
-    /// Pins currently visible identities so prune/budget cannot drop their painted images.
+    /// Replaces the pinned set at a pass boundary so prune/budget cannot drop painted
+    /// images for currently visible identities.
     func pinVisible(_ ids: Set<MediaAssetID>) {
         pinnedIDs = ids
+    }
+
+    /// Additively pins one id (a tile being bound mid-pass). `pinVisible(_:)` replaces
+    /// the whole set at the next pass boundary.
+    func pin(_ id: MediaAssetID) {
+        pinnedIDs.insert(id)
     }
 
     @discardableResult
