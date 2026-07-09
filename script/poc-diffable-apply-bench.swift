@@ -1,3 +1,4 @@
+#!/usr/bin/env swift
 // Offscreen(ish) benchmark: NSCollectionViewDiffableDataSource apply cost on macOS.
 // Mimics Otos media grid: compositional layout (6 columns, square cells),
 // two-string Hashable identifiers, n=23k items, K items moved per apply.
