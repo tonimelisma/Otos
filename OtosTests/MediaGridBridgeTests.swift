@@ -215,23 +215,6 @@ struct MediaGridBridgeTests {
         #expect(!largePolicy.animatingDifferences)
         #expect(largePolicy.usesReloadDataFallback)
     }
-
-    @Test func tileDetailCacheMergesAndEvictsLeastRecentlyUsedAssets() {
-        let firstDetail = makeDetail(path: "a.jpg")
-        let secondDetail = makeDetail(path: "b.jpg")
-        let thirdDetail = makeDetail(path: "c.jpg")
-        var cache = MediaTileDetailCache(limit: 2)
-
-        cache.merge([firstDetail.id: firstDetail, secondDetail.id: secondDetail])
-        #expect(cache.count == 2)
-        #expect(cache.detail(for: firstDetail.id) == firstDetail)
-
-        cache.merge([thirdDetail.id: thirdDetail])
-        #expect(cache.count == 2)
-        #expect(cache.detail(for: firstDetail.id) == firstDetail)
-        #expect(cache.detail(for: secondDetail.id) == nil)
-        #expect(cache.detail(for: thirdDetail.id) == thirdDetail)
-    }
 }
 
 @MainActor

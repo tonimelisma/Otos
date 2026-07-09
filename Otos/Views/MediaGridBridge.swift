@@ -14,9 +14,10 @@ import UniformTypeIdentifiers
 /// A structural change performs one diffable apply, animating small/user-visible
 /// insert/remove changes while using AppKit's reloadData-class diffable fallback
 /// for measured-large or reorder-only changes. Unchanged IDs re-read visible
-/// details and reconfigure existing reusable items in place. Decoded thumbnails
-/// are supplied by the ViewModel-owned `MediaTileImageCache` so recycled items can
-/// repaint synchronously.
+/// details and reconfigure existing reusable items in place. Paint truth lives in
+/// `TileContentStore` (monotonic detail + image); `MediaTileImageCache` is the
+/// decoded-byte LRU that preheat and decode share so recycled items can repaint
+/// synchronously from the store.
 /// `MediaGridMutationGate` is the single arbiter for both exclusive collection-view
 /// mutations — diffable structural applies and animated zoom swaps — so the two never
 /// overlap in either direction; it keeps only the newest pending grid and the newest
@@ -90,13 +91,14 @@ final class MediaGridViewController: NSViewController {
     /// `requestedColumnCount`). The controller holds no separate column-count state.
     let mutationGate = MediaGridMutationGate()
     var dataSource: NSCollectionViewDiffableDataSource<Section, MediaAssetID>!
-    /// Sticky, bounded tile details. Identity order lives in the diffable data source;
-    /// this cache preserves best-known rows across scroll, reloadData-class recycling,
-    /// and transient query failures so a tile does not downgrade to placeholder merely
-    /// because the current visible query returned no row.
-    private var tileDetails = MediaTileDetailCache()
+    /// Sticky, monotonic tile content (detail + best decoded image). Identity order lives
+    /// in the diffable data source; this store is the single paint truth so a tile never
+    /// blanks a painted same-asset thumbnail (APP-015 by construction).
+    let tileContents = TileContentStore()
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
+    /// In-flight decode keys `"id|imageKey"` owned by the controller, not the tile.
+    private var inFlightDecodes = Set<String>()
     var preheatTask: Task<Void, Never>?
     var preheatIDs = Set<MediaAssetID>()
     var preheatGeneration = 0
@@ -228,11 +230,8 @@ extension MediaGridViewController {
         ) as? MediaGridItem else {
             return nil
         }
-        _ = item.configure(
-            detail: detailForTile(assetID),
-            thumbnailDirectory: thumbnailDirectory,
-            imageCache: imageCache
-        )
+        let change = ensureContentAndMaybeDecode(for: assetID)
+        renderItem(item, assetID: assetID, change: change)
         return item
     }
 
@@ -363,13 +362,11 @@ extension MediaGridViewController {
                 missingItemCount += 1
                 continue
             }
-            if item.configure(
-                detail: detailForTile(assetID),
-                thumbnailDirectory: thumbnailDirectory,
-                imageCache: imageCache
-            ) {
+            let change = ensureContentAndMaybeDecode(for: assetID)
+            if case .awaitingDecode = change {
                 thumbnailLoadsStarted += 1
             }
+            renderItem(item, assetID: assetID, change: change)
             configuredCount += 1
         }
 
@@ -399,24 +396,139 @@ extension MediaGridViewController {
             .compactMap { dataSource.itemIdentifier(for: $0) }
     }
 
-    func detailForTile(_ id: MediaAssetID) -> MediaTileDetail {
-        tileDetails.detail(for: id) ?? MediaTileDetail(
-            libraryRootPath: id.libraryRootPath,
-            relativePath: id.relativePath
-        )
+    func contentForTile(_ id: MediaAssetID) -> TileContent? {
+        tileContents.content(for: id)
     }
 
     func mergeTileDetails(_ details: [MediaAssetID: MediaTileDetail], reason: String) {
         guard !details.isEmpty else {
             return
         }
-        tileDetails.merge(details)
-        let storedCount = tileDetails.count
+        let changes = tileContents.mergeDetails(details)
+        // Seed images already in the byte cache so recycle/reconfigure can paint sync;
+        // otherwise start a controller-owned decode for the new key.
+        for (id, change) in changes {
+            if case .awaitingDecode = change {
+                if !seedImageFromCacheIfAvailable(for: id) {
+                    startDecode(for: id)
+                }
+            }
+        }
+        let storedCount = tileContents.count
         OtosLog.ui.debug(
             """
             Media grid tile details merged incoming=\(details.count, privacy: .public) \
             stored=\(storedCount, privacy: .public) reason=\(reason, privacy: .public)
             """
         )
+    }
+
+    private func renderItem(_ item: MediaGridItem, assetID: MediaAssetID, change: TileContentChange) {
+        let content = ensureStoreEntry(for: assetID)
+        item.render(content: content, change: change)
+    }
+
+    /// Ensures a store entry exists (empty detail stub if needed), pins visible IDs,
+    /// seeds or starts decode when a thumbnail is known without an image, and returns
+    /// the change classification for fade.
+    @discardableResult
+    func ensureContentAndMaybeDecode(for id: MediaAssetID) -> TileContentChange {
+        pinVisibleIDs()
+        if tileContents.content(for: id) == nil {
+            _ = tileContents.mergeDetail(
+                MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath)
+            )
+        }
+        guard let content = tileContents.content(for: id) else {
+            return .unchanged
+        }
+        guard content.detail.thumbnailPath != nil else {
+            return content.image == nil ? .detailOnly : .unchanged
+        }
+        if content.image != nil {
+            let expectedKey = MediaAssetTilePresentation.imageContentKey(content.detail)
+            if content.imageKey != expectedKey {
+                startDecode(for: id)
+                return .awaitingDecode(retainsImage: true)
+            }
+            return .unchanged
+        }
+        if seedImageFromCacheIfAvailable(for: id) {
+            return .unchanged
+        }
+        startDecode(for: id)
+        return .awaitingDecode(retainsImage: false)
+    }
+
+    @discardableResult
+    private func ensureStoreEntry(for id: MediaAssetID) -> TileContent? {
+        if let content = tileContents.content(for: id) {
+            return content
+        }
+        _ = tileContents.mergeDetail(
+            MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath)
+        )
+        return tileContents.content(for: id)
+    }
+
+    private func pinVisibleIDs() {
+        tileContents.pinVisible(Set(visibleAssetIDs()))
+    }
+
+    @discardableResult
+    private func seedImageFromCacheIfAvailable(for id: MediaAssetID) -> Bool {
+        guard let content = tileContents.content(for: id),
+              content.detail.thumbnailPath != nil,
+              let image = imageCache?.image(for: content.imageKey)
+        else {
+            return false
+        }
+        _ = tileContents.applyDecoded(image, key: content.imageKey, for: id)
+        return true
+    }
+
+    private func startDecode(for id: MediaAssetID) {
+        guard let content = tileContents.content(for: id),
+              content.detail.thumbnailPath != nil
+        else {
+            return
+        }
+        let key = content.imageKey
+        let flightKey = "\(id.libraryRootPath.rawValue)|\(id.relativePath.rawValue)|\(key)"
+        guard inFlightDecodes.insert(flightKey).inserted else {
+            return
+        }
+        let detail = content.detail
+        let directory = thumbnailDirectory
+        let cache = imageCache
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: directory)
+            if let image = loaded.image {
+                cache?.insert(image, for: key)
+            }
+            await MainActor.run {
+                guard let self else {
+                    return
+                }
+                self.inFlightDecodes.remove(flightKey)
+                guard let image = loaded.image else {
+                    return
+                }
+                let change = self.tileContents.applyDecoded(image, key: key, for: id)
+                guard change == .firstImage || change == .replacedImage else {
+                    return
+                }
+                self.renderVisibleItem(id: id, change: change)
+            }
+        }
+    }
+
+    func renderVisibleItem(id: MediaAssetID, change: TileContentChange) {
+        guard let indexPath = dataSource.indexPath(for: id),
+              let item = collectionView.item(at: indexPath) as? MediaGridItem
+        else {
+            return
+        }
+        item.render(content: tileContents.content(for: id), change: change)
     }
 }

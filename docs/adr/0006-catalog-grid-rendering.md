@@ -31,7 +31,7 @@ with continuous heap growth after repeated scope changes (captured by `sample` a
 heap evidence at the time). Otos needs a thumbnail-backed browser that can scale to
 large libraries without putting one SwiftUI hosting tree behind every tile.
 
-The no-blank invariant adds a stricter rendering fact: a tile whose thumbnail has
+Paint truth for visible tiles is owned by `TileContentStore` (monotonic detail + decoded image); tiles only render that value. The no-blank invariant adds a stricter rendering fact: a tile whose thumbnail has
 already painted must never render placeholder content for that same on-screen asset.
 Baseline diagnostics showed large reorder-only snapshots being applied with
 `animatingDifferences: false`; the macOS 27 AppKit SDK header documents that this

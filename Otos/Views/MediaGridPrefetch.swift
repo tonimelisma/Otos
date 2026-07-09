@@ -107,38 +107,50 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
             self.mergeTileDetails(activeDetails, reason: reason)
             return Array(activeDetails.values)
         }
+        var warmed: [(MediaAssetID, String, CGImage)] = []
         for detail in detailsToWarm where !Task.isCancelled {
-            Self.warmImageCache(
+            if let result = Self.warmImageCache(
                 detail: detail,
                 thumbnailDirectory: imageContext.thumbnailDirectory,
                 imageCache: imageContext.imageCache
-            )
+            ) {
+                warmed.append(result)
+            }
         }
-        await MainActor.run { self.finishPreheat(generation: generation) }
+        await MainActor.run {
+            for (id, key, image) in warmed {
+                let change = self.tileContents.applyDecoded(image, key: key, for: id)
+                if change == .firstImage || change == .replacedImage {
+                    self.renderVisibleItem(id: id, change: change)
+                }
+            }
+            self.finishPreheat(generation: generation)
+        }
     }
 
     private nonisolated static func warmImageCache(
         detail: MediaTileDetail,
         thumbnailDirectory: URL?,
         imageCache: MediaTileImageCache?
-    ) {
+    ) -> (MediaAssetID, String, CGImage)? {
         guard !Task.isCancelled,
               let imageCache,
               detail.thumbnailPath != nil
         else {
-            return
+            return nil
         }
         let key = MediaAssetTilePresentation.imageContentKey(detail)
-        guard imageCache.image(for: key) == nil,
-              let image = MediaAssetTilePresentation.decodedThumbnailImage(
-                  detail: detail,
-                  thumbnailDirectory: thumbnailDirectory
-              ),
-              !Task.isCancelled
-        else {
-            return
+        if let existing = imageCache.image(for: key) {
+            return (detail.id, key, existing)
+        }
+        guard let image = MediaAssetTilePresentation.decodedThumbnailImage(
+            detail: detail,
+            thumbnailDirectory: thumbnailDirectory
+        ), !Task.isCancelled else {
+            return nil
         }
         imageCache.insert(image, for: key)
+        return (detail.id, key, image)
     }
 
     private func cancelPreheat(for ids: [MediaAssetID]) {

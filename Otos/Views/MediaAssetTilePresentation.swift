@@ -81,31 +81,6 @@ nonisolated enum MediaAssetTileLayout {
     }
 }
 
-nonisolated struct TilePaintContext {
-    let incomingKey: String
-    let incomingThumbnailPath: String?
-    let currentKey: String?
-    let currentAssetID: MediaAssetID?
-    let incomingAssetID: MediaAssetID
-    let cacheHasImage: Bool
-    let hasPaintedImage: Bool
-}
-
-nonisolated enum TilePaintDecision: Equatable {
-    case paintCached
-    case keepCurrent
-    case loadAsync(retainsCurrentImage: Bool)
-    case placeholder
-}
-
-/// Distinguishes an instant cache-backed repaint from an async decode completion, so the
-/// tile can fade only the latter (spec 0047) without threading a stringly typed reason
-/// through `applyImage`.
-nonisolated enum TilePaintApplication {
-    case cacheHit
-    case asyncLoad
-}
-
 enum MediaAssetTilePresentation {
     static func isVideo(_ detail: MediaTileDetail) -> Bool {
         detail.bestKind == .video
@@ -169,20 +144,6 @@ enum MediaAssetTilePresentation {
 
     nonisolated static func showsVideoBadge(contentRect: CGRect) -> Bool {
         contentRect.width >= 56 && contentRect.height >= 56
-    }
-
-    nonisolated static func paintDecision(_ context: TilePaintContext) -> TilePaintDecision {
-        if context.cacheHasImage {
-            return .paintCached
-        }
-        if context.incomingKey == context.currentKey {
-            return .keepCurrent
-        }
-        let sameIdentity = context.currentAssetID == context.incomingAssetID
-        if context.incomingThumbnailPath == nil {
-            return sameIdentity && context.hasPaintedImage ? .keepCurrent : .placeholder
-        }
-        return .loadAsync(retainsCurrentImage: sameIdentity && context.hasPaintedImage)
     }
 
     /// Thumbnail path plus source stamp; video-badge updates do not change image identity.
