@@ -41,6 +41,14 @@ final class MediaGridMutationGate {
         case none
         case structuralApply
         case zoomSwap
+
+        var diagnosticDescription: String {
+            switch self {
+            case .none: "none"
+            case .structuralApply: "structuralApply"
+            case .zoomSwap: "zoomSwap"
+            }
+        }
     }
 
     enum Action: Equatable {
@@ -79,6 +87,14 @@ final class MediaGridMutationGate {
     private(set) var requestedColumnCount: Int
     private(set) var inFlight: InFlight = .none
     private var pendingGrid: CatalogMediaGridState?
+
+    /// Scalar gate facts for stall correlation — no grid payload retained.
+    var stallDiagnosticFields: [String: String] {
+        [
+            "inFlightExclusive": inFlight.diagnosticDescription,
+            "pendingGrid": pendingGrid == nil ? "false" : "true",
+        ]
+    }
 
     init(columnCount: Int = GridColumnCount.defaultValue) {
         installedColumnCount = columnCount

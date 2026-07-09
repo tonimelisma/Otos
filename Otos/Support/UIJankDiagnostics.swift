@@ -17,6 +17,8 @@ nonisolated struct CatalogGridHandoff: Equatable {
     let itemDelta: Int
     let selection: String
     let emptyState: String
+    let mediaIdentityChanged: Bool
+    let detailRefreshGeneration: UInt64
     let timestamp: Date
 }
 
@@ -45,6 +47,8 @@ final class MainRunLoopStallMonitor {
     private var latestHandoff: CatalogGridHandoff?
     private var operationStack: [OperationRecord] = []
     private var lastLongOperation: CompletedOperationRecord?
+    /// Optional MainActor-safe extra fields (e.g. mutation-gate exclusivity) sampled at stall time.
+    var additionalStallFields: (() -> [String: String])?
     private let interval: TimeInterval = 0.1
     private let stallThreshold: TimeInterval = 0.1
     private let longOperationThresholdMs = 100
@@ -149,12 +153,14 @@ final class MainRunLoopStallMonitor {
         let latestHandoff = latestHandoff
         let currentOperation = operationStack.last
         let lastLongOperation = lastLongOperation
+        let extraFields = additionalStallFields?() ?? [:]
         let fields = stallFields(
             stallMs: stallMs,
             now: now,
             latestHandoff: latestHandoff,
             currentOperation: currentOperation,
-            lastLongOperation: lastLongOperation
+            lastLongOperation: lastLongOperation,
+            extraFields: extraFields
         )
         recordStallDiagnostic(fields)
     }
@@ -164,7 +170,8 @@ final class MainRunLoopStallMonitor {
         now: Date,
         latestHandoff: CatalogGridHandoff?,
         currentOperation: OperationRecord?,
-        lastLongOperation: CompletedOperationRecord?
+        lastLongOperation: CompletedOperationRecord?,
+        extraFields: [String: String]
     ) -> [String: String] {
         var fields = [
             "stallMs": "\(stallMs)",
@@ -178,8 +185,12 @@ final class MainRunLoopStallMonitor {
             fields["latestItemDelta"] = "\(latestHandoff.itemDelta)"
             fields["latestSelection"] = latestHandoff.selection
             fields["latestEmptyState"] = latestHandoff.emptyState
+            fields["mediaIdentityChanged"] = "\(latestHandoff.mediaIdentityChanged)"
+            fields["detailRefreshGeneration"] = "\(latestHandoff.detailRefreshGeneration)"
             fields["latestHandoffAgeMs"] = "\(DiagnosticsTiming.milliseconds(since: latestHandoff.timestamp, now: now))"
         }
+        // Prefer the in-flight operation over a finished long op so stalls during
+        // reconfigure are not blamed on a completed applyStructure.
         if let currentOperation {
             let ageMs = DiagnosticsTiming.milliseconds(since: currentOperation.startedAt, now: now)
             fields["currentOperation"] = currentOperation.name
@@ -190,6 +201,9 @@ final class MainRunLoopStallMonitor {
             fields["lastLongOperation"] = lastLongOperation.name
             fields["lastLongOperationMs"] = "\(lastLongOperation.durationMs)"
             fields["lastLongOperationAgeMs"] = "\(ageMs)"
+        }
+        for (key, value) in extraFields {
+            fields[key] = value
         }
         return fields
     }

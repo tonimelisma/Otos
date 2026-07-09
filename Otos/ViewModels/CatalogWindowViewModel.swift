@@ -385,6 +385,8 @@ extension CatalogWindowViewModel {
 
         let itemCount = nextState.mediaGrid.orderedAssetIDs.count
         let previousItemCount = previousState.mediaGrid.orderedAssetIDs.count
+        let mediaIdentityChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
+            || previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
         let handoff = CatalogGridHandoff(
             updateID: updateID,
             itemCount: itemCount,
@@ -392,6 +394,8 @@ extension CatalogWindowViewModel {
             itemDelta: itemCount - previousItemCount,
             selection: nextState.resolvedSidebarSelection.diagnosticDescription,
             emptyState: nextState.mediaEmptyState.diagnosticDescription,
+            mediaIdentityChanged: mediaIdentityChanged,
+            detailRefreshGeneration: nextState.mediaGrid.detailRefreshGeneration,
             timestamp: Date()
         )
         stallMonitor.recordGridHandoff(handoff)
