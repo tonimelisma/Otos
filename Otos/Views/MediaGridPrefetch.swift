@@ -16,6 +16,12 @@ private struct PreheatImageContext {
 // narrows the active ID set without throwing away still-useful IDs.
 
 extension MediaGridViewController: NSCollectionViewPrefetching {
+    enum PreheatLookaheadOutcome {
+        case started(count: Int)
+        case reused
+        case skipped
+    }
+
     func collectionView(
         _: NSCollectionView,
         prefetchItemsAt indexPaths: [IndexPath]
@@ -49,17 +55,24 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
         return ids.filter { seen.insert($0).inserted }
     }
 
-    private func startPreheat(for ids: [MediaAssetID], reason: String) {
+    private enum PreheatStartOutcome {
+        case started
+        case reused
+        case skipped
+    }
+
+    @discardableResult
+    private func startPreheat(for ids: [MediaAssetID], reason: String) -> PreheatStartOutcome {
         guard let detailReader else {
-            return
+            return .skipped
         }
         let ids = uniqueIDs(ids)
         let requestedIDs = Set(ids)
         guard !requestedIDs.isEmpty else {
-            return
+            return .skipped
         }
         guard !canReuseCurrentPreheat(for: requestedIDs) else {
-            return
+            return .reused
         }
         preheatGeneration += 1
         let generation = preheatGeneration
@@ -75,6 +88,7 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
                 imageContext: imageContext
             )
         }
+        return .started
     }
 
     private func canReuseCurrentPreheat(for requestedIDs: Set<MediaAssetID>) -> Bool {
@@ -167,25 +181,32 @@ extension MediaGridViewController: NSCollectionViewPrefetching {
     }
 
     @discardableResult
-    func preheatLookahead(reason: String) -> Int {
+    func preheatLookahead(reason: String) -> PreheatLookaheadOutcome {
         let visibleRect = scrollView.contentView.bounds
         guard visibleRect.width > 0, visibleRect.height > 0 else {
-            return 0
+            return .skipped
         }
         let lookaheadRect = visibleRect.insetBy(dx: 0, dy: -visibleRect.height * 2)
         guard let attributes = collectionView.collectionViewLayout?.layoutAttributesForElements(in: lookaheadRect),
               !attributes.isEmpty
         else {
-            return 0
+            return .skipped
         }
         let ids = idsForPrefetch(attributes.compactMap(\.indexPath))
-        startPreheat(for: ids, reason: reason)
+        let outcome = startPreheat(for: ids, reason: reason)
         OtosLog.ui.debug(
             """
             Media grid manual preheat requested count=\(ids.count, privacy: .public) \
             reason=\(reason, privacy: .public)
             """
         )
-        return ids.count
+        switch outcome {
+        case .started:
+            return .started(count: ids.count)
+        case .reused:
+            return .reused
+        case .skipped:
+            return .skipped
+        }
     }
 }

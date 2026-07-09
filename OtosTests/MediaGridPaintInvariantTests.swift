@@ -68,6 +68,23 @@ struct MediaGridPaintInvariantTests {
         #expect(harness.controller.tileContents.content(for: visible)?.image != nil)
         #expect(harness.controller.tileContents.content(for: recycled) == nil)
     }
+
+    @Test func reconfigureVisibleItemsPinsOnce() throws {
+        let harness = try PaintInvariantHarness(itemCount: 4)
+        harness.controller.reconfigureVisibleItems(reason: "test")
+        #expect(harness.controller.lastReconfigurePinCallCount == 1)
+    }
+
+    @Test func repeatedVisibleIDsSkipScrollDetailQuery() throws {
+        let harness = try PaintInvariantHarness(itemCount: 4)
+        let visibleIDs = harness.controller.visibleAssetIDs()
+        guard !visibleIDs.isEmpty else {
+            return
+        }
+        #expect(harness.controller.wouldStartVisibleDetailQuery(for: visibleIDs))
+        _ = harness.controller.requestVisibleDetails(reason: "scroll")
+        #expect(!harness.controller.wouldStartVisibleDetailQuery(for: visibleIDs))
+    }
 }
 
 @MainActor
@@ -126,6 +143,7 @@ private final class PaintInvariantHarness {
     }
 
     func reconfigureVisible(_ id: MediaAssetID) {
+        controller.tileContents.pinVisible(Set([id]))
         _ = controller.ensureContentAndMaybeDecode(for: id)
         if let indexPath = controller.dataSource.indexPath(for: id),
            let item = controller.collectionView.item(at: indexPath) as? MediaGridItem

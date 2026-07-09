@@ -41,10 +41,12 @@ no-blank correctness cannot rely on AppKit preserving cell instances. The invari
 is enforced by `TileContentStore` (cost-bounded decoded images, visible IDs pinned
 against prune and budget eviction) so a painted thumbnail never regresses to nil
 for a visible asset; tiles are pure renderers of that store value. Diffable apply
-semantics only affect how much work AppKit does. The documented reloadData-class
-fallback for large/reorder applies was
-adopted after live diagnostics found zero-duration true diffing taking 5.1 s and
-25.2 s for large/reorder applies at real-library scale.
+semantics only affect how much work AppKit does. Large and reorder-only applies use
+AppKit's reloadData-class path (`animatingDifferences: false`). Live measurement on a
+~23k library (2026-07-09) shows that path and zero-duration true-diff in the same
+ballpark (~110–250 ms `applyMs`), not the older multi-second true-diff spans that once
+motivated treating true-diff as pathological. The remaining scroll hitch under Best Date
+enrichment is how often those applies run, not a multi-second Diffable cost.
 
 ## Alternatives
 
@@ -100,12 +102,14 @@ curve (`MediaGridAnimation`, spec 0047), applied through an explicit
 batch actually inserted or deleted, leaving every other appearing/disappearing
 item (scroll dequeue, a future zoom swap) at `super`'s unmodified attributes.
 Large applies and background reorder-only changes use AppKit's reloadData-class
-diffable path (`animatingDifferences: false`) after measured true-diff apply cost
-at real-library scale, completely unaffected by the animation tuning above. This
-is visually safe because `TileContentStore` holds any decoded thumbnail for a
-visible (pinned) asset and never drops it under budget pressure, so a recycled
-tile can synchronously repaint and never downgrades a painted same-asset image
-to placeholder content. The fallback is an apply-policy choice only; it does not
+diffable path (`animatingDifferences: false`), completely unaffected by the
+animation tuning above. At current ~23k library scale that apply costs roughly
+one to a few hundred milliseconds on MainActor — acceptable as a single apply,
+and not evidence that true-diff is uniquely multi-second. This is visually safe
+because `TileContentStore` holds any decoded thumbnail for a visible (pinned)
+asset and never drops it under budget pressure, so a recycled tile can
+synchronously repaint and never downgrades a painted same-asset image to
+placeholder content. The fallback is an apply-policy choice only; it does not
 make the catalog or `TileContentStore` a source of media truth. A thumbnail's
 arrival from an async decode (never a store hit) fades in; a store-hit repaint
 (scroll-back, recycled-cell sync repaint) stays instant to
@@ -118,9 +122,14 @@ plan had pre-authorized dropping rather than fixing with async machinery.
 For unchanged IDs, re-read visible details through the Store-backed detail reader
 and reconfigure the existing visible items in place. Do not call AppKit item reload
 for a detail-only refresh: reload enters the reuse lifecycle, and reusable tile
-cleanup clears the thumbnail before the async loader repaints it. Permit one
-structural apply at a time and retain only the latest pending grid state. Reset
-scroll and selection only when the query descriptor changes; same-descriptor
+cleanup clears the thumbnail before the async loader repaints it. Before each
+reconfigure, merge, or dequeue paint pass, pin the current visible identity set once
+in `TileContentStore`; do not re-derive that set per tile. Scroll-driven viewport
+reporting, visible detail queries, and preheat look-ahead coalesce on a trailing
+~16 ms edge and skip a new detail query when the visible identity list is unchanged,
+matching the enrichment viewport's newest-value delivery and avoiding per-bounds-tick
+Store cancellation. Permit one structural apply at a time and retain only the latest
+pending grid state. Reset scroll and selection only when the query descriptor changes; same-descriptor
 structural applies restore surviving selected identities through the minimal
 selection delta (`MediaGridSelection.selectionDelta`), so a surviving tile's
 selection state is never reassigned and its animated ring never blinks on a

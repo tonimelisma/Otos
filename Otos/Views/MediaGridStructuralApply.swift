@@ -9,6 +9,9 @@ extension MediaGridViewController {
         let resetSelection: Bool
         let resetScroll: Bool
         let applyStart: Date
+        let applyCallStart: Date
+        let diffPolicyMs: Int
+        let snapshotBuildMs: Int
         let insertedCount: Int
         let removedCount: Int
         let reorderOnly: Bool
@@ -25,10 +28,12 @@ extension MediaGridViewController {
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
         let applyStart = Date()
+        let policyStart = applyStart
         let summary = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: mutationGate.displayedOrderedIDs,
             nextOrderedIDs: grid.orderedAssetIDs
         )
+        let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
         // Snapshot the selected identities before the diffable apply can drop or shift
         // them. Query-descriptor changes are user context changes, so they intentionally
         // start from an empty selection instead of restoring surviving identities.
@@ -37,17 +42,23 @@ extension MediaGridViewController {
         // Identity order is the complete structural contract. Tile details are
         // read for visible identities after the structural apply, so thumbnail
         // or video-badge changes never require this O(n) diffable snapshot path.
+        let snapshotStart = Date()
         let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
+        let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
 
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
         let stallMonitor = stallMonitor
+        let applyCallStart = Date()
         let context = StructuralApplyCompletionContext(
             grid: grid,
             preservedSelection: preservedSelection,
             resetSelection: resetSelection,
             resetScroll: resetScroll,
             applyStart: applyStart,
+            applyCallStart: applyCallStart,
+            diffPolicyMs: diffPolicyMs,
+            snapshotBuildMs: snapshotBuildMs,
             insertedCount: summary.insertedCount,
             removedCount: summary.removedCount,
             reorderOnly: summary.reorderOnly,
@@ -90,10 +101,11 @@ extension MediaGridViewController {
         )
     }
 
-    /// The `animatingDifferences: false` branch is the measured reloadData-class fallback
-    /// (spec 0039) and stays byte-for-byte as a plain `apply` call. Only the already-animating
+    /// The `animatingDifferences: false` branch is the reloadData-class path for
+    /// large/reorder applies (ADR 0006). Live ~23k measurement puts that path and
+    /// zero-duration true-diff in the same ~110–250 ms ballpark. Only the already-animating
     /// small-apply branch gets the tuned duration/timing curve, wrapped in an explicit
-    /// `NSAnimationContext` group so it does not affect the fallback path (spec 0047).
+    /// `NSAnimationContext` group so it does not affect the large/reorder path.
     private func applySnapshot(
         _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
         summary: MediaGridStructuralApplyPolicy,
@@ -124,6 +136,8 @@ extension MediaGridViewController {
         operation: MainRunLoopOperationToken?,
         stallMonitor: MainRunLoopStallMonitor?
     ) {
+        let applyCallMs = DiagnosticsTiming.milliseconds(since: context.applyCallStart)
+        let completionStart = Date()
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
 
         if context.resetScroll {
@@ -133,7 +147,12 @@ extension MediaGridViewController {
         tileContents.pinVisible(Set(visibleAssetIDs()))
         let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
         reportViewport()
-        let preheatCount = preheatLookahead(reason: "structuralApply")
+        let preheatCount = switch preheatLookahead(reason: "structuralApply") {
+        case let .started(count):
+            count
+        case .reused, .skipped:
+            0
+        }
         // A descriptor-changing apply is a user context change and must clear the
         // selection model (`gridSelection = .empty`) unconditionally, exactly like the
         // `.refreshVisible` descriptor-change path — `restoreSelection`'s prune only
@@ -146,16 +165,21 @@ extension MediaGridViewController {
             restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)
         }
 
+        let completionMs = DiagnosticsTiming.milliseconds(since: completionStart)
         let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)
         logFinishedStructuralApply(
             context,
             applyMs: applyMs,
+            applyCallMs: applyCallMs,
+            completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
         )
         recordStructuralApplyDiagnostics(
             context,
             applyMs: applyMs,
+            applyCallMs: applyCallMs,
+            completionMs: completionMs,
             visibleDetailRequestCount: visibleDetailRequestCount,
             preheatCount: preheatCount
         )
@@ -173,6 +197,8 @@ extension MediaGridViewController {
     private func logFinishedStructuralApply(
         _ context: StructuralApplyCompletionContext,
         applyMs: Int,
+        applyCallMs: Int,
+        completionMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
     ) {
@@ -187,6 +213,10 @@ extension MediaGridViewController {
             reloadDataFallback=\(context.usesReloadDataFallback, privacy: .public) \
             visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
             preheatCount=\(preheatCount, privacy: .public) \
+            diffPolicyMs=\(context.diffPolicyMs, privacy: .public) \
+            snapshotBuildMs=\(context.snapshotBuildMs, privacy: .public) \
+            applyCallMs=\(applyCallMs, privacy: .public) \
+            completionMs=\(completionMs, privacy: .public) \
             applyMs=\(applyMs, privacy: .public)
             """
         )
@@ -195,22 +225,32 @@ extension MediaGridViewController {
     private func recordStructuralApplyDiagnostics(
         _ context: StructuralApplyCompletionContext,
         applyMs: Int,
+        applyCallMs: Int,
+        completionMs: Int,
         visibleDetailRequestCount: Int,
         preheatCount: Int
     ) {
-        let itemCount = context.grid.orderedAssetIDs.count
-        let scopeDescription = context.grid.scope.diagnosticDescription
-        let insertedCount = context.insertedCount
-        let removedCount = context.removedCount
-        let reorderOnly = context.reorderOnly
-        let largeApply = context.largeApply
-        let animatingDifferences = context.animatingDifferences
-        let usesReloadDataFallback = context.usesReloadDataFallback
-        Task {
-            OtosLog.ui.notice(
-                // swiftlint:disable:next line_length
-                "op=ui.mediaGrid.structuralApply phase=finish items=\(itemCount, privacy: .public) scope=\(scopeDescription, privacy: .public) inserted=\(insertedCount, privacy: .public) removed=\(removedCount, privacy: .public) reorderOnly=\(reorderOnly, privacy: .public) largeApply=\(largeApply, privacy: .public) animatingDifferences=\(animatingDifferences, privacy: .public) reloadDataFallback=\(usesReloadDataFallback, privacy: .public) visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) preheatCount=\(preheatCount, privacy: .public) applyMs=\(applyMs, privacy: .public)"
-            )
-        }
+        OtosLog.ui.noticeOperation(
+            "ui.mediaGrid.structuralApply",
+            phase: "finish",
+            fields: [
+                "items": "\(context.grid.orderedAssetIDs.count)",
+                "scope": context.grid.scope.diagnosticDescription,
+                "inserted": "\(context.insertedCount)",
+                "removed": "\(context.removedCount)",
+                "reorderOnly": "\(context.reorderOnly)",
+                "largeApply": "\(context.largeApply)",
+                "animatingDifferences": "\(context.animatingDifferences)",
+                "reloadDataFallback": "\(context.usesReloadDataFallback)",
+                "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
+                "preheatCount": "\(preheatCount)",
+                "detailRefreshGeneration": "\(context.grid.detailRefreshGeneration)",
+                "diffPolicyMs": "\(context.diffPolicyMs)",
+                "snapshotBuildMs": "\(context.snapshotBuildMs)",
+                "applyCallMs": "\(applyCallMs)",
+                "completionMs": "\(completionMs)",
+                "applyMs": "\(applyMs)",
+            ]
+        )
     }
 }

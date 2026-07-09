@@ -12,12 +12,14 @@ import UniformTypeIdentifiers
 ///
 /// Descriptor plus identity order is structural; tile detail is read only for the visible window.
 /// A structural change performs one diffable apply, animating small/user-visible
-/// insert/remove changes while using AppKit's reloadData-class diffable fallback
-/// for measured-large or reorder-only changes. Unchanged IDs re-read visible
+/// insert/remove changes while using AppKit's reloadData-class path for large or
+/// reorder-only changes (~110–250 ms at current ~23k scale, not multi-second). Unchanged IDs re-read visible
 /// details and reconfigure existing reusable items in place. Paint truth lives in
 /// `TileContentStore` alone (monotonic detail + cost-bounded decoded image); the
-/// controller owns decode dedup via `inFlightDecodes` and pins visible IDs before
-/// every store mutation so a painted thumbnail cannot be budget-dropped.
+/// controller owns decode dedup via `inFlightDecodes` and pins the current visible set
+/// once per reconfigure/merge/dequeue pass before store mutations so a painted thumbnail
+/// cannot be budget-dropped. Scroll-driven detail/preheat work is coalesced on a trailing
+/// ~16 ms edge so bounds notifications do not restart Store queries every tick.
 /// `MediaGridMutationGate` is the single arbiter for both exclusive collection-view
 /// mutations — diffable structural applies and animated zoom swaps — so the two never
 /// overlap in either direction; it keeps only the newest pending grid and the newest
@@ -101,6 +103,26 @@ final class MediaGridViewController: NSViewController {
     var preheatTask: Task<Void, Never>?
     var preheatIDs = Set<MediaAssetID>()
     var preheatGeneration = 0
+    /// Scroll-bounds diagnostic window: tick/query/preheat counters flushed each second.
+    private var scrollBoundsWindowStart = Date()
+    private var scrollBoundsTickCount = 0
+    private var scrollFlushCount = 0
+    private var scrollDetailQueryStarted = 0
+    private var scrollDetailQueryCancelled = 0
+    private var scrollDetailQuerySkippedUnchanged = 0
+    private var scrollPreheatStarted = 0
+    private var scrollPreheatReused = 0
+    private var scrollWorkDirty = false
+    private var scrollCoalesceTask: Task<Void, Never>?
+    private var lastDetailQueryIDs: [MediaAssetID] = []
+    /// Reconfigure pin-cost counters (reset each reconfigure).
+    private var reconfigurePinCallCount = 0
+    private var reconfigurePinElapsed: TimeInterval = 0
+    private var reconfigureVisibleIDsElapsed: TimeInterval = 0
+    private var decodeStartedCount = 0
+    private var decodeAppliedCount = 0
+    /// Test hook: pin calls during the last `reconfigureVisibleItems` pass.
+    private(set) var lastReconfigurePinCallCount = 0
     /// The model-owned mouse-selection truth (see `MediaGridSelectionController.swift`):
     /// the selected set, the ⇧-range anchor, and the base "islands" a ⇧-range unions with.
     /// `collectionView.selectionIndexPaths` is a render output written from
@@ -120,7 +142,14 @@ final class MediaGridViewController: NSViewController {
     /// against this directory; the scroll observer reports visible identities here.
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
-    var stallMonitor: MainRunLoopStallMonitor?
+    var stallMonitor: MainRunLoopStallMonitor? {
+        didSet {
+            stallMonitor?.additionalStallFields = { [weak self] in
+                self?.mutationGate.stallDiagnosticFields ?? [:]
+            }
+        }
+    }
+
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     override func loadView() {
@@ -145,13 +174,89 @@ final class MediaGridViewController: NSViewController {
     deinit {
         detailQueryTask?.cancel()
         preheatTask?.cancel()
+        scrollCoalesceTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func scrollBoundsChanged() {
+        scrollBoundsTickCount += 1
+        scrollWorkDirty = true
+        scrollCoalesceTask?.cancel()
+        scrollCoalesceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(16))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else {
+                return
+            }
+            guard scrollWorkDirty else {
+                return
+            }
+            scrollWorkDirty = false
+            flushScrollDrivenWork()
+        }
+        flushScrollBoundsDiagnosticsIfNeeded()
+    }
+
+    private func flushScrollDrivenWork() {
+        scrollFlushCount += 1
         reportViewport()
-        _ = requestVisibleDetails(reason: "scroll")
-        preheatLookahead(reason: "scroll")
+        let visibleIDs = visibleAssetIDs()
+        guard !visibleIDs.isEmpty else {
+            return
+        }
+        if visibleIDs == lastDetailQueryIDs {
+            scrollDetailQuerySkippedUnchanged += 1
+        } else if wouldStartVisibleDetailQuery(for: visibleIDs) {
+            let hadActiveDetailQuery = detailQueryTask != nil
+            let detailCount = requestVisibleDetails(reason: "scroll")
+            if detailCount > 0 {
+                if hadActiveDetailQuery {
+                    scrollDetailQueryCancelled += 1
+                }
+                scrollDetailQueryStarted += 1
+            }
+        }
+        switch preheatLookahead(reason: "scroll") {
+        case .started:
+            scrollPreheatStarted += 1
+        case .reused:
+            scrollPreheatReused += 1
+        case .skipped:
+            break
+        }
+    }
+
+    private func flushScrollBoundsDiagnosticsIfNeeded() {
+        let now = Date()
+        guard now.timeIntervalSince(scrollBoundsWindowStart) >= 1.0 else {
+            return
+        }
+        let windowMs = DiagnosticsTiming.milliseconds(since: scrollBoundsWindowStart, now: now)
+        OtosLog.ui.noticeOperation(
+            "ui.mediaGrid.scrollBounds",
+            phase: "window",
+            fields: [
+                "boundsTickCount": "\(scrollBoundsTickCount)",
+                "flushCount": "\(scrollFlushCount)",
+                "detailQueryStarted": "\(scrollDetailQueryStarted)",
+                "detailQueryCancelled": "\(scrollDetailQueryCancelled)",
+                "detailQuerySkippedUnchanged": "\(scrollDetailQuerySkippedUnchanged)",
+                "preheatStarted": "\(scrollPreheatStarted)",
+                "preheatReused": "\(scrollPreheatReused)",
+                "windowMs": "\(windowMs)",
+            ]
+        )
+        scrollBoundsWindowStart = now
+        scrollBoundsTickCount = 0
+        scrollFlushCount = 0
+        scrollDetailQueryStarted = 0
+        scrollDetailQueryCancelled = 0
+        scrollDetailQuerySkippedUnchanged = 0
+        scrollPreheatStarted = 0
+        scrollPreheatReused = 0
     }
 
     /// Maps the currently visible items to their ordered identities and forwards them as
@@ -228,6 +333,7 @@ extension MediaGridViewController {
         ) as? MediaGridItem else {
             return nil
         }
+        pinVisibleIDs()
         let change = ensureContentAndMaybeDecode(for: assetID)
         renderItem(item, assetID: assetID, change: change)
         return item
@@ -291,6 +397,7 @@ extension MediaGridViewController {
         detailQueryGeneration += 1
         let generation = detailQueryGeneration
         detailQueryTask?.cancel()
+        lastDetailQueryIDs = visibleIDs
 
         guard let detailReader else {
             reconfigureVisibleItems(reason: reason)
@@ -345,11 +452,26 @@ extension MediaGridViewController {
             return
         }
         let reconfigureStart = Date()
+        reconfigurePinCallCount = 0
+        reconfigurePinElapsed = 0
+        reconfigureVisibleIDsElapsed = 0
+        lastReconfigurePinCallCount = 0
+        let decodeStartsBefore = decodeStartedCount
+        let visibleStart = Date()
+        let visibleIDs = visibleIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) }
+        reconfigureVisibleIDsElapsed += Date().timeIntervalSince(visibleStart)
+        let pinStart = Date()
+        tileContents.pinVisible(Set(visibleIDs))
+        reconfigurePinElapsed += Date().timeIntervalSince(pinStart)
+        reconfigurePinCallCount = 1
+        lastReconfigurePinCallCount = 1
         let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleReconfigure")
         var configuredCount = 0
         var thumbnailLoadsStarted = 0
         var missingAssetCount = 0
         var missingItemCount = 0
+        var ensureElapsed: TimeInterval = 0
+        var renderElapsed: TimeInterval = 0
 
         for indexPath in visibleIndexPaths {
             guard let assetID = dataSource.itemIdentifier(for: indexPath) else {
@@ -360,26 +482,47 @@ extension MediaGridViewController {
                 missingItemCount += 1
                 continue
             }
+            let ensureStart = Date()
             let change = ensureContentAndMaybeDecode(for: assetID)
+            ensureElapsed += Date().timeIntervalSince(ensureStart)
             if case .awaitingDecode = change {
                 thumbnailLoadsStarted += 1
             }
+            let renderStart = Date()
             renderItem(item, assetID: assetID, change: change)
+            renderElapsed += Date().timeIntervalSince(renderStart)
             configuredCount += 1
         }
 
         OtosSignpost.ui.endInterval("MediaGridVisibleReconfigure", signpost)
         let reconfigureMs = DiagnosticsTiming.milliseconds(since: reconfigureStart)
-        OtosLog.ui.debug(
-            """
-            Media grid visible items reconfigured count=\(configuredCount, privacy: .public) \
-            requested=\(visibleIndexPaths.count, privacy: .public) \
-            missingAssets=\(missingAssetCount, privacy: .public) \
-            missingItems=\(missingItemCount, privacy: .public) \
-            thumbnailLoadsStarted=\(thumbnailLoadsStarted, privacy: .public) \
-            reason=\(reason, privacy: .public) \
-            reconfigureMs=\(reconfigureMs, privacy: .public)
-            """
+        let decodeStarts = decodeStartedCount - decodeStartsBefore
+        let pinMs = max(0, Int((reconfigurePinElapsed * 1000).rounded()))
+        let visibleIDsMs = max(0, Int((reconfigureVisibleIDsElapsed * 1000).rounded()))
+        let ensureMs = max(0, Int((ensureElapsed * 1000).rounded()))
+        let renderMs = max(0, Int((renderElapsed * 1000).rounded()))
+        OtosLog.ui.noticeOperation(
+            "ui.mediaGrid.reconfigure",
+            phase: "finish",
+            fields: [
+                "visibleCount": "\(configuredCount)",
+                "requested": "\(visibleIndexPaths.count)",
+                "missingAssets": "\(missingAssetCount)",
+                "missingItems": "\(missingItemCount)",
+                "pinCallCount": "\(reconfigurePinCallCount)",
+                "pinMs": "\(pinMs)",
+                "visibleIDsMs": "\(visibleIDsMs)",
+                "ensureMs": "\(ensureMs)",
+                "renderMs": "\(renderMs)",
+                "decodeStarts": "\(decodeStarts)",
+                "decodeInFlight": "\(inFlightDecodes.count)",
+                "decodeStartedTotal": "\(decodeStartedCount)",
+                "decodeAppliedTotal": "\(decodeAppliedCount)",
+                "storeImageBytes": "\(tileContents.imageBytes)",
+                "thumbnailLoadsStarted": "\(thumbnailLoadsStarted)",
+                "reason": reason,
+                "reconfigureMs": "\(reconfigureMs)",
+            ]
         )
     }
 
@@ -392,6 +535,11 @@ extension MediaGridViewController {
         collectionView.indexPathsForVisibleItems()
             .sorted()
             .compactMap { dataSource.itemIdentifier(for: $0) }
+    }
+
+    /// Whether a scroll flush would start a new visible detail query for `visibleIDs`.
+    func wouldStartVisibleDetailQuery(for visibleIDs: [MediaAssetID]) -> Bool {
+        !visibleIDs.isEmpty && visibleIDs != lastDetailQueryIDs
     }
 
     func contentForTile(_ id: MediaAssetID) -> TileContent? {
@@ -423,12 +571,12 @@ extension MediaGridViewController {
         item.render(content: content, change: change)
     }
 
-    /// Ensures a store entry exists (empty detail stub if needed), pins visible IDs,
-    /// starts decode when a thumbnail is known without an image, and returns the
-    /// change classification for fade.
+    /// Ensures a store entry exists (empty detail stub if needed), starts decode when a
+    /// thumbnail is known without an image, and returns the change classification for fade.
+    /// Callers must pin the current visible set before mutating the store when painting
+    /// visible tiles (reconfigure, merge, dequeue).
     @discardableResult
     func ensureContentAndMaybeDecode(for id: MediaAssetID) -> TileContentChange {
-        pinVisibleIDs()
         if tileContents.content(for: id) == nil {
             _ = tileContents.mergeDetail(
                 MediaTileDetail(libraryRootPath: id.libraryRootPath, relativePath: id.relativePath)
@@ -478,6 +626,7 @@ extension MediaGridViewController {
         guard inFlightDecodes.insert(flightKey).inserted else {
             return
         }
+        decodeStartedCount += 1
         let detail = content.detail
         let directory = thumbnailDirectory
         Task.detached(priority: .userInitiated) { [weak self] in
@@ -494,6 +643,7 @@ extension MediaGridViewController {
                 guard change == .firstImage || change == .replacedImage else {
                     return
                 }
+                self.decodeAppliedCount += 1
                 self.renderVisibleItem(id: id, change: change)
             }
         }

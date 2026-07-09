@@ -384,13 +384,14 @@ churns:
 2. The grid's apply gate serializes applies: one structural apply in flight,
    only the newest pending state retained. A 1 Hz publication rhythm makes
    gate contention rare by construction.
-3. Spec 0038 corrected the visual invariant: AppKit treats
-   `animatingDifferences: false` as a reloadData-class apply, so tile correctness
-   cannot depend on preserving item instances. Spec 0039 then applied that
-   fallback for measured-large or reorder-only applies after true-diff applies
-   proved too expensive at real-library scale. The `MediaGridStructuralApply`
-   signpost still measures this main-thread cost, which is the path that must
-   stay well under the 100 ms budget and is instrumented to prove it.
+3. AppKit treats `animatingDifferences: false` as a reloadData-class apply, so
+   tile correctness cannot depend on preserving item instances; large/reorder
+   applies use that path. Live measurement (2026-07-09, ~23k library) shows
+   reloadData-class and zero-duration true-diff in the same ~110–250 ms
+   `applyMs` ballpark — not a multi-second Diffable pathology. The
+   `MediaGridStructuralApply` signpost still measures this MainActor cost; a
+   single apply can exceed the 100 ms hang threshold, so enrichment-driven
+   reorder *frequency* during scroll is the hitch variable to watch.
 4. Scroll stability is a policy choice at apply time, currently
    offset-preserving (same pixel offset, scroll-to-top only on scope change).
    Under date sort during active enrichment, offset preservation means
