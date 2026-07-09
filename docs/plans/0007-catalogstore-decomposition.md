@@ -19,7 +19,7 @@ to touch.
 
 ## 2. Hard constraint (must not be violated)
 
-`FND-019` (→ ADR after plan 0001) requires **one actor** as the single owner
+`ARC-003` (CatalogStore single-actor ownership) requires **one actor** as the single owner
 of GRDB, root runtime state, scan/enumeration leases, removable-source state,
 scan cadence, and all catalog queries. Therefore this plan does **not** split
 `CatalogStore` into multiple actors — doing so would introduce new

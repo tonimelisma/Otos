@@ -3,10 +3,6 @@
 - Status: Accepted
 - Date: 2026-06-15
 - Last updated: 2026-06-22
-- Specs: `docs/specs/0009-catalog-publication-and-availability.md`,
-  `docs/specs/0012-catalog-state-robustness.md`,
-  `docs/specs/0013-catalog-lifecycle-race-safety.md`,
-  `docs/specs/0014-catalog-task-and-mutation-ownership.md`
 
 ## Context
 

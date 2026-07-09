@@ -313,7 +313,6 @@ struct CatalogStoreTests {
         let reloaded = try await catalogStoreTestState(reloadedStore)
         #expect(reloaded.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
     }
-
 }
 
 private extension CatalogStoreTests {

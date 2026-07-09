@@ -83,7 +83,7 @@ solely as Instruments annotations.**
    assertions inside `script/smoke-run.sh --verify` (see §3.4);
    `BrowserDiagnosticsSourceHygieneTests` (already deleted by plan 0001 —
    coordinate, don't double-delete).
-5. Requirement rows referencing the JSONL machinery (FND-006 evidence list,
+5. Requirement rows referencing the JSONL machinery (performance-evidence guidance in AGENTS.md,
    diagnostics rows) — updated to the new tooling.
 
 ### 3.3 What is kept (and why it survives the "do we use it" test)

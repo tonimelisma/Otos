@@ -2,9 +2,6 @@
 
 - Status: Accepted
 - Last updated: 2026-06-26
-- Specs: `docs/specs/0015-filesystem-truth-and-review-process.md`,
-  `docs/specs/0016-cloud-materialization-detection.md`,
-  `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`
 
 ## Context
 
@@ -169,8 +166,7 @@ subordinate, rebuildable overlay.
    transient and is never persisted. The current catalog/scanner still reads only
    filesystem facts and materializes nothing; byte-reading materialization is the
    enrichment owner's job (ADR 0009). See
-   `docs/specs/0016-cloud-materialization-detection.md`,
-   `docs/specs/0021-cloud-materialization-triggering-and-eviction-poc.md`, and
+   , and
    `docs/adr/0009-enrichment-storage-and-staleness.md`.
 7. Media metadata and filesystem facts are distinct. Filesystem facts are URL
    resource values (name, size, dates, type, and the dataless flag) readable without
@@ -317,7 +313,7 @@ new identity columns, no sidecar writers, and no overlay-class split.
 - `docs/adr/0002-catalog-persistence-and-filesystem-scan.md`: still owns the schema
   and scan; it now references this ADR for the product-wide overlay contract.
 - `docs/index.md`: this ADR registered. Done in this increment.
-- `docs/specs/0016-cloud-materialization-detection.md` and
+-  and
   `Otos/Services/FileMaterialization.swift`: add the verified dataless detection
   mechanism and the media-metadata versus filesystem-facts distinction that
   decisions 6 and 7 reference.

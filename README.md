@@ -18,7 +18,7 @@ agents and contributors.
 
 The documentation map lives in `docs/index.md`. Current requirements are tracked
 in `docs/requirements.md`, opt-in planning notes live under `docs/product/`, and
-process guidance lives under `docs/process/`.
+how-to-work guidance lives in `AGENTS.md`; the code map is `docs/architecture.md`.
 
 ## Setup
 

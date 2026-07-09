@@ -1,127 +1,56 @@
 # Otos Documentation
 
-This directory is the canonical documentation home for Otos. Root markdown is
-limited to project entry points such as `README.md` and `AGENTS.md`.
+Documentation is organized around **current truth**, not increments. Each kind has
+one MECE home (see `AGENTS.md` → Documentation). When docs conflict with code,
+inspect the code before changing behavior, and fix the doc in the same PR as the
+behavior change. Git history owns old implementation history.
 
-When docs conflict with code, inspect the code before changing behavior. When
-living docs conflict with each other, fix the documentation conflict in the same
-increment as the behavior change.
+## Authoritative current-state docs
 
-All documents in the current-contract, ADR, spec, process, and template sections
-are living current-state documentation. Rewrite affected claims and backlinks or
-delete documents that no longer serve a current purpose. Git history owns old
-implementation history.
+| Document | Owns |
+| --- | --- |
+| [../AGENTS.md](../AGENTS.md) | How to work here: product non-negotiables, engineering rules, git/CI/PR workflow, documentation model, and Definition of Done. |
+| [requirements.md](requirements.md) | The registry of implemented product/system behavior. Rows map to the source files and tests that implement/verify them. Current-state only. |
+| [architecture.md](architecture.md) | The one-page code map: one-directional dataflow, actor ownership, and where to make a change. |
 
-## Current Authoritative Contracts
+## Architecture Decision Records
 
-| Document | Owns | Update when |
-| --- | --- | --- |
-| [AGENTS.md](../AGENTS.md) | Agent workflow, non-negotiable principles, CI/PR rules, and Definition of Done. | Development workflow, gate policy, or repo-wide engineering rules change. |
-| [requirements.md](requirements.md) | Implemented current requirements, active process requirements, current-increment changes, retired requirements, acceptance examples, and verification evidence. | Any non-micro behavior change, bug fix, feature, refactor, regression guard, or workflow change changes current requirements. |
-| [process/development-workflow.md](process/development-workflow.md) | Work classification, Definition of Ready, worktree discipline, retirement proof, and landing expectations. | Increment workflow or PR readiness rules change. |
-| [process/code-smells.md](process/code-smells.md) | Swift/macOS code-smell review guidance and DoD reporting expectations. | Review heuristics, Swift/macOS smell categories, or source references change. |
-| [process/testing.md](process/testing.md) | AI-aware macOS testing strategy and verification layers. | Test strategy, test commands, or acceptance evidence expectations change. |
-| [process/performance.md](process/performance.md) | Jank detection and performance evidence using the repo's OSLog/signpost and Instruments tooling. | Instrumentation categories, profile scripts, or performance budgets change. |
-| [process/instrumentation-review.md](process/instrumentation-review.md) | Post-run instrumentation audit checklist for JSONL, unified logs, smoke artifacts, grid counters, materialization attribution, and baseline drift. | Runtime diagnostics, smoke evidence, or instrumentation gates change. |
-| [process/apple-docs.md](process/apple-docs.md) | Apple documentation grounding workflow and citation expectations. | The Apple documentation helper or citation policy changes. |
-| [process/code-review.md](process/code-review.md) | Review lens, rubric, severity model, and merge gate for human and agent review. | Review criteria, severity model, or merge-gate policy changes. |
-| [onboarding.md](onboarding.md) | A logical-order walkthrough of the codebase and the rationale for its key design decisions, for newcomers. | The architecture, data flow, or a core design decision changes. |
-
-## Current Architecture Decisions
+Each ADR owns one architectural decision and justifies what was built. Supersede or
+rewrite an ADR when the decision changes; never append increment history.
 
 | ADR | Owns |
 | --- | --- |
 | [0001](adr/0001-repository-foundation.md) | Repository and toolchain foundation. |
-| [0002](adr/0002-catalog-persistence-and-filesystem-scan.md) | GRDB/SQLite catalog persistence, filesystem facts, and idempotent scan reconciliation. |
-| [0003](adr/0003-library-root-selection-and-access.md) | Unsandboxed folder selection, normalized path identity, and overlap rules. |
+| [0002](adr/0002-catalog-persistence-and-filesystem-scan.md) | GRDB/SQLite catalog persistence, filesystem facts, idempotent scan reconciliation. |
+| [0003](adr/0003-library-root-selection-and-access.md) | Unsandboxed folder selection, normalized path identity, overlap rules. |
 | [0004](adr/0004-catalog-ui-ownership.md) | Permanent single-window Store/Projection/ViewModel/View ownership. |
-| [0005](adr/0005-catalog-publication-and-availability.md) | Projection publication, explicit selection delivery, and transient availability. |
-| [0006](adr/0006-catalog-grid-rendering.md) | Narrow AppKit collection rendering, aspect-fit tile face, video badge overlay, no-blank synchronous paint, and structural/detail update mechanics. |
-| [0007](adr/0007-catalog-order-reuse.md) | Superseded ordering/materialization decision retained for precomputed sort-key and order-cache-removal evidence. |
-| [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, and the cloud materialization policy. |
-| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage (JPEG thumbnails as files plus bounded decoded rendering cache, metadata as scalar columns plus JSON, hot video duration), the `(size, mtime)` staleness signature, eager full-library materialization, and the two-pool coordinator ownership. |
-| [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, and clean destructive catalog reset. |
-| [0011](adr/0011-catalog-query-descriptor-best-values-and-cadence.md) | Catalog query descriptor, generated best date/kind/format values, toolbar/menu sort-filter query ownership, and two-tier publication cadence. |
-| [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy representation: original file URLs on the pasteboard (not image pixels), references only, reading no bytes and never materializing a dataless cloud original. |
-| [0013](adr/0013-removable-and-device-sources.md) | Removable volume and MTP camera source identity, root metadata, All Media exclusion, detach/forget lifecycle, temporary device staging, and connected-source enrichment priority. |
+| [0005](adr/0005-catalog-publication-and-availability.md) | Projection publication, explicit selection delivery, transient availability. |
+| [0006](adr/0006-catalog-grid-rendering.md) | AppKit grid rendering, no-blank invariant, animation/zoom, model-owned selection, thumbnail-only hit area. |
+| [0007](adr/0007-catalog-order-reuse.md) | Superseded ordering/materialization decision retained for its precomputed-sort-key evidence. |
+| [0008](adr/0008-filesystem-source-of-truth-and-overlay-lifecycle.md) | Filesystem source of truth, single overlay lifecycle, path identity, no sidecars, cloud materialization policy. |
+| [0009](adr/0009-enrichment-storage-and-staleness.md) | Enrichment storage, `(size, mtime)` staleness signature, eager full-library materialization, two-pool coordinator. |
+| [0010](adr/0010-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, identity-plus-generation grid publication, visible detail reads, clean reset. |
+| [0011](adr/0011-catalog-query-descriptor-best-values-and-cadence.md) | Query descriptor, generated best values, sort/filter query ownership, two-tier publication cadence. |
+| [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy: original file URLs on the pasteboard, references only, reading no bytes. |
+| [0013](adr/0013-removable-and-device-sources.md) | Removable volume and MTP camera source identity, metadata, All Media exclusion, detach/forget, device staging. |
+| [0014](adr/0014-sidebar-selection-and-source-lifecycle.md) | Sidebar default/attach selection, All-Media visibility, and honest unmount-driven eject. |
 
-## Current Implementation Specs
+## Research
 
-| Spec | Owns |
-| --- | --- |
-| [0001](specs/0001-foundation.md) | Repository foundation implementation. |
-| [0003](specs/0003-current-requirements-authority.md) | Current requirements and non-authoritative planning separation. |
-| [0004](specs/0004-library-catalog-browser.md) | Saved libraries, persistence, automatic scans, and catalog browser surface. |
-| [0005](specs/0005-catalog-state-diagnostics-cleanup.md) | Typed catalog identity, filesystem facts, and diagnostics foundation. |
-| [0006](specs/0006-catalog-library-state-snapshot.md) | Projected library row shape and narrow view inputs. |
-| [0007](specs/0007-catalog-window-model.md) | Single-window ViewModel and passive-view ownership. |
-| [0008](specs/0008-package-descendant-scan-skip.md) | Package-descendant scan exclusion. |
-| [0009](specs/0009-catalog-publication-and-availability.md) | Coalesced state publication and transient availability behavior. |
-| [0010](specs/0010-appkit-jank-instrumentation.md) | Jank telemetry strategy and retained failure evidence. |
-| [0011](specs/0011-placeholder-media-grid.md) | Placeholder collection grid behavior and rendering regression fix. |
-| [0012](specs/0012-catalog-state-robustness.md) | Explicit intents, unknown availability, order validation, diagnostics split, and living documentation. |
-| [0013](specs/0013-catalog-lifecycle-race-safety.md) | Serialized startup, replacement-safe transient scan ownership, and retained selection normalization. |
-| [0014](specs/0014-catalog-task-and-mutation-ownership.md) | Weak ViewModel task lifetime, lossless serial mutations, and coalesced replacement selection. |
-| [0015](specs/0015-filesystem-truth-and-review-process.md) | Filesystem-truth contract, overlay lifecycle, and the code-review process. |
-| [0016](specs/0016-cloud-materialization-detection.md) | Cloud dataless-file detection facts, the media-metadata boundary, and the live `FileMaterialization` detector used by enrichment byte-read work. |
-| [0017](specs/0017-catalog-publication-performance.md) | Cheap precomputed sort key and no-op-scan notification suppression, with before/after measurement. |
-| [0018](specs/0018-catalog-order-cache-and-scoped-map-removal.md) | Remove the projection order cache and scoped value map now that the sort is cheap. |
-| [0019](specs/0019-onboarding-walkthrough-and-why-comments.md) | Onboarding walkthrough and architecture why-comments. |
-| [0020](specs/0020-scan-date-freshness-and-selective-sync-contract.md) | Scan-date freshness, selective-sync contract correction, and the PR-review-comment increment process. |
-| [0021](specs/0021-cloud-materialization-triggering-and-eviction-poc.md) | Cloud materialization triggering POC, the background-download contract change, the eviction constraint, and the retained non-blocking materialization helpers. |
-| [0022](specs/0022-metadata-and-thumbnail-enrichment.md) | Background metadata and JPEG thumbnail enrichment: the data model, the cursorless two-pool coordinator, the viewport channel, and tile rendering. |
-| [0023](specs/0023-filesystem-event-rescan-v1.md) | Running-app FSEvents: debounce, arming, affected-root fallback scans, and active-scan follow-up. |
-| [0024](specs/0024-grid-flicker-and-thumbnail-jpeg.md) | Sidebar status, grid flicker, and static thumbnail bug fix: name-only sidebar rows, in-place same-identity tile reconfiguration, JPEG thumbnail storage, and projection/grid/thumbnail instrumentation. |
-| [0025](specs/0025-store-owned-query-catalog-and-identity-grid.md) | Store-owned indexed SQLite queries, clean schema/reset, identity-plus-generation grid state, visible detail reading, and query-based enrichment selection. |
-| [0026](specs/0026-telemetry-observability-increment.md) | Original telemetry capture increment; session-file details are superseded by spec 0034. |
-| [0027](specs/0027-targeted-filesystem-event-reconciliation.md) | Targeted single regular-file FSEvents reconciliation with full-root fallback. |
-| [0028](specs/0028-code-quality-maintainability-audit.md) | Documentation truth, zero unchecked Sendables, named diagnostics task escapes, enrichment startup failure handling, and deterministic async test helpers. |
-| [0029](specs/0029-sqlite-retirement-completion.md) | SQLite retirement completion: staged thumbnail publication, Store-owned query-plan tests, retired helper removal, and stale-document cleanup. |
-| [0030](specs/0030-toolbar-sort-filter-query-surface.md) | Toolbar/menu sort and filter controls, descriptor-owned browser query state, generated SQLite best values, and one-second background publication cadence. |
-| [0031](specs/0031-grid-selection-and-copy.md) | Media grid selection (single, ⌘-click, ⇧-click, ⌘A) with identity-based persistence across structural applies, and ⌘C copy of the selected assets' original file URLs. |
-| [0032](specs/0032-catalog-browser-smell-followup.md) | Catalog browser smell and review follow-up: Projection diagnostics/policy split, AppKit detail-cache pruning, review-thread fixes, and narrow persistence query cleanup. |
-| [0033](specs/0033-smoke-library-seeding.md) | Seeded smoke launch tooling: ensure the main OneDrive Pictures library, wait, scroll down/up, capture logs and catalog diagnostics, and avoid empty-catalog runtime evidence. |
-| [0034](specs/0034-session-scoped-diagnostics-and-log-hygiene.md) | Session-scoped diagnostics, ignored run/test log captures, JSONL de-spamming, scan issue aggregation, and cancellation-aware tile-detail errors. |
-| [0035](specs/0035-catalog-browser-remediation-completion.md) | Catalog browser remediation completion: Store wait/exec timing, stall operation attribution, WAL visibility, diffable structural grid applies, image-only tile reload identity, enrichment claim batching, query-intent freshness, and source/docs hygiene. |
-| [0036](specs/0036-pr41-browser-remediation-follow-up.md) | PR 41 remediation follow-up: enrichment claim lifecycle, newest-first fallback claiming, bounded filesystem diagnostics, large reorder-only grid apply policy, and source/docs cleanup. |
-| [0037](specs/0037-thumbnail-tile-redesign.md) | Thumbnail tile redesign baseline; current tile anatomy is superseded by specs 0038 and 0044. |
-| [0038](specs/0038-no-blank-grid-invariant.md) | No-blank grid invariant: synchronous decoded-thumbnail paint, sticky visible details, tile overlay geometry, materialization re-request, reserved download slot, and verification evidence. |
-| [0039](specs/0039-grid-preheat-and-apply-follow-up.md) | Post-review grid follow-up: batched newest-burst preheating, non-main decoded cache warming, reloadData fallback for measured-large/reorder applies, cache recency cleanup, and current docs correction. |
-| [0040](specs/0040-materialization-cadence-jsonl-telemetry.md) | Materialization cadence and durable telemetry: one-second provider re-requests, materialization result attribution, claim-failure lifecycle rows, coarse grid counter JSONL snapshots, diagnostics gates, and plan retirement. |
-| [0041](specs/0041-review-follow-up-telemetry-and-doc-truth.md) | Review follow-up: explicit termination and early interval grid-counter rows, start-only diagnostics gate failure, partial preheat cancellation, cache documentation truth, and formatter reuse. |
-| [0042](specs/0042-removable-volume-sources.md) | Removable filesystem volume sources: detection, stable source identity, remount path remap, separate sidebar/settings rows, All Media exclusion, detach/forget lifecycle, scanner junk exclusions, and enrichment priority. |
-| [0043](specs/0043-mtp-camera-sources.md) | MTP camera sources: ImageCapture monitoring, mass-storage rejection, virtual staging roots, provisional thumbnails, device materialization routing, staging cleanup, camera banner, and stills-before-video staging order. |
-| [0044](specs/0044-thumbnail-label-removal-and-badge-centering.md) | Thumbnail label removal and badge centering: no filename/date tile overlay, tile-specific detail rows, and centered duration text in a right-aligned video badge. |
-| [0045](specs/0045-removable-media-review-remediation.md) | Removable-media review remediation: device enumeration leases, fail-closed camera reconciliation, removable-volume quiesce/eject ordering, duplicate volume disambiguation, and device-staging retry scheduling. |
-| [0046](specs/0046-grid-shift-click-range-selection.md) | Grid shift-click range selection: anchor/base correction state makes ⇧-click select a Photos/Lightroom-style contiguous range instead of AppKit's native two-item toggle. |
-| [0047](specs/0047-grid-animation-and-placeholder-polish.md) | Grid animation and placeholder polish: tuned animated-apply timing, insert/remove choreography, animated selection ring with a delta-based `restoreSelection`, thumbnail-arrival fade, and a media-kind placeholder icon. |
-| [0048](specs/0048-grid-zoom.md) | Grid zoom: user-adjustable 3–9 column density (default 6, persisted) driven by the View menu, a toolbar slider, and a pinch gesture through one ViewModel intent, with an animated layout swap that keeps the viewport-center tile anchored. |
+Dated research passes, POCs, and benchmarks with sources and conclusions.
+Non-authoritative: they record what we learned, not current behavior.
 
-## Planning Documents
+- [research/media-grid-best-practices.md](research/media-grid-best-practices.md)
+- [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md)
+- [research/toolbar-sort-filter-architecture.md](research/toolbar-sort-filter-architecture.md)
+- [research/removable-volume-and-camera-sources.md](research/removable-volume-and-camera-sources.md)
 
-Planning documents can contain future ideas, wild concepts, abandoned options,
-candidate requirements, and research notes. They are not proof that behavior
-exists, they are not commitments, and they must not guide agent work unless the
-user explicitly asks to use them for the current task.
+## Plans and roadmap
 
-| Document | Owns | Update when |
-| --- | --- | --- |
-| [product/roadmap.md](product/roadmap.md) | Non-authoritative idea and planning notes that may include concepts never meant to be implemented. | The user explicitly asks to record, revise, or use roadmap/planning material. |
-| [research/media-grid-best-practices.md](research/media-grid-best-practices.md) | Non-authoritative platform research for large media-grid identity, detail loading, prefetching, and responsiveness design. | New platform guidance or architecture research changes the media-grid design basis. |
-| [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md) | Non-authoritative storage/query research for database-backed media catalog design. | New storage/query research changes the catalog architecture design basis. |
-| [research/toolbar-sort-filter-architecture.md](research/toolbar-sort-filter-architecture.md) | Non-authoritative HIG/Liquid Glass toolbar research and end-to-end sort/filter query architecture alternatives. | New platform guidance or a sort/filter design decision changes the toolbar/query design basis. |
-| [research/removable-volume-and-camera-sources.md](research/removable-volume-and-camera-sources.md) | Non-authoritative platform research for removable volumes, ImageCapture camera browsing, and local staging constraints. | New platform guidance or source-device behavior changes the removable-device design basis. |
-| [plans/0030-toolbar-sort-filter-query-surface-plan.md](plans/0030-toolbar-sort-filter-query-surface-plan.md) | Non-authoritative implementation plan used as the explicit blueprint for the toolbar sort/filter query increment. | Historical implementation planning needs clarification or the user explicitly asks to revisit the plan. |
+- [plans/](plans/) — active, numbered work plans. **Deleted when the work is done.**
+- [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
+  guides work unless the user explicitly asks for roadmap input.
+- [templates/adr-template.md](templates/adr-template.md) — the ADR format.
 
-## Templates
-
-| Template | Purpose |
-| --- | --- |
-| [templates/spec-template.md](templates/spec-template.md) | Decision-complete implementation specs. |
-| [templates/adr-template.md](templates/adr-template.md) | Architecture decision records. |
-
-## Deferred Docs
-
-Accessibility docs are deferred until the app has enough real product and code
-structure for them to be useful. Do not create placeholders that merely restate
-`AGENTS.md`. The onboarding walkthrough now lives at [onboarding.md](onboarding.md).
+Code reviews and DoD reports live on the PR, never in the repo tree. There are no
+per-increment specs.
