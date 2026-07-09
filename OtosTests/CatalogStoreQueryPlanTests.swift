@@ -48,13 +48,13 @@ struct CatalogStoreQueryPlanTests {
             descriptor: .default,
             rootIDs: [rootID1, rootID2]
         ))
-        let rootEnrichmentQuery = try #require(CatalogStore.enrichmentClaimQuery(
+        let rootEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],
             now: now,
             claimNotAfter: now + 300,
             limit: 4
         ))
-        let globalEnrichmentQuery = try #require(CatalogStore.enrichmentClaimQuery(
+        let globalEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             now: now,
             claimNotAfter: now + 300,
@@ -92,7 +92,7 @@ struct CatalogStoreQueryPlanTests {
         try CatalogStore.migrator.migrate(dbQueue)
         let rootID = try await insertEnrichmentClaimFixture(dbQueue, assetCount: 200, claimedCount: 50)
         let now = Date().timeIntervalSince1970
-        let claimQuery = try #require(CatalogStore.enrichmentClaimQuery(
+        let claimQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID],
             now: now,
             claimNotAfter: now + 300,
@@ -134,7 +134,7 @@ struct CatalogStoreQueryPlanTests {
         let claimedUntil = Date().timeIntervalSince1970 + 300
 
         let claimed = try await dbQueue.write { db in
-            try CatalogStore.fetchStoredAssetsNeedingEnrichment(
+            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                 rootIDs: [rootID],
                 claimNotAfter: claimedUntil,
                 limit: 2,

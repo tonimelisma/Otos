@@ -699,198 +699,6 @@ extension CatalogStore {
         }
     }
 
-    static func fetchStoredAssetsNeedingEnrichment(
-        rootIDs: [Int64],
-        claimNotAfter: TimeInterval,
-        limit: Int,
-        db: Database
-    ) throws -> [StoredAsset] {
-        let now = Date().timeIntervalSince1970
-        guard let query = enrichmentClaimQuery(
-            rootIDs: rootIDs,
-            now: now,
-            claimNotAfter: claimNotAfter,
-            limit: limit
-        ) else {
-            return []
-        }
-        let keys = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments).map(enrichmentCandidateKey(from:))
-        guard !keys.isEmpty else {
-            return []
-        }
-        try claimStoredAssetsNeedingEnrichment(
-            keys,
-            now: now,
-            claimedUntil: claimNotAfter,
-            db: db
-        )
-        let assets = try fetchStoredAssetsForEnrichmentCandidates(keys, db: db)
-        let assetsByKey = Dictionary(uniqueKeysWithValues: assets.map { asset in
-            (EnrichmentCandidateKey(libraryRootID: asset.libraryRootID, relativePath: asset.relativePath), asset)
-        })
-        return keys.compactMap { assetsByKey[$0] }
-    }
-
-    static func enrichmentClaimQuery(
-        rootIDs: [Int64],
-        now: TimeInterval,
-        claimNotAfter _: TimeInterval,
-        limit: Int
-    ) -> SQLQuery? {
-        guard !rootIDs.isEmpty, limit > 0 else {
-            return nil
-        }
-        if rootIDs.count == 1, let rootID = rootIDs.first {
-            return rootEnrichmentClaimQuery(
-                rootID: rootID,
-                now: now,
-                limit: limit
-            )
-        }
-
-        return globalEnrichmentClaimQuery(
-            rootIDs: rootIDs,
-            now: now,
-            limit: limit
-        )
-    }
-
-    private static func rootEnrichmentClaimQuery(
-        rootID: Int64,
-        now: TimeInterval,
-        limit: Int
-    ) -> SQLQuery {
-        SQLQuery(
-            sql: """
-            SELECT library_root_id, relative_path
-            FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
-            WHERE library_root_id = ?
-              AND (\(enrichmentStalenessSQLPredicate()))
-              AND (
-                enrichment_claimed_until IS NULL
-                OR enrichment_claimed_until < ?
-              )
-            ORDER BY best_capture_unix DESC, relative_path
-            LIMIT ?
-            """,
-            arguments: sqlArguments(rootID, now, limit)
-        )
-    }
-
-    private static func globalEnrichmentClaimQuery(
-        rootIDs: [Int64],
-        now: TimeInterval,
-        limit: Int
-    ) -> SQLQuery {
-        let placeholders = sqlPlaceholders(count: rootIDs.count)
-        var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
-        arguments.append(now)
-        arguments.append(limit)
-        return SQLQuery(
-            sql: """
-            SELECT library_root_id, relative_path
-            FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
-            WHERE library_root_id IN (\(placeholders))
-              AND (\(enrichmentStalenessSQLPredicate()))
-              AND (
-                enrichment_claimed_until IS NULL
-                OR enrichment_claimed_until < ?
-              )
-            ORDER BY best_capture_unix DESC, library_root_id, relative_path
-            LIMIT ?
-            """,
-            arguments: StatementArguments(arguments)
-        )
-    }
-
-    static func claimEnrichmentAsset(
-        libraryRootID: Int64,
-        relativePath: MediaRelativePath,
-        claimedUntil: TimeInterval,
-        db: Database
-    ) throws -> Bool {
-        let now = Date().timeIntervalSince1970
-        try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET enrichment_claimed_until = ?
-            WHERE library_root_id = ?
-              AND relative_path = ?
-              AND (\(enrichmentStalenessSQLPredicate()))
-              AND (
-                enrichment_claimed_until IS NULL
-                OR enrichment_claimed_until < ?
-              )
-            """,
-            arguments: [claimedUntil, libraryRootID, relativePath.rawValue, now]
-        )
-        return db.changesCount > 0
-    }
-
-    static func releaseEnrichmentClaims(
-        ids: [MediaAssetID],
-        rootIDsByPath: [LibraryRootPath: Int64],
-        db: Database
-    ) throws {
-        for id in ids {
-            guard let rootID = rootIDsByPath[id.libraryRootPath] else {
-                continue
-            }
-            try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET enrichment_claimed_until = NULL
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [rootID, id.relativePath.rawValue]
-            )
-        }
-    }
-
-    static func releaseEnrichmentClaims(rootID: Int64, db: Database) throws {
-        try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET enrichment_claimed_until = NULL
-            WHERE library_root_id = ?
-            """,
-            arguments: [rootID]
-        )
-    }
-
-    @discardableResult
-    static func clearEnrichmentClaims(db: Database) throws -> Int {
-        try db.execute(
-            sql: """
-            UPDATE media_asset
-            SET enrichment_claimed_until = NULL
-            WHERE enrichment_claimed_until IS NOT NULL
-            """
-        )
-        return db.changesCount
-    }
-
-    static func refreshEnrichmentClaims(
-        ids: [MediaAssetID],
-        rootIDsByPath: [LibraryRootPath: Int64],
-        claimedUntil: TimeInterval,
-        db: Database
-    ) throws {
-        for id in ids {
-            guard let rootID = rootIDsByPath[id.libraryRootPath] else {
-                continue
-            }
-            try db.execute(
-                sql: """
-                UPDATE media_asset
-                SET enrichment_claimed_until = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [claimedUntil, rootID, id.relativePath.rawValue]
-            )
-        }
-    }
-
     static func upsertScannedFile(
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
@@ -1055,14 +863,14 @@ private nonisolated func createEnrichmentClaimIndexes(_ db: Database) throws {
         sql: """
         CREATE INDEX idx_media_asset_needs_enrichment_global
         ON media_asset(best_capture_unix DESC, library_root_id, relative_path)
-        WHERE \(enrichmentStalenessSQLPredicate())
+        WHERE \(EnrichmentLeaseGateway.stalenessSQLPredicate())
         """
     )
     try db.execute(
         sql: """
         CREATE INDEX idx_media_asset_needs_enrichment_root
         ON media_asset(library_root_id, best_capture_unix DESC, relative_path)
-        WHERE \(enrichmentStalenessSQLPredicate())
+        WHERE \(EnrichmentLeaseGateway.stalenessSQLPredicate())
         """
     )
 }
@@ -1110,77 +918,6 @@ private nonisolated func upsertAssetMetadataSQL() -> String {
         primary_altitude_meters = excluded.primary_altitude_meters,
         metadata_extra_json = excluded.metadata_extra_json
     """
-}
-
-private nonisolated func enrichmentStalenessSQLPredicate() -> String {
-    """
-    enriched_source_size IS NULL
-       OR enriched_source_mtime IS NULL
-       OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
-       OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-          <> COALESCE(enriched_source_mtime, -1)
-    """
-}
-
-private nonisolated struct EnrichmentCandidateKey: Hashable {
-    let libraryRootID: Int64
-    let relativePath: MediaRelativePath
-}
-
-private nonisolated func enrichmentCandidateKey(from row: Row) -> EnrichmentCandidateKey {
-    EnrichmentCandidateKey(
-        libraryRootID: row["library_root_id"],
-        relativePath: MediaRelativePath(rawValue: row["relative_path"])
-    )
-}
-
-private nonisolated func claimStoredAssetsNeedingEnrichment(
-    _ keys: [EnrichmentCandidateKey],
-    now: TimeInterval,
-    claimedUntil: TimeInterval,
-    db: Database
-) throws {
-    guard !keys.isEmpty else {
-        return
-    }
-    var arguments: [any DatabaseValueConvertible] = [claimedUntil]
-    arguments.append(contentsOf: enrichmentCandidateKeyArguments(keys))
-    arguments.append(now)
-    try db.execute(
-        sql: """
-        UPDATE media_asset
-        SET enrichment_claimed_until = ?
-        WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
-          AND (\(enrichmentStalenessSQLPredicate()))
-          AND (
-            enrichment_claimed_until IS NULL
-            OR enrichment_claimed_until < ?
-          )
-        """,
-        arguments: StatementArguments(arguments)
-    )
-}
-
-private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
-    _ keys: [EnrichmentCandidateKey],
-    db: Database
-) throws -> [CatalogStore.StoredAsset] {
-    guard !keys.isEmpty else {
-        return []
-    }
-    return try Row.fetchAll(
-        db,
-        sql: """
-        SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
-               created_at_unix, content_modified_at_unix,
-               enriched_source_size, enriched_source_mtime, thumbnail_path,
-               duration_seconds,
-               best_capture_unix, best_kind, best_format
-        FROM media_asset
-        WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
-        """,
-        arguments: StatementArguments(enrichmentCandidateKeyArguments(keys))
-    ).map(storedAsset(from:))
 }
 
 private nonisolated func orderPlan(
@@ -1266,14 +1003,6 @@ private nonisolated func sqlTuplePlaceholders(rowCount: Int, columnCount: Int) -
 
 private nonisolated func sqlArguments(_ values: (any DatabaseValueConvertible)...) -> StatementArguments {
     StatementArguments(values)
-}
-
-private nonisolated func enrichmentCandidateKeyArguments(
-    _ keys: [EnrichmentCandidateKey]
-) -> [any DatabaseValueConvertible] {
-    keys.flatMap { key in
-        [key.libraryRootID, key.relativePath.rawValue] as [any DatabaseValueConvertible]
-    }
 }
 
 private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {

@@ -185,8 +185,6 @@ actor CatalogStore {
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
 
-    private static let enrichmentClaimLease: TimeInterval = 300
-
     init(
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
         scanner: CatalogScanner = .live,
@@ -478,7 +476,7 @@ extension CatalogStore {
         var candidates: [MediaAsset] = []
         candidates.reserveCapacity(limit)
         var claimedIDs = Set<MediaAssetID>()
-        let uniquePriorityIDs = unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
+        let uniquePriorityIDs = EnrichmentLeaseGateway.unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
         var waitMs = 0
         var execMs = 0
 
@@ -549,7 +547,7 @@ extension CatalogStore {
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let dbWriter = try database()
         try await dbWriter.write { db in
-            try Self.releaseEnrichmentClaims(ids: ids, rootIDsByPath: rootIDsByPathBeforeWrite, db: db)
+            try EnrichmentLeaseGateway.releaseEnrichmentClaims(ids: ids, rootIDsByPath: rootIDsByPathBeforeWrite, db: db)
         }
     }
 
@@ -559,10 +557,10 @@ extension CatalogStore {
             return nil
         }
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
-        let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
+        let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let dbWriter = try database()
         try await dbWriter.write { db in
-            try Self.refreshEnrichmentClaims(
+            try EnrichmentLeaseGateway.refreshEnrichmentClaims(
                 ids: ids,
                 rootIDsByPath: rootIDsByPathBeforeWrite,
                 claimedUntil: claimedUntil,
@@ -572,31 +570,19 @@ extension CatalogStore {
         return Date(timeIntervalSince1970: claimedUntil)
     }
 
-    private func unclaimedPriorityIDs(
-        _ priorityIDs: [MediaAssetID],
-        claimedIDs: inout Set<MediaAssetID>
-    ) -> [MediaAssetID] {
-        priorityIDs.reduce(into: [MediaAssetID]()) { result, id in
-            guard !claimedIDs.contains(id) else {
-                return
-            }
-            claimedIDs.insert(id)
-            result.append(id)
-        }
-    }
-
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int
     ) async throws -> DatabaseTimedValue<[MediaAsset]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
-        let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
+        let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let dbWriter = try database()
-        let eligibleClaims = priorityEnrichmentClaimInputs(
+        let eligibleClaims = EnrichmentLeaseGateway.priorityClaimInputs(
             ids: ids,
             assetsByID: priorityAssetsByID,
-            rootIDsByPath: rootIDsByPathBeforeWrite
+            rootIDsByPath: rootIDsByPathBeforeWrite,
+            isRootAvailable: { [roots] path in roots[path]?.availability == .available }
         )
         guard !eligibleClaims.isEmpty else {
             return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)
@@ -608,7 +594,7 @@ extension CatalogStore {
                 guard candidates.count < limit else {
                     break
                 }
-                guard try Self.claimEnrichmentAsset(
+                guard try EnrichmentLeaseGateway.claimEnrichmentAsset(
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
                     claimedUntil: claimedUntil,
@@ -631,26 +617,6 @@ extension CatalogStore {
         return result
     }
 
-    private func priorityEnrichmentClaimInputs(
-        ids: [MediaAssetID],
-        assetsByID: [MediaAssetID: MediaAsset],
-        rootIDsByPath: [LibraryRootPath: Int64]
-    ) -> [(asset: MediaAsset, rootID: Int64)] {
-        var eligibleClaims: [(asset: MediaAsset, rootID: Int64)] = []
-        eligibleClaims.reserveCapacity(ids.count)
-        for id in ids {
-            guard let asset = assetsByID[id],
-                  asset.needsEnrichment,
-                  roots[asset.libraryRootPath]?.availability == .available,
-                  let rootID = rootIDsByPath[asset.libraryRootPath]
-            else {
-                continue
-            }
-            eligibleClaims.append((asset, rootID))
-        }
-        return eligibleClaims
-    }
-
     private func recordSlowPriorityEnrichmentClaim(
         priorityCount: Int,
         eligibleCount: Int,
@@ -663,13 +629,13 @@ extension CatalogStore {
     }
 
     private func claimedEnrichmentCandidates(limit: Int) async throws -> DatabaseTimedValue<[MediaAsset]> {
-        let claimedUntil = Date().timeIntervalSince1970 + Self.enrichmentClaimLease
+        let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let prioritizedRootIDs = availableRootIDsByRemovablePriority()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [StoredAsset] = []
             if !prioritizedRootIDs.removable.isEmpty {
-                storedAssets = try Self.fetchStoredAssetsNeedingEnrichment(
+                storedAssets = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: prioritizedRootIDs.removable,
                     claimNotAfter: claimedUntil,
                     limit: limit,
@@ -677,7 +643,7 @@ extension CatalogStore {
                 )
             }
             if storedAssets.count < limit, !prioritizedRootIDs.fixed.isEmpty {
-                let fixedAssets = try Self.fetchStoredAssetsNeedingEnrichment(
+                let fixedAssets = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
                     rootIDs: prioritizedRootIDs.fixed,
                     claimNotAfter: claimedUntil,
                     limit: limit - storedAssets.count,
@@ -798,7 +764,7 @@ extension CatalogStore {
 
     private func clearAbandonedEnrichmentClaims(_ dbQueue: any DatabaseWriter) async throws {
         let clearedCount = try await dbQueue.write { db in
-            try Self.clearEnrichmentClaims(db: db)
+            try EnrichmentLeaseGateway.clearEnrichmentClaims(db: db)
         }
         guard clearedCount > 0 else {
             return
@@ -1103,7 +1069,7 @@ extension CatalogStore {
         }
         do {
             try await dbWriter.write { db in
-                try Self.releaseEnrichmentClaims(rootID: rootRowID, db: db)
+                try EnrichmentLeaseGateway.releaseEnrichmentClaims(rootID: rootRowID, db: db)
             }
         } catch {
             OtosLog.metadata.error(
