@@ -2138,7 +2138,7 @@ private extension CatalogStore {
             }
         }
         OtosLog.catalog.error(
-            "op=catalog.scan phase=error fields=\(String(describing: diagnosticFields), privacy: .public)"
+            "op=catalog.scan phase=error \(otosLogFields(diagnosticFields), privacy: .public)"
         )
         clearCurrentScan(scan, armFilesystemWatching: true)
     }
@@ -2311,7 +2311,7 @@ private extension CatalogStore {
         fields: [String: String] = [:]
     ) {
         OtosLog.catalog.notice(
-            "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) fields=\(String(describing: fields), privacy: .public)"
+            "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(otosLogFields(fields), privacy: .public)"
         )
     }
 

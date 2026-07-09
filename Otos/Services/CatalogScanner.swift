@@ -342,7 +342,7 @@ private extension LiveCatalogScanner {
                 """
             )
             OtosLog.catalog.notice(
-                "op=catalog.scan.skippedPackage phase=skip fields=\(String(describing: fields), privacy: .public)"
+                "op=catalog.scan.skippedPackage phase=skip \(otosLogFields(fields), privacy: .public)"
             )
         }
     }

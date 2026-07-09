@@ -5,8 +5,9 @@ import OSLog
 ///
 /// `CatalogProjection` owns publication ordering and actor state; this file owns
 /// the value-shaped diagnostics it emits after each completed publication. Keeping
-/// the comparison and JSONL field construction here lets the actor read as
-/// publication machinery while preserving the same bounded scalar diagnostics.
+/// the comparison and OSLog field construction here (`op=`/`key=value` for the
+/// agent; interval signposts for Instruments) lets the actor read as publication
+/// machinery while preserving the same bounded scalar diagnostics.
 nonisolated struct CatalogProjectionBuildMetrics {
     let orderQueryMs: Int
 }

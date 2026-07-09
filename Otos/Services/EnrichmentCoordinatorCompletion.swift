@@ -209,7 +209,7 @@ extension EnrichmentCoordinator {
         diagnosticFields["rootPath"] = id.libraryRootPath.rawValue
         diagnosticFields["relativePath"] = id.relativePath.rawValue
         OtosLog.metadata.notice(
-            "op=catalog.thumbnails.visibleLifecycle phase=\(phase, privacy: .public) fields=\(String(describing: diagnosticFields), privacy: .public)"
+            "op=catalog.thumbnails.visibleLifecycle phase=\(phase, privacy: .public) \(otosLogFields(diagnosticFields), privacy: .public)"
         )
     }
 

@@ -7,9 +7,9 @@ import OSLog
 /// The monitor samples the active app's main run loop in debug builds. The
 /// ViewModel supplies only the latest scalar grid handoff, so a delayed timer can
 /// be correlated with catalog work without retaining a `CatalogWindowState` or
-/// its asset dictionary. Frequent state and collection activity is measured with
-/// Logger/signposts; JSONL is written only when an actual active-app stall is
-/// detected.
+/// its asset dictionary. Frequent state and collection activity uses OSLog
+/// (`op=`/`key=value`) for the agent and interval signposts for Instruments; a
+/// main-thread stall emits one structured `.fault op=mainThreadStall` line.
 nonisolated struct CatalogGridHandoff: Equatable {
     let updateID: Int
     let itemCount: Int
@@ -149,16 +149,6 @@ final class MainRunLoopStallMonitor {
         let latestHandoff = latestHandoff
         let currentOperation = operationStack.last
         let lastLongOperation = lastLongOperation
-        OtosLog.performance.error(
-            """
-            Main run loop stall detected ms=\(stallMs, privacy: .public) \
-            latestUpdateID=\(latestHandoff?.updateID ?? 0, privacy: .public) \
-            latestItems=\(latestHandoff?.itemCount ?? 0, privacy: .public) \
-            currentOperation=\(currentOperation?.name ?? "none", privacy: .public) \
-            lastLongOperation=\(lastLongOperation?.name ?? "none", privacy: .public)
-            """
-        )
-
         let fields = stallFields(
             stallMs: stallMs,
             now: now,
@@ -205,10 +195,9 @@ final class MainRunLoopStallMonitor {
     }
 
     private func recordStallDiagnostic(_ fields: [String: String]) {
-        let stallMs = fields["stallMs"] ?? "?"
         let lastOp = fields["currentOperation"] ?? fields["lastLongOperation"] ?? "none"
         OtosLog.performance.fault(
-            "op=mainThreadStall stallMs=\(stallMs, privacy: .public) lastOp=\(lastOp, privacy: .public) fields=\(String(describing: fields), privacy: .public)"
+            "op=mainThreadStall lastOp=\(lastOp, privacy: .public) \(otosLogFields(fields), privacy: .public)"
         )
     }
 }

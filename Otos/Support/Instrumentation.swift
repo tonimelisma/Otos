@@ -29,6 +29,11 @@ nonisolated enum OtosLog {
     }
 }
 
+/// Renders `["a":"1","b":"2"]` as `"a=1 b=2"` (sorted, stable) for greppable logs.
+nonisolated func otosLogFields(_ fields: [String: String]) -> String {
+    fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
+}
+
 nonisolated enum OtosSignpost {
     static let app = OSSignposter(logger: OtosLog.app)
     static let ui = OSSignposter(logger: OtosLog.ui)
@@ -49,10 +54,7 @@ extension Logger {
             notice("op=\(operation, privacy: .public) phase=\(phase, privacy: .public)")
             return
         }
-        let pairs = fields
-            .sorted { $0.key < $1.key }
-            .map { "\($0.key)=\($0.value)" }
-            .joined(separator: " ")
+        let pairs = otosLogFields(fields)
         notice(
             "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)"
         )
@@ -63,10 +65,7 @@ extension Logger {
             error("op=\(operation, privacy: .public) phase=\(phase, privacy: .public)")
             return
         }
-        let pairs = fields
-            .sorted { $0.key < $1.key }
-            .map { "\($0.key)=\($0.value)" }
-            .joined(separator: " ")
+        let pairs = otosLogFields(fields)
         error(
             "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)"
         )

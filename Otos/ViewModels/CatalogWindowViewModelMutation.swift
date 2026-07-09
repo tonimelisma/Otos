@@ -358,7 +358,7 @@ private extension CatalogWindowViewModel {
         var fields = fields
         fields["error"] = String(describing: error)
         OtosLog.catalog.error(
-            "op=\(operation, privacy: .public) phase=error fields=\(String(describing: fields), privacy: .public)"
+            "op=\(operation, privacy: .public) phase=error \(otosLogFields(fields), privacy: .public)"
         )
     }
 }
