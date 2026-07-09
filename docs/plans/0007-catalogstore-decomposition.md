@@ -83,6 +83,15 @@ orchestration, and the public API.
 execution. Focused unit tests cover drop/defer/rescan/targeted; existing
 `CatalogStoreFilesystemEventTests` remain the integration gate.
 
+### Phase 3 status (2026-07-09)
+
+**Shipped.** `ScanLeaseController` owns filesystem/device lease bookkeeping,
+the pending scan queue, and rescan-after-current-scan deferrals. `CatalogStore`
+keeps `currentScanTask`, spawn/await orchestration, and the public
+`ActiveScan` type. Focused unit tests cover enqueue dedupe, front priority,
+ownership checks, cancel, deferred rescan, and generation increment;
+`CatalogStoreLifecycleRaceTests` remain the integration gate.
+
 1. **`RootRegistry`** — mechanically follows plan 0006: promote the two maps +
    mutators + query-id/priority helpers into a `RootRegistry` value the actor
    owns (`private var roots = RootRegistry()`), calling it synchronously.

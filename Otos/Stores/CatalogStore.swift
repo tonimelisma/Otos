@@ -16,8 +16,8 @@ nonisolated enum CatalogStoreChange: Equatable {
 ///
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
 /// overlay storage and the per-asset working set; the actor keeps only root identity,
-/// source metadata, per-root runtime facts via `RootRegistry` / `RootRuntimeState`, scan/enumeration lifecycle, and notification
-/// state resident. Fixed libraries, removable volumes, and MTP cameras share the root
+/// source metadata, per-root runtime facts via `RootRegistry` / `RootRuntimeState`,
+/// scan/enumeration leases via `ScanLeaseController`, and notification state resident. Fixed libraries, removable volumes, and MTP cameras share the root
 /// table because the current filesystem or staging path remains the asset identity
 /// boundary, while `LibraryRootKind` controls lifecycle rules such as All Media
 /// membership, launch scans, detach, and Forget. Filesystem scans and device catalog
@@ -45,7 +45,8 @@ nonisolated enum CatalogStoreChange: Equatable {
 /// observes the same load instead of applying competing root sets. Awaited GRDB calls
 /// make this actor reentrant, so active scans carry the root path, private root-row
 /// instance, and in-memory lease generation they own and revalidate them after each
-/// database await. Completed scans reconcile missing paths; failed, cancelled, or
+/// database await. `ScanLeaseController` holds the lease/queue bookkeeping; this actor
+/// keeps `currentScanTask` and all spawn/await orchestration. Completed scans reconcile missing paths; failed, cancelled, or
 /// stale scans preserve prior rows because incomplete observation cannot prove
 /// removal. Device enumerations use the same process-local lease before they may
 /// reconcile missing rows, so a stale camera flow cannot delete rows written by a
@@ -133,11 +134,6 @@ actor CatalogStore {
         }
     }
 
-    private enum ScanQueuePriority {
-        case normal
-        case front
-    }
-
     private struct EnrichmentBatchWriteOutcome {
         var appliedCount = 0
         var promotionFailed = false
@@ -182,14 +178,10 @@ actor CatalogStore {
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
     private var roots = RootRegistry()
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
-    private var pendingScanPaths: [LibraryRootPath] = []
-    private var activeScan: ActiveScan?
-    private var activeDeviceScans: [LibraryRootPath: ActiveScan] = [:]
-    private var nextActiveScanLeaseGeneration: UInt64 = 0
+    private var scanLeases = ScanLeaseController()
     private var currentScanTask: Task<Void, Never>?
     private var filesystemWatchingStarted = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
-    private var rescanAfterCurrentScan: Set<LibraryRootPath> = []
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
 
@@ -1099,13 +1091,9 @@ extension CatalogStore {
     private func cancelRuntimeWork(for path: LibraryRootPath) {
         unrequestedLoadedRootPaths.removeAll { $0 == path }
         cancelFilesystemDebounce(for: path)
-        rescanAfterCurrentScan.remove(path)
-        pendingScanPaths.removeAll { $0 == path }
-        activeDeviceScans.removeValue(forKey: path)
-        if activeScan?.rootPath == path {
+        if scanLeases.cancelWork(for: path) {
             currentScanTask?.cancel()
             currentScanTask = nil
-            activeScan = nil
         }
     }
 
@@ -1238,7 +1226,7 @@ extension CatalogStore {
         let previous = roots[oldPath]
         removeRoot(path: oldPath)
         filesystemWatchingArmed.remove(oldPath)
-        rescanAfterCurrentScan.remove(oldPath)
+        scanLeases.removeRescanDeferral(oldPath)
         filesystemEventBatches.removeValue(forKey: oldPath)
         upsert(RootRuntimeState(
             root: newRoot,
@@ -1410,8 +1398,8 @@ extension CatalogStore {
         else {
             throw CancellationError()
         }
-        let scan = makeActiveScan(rootPath: rootPath, rootRowID: rootRowID)
-        activeDeviceScans[rootPath] = scan
+        let scan = scanLeases.makeActiveScan(rootPath: rootPath, rootRowID: rootRowID)
+        scanLeases.beginDeviceScan(scan)
         if var state = roots[rootPath] {
             state.activity = .enumerating
             upsert(state)
@@ -1481,10 +1469,10 @@ extension CatalogStore {
     }
 
     func endDeviceCatalogEnumeration(scan: ActiveScan) async {
-        guard activeDeviceScans[scan.rootPath] == scan else {
+        guard scanLeases.isCurrentDeviceScan(scan) else {
             return
         }
-        activeDeviceScans.removeValue(forKey: scan.rootPath)
+        scanLeases.endDeviceScan(scan)
         if var state = roots[scan.rootPath], state.root.kind == .deviceMTP {
             state.activity = .idle
             upsert(state)
@@ -1523,14 +1511,11 @@ extension CatalogStore {
     func shutdown() {
         currentScanTask?.cancel()
         currentScanTask = nil
-        activeScan = nil
-        activeDeviceScans.removeAll()
-        pendingScanPaths.removeAll()
+        scanLeases.resetAll()
         cancelAllFilesystemDebounces()
         filesystemWatcher.stop()
         filesystemWatchingStarted = false
         filesystemWatchingArmed.removeAll()
-        rescanAfterCurrentScan.removeAll()
         notifyCatalogChanged()
     }
 }
@@ -1880,7 +1865,7 @@ private extension CatalogStore {
 
     private func removeRoot(path: LibraryRootPath) {
         _ = roots.remove(path: path)
-        activeDeviceScans.removeValue(forKey: path)
+        scanLeases.removeDeviceScan(for: path)
     }
 
     private func catalogLibraryState(from state: RootRuntimeState) -> CatalogLibraryState {
@@ -1893,7 +1878,7 @@ private extension CatalogStore {
     }
 
     private func activity(for path: LibraryRootPath) -> CatalogLibraryActivity {
-        if activeScan?.rootPath == path {
+        if scanLeases.hasActiveFilesystemScan(for: path) {
             return .scanning
         }
         return roots[path]?.activity ?? .idle
@@ -1924,18 +1909,11 @@ private extension CatalogStore {
         try roots.validateNoOverlap(path, ignoring: existingRootRowID)
     }
 
-    private func enqueueScans(_ paths: [LibraryRootPath], priority: ScanQueuePriority = .normal) {
-        for path in paths where roots[path] != nil {
-            if activeScan?.rootPath == path || pendingScanPaths.contains(path) {
-                continue
-            }
-            switch priority {
-            case .normal:
-                pendingScanPaths.append(path)
-            case .front:
-                pendingScanPaths.insert(path, at: 0)
-            }
-        }
+    private func enqueueScans(
+        _ paths: [LibraryRootPath],
+        priority: ScanLeaseController.QueuePriority = .normal
+    ) {
+        scanLeases.enqueue(paths, priority: priority) { roots[$0] != nil }
         startNextScanIfNeeded()
     }
 
@@ -1943,8 +1921,7 @@ private extension CatalogStore {
         guard currentScanTask == nil else {
             return
         }
-        while let nextPath = pendingScanPaths.first {
-            pendingScanPaths.removeFirst()
+        while let nextPath = scanLeases.popPending() {
             guard roots[nextPath] != nil,
                   let rootRowID = roots[nextPath]?.rowID
             else {
@@ -1955,8 +1932,8 @@ private extension CatalogStore {
                 continue
             }
             setAvailability(.available, for: nextPath)
-            let scan = makeActiveScan(rootPath: nextPath, rootRowID: rootRowID)
-            activeScan = scan
+            let scan = scanLeases.makeActiveScan(rootPath: nextPath, rootRowID: rootRowID)
+            scanLeases.beginFilesystemScan(scan)
             notifyCatalogChanged()
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
             recordDiagnostic(
@@ -2201,18 +2178,18 @@ private extension CatalogStore {
     }
 
     private func clearCurrentScan(_ scan: ActiveScan, armFilesystemWatching: Bool) {
-        guard activeScan == scan else {
+        guard scanLeases.isCurrentFilesystemScan(scan) else {
             return
         }
         let rootPath = scan.rootPath
-        activeScan = nil
+        let needsRescan = scanLeases.clearFilesystemScan(scan)
         currentScanTask = nil
 
         if armFilesystemWatching, roots[rootPath] != nil {
             filesystemWatchingArmed.insert(rootPath)
         }
 
-        if rescanAfterCurrentScan.remove(rootPath) != nil {
+        if needsRescan {
             filesystemEventBatches.removeValue(forKey: rootPath)
             enqueueScans([rootPath])
         }
@@ -2408,7 +2385,7 @@ private extension CatalogStore {
             rootExists: roots[root] != nil,
             isArmed: filesystemWatchingArmed.contains(root),
             isAvailable: rootIsAvailable(root),
-            hasActiveScanForRoot: activeScan?.rootPath == root
+            hasActiveScanForRoot: scanLeases.hasActiveFilesystemScan(for: root)
         )
 
         switch decision {
@@ -2418,7 +2395,7 @@ private extension CatalogStore {
         case .noop:
             filesystemEventBatches.removeValue(forKey: root)
         case let .deferUntilScanCompletes(eventCount):
-            rescanAfterCurrentScan.insert(root)
+            scanLeases.markRescanAfterCurrentScan(root)
             filesystemEventBatches.removeValue(forKey: root)
             OtosLog.catalog.debug(
                 "Filesystem reconcile deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
@@ -2585,17 +2562,9 @@ private extension CatalogStore {
     }
 
     private func owns(_ scan: ActiveScan) -> Bool {
-        (activeScan == scan || activeDeviceScans[scan.rootPath] == scan)
-            && roots.ownsLease(rootPath: scan.rootPath, rootRowID: scan.rootRowID)
-    }
-
-    private func makeActiveScan(rootPath: LibraryRootPath, rootRowID: Int64) -> ActiveScan {
-        nextActiveScanLeaseGeneration &+= 1
-        return ActiveScan(
-            rootPath: rootPath,
-            rootRowID: rootRowID,
-            leaseGeneration: nextActiveScanLeaseGeneration
-        )
+        scanLeases.owns(scan) { path, rowID in
+            roots.ownsLease(rootPath: path, rootRowID: rowID)
+        }
     }
 
     private func recordIgnoredStaleCallback(_ scan: ActiveScan, callback: String) async {
