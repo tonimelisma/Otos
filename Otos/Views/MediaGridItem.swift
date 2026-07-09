@@ -8,7 +8,7 @@ import OSLog
 // owns structure and reuse; the item simply forwards AppKit lifecycle events and
 // records slow synchronous configuration spans.
 
-final class MediaAssetCollectionItem: NSCollectionViewItem {
+final class MediaGridItem: NSCollectionViewItem {
     private var tileView: MediaAssetTileView? {
         view as? MediaAssetTileView
     }

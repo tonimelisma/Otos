@@ -88,6 +88,9 @@ actor CatalogProjection {
         scheduleImmediatePublicationAfterIntent()
     }
 
+    /// One-shot window-state build for tests. Production UI consumes the coalesced
+    /// publication loop; this entry exists so projection math can be asserted without
+    /// standing up the dirty/publish cadence.
     func windowState(
         libraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],

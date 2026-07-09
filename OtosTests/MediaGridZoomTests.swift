@@ -12,7 +12,7 @@ import Testing
 /// pre-window path — installing the layout directly and completing synchronously — which
 /// keeps these tests free of AppKit animation timing.
 @MainActor
-struct MediaAssetCollectionZoomTests {
+struct MediaGridZoomTests {
     @Test func receiveColumnCountSwapsImmediatelyWhenNoApplyIsInFlight() {
         let controller = makeController(itemCount: 4)
         #expect(controller.mutationGate.installedColumnCount == GridColumnCount.defaultValue)
@@ -55,7 +55,7 @@ struct MediaAssetCollectionZoomTests {
         )
         #expect(controller.mutationGate.requestedColumnCount == 3)
 
-        let context = MediaAssetCollectionViewController.StructuralApplyCompletionContext(
+        let context = MediaGridViewController.StructuralApplyCompletionContext(
             grid: newGrid,
             preservedSelection: [],
             resetSelection: false,
@@ -77,12 +77,12 @@ struct MediaAssetCollectionZoomTests {
 }
 
 @MainActor
-private func makeController(itemCount: Int) -> MediaAssetCollectionViewController {
-    let controller = MediaAssetCollectionViewController()
+private func makeController(itemCount: Int) -> MediaGridViewController {
+    let controller = MediaGridViewController()
     _ = controller.view // forces loadView(), which installs the collection view and data source
 
     let assetIDs = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
-    var snapshot = NSDiffableDataSourceSnapshot<MediaAssetCollectionViewController.Section, MediaAssetID>()
+    var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
     snapshot.appendSections([.media])
     snapshot.appendItems(assetIDs, toSection: .media)
     controller.dataSource.apply(snapshot, animatingDifferences: false)

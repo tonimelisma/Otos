@@ -228,7 +228,7 @@ Update:
 - source file guides and focused comments in `CatalogModels`,
   `CatalogStorePersistence`, `CatalogStore`, `CatalogProjection`,
   `CatalogWindowViewModel`, `EnrichmentCoordinator`, `MediaEnricher`,
-  `MediaGridView`, and `MediaAssetCollectionView`
+  `MediaGridView`, and `MediaGridBridgeView`
 
 Planning documents may remain non-authoritative as long as they do not claim
 current behavior before code lands.

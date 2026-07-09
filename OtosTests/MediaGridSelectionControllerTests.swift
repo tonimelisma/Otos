@@ -19,7 +19,7 @@ import Testing
 /// only thing it skips is AppKit's native selection tracking loop, which the design
 /// deliberately never calls.
 @MainActor
-struct MediaAssetCollectionSelectionTests {
+struct MediaGridSelectionControllerTests {
     // MARK: - Acceptance matrix (rows 1–14)
 
     @Test func row1_plainClickSelectsOnlyTheClickedItem() throws {
@@ -211,7 +211,7 @@ struct MediaAssetCollectionSelectionTests {
             scope: .library(LibraryRootPath(rawValue: "/Pictures")),
             orderedAssetIDs: harness.ids // the anchored asset is still present
         )
-        let context = MediaAssetCollectionViewController.StructuralApplyCompletionContext(
+        let context = MediaGridViewController.StructuralApplyCompletionContext(
             grid: grid,
             preservedSelection: [],
             resetSelection: true,
@@ -281,7 +281,7 @@ struct MediaAssetCollectionSelectionTests {
 
 @MainActor
 private final class GridSelectionTestHarness {
-    let controller: MediaAssetCollectionViewController
+    let controller: MediaGridViewController
     let ids: [MediaAssetID]
     private let window: NSWindow
     private let imageCache = MediaTileImageCache()
@@ -292,12 +292,12 @@ private final class GridSelectionTestHarness {
     }
 
     init(itemCount: Int) throws {
-        controller = MediaAssetCollectionViewController()
+        controller = MediaGridViewController()
         _ = controller.view // forces loadView()
         controller.imageCache = imageCache
 
         ids = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
-        var snapshot = NSDiffableDataSourceSnapshot<MediaAssetCollectionViewController.Section, MediaAssetID>()
+        var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
         snapshot.appendSections([.media])
         snapshot.appendItems(ids, toSection: .media)
         controller.dataSource.apply(snapshot, animatingDifferences: false)
@@ -343,7 +343,7 @@ private final class GridSelectionTestHarness {
         controller.mergeTileDetails([id: detail], reason: "test")
 
         if let indexPath = controller.dataSource.indexPath(for: id),
-           let item = controller.collectionView.item(at: indexPath) as? MediaAssetCollectionItem
+           let item = controller.collectionView.item(at: indexPath) as? MediaGridItem
         { // swiftlint:disable:this opening_brace
             _ = item.configure(detail: detail, thumbnailDirectory: nil, imageCache: imageCache)
         }
@@ -424,7 +424,7 @@ private final class GridSelectionTestHarness {
 
     private func windowPoint(for id: MediaAssetID, target: ClickTarget) throws -> NSPoint {
         let indexPath = try #require(controller.dataSource.indexPath(for: id))
-        let item = try #require(controller.collectionView.item(at: indexPath) as? MediaAssetCollectionItem)
+        let item = try #require(controller.collectionView.item(at: indexPath) as? MediaGridItem)
         let tileView = try #require(item.view as? MediaAssetTileView)
         let pixelSize = try #require(tileView.currentImagePixelSize, "Tile has no decoded thumbnail")
         let face = MediaAssetTilePresentation.thumbnailFaceRect(

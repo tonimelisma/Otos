@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 import OSLog
 
-extension MediaAssetCollectionViewController {
+extension MediaGridViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
         let preservedSelection: Set<MediaAssetID>
@@ -23,7 +23,7 @@ extension MediaAssetCollectionViewController {
         resetScroll: Bool,
         resetSelection: Bool
     ) {
-        let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.applyStructure")
+        let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
         let applyStart = Date()
         let summary = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: mutationGate.displayedOrderedIDs,

@@ -127,7 +127,7 @@ policy (byte-identical branch), `GridSelection`, preheat look-ahead,
    `render(store.contents[id])`; move decode ownership to the controller;
    delete the old tile fields and decision enum.
 4. Delete watchdog paths; update the file guides
-   (`MediaAssetTileView.swift`, `MediaAssetCollectionView.swift`) — they
+   (`MediaAssetTileView.swift`, `MediaGridBridge.swift`) — they
    currently *explain* the defended invariant and must now explain the
    structural one.
 5. Update tests: `MediaAssetTilePresentationTests` paint-decision cases

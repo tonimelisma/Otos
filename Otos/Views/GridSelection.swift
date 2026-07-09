@@ -62,10 +62,10 @@ nonisolated struct GridSelection: Equatable {
         return GridSelection(selection: base.union(range), anchor: anchor, base: base)
     }
 
-    /// ⌘⇧-click **(eng default)**: extend the range from the anchor to `id` while
-    /// *keeping* existing selected islands (`selection ∪ range`), rather than collapsing
-    /// to `base ∪ range` (which a plain ⇧-click does). Anchor and base unchanged. Falls
-    /// back to a plain click with no anchor or a missing endpoint.
+    /// ⌘⇧-click: extend the range from the anchor to `id` while keeping existing
+    /// islands (`selection ∪ range`). Differs from plain ⇧, which recomputes from the
+    /// base (`base ∪ range`). Anchor and base unchanged. Falls back to a plain click
+    /// with no anchor or a missing endpoint.
     func commandShiftClick(_ id: MediaAssetID, orderedIDs: [MediaAssetID]) -> GridSelection {
         guard let anchor,
               let anchorIndex = orderedIDs.firstIndex(of: anchor),
@@ -109,5 +109,29 @@ nonisolated struct GridSelection: Equatable {
             return GridSelection(selection: prunedSelection, anchor: nil, base: [])
         }
         return GridSelection(selection: prunedSelection, anchor: anchor, base: base.intersection(orderSet))
+    }
+
+    /// The selected identities in display order. Copy emits URLs in the order the user
+    /// sees tiles, not in hash order, so a pasted multi-selection is stable.
+    nonisolated static func orderedSelection(
+        _ selected: Set<MediaAssetID>,
+        in ordered: [MediaAssetID]
+    ) -> [MediaAssetID] {
+        guard !selected.isEmpty else {
+            return []
+        }
+        return ordered.filter(selected.contains)
+    }
+
+    /// The minimal delta that turns `current` into `target`: identities to deselect and
+    /// identities to select. Applying only this delta — instead of deselecting everything
+    /// and reselecting survivors — means an identity present in both sets receives no
+    /// select/deselect call at all, so its tile's `isSelected` never changes and an
+    /// animated selection ring never blinks for a survivor.
+    nonisolated static func selectionDelta(
+        current: Set<MediaAssetID>,
+        target: Set<MediaAssetID>
+    ) -> (toDeselect: Set<MediaAssetID>, toSelect: Set<MediaAssetID>) {
+        (current.subtracting(target), target.subtracting(current))
     }
 }

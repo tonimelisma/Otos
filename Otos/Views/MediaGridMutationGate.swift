@@ -29,9 +29,9 @@ import Foundation
 /// same drain.
 ///
 /// A query-descriptor change is a user context change, so it resets scroll and selection
-/// even when the same identities survive. Lives beside `MediaAssetCollectionView` (its
+/// even when the same identities survive. Lives beside `MediaGridBridgeView` (its
 /// only owner) but in its own file so the collection bridge stays focused and the gate
-/// can be unit-tested directly (`MediaAssetCollectionTests`).
+/// can be unit-tested directly (`MediaGridBridgeTests`).
 @MainActor
 final class MediaGridMutationGate {
     /// Which exclusive mutation, if any, currently owns the collection view. A

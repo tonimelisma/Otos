@@ -29,7 +29,7 @@ import UniformTypeIdentifiers
 /// collection-view subclass) captures the click at `mouseDown` and does **not** call
 /// `super.mouseDown`, so AppKit's native mouse-selection tracking loop never runs and
 /// there is no commit to race. It forwards `(hit, modifiers)` to
-/// `MediaAssetCollectionSelection.swift`, which computes the gesture against a pure
+/// `MediaGridSelectionController.swift`, which computes the gesture against a pure
 /// `GridSelection` value (selection + anchor + base) — the single source of truth — and
 /// writes `selectionIndexPaths` from the model as the last operation of the gesture. The
 /// model is never read from `selectionIndexPaths` to *decide* a gesture;
@@ -41,7 +41,7 @@ import UniformTypeIdentifiers
 /// update never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller
 /// through the responder chain and writes the selected assets' original file URLs to the
 /// pasteboard (ADR 0012), reading no bytes.
-struct MediaAssetCollectionView: NSViewControllerRepresentable {
+struct MediaGridBridgeView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
@@ -56,12 +56,12 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
     /// View menu and toolbar slider call directly.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
 
-    func makeNSViewController(context _: Context) -> MediaAssetCollectionViewController {
-        MediaAssetCollectionViewController()
+    func makeNSViewController(context _: Context) -> MediaGridViewController {
+        MediaGridViewController()
     }
 
     func updateNSViewController(
-        _ controller: MediaAssetCollectionViewController,
+        _ controller: MediaGridViewController,
         context _: Context
     ) {
         controller.thumbnailDirectory = thumbnailDirectory
@@ -76,12 +76,12 @@ struct MediaAssetCollectionView: NSViewControllerRepresentable {
 }
 
 @MainActor
-final class MediaAssetCollectionViewController: NSViewController {
+final class MediaGridViewController: NSViewController {
     enum Section: Hashable {
         case media
     }
 
-    private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaAssetCollectionItem")
+    private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaGridItem")
 
     let scrollView = NSScrollView()
     let collectionView = MediaGridCollectionView()
@@ -100,7 +100,7 @@ final class MediaAssetCollectionViewController: NSViewController {
     var preheatTask: Task<Void, Never>?
     var preheatIDs = Set<MediaAssetID>()
     var preheatGeneration = 0
-    /// The model-owned mouse-selection truth (see `MediaAssetCollectionSelection.swift`):
+    /// The model-owned mouse-selection truth (see `MediaGridSelectionController.swift`):
     /// the selected set, the ⇧-range anchor, and the base "islands" a ⇧-range unions with.
     /// `collectionView.selectionIndexPaths` is a render output written from
     /// `gridSelection.selection`, never an input to a gesture computation. Ephemeral,
@@ -108,7 +108,7 @@ final class MediaAssetCollectionViewController: NSViewController {
     var gridSelection = GridSelection.empty
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
-    /// `MediaAssetCollectionZoom.swift`. Column-count truth lives in `mutationGate`.
+    /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
     /// The item under the gesture location at pinch start, held for the gesture's
     /// duration so a chain of pinch steps all anchor to the same tile.
@@ -124,7 +124,7 @@ final class MediaAssetCollectionViewController: NSViewController {
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
     override func loadView() {
-        let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.layoutInstall")
+        let operation = stallMonitor?.beginOperation("MediaGridViewController.layoutInstall")
         defer {
             if let operation {
                 stallMonitor?.endOperation(operation)
@@ -194,7 +194,7 @@ final class MediaAssetCollectionViewController: NSViewController {
     }
 }
 
-extension MediaAssetCollectionViewController {
+extension MediaGridViewController {
     private func configureCollectionView() {
         collectionView.backgroundColors = [.clear]
         collectionView.isSelectable = true
@@ -206,7 +206,7 @@ extension MediaAssetCollectionViewController {
             self?.applyMouseSelection(hit: hit, modifiers: modifiers)
         }
         collectionView.register(
-            MediaAssetCollectionItem.self,
+            MediaGridItem.self,
             forItemWithIdentifier: Self.itemIdentifier
         )
 
@@ -221,11 +221,11 @@ extension MediaAssetCollectionViewController {
         collectionView: NSCollectionView,
         indexPath: IndexPath,
         assetID: MediaAssetID
-    ) -> MediaAssetCollectionItem? {
+    ) -> MediaGridItem? {
         guard let item = collectionView.makeItem(
             withIdentifier: Self.itemIdentifier,
             for: indexPath
-        ) as? MediaAssetCollectionItem else {
+        ) as? MediaGridItem else {
             return nil
         }
         _ = item.configure(
@@ -334,7 +334,7 @@ extension MediaAssetCollectionViewController {
     }
 
     func reconfigureVisibleItems(reason: String) {
-        let operation = stallMonitor?.beginOperation("MediaAssetCollectionViewController.reconfigureVisibleItems")
+        let operation = stallMonitor?.beginOperation("MediaGridViewController.reconfigureVisibleItems")
         defer {
             if let operation {
                 stallMonitor?.endOperation(operation)
@@ -359,7 +359,7 @@ extension MediaAssetCollectionViewController {
                 missingAssetCount += 1
                 continue
             }
-            guard let item = collectionView.item(at: indexPath) as? MediaAssetCollectionItem else {
+            guard let item = collectionView.item(at: indexPath) as? MediaGridItem else {
                 missingItemCount += 1
                 continue
             }

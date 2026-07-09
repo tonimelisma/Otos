@@ -21,7 +21,7 @@ import OSLog
 // state that arrived mid-animation — that completion is what closes the reverse window
 // (an apply requested during a swap).
 
-extension MediaAssetCollectionViewController {
+extension MediaGridViewController {
     func configurePinchZoomGesture() {
         let recognizer = NSMagnificationGestureRecognizer(
             target: self,

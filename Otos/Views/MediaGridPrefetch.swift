@@ -16,7 +16,7 @@ private struct PreheatImageContext {
 // of queued because only the next viewport is useful, while partial AppKit
 // cancellation narrows the active ID set without throwing away still-useful IDs.
 
-extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
+extension MediaGridViewController: NSCollectionViewPrefetching {
     func collectionView(
         _: NSCollectionView,
         prefetchItemsAt indexPaths: [IndexPath]
