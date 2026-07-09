@@ -174,10 +174,8 @@ extension EnrichmentCoordinator {
         pendingApply.removeAll(keepingCapacity: true)
         pendingApplyIDs.removeAll(keepingCapacity: true)
         let outcome = await store.applyEnrichmentBatch(batch)
-        await diagnostics?.record(
-            operation: "catalog.enrichment.coordinator",
-            phase: "flush",
-            fields: ["count": "\(batch.count)", "outcome": "\(outcome)"]
+        OtosLog.metadata.notice(
+            "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
         )
         await recordVisibleThumbnailBatchOutcome(outcome, batchCount: batch.count, ids: diagnosedBatchIDs)
         handleApplyOutcome(outcome, batchCount: batch.count)
@@ -210,10 +208,8 @@ extension EnrichmentCoordinator {
         var diagnosticFields = fields
         diagnosticFields["rootPath"] = id.libraryRootPath.rawValue
         diagnosticFields["relativePath"] = id.relativePath.rawValue
-        await diagnostics?.record(
-            operation: "catalog.thumbnails.visibleLifecycle",
-            phase: phase,
-            fields: diagnosticFields
+        OtosLog.metadata.notice(
+            "op=catalog.thumbnails.visibleLifecycle phase=\(phase, privacy: .public) fields=\(String(describing: diagnosticFields), privacy: .public)"
         )
     }
 
@@ -310,10 +306,8 @@ extension EnrichmentCoordinator {
     private func releaseShutdownClaims(_ ids: Set<MediaAssetID>) async {
         do {
             try await store.releaseEnrichmentClaims(Array(ids))
-            await diagnostics?.record(
-                operation: "catalog.enrichment.coordinator",
-                phase: "shutdownRelease",
-                fields: ["count": "\(ids.count)"]
+            OtosLog.metadata.notice(
+                "op=catalog.enrichment.coordinator phase=shutdownRelease count=\(ids.count, privacy: .public)"
             )
         } catch {
             OtosLog.metadata.error(

@@ -55,40 +55,38 @@ extension CatalogWindowViewModel {
     nonisolated static func performCatalogMutation(
         _ intent: CatalogMutationIntent,
         store: CatalogStore,
-        coordinator: EnrichmentCoordinator?,
-        diagnostics: CatalogDiagnostics?
+        coordinator: EnrichmentCoordinator?
     ) async -> RemovableEjectOutcome? {
         switch intent {
         case let .addLibrary(url):
-            await performAddLibrary(url, store: store, diagnostics: diagnostics)
+            await performAddLibrary(url, store: store)
             return nil
         case let .ensureLibrary(url):
-            await performEnsureLibrary(url, store: store, diagnostics: diagnostics)
+            await performEnsureLibrary(url, store: store)
             return nil
         case let .removeLibrary(path):
-            await performRemoveLibrary(path, store: store, diagnostics: diagnostics)
+            await performRemoveLibrary(path, store: store)
             return nil
         case let .ejectRemovableSource(root):
             return await performEjectRemovableSource(
                 root,
                 store: store,
-                coordinator: coordinator,
-                diagnostics: diagnostics
+                coordinator: coordinator
             )
         case let .forgetRemovableSource(root):
-            await performForgetRemovableSource(root, store: store, diagnostics: diagnostics)
+            await performForgetRemovableSource(root, store: store)
             return nil
         case let .attachRemovableVolume(attachment):
-            await performAttachRemovableVolume(attachment, store: store, diagnostics: diagnostics)
+            await performAttachRemovableVolume(attachment, store: store)
             return nil
         case let .quiesceRemovableSource(identity):
-            await performQuiesceRemovableSource(identity, store: store, diagnostics: diagnostics)
+            await performQuiesceRemovableSource(identity, store: store)
             return nil
         case let .resumeRemovableSource(identity):
-            await performResumeRemovableSource(identity, store: store, diagnostics: diagnostics)
+            await performResumeRemovableSource(identity, store: store)
             return nil
         case let .detachRemovableSource(identity, reason):
-            await performDetachRemovableSource(identity, reason: reason, store: store, diagnostics: diagnostics)
+            await performDetachRemovableSource(identity, reason: reason, store: store)
             return nil
         }
     }
@@ -170,10 +168,8 @@ extension CatalogWindowViewModel {
 private extension CatalogWindowViewModel {
     nonisolated static func performAddLibrary(
         _ url: URL,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogAddLibraryIntent")
         do {
             try await store.addLibrary(url: url)
         } catch {
@@ -181,19 +177,15 @@ private extension CatalogWindowViewModel {
                 "Catalog add library failed",
                 operation: "catalog.library.add",
                 fields: ["url": url.path(percentEncoded: false)],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
-        OtosSignpost.ui.endInterval("CatalogAddLibraryIntent", signpost)
     }
 
     nonisolated static func performEnsureLibrary(
         _ url: URL,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogEnsureLibraryIntent")
         do {
             try await store.ensureLibrary(url: url)
         } catch {
@@ -201,19 +193,15 @@ private extension CatalogWindowViewModel {
                 "Catalog ensure library failed",
                 operation: "catalog.library.ensure",
                 fields: ["url": url.path(percentEncoded: false)],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
-        OtosSignpost.ui.endInterval("CatalogEnsureLibraryIntent", signpost)
     }
 
     nonisolated static func performRemoveLibrary(
         _ path: LibraryRootPath,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogRemoveLibraryIntent")
         do {
             try await store.removeLibrary(path: path)
         } catch {
@@ -221,23 +209,17 @@ private extension CatalogWindowViewModel {
                 "Catalog remove library failed",
                 operation: "catalog.library.remove",
                 fields: ["rootPath": path.rawValue],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
-        OtosSignpost.ui.endInterval("CatalogRemoveLibraryIntent", signpost)
     }
 
     nonisolated static func performEjectRemovableSource(
         _ root: LibraryRoot,
         store: CatalogStore,
-        coordinator: EnrichmentCoordinator?,
-        diagnostics: CatalogDiagnostics?
+        coordinator: EnrichmentCoordinator?
     ) async -> RemovableEjectOutcome {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogEjectRemovableSourceIntent")
-        defer {
-            OtosSignpost.ui.endInterval("CatalogEjectRemovableSourceIntent", signpost)
-        }
+        defer {}
         guard let identity = root.deviceIdentity else {
             return .failed(description: "The disk could not be ejected.")
         }
@@ -252,13 +234,8 @@ private extension CatalogWindowViewModel {
                 }
             }
             try await unmountAndEjectDeviceOffMain(root.path.url)
-            await diagnostics?.record(
-                operation: "catalog.removable.eject",
-                phase: "finish",
-                fields: [
-                    "rootPath": root.path.rawValue,
-                    "outcome": "ejected",
-                ]
+            OtosLog.catalog.notice(
+                "op=catalog.removable.eject phase=finish outcome=ejected rootPath=\(root.path.rawValue, privacy: .public)"
             )
             return .ejected
         } catch {
@@ -270,8 +247,7 @@ private extension CatalogWindowViewModel {
                     "rootPath": root.path.rawValue,
                     "outcome": outcomeDiagnosticCase(outcome),
                 ],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
             return outcome
         }
@@ -285,10 +261,8 @@ private extension CatalogWindowViewModel {
 
     nonisolated static func performForgetRemovableSource(
         _ root: LibraryRoot,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogForgetRemovableSourceIntent")
         do {
             try await store.removeLibrary(path: root.path)
         } catch {
@@ -296,19 +270,15 @@ private extension CatalogWindowViewModel {
                 "Catalog forget removable source failed",
                 operation: "catalog.removable.forget",
                 fields: ["rootPath": root.path.rawValue],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
-        OtosSignpost.ui.endInterval("CatalogForgetRemovableSourceIntent", signpost)
     }
 
     nonisolated static func performAttachRemovableVolume(
         _ attachment: RemovableVolumeAttachment,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogAttachRemovableVolumeIntent")
         do {
             try await store.attachRemovableVolume(
                 mountURL: attachment.mountURL,
@@ -324,17 +294,14 @@ private extension CatalogWindowViewModel {
                     "identity": attachment.identity,
                     "url": attachment.mountURL.path(percentEncoded: false),
                 ],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
-        OtosSignpost.ui.endInterval("CatalogAttachRemovableVolumeIntent", signpost)
     }
 
     nonisolated static func performQuiesceRemovableSource(
         _ identity: String,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
         do {
             try await store.quiesceRemovableSource(identity: identity)
@@ -343,16 +310,14 @@ private extension CatalogWindowViewModel {
                 "Catalog quiesce removable source failed",
                 operation: "catalog.removable.quiesce",
                 fields: ["identity": identity],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
     }
 
     nonisolated static func performResumeRemovableSource(
         _ identity: String,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
         do {
             try await store.resumeRemovableSource(identity: identity)
@@ -361,8 +326,7 @@ private extension CatalogWindowViewModel {
                 "Catalog resume removable source failed",
                 operation: "catalog.removable.resume",
                 fields: ["identity": identity],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
     }
@@ -370,10 +334,8 @@ private extension CatalogWindowViewModel {
     nonisolated static func performDetachRemovableSource(
         _ identity: String,
         reason: RemovableSourceDetachReason,
-        store: CatalogStore,
-        diagnostics: CatalogDiagnostics?
+        store: CatalogStore
     ) async {
-        let signpost = OtosSignpost.ui.beginInterval("CatalogDetachRemovableSourceIntent")
         do {
             try await store.detachRemovableSource(identity: identity, reason: reason)
         } catch {
@@ -381,23 +343,22 @@ private extension CatalogWindowViewModel {
                 "Catalog detach removable source failed",
                 operation: "catalog.removable.detach",
                 fields: ["identity": identity],
-                error: error,
-                diagnostics: diagnostics
+                error: error
             )
         }
-        OtosSignpost.ui.endInterval("CatalogDetachRemovableSourceIntent", signpost)
     }
 
     nonisolated static func recordMutationError(
         _ message: String,
         operation: String,
         fields: [String: String],
-        error: Error,
-        diagnostics: CatalogDiagnostics?
+        error: Error
     ) async {
         OtosLog.catalog.error("\(message, privacy: .public)")
         var fields = fields
         fields["error"] = String(describing: error)
-        await diagnostics?.record(operation: operation, phase: "error", fields: fields)
+        OtosLog.catalog.error(
+            "op=\(operation, privacy: .public) phase=error fields=\(String(describing: fields), privacy: .public)"
+        )
     }
 }

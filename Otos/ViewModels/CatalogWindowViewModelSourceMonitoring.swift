@@ -93,10 +93,8 @@ extension CatalogWindowViewModel {
                     observedPaths: Set(items.map(\.relativePath))
                 )
             } else {
-                await diagnostics?.record(
-                    operation: "catalog.device.scan",
-                    phase: "unstable",
-                    fields: ["identity": session.identity, "count": "\(items.count)"]
+                OtosLog.catalog.notice(
+                    "op=catalog.device.scan phase=unstable identity=\(session.identity, privacy: .public) count=\(items.count, privacy: .public)"
                 )
             }
             await applyProvisionalThumbnails(for: items, rootPath: rootPath, session: session)
@@ -107,10 +105,8 @@ extension CatalogWindowViewModel {
             OtosLog.fileAccess.error(
                 "Camera catalog flow failed identity=\(session.identity, privacy: .public)"
             )
-            await diagnostics?.record(
-                operation: "catalog.device.scan",
-                phase: "error",
-                fields: ["identity": session.identity, "error": String(describing: error)]
+            OtosLog.catalog.error(
+                "op=catalog.device.scan phase=error identity=\(session.identity, privacy: .public) error=\(String(describing: error), privacy: .public)"
             )
         }
         if let activeScan {

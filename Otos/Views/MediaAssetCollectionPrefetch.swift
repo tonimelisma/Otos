@@ -25,8 +25,6 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         guard !ids.isEmpty else {
             return
         }
-        GridTelemetry.recordAppKitPrefetchRequest(idCount: ids.count)
-        OtosSignpost.ui.emitEvent("MediaGridPrefetchRequested")
         OtosLog.ui.debug("Media grid prefetch requested count=\(ids.count, privacy: .public)")
         startPreheat(for: ids, reason: "prefetch")
     }
@@ -40,7 +38,6 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         guard !ids.isEmpty else {
             return
         }
-        OtosSignpost.ui.emitEvent("MediaGridPrefetchCancelled")
         OtosLog.ui.debug("Media grid prefetch cancelled count=\(ids.count, privacy: .public)")
     }
 
@@ -100,7 +97,6 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
             await MainActor.run { self.finishPreheat(generation: generation) }
             return
         }
-        GridTelemetry.recordPreheatedIDs(details.count)
         let detailsToWarm = await MainActor.run {
             guard self.preheatGeneration == generation else {
                 return [] as [MediaTileDetail]
@@ -183,8 +179,6 @@ extension MediaAssetCollectionViewController: NSCollectionViewPrefetching {
         }
         let ids = idsForPrefetch(attributes.compactMap(\.indexPath))
         startPreheat(for: ids, reason: reason)
-        GridTelemetry.recordManualPreheatRequest(idCount: ids.count)
-        OtosSignpost.ui.emitEvent("MediaGridManualPreheat")
         OtosLog.ui.debug(
             """
             Media grid manual preheat requested count=\(ids.count, privacy: .public) \

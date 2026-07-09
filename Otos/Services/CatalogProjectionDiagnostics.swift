@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Projection diagnostics guide
 ///
@@ -97,9 +98,9 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
     let dirtyAfter: Bool
     let stateChanged: Bool
 
-    func emit(to diagnostics: CatalogDiagnostics?) async {
-        await diagnostics?.record(
-            operation: "catalog.projection.window",
+    func emit() async {
+        OtosLog.ui.noticeOperation(
+            "catalog.projection.window",
             phase: "finish",
             fields: [
                 "libraries": "\(state.libraries.count)",

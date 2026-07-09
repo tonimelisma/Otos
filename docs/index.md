@@ -34,6 +34,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0012](adr/0012-media-asset-clipboard-representation.md) | Media grid clipboard copy: original file URLs on the pasteboard, references only, reading no bytes. |
 | [0013](adr/0013-removable-and-device-sources.md) | Removable volume and MTP camera source identity, metadata, All Media exclusion, detach/forget, device staging. |
 | [0014](adr/0014-sidebar-selection-and-source-lifecycle.md) | Sidebar default/attach selection, All-Media visibility, and honest unmount-driven eject. |
+| [0015](adr/0015-observability.md) | Unified logging + Instruments-only signposts; rejects JSONL/event/counter sinks. |
 
 ## Research
 

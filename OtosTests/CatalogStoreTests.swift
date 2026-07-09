@@ -8,8 +8,8 @@ struct CatalogStoreTests {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _, _ in [] }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
+        let scanner = CatalogScanner { _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner)
         let recorder = ChangeRecorder()
         let stream = await store.changeNotifications()
         let recordingTask = Task {
@@ -132,12 +132,9 @@ struct CatalogStoreTests {
         try writeCatalogStoreFile(root.appending(path: "visible.jpg"), contents: "jpeg")
         try writeCatalogStoreFile(package.appending(path: "hidden-inside-package.jpg"), contents: "jpeg")
 
-        let diagnosticsURL = temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
         let store = CatalogStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
-            scanCadence: .milliseconds(10),
-            diagnostics: diagnostics
+            scanCadence: .milliseconds(10)
         )
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
@@ -146,12 +143,6 @@ struct CatalogStoreTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"]
         }
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["visible.jpg"])
-
-        let diagnosticsData = try Data(contentsOf: diagnosticsURL)
-        let diagnosticsText = try String.decodedUTF8(diagnosticsData)
-        #expect(diagnosticsText.contains("\"operation\":\"catalog.scan.skippedPackage\""))
-        #expect(diagnosticsText.contains("Photos Library.photoslibrary"))
-        #expect(diagnosticsText.contains("com.apple.photos.library"))
     }
 
     @Test func addLibraryRejectsDuplicateAncestorAndDescendantRoots() async throws {
@@ -250,7 +241,7 @@ struct CatalogStoreTests {
         }
 
         try FileManager.default.removeItem(at: first)
-        let failingScanner = CatalogScanner { _, _, _, batchHandler in
+        let failingScanner = CatalogScanner { _, _, batchHandler in
             try await batchHandler([
                 ScannedMediaFile(
                     relativePath: MediaRelativePath(rawValue: "b.jpg"),
@@ -291,7 +282,7 @@ struct CatalogStoreTests {
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
 
-        let hangingScanner = CatalogScanner { _, _, _, _ in
+        let hangingScanner = CatalogScanner { _, _, _ in
             while true {
                 try Task.checkCancellation()
                 try await Task.sleep(for: .seconds(1))

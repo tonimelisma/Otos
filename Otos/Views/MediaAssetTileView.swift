@@ -156,7 +156,6 @@ extension MediaAssetTileView {
                 imageCache: request.imageCache
             )
         case .keepCurrent:
-            OtosSignpost.ui.emitEvent("MediaTileContentUnchanged")
             currentAssetID = request.detail.id
             return false
         case let .loadAsync(retainsCurrentImage):
@@ -236,8 +235,6 @@ extension MediaAssetTileView {
         let generation = loadGeneration
         loadTask?.cancel()
         let key = MediaAssetTilePresentation.imageContentKey(detail)
-        GridTelemetry.recordTileLoadStarted()
-        OtosSignpost.ui.emitEvent("MediaTileLoadStarted")
         loadTask = Task.detached(priority: .userInitiated) { [weak self, imageCache] in
             let loaded = MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: thumbnailDirectory)
             if Task.isCancelled {
@@ -254,13 +251,9 @@ extension MediaAssetTileView {
                       self.currentAssetID == detail.id,
                       self.currentImageContentKey == key
                 else {
-                    GridTelemetry.recordTileLoadDropped()
-                    OtosSignpost.ui.emitEvent("MediaTileLoadDropped")
                     return
                 }
                 guard let image = loaded.image else {
-                    GridTelemetry.recordTileLoadNil()
-                    OtosSignpost.ui.emitEvent("MediaTileLoadNil")
                     OtosLog.ui.debug(
                         """
                         Media tile thumbnail load returned nil assetID=\
@@ -277,8 +270,6 @@ extension MediaAssetTileView {
                     contentKey: key,
                     application: .asyncLoad
                 )
-                GridTelemetry.recordTileLoadApplied()
-                OtosSignpost.ui.emitEvent("MediaTileLoadApplied")
             }
         }
     }
@@ -330,8 +321,7 @@ extension MediaAssetTileView {
         enforcesInvariant: Bool
     ) {
         if let incomingAssetID, enforcesInvariant, currentAssetID == incomingAssetID, currentImagePixelSize != nil {
-            GridTelemetry.recordWatchdog()
-            OtosSignpost.ui.emitEvent("MediaTilePaintInvariantViolation")
+            OtosLog.ui.error("op=paintWatchdog")
             OtosLog.ui.error(
                 "Media tile attempted to clear painted same-asset thumbnail reason=\(reason, privacy: .public)"
             )
@@ -357,7 +347,6 @@ extension MediaAssetTileView {
 
     override func prepareForReuse() {
         super.prepareForReuse()
-        OtosSignpost.ui.emitEvent("MediaTilePrepareForReuse")
         loadTask?.cancel()
         loadTask = nil
         loadGeneration += 1

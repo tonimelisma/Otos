@@ -67,7 +67,7 @@ private final class WindowStateObserver {
 }
 
 func fixedViewModelSelectionScanner(filesByRoot: [LibraryRootPath: String]) -> CatalogScanner {
-    CatalogScanner { rootPath, _, _, batchHandler in
+    CatalogScanner { rootPath, _, batchHandler in
         guard let fileName = filesByRoot[rootPath] else {
             return []
         }

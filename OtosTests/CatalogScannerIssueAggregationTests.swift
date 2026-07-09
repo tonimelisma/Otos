@@ -15,8 +15,7 @@ struct CatalogScannerIssueAggregationTests {
         do {
             _ = try await CatalogScanner.live.scanRoot(
                 mismatchedRoot,
-                .milliseconds(1),
-                nil
+                .milliseconds(1)
             ) { _ in }
             Issue.record("A non-normalized root spelling should not produce successful relative paths")
         } catch let CatalogScanError.filesystemErrorsEncountered(count, summaries) {

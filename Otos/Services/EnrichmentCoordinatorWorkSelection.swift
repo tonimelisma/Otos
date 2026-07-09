@@ -224,10 +224,8 @@ extension EnrichmentCoordinator {
         OtosLog.metadata.error(
             "Enrichment candidate query failed error=\(String(describing: error), privacy: .public)"
         )
-        await diagnostics?.record(
-            operation: "catalog.enrichment.coordinator",
-            phase: "queryError",
-            fields: ["error": String(describing: error)]
+        OtosLog.metadata.error(
+            "op=catalog.enrichment.coordinator phase=queryError error=\(String(describing: error), privacy: .public)"
         )
     }
 }

@@ -7,9 +7,9 @@ struct CatalogProjectionLifecycleTests {
         let temp = try makeProjectionLifecycleTemporaryDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _, _ in [] }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
-        let projection = CatalogProjection(cadence: .milliseconds(50), diagnostics: nil)
+        let scanner = CatalogScanner { _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner)
+        let projection = CatalogProjection(cadence: .milliseconds(50))
         let recorder = LifecycleStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -44,9 +44,9 @@ struct CatalogProjectionLifecycleTests {
         let temp = try makeProjectionLifecycleTemporaryDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _, _ in [] }
-        let store = CatalogStore(location: .inMemory, scanner: scanner, diagnostics: nil)
-        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
+        let scanner = CatalogScanner { _, _, _ in [] }
+        let store = CatalogStore(location: .inMemory, scanner: scanner)
+        let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = LifecycleStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -85,7 +85,7 @@ struct CatalogProjectionLifecycleTests {
             LibraryRootPath(rawValue: "/Users/example/Newer")
         )
         let gate = SelectionBuildGate(blockedSelection: missing)
-        let store = CatalogStore(location: .inMemory, diagnostics: nil)
+        let store = CatalogStore(location: .inMemory)
         let projection = selectionNormalizingProjection(missing: missing, gate: gate)
         let recorder = LifecycleStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
@@ -116,7 +116,7 @@ private func selectionNormalizingProjection(
     missing: SidebarSelection,
     gate: SelectionBuildGate
 ) -> CatalogProjection {
-    CatalogProjection(cadence: .milliseconds(10), diagnostics: nil) { _, _, request in
+    CatalogProjection(cadence: .milliseconds(10)) { _, _, request in
         let selection = request.descriptor.scope
         await gate.pauseIfNeeded(selection)
         let resolved = selection == missing ? SidebarSelection.allMedia : selection

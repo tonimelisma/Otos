@@ -9,12 +9,9 @@ struct CatalogStoreEnsureLibraryTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
 
-        let diagnosticsURL = temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
         let store = CatalogStore(
             location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
-            scanCadence: .milliseconds(10),
-            diagnostics: diagnostics
+            scanCadence: .milliseconds(10)
         )
         try await store.start(scansSavedLibraries: false)
 
@@ -27,10 +24,5 @@ struct CatalogStoreEnsureLibraryTests {
         let final = try await catalogStoreTestState(store)
         #expect(final.libraries.map(\.path) == scanned.libraries.map(\.path))
         #expect(final.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
-
-        let diagnosticsText = try #require(String(data: Data(contentsOf: diagnosticsURL), encoding: .utf8))
-        #expect(diagnosticsText.contains("\"operation\":\"catalog.library.ensure\""))
-        #expect(diagnosticsText.contains("\"phase\":\"finish\""))
-        #expect(diagnosticsText.contains("\"phase\":\"exists\""))
     }
 }

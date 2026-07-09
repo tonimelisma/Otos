@@ -8,7 +8,7 @@ import Foundation
 // `queryDescriptor`/`sidebarSelection` change on a user intent (both are `private(set)`, so
 // that writer must stay beside them). Split out here so the main ViewModel file stays a
 // focused lifecycle/state-consumption owner under the repo's file-length budget, mirroring
-// the existing `CatalogWindowViewModelMutation`/`…SourceMonitoring`/`…GridTelemetry` splits.
+// the existing `CatalogWindowViewModelMutation`/`…SourceMonitoring` splits.
 
 extension CatalogWindowViewModel {
     func selectSidebar(_ selection: SidebarSelection) {

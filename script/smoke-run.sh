@@ -6,8 +6,6 @@ SUBSYSTEM="net.melisma.Otos"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
 LOG_DIR="$(otos_logs_dir "$ROOT_DIR")"
-DIAGNOSTICS_DIR="$ROOT_DIR/build/Diagnostics"
-APP_DIAGNOSTICS_DIR="$HOME/Library/Application Support/$SUBSYSTEM/Diagnostics"
 DEFAULT_ROOT="$HOME/Desktop/OneDrive/Pictures"
 
 MODE="${1:---jank}"
@@ -120,39 +118,24 @@ run_seeded_launch() {
   wait_for_app_pid
 }
 
-diagnostics_file_for_pid() {
-  local app_pid="$1"
-  local diagnostics_file=""
-  for _ in $(seq 1 50); do
-    diagnostics_file="$(ls -t "$APP_DIAGNOSTICS_DIR"/catalog-diagnostics-*-p"$app_pid"-prod.jsonl 2>/dev/null | head -n 1 || true)"
-    if [[ -n "$diagnostics_file" ]]; then
-      echo "$diagnostics_file"
-      return
-    fi
-    sleep 0.1
-  done
-  echo "Timed out waiting for diagnostics for pid=$app_pid in $APP_DIAGNOSTICS_DIR" >&2
-  exit 1
-}
 
 verify_seed_consumed() {
   local app_pid="$1"
-  local diagnostics_file
-  diagnostics_file="$(diagnostics_file_for_pid "$app_pid")"
-  local escaped_root="${SMOKE_ROOT//\//\\/}"
+  local predicate="processID == $app_pid AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=catalog.library.ensure\""
   for _ in $(seq 1 50); do
-    if grep -E '"operation":"catalog\.library\.ensure".*"phase":"(exists|finish)"' "$diagnostics_file" >/dev/null \
-      && grep -F "\"rootPath\":\"$escaped_root\"" "$diagnostics_file" >/dev/null; then
-      echo "Seeded library verified diagnostics=$diagnostics_file"
+    if /usr/bin/log show --last 2m --style ndjson --info --predicate "$predicate" 2>/dev/null \
+      | grep -E 'op=catalog\.library\.ensure.*phase=(exists|finish)' >/dev/null; then
+      echo "Seeded library verified via unified log pid=$app_pid"
       return
     fi
     sleep 0.1
   done
 
-  echo "Seeded smoke launch did not record successful catalog.library.ensure for root=$SMOKE_ROOT" >&2
-  OTOS_CATALOG_DIAGNOSTICS_FILE="$diagnostics_file" "$ROOT_DIR/script/catalog-diagnostics.sh" summary >&2 || true
+  echo "Seeded smoke launch did not log op=catalog.library.ensure phase=exists|finish for root=$SMOKE_ROOT pid=$app_pid" >&2
+  /usr/bin/log show --last 2m --style ndjson --info --predicate "processID == $app_pid AND subsystem == \"$SUBSYSTEM\"" 2>/dev/null | tail -n 40 >&2 || true
   exit 1
 }
+
 
 run_verify() {
   QUIT_ON_EXIT=1
@@ -181,12 +164,8 @@ run_jank() {
     --pause "$SCROLL_PAUSE"
 
   sleep 1
-  mkdir -p "$DIAGNOSTICS_DIR"
-  local summary_stdout
-  summary_stdout="$DIAGNOSTICS_DIR/smoke-diagnostics-$(date -u +%Y-%m-%dT%H%M%SZ).txt"
-  "$ROOT_DIR/script/catalog-diagnostics.sh" summary | tee "$summary_stdout"
   echo "smoke log: $LOG_FILE"
-  echo "smoke diagnostics stdout: $summary_stdout"
+  echo "Post-hoc logs: script/logs.sh show --last 10m"
 }
 
 if [[ "$MODE" != "--jank" && "$MODE" != "jank" && "$MODE" != "--verify" && "$MODE" != "verify" ]]; then

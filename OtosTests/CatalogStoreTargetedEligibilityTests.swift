@@ -18,8 +18,7 @@ struct CatalogStoreTargetedEligibilityTests {
             scanner: recordingLiveScanner(recorder),
             filesystemWatcher: watcher,
             scanCadence: .milliseconds(10),
-            filesystemEventDebounce: .milliseconds(30),
-            diagnostics: nil
+            filesystemEventDebounce: .milliseconds(30)
         )
 
         try await store.start(scansSavedLibraries: false)

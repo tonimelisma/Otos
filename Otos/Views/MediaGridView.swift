@@ -12,7 +12,6 @@ struct MediaGridView: View {
     var detailReader: MediaTileDetailReader?
     var imageCache = MediaTileImageCache()
     var stallMonitor: MainRunLoopStallMonitor?
-    var diagnostics: CatalogDiagnostics?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     var clearFilters: () -> Void = {}
     var gridColumnCount: Int = GridColumnCount.defaultValue
@@ -52,7 +51,6 @@ struct MediaGridView: View {
                         detailReader: detailReader,
                         imageCache: imageCache,
                         stallMonitor: stallMonitor,
-                        diagnostics: diagnostics,
                         onViewportChanged: onViewportChanged,
                         columnCount: gridColumnCount,
                         onColumnCountChangeRequested: onGridColumnCountChangeRequested

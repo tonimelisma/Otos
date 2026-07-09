@@ -173,7 +173,6 @@ actor CatalogStore {
     private let scanCadence: Duration
     private let filesystemEventDebounce: Duration
     private let filesystemEventSleep: @Sendable (Duration) async -> Void
-    private let diagnostics: CatalogDiagnostics?
     private let initialLoadDidRead: (@Sendable () async -> Void)?
     private var dbWriter: (any DatabaseWriter)?
     private var databaseFileURL: URL?
@@ -209,7 +208,6 @@ actor CatalogStore {
         filesystemEventSleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
-        diagnostics: CatalogDiagnostics? = .shared,
         initialLoadDidRead: (@Sendable () async -> Void)? = nil
     ) {
         self.location = location
@@ -218,7 +216,6 @@ actor CatalogStore {
         self.scanCadence = scanCadence
         self.filesystemEventDebounce = filesystemEventDebounce
         self.filesystemEventSleep = filesystemEventSleep
-        self.diagnostics = diagnostics
         self.initialLoadDidRead = initialLoadDidRead
     }
 }
@@ -289,17 +286,9 @@ extension CatalogStore {
             execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.store.query.order",
-            phase: "finish",
-            fields: [
-                "descriptor": descriptor.diagnosticDescription,
-                "rootCount": "\(rootIDs.count)",
-                "count": "\(ids.count)",
-                "waitMs": "\(timedRows.waitMs)",
-                "execMs": "\(timedRows.execMs)",
-                "queryMs": "\(queryMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return ids
     }
@@ -323,17 +312,9 @@ extension CatalogStore {
         let timedCount = try await timedRead(dbWriter) { db in
             try Self.countAssets(rootIDs: rootIDs, db: db)
         }
-        await diagnostics?.record(
-            operation: "catalog.store.query.catalogedCount",
-            phase: "finish",
-            fields: [
-                "selection": selection.diagnosticDescription,
-                "rootCount": "\(rootIDs.count)",
-                "count": "\(timedCount.value)",
-                "waitMs": "\(timedCount.waitMs)",
-                "execMs": "\(timedCount.execMs)",
-                "queryMs": "\(timedCount.totalMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -350,17 +331,9 @@ extension CatalogStore {
         let timedCount = try await timedRead(dbWriter) { db in
             try Self.countAssets(rootIDs: rootIDs, db: db)
         }
-        await diagnostics?.record(
-            operation: "catalog.store.query.visibleCount",
-            phase: "finish",
-            fields: [
-                "selection": selection.diagnosticDescription,
-                "rootCount": "\(rootIDs.count)",
-                "count": "\(timedCount.value)",
-                "waitMs": "\(timedCount.waitMs)",
-                "execMs": "\(timedCount.execMs)",
-                "queryMs": "\(timedCount.totalMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
@@ -377,18 +350,9 @@ extension CatalogStore {
         let timedOptions = try await timedRead(dbWriter) { db in
             try Self.filterOptions(rootIDs: rootIDs, db: db)
         }
-        await diagnostics?.record(
-            operation: "catalog.store.query.filterOptions",
-            phase: "finish",
-            fields: [
-                "selection": selection.diagnosticDescription,
-                "rootCount": "\(rootIDs.count)",
-                "kindCount": "\(timedOptions.value.availableKinds.count)",
-                "formatCount": "\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count })",
-                "waitMs": "\(timedOptions.waitMs)",
-                "execMs": "\(timedOptions.execMs)",
-                "queryMs": "\(timedOptions.totalMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.filterOptions phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.availableKinds.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
         )
         return timedOptions.value
     }
@@ -478,17 +442,9 @@ extension CatalogStore {
             execMs=\(timing.execMs, privacy: .public) queryMs=\(timing.totalMs, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.store.query.tileDetail",
-            phase: "finish",
-            fields: [
-                "requested": "\(requestedCount)",
-                "returned": "\(returnedCount)",
-                "waitMs": "\(timing.waitMs)",
-                "execMs": "\(timing.execMs)",
-                "queryMs": "\(timing.totalMs)",
-                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.tileDetail phase=finish requested=\(requestedCount, privacy: .public) returned=\(returnedCount, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) queryMs=\(timing.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
         )
     }
 
@@ -517,15 +473,9 @@ extension CatalogStore {
             execMs=\(timedMetadata.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.store.query.metadata",
-            phase: "finish",
-            fields: [
-                "returned": timedMetadata.value == nil ? "0" : "1",
-                "waitMs": "\(timedMetadata.waitMs)",
-                "execMs": "\(timedMetadata.execMs)",
-                "queryMs": "\(queryMs)",
-            ]
+        OtosLog.metadata.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.metadata phase=finish 0=1 returned=\(timedMetadata.value == nil ? "0" : "1", privacy: .public) waitMs=\(timedMetadata.waitMs, privacy: .public) execMs=\(timedMetadata.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return timedMetadata.value
     }
@@ -605,18 +555,9 @@ extension CatalogStore {
             queryMs=\(queryMs, privacy: .public) wallMs=\(wallMs, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.store.query.enrichment",
-            phase: "finish",
-            fields: [
-                "priority": "\(priorityCount)",
-                "returned": "\(returnedCount)",
-                "waitMs": "\(waitMs)",
-                "execMs": "\(execMs)",
-                "queryMs": "\(queryMs)",
-                "wallMs": "\(wallMs)",
-                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.enrichment phase=finish priority=\(priorityCount, privacy: .public) returned=\(returnedCount, privacy: .public) waitMs=\(waitMs, privacy: .public) execMs=\(execMs, privacy: .public) queryMs=\(queryMs, privacy: .public) wallMs=\(wallMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
         )
     }
 
@@ -734,18 +675,9 @@ extension CatalogStore {
         eligibleCount: Int,
         result: DatabaseTimedValue<[MediaAsset]>
     ) async {
-        await diagnostics?.record(
-            operation: "catalog.store.query.enrichment.priorityClaim",
-            phase: "finish",
-            fields: [
-                "priority": "\(priorityCount)",
-                "eligible": "\(eligibleCount)",
-                "returned": "\(result.value.count)",
-                "waitMs": "\(result.waitMs)",
-                "execMs": "\(result.execMs)",
-                "queryMs": "\(result.totalMs)",
-                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.enrichment.priorityClaim phase=finish priority=\(priorityCount, privacy: .public) eligible=\(eligibleCount, privacy: .public) returned=\(result.value.count, privacy: .public) waitMs=\(result.waitMs, privacy: .public) execMs=\(result.execMs, privacy: .public) queryMs=\(result.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
         )
     }
 
@@ -805,19 +737,9 @@ extension CatalogStore {
         fixedRootCount: Int,
         result: DatabaseTimedValue<[MediaAsset]>
     ) async {
-        await diagnostics?.record(
-            operation: "catalog.store.query.enrichment.claim",
-            phase: "finish",
-            fields: [
-                "limit": "\(limit)",
-                "availableRootCount": "\(removableRootCount + fixedRootCount)",
-                "removableRootCount": "\(removableRootCount)",
-                "returned": "\(result.value.count)",
-                "waitMs": "\(result.waitMs)",
-                "execMs": "\(result.execMs)",
-                "queryMs": "\(result.totalMs)",
-                "thresholdMs": "\(Self.slowQueryDiagnosticThresholdMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.store.query.enrichment.claim phase=finish limit=\(limit, privacy: .public) availableRootCount=\(removableRootCount + fixedRootCount, privacy: .public) removableRootCount=\(removableRootCount, privacy: .public) returned=\(result.value.count, privacy: .public) waitMs=\(result.waitMs, privacy: .public) execMs=\(result.execMs, privacy: .public) queryMs=\(result.totalMs, privacy: .public) thresholdMs=\(Self.slowQueryDiagnosticThresholdMs, privacy: .public)"
         )
     }
 
@@ -839,7 +761,7 @@ extension CatalogStore {
         }
         if let startupTask {
             OtosLog.persistence.debug("Catalog startup joined existing load")
-            await diagnostics?.record(operation: "catalog.start", phase: "coalesced")
+            OtosLog.catalog.noticeOperation("catalog.start", phase: "coalesced")
             try await startupTask.value
             return
         }
@@ -859,7 +781,7 @@ extension CatalogStore {
 
     private func performInitialLoad() async throws {
         let state = OtosSignpost.persistence.beginInterval("CatalogStart")
-        await diagnostics?.record(operation: "catalog.start", phase: "start")
+        OtosLog.catalog.noticeOperation("catalog.start", phase: "start")
         defer {
             OtosSignpost.persistence.endInterval("CatalogStart", state)
         }
@@ -887,13 +809,8 @@ extension CatalogStore {
             assets=\(loaded.assetCount, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.start",
-            phase: "finish",
-            fields: [
-                "roots": "\(normalizedRoots.count)",
-                "assets": "\(loaded.assetCount)",
-            ]
+        OtosLog.catalog.notice(
+            "op=catalog.start phase=finish roots=\(normalizedRoots.count, privacy: .public) assets=\(loaded.assetCount, privacy: .public)"
         )
         notifyCatalogChanged()
     }
@@ -908,10 +825,8 @@ extension CatalogStore {
         OtosLog.metadata.info(
             "Cleared abandoned enrichment claims count=\(clearedCount, privacy: .public)"
         )
-        await diagnostics?.record(
-            operation: "catalog.enrichment.claims",
-            phase: "startupClear",
-            fields: ["count": "\(clearedCount)"]
+        OtosLog.metadata.notice(
+            "op=catalog.enrichment.claims phase=startupClear count=\(clearedCount, privacy: .public)"
         )
     }
 
@@ -980,18 +895,9 @@ extension CatalogStore {
         resultsCount: Int,
         writeOutcome: EnrichmentBatchWriteOutcome
     ) async {
-        await diagnostics?.record(
-            operation: "catalog.enrichment.batch",
-            phase: "finish",
-            fields: [
-                "attempted": "\(resultsCount)",
-                "count": "\(writeOutcome.appliedCount)",
-                "discardedThumbnails": "\(writeOutcome.discardedThumbnails.count)",
-                "promotionFailed": "\(writeOutcome.promotionFailed)",
-                "waitMs": "\(writeOutcome.waitMs)",
-                "execMs": "\(writeOutcome.execMs)",
-                "writeMs": "\(writeOutcome.waitMs + writeOutcome.execMs)",
-            ]
+        OtosLog.metadata.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) discardedThumbnails=\(writeOutcome.discardedThumbnails.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
         )
     }
 
@@ -1080,10 +986,8 @@ extension CatalogStore {
             error=\(String(describing: error), privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.enrichment.batch",
-            phase: "error",
-            fields: ["count": "\(count)", "error": String(describing: error)]
+        OtosLog.metadata.error(
+            "op=catalog.enrichment.batch phase=error count=\(count, privacy: .public) error=\(String(describing: error), privacy: .public)"
         )
     }
 
@@ -1097,17 +1001,13 @@ extension CatalogStore {
     func ensureLibrary(url: URL) async throws {
         let path = try CatalogPath.normalizedExistingDirectoryPath(for: url)
         try await ensureStartedForMutation()
-        await diagnostics?.record(
-            operation: "catalog.library.ensure",
-            phase: "start",
-            fields: ["rootPath": path.rawValue]
+        OtosLog.catalog.notice(
+            "op=catalog.library.ensure phase=start rootPath=\(path.rawValue, privacy: .public)"
         )
         if rootsByPath[path] != nil {
             OtosLog.catalog.info("Smoke library root already saved path=\(path.rawValue, privacy: .public)")
-            await diagnostics?.record(
-                operation: "catalog.library.ensure",
-                phase: "exists",
-                fields: ["rootPath": path.rawValue]
+            OtosLog.catalog.notice(
+                "op=catalog.library.ensure phase=exists rootPath=\(path.rawValue, privacy: .public)"
             )
             return
         }
@@ -1142,10 +1042,8 @@ extension CatalogStore {
         }
 
         let state = OtosSignpost.persistence.beginInterval("CatalogRemoveRoot")
-        await diagnostics?.record(
-            operation: "catalog.library.remove",
-            phase: "start",
-            fields: ["rootPath": path.rawValue]
+        OtosLog.catalog.notice(
+            "op=catalog.library.remove phase=start rootPath=\(path.rawValue, privacy: .public)"
         )
         try await dbQueue.write { db in
             try Self.deleteLibraryRoot(rootRowID: rootRowID, db: db)
@@ -1160,10 +1058,8 @@ extension CatalogStore {
         }
         deleteDeviceStagingIfNeeded(root)
         OtosLog.catalog.info("Library root removed path=\(root.path.rawValue, privacy: .public)")
-        await diagnostics?.record(
-            operation: "catalog.library.remove",
-            phase: "finish",
-            fields: ["rootPath": path.rawValue]
+        OtosLog.catalog.notice(
+            "op=catalog.library.remove phase=finish rootPath=\(path.rawValue, privacy: .public)"
         )
         notifyCatalogChanged(.libraryRemoved(path))
         startNextScanIfNeeded()
@@ -1333,15 +1229,9 @@ extension CatalogStore {
             identity=\(attachment.identity, privacy: .public) path=\(attachment.path.rawValue, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.removable.attach",
-            phase: "finish",
-            fields: [
-                "kind": attachment.kind.rawValue,
-                "identity": attachment.identity,
-                "rootPath": attachment.path.rawValue,
-                "displayName": attachment.displayName,
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public)"
         )
         notifyCatalogChanged()
         if attachment.enqueuesScan {
@@ -1378,10 +1268,8 @@ extension CatalogStore {
             OtosSignpost.persistence.endInterval("CatalogAddRoot", state)
         }
         if recordsStart {
-            await diagnostics?.record(
-                operation: operation,
-                phase: "start",
-                fields: ["rootPath": path.rawValue]
+            OtosLog.catalog.notice(
+                "op=\(operation, privacy: .public) phase=start rootPath=\(path.rawValue, privacy: .public)"
             )
         }
         let storedRoot = try await dbQueue.write { db in
@@ -1394,10 +1282,8 @@ extension CatalogStore {
         rootRowIDsByPath[root.path] = storedRoot.id
         rootPathsByRowID[storedRoot.id] = root.path
         OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
-        await diagnostics?.record(
-            operation: operation,
-            phase: "finish",
-            fields: ["rootPath": root.path.rawValue]
+        OtosLog.catalog.notice(
+            "op=\(operation, privacy: .public) phase=finish rootPath=\(root.path.rawValue, privacy: .public)"
         )
         notifyCatalogChanged()
         filesystemWatcher.addRoot(root.path)
@@ -1473,15 +1359,9 @@ extension CatalogStore {
             reason=\(reason.rawValue, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.removable.detach",
-            phase: "finish",
-            fields: [
-                "identity": identity,
-                "rootPath": root.path.rawValue,
-                "kind": root.kind.rawValue,
-                "reason": reason.rawValue,
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.removable.detach phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public) reason=\(reason.rawValue, privacy: .public)"
         )
         notifyCatalogChanged()
         startNextScanIfNeeded()
@@ -1498,14 +1378,9 @@ extension CatalogStore {
         cancelRuntimeWork(for: root.path)
         activityByRootPath[root.path] = .idle
         await releaseEnrichmentClaimsForRoot(rootRowID)
-        await diagnostics?.record(
-            operation: "catalog.removable.quiesce",
-            phase: "finish",
-            fields: [
-                "identity": identity,
-                "rootPath": root.path.rawValue,
-                "kind": root.kind.rawValue,
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.removable.quiesce phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public)"
         )
     }
 
@@ -1520,14 +1395,9 @@ extension CatalogStore {
         if changed {
             notifyCatalogChanged()
         }
-        await diagnostics?.record(
-            operation: "catalog.removable.resume",
-            phase: "finish",
-            fields: [
-                "identity": identity,
-                "rootPath": root.path.rawValue,
-                "kind": root.kind.rawValue,
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.removable.resume phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public)"
         )
     }
 
@@ -1575,16 +1445,9 @@ extension CatalogStore {
         if timedChangedCount.value > 0 {
             notifyCatalogChanged()
         }
-        await diagnostics?.record(
-            operation: "catalog.device.scan.batch",
-            phase: "finish",
-            fields: [
-                "rootPath": scan.rootPath.rawValue,
-                "count": "\(batch.count)",
-                "changedCount": "\(timedChangedCount.value)",
-                "waitMs": "\(timedChangedCount.waitMs)",
-                "execMs": "\(timedChangedCount.execMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.device.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(batch.count, privacy: .public) changedCount=\(timedChangedCount.value, privacy: .public) waitMs=\(timedChangedCount.waitMs, privacy: .public) execMs=\(timedChangedCount.execMs, privacy: .public)"
         )
     }
 
@@ -1907,14 +1770,9 @@ private extension CatalogStore {
                 thumbnailMigrations=\(thumbnailMigrations.count, privacy: .public)
                 """
             )
-            await diagnostics?.record(
-                operation: "catalog.library.normalize",
-                phase: "finish",
-                fields: [
-                    "oldRootPath": storedRoot.path.rawValue,
-                    "rootPath": normalizedPath.rawValue,
-                    "thumbnailMigrations": "\(thumbnailMigrations.count)",
-                ]
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.library.normalize phase=finish oldRootPath=\(storedRoot.path.rawValue, privacy: .public) rootPath=\(normalizedPath.rawValue, privacy: .public) thumbnailMigrations=\(thumbnailMigrations.count, privacy: .public)"
             )
             return StoredRoot(
                 id: storedRoot.id,
@@ -1942,14 +1800,9 @@ private extension CatalogStore {
             error=\(String(describing: error), privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.library.normalize",
-            phase: "error",
-            fields: [
-                "oldRootPath": storedRoot.path.rawValue,
-                "rootPath": normalizedPath.rawValue,
-                "error": String(describing: error),
-            ]
+        OtosLog.catalog.error(
+            // swiftlint:disable:next line_length
+            "op=catalog.library.normalize phase=error oldRootPath=\(storedRoot.path.rawValue, privacy: .public) rootPath=\(normalizedPath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
         )
     }
 
@@ -2139,9 +1992,9 @@ private extension CatalogStore {
             // The scan task is retained in `currentScanTask`, cancelled when
             // the owning root goes away, and every callback revalidates the
             // `ActiveScan` lease before mutating actor state.
-            currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence, diagnostics] in
+            currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence] in
                 do {
-                    let observedPaths = try await scanner.scanRoot(nextPath, scanCadence, diagnostics) { batch in
+                    let observedPaths = try await scanner.scanRoot(nextPath, scanCadence) { batch in
                         try await self.recordScannedBatch(batch, scan: scan)
                     }
                     await self.scanCompleted(scan: scan, observedPaths: observedPaths)
@@ -2220,18 +2073,9 @@ private extension CatalogStore {
             writeMs=\(timing.totalMs, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.scan.batch",
-            phase: "finish",
-            fields: [
-                "rootPath": scan.rootPath.rawValue,
-                "count": "\(scannedCount)",
-                "changed": "\(visibleChange)",
-                "changedCount": "\(changedCount)",
-                "waitMs": "\(timing.waitMs)",
-                "execMs": "\(timing.execMs)",
-                "writeMs": "\(timing.totalMs)",
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.scan.batch phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) count=\(scannedCount, privacy: .public) changed=\(visibleChange, privacy: .public) changedCount=\(changedCount, privacy: .public) waitMs=\(timing.waitMs, privacy: .public) execMs=\(timing.execMs, privacy: .public) writeMs=\(timing.totalMs, privacy: .public)"
         )
     }
 
@@ -2252,14 +2096,9 @@ private extension CatalogStore {
                 observed=\(observedPaths.count, privacy: .public) deleted=\(deletedCount, privacy: .public)
                 """
             )
-            await diagnostics?.record(
-                operation: "catalog.scan",
-                phase: "finish",
-                fields: [
-                    "rootPath": scan.rootPath.rawValue,
-                    "observed": "\(observedPaths.count)",
-                    "deleted": "\(deletedCount)",
-                ]
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observedPaths.count, privacy: .public) deleted=\(deletedCount, privacy: .public)"
             )
         } catch is CancellationError {
             await recordIgnoredStaleCallback(scan, callback: "reconciliation")
@@ -2271,13 +2110,9 @@ private extension CatalogStore {
                 error=\(String(describing: error), privacy: .public)
                 """
             )
-            await diagnostics?.record(
-                operation: "catalog.scan.reconcile",
-                phase: "error",
-                fields: [
-                    "rootPath": scan.rootPath.rawValue,
-                    "error": String(describing: error),
-                ]
+            OtosLog.catalog.error(
+                // swiftlint:disable:next line_length
+                "op=catalog.scan.reconcile phase=error rootPath=\(scan.rootPath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
             )
         }
 
@@ -2336,10 +2171,8 @@ private extension CatalogStore {
             return
         }
         OtosLog.catalog.info("Catalog scan cancelled path=\(scan.rootPath.rawValue, privacy: .public)")
-        await diagnostics?.record(
-            operation: "catalog.scan",
-            phase: "cancel",
-            fields: ["rootPath": scan.rootPath.rawValue]
+        OtosLog.catalog.notice(
+            "op=catalog.scan phase=cancel rootPath=\(scan.rootPath.rawValue, privacy: .public)"
         )
         clearCurrentScan(scan, armFilesystemWatching: false)
     }
@@ -2360,10 +2193,8 @@ private extension CatalogStore {
             OtosLog.catalog.error(
                 "Catalog scan failed because root is unavailable path=\(scan.rootPath.rawValue, privacy: .public)"
             )
-            await diagnostics?.record(
-                operation: "catalog.library.availability",
-                phase: "unavailable",
-                fields: ["rootPath": scan.rootPath.rawValue]
+            OtosLog.catalog.notice(
+                "op=catalog.library.availability phase=unavailable rootPath=\(scan.rootPath.rawValue, privacy: .public)"
             )
         } else {
             OtosLog.catalog.error(
@@ -2388,10 +2219,8 @@ private extension CatalogStore {
                 diagnosticFields["\(prefix).examples"] = summary.examplePaths.joined(separator: " | ")
             }
         }
-        await diagnostics?.record(
-            operation: "catalog.scan",
-            phase: "error",
-            fields: diagnosticFields
+        OtosLog.catalog.error(
+            "op=catalog.scan phase=error fields=\(String(describing: diagnosticFields), privacy: .public)"
         )
         clearCurrentScan(scan, armFilesystemWatching: true)
     }
@@ -2571,34 +2400,25 @@ private extension CatalogStore {
         }
     }
 
-    /// Actor-isolated methods often need to record optional, bounded JSONL
-    /// diagnostics from synchronous branches. This is the one best-effort
-    /// fire-and-forget diagnostics escape in Store: it captures only scalar
-    /// strings and the diagnostics actor, never catalog state or asset batches.
+    /// Best-effort boundary log from synchronous Store branches. Captures only
+    /// scalar strings — never catalog state or asset batches.
     private func recordDiagnostic(
         operation: String,
         phase: String,
         fields: [String: String] = [:]
     ) {
-        guard let diagnostics else {
-            return
-        }
-        Task { [diagnostics, operation, phase, fields] in
-            await diagnostics.record(operation: operation, phase: phase, fields: fields)
-        }
+        OtosLog.catalog.notice(
+            "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) fields=\(String(describing: fields), privacy: .public)"
+        )
     }
 
     private func recordWALDiagnostics(reason: String) async {
         guard databaseFileURL != nil else {
             return
         }
-        await diagnostics?.record(
-            operation: "catalog.database.wal",
-            phase: "sample",
-            fields: [
-                "reason": reason,
-                "walBytes": "\(walFileSizeBytes() ?? -1)",
-            ]
+        let walBytes = walFileSizeBytes() ?? -1
+        OtosLog.catalog.notice(
+            "op=catalog.database.wal phase=sample reason=\(reason, privacy: .public) walBytes=\(walBytes, privacy: .public)"
         )
     }
 
@@ -2646,15 +2466,9 @@ private extension CatalogStore {
             OtosLog.catalog.debug(
                 "Filesystem reconcile deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
             )
-            await diagnostics?.record(
-                operation: "catalog.filesystemEvent",
-                phase: "schedule",
-                fields: filesystemEventBatchFields(
-                    root: root,
-                    events: events,
-                    mode: "deferred",
-                    catalogChanged: false
-                )
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.filesystemEvent phase=schedule mode=deferred rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public)"
             )
             return
         }
@@ -2667,15 +2481,9 @@ private extension CatalogStore {
         if events.contains(where: { FilesystemEventFlags(event: $0).requiresFullRootScan }) {
             enqueueScans([root])
             OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
-            await diagnostics?.record(
-                operation: "catalog.filesystemEvent",
-                phase: "schedule",
-                fields: filesystemEventBatchFields(
-                    root: root,
-                    events: events,
-                    mode: "fullRoot",
-                    catalogChanged: false
-                )
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.filesystemEvent phase=schedule mode=fullRoot rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public)"
             )
             return
         }
@@ -2690,15 +2498,9 @@ private extension CatalogStore {
         if catalogChanged {
             notifyCatalogChanged()
         }
-        await diagnostics?.record(
-            operation: "catalog.filesystemEvent",
-            phase: "reconcile",
-            fields: filesystemEventBatchFields(
-                root: root,
-                events: events,
-                mode: "targeted",
-                catalogChanged: catalogChanged
-            )
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.filesystemEvent phase=reconcile mode=targeted rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public) catalogChanged=\(catalogChanged, privacy: .public)"
         )
     }
 
@@ -2851,13 +2653,8 @@ private extension CatalogStore {
         OtosLog.catalog.debug(
             "Filesystem rescan dropped path=\(root.rawValue, privacy: .public) reason=\(reason, privacy: .public)"
         )
-        await diagnostics?.record(
-            operation: "catalog.filesystemEvent",
-            phase: "drop",
-            fields: [
-                "rootPath": root.rawValue,
-                "reason": reason,
-            ]
+        OtosLog.catalog.notice(
+            "op=catalog.filesystemEvent phase=drop rootPath=\(root.rawValue, privacy: .public) reason=\(reason, privacy: .public)"
         )
     }
 
@@ -2897,14 +2694,9 @@ private extension CatalogStore {
             callback=\(callback, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.scan.staleCallback",
-            phase: "ignored",
-            fields: [
-                "rootPath": scan.rootPath.rawValue,
-                "rootRowID": "\(scan.rootRowID)",
-                "callback": callback,
-            ]
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.scan.staleCallback phase=ignored rootPath=\(scan.rootPath.rawValue, privacy: .public) rootRowID=\(scan.rootRowID, privacy: .public) callback=\(callback, privacy: .public)"
         )
     }
 }

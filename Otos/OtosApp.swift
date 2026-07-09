@@ -21,12 +21,10 @@ struct OtosApp: App {
                     OtosLog.app.info("Main window content attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
                     catalogViewModel.start()
+                    OtosLog.app.notice(
+                        "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
+                    )
                     SmokeLibrarySeed.applyIfPresent(to: catalogViewModel)
-                }
-                .onReceive(NotificationCenter.default.publisher(
-                    for: NSApplication.willTerminateNotification
-                )) { _ in
-                    catalogViewModel.recordGridTelemetryForTermination()
                 }
         }
         .commands {

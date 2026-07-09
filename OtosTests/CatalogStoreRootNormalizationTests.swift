@@ -27,11 +27,9 @@ struct CatalogStoreRootNormalizationTests {
         let resolvedPath = try CatalogPath.normalizedDirectoryPath(for: fixture.pictures)
         try await writeSavedSymlinkCatalog(databaseURL: databaseURL, rootPath: savedSymlinkPath)
 
-        let diagnosticsURL = fixture.temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
         let store = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanCadence: .milliseconds(10),
-            diagnostics: CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
+            scanCadence: .milliseconds(10)
         )
         try await store.start()
 
@@ -41,10 +39,6 @@ struct CatalogStoreRootNormalizationTests {
         #expect(scanned.libraries.map(\.path) == [resolvedPath])
         #expect(scanned.testAssets.map(\.relativePath.rawValue) == ["one.jpg"])
         #expect(try await savedLibraryRootPaths(in: databaseURL) == [resolvedPath.rawValue])
-
-        let diagnosticsText = try #require(String(data: Data(contentsOf: diagnosticsURL), encoding: .utf8))
-        #expect(diagnosticsText.contains("\"operation\":\"catalog.library.normalize\""))
-        #expect(diagnosticsText.contains("\"phase\":\"finish\""))
     }
 
     @Test func startupMigratesThumbnailPathsWhenNormalizingSavedRoot() async throws {
@@ -73,11 +67,9 @@ struct CatalogStoreRootNormalizationTests {
         try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
         try Data("thumbnail".utf8).write(to: thumbnailDirectory.appending(path: oldThumbnail))
 
-        let diagnosticsURL = fixture.temp.appending(path: "diagnostics/catalog-diagnostics.jsonl")
         let store = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanCadence: .milliseconds(10),
-            diagnostics: CatalogDiagnostics(outputURL: diagnosticsURL, isEnabled: true)
+            scanCadence: .milliseconds(10)
         )
         try await store.start()
 

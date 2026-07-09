@@ -3,16 +3,16 @@ import Foundation
 import Testing
 
 func recordingScanner(_ recorder: FilesystemEventScanInvocationRecorder) -> CatalogScanner {
-    CatalogScanner { rootPath, _, _, _ in
+    CatalogScanner { rootPath, _, _ in
         await recorder.record(rootPath)
         return []
     }
 }
 
 func recordingLiveScanner(_ recorder: FilesystemEventScanInvocationRecorder) -> CatalogScanner {
-    CatalogScanner { rootPath, cadence, diagnostics, batchHandler in
+    CatalogScanner { rootPath, cadence, batchHandler in
         await recorder.record(rootPath)
-        return try await CatalogScanner.live.scanRoot(rootPath, cadence, diagnostics, batchHandler)
+        return try await CatalogScanner.live.scanRoot(rootPath, cadence, batchHandler)
     }
 }
 
@@ -20,7 +20,7 @@ func deferredHangingScanner(
     probe: FilesystemScanProbe,
     recorder: FilesystemEventScanInvocationRecorder
 ) -> CatalogScanner {
-    CatalogScanner { rootPath, _, _, _ in
+    CatalogScanner { rootPath, _, _ in
         let invocation = await probe.beginInvocation()
         await recorder.record(rootPath)
         if invocation == 2 {
@@ -34,7 +34,7 @@ func firstScanHangingScanner(
     probe: FilesystemScanProbe,
     recorder: FilesystemEventScanInvocationRecorder
 ) -> CatalogScanner {
-    CatalogScanner { rootPath, _, _, _ in
+    CatalogScanner { rootPath, _, _ in
         let invocation = await probe.beginInvocation()
         await recorder.record(rootPath)
         if invocation == 1 {
@@ -166,28 +166,6 @@ func waitForFilesystemRescan(
             return
         }
         throw AsyncTestTimeoutError.streamEnded("filesystem rescan")
-    }
-}
-
-func waitForFilesystemDiagnostic(
-    _ url: URL,
-    matching predicate: @escaping @Sendable (CatalogDiagnosticEvent) -> Bool
-) async throws -> CatalogDiagnosticEvent {
-    try await withTestTimeout("filesystem diagnostic") {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        while !Task.isCancelled {
-            if let data = try? Data(contentsOf: url) {
-                let events = data.split(separator: 0x0A).compactMap { line in
-                    try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
-                }
-                if let event = events.first(where: predicate) {
-                    return event
-                }
-            }
-            await Task.yield()
-        }
-        throw CancellationError()
     }
 }
 

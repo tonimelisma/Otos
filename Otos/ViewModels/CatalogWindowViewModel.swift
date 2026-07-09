@@ -76,17 +76,12 @@ final class CatalogWindowViewModel {
         stallMonitor
     }
 
-    var catalogDiagnostics: CatalogDiagnostics? {
-        diagnostics
-    }
-
     @ObservationIgnored let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored let enrichmentCoordinator: EnrichmentCoordinator?
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let mediaTileImageCache = MediaTileImageCache()
-    @ObservationIgnored let diagnostics: CatalogDiagnostics?
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
@@ -111,7 +106,6 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
     @ObservationIgnored var gridTelemetryTask: Task<Void, Never>?
-    @ObservationIgnored var didRecordTerminationGridTelemetry = false
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
@@ -121,7 +115,6 @@ final class CatalogWindowViewModel {
         catalogStore: CatalogStore = CatalogStore(),
         catalogProjection: CatalogProjection = CatalogProjection(),
         enrichmentCoordinator: EnrichmentCoordinator? = nil,
-        diagnostics: CatalogDiagnostics? = .shared,
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
@@ -163,7 +156,6 @@ final class CatalogWindowViewModel {
                 )
                 : nil
         )
-        self.diagnostics = diagnostics
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
@@ -216,11 +208,8 @@ extension CatalogWindowViewModel {
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowViewModelStart")
         OtosSignpost.ui.endInterval("CatalogWindowViewModelStart", signpost)
         OtosLog.ui.info("Catalog window view model started")
-        Task { [diagnostics] in
-            await diagnostics?.prepareForLifecycle()
-        }
         if startsStallMonitor {
-            stallMonitor.start(diagnostics: diagnostics)
+            stallMonitor.start()
         }
 
         // This is the sole query-intent task. AsyncStream provides ordered
@@ -228,23 +217,21 @@ extension CatalogWindowViewModel {
         // queue while Projection is busy publishing a large state.
         let projection = catalogProjection
         let store = catalogStore
-        let diagnostics = diagnostics
         let initialRequest = CatalogQueryRequest(
             descriptor: queryDescriptor,
             generation: queryGeneration
         )
 
         startQueryForwarding(projection: projection)
-        startMutationForwarding(store: store, coordinator: enrichmentCoordinator, diagnostics: diagnostics)
+        startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
         startStateConsumption(
             projection: projection,
             store: store,
             initialRequest: initialRequest
         )
-        startCatalog(store: store, diagnostics: diagnostics)
+        startCatalog(store: store)
         startRemovableVolumeMonitoring()
         startDeviceStagingSweepThenCameraMonitoring()
-        startGridTelemetryRecording(diagnostics: diagnostics)
         if startsEnrichment {
             startEnrichment()
         }
@@ -260,7 +247,6 @@ extension CatalogWindowViewModel {
         queryDescriptor = descriptor
         sidebarSelection = descriptor.scope
         OtosLog.ui.info("Catalog query changed descriptor=\(descriptor.diagnosticDescription, privacy: .public)")
-        OtosSignpost.ui.emitEvent("CatalogQueryDescriptorIntent")
         queryContinuation.yield(CatalogQueryRequest(
             descriptor: descriptor,
             generation: queryGeneration
@@ -311,14 +297,13 @@ extension CatalogWindowViewModel {
 
     private func startMutationForwarding(
         store: CatalogStore,
-        coordinator: EnrichmentCoordinator?,
-        diagnostics: CatalogDiagnostics?
+        coordinator: EnrichmentCoordinator?
     ) {
         // Mutations use one lossless consumer so Store sees the user's commands
         // in submission order. Cancellation is checked between commands: an
         // already-started SQLite transaction may finish, but the next queued
         // command must not begin after this owner is gone.
-        mutationForwardingTask = Task { [weak self, mutationStream, store, coordinator, diagnostics] in
+        mutationForwardingTask = Task { [weak self, mutationStream, store, coordinator] in
             for await intent in mutationStream {
                 guard !Task.isCancelled else {
                     break
@@ -326,8 +311,7 @@ extension CatalogWindowViewModel {
                 let ejectOutcome = await Self.performCatalogMutation(
                     intent,
                     store: store,
-                    coordinator: coordinator,
-                    diagnostics: diagnostics
+                    coordinator: coordinator
                 )
                 if let ejectOutcome {
                     await self?.handleEjectOutcome(ejectOutcome, for: intent)
@@ -360,20 +344,16 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func startCatalog(store: CatalogStore, diagnostics: CatalogDiagnostics?) {
-        catalogStartupTask = Task { [store, diagnostics] in
-            let signpost = OtosSignpost.catalog.beginInterval("CatalogStartIntent")
+    private func startCatalog(store: CatalogStore) {
+        catalogStartupTask = Task { [store] in
             do {
                 try await store.start()
             } catch {
                 OtosLog.persistence.error("Catalog start failed")
-                await diagnostics?.record(
-                    operation: "catalog.start",
-                    phase: "error",
-                    fields: ["error": String(describing: error)]
+                OtosLog.catalog.error(
+                    "op=catalog.start phase=error error=\(String(describing: error), privacy: .public)"
                 )
             }
-            OtosSignpost.catalog.endInterval("CatalogStartIntent", signpost)
         }
     }
 

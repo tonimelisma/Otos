@@ -37,7 +37,6 @@ struct ContentView: View {
                 detailReader: viewModel.tileDetailReader,
                 imageCache: viewModel.tileImageCache,
                 stallMonitor: viewModel.uiStallMonitor,
-                diagnostics: viewModel.catalogDiagnostics,
                 onViewportChanged: viewModel.viewportChanged,
                 clearFilters: viewModel.clearMediaFilter,
                 gridColumnCount: viewModel.gridColumnCount,

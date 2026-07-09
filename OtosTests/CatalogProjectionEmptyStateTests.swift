@@ -12,8 +12,7 @@ struct CatalogProjectionEmptyStateTests {
 
         let firstStore = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
         try await firstStore.start(scansSavedLibraries: false)
         try await firstStore.addLibrary(url: root)
@@ -25,10 +24,9 @@ struct CatalogProjectionEmptyStateTests {
 
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
-        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: nil)
+        let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = EmptyStateRecorder()
         let stream = await projection.states(store: secondStore, initialDescriptor: .default)
         let recordingTask = Task {

@@ -173,8 +173,10 @@ behavior); diagnostic payload sprawl.
 
 Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The
 required local check is `script/verify.sh` (requirements-authority + lint + build +
-test). Read logs with `script/logs.sh [Category]`; profile with
-`script/profile.sh "<Template>" 10s`.
+test). Read logs with `script/logs.sh stream [Category]` (live) or
+`script/logs.sh show --last 10m` (post-hoc ndjson); profile with
+`script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
+See `docs/adr/0015-observability.md`.
 
 ## Documentation
 

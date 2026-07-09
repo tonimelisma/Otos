@@ -32,15 +32,13 @@ nonisolated struct CatalogScanner {
     var scanRoot: @Sendable (
         _ rootPath: LibraryRootPath,
         _ cadence: Duration,
-        _ diagnostics: CatalogDiagnostics?,
         _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
     ) async throws -> Set<MediaRelativePath>
 
-    static let live = CatalogScanner { rootPath, cadence, diagnostics, batchHandler in
+    static let live = CatalogScanner { rootPath, cadence, batchHandler in
         try await LiveCatalogScanner.scan(
             rootPath: rootPath,
             cadence: cadence,
-            diagnostics: diagnostics,
             batchHandler: batchHandler
         )
     }
@@ -136,7 +134,6 @@ private nonisolated enum LiveCatalogScanner {
     static func scan(
         rootPath: LibraryRootPath,
         cadence: Duration,
-        diagnostics: CatalogDiagnostics?,
         batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
     ) async throws -> Set<MediaRelativePath> {
         let rootURL = rootPath.url
@@ -188,7 +185,6 @@ private nonisolated enum LiveCatalogScanner {
         return try await finish(
             scanState: &scanState,
             rootPath: rootPath,
-            diagnostics: diagnostics,
             batchHandler: batchHandler
         )
     }
@@ -196,15 +192,13 @@ private nonisolated enum LiveCatalogScanner {
     private static func finish(
         scanState: inout ScanState,
         rootPath: LibraryRootPath,
-        diagnostics: CatalogDiagnostics?,
         batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
     ) async throws -> Set<MediaRelativePath> {
         try await flush(&scanState.pending, batchHandler: batchHandler)
-        await recordSkippedPackages(scanState.skippedPackages, rootPath: rootPath, diagnostics: diagnostics)
+        await recordSkippedPackages(scanState.skippedPackages, rootPath: rootPath)
         await recordSkippedNonMedia(
             count: scanState.skippedNonMediaCount,
-            rootPath: rootPath,
-            diagnostics: diagnostics
+            rootPath: rootPath
         )
         let summaries = scanState.issueSummaries()
         recordIssues(summaries, rootPath: rootPath)
@@ -331,8 +325,7 @@ private nonisolated enum LiveCatalogScanner {
 private extension LiveCatalogScanner {
     private nonisolated static func recordSkippedPackages(
         _ skippedPackages: [SkippedPackage],
-        rootPath: LibraryRootPath,
-        diagnostics: CatalogDiagnostics?
+        rootPath: LibraryRootPath
     ) async {
         for package in skippedPackages {
             var fields = [
@@ -348,18 +341,15 @@ private extension LiveCatalogScanner {
                 contentType=\(package.contentTypeIdentifier ?? "unknown", privacy: .public)
                 """
             )
-            await diagnostics?.record(
-                operation: "catalog.scan.skippedPackage",
-                phase: "skip",
-                fields: fields
+            OtosLog.catalog.notice(
+                "op=catalog.scan.skippedPackage phase=skip fields=\(String(describing: fields), privacy: .public)"
             )
         }
     }
 
     private nonisolated static func recordSkippedNonMedia(
         count: Int,
-        rootPath: LibraryRootPath,
-        diagnostics: CatalogDiagnostics?
+        rootPath: LibraryRootPath
     ) async {
         guard count > 0 else {
             return
@@ -370,13 +360,8 @@ private extension LiveCatalogScanner {
             count=\(count, privacy: .public)
             """
         )
-        await diagnostics?.record(
-            operation: "catalog.scan.skippedNonMedia",
-            phase: "skip",
-            fields: [
-                "rootPath": rootPath.rawValue,
-                "count": "\(count)",
-            ]
+        OtosLog.catalog.notice(
+            "op=catalog.scan.skippedNonMedia phase=skip rootPath=\(rootPath.rawValue, privacy: .public) count=\(count, privacy: .public)"
         )
     }
 

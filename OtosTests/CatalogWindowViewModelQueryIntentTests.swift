@@ -120,11 +120,10 @@ private func waitForRequestsReleasingBuilds(
 
 @MainActor
 private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
-    let store = CatalogStore(location: .inMemory, diagnostics: nil)
+    let store = CatalogStore(location: .inMemory)
     let gate = WindowStateBuildGate()
     let projection = CatalogProjection(
         cadence: .milliseconds(10),
-        diagnostics: nil,
         stateBuilder: { libraries, _, request in
             let buildNumber = await gate.record(request)
             return testWindowState(buildNumber: buildNumber, libraries: libraries, request: request)
@@ -133,8 +132,8 @@ private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: Win
     let model = CatalogWindowViewModel(
         catalogStore: store,
         catalogProjection: projection,
-        diagnostics: nil,
         startsStallMonitor: false,
+
         startsEnrichment: false
     )
     return (model, gate)

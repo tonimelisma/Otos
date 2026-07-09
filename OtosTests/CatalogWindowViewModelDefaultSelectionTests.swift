@@ -12,11 +12,10 @@ struct ViewModelDefaultSelectionTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try Data("jpeg".utf8).write(to: root.appending(path: "one.jpg"))
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         let model = CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )
@@ -93,11 +92,10 @@ struct ViewModelDefaultSelectionTests {
 
     @MainActor
     private func makePolicyTestViewModel() -> CatalogWindowViewModel {
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         return CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: CatalogProjection(cadence: .milliseconds(10), diagnostics: nil),
-            diagnostics: nil,
+            catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false
         )

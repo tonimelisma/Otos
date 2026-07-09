@@ -101,9 +101,7 @@ extension MediaAssetCollectionViewController {
             rangeChanged = gridSelection.selection != before
             reason = "commandShiftRange"
         }
-        if rangeChanged {
-            OtosSignpost.ui.emitEvent("MediaGridShiftRangeApplied")
-        }
+        if rangeChanged {}
         applySelectionDelta(from: selectedIdentities(), to: gridSelection.selection)
         logSelection(reason: reason)
     }
@@ -149,7 +147,6 @@ extension MediaAssetCollectionViewController {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridCopy")
         let count = MediaGridClipboard.write(ordered, to: .general)
         OtosSignpost.ui.endInterval("MediaGridCopy", signpost)
-        OtosSignpost.ui.emitEvent("MediaGridCopyInvoked")
         OtosLog.ui.info("Media grid copy wrote fileURLs count=\(count, privacy: .public)")
     }
 
@@ -181,7 +178,6 @@ extension MediaAssetCollectionViewController {
 
     func logSelection(reason: String) {
         let count = collectionView.selectionIndexPaths.count
-        OtosSignpost.ui.emitEvent("MediaGridSelectionChanged")
         OtosLog.ui.debug(
             """
             Media grid selection changed count=\(count, privacy: .public) \

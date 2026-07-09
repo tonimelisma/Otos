@@ -5,7 +5,7 @@ import Testing
 struct CatalogProjectionOrderingTests {
     @Test func detailChangeKeepsOrder() async {
         let root = orderingRoot()
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let original = orderingAsset(root: root, relativePath: "one.jpg")
         let changed = MediaAsset(
             libraryRootPath: original.libraryRootPath,
@@ -31,7 +31,7 @@ struct CatalogProjectionOrderingTests {
 
     @Test func sameCountIdentityReplacementRebuildsOrder() async {
         let root = orderingRoot()
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let first = orderingAsset(root: root, relativePath: "z.jpg")
         let replacement = orderingAsset(root: root, relativePath: "a.jpg")
 
@@ -49,7 +49,7 @@ struct CatalogProjectionOrderingTests {
 
     @Test func changedMembershipResortsAfterInsertionAndDeletion() async {
         let root = orderingRoot()
-        let projection = CatalogProjection(diagnostics: nil)
+        let projection = CatalogProjection()
         let first = await projection.windowState(
             fixture: orderingFixture(
                 root: root,
@@ -78,18 +78,15 @@ struct CatalogProjectionOrderingTests {
 
     @Test func sidebarFilteringPublishesSelectedScope() async throws {
         let temp = try orderingTemporaryDirectory()
-        let outputURL = temp.appending(path: "catalog-diagnostics.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
         try Data("a".utf8).write(to: rootURL.appending(path: "a.jpg"))
 
         let store = CatalogStore(
             location: .inMemory,
-            scanCadence: .milliseconds(10),
-            diagnostics: nil
+            scanCadence: .milliseconds(10)
         )
-        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
+        let projection = CatalogProjection(cadence: .milliseconds(10))
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recorder = OrderingStateRecorder()
         let recordingTask = Task {
@@ -102,46 +99,33 @@ struct CatalogProjectionOrderingTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
-        _ = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+        let selected = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
             states.last { state in
                 state.resolvedSidebarSelection == .library(rootPath)
                     && state.mediaGrid.orderedAssetIDs.count == 1
             }
         }
-        _ = try await waitForOrderingDiagnostic(outputURL) { event in
-            event.operation == "catalog.projection.window"
-                && event.fields["resolvedSidebarSelection"]?.hasPrefix("library:") == true
-                && event.fields["selectedScopeAssetCount"] == "1"
-        }
+        #expect(selected.last?.mediaGrid.orderedAssetIDs.count == 1)
 
-        try await diagnostics.removeExistingDiagnosticsForTesting()
         await projection.updateSidebarSelection(.library(rootPath))
-        _ = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+        let filtered = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
             states.last { state in
                 state.resolvedSidebarSelection == .library(rootPath)
                     && state.mediaGrid.orderedAssetIDs.count == 1
             }
         }
-        let filtered = try await waitForOrderingDiagnostic(outputURL) { event in
-            event.operation == "catalog.projection.window"
-                && event.fields["sidebarSelection"] == "library:\(rootPath.rawValue)"
-                && event.fields["selectedScopeAssetCount"] == "1"
-        }
-
-        #expect(filtered.fields["selectedScopeAssetCount"] == "1")
+        #expect(filtered.last?.resolvedSidebarSelection == .library(rootPath))
+        #expect(filtered.last?.mediaGrid.orderedAssetIDs.count == 1)
     }
 
-    // swiftlint:disable:next function_body_length
     @Test func detailOnlyStoreChangePublishesRefreshAndChecksOrder() async throws {
         let temp = try orderingTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         try "jpeg".write(to: root.appending(path: "one.jpg"), atomically: true, encoding: .utf8)
 
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10), diagnostics: nil)
-        let outputURL = temp.appending(path: "projection-order-skip.jsonl")
-        let diagnostics = CatalogDiagnostics(outputURL: outputURL, isEnabled: true)
-        let projection = CatalogProjection(cadence: .milliseconds(10), diagnostics: diagnostics)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = OrderingStateRecorder()
         let stream = await projection.states(store: store, initialDescriptor: .default)
         let recordingTask = Task {
@@ -168,7 +152,6 @@ struct CatalogProjectionOrderingTests {
             state.mediaGrid.orderedAssetIDs == [id]
                 && state.libraries.allSatisfy { $0.activity == .idle }
         })
-        try await diagnostics.removeExistingDiagnosticsForTesting()
 
         let asset = try #require(try await store.mediaAssets(for: [id])[id])
         let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
@@ -188,12 +171,7 @@ struct CatalogProjectionOrderingTests {
             }
         }
         let detailGeneration = try #require(detailState.last?.mediaGrid.detailRefreshGeneration)
-        let detailOnly = try await waitForOrderingDiagnostic(outputURL) { event in
-            event.operation == "catalog.projection.window"
-                && event.fields["detailRefreshChanged"] == "true"
-                && event.fields["detailRefreshGeneration"] == "\(detailGeneration)"
-        }
-        #expect(detailOnly.fields["assetOrderQueryMs"] != nil)
+        #expect(detailGeneration > initialState.mediaGrid.detailRefreshGeneration)
     }
 }
 
@@ -221,28 +199,6 @@ private func orderingFixture(
         libraries: [CatalogLibraryState(root: root, availability: .available, activity: .idle)],
         orderedAssetIDs: orderedAssetIDs(for: assets)
     )
-}
-
-private func waitForOrderingDiagnostic(
-    _ url: URL,
-    matching predicate: @escaping @Sendable (CatalogDiagnosticEvent) -> Bool
-) async throws -> CatalogDiagnosticEvent {
-    try await withTestTimeout("ordering diagnostic") {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        while !Task.isCancelled {
-            if let data = try? Data(contentsOf: url) {
-                let events = data.split(separator: 0x0A).compactMap { line in
-                    try? decoder.decode(CatalogDiagnosticEvent.self, from: Data(line))
-                }
-                if let event = events.first(where: predicate) {
-                    return event
-                }
-            }
-            await Task.yield()
-        }
-        throw CancellationError()
-    }
 }
 
 private func orderingTemporaryDirectory() throws -> URL {

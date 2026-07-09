@@ -111,8 +111,8 @@ Otos. What transfers as-is (concepts, largely re-typable code):
 - Separate sidebar section; removable content excluded from All Media.
 
 What should not transfer: the background agent/persistence monitoring, import
-flows (both explicitly out of scope), the bespoke logging plumbing (Otos has
-`CatalogDiagnostics`), pointer-based camera item IDs.
+flows (both explicitly out of scope), the bespoke logging plumbing (Otos uses
+`OtosLog` / unified logging per ADR 0015), pointer-based camera item IDs.
 
 ## Fit with current Otos
 
