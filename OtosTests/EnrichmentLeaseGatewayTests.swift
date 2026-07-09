@@ -55,10 +55,11 @@ struct EnrichmentLeaseGatewayTests {
             contentTypeIdentifier: "public.jpeg",
             byteSize: 1024,
             createdAt: nil,
-            contentModifiedAt: nil,
+            contentModifiedAt: Date(timeIntervalSince1970: 1),
             enrichedSourceSize: 1024,
             enrichedSourceMTimeSeconds: 1
         )
+        #expect(currentAsset.needsEnrichment == false)
         let assetsByID = [
             id: staleAsset,
             currentAsset.id: currentAsset,
