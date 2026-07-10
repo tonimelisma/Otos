@@ -47,6 +47,14 @@ extension CatalogWindowViewModel {
     ) -> GridSelection {
         gridSelection = gridSelection.reconcilingSelection(liveSelection)
 
+        if viewMode == .compare {
+            guard let hit else {
+                return gridSelection
+            }
+            applyCompareClick(hit, orderedIDs: orderedIDs)
+            return gridSelection
+        }
+
         let shift = modifiers.contains(.shift)
         let command = modifiers.contains(.command)
 
@@ -74,6 +82,16 @@ extension CatalogWindowViewModel {
     /// ⇧-arrows). Idempotent when `live` already equals `gridSelection.selection`.
     @discardableResult
     func reconcileNativeSelection(_ live: Set<MediaAssetID>) -> GridSelection {
+        if viewMode == .compare {
+            // Cap-2: adopt at most two live identities in display order as the pair.
+            let ordered = GridSelection.orderedSelection(live, in: state.mediaGrid.orderedAssetIDs)
+            let capped = Array(ordered.prefix(2))
+            applyComparePair(
+                ComparePair(members: capped, older: capped.first),
+                orderedIDs: state.mediaGrid.orderedAssetIDs
+            )
+            return gridSelection
+        }
         gridSelection = gridSelection.reconcilingSelection(live)
         return gridSelection
     }

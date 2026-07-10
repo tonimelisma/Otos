@@ -185,19 +185,15 @@ struct CatalogZoomControl: View {
     }
 }
 
-/// Segmented Grid / Loupe control (Compare joins in plan 0052 Increment 3).
-/// Both surfaces call the same ViewModel `setViewMode` intent as the View menu.
+/// Segmented Grid / Loupe / Compare control. All three call the same ViewModel
+/// `setViewMode` intent as the View menu (⌘1 / ⌘2 / ⌘3).
 struct ViewModePicker: View {
     let viewMode: BrowserViewMode
     let setViewMode: (BrowserViewMode) -> Void
 
-    private var visibleModes: [BrowserViewMode] {
-        [.grid, .loupe]
-    }
-
     var body: some View {
         Picker("View Mode", selection: modeBinding) {
-            ForEach(visibleModes) { mode in
+            ForEach(BrowserViewMode.allCases) { mode in
                 Image(systemName: mode.systemImage)
                     .tag(mode)
                     .help(mode.help)
@@ -211,7 +207,7 @@ struct ViewModePicker: View {
 
     private var modeBinding: Binding<BrowserViewMode> {
         Binding(
-            get: { visibleModes.contains(viewMode) ? viewMode : .grid },
+            get: { viewMode },
             set: { setViewMode($0) }
         )
     }

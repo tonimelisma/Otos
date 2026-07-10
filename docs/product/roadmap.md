@@ -179,3 +179,7 @@ Earlier vocabulary notes in this file include:
   [improving app responsiveness](https://developer.apple.com/documentation/xcode/improving-app-responsiveness),
   [user interface responsiveness](https://developer.apple.com/documentation/xcode/understanding-user-interface-responsiveness),
   [SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance).
+
+- Loupe 1:1 zoom/pan (LrC click-to-zoom) — deferred after plan 0052 v1 fit-to-window.
+- Video playback in loupe — deferred; v1 is poster frame only (plan 0052).
+- Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped in plan 0052.

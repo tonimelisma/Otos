@@ -38,6 +38,10 @@ struct OtosApp: App {
                     catalogViewModel.setViewMode(.loupe)
                 }
                 .keyboardShortcut("2", modifiers: .command)
+                Button("Compare") {
+                    catalogViewModel.setViewMode(.compare)
+                }
+                .keyboardShortcut("3", modifiers: .command)
                 Divider()
                 Menu("Sort") {
                     CatalogSortMenuContent(
