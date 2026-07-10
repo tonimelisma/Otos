@@ -71,8 +71,11 @@ final class CatalogWindowViewModel {
     /// Loupe focus identity within the current display order. Compare does not retarget
     /// this; exit-to-grid keeps it so Stage C can center the grid on return.
     var focusedAssetID: MediaAssetID?
-    /// Symmetric compare pair (capped selection). Empty outside compare mode.
+    /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
     var comparePair = ComparePair.empty
+    /// Which compare pane was most recently replaced (click/slide/entry). Drives strip
+    /// focus centering; defaults to `.right` on entry.
+    var lastReplacedComparePane: PanePosition?
     /// Full-size decodes keyed by pane slot and bound to the asset they belong to.
     /// Views render `image` only when `id` matches the pane's expected asset.
     var panePreviews: [PaneSlot: PanePreview] = [:]

@@ -61,7 +61,9 @@ extension CatalogWindowViewModel {
             guard let hit else {
                 return gridSelection
             }
-            applyCompareClick(hit, orderedIDs: orderedIDs)
+            // Plain / ⇧ → replace right; ⌘ / ⌘⇧ → replace left.
+            let position: PanePosition = command ? .left : .right
+            applyCompareClick(hit, replacing: position, orderedIDs: orderedIDs)
             return gridSelection
         }
 

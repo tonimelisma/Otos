@@ -49,6 +49,7 @@ extension CatalogWindowViewModel {
             gridSelection = gridSelection.plainClick(focus)
         }
         comparePair = .empty
+        lastReplacedComparePane = nil
         focusedAssetID = focus
         viewMode = .loupe
         refreshPanePreviews()
@@ -66,6 +67,7 @@ extension CatalogWindowViewModel {
         // viewMode must be .compare before applyComparePair → refreshPanePreviews,
         // otherwise expectedAsset(for: compare*) returns nil and no decode starts.
         viewMode = .compare
+        lastReplacedComparePane = .right
         applyComparePair(pair, orderedIDs: ordered)
         OtosLog.ui.notice(
             "op=viewMode.set mode=compare count=\(pair.members.count, privacy: .public)"
@@ -80,6 +82,7 @@ extension CatalogWindowViewModel {
         panePreviews = [:]
         downloadingSlots = []
         comparePair = .empty
+        lastReplacedComparePane = nil
         cancelAllPaneRequestTasks()
         OtosLog.ui.notice("op=viewMode.set mode=grid")
     }
@@ -98,11 +101,22 @@ extension CatalogWindowViewModel {
         }
         let ordered = state.mediaGrid.orderedAssetIDs
         let next = ComparePairPolicy.slide(delta, pair: comparePair, orderedIDs: ordered)
+        lastReplacedComparePane = delta > 0 ? .right : .left
         applyComparePair(next, orderedIDs: ordered)
     }
 
-    func applyCompareClick(_ id: MediaAssetID, orderedIDs: [MediaAssetID]) {
-        let next = ComparePairPolicy.click(id, pair: comparePair, orderedIDs: orderedIDs)
+    func applyCompareClick(
+        _ id: MediaAssetID,
+        replacing position: PanePosition,
+        orderedIDs: [MediaAssetID]
+    ) {
+        let next = ComparePairPolicy.click(
+            id,
+            replacing: position,
+            pair: comparePair,
+            orderedIDs: orderedIDs
+        )
+        lastReplacedComparePane = position
         applyComparePair(next, orderedIDs: orderedIDs)
     }
 
@@ -146,20 +160,24 @@ extension CatalogWindowViewModel {
         case .compare:
             if descriptorChanged {
                 let pair = ComparePairPolicy.entry(selection: .empty, orderedIDs: ordered)
+                lastReplacedComparePane = .right
                 applyComparePair(pair, orderedIDs: ordered)
                 return
             }
-            let pruned = ComparePairPolicy.prune(pair: comparePair, survivingOrderedIDs: ordered)
+            let pruned = ComparePairPolicy.prune(
+                pair: comparePair,
+                previousOrderedIDs: previousOrderedIDs,
+                survivingOrderedIDs: ordered
+            )
             applyComparePair(pruned, orderedIDs: ordered)
         }
     }
 
-    func applyComparePair(_ pair: ComparePair, orderedIDs: [MediaAssetID]) {
+    func applyComparePair(_ pair: ComparePair, orderedIDs _: [MediaAssetID]) {
         comparePair = pair
-        let panes = pair.panes(in: orderedIDs)
         gridSelection = GridSelection(
             selection: Set(pair.members),
-            anchor: panes.left ?? pair.members.first,
+            anchor: pair.left ?? pair.members.first,
             base: Set(pair.members)
         )
         // Compare must not retarget loupe focus — exit/re-enter loupe keeps
@@ -169,14 +187,23 @@ extension CatalogWindowViewModel {
 
     /// Single source for "which asset should this pane show right now".
     func expectedAsset(for slot: PaneSlot) -> MediaAssetID? {
-        let ordered = state.mediaGrid.orderedAssetIDs
         switch slot {
         case .loupe:
-            return viewMode == .loupe ? focusedAssetID : nil
+            viewMode == .loupe ? focusedAssetID : nil
         case .compareLeft:
-            return viewMode == .compare ? comparePair.panes(in: ordered).left : nil
+            viewMode == .compare ? comparePair.left : nil
         case .compareRight:
-            return viewMode == .compare ? comparePair.panes(in: ordered).right : nil
+            viewMode == .compare ? comparePair.right : nil
+        }
+    }
+
+    /// Strip focus target in compare: the most recently replaced slot's asset.
+    var compareStripFocusTargetID: MediaAssetID? {
+        switch lastReplacedComparePane ?? .right {
+        case .left:
+            comparePair.left
+        case .right:
+            comparePair.right
         }
     }
 
