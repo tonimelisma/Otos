@@ -29,22 +29,22 @@ import UniformTypeIdentifiers
 /// signposts for Instruments; telemetry must not create file-writing tasks or retain
 /// grid state on MainActor.
 ///
-/// Mouse selection is model-owned (spec 0046). `MediaGridCollectionView` (the one
-/// collection-view subclass) captures the click at `mouseDown` and does **not** call
-/// `super.mouseDown`, so AppKit's native mouse-selection tracking loop never runs and
-/// there is no commit to race. It forwards `(hit, modifiers)` to
-/// `MediaGridSelectionController.swift`, which computes the gesture against a pure
-/// `GridSelection` value (selection + anchor + base) — the single source of truth — and
-/// writes `selectionIndexPaths` from the model as the last operation of the gesture. The
-/// model is never read from `selectionIndexPaths` to *decide* a gesture;
-/// `selectionIndexPaths` is an output, read only to compute the minimal write delta and
-/// to reconcile after native keyboard selection (⌘A, ⇧-arrows). Keyboard ⇧+arrow / ⌘A
-/// stay native. Because enrichment and scans re-apply the structure frequently, each
-/// structural apply snapshots the selected identities first and restores the survivors by
-/// identity afterward, pruning the model's anchor/base the same way, so a background
-/// update never loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller
-/// through the responder chain and writes the selected assets' original file URLs to the
-/// pasteboard (ADR 0012), reading no bytes.
+/// Mouse selection is model-owned (spec 0046). The pure `GridSelection` value lives in
+/// `CatalogWindowViewModel`; this controller is a renderer. `MediaGridCollectionView`
+/// captures the click at `mouseDown` and does **not** call `super.mouseDown`, so AppKit's
+/// native mouse-selection tracking loop never runs and there is no commit to race. It
+/// forwards `(hit, modifiers)` to `MediaGridSelectionController.swift`, which calls the
+/// injected ViewModel intent synchronously, receives the updated model, and writes
+/// `selectionIndexPaths` from it as the last operation of the gesture. The model is never
+/// read from `selectionIndexPaths` to *decide* a gesture; `selectionIndexPaths` is an
+/// output, read only to compute the minimal write delta and to reconcile after native
+/// keyboard selection (⌘A, ⇧-arrows). Keyboard ⇧+arrow / ⌘A stay native. Because
+/// enrichment and scans re-apply the structure frequently, each structural apply
+/// snapshots the selected identities first and restores the survivors by identity
+/// afterward, pruning the model's anchor/base the same way, so a background update never
+/// loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller through the
+/// responder chain and writes the selected assets' original file URLs to the pasteboard
+/// (ADR 0012), reading no bytes.
 struct MediaGridBridgeView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
@@ -58,6 +58,9 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     /// through this closure, which the caller wires to the same ViewModel intent the
     /// View menu and toolbar −/+ buttons call directly.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
+    /// ViewModel-owned selection intents. The controller never stores `GridSelection`
+    /// itself — every gesture/prune/clear routes through these closures.
+    var selectionHandlers: MediaGridSelectionHandlers = .init()
 
     func makeNSViewController(context _: Context) -> MediaGridViewController {
         MediaGridViewController()
@@ -67,6 +70,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         _ controller: MediaGridViewController,
         context _: Context
     ) {
+        controller.selectionHandlers = selectionHandlers
         controller.thumbnailDirectory = thumbnailDirectory
         controller.detailReader = detailReader
         controller.stallMonitor = stallMonitor
@@ -129,12 +133,10 @@ final class MediaGridViewController: NSViewController {
     private var decodeAppliedCount = 0
     /// Test hook: pin calls during the last `reconfigureVisibleItems` pass.
     private(set) var lastReconfigurePinCallCount = 0
-    /// The model-owned mouse-selection truth (see `MediaGridSelectionController.swift`):
-    /// the selected set, the ⇧-range anchor, and the base "islands" a ⇧-range unions with.
-    /// `collectionView.selectionIndexPaths` is a render output written from
-    /// `gridSelection.selection`, never an input to a gesture computation. Ephemeral,
-    /// pruned/cleared alongside the selection — the single selection truth.
-    var gridSelection = GridSelection.empty
+    /// Injected ViewModel selection intents. The pure `GridSelection` value lives in
+    /// `CatalogWindowViewModel`; this controller only renders it into
+    /// `selectionIndexPaths` and reconciles native keyboard selection upward.
+    var selectionHandlers = MediaGridSelectionHandlers()
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.

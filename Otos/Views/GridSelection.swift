@@ -14,9 +14,11 @@ import Foundation
 /// AppKit's own commit and produced the "contracting range drops the clicked tile" and
 /// "selection remembers the old set" bugs. `GridSelection` inverts the relationship: the
 /// model is the truth, and `selectionIndexPaths` is an *output* the controller writes
-/// from `gridSelection.selection`. The controller never reads AppKit's selection to
+/// from `gridSelection.selection`. The AppKit controller never reads AppKit's selection to
 /// *decide* a gesture; it reads it only to compute the minimal write delta and to
-/// reconcile after native keyboard selection (⌘A, ⇧-arrows). Because
+/// reconcile after native keyboard selection (⌘A, ⇧-arrows). Ownership of the value lives
+/// in `CatalogWindowViewModel` so grid and filmstrip renderers share one truth across
+/// mode switches; the controller is a synchronous renderer of that value. Because
 /// `MediaGridCollectionView.mouseDown` does not call `super.mouseDown`, AppKit's native
 /// mouse-selection tracking loop never runs, so there is no competing commit to race.
 ///

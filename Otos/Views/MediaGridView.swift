@@ -15,6 +15,7 @@ struct MediaGridView: View {
     var clearFilters: () -> Void = {}
     var gridColumnCount: Int = GridColumnCount.defaultValue
     var onGridColumnCountChangeRequested: (Int) -> Void = { _ in }
+    var selectionHandlers: MediaGridSelectionHandlers = .init()
     @AppStorage("dismissedCameraConnectionBannerIdentities") private var dismissedCameraBannerIdentities = ""
 
     var body: some View {
@@ -51,7 +52,8 @@ struct MediaGridView: View {
                         stallMonitor: stallMonitor,
                         onViewportChanged: onViewportChanged,
                         columnCount: gridColumnCount,
-                        onColumnCountChangeRequested: onGridColumnCountChangeRequested
+                        onColumnCountChangeRequested: onGridColumnCountChangeRequested,
+                        selectionHandlers: selectionHandlers
                     )
                 }
             }

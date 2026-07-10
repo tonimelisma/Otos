@@ -180,18 +180,19 @@ data-driven change rather than a new rendering mechanism.
 - Missing detail rows, detail-query failures, and nil thumbnail decode results
   are information loss, not proof that a painted same-asset thumbnail should be
   cleared.
-- Native AppKit selection and responder-chain copy behavior live at this boundary
-  so SwiftUI and the ViewModel do not mirror high-cardinality selection state.
-  Mouse selection is model-owned: a pure `GridSelection` value is the single
-  selection truth, `MediaGridCollectionView.mouseDown` does not call `super.mouseDown`
-  (AppKit's native mouse-selection tracking loop never runs, so there is no commit to
-  race), and `selectionIndexPaths` is a render output written from the model — not a
-  second selection model. The prior read-AppKit-then-correct design coupled the
-  computation to AppKit's undocumented mouseDown/mouseUp commit timing and lost the
-  race; owning the model removes that class of bug. Keyboard selection (⌘A, ⇧-arrows)
-  stays native and the model reconciles from `selectionIndexPaths` afterward: when the
-  live selection differs, `base` becomes the live set (anchor unchanged) so a later
-  ⇧-click unions against the keyboard result instead of a stale pre-keyboard base.
+- Native AppKit selection rendering and responder-chain copy behavior live at this
+  boundary. Selection *truth* is a pure `GridSelection` value owned by
+  `CatalogWindowViewModel` so grid and filmstrip surfaces share one model across mode
+  switches; the AppKit controller is a synchronous renderer of that value.
+  `MediaGridCollectionView.mouseDown` does not call `super.mouseDown` (AppKit's native
+  mouse-selection tracking loop never runs, so there is no commit to race), and
+  `selectionIndexPaths` is a render output written from the model — not a second
+  selection model. The prior read-AppKit-then-correct design coupled the computation to
+  AppKit's undocumented mouseDown/mouseUp commit timing and lost the race; owning the
+  model removes that class of bug. Keyboard selection (⌘A, ⇧-arrows) stays native and
+  the model reconciles from `selectionIndexPaths` afterward: when the live selection
+  differs, `base` becomes the live set (anchor unchanged) so a later ⇧-click unions
+  against the keyboard result instead of a stale pre-keyboard base.
 - Only a click inside the tile's aspect-fit thumbnail *face* selects the tile;
   letterbox padding around a decoded thumbnail is treated as empty space (matching
   Photos). The face geometry is shared with the renderer through
@@ -207,5 +208,6 @@ data-driven change rather than a new rendering mechanism.
 - `NSDiffableDataSource.h` (macOS 27 SDK): `animatingDifferences: false` applies via
   `reloadData`; there is no `applySnapshotUsingReloadData`.
 - Implemented in `Otos/Views/MediaGrid*.swift`, `Otos/Views/MediaGrid*.swift`,
-  `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`;
+  `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`,
+  `Otos/ViewModels/CatalogWindowViewModelSelection.swift`;
   requirements APP-006/010/011/015.

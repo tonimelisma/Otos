@@ -62,9 +62,9 @@ outline) — a `.fill`-variant trio is not achievable, so the outline trio is th
 - **No double-click path exists.** `MediaGridCollectionView.mouseDown` swallows the
   gesture (no `super`), forwards `(hit, modifiers)`; `event.clickCount` is unread.
   APP-010 explicitly records "double-click activation, previews … remain absent".
-- **Selection** is a pure `GridSelection` value (selection/anchor/base) owned by the
-  AppKit `MediaGridViewController` (spec 0046), ephemeral, *not surfaced to SwiftUI*
-  (APP-011). The anchor is precisely LrC's "active photo" analog.
+- **Selection** is a pure `GridSelection` value (selection/anchor/base) owned by
+  `CatalogWindowViewModel` (APP-011); the AppKit controller renders it. The anchor is
+  precisely LrC's "active photo" analog.
 - **Thumbnails are 256 px long edge** (`ThumbnailStore.maxPixelSize`); no
   original-size decode path exists anywhere. A loupe needs a new byte-reading owner.
 - **Byte reads must gate on `FileMaterialization.status` (SF_DATALESS)**; deliberate
