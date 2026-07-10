@@ -189,6 +189,7 @@ struct MediaGridBridgeTests {
         let smallInsert = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg", "d.jpg"]).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: previous,
+            previousOrderedIDSet: Set(previous),
             nextOrderedIDs: smallInsert,
             descriptorChanged: false
         )
@@ -202,6 +203,7 @@ struct MediaGridBridgeTests {
         let reordered = [previous[2], previous[1], previous[0]]
         let small = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: previous,
+            previousOrderedIDSet: Set(previous),
             nextOrderedIDs: reordered,
             descriptorChanged: false
         )
@@ -215,6 +217,7 @@ struct MediaGridBridgeTests {
         let largeReordered = Array(largePrevious.reversed())
         let large = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: largePrevious,
+            previousOrderedIDSet: Set(largePrevious),
             nextOrderedIDs: largeReordered,
             descriptorChanged: false
         )
@@ -229,6 +232,7 @@ struct MediaGridBridgeTests {
         let reordered = [previous[2], previous[1], previous[0]]
         let policy = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: previous,
+            previousOrderedIDSet: Set(previous),
             nextOrderedIDs: reordered,
             descriptorChanged: true
         )
@@ -244,6 +248,7 @@ struct MediaGridBridgeTests {
         ).orderedAssetIDs
         let policy = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: [],
+            previousOrderedIDSet: [],
             nextOrderedIDs: largeApply,
             descriptorChanged: false
         )
@@ -273,6 +278,27 @@ struct MediaGridBridgeTests {
             orderedAssetIDs: ["a.jpg", "b.jpg"].map { makeAssetID(path: $0) }
         )
         #expect(gate.receive(sortFlip) == [.apply(sortFlip, descriptorChanged: true)])
+    }
+
+    // MARK: - Plan 0009 Part A: retained membership set
+
+    @Test func gateRetainsOrderedIDSetConsistentWithArray() {
+        let gate = MediaGridMutationGate()
+        let first = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"])
+        #expect(gate.displayedOrderedIDs.isEmpty)
+        #expect(gate.displayedOrderedIDSet.isEmpty)
+
+        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.completeStructuralApply(applied: first) == [])
+        #expect(gate.displayedOrderedIDs == first.orderedAssetIDs)
+        #expect(gate.displayedOrderedIDSet == Set(first.orderedAssetIDs))
+
+        let reordered = makeGrid(scope: .allMedia, paths: ["c.jpg", "a.jpg", "b.jpg"])
+        #expect(gate.receive(reordered) == [.apply(reordered, descriptorChanged: false)])
+        #expect(gate.completeStructuralApply(applied: reordered) == [])
+        #expect(gate.displayedOrderedIDs == reordered.orderedAssetIDs)
+        #expect(gate.displayedOrderedIDSet == Set(reordered.orderedAssetIDs))
+        #expect(gate.displayedOrderedIDSet.count == gate.displayedOrderedIDs.count)
     }
 }
 

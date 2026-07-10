@@ -13,6 +13,20 @@ nonisolated enum MediaGridAnimation {
     /// large membership applies keep the unanimated reloadData-class path.
     static let applyDuration: TimeInterval = 0.35
 
+    /// Quiet window after the last scroll-bounds tick before a move animation is
+    /// allowed. One coalesced scroll flush is 16 ms; 250 ms of quiet means the
+    /// user has plausibly stopped.
+    static let applyAnimationScrollQuietThreshold: TimeInterval = 0.25
+
+    /// During live scrolling a move animation is invisible churn; apply instantly
+    /// instead. Never downgrades `animatingDifferences` — that path is the
+    /// reloadData teardown plan 0008 removed.
+    nonisolated static func suppressesApplyAnimation(
+        lastScrollTickAge: TimeInterval
+    ) -> Bool {
+        lastScrollTickAge < applyAnimationScrollQuietThreshold
+    }
+
     /// Ease-out with a mild overshoot. AppKit's `NSAnimationContext` has no spring
     /// API (verified against the Xcode 27 beta macOS SDK: `NSAnimationContext.h`
     /// exposes only `duration` and a `CAMediaTimingFunction`); the overshoot is

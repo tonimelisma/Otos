@@ -225,6 +225,7 @@ struct MediaGridSelectionControllerTests {
             reorderOnly: false,
             largeApply: false,
             animatingDifferences: true,
+            animationSuppressed: false,
             usesReloadDataFallback: false,
             signpost: .beginState(id: .exclusive)
         )

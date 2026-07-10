@@ -99,14 +99,22 @@ padding. Images have no video badge, blue tint, or video-only backing color.
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
 insert/remove changes, and same-descriptor same-membership reorders (enrichment
 trickle), animate with a tuned duration and ease-out-with-overshoot curve
-(`MediaGridAnimation`, spec 0047), applied through an explicit
-`NSAnimationContext` group around the animated apply branch only; a
-`MediaGridAnimatedLayout` fades and shrinks only the index paths a given apply
-batch actually inserted or deleted, leaving every other appearing/disappearing
-item (scroll dequeue, a future zoom swap) — and every moved item in a move-only
-batch — at `super`'s unmodified attributes so moves animate as plain position
-changes. Descriptor-changed reorders (sort/scope/filter flips) and large
-membership applies (`n ≥ 1000`) use AppKit's reloadData-class diffable path
+(`MediaGridAnimation`), applied through an explicit
+`NSAnimationContext` group around the animated apply branch only. While scroll
+bounds have tickled within the last 250 ms, the group still calls
+`apply(animatingDifferences: true)` but sets `duration = 0` — mid-scroll move
+animations are invisible churn that feeds Core Animation commit pressure
+(plan 0009). Never downgrade to `animatingDifferences: false` for that case;
+that is the reloadData teardown path. A `MediaGridAnimatedLayout` fades and
+shrinks only the index paths a given apply batch actually inserted or deleted,
+leaving every other appearing/disappearing item (scroll dequeue, a future zoom
+swap) — and every moved item in a move-only batch — at `super`'s unmodified
+attributes so moves animate as plain position changes. Reorder-only completion
+skips `TileContentStore.prune` (membership identical by definition). The
+mutation gate retains `displayedOrderedIDSet` with `displayedOrderedIDs` so
+apply-policy summarize does not rebuild the previous-order Set every apply.
+Descriptor-changed reorders (sort/scope/filter flips) and large membership
+applies (`n ≥ 1000`) use AppKit's reloadData-class diffable path
 (`animatingDifferences: false`), completely unaffected by the animation tuning
 above. Same-descriptor reorders are structurally bounded to small mover counts
 by enrichment batch caps within one projection tick; do not add LIS/mover-count
