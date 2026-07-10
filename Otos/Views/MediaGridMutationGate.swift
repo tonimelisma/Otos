@@ -82,6 +82,10 @@ final class MediaGridMutationGate {
     }
 
     private(set) var displayedOrderedIDs: [MediaAssetID] = []
+    /// Membership set for `displayedOrderedIDs`, retained beside the array so
+    /// `MediaGridStructuralApplyPolicy.summarize` does not rebuild `Set(23k)` on
+    /// every apply. Updated only in `completeStructuralApply(applied:)`.
+    private(set) var displayedOrderedIDSet: Set<MediaAssetID> = []
     private(set) var displayedDescriptor: CatalogQueryDescriptor = .default
     /// What the installed layout currently shows.
     private(set) var installedColumnCount: Int
@@ -134,8 +138,10 @@ final class MediaGridMutationGate {
 
     /// The diffable structural apply for `grid` finished. Adopts its identities/descriptor
     /// as displayed, clears the in-flight slot, then drains any parked work.
+    /// Order array and membership set stay in lockstep — one write site only.
     func completeStructuralApply(applied grid: CatalogMediaGridState) -> [Action] {
         displayedOrderedIDs = grid.orderedAssetIDs
+        displayedOrderedIDSet = Set(grid.orderedAssetIDs)
         displayedDescriptor = grid.descriptor
         inFlight = .none
         return drain()

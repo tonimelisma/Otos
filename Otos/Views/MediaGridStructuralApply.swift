@@ -17,6 +17,7 @@ extension MediaGridViewController {
         let reorderOnly: Bool
         let largeApply: Bool
         let animatingDifferences: Bool
+        let animationSuppressed: Bool
         let usesReloadDataFallback: Bool
         let signpost: OSSignpostIntervalState
     }
@@ -32,6 +33,7 @@ extension MediaGridViewController {
         let policyStart = applyStart
         let summary = MediaGridStructuralApplyPolicy.summarize(
             previousOrderedIDs: mutationGate.displayedOrderedIDs,
+            previousOrderedIDSet: mutationGate.displayedOrderedIDSet,
             nextOrderedIDs: grid.orderedAssetIDs,
             descriptorChanged: descriptorChanged
         )
@@ -52,6 +54,10 @@ extension MediaGridViewController {
         logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
         let stallMonitor = stallMonitor
         let applyCallStart = Date()
+        let animationSuppressed = summary.animatingDifferences
+            && MediaGridAnimation.suppressesApplyAnimation(
+                lastScrollTickAge: Date().timeIntervalSince(lastScrollTickAt)
+            )
         let context = StructuralApplyCompletionContext(
             grid: grid,
             preservedSelection: preservedSelection,
@@ -66,6 +72,7 @@ extension MediaGridViewController {
             reorderOnly: summary.reorderOnly,
             largeApply: summary.largeApply,
             animatingDifferences: summary.animatingDifferences,
+            animationSuppressed: animationSuppressed,
             usesReloadDataFallback: summary.usesReloadDataFallback,
             signpost: signpost
         )
@@ -82,7 +89,12 @@ extension MediaGridViewController {
                 stallMonitor: stallMonitor
             )
         }
-        applySnapshot(snapshot, summary: summary, completion: completion)
+        applySnapshot(
+            snapshot,
+            summary: summary,
+            animationSuppressed: animationSuppressed,
+            completion: completion
+        )
     }
 
     private func logStartedStructuralApply(
@@ -106,7 +118,9 @@ extension MediaGridViewController {
     /// Animated branch (`animatingDifferences: true`): small insert/remove and
     /// same-descriptor reorder-only applies (enrichment trickle). Tuned duration/
     /// timing via an explicit `NSAnimationContext` group. Moves surviving items
-    /// instead of recreating them (ADR 0006).
+    /// instead of recreating them (ADR 0006). During live scrolling the group
+    /// keeps `animatingDifferences: true` but sets `duration = 0` so completion
+    /// semantics stay identical without feeding CA commit pressure.
     ///
     /// Unanimated branch (`false`): descriptor-changed reorders and large
     /// membership applies — AppKit's reloadData-class path. Scroll resets on
@@ -116,6 +130,7 @@ extension MediaGridViewController {
     private func applySnapshot(
         _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
         summary: MediaGridStructuralApplyPolicy,
+        animationSuppressed: Bool,
         completion: @escaping () -> Void
     ) {
         guard summary.animatingDifferences else {
@@ -123,7 +138,9 @@ extension MediaGridViewController {
             return
         }
         NSAnimationContext.beginGrouping()
-        NSAnimationContext.current.duration = MediaGridAnimation.applyDuration
+        NSAnimationContext.current.duration = animationSuppressed
+            ? 0
+            : MediaGridAnimation.applyDuration
         NSAnimationContext.current.timingFunction = MediaGridAnimation.applyTimingFunction
         dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
         NSAnimationContext.endGrouping()
@@ -150,7 +167,11 @@ extension MediaGridViewController {
         if context.resetScroll {
             scrollToTop()
         }
-        tileContents.prune(to: Set(context.grid.orderedAssetIDs))
+        // Reorder-only applies keep identical membership by definition; prune's
+        // Set(orderedAssetIDs) rebuild would be a ~27 ms no-op at 23k scale.
+        if !context.reorderOnly {
+            tileContents.prune(to: Set(context.grid.orderedAssetIDs))
+        }
         tileContents.pinVisible(Set(visibleAssetIDs()))
         let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
         reportViewport()
@@ -217,6 +238,7 @@ extension MediaGridViewController {
             reorderOnly=\(context.reorderOnly, privacy: .public) \
             largeApply=\(context.largeApply, privacy: .public) \
             animating=\(context.animatingDifferences, privacy: .public) \
+            animationSuppressed=\(context.animationSuppressed, privacy: .public) \
             reloadDataFallback=\(context.usesReloadDataFallback, privacy: .public) \
             visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
             preheatCount=\(preheatCount, privacy: .public) \
@@ -248,6 +270,7 @@ extension MediaGridViewController {
                 "reorderOnly": "\(context.reorderOnly)",
                 "largeApply": "\(context.largeApply)",
                 "animatingDifferences": "\(context.animatingDifferences)",
+                "animationSuppressed": "\(context.animationSuppressed)",
                 "reloadDataFallback": "\(context.usesReloadDataFallback)",
                 "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
                 "preheatCount": "\(preheatCount)",

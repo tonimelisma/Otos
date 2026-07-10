@@ -48,14 +48,17 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     ///   scroll resets anyway and whole-list moves hit the quadratic cliff.
     /// - Large insert/remove (`n ≥ 1000`): reloadData fallback.
     /// - Small insert/remove: animate (existing behavior).
+    ///
+    /// `previousOrderedIDSet` must match `Set(previousOrderedIDs)` — the gate retains
+    /// both so each apply does not rebuild the membership set from 23k IDs.
     static func summarize(
         previousOrderedIDs: [MediaAssetID],
+        previousOrderedIDSet: Set<MediaAssetID>,
         nextOrderedIDs: [MediaAssetID],
         descriptorChanged: Bool
     ) -> MediaGridStructuralApplyPolicy {
-        let previousIDs = Set(previousOrderedIDs)
         let retainedCount = nextOrderedIDs.reduce(into: 0) { count, id in
-            if previousIDs.contains(id) {
+            if previousOrderedIDSet.contains(id) {
                 count += 1
             }
         }

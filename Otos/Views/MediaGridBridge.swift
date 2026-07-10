@@ -115,6 +115,9 @@ final class MediaGridViewController: NSViewController {
     private var scrollWorkDirty = false
     private var scrollCoalesceTask: Task<Void, Never>?
     private var lastDetailQueryIDs: [MediaAssetID] = []
+    /// Last scroll-bounds notification time. Structural applies suppress move
+    /// animation while this is recent (`MediaGridAnimation.suppressesApplyAnimation`).
+    private(set) var lastScrollTickAt = Date.distantPast
     /// Reconfigure pin-cost counters (reset each reconfigure).
     private var reconfigurePinCallCount = 0
     private var reconfigurePinElapsed: TimeInterval = 0
@@ -179,6 +182,7 @@ final class MediaGridViewController: NSViewController {
     }
 
     @objc private func scrollBoundsChanged() {
+        lastScrollTickAt = Date()
         scrollBoundsTickCount += 1
         scrollWorkDirty = true
         scrollCoalesceTask?.cancel()
