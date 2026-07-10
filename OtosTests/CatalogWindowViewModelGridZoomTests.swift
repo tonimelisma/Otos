@@ -74,6 +74,39 @@ struct CatalogWindowViewModelGridZoomTests {
         }
         #expect(model.gridColumnCount == GridColumnCount.maximum)
     }
+
+    @Test func defaultsToSeventyTwoStripTileEdge() {
+        let model = makeViewModel(defaults: isolatedDefaults())
+        #expect(model.stripTileEdge == MediaGridPresentation.defaultStripTileEdge)
+    }
+
+    @Test func setStripTileEdgeClampsPersistsAndPublishes() {
+        let defaults = isolatedDefaults()
+        let model = makeViewModel(defaults: defaults)
+
+        model.setStripTileEdge(20)
+        #expect(model.stripTileEdge == MediaGridPresentation.minStripTileEdge)
+        #expect(
+            defaults.double(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
+                == Double(MediaGridPresentation.minStripTileEdge)
+        )
+
+        model.setStripTileEdge(400)
+        #expect(model.stripTileEdge == MediaGridPresentation.maxStripTileEdge)
+        #expect(
+            defaults.double(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
+                == Double(MediaGridPresentation.maxStripTileEdge)
+        )
+    }
+
+    @Test func setStripTileEdgeRoundTripsThroughANewViewModelInstance() {
+        let defaults = isolatedDefaults()
+        let first = makeViewModel(defaults: defaults)
+        first.setStripTileEdge(120)
+
+        let second = makeViewModel(defaults: defaults)
+        #expect(second.stripTileEdge == 120)
+    }
 }
 
 @MainActor

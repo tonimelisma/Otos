@@ -12,6 +12,8 @@ enum MediaGridPresentation: Equatable {
     case strip(tileEdge: CGFloat)
 
     static let defaultStripTileEdge: CGFloat = 72
+    static let minStripTileEdge: CGFloat = 48
+    static let maxStripTileEdge: CGFloat = 192
 
     var isStrip: Bool {
         if case .strip = self {
@@ -62,7 +64,7 @@ extension MediaGridViewController {
     /// needs no insert/remove choreography, and horizontal `scrollDirection` on the
     /// animated subclass was rejected after SIGSEGV during test teardown (plan 0053 C-P1).
     private static func makeStripLayout(tileEdge: CGFloat) -> NSCollectionViewCompositionalLayout {
-        let edge = max(48, tileEdge)
+        let edge = max(MediaGridPresentation.minStripTileEdge, tileEdge)
         let itemSize = NSCollectionLayoutSize(
             widthDimension: .absolute(edge),
             heightDimension: .absolute(edge)

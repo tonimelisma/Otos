@@ -12,6 +12,8 @@ struct LoupeView: View {
     let focusedAssetID: MediaAssetID?
     let panePreview: PanePreview?
     let isDownloading: Bool
+    let stripTileEdge: CGFloat
+    let setStripTileEdge: (CGFloat) -> Void
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
     var stallMonitor: MainRunLoopStallMonitor?
@@ -25,8 +27,12 @@ struct LoupeView: View {
         VStack(spacing: 0) {
             previewPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            FilmstripResizeHandle(
+                stripTileEdge: stripTileEdge,
+                setStripTileEdge: setStripTileEdge
+            )
             filmstrip
-                .frame(height: MediaGridPresentation.defaultStripTileEdge + 12)
+                .frame(height: stripTileEdge + 12)
         }
     }
 
@@ -69,10 +75,47 @@ struct LoupeView: View {
             stallMonitor: stallMonitor,
             onViewportChanged: onViewportChanged,
             selectionHandlers: selectionHandlers,
-            presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge),
+            presentation: .strip(tileEdge: stripTileEdge),
             onEscapeKey: onEscape,
             onArrowKey: onStripArrow,
             focusTargetID: focusedAssetID
         )
+    }
+}
+
+/// Drag the top edge of the filmstrip to resize tile edge (drag up = larger).
+struct FilmstripResizeHandle: View {
+    let stripTileEdge: CGFloat
+    let setStripTileEdge: (CGFloat) -> Void
+    @State private var dragStartEdge: CGFloat?
+
+    var body: some View {
+        Rectangle()
+            .fill(.clear)
+            .frame(height: 8)
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                if hovering {
+                    NSCursor.resizeUpDown.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if dragStartEdge == nil {
+                            dragStartEdge = stripTileEdge
+                        }
+                        guard let start = dragStartEdge else {
+                            return
+                        }
+                        setStripTileEdge(start - value.translation.height)
+                    }
+                    .onEnded { _ in
+                        dragStartEdge = nil
+                    }
+            )
+            .accessibilityLabel("Resize Filmstrip")
     }
 }

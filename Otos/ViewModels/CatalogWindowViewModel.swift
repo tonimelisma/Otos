@@ -58,6 +58,9 @@ final class CatalogWindowViewModel {
     /// property default, because its initial value depends on the injected
     /// `gridColumnCountDefaults`.
     private(set) var gridColumnCount: Int
+    /// Filmstrip square tile edge in points (48–192). Same persistence pattern as
+    /// `gridColumnCount`; loupe/compare strips read this for frame height and layout.
+    private(set) var stripTileEdge: CGFloat
     /// Ephemeral mouse-selection truth (selection, ⇧-range anchor, base islands). Owned
     /// here so grid and filmstrip renderers share one model across mode switches; mutated
     /// only through the intents in `CatalogWindowViewModelSelection.swift`. Not
@@ -158,6 +161,8 @@ final class CatalogWindowViewModel {
         self.gridColumnCountDefaults = gridColumnCountDefaults
         let storedColumns = gridColumnCountDefaults.integer(forKey: Self.gridColumnCountDefaultsKey)
         gridColumnCount = GridColumnCount.validated(storedColumns)
+        let storedStrip = gridColumnCountDefaults.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
+        stripTileEdge = Self.clampedStripTileEdge(storedStrip.map { CGFloat($0) })
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
@@ -622,6 +627,7 @@ extension CatalogWindowViewModel {
 extension CatalogWindowViewModel {
     /// Not `private`: `init` also reads this key to load the stored preference.
     static let gridColumnCountDefaultsKey = "mediaGridColumnCount"
+    static let stripTileEdgeDefaultsKey = "mediaStripTileEdge"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
     func setGridColumnCount(_ requested: Int) {
@@ -639,5 +645,25 @@ extension CatalogWindowViewModel {
 
     func zoomOutGrid() {
         setGridColumnCount(gridColumnCount + 1)
+    }
+
+    /// Clamps into 48…192, persists, and publishes; a no-op re-request does not re-persist.
+    func setStripTileEdge(_ requested: CGFloat) {
+        let clamped = Self.clampedStripTileEdge(requested)
+        guard clamped != stripTileEdge else {
+            return
+        }
+        stripTileEdge = clamped
+        gridColumnCountDefaults.set(Double(clamped), forKey: Self.stripTileEdgeDefaultsKey)
+    }
+
+    static func clampedStripTileEdge(_ requested: CGFloat?) -> CGFloat {
+        guard let requested, requested.isFinite else {
+            return MediaGridPresentation.defaultStripTileEdge
+        }
+        return min(
+            MediaGridPresentation.maxStripTileEdge,
+            max(MediaGridPresentation.minStripTileEdge, requested)
+        )
     }
 }
