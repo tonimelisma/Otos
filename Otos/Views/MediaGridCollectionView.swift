@@ -6,21 +6,17 @@ import AppKit
 /// `mouseDown(with:)` does **not** call `super.mouseDown`. AppKit's default
 /// `mouseDown` runs a mouse-tracking loop whose selection-commit timing across the mouse
 /// event sequence is not a stable, documented contract; the prior design read
-/// `selectionIndexPaths` after `super.mouseDown` to correct the result and lost the race
-/// (spec 0046). Instead this subclass finds the candidate item, confirms the click is
-/// inside the tile's aspect-fit thumbnail face (spec 0049), preserves keyboard focus (the
-/// one thing `super.mouseDown` would otherwise handle), and forwards `(hit, modifiers)` to
+/// `selectionIndexPaths` after `super.mouseDown` to correct the result and lost the race.
+/// Instead this subclass finds the candidate item, confirms the click is inside the tile's
+/// aspect-fit thumbnail face, preserves keyboard focus, and forwards `(hit, modifiers)` to
 /// the controller, which computes the gesture against its own `GridSelection` and writes
-/// `selectionIndexPaths` itself. Because AppKit's native selection tracking loop never
-/// runs, there is no competing commit to overwrite the model's write, and the
-/// mouseDown-vs-mouseUp timing is irrelevant. The grid uses neither rubber-band marquee
-/// nor drag-reorder (grep-verified), so not calling `super` loses no functionality.
-/// Programmatic `selectionIndexPaths =` / `selectItems` / `deselectItems` do not re-enter
-/// `mouseDown`, so there is no feedback loop.
+/// `selectionIndexPaths` itself.
 ///
 /// Double-click (`clickCount == 2`) on an unmodified hit forwards `onDoubleClickHit`
 /// after the selection write so loupe entry sees the updated selection. Return opens
 /// loupe from grid; Escape / arrows in strip mode are forwarded via key handlers.
+/// In strip mode vertical/extension keys and select-all are consumed so native
+/// multi-selection cannot corrupt focus/pair invariants.
 final class MediaGridCollectionView: NSCollectionView {
     /// Delivered from `mouseDown(with:)` with the item under the click location (`nil` for
     /// empty space) and the click's modifier flags. The controller wires this to
@@ -70,11 +66,29 @@ final class MediaGridCollectionView: NSCollectionView {
             case 124: // right
                 onArrowKey?(1)
                 return
+            case 125, 126: // down, up — meaningless in a single row
+                return
+            case 115, 119: // Home, End
+                return
+            case 116, 121: // PageUp, PageDown
+                return
             default:
-                break
+                // ⇧+←/→ and other extension chords: consume in strip mode.
+                if event.modifierFlags.contains(.shift)
+                    || event.modifierFlags.contains(.command)
+                {
+                    return
+                }
             }
         }
         super.keyDown(with: event)
+    }
+
+    override func selectAll(_ sender: Any?) {
+        guard !forwardsArrowKeys else {
+            return
+        }
+        super.selectAll(sender)
     }
 
     private func clickHitsThumbnailFace(_ candidate: IndexPath, event: NSEvent) -> Bool {

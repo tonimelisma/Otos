@@ -22,7 +22,7 @@ enum MediaGridPresentation: Equatable {
 }
 
 extension MediaGridViewController {
-    static func makeLayout(presentation: MediaGridPresentation) -> MediaGridAnimatedLayout {
+    static func makeLayout(presentation: MediaGridPresentation) -> NSCollectionViewLayout {
         switch presentation {
         case let .grid(columnCount):
             makeGridLayout(columnCount: columnCount)
@@ -58,7 +58,10 @@ extension MediaGridViewController {
         return MediaGridAnimatedLayout(section: section)
     }
 
-    private static func makeStripLayout(tileEdge: CGFloat) -> MediaGridAnimatedLayout {
+    /// Horizontal filmstrip: plain compositional layout (no animated subclass). The strip
+    /// needs no insert/remove choreography, and horizontal `scrollDirection` on the
+    /// animated subclass was rejected after SIGSEGV during test teardown (plan 0053 C-P1).
+    private static func makeStripLayout(tileEdge: CGFloat) -> NSCollectionViewCompositionalLayout {
         let edge = max(48, tileEdge)
         let itemSize = NSCollectionLayoutSize(
             widthDimension: .absolute(edge),
@@ -73,9 +76,12 @@ extension MediaGridViewController {
         )
         let group = NSCollectionLayoutGroup.horizontal(layoutSize: groupSize, subitems: [item])
         let section = NSCollectionLayoutSection(group: group)
-        section.orthogonalScrollingBehavior = .continuous
+        // Horizontal collection-view scrolling (not an orthogonal embedded scroller)
+        // so the controller's clip-view bounds observer drives detail queries / preheat.
         section.contentInsets = NSDirectionalEdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8)
         section.interGroupSpacing = 0
-        return MediaGridAnimatedLayout(section: section)
+        let configuration = NSCollectionViewCompositionalLayoutConfiguration()
+        configuration.scrollDirection = .horizontal
+        return NSCollectionViewCompositionalLayout(section: section, configuration: configuration)
     }
 }

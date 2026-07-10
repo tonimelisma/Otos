@@ -71,7 +71,8 @@ struct LoupeView: View {
             selectionHandlers: selectionHandlers,
             presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge),
             onEscapeKey: onEscape,
-            onArrowKey: onStripArrow
+            onArrowKey: onStripArrow,
+            focusTargetID: focusedAssetID
         )
     }
 }

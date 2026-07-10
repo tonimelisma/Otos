@@ -67,6 +67,8 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onReturnKey: () -> Void = {}
     var onEscapeKey: () -> Void = {}
     var onArrowKey: (Int) -> Void = { _ in }
+    /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
+    var focusTargetID: MediaAssetID?
 
     func makeNSViewController(context _: Context) -> MediaGridViewController {
         MediaGridViewController(presentation: presentation)
@@ -92,6 +94,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         }
         controller.receive(grid)
         controller.renderSelectionFromModel(reason: "swiftuiUpdate")
+        controller.receiveFocusTarget(focusTargetID)
     }
 }
 
@@ -135,7 +138,8 @@ final class MediaGridViewController: NSViewController {
     /// Cancels/restarts on each scroll tick; fires after the shared quiet
     /// threshold to release the mutation gate's scroll hold.
     private var scrollHoldQuietTask: Task<Void, Never>?
-    private var lastDetailQueryIDs: [MediaAssetID] = []
+    /// Test/diagnostic read of the last scroll-driven detail query identity list.
+    private(set) var lastDetailQueryIDs: [MediaAssetID] = []
     /// Last scroll-bounds notification time. Structural applies suppress move
     /// animation while this is recent (`MediaGridAnimation.suppressesApplyAnimation`).
     private(set) var lastScrollTickAt = Date.distantPast
@@ -156,6 +160,8 @@ final class MediaGridViewController: NSViewController {
     /// while this is set they must not reconcile the (by definition half-applied)
     /// live set into the model. Written only by `applySelectionDelta`.
     var isApplyingModelSelection = false
+    private var lastFocusTargetID: MediaAssetID?
+    var pendingFocusTargetID: MediaAssetID?
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.
@@ -216,6 +222,24 @@ final class MediaGridViewController: NSViewController {
         OtosLog.ui.info(
             "Media grid layout installed presentation=\(presentationDescription, privacy: .public)"
         )
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // The collection view owns keyboard input in every presentation: arrows
+        // (grid: native selection; strip: forwarded focus/pair intents), Return, Esc.
+        // Mode switches recreate the controller, so claim first responder on appear.
+        if let window = view.window {
+            window.makeFirstResponder(collectionView)
+        } else {
+            // C-P2 fallback: window can be briefly nil under NSViewControllerRepresentable.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                view.window?.makeFirstResponder(collectionView)
+            }
+        }
     }
 
     deinit {
@@ -296,6 +320,11 @@ final class MediaGridViewController: NSViewController {
         case .skipped:
             break
         }
+    }
+
+    /// Test hook: run the scroll-driven detail/preheat path immediately.
+    func flushScrollDrivenWorkNow() {
+        flushScrollDrivenWork()
     }
 
     private func flushScrollBoundsDiagnosticsIfNeeded() {
@@ -455,6 +484,40 @@ extension MediaGridViewController {
         collectionView.collectionViewLayout = Self.makeLayout(presentation: next)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
         configureScrollView()
+    }
+
+    /// Scrolls the target to center when it changes. If the item is not in the data
+    /// source yet (fresh controller before its first apply), parks it; the apply
+    /// completion retries. Never scrolls when the target is unchanged, so user
+    /// scrolling is not fought.
+    func receiveFocusTarget(_ id: MediaAssetID?) {
+        guard id != lastFocusTargetID else {
+            return
+        }
+        lastFocusTargetID = id
+        scrollToFocusTarget(id)
+    }
+
+    func scrollToFocusTarget(_ id: MediaAssetID?) {
+        guard let id else {
+            pendingFocusTargetID = nil
+            return
+        }
+        guard let path = dataSource.indexPath(for: id) else {
+            pendingFocusTargetID = id
+            return
+        }
+        // scrollToItems before the view is window-hosted leaves AppKit in a bad
+        // state on this OS; park and let the next appear/apply retry.
+        guard view.window != nil else {
+            pendingFocusTargetID = id
+            return
+        }
+        pendingFocusTargetID = nil
+        collectionView.scrollToItems(
+            at: [path],
+            scrollPosition: presentation.isStrip ? .centeredHorizontally : .centeredVertically
+        )
     }
 
     private func installScrollObserver() {
