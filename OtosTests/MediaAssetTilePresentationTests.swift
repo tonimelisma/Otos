@@ -43,16 +43,68 @@ struct MediaAssetTilePresentationTests {
         )) == "1:02:33")
     }
 
-    @Test func videoBadgeVisibilityIsVideosOnly() {
-        #expect(MediaAssetTilePresentation.showsVideoBadge(makeDetail(
-            path: "movie.mp4",
-            kind: .video
-        )))
-        #expect(!MediaAssetTilePresentation.showsVideoBadge(makeDetail(
-            path: "image.jpg",
-            kind: .image,
-            durationSeconds: 42
-        )))
+    // MARK: - Kind badge content table (plan 0009 Part E)
+
+    @Test func placeholderTilesNeverShowLowerRightBadge() {
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "movie.mp4", kind: .video, durationSeconds: 42),
+            thumbnailPainted: false
+        ) == .none)
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "shot.CR3", kind: .raw),
+            thumbnailPainted: false
+        ) == .none)
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "image.jpg", kind: .image),
+            thumbnailPainted: false
+        ) == .none)
+    }
+
+    @Test func paintedVideoWithDurationShowsCenteredDurationText() {
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "clip.mp4", kind: .video, durationSeconds: 5),
+            thumbnailPainted: true
+        ) == .durationText("0:05"))
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "long.mp4", kind: .video, durationSeconds: 5025),
+            thumbnailPainted: true
+        ) == .durationText("1:23:45"))
+    }
+
+    @Test func paintedVideoWithoutDurationShowsFilmIcon() {
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "movie.mp4", kind: .video, durationSeconds: nil),
+            thumbnailPainted: true
+        ) == .filmIcon)
+    }
+
+    @Test func paintedRawShowsRawLabel() {
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "shot.CR3", kind: .raw),
+            thumbnailPainted: true
+        ) == .rawLabel)
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "shot.NEF", kind: .raw, durationSeconds: 42),
+            thumbnailPainted: true
+        ) == .rawLabel)
+    }
+
+    @Test func paintedPlainImageShowsNoBadge() {
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "image.jpg", kind: .image),
+            thumbnailPainted: true
+        ) == .none)
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: makeDetail(path: "unknown.bin", kind: nil),
+            thumbnailPainted: true
+        ) == .none)
+    }
+
+    @Test func accessibilityLabelMatchesBadgeContent() {
+        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .durationText("0:42")) == "Video, 0:42")
+        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .filmIcon) == "Video")
+        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .rawLabel) == "RAW image")
+        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .none) == nil)
     }
 
     @Test func contentRectAspectFitsImageInsideSquareCell() {
@@ -110,42 +162,79 @@ struct MediaAssetTilePresentationTests {
     }
 
     @Test func badgeVisibilityHidesOnSmallRects() {
-        #expect(MediaAssetTilePresentation.showsVideoBadge(
+        #expect(MediaAssetTilePresentation.showsKindBadge(
             contentRect: CGRect(x: 0, y: 0, width: 80, height: 80)
         ))
-        #expect(!MediaAssetTilePresentation.showsVideoBadge(
+        #expect(!MediaAssetTilePresentation.showsKindBadge(
             contentRect: CGRect(x: 0, y: 0, width: 80, height: 50)
         ))
-        #expect(!MediaAssetTilePresentation.showsVideoBadge(
+        #expect(!MediaAssetTilePresentation.showsKindBadge(
             contentRect: CGRect(x: 0, y: 0, width: 40, height: 80)
         ))
     }
 
-    @Test func videoBadgeIsCornerAnchored() throws {
-        let frame = try #require(MediaAssetTileLayout.videoBadgeFrame(
+    @Test func kindBadgeIsCornerAnchored() throws {
+        let frame = try #require(MediaAssetTileLayout.kindBadgeFrame(
             contentBounds: CGRect(x: 0, y: 0, width: 120, height: 80),
             badgeWidth: 31
         ))
         #expect(frame == CGRect(x: 89, y: 60, width: 31, height: 20))
-        #expect(MediaAssetTileLayout.videoBadgeFrame(
+        #expect(MediaAssetTileLayout.kindBadgeFrame(
             contentBounds: CGRect(x: 0, y: 0, width: 30, height: 80),
             badgeWidth: 31
         ) == nil)
     }
 
-    @Test func durationTextIsCenteredInsideRightAnchoredBadge() throws {
-        let badgeWidth = MediaAssetTileLayout.videoBadgeWidth(durationTextWidth: 23.5)
+    @Test func badgeLabelCentersTextWhenWidthIsUnclamped() throws {
+        let textWidth: CGFloat = 23.5
+        let badgeWidth = MediaAssetTileLayout.kindBadgeWidth(textWidth: textWidth)
         #expect(badgeWidth == 34)
 
-        let badgeFrame = try #require(MediaAssetTileLayout.videoBadgeFrame(
+        let badgeFrame = try #require(MediaAssetTileLayout.kindBadgeFrame(
             contentBounds: CGRect(x: 0, y: 0, width: 120, height: 80),
             badgeWidth: badgeWidth
         ))
         #expect(badgeFrame == CGRect(x: 86, y: 60, width: 34, height: 20))
 
-        let textFrame = MediaAssetTileLayout.videoBadgeDurationFrame(badgeWidth: badgeWidth)
-        #expect(textFrame == CGRect(x: 5, y: 3, width: 24, height: 14))
+        let textFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
+            badgeWidth: badgeWidth,
+            textWidth: textWidth
+        )
+        #expect(textFrame.width == 24)
         #expect(textFrame.midX == badgeWidth / 2)
+    }
+
+    @Test func badgeLabelCentersShortTextWhenMinWidthClamps() {
+        // "0:05" is narrower than badgeMinWidth (22); label must still center.
+        let textWidth: CGFloat = 10
+        let badgeWidth = MediaAssetTileLayout.kindBadgeWidth(textWidth: textWidth)
+        #expect(badgeWidth == MediaAssetTileLayout.badgeMinWidth)
+
+        let textFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
+            badgeWidth: badgeWidth,
+            textWidth: textWidth
+        )
+        #expect(textFrame.width == 10)
+        #expect(textFrame.midX == badgeWidth / 2)
+    }
+
+    @Test func badgeLabelCentersLongDurationAndRawLabel() {
+        let longWidth: CGFloat = 48
+        let longBadge = MediaAssetTileLayout.kindBadgeWidth(textWidth: longWidth)
+        let longFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
+            badgeWidth: longBadge,
+            textWidth: longWidth
+        )
+        #expect(longFrame.midX == longBadge / 2)
+
+        let rawWidth: CGFloat = 18
+        let rawBadge = MediaAssetTileLayout.kindBadgeWidth(textWidth: rawWidth)
+        let rawFrame = MediaAssetTileLayout.kindBadgeLabelFrame(
+            badgeWidth: rawBadge,
+            textWidth: rawWidth
+        )
+        #expect(rawFrame.midX == rawBadge / 2)
+        #expect(MediaAssetTileLayout.rawLabel == "RAW")
     }
 
     @Test func imageContentKeyDistinguishesThumbnailPathStampAndSize() {
@@ -189,6 +278,7 @@ struct MediaAssetTilePresentationTests {
     @Test func placeholderIconIsFilmForVideoAndPhotoOtherwise() {
         #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .video) == "film")
         #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .image) == "photo")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .raw) == "photo")
         #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: nil) == "photo")
     }
 

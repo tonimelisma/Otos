@@ -4,13 +4,25 @@ import Foundation
 
 // Pure tile presentation guide
 //
-// These helpers keep video badge policy, thumbnail face geometry, and
+// These helpers keep kind-badge policy, thumbnail face geometry, and
 // thumbnail-load policy independent from reusable AppKit view state. The AppKit
 // tile calls into this file, and tests assert these value-level decisions directly.
+// Lower-right badges appear only after a thumbnail has painted: video duration
+// (or a film icon when duration is missing), or a RAW label for raw images.
+// Placeholder tiles never show a lower-right badge — the centered kind glyph
+// already communicates kind.
 
 struct LoadedTile {
     let image: CGImage?
     let pixelSize: CGSize?
+}
+
+/// Lower-right shaded badge content for a painted tile face.
+nonisolated enum TileBadgeContent: Equatable {
+    case none
+    case durationText(String)
+    case filmIcon
+    case rawLabel
 }
 
 nonisolated enum MediaAssetTileLayout {
@@ -25,6 +37,7 @@ nonisolated enum MediaAssetTileLayout {
     static let placeholderIconAlpha: CGFloat = 0.35
     static let placeholderIconMinSide: CGFloat = 16
     static let placeholderIconMaxSide: CGFloat = 40
+    static let rawLabel = "RAW"
 
     /// A quarter of the shorter content dimension, clamped to a legible range — big
     /// enough to read as a deliberate kind indicator on a small tile, small enough to
@@ -44,7 +57,7 @@ nonisolated enum MediaAssetTileLayout {
         )
     }
 
-    static func videoBadgeFrame(
+    static func kindBadgeFrame(
         contentBounds: CGRect,
         badgeWidth: CGFloat,
         badgeHeight: CGFloat = badgeHeight
@@ -62,21 +75,26 @@ nonisolated enum MediaAssetTileLayout {
         )
     }
 
-    static func videoBadgeWidth(durationTextWidth: CGFloat?) -> CGFloat {
-        guard let durationTextWidth else {
+    static func kindBadgeWidth(textWidth: CGFloat?) -> CGFloat {
+        guard let textWidth else {
             return badgeMinWidth
         }
         return max(
             badgeMinWidth,
-            ceil(durationTextWidth) + badgeHorizontalPadding * 2
+            ceil(textWidth) + badgeHorizontalPadding * 2
         )
     }
 
-    static func videoBadgeDurationFrame(badgeWidth: CGFloat) -> CGRect {
-        CGRect(
-            x: badgeHorizontalPadding,
+    /// Centers the measured text within the badge. When the min-width clamp wins,
+    /// the label is still centered on the actual text width rather than inset by
+    /// the fixed padding alone.
+    static func kindBadgeLabelFrame(badgeWidth: CGFloat, textWidth: CGFloat) -> CGRect {
+        let clampedTextWidth = min(max(ceil(textWidth), 0), badgeWidth)
+        let x = max((badgeWidth - clampedTextWidth) / 2, 0)
+        return CGRect(
+            x: x,
             y: badgeTextY,
-            width: max(badgeWidth - badgeHorizontalPadding * 2, 0),
+            width: clampedTextWidth,
             height: badgeTextHeight
         )
     }
@@ -87,8 +105,9 @@ enum MediaAssetTilePresentation {
         detail.bestKind == .video
     }
 
+    /// Formats known finite video duration for the lower-right badge.
     nonisolated static func videoBadgeText(_ detail: MediaTileDetail) -> String? {
-        guard showsVideoBadge(detail),
+        guard detail.bestKind == .video,
               let durationSeconds = detail.durationSeconds,
               durationSeconds.isFinite
         else {
@@ -102,15 +121,45 @@ enum MediaAssetTilePresentation {
         return duration.formatted(.time(pattern: .minuteSecond))
     }
 
-    nonisolated static func showsVideoBadge(_ detail: MediaTileDetail) -> Bool {
-        detail.bestKind == .video
+    /// Lower-right badge policy. Placeholder tiles never get a badge; painted
+    /// video shows duration or a film-icon fallback; painted raw shows `RAW`.
+    nonisolated static func badgeContent(
+        detail: MediaTileDetail,
+        thumbnailPainted: Bool
+    ) -> TileBadgeContent {
+        guard thumbnailPainted else {
+            return .none
+        }
+        switch detail.bestKind {
+        case .video:
+            if let text = videoBadgeText(detail) {
+                return .durationText(text)
+            }
+            return .filmIcon
+        case .raw:
+            return .rawLabel
+        case .image, .none:
+            return .none
+        }
     }
 
-    /// SF Symbol name for the placeholder icon (D6/D3, spec 0047): a film reel for a
-    /// known video, a photo otherwise — this covers both a known image and a not-yet-known
-    /// kind, since a generic photo glyph is a reasonable default while kind is still
-    /// unresolved. No spinner: a spinner on a merely queued tile would fabricate progress
-    /// that is not actually happening yet.
+    /// Accessibility label for the tile given badge content.
+    nonisolated static func accessibilityLabel(for content: TileBadgeContent) -> String? {
+        switch content {
+        case let .durationText(text):
+            "Video, \(text)"
+        case .filmIcon:
+            "Video"
+        case .rawLabel:
+            "RAW image"
+        case .none:
+            nil
+        }
+    }
+
+    /// SF Symbol name for the placeholder icon: a film reel for a known video, a
+    /// photo otherwise — covers both a known image and a not-yet-known kind.
+    /// No spinner: a spinner on a merely queued tile would fabricate progress.
     nonisolated static func placeholderIconSystemName(for kind: MediaKind?) -> String {
         kind == .video ? "film" : "photo"
     }
@@ -160,11 +209,12 @@ enum MediaAssetTilePresentation {
         contentRect(imagePixelSize: imagePixelSize, bounds: bounds)
     }
 
-    nonisolated static func showsVideoBadge(contentRect: CGRect) -> Bool {
+    /// Size gate for any lower-right badge content (duration, film icon, RAW).
+    nonisolated static func showsKindBadge(contentRect: CGRect) -> Bool {
         contentRect.width >= 56 && contentRect.height >= 56
     }
 
-    /// Thumbnail path plus source stamp; video-badge updates do not change image identity.
+    /// Thumbnail path plus source stamp; badge updates do not change image identity.
     nonisolated static func imageContentKey(_ detail: MediaTileDetail) -> String {
         let thumbnail = detail.thumbnailPath ?? ""
         let size = detail.enrichedSourceSize ?? -1

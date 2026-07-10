@@ -90,11 +90,15 @@ placeholder before the thumbnail is known. A dim, centered media-kind icon (film
 for a known video, photo otherwise) sits on the placeholder until a thumbnail
 paints for that tile for the first time — never a spinner or shimmer, which would
 fabricate progress that is not happening (spec 0047). Tiles do not render
-filename or relative date text. Only content whose generated best kind is video
-gets a bottom-right badge inside the face: centered duration text when
-available, otherwise a film symbol. The badge darkened area is right-aligned to
-the thumbnail face with no outer inset and symmetric internal horizontal
-padding. Images have no video badge, blue tint, or video-only backing color.
+filename or relative date text. Lower-right shaded badges appear only after a
+thumbnail has painted: video tiles show center-justified clip length when known,
+otherwise a film icon (duration extraction failed); raw image tiles show the
+word `RAW` in the same shaded style; plain images and all placeholder tiles show
+no lower-right badge (the centered placeholder glyph already communicates kind).
+The badge darkened area is right-aligned to the thumbnail face with no outer
+inset; text is centered on its measured width within the badge (including when
+the min-width clamp wins). Faces under 56 pt hide the badge. Images have no
+blue tint or video-only backing color.
 
 Apply a diffable snapshot when ordered IDs change. Small and user-visible
 insert/remove changes, and same-descriptor same-membership reorders (enrichment
