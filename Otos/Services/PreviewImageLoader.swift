@@ -5,6 +5,14 @@ import OSLog
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
+/// Preview loading boundary used by `CatalogWindowViewModel`. Production uses
+/// `PreviewImageLoader`; tests inject a controllable fake via constructor injection.
+/// Explicitly nonisolated so actor-backed loaders can conform under MainActor-default
+/// module isolation.
+nonisolated protocol PreviewLoading: Sendable {
+    func preview(for request: PreviewImageLoader.Request) async -> PreviewImageLoader.Outcome
+}
+
 /// Preview image loader guide
 ///
 /// The loupe/compare analog of `EnrichmentCoordinator`'s byte-read role, and the app's
@@ -14,10 +22,11 @@ import UniformTypeIdentifiers
 /// user has opened loupe/compare, and returns a downsampled `CGImage` (or `.downloading` /
 /// `.unavailable`).
 ///
-/// Per-id in-flight work is coalesced. A small pinned LRU holds the focus neighborhood so
-/// arrowing back does not re-decode. Stale results are rejected by the caller's generation
-/// token — this actor returns whatever it decoded; the ViewModel drops superseded gens.
-actor PreviewImageLoader {
+/// Per-id in-flight work is coalesced. A small LRU holds recent decodes; a cache hit
+/// requires `entry.longEdge >= request.targetLongEdge` so a screen-size change re-decodes
+/// instead of upscaling. Stale results are rejected by the ViewModel's expected-asset
+/// identity check — this actor returns whatever it decoded.
+actor PreviewImageLoader: PreviewLoading {
     enum Outcome {
         case image(CGImage)
         case downloading
@@ -28,12 +37,12 @@ actor PreviewImageLoader {
         let id: MediaAssetID
         let detail: MediaTileDetail?
         let targetLongEdge: Int
-        let generation: UInt64
     }
 
     private struct CacheEntry {
         let image: CGImage
         let byteCost: Int
+        let longEdge: Int
     }
 
     private let materialize: @Sendable (URL) async -> MaterializationResult
@@ -57,35 +66,26 @@ actor PreviewImageLoader {
     }
 
     /// Decodes (or materializes then decodes) a preview for `request.id`. Cached hits
-    /// return immediately. Concurrent requests for the same id share one in-flight task.
-    func preview(for request: Request) async -> (generation: UInt64, outcome: Outcome) {
-        if let cached = cache[request.id] {
+    /// return immediately when the stored long edge is large enough. Concurrent requests
+    /// for the same id share one in-flight task.
+    func preview(for request: Request) async -> Outcome {
+        if let cached = cache[request.id], cached.longEdge >= request.targetLongEdge {
             touch(request.id)
-            return (request.generation, .image(cached.image))
+            return .image(cached.image)
         }
         if let existing = inFlight[request.id] {
-            let outcome = await existing.value
-            return (request.generation, outcome)
+            return await existing.value
         }
-        let task = Task { [request] in
+        let task = Task {
             await self.decode(request)
         }
         inFlight[request.id] = task
         let outcome = await task.value
         inFlight[request.id] = nil
         if case let .image(image) = outcome {
-            insert(image, for: request.id)
+            insert(image, for: request.id, longEdge: request.targetLongEdge)
         }
-        return (request.generation, outcome)
-    }
-
-    func pin(ids: [MediaAssetID]) {
-        let keep = Set(ids)
-        cacheOrder.removeAll { !keep.contains($0) && cache[$0] != nil }
-        // Recompute bytes after unpinning non-neighbors; then evict if over budget.
-        cache = cache.filter { keep.contains($0.key) }
-        cacheBytes = cache.values.reduce(0) { $0 + $1.byteCost }
-        evictIfNeeded(keeping: keep)
+        return outcome
     }
 
     private func decode(_ request: Request) async -> Outcome {
@@ -128,11 +128,16 @@ actor PreviewImageLoader {
         let isMovie = request.detail?.bestKind == .video
             || UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true
 
-        let decoded: (CGImage, String)? = if isMovie {
-            await decodeVideoPoster(url: url, targetLongEdge: request.targetLongEdge)
-        } else {
-            decodeImage(url: url, targetLongEdge: request.targetLongEdge)
-        }
+        // Decode off the actor so two panes can decode concurrently and bookkeeping
+        // stays responsive. Dataless/materialize gates above already ran in order.
+        let target = request.targetLongEdge
+        let decoded: (CGImage, String)? = await Task.detached(priority: .userInitiated) {
+            if isMovie {
+                await Self.decodeVideoPoster(url: url, targetLongEdge: target)
+            } else {
+                Self.decodeImage(url: url, targetLongEdge: target)
+            }
+        }.value
 
         let decodeMs = DiagnosticsTiming.milliseconds(since: start)
         guard let (image, source) = decoded else {
@@ -154,7 +159,7 @@ actor PreviewImageLoader {
         return .image(image)
     }
 
-    private func decodeImage(url: URL, targetLongEdge: Int) -> (CGImage, String)? {
+    private nonisolated static func decodeImage(url: URL, targetLongEdge: Int) -> (CGImage, String)? {
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,
         ]
@@ -187,7 +192,10 @@ actor PreviewImageLoader {
         return (image, "imageio")
     }
 
-    private func decodeVideoPoster(url: URL, targetLongEdge: Int) async -> (CGImage, String)? {
+    private nonisolated static func decodeVideoPoster(
+        url: URL,
+        targetLongEdge: Int
+    ) async -> (CGImage, String)? {
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
             size: CGSize(width: targetLongEdge, height: targetLongEdge),
@@ -195,19 +203,21 @@ actor PreviewImageLoader {
             representationTypes: [.thumbnail, .lowQualityThumbnail]
         )
         do {
-            let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
+            let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(
+                for: request
+            )
             return (representation.cgImage, "quicklook")
         } catch {
             return nil
         }
     }
 
-    private func insert(_ image: CGImage, for id: MediaAssetID) {
+    private func insert(_ image: CGImage, for id: MediaAssetID, longEdge: Int) {
         let cost = image.height * image.bytesPerRow
         if let existing = cache[id] {
             cacheBytes -= existing.byteCost
         }
-        cache[id] = CacheEntry(image: image, byteCost: cost)
+        cache[id] = CacheEntry(image: image, byteCost: cost, longEdge: longEdge)
         cacheBytes += cost
         touch(id)
         evictIfNeeded(keeping: [id])

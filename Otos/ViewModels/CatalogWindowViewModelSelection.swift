@@ -65,6 +65,14 @@ extension CatalogWindowViewModel {
             return gridSelection
         }
 
+        if viewMode == .loupe, let hit, !shift, !command {
+            focusedAssetID = hit
+            gridSelection = gridSelection.plainClick(hit)
+            refreshPanePreviews()
+            return gridSelection
+        }
+        // loupe + modified click falls through: selection semantics apply, focus unchanged
+
         guard let hit else {
             if !shift, !command {
                 gridSelection = gridSelection.clearedBySpace()

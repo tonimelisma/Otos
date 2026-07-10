@@ -68,7 +68,15 @@ placeholder).
   on `FileMaterialization`.
 - Viewing a dataless original accepts its download cost (consistent with
   ADR 0008's permission for deliberate materialization).
-- Requirements APP-020 / APP-023 record loupe entry and preview decode policy.
+- Pane content is identity-keyed: `PanePreview` binds a decode to its
+  `MediaAssetID`, and the ViewModel's sole staleness guard is
+  `expectedAsset(for: slot) == id`. Generation counters are not used. A slot
+  whose expected id already matches keeps its preview across pair/focus churn;
+  a mismatched or nil expectation clears that slot and re-requests.
+- Same-session file-content staleness (original bytes change while a cache entry
+  remains) is an accepted limitation; no stamp plumbing.
+- Requirements APP-020 / APP-021 / APP-023 record loupe/compare entry and preview
+  decode policy.
 - Instrumentation: `MediaIO` signposts + `op=preview.decode` notice logs with
   `decodeMs`, `source` (imageio / embedded / quicklook), and materialization
   outcome.

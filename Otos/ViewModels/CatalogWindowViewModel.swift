@@ -68,17 +68,16 @@ final class CatalogWindowViewModel {
     /// Mutated only through view-mode intents (separate file; Swift `private(set)` is
     /// file-scoped).
     var viewMode: BrowserViewMode = .grid
-    /// Loupe (and later compare) focus identity within the current display order.
+    /// Loupe focus identity within the current display order. Compare does not retarget
+    /// this; exit-to-grid keeps it so Stage C can center the grid on return.
     var focusedAssetID: MediaAssetID?
-    /// Latest full-size preview for the focused asset; nil until the first decode lands.
-    /// The loupe paints the 256 px thumbnail underneath until this arrives (APP-015).
-    var previewImage: CGImage?
-    /// True while a deliberate materialization is in flight for the focused original.
-    var previewIsDownloading = false
     /// Symmetric compare pair (capped selection). Empty outside compare mode.
     var comparePair = ComparePair.empty
-    /// Full-size preview for the compare right pane (left uses `previewImage`).
-    var compareRightPreviewImage: CGImage?
+    /// Full-size decodes keyed by pane slot and bound to the asset they belong to.
+    /// Views render `image` only when `id` matches the pane's expected asset.
+    var panePreviews: [PaneSlot: PanePreview] = [:]
+    /// Slots currently awaiting deliberate materialization / retry.
+    var downloadingSlots: Set<PaneSlot> = []
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.
@@ -127,8 +126,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
-    @ObservationIgnored var previewGeneration: UInt64 = 0
-    @ObservationIgnored let previewLoader = PreviewImageLoader()
+    @ObservationIgnored let previewLoader: any PreviewLoading
 
     init(
         catalogStore: CatalogStore = CatalogStore(),
@@ -137,7 +135,8 @@ final class CatalogWindowViewModel {
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
-        gridColumnCountDefaults: UserDefaults = .standard
+        gridColumnCountDefaults: UserDefaults = .standard,
+        previewLoader: any PreviewLoading = PreviewImageLoader()
     ) {
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
@@ -178,6 +177,7 @@ final class CatalogWindowViewModel {
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
+        self.previewLoader = previewLoader
         self.queryStream = queryStream
         self.queryContinuation = queryContinuation
         self.mutationStream = mutationStream
