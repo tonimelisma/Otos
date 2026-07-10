@@ -122,17 +122,13 @@ struct ContentView: View {
         case .compare:
             CompareView(
                 grid: viewModel.state.mediaGrid,
-                leftID: viewModel.comparePair.panes(in: viewModel.state.mediaGrid.orderedAssetIDs).left,
-                rightID: viewModel.comparePair.panes(in: viewModel.state.mediaGrid.orderedAssetIDs).right,
+                leftID: viewModel.comparePair.left,
+                rightID: viewModel.comparePair.right,
                 leftPreview: viewModel.panePreviews[.compareLeft],
                 rightPreview: viewModel.panePreviews[.compareRight],
                 leftIsDownloading: viewModel.downloadingSlots.contains(.compareLeft),
                 rightIsDownloading: viewModel.downloadingSlots.contains(.compareRight),
-                focusTargetID: viewModel.comparePair.members.first {
-                    $0 != viewModel.comparePair.older
-                } ?? viewModel.comparePair.panes(
-                    in: viewModel.state.mediaGrid.orderedAssetIDs
-                ).left,
+                focusTargetID: viewModel.compareStripFocusTargetID,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 stallMonitor: viewModel.uiStallMonitor,

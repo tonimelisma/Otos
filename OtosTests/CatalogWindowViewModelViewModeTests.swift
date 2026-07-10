@@ -160,10 +160,11 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.panePreviews[.compareLeft]?.id == ids[0])
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
         _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
-        // FIFO: (A,B) + C → (B,C). Left becomes B; matching preview must not be cleared.
-        #expect(Set(model.comparePair.members) == Set([ids[1], ids[2]]))
+        // Positional: plain click replaces right. (A,B) + C → (A,C). Left keeps A.
+        #expect(model.comparePair.left == ids[0])
+        #expect(model.comparePair.right == ids[2])
         await model.paneRequestTasks[.compareRight]?.value
-        #expect(model.panePreviews[.compareLeft]?.id == ids[1])
+        #expect(model.panePreviews[.compareLeft]?.id == ids[0])
         #expect(model.panePreviews[.compareLeft] != nil)
     }
 
@@ -218,7 +219,7 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.focusedAssetID == expected)
     }
 
-    @Test func fifoStripClickReplacesOlderMember() async {
+    @Test func positionalClickReplacesNamedPane() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeCGImage(seed: 6)
         await fake.setDefaultOutcome(.image(image))
@@ -228,15 +229,19 @@ struct CatalogWindowViewModelViewModeTests {
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
         model.enterCompare()
-        #expect(model.comparePair.older == ids[0])
+        #expect(model.comparePair.left == ids[0])
+        #expect(model.comparePair.right == ids[1])
+        #expect(model.lastReplacedComparePane == .right)
 
         _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
-        #expect(Set(model.comparePair.members) == Set([ids[1], ids[2]]))
-        #expect(model.comparePair.older == ids[1])
+        #expect(model.comparePair.left == ids[0])
+        #expect(model.comparePair.right == ids[2])
+        #expect(model.lastReplacedComparePane == .right)
 
-        _ = model.applyGridClick(hit: ids[3], modifiers: [], orderedIDs: ids)
-        #expect(Set(model.comparePair.members) == Set([ids[2], ids[3]]))
-        #expect(model.comparePair.older == ids[2])
+        _ = model.applyGridClick(hit: ids[3], modifiers: [.command], orderedIDs: ids)
+        #expect(model.comparePair.left == ids[3])
+        #expect(model.comparePair.right == ids[2])
+        #expect(model.lastReplacedComparePane == .left)
     }
 
     @Test func rapidArrowStormKeepsFinalFocusIdentity() async throws {
