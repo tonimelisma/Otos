@@ -35,9 +35,11 @@ final class MediaAssetTileView: NSView {
     private(set) var paintedImagePixelSize: CGSize?
     private var renderedBestKind: MediaKind?
     private var renderedDetail: MediaTileDetail?
+    private var renderedFormattedDuration: String?
     private var badgeContent: TileBadgeContent = .none
     /// Last SF Symbol name assigned to `placeholderIconView`; skip re-assign when unchanged.
     private var appliedPlaceholderIconName: String?
+    private var appliedBadgeContent: TileBadgeContent = .none
 
     override var isFlipped: Bool {
         true
@@ -103,6 +105,7 @@ extension MediaAssetTileView {
         }
         renderedBestKind = content.detail.bestKind
         renderedDetail = content.detail
+        renderedFormattedDuration = content.formattedDuration
 
         if let image = content.image {
             applyImage(image, fade: change == .firstImage || change == .replacedImage)
@@ -118,15 +121,23 @@ extension MediaAssetTileView {
     private func configureBadge() {
         guard let detail = renderedDetail else {
             badgeContent = .none
-            applyBadgeContent(.none)
+            if appliedBadgeContent != .none {
+                applyBadgeContent(.none)
+                appliedBadgeContent = .none
+            }
+            setAccessibilityLabel(nil)
             return
         }
         let content = MediaAssetTilePresentation.badgeContent(
             detail: detail,
-            thumbnailPainted: paintedImagePixelSize != nil
+            thumbnailPainted: paintedImagePixelSize != nil,
+            formattedDuration: renderedFormattedDuration
         )
         badgeContent = content
-        applyBadgeContent(content)
+        if appliedBadgeContent != content {
+            applyBadgeContent(content)
+            appliedBadgeContent = content
+        }
         setAccessibilityLabel(
             MediaAssetTilePresentation.accessibilityLabel(detail: detail, badgeContent: content)
         )
@@ -171,8 +182,10 @@ extension MediaAssetTileView {
         paintedImagePixelSize = nil
         renderedBestKind = nil
         renderedDetail = nil
+        renderedFormattedDuration = nil
         badgeContent = .none
         appliedPlaceholderIconName = nil
+        appliedBadgeContent = .none
         badgeLabel.stringValue = ""
         badgeLabel.isHidden = true
         filmIconView.isHidden = true

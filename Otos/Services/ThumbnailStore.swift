@@ -174,7 +174,34 @@ nonisolated enum ThumbnailStore {
             )
             return nil
         }
-        return image
+        // Draw once into premultiplied-BGRA so CA can commit without copying
+        // each paint into an IOSurface (plan 0010 Part D).
+        return iosurfaceFriendlyImage(image) ?? image
+    }
+
+    /// Premultiplied BGRA, little-endian, device RGB — the format Core Animation
+    /// prefers for IOSurface-backed layer contents.
+    private static func iosurfaceFriendlyImage(_ image: CGImage) -> CGImage? {
+        let width = image.width
+        let height = image.height
+        guard width > 0, height > 0 else {
+            return nil
+        }
+        let bitmapInfo = CGBitmapInfo.byteOrder32Little.rawValue
+            | CGImageAlphaInfo.premultipliedFirst.rawValue
+        guard let context = CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: bitmapInfo
+        ) else {
+            return nil
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        return context.makeImage()
     }
 
     /// Deletes a thumbnail file. No-op if it is already absent.

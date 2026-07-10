@@ -171,12 +171,18 @@ extension MediaGridViewController {
         // to it, then prune to survivors. (They are normally equal — the model is the
         // truth — but reconcile defensively in case a native keyboard change happened
         // between snapshot and completion.)
-        gridSelection = gridSelection.reconcilingSelection(preserved).pruned(to: ordered)
+        let reconciled = gridSelection.reconcilingSelection(preserved)
+        gridSelection = reconciled.selection.isEmpty
+            ? GridSelection.empty
+            : reconciled.pruned(to: ordered)
         applySelectionDelta(from: selectedIdentities(), to: gridSelection.selection)
         logSelection(reason: "restore")
     }
 
     func logSelection(reason: String) {
+        guard OtosUIVerbose.enabled else {
+            return
+        }
         let count = collectionView.selectionIndexPaths.count
         OtosLog.ui.debug(
             """

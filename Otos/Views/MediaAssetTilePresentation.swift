@@ -127,14 +127,15 @@ enum MediaAssetTilePresentation {
     /// of non-thumbnail content cannot resurrect badges on broken tiles.
     nonisolated static func badgeContent(
         detail: MediaTileDetail,
-        thumbnailPainted: Bool
+        thumbnailPainted: Bool,
+        formattedDuration: String? = nil
     ) -> TileBadgeContent {
         guard thumbnailPainted, !detail.thumbnailUnavailable else {
             return .none
         }
         switch detail.bestKind {
         case .video:
-            if let text = videoBadgeText(detail) {
+            if let text = formattedDuration ?? videoBadgeText(detail) {
                 return .durationText(text)
             }
             return .filmIcon

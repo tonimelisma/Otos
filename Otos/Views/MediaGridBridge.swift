@@ -438,33 +438,46 @@ extension MediaGridViewController {
         }
 
         let queryStart = Date()
-        let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleDetailQuery")
-        OtosLog.ui.debug(
-            """
-            Media grid visible detail query started count=\(visibleIDs.count, privacy: .public) \
-            reason=\(reason, privacy: .public)
-            """
-        )
+        let verbose = OtosUIVerbose.enabled
+        let signpost = verbose
+            ? OtosSignpost.ui.beginInterval("MediaGridVisibleDetailQuery")
+            : nil
+        if verbose {
+            OtosLog.ui.debug(
+                """
+                Media grid visible detail query started count=\(visibleIDs.count, privacy: .public) \
+                reason=\(reason, privacy: .public)
+                """
+            )
+        }
         detailQueryTask = Task { [weak self, detailReader, visibleIDs] in
             let details = await detailReader.details(for: visibleIDs)
             if Task.isCancelled {
-                OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                if let signpost {
+                    OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                }
                 return
             }
             guard let self, detailQueryGeneration == generation else {
-                OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                if let signpost {
+                    OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+                }
                 return
             }
             mergeTileDetails(details, reason: reason)
-            OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
-            let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
-            OtosLog.ui.debug(
-                """
-                Media grid visible detail query finished requested=\(visibleIDs.count, privacy: .public) \
-                returned=\(details.count, privacy: .public) reason=\(reason, privacy: .public) \
-                queryMs=\(queryMs, privacy: .public)
-                """
-            )
+            if let signpost {
+                OtosSignpost.ui.endInterval("MediaGridVisibleDetailQuery", signpost)
+            }
+            if OtosUIVerbose.enabled {
+                let queryMs = DiagnosticsTiming.milliseconds(since: queryStart)
+                OtosLog.ui.debug(
+                    """
+                    Media grid visible detail query finished requested=\(visibleIDs.count, privacy: .public) \
+                    returned=\(details.count, privacy: .public) reason=\(reason, privacy: .public) \
+                    queryMs=\(queryMs, privacy: .public)
+                    """
+                )
+            }
             reconfigureVisibleItems(reason: "detailQuery")
         }
         return visibleIDs.count
@@ -498,7 +511,9 @@ extension MediaGridViewController {
         reconfigurePinElapsed += Date().timeIntervalSince(pinStart)
         reconfigurePinCallCount = 1
         lastReconfigurePinCallCount = 1
-        let signpost = OtosSignpost.ui.beginInterval("MediaGridVisibleReconfigure")
+        let reconfigureSignpost = OtosUIVerbose.enabled
+            ? OtosSignpost.ui.beginInterval("MediaGridVisibleReconfigure")
+            : nil
         var configuredCount = 0
         var thumbnailLoadsStarted = 0
         var missingAssetCount = 0
@@ -527,7 +542,9 @@ extension MediaGridViewController {
             configuredCount += 1
         }
 
-        OtosSignpost.ui.endInterval("MediaGridVisibleReconfigure", signpost)
+        if let reconfigureSignpost {
+            OtosSignpost.ui.endInterval("MediaGridVisibleReconfigure", reconfigureSignpost)
+        }
         let reconfigureMs = DiagnosticsTiming.milliseconds(since: reconfigureStart)
         let decodeStarts = decodeStartedCount - decodeStartsBefore
         let pinMs = max(0, Int((reconfigurePinElapsed * 1000).rounded()))

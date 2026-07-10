@@ -34,6 +34,12 @@ nonisolated func otosLogFields(_ fields: [String: String]) -> String {
     fields.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: " ")
 }
 
+/// Scroll-path per-flush debug chatter and signpost intervals. Summary
+/// `noticeOperation` lines stay always-on. Set `OTOS_UI_VERBOSE=1` to enable.
+nonisolated enum OtosUIVerbose {
+    static let enabled = ProcessInfo.processInfo.environment["OTOS_UI_VERBOSE"] == "1"
+}
+
 nonisolated enum OtosSignpost {
     static let app = OSSignposter(logger: OtosLog.app)
     static let ui = OSSignposter(logger: OtosLog.ui)

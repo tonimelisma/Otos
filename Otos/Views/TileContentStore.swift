@@ -24,11 +24,15 @@ nonisolated struct TileContent: Equatable {
     var detail: MediaTileDetail
     var imageKey: String
     var image: CGImage?
+    /// Cached `videoBadgeText` for the current detail; recomputed only when
+    /// duration or kind changes so bind does not re-format every pass.
+    var formattedDuration: String?
 
     static func == (lhs: TileContent, rhs: TileContent) -> Bool {
         lhs.detail == rhs.detail
             && lhs.imageKey == rhs.imageKey
             && lhs.image === rhs.image
+            && lhs.formattedDuration == rhs.formattedDuration
     }
 }
 
@@ -95,7 +99,12 @@ final class TileContentStore {
 
         guard var entry = entries[id] else {
             entries[id] = Entry(
-                content: TileContent(detail: detail, imageKey: key, image: nil),
+                content: TileContent(
+                    detail: detail,
+                    imageKey: key,
+                    image: nil,
+                    formattedDuration: MediaAssetTilePresentation.videoBadgeText(detail)
+                ),
                 accessStamp: stamp,
                 imageCost: 0
             )
@@ -107,6 +116,11 @@ final class TileContentStore {
 
         let previous = entry.content
         entry.content.detail = detail
+        if previous.detail.durationSeconds != detail.durationSeconds
+            || previous.detail.bestKind != detail.bestKind
+        {
+            entry.content.formattedDuration = MediaAssetTilePresentation.videoBadgeText(detail)
+        }
         entry.accessStamp = stamp
 
         if key == previous.imageKey {
