@@ -1,4 +1,5 @@
 import Foundation
+import MediaMetadata
 
 /// Capture-wall naming fact
 ///
@@ -46,6 +47,32 @@ nonisolated enum CaptureWallClock {
             {
                 return selection
             }
+        }
+        return nil
+    }
+
+    /// Selects from live MediaMetadata timestamps using `captureLocalComponents`
+    /// so absolute UTC wall clocks are structurally unusable for naming.
+    static func select(from timestamps: CaptureTimestamps) -> Selection? {
+        let ordered: [(String, CaptureTime?)] = [
+            ("original", timestamps.original),
+            ("digitized", timestamps.digitized),
+            ("quickTimeCreation", timestamps.quickTimeCreation),
+            ("quickTimeContentCreate", timestamps.quickTimeContentCreate),
+        ]
+        for (role, time) in ordered {
+            guard let time, let local = time.captureLocalComponents else {
+                continue
+            }
+            _ = role
+            let compact =
+                Int64(local.year) * 10_000_000_000
+                    + Int64(local.month) * 100_000_000
+                    + Int64(local.day) * 1_000_000
+                    + Int64(local.hour) * 10000
+                    + Int64(local.minute) * 100
+                    + Int64(local.second)
+            return Selection(compact: compact, precision: time.precision.rawValue)
         }
         return nil
     }
