@@ -34,6 +34,11 @@ Earlier vocabulary notes in this file include:
   work, not part of the first browsing foundation.
 - Other product ideas may be outside this note or may be added later if the user
   explicitly asks to work on planning.
+- Faster visible-tile thumbnails on cloud-synced libraries: raise
+  materialization (download) concurrency for viewport-priority enrichment.
+  Measured 2026-07-09: one visible RAW took ~50 s of OneDrive download through
+  the fixed 4-worker pool; a screenful of unenriched RAWs drains at cloud
+  speed. Needs an owner decision on bandwidth/disk tradeoffs.
 
 ## Non-Authoritative Idea Sequence
 

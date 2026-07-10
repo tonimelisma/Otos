@@ -231,6 +231,40 @@ allocation and unanimated reorder policy are unchanged — those remain plan
    completion (see spike caveat); if AppKit's completion proves unreliable
    there, the finding goes back to the owner before any workaround is designed.
 
+## Post-fix run (2026-07-09, after PRs #78–#80 / plan 0008)
+
+Instrumented scroll run: log `logs/run-20260709T235830Z-p6981-prod.log`, trace
+`build/Profiles/SwiftUI-postfix-20260709-165836.trace` (~2 min attach,
+enrichment active at ~4.9k/23,045 enriched).
+
+- Plan 0008 behaves as designed: 26/26 structural applies animated
+  (`animatingDifferences=true`, `reloadDataFallback=false`), completions fire
+  (no jammed gate), reconfigure ≤ 27 ms with `pinMs=0`,
+  `updatePlaceholderPresentation` down from 2.8 s/55 s to 0.42 s/135 s.
+- Jank persists: 95 `mainThreadStall` faults (~3 min log), 31 hangs
+  253–714 ms (120 s trace), 9 back-to-back hangs in one 8 s hard-scroll
+  stretch.
+- Residual 1 — per-apply main-actor bookkeeping, ~130–170 ms/apply at 1/s:
+  `diffPolicyMs` 27–65 (Set(23k) in `summarize`), `snapshotBuildMs` ~30,
+  `applyCallMs` ~43 (matches this doc's benchmark), `completionMs` ~27
+  (`prune`'s Set(23k)). Hashing/equality of
+  `MediaAssetID`/`LibraryRootPath`/`MediaRelativePath` totals ~1.7 s of
+  main-thread time whole-run.
+- Residual 2 — Core Animation commit pressure: 3.0 s of the 5.0 s
+  hang-window main-thread time sits under `CA::Transaction::commit`, of which
+  ~1.5 s is `mach_msg` (commit blocked on the render server) and ~0.24 s is
+  `CVPixelBuffer` → IOSurface copies of thumbnail `layer.contents`; driver is
+  scrolling concurrent with the 0.35 s move animation firing every second.
+- Visible-thumbnail latency is a separate fact: viewport prioritization works
+  (`downloadDispatched … viewport=true`), but one visible RAW took ~50 s of
+  OneDrive materialization through the 4-worker download pool before its ~1.5 s
+  enrich-and-paint. Grid is not the bottleneck; recorded as a roadmap idea.
+
+Remediation: `docs/plans/0009-grid-jank-residuals-and-tile-badges.md`
+(prune skip + retained previous-order Set; scroll-time animation suppression —
+owner-confirmed 2026-07-09 that mid-scroll animations are unnecessary;
+measured `MediaAssetID` fingerprint hashing; CA-commit/IOSurface spike).
+
 ## Sources
 
 - Local SDK headers (primary): `NSDiffableDataSource.h`, `NSCollectionView.h`,
