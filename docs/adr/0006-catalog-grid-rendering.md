@@ -17,7 +17,7 @@ AppKit rendering, structural/detail update mechanics, the no-blank invariant
 enforcement, animation and zoom, model-owned mouse selection, and the thumbnail-only
 hit area (all folded in below). Sidebar source selection and the source lifecycle
 (default/attach selection, All-Media visibility, eject) are owned by ADR 0014.
-Preview still requires a separate future ADR if implemented. Thumbnail storage is
+Loupe/compare preview decode is owned by ADR 0016. Thumbnail storage is
 owned by ADR 0009; this ADR owns how the visible grid renders and refreshes those
 thumbnail-backed values, including the invariant that a painted same-asset thumbnail
 never blanks while the asset remains on screen. Scan-time media eligibility (UTType

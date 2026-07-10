@@ -30,6 +30,15 @@ struct OtosApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("View") {
+                Button("Grid") {
+                    catalogViewModel.setViewMode(.grid)
+                }
+                .keyboardShortcut("1", modifiers: .command)
+                Button("Loupe") {
+                    catalogViewModel.setViewMode(.loupe)
+                }
+                .keyboardShortcut("2", modifiers: .command)
+                Divider()
                 Menu("Sort") {
                     CatalogSortMenuContent(
                         sort: catalogViewModel.queryDescriptor.sort,
@@ -55,12 +64,18 @@ struct OtosApp: App {
                 // "+" here would only fire on ⌘⇧=. Using "=" makes the physical ⌘= work and
                 // the menu render ⌘= honestly; the ⌘+/⌘− glyph symmetry is sacrificed (F3).
                 .keyboardShortcut("=", modifiers: .command)
-                .disabled(catalogViewModel.gridColumnCount <= GridColumnCount.minimum)
+                .disabled(
+                    catalogViewModel.viewMode != .grid
+                        || catalogViewModel.gridColumnCount <= GridColumnCount.minimum
+                )
                 Button("Zoom Out") {
                     catalogViewModel.zoomOutGrid()
                 }
                 .keyboardShortcut("-", modifiers: .command)
-                .disabled(catalogViewModel.gridColumnCount >= GridColumnCount.maximum)
+                .disabled(
+                    catalogViewModel.viewMode != .grid
+                        || catalogViewModel.gridColumnCount >= GridColumnCount.maximum
+                )
             }
         }
 

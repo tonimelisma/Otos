@@ -27,7 +27,9 @@ rebuildable projection. When they disagree, the filesystem wins.
   CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; assigns @Observable state
         │
         ▼
-  SwiftUI views  →  MediaGridBridgeView (AppKit NSCollectionView, the grid)
+  SwiftUI views  →  grid / loupe(+filmstrip) detail (mode-switched)
+                     MediaGridBridgeView (AppKit NSCollectionView; .grid or .strip)
+                     PreviewImageLoader (actor) — loupe/compare full-size decode
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a
@@ -40,7 +42,8 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `CatalogStore` | actor | SQLite, `RootRegistry`/`RootRuntimeState`, `FilesystemReconciler` (pure batch classify), `ScanLeaseController` (lease/queue bookkeeping), `CatalogQueryGateway` (read SQL/mapping), `EnrichmentLeaseGateway` (enrichment claim leases + SQL), removable-source state, change notifications, all catalog queries | serializes every mutation/query for free; a remove can be processed mid-scan safely (lease re-checked after every await); owned helpers are not second actors |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
 | `EnrichmentCoordinator` | actor | two worker pools (enrich local / download cloud), in-flight tracking, claim leases | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
+| `PreviewImageLoader` | actor | loupe/compare full-size decode, dataless materialization gate, per-id coalesce + small LRU | serializes decode/cache state; byte reads off the actor |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.
@@ -75,6 +78,7 @@ everything expensive happens on an actor off the main thread.
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
+| loupe / preview decode | `LoupeView` + `PreviewImageLoader` (ADR 0016); mode intents on `CatalogWindowViewModel` |
 
 Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main

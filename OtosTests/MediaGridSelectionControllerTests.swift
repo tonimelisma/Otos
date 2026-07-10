@@ -264,6 +264,16 @@ struct MediaGridSelectionControllerTests {
         #expect(harness.controller.gridSelection.anchor == nil)
     }
 
+    @Test func unmodifiedDoubleClickForwardsAfterSelection() throws {
+        let harness = try makeHarness(itemCount: 8)
+        var doubleClicked: MediaAssetID?
+        harness.controller.onItemDoubleClick = { doubleClicked = $0 }
+        try harness.doubleClick(harness.ids[2])
+
+        #expect(harness.selectedIDs() == [harness.ids[2]])
+        #expect(doubleClicked == harness.ids[2])
+    }
+
     @Test func modifiedClickInLetterboxIsNoOp() throws {
         let harness = try makeHarness(itemCount: 8)
         let first = harness.ids[1]
@@ -453,6 +463,22 @@ private final class GridSelectionTestHarness {
             context: nil,
             eventNumber: 0,
             clickCount: 1,
+            pressure: 1.0
+        )!
+        controller.collectionView.mouseDown(with: event)
+    }
+
+    func doubleClick(_ id: MediaAssetID) throws {
+        let point = try windowPoint(for: id)
+        let event = NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: point,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber,
+            context: nil,
+            eventNumber: 0,
+            clickCount: 2,
             pressure: 1.0
         )!
         controller.collectionView.mouseDown(with: event)
