@@ -482,7 +482,7 @@ private func singleFileScanner(_ rel: MediaRelativePath, mtime: MutableSeconds) 
                 contentModifiedAt: Date(timeIntervalSince1970: TimeInterval(seconds))
             ),
         ])
-        return [rel]
+        return .mediaOnly([rel])
     }
 }
 
@@ -499,8 +499,8 @@ private func presenceScanner(_ rel: MediaRelativePath, present: MutablePresence)
                     contentModifiedAt: Date(timeIntervalSince1970: 1000)
                 ),
             ])
-            return [rel]
+            return .mediaOnly([rel])
         }
-        return []
+        return .empty
     }
 }

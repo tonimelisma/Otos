@@ -178,7 +178,32 @@ extension CatalogStore {
             try addImportHistoryAndCaptureWallColumns(db)
             try backfillCaptureWallFromMetadataJSON(db)
         }
+        migrator.registerMigration("v7_media_companion") { db in
+            try createMediaCompanionTable(db)
+        }
         return migrator
+    }
+
+    static func createMediaCompanionTable(_ db: Database) throws {
+        try db.execute(
+            sql: """
+            CREATE TABLE media_companion (
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                primary_relative_path TEXT,
+                kind TEXT NOT NULL,
+                byte_size INTEGER,
+                content_modified_at DOUBLE,
+                PRIMARY KEY (library_root_id, relative_path),
+                FOREIGN KEY (library_root_id) REFERENCES library_root(id) ON DELETE CASCADE
+            )
+            """
+        )
+        try db.create(
+            index: "idx_media_companion_primary",
+            on: "media_companion",
+            columns: ["library_root_id", "primary_relative_path"]
+        )
     }
 
     /// Compatibility check run before any migrator write. Future or unrecognized
@@ -520,6 +545,238 @@ extension CatalogStore {
                 thumbnailPath: thumbnailPath
             )
         }
+    }
+
+    static func fetchExistingCompanionPaths(
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> Set<MediaRelativePath> {
+        try Set(
+            String.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path
+                FROM media_companion
+                WHERE library_root_id = ?
+                """,
+                arguments: [libraryRootID]
+            ).map(MediaRelativePath.init(rawValue:))
+        )
+    }
+
+    static func fetchCompanions(
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> [MediaCompanion] {
+        try Row.fetchAll(
+            db,
+            sql: """
+            SELECT relative_path, primary_relative_path, kind, byte_size, content_modified_at
+            FROM media_companion
+            WHERE library_root_id = ?
+            ORDER BY relative_path COLLATE NOCASE, relative_path
+            """,
+            arguments: [libraryRootID]
+        ).compactMap { row in
+            guard let kind = MediaCompanionKind(rawValue: row["kind"]) else {
+                return nil
+            }
+            let primary: String? = row["primary_relative_path"]
+            let modified: Double? = row["content_modified_at"]
+            return MediaCompanion(
+                relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+                primaryRelativePath: primary.map(MediaRelativePath.init(rawValue:)),
+                kind: kind,
+                byteSize: row["byte_size"],
+                contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:))
+            )
+        }
+    }
+
+    static func fetchPrimariesInDirectory(
+        libraryRootID: Int64,
+        directoryKey: String,
+        db: Database
+    ) throws -> [ScannedMediaFile] {
+        let rows = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT relative_path, name, content_type_identifier, kind, format,
+                   byte_size, created_at_unix, content_modified_at_unix
+            FROM media_asset
+            WHERE library_root_id = ?
+            """,
+            arguments: [libraryRootID]
+        )
+        return rows.compactMap { row in
+            let relativePath = MediaRelativePath(rawValue: row["relative_path"])
+            guard MediaCompanionPairing.directoryKey(of: relativePath) == directoryKey else {
+                return nil
+            }
+            let created: Double? = row["created_at_unix"]
+            let modified: Double? = row["content_modified_at_unix"]
+            let kindRaw: String? = row["kind"]
+            let formatRaw: String? = row["format"]
+            return ScannedMediaFile(
+                relativePath: relativePath,
+                name: row["name"],
+                contentTypeIdentifier: row["content_type_identifier"],
+                byteSize: row["byte_size"],
+                createdAt: created.map(Date.init(timeIntervalSince1970:)),
+                contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:)),
+                kind: kindRaw.flatMap(MediaKind.init(rawValue:)),
+                format: formatRaw.map(MediaFormatToken.init(rawValue:))
+            )
+        }
+    }
+
+    static func fetchCompanionsInDirectory(
+        libraryRootID: Int64,
+        directoryKey: String,
+        db: Database
+    ) throws -> [ScannedCompanionFile] {
+        try fetchCompanions(libraryRootID: libraryRootID, db: db)
+            .filter { MediaCompanionPairing.directoryKey(of: $0.relativePath) == directoryKey }
+            .map {
+                ScannedCompanionFile(
+                    relativePath: $0.relativePath,
+                    kind: $0.kind,
+                    byteSize: $0.byteSize,
+                    contentModifiedAt: $0.contentModifiedAt
+                )
+            }
+    }
+
+    @discardableResult
+    static func upsertCompanion(
+        _ companion: MediaCompanion,
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> Bool {
+        try db.execute(
+            sql: """
+            INSERT INTO media_companion (
+                library_root_id,
+                relative_path,
+                primary_relative_path,
+                kind,
+                byte_size,
+                content_modified_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
+                primary_relative_path = excluded.primary_relative_path,
+                kind = excluded.kind,
+                byte_size = excluded.byte_size,
+                content_modified_at = excluded.content_modified_at
+            WHERE media_companion.primary_relative_path IS NOT excluded.primary_relative_path
+               OR media_companion.kind IS NOT excluded.kind
+               OR media_companion.byte_size IS NOT excluded.byte_size
+               OR CAST(COALESCE(media_companion.content_modified_at, -1) AS INTEGER)
+                  IS NOT CAST(COALESCE(excluded.content_modified_at, -1) AS INTEGER)
+            """,
+            arguments: [
+                libraryRootID,
+                companion.relativePath.rawValue,
+                companion.primaryRelativePath?.rawValue,
+                companion.kind.rawValue,
+                companion.byteSize,
+                companion.contentModifiedAt?.timeIntervalSince1970,
+            ]
+        )
+        return db.changesCount > 0
+    }
+
+    @discardableResult
+    static func deleteCompanionRow(
+        rootRowID: Int64,
+        relativePath: MediaRelativePath,
+        db: Database
+    ) throws -> Bool {
+        try db.execute(
+            sql: """
+            DELETE FROM media_companion
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootRowID, relativePath.rawValue]
+        )
+        return db.changesCount > 0
+    }
+
+    /// Re-derives `primary_relative_path` for every companion in the directory
+    /// that contains `relativePath` (targeted FSEvents / media upsert path).
+    @discardableResult
+    static func repairCompanionsInDirectory(
+        of relativePath: MediaRelativePath,
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> Bool {
+        let directoryKey = MediaCompanionPairing.directoryKey(of: relativePath)
+        let primaries = try fetchPrimariesInDirectory(
+            libraryRootID: libraryRootID,
+            directoryKey: directoryKey,
+            db: db
+        )
+        let companions = try fetchCompanionsInDirectory(
+            libraryRootID: libraryRootID,
+            directoryKey: directoryKey,
+            db: db
+        )
+        guard !companions.isEmpty else {
+            return false
+        }
+        let paired = MediaCompanionPairing.pair(companions: companions, primaries: primaries)
+        var changed = false
+        for companion in paired {
+            if try upsertCompanion(companion, libraryRootID: libraryRootID, db: db) {
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    static func applyScannedCompanions(
+        _ companions: [ScannedCompanionFile],
+        libraryRootID: Int64,
+        db: Database
+    ) throws -> Int {
+        var changedCount = 0
+        let byDirectory = Dictionary(grouping: companions) {
+            MediaCompanionPairing.directoryKey(of: $0.relativePath)
+        }
+        for (directoryKey, directoryCompanions) in byDirectory {
+            let primaries = try fetchPrimariesInDirectory(
+                libraryRootID: libraryRootID,
+                directoryKey: directoryKey,
+                db: db
+            )
+            let paired = MediaCompanionPairing.pair(
+                companions: directoryCompanions,
+                primaries: primaries
+            )
+            for companion in paired {
+                if try upsertCompanion(companion, libraryRootID: libraryRootID, db: db) {
+                    changedCount += 1
+                }
+            }
+        }
+        return changedCount
+    }
+
+    static func reconcileMissingCompanions(
+        libraryRootID: Int64,
+        observedPaths: Set<MediaRelativePath>,
+        db: Database
+    ) throws -> Int {
+        let existing = try fetchExistingCompanionPaths(libraryRootID: libraryRootID, db: db)
+        let missing = existing.subtracting(observedPaths)
+        var deleted = 0
+        for path in missing {
+            if try deleteCompanionRow(rootRowID: libraryRootID, relativePath: path, db: db) {
+                deleted += 1
+            }
+        }
+        return deleted
     }
 
     static func upsertScannedFile(

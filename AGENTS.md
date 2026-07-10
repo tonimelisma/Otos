@@ -37,7 +37,9 @@ architecture. Read those for detail; this file is how to work here.
   stores are a subordinate, rebuildable projection; when they disagree, the
   filesystem wins and the catalog reconciles.
 - Otos never takes media hostage: no opaque app-owned vault, and it never writes
-  into the user's media folders, including no sidecar files. It changes the user's
+  into the user's media folders. It does not generate sidecar files for identity
+  or authored overlay. It may inventory and, during explicit import/reorganization,
+  transfer existing user-owned useful companions (`.xmp` / `.srt`). It changes the user's
   files only through explicit, opt-in, user-initiated actions; the default is that
   nothing on disk changes.
 - Overlay has one lifecycle. Every overlay Otos holds for an item is kept as long

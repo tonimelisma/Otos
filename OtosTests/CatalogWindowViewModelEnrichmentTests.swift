@@ -127,7 +127,7 @@ private func fixedOneFileScanner(_ name: String) -> CatalogScanner {
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
         ])
-        return [MediaRelativePath(rawValue: name)]
+        return .mediaOnly([MediaRelativePath(rawValue: name)])
     }
 }
 

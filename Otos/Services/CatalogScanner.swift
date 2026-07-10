@@ -6,23 +6,27 @@ import UniformTypeIdentifiers
 ///
 /// The scanner performs one read-only, idempotent filesystem observation. It
 /// enumerates regular files, applies structural and media-eligibility filters,
-/// collects only the approved URL resource values, and flushes observed facts on a
-/// time cadence through the Store-owned batch callback. It never decides
-/// persistence, deletion, or UI state.
+/// collects only the approved URL resource values, and flushes observed media
+/// facts on a time cadence through the Store-owned batch callback. Recognized
+/// companions (`.xmp` / `.srt`) are collected during the same walk and returned
+/// in the completed observation so Store can pair and reconcile them without a
+/// second enumerator. It never decides persistence, deletion, or UI state.
 ///
 /// Media eligibility: after structural guards, only regular files whose
 /// `contentTypeKey` conforms to `UTType.image` or `UTType.movie` become observed
-/// scan results. Nil or other types are skipped without failing the scan. Hidden
-/// files, AppleDouble files, package descendants, symlinks, Spotlight/trash folders,
-/// and common camera helper paths are structural exclusions before media eligibility
-/// is considered. See ADR 0002 and `MediaEligibility`.
+/// media. Recognized companions are inventoried separately and never enter media
+/// queries or enrichment. Nil or other types are skipped without failing the
+/// scan. Hidden files, AppleDouble files, package descendants, symlinks,
+/// Spotlight/trash folders, and common camera helper paths are structural
+/// exclusions before media eligibility is considered. See ADR 0002 and
+/// `MediaEligibility`.
 ///
 /// Why metadata only and never file bytes: most media lives in cloud-synced folders
 /// as dataless placeholders. Reading a file's resource values (name, size, dates,
 /// type) is free, but reading its bytes would force the provider to download it,
 /// potentially gigabytes. The scanner reads facts, never content.
 ///
-/// A returned path set proves the completed observation used for reconciliation.
+/// A returned observation proves the completed walk used for reconciliation.
 /// Cancellation or any filesystem issue prevents that success return, so Store
 /// preserves earlier rows. Package descendants and symlinks are skipped before
 /// they can expand traversal beyond the regular-file catalog contract. Full scans
@@ -33,7 +37,7 @@ nonisolated struct CatalogScanner {
         _ rootPath: LibraryRootPath,
         _ cadence: Duration,
         _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
-    ) async throws -> Set<MediaRelativePath>
+    ) async throws -> CatalogScanObservation
 
     static let live = CatalogScanner { rootPath, cadence, batchHandler in
         try await LiveCatalogScanner.scan(
@@ -83,6 +87,7 @@ private nonisolated enum LiveCatalogScanner {
 
     private struct ScanState {
         var pending: [ScannedMediaFile] = []
+        var companions: [ScannedCompanionFile] = []
         var observedPaths = Set<MediaRelativePath>()
         var filesystemIssueCount = 0
         var filesystemIssueBuckets: [ScanIssueKey: ScanIssueBucket] = [:]
@@ -135,7 +140,7 @@ private nonisolated enum LiveCatalogScanner {
         rootPath: LibraryRootPath,
         cadence: Duration,
         batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
-    ) async throws -> Set<MediaRelativePath> {
+    ) async throws -> CatalogScanObservation {
         let rootURL = rootPath.url
         var scanState = ScanState()
         let clock = ContinuousClock()
@@ -193,7 +198,7 @@ private nonisolated enum LiveCatalogScanner {
         scanState: inout ScanState,
         rootPath: LibraryRootPath,
         batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
-    ) async throws -> Set<MediaRelativePath> {
+    ) async throws -> CatalogScanObservation {
         try await flush(&scanState.pending, batchHandler: batchHandler)
         await recordSkippedPackages(scanState.skippedPackages, rootPath: rootPath)
         await recordSkippedNonMedia(
@@ -209,7 +214,11 @@ private nonisolated enum LiveCatalogScanner {
                 summaries: summaries
             )
         }
-        return scanState.observedPaths
+        return CatalogScanObservation(
+            mediaPaths: scanState.observedPaths,
+            companions: scanState.companions,
+            skippedPackageCount: scanState.skippedPackages.count
+        )
     }
 
     private static func scanFileURL(
@@ -219,7 +228,7 @@ private nonisolated enum LiveCatalogScanner {
         scanState: inout ScanState
     ) {
         do {
-            guard let file = try scannedFile(
+            guard let item = try observedItem(
                 fileURL: fileURL,
                 rootPath: rootPath,
                 enumerator: enumerator,
@@ -227,8 +236,13 @@ private nonisolated enum LiveCatalogScanner {
             ) else {
                 return
             }
-            scanState.pending.append(file)
-            scanState.observedPaths.insert(file.relativePath)
+            switch item {
+            case let .media(file):
+                scanState.pending.append(file)
+                scanState.observedPaths.insert(file.relativePath)
+            case let .companion(companion):
+                scanState.companions.append(companion)
+            }
         } catch {
             scanState.recordIssue(
                 kind: "resource",
@@ -250,12 +264,12 @@ private nonisolated enum LiveCatalogScanner {
         return "\(typeName)(domain:\(nsError.domain),code:\(nsError.code))"
     }
 
-    private static func scannedFile(
+    private static func observedItem(
         fileURL: URL,
         rootPath: LibraryRootPath,
         enumerator: FileManager.DirectoryEnumerator,
         scanState: inout ScanState
-    ) throws -> ScannedMediaFile? {
+    ) throws -> CatalogScannedFileReader.ObservedItem? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
         if values.isHidden == true {
             if values.isDirectory == true {
@@ -295,13 +309,30 @@ private nonisolated enum LiveCatalogScanner {
         { // swiftlint:disable:this opening_brace
             return nil
         }
-        if values.isRegularFile == true,
-           !MediaEligibility.isCatalogMedia(contentType: values.contentType)
-        { // swiftlint:disable:this opening_brace
-            scanState.skippedNonMediaCount += 1
+        if values.isRegularFile == true {
+            if let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL),
+               let kind = MediaCompanionKind.recognize(
+                   fileExtension: URL(fileURLWithPath: relativePath.rawValue).pathExtension
+               )
+            {
+                return .companion(
+                    ScannedCompanionFile(
+                        relativePath: relativePath,
+                        kind: kind,
+                        byteSize: values.fileSize.map(Int64.init),
+                        contentModifiedAt: values.contentModificationDate
+                    )
+                )
+            }
+            if !MediaEligibility.isCatalogMedia(contentType: values.contentType) {
+                scanState.skippedNonMediaCount += 1
+                return nil
+            }
+        }
+        guard let file = try CatalogScannedFileReader.scannedFile(fileURL: fileURL, rootPath: rootPath) else {
             return nil
         }
-        return try CatalogScannedFileReader.scannedFile(fileURL: fileURL, rootPath: rootPath)
+        return .media(file)
     }
 
     private static func flush(
@@ -343,6 +374,12 @@ private extension LiveCatalogScanner {
             )
             OtosLog.catalog.notice(
                 "op=catalog.scan.skippedPackage phase=skip \(otosLogFields(fields), privacy: .public)"
+            )
+        }
+        if !skippedPackages.isEmpty {
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.scan.skippedPackageCount phase=summary rootPath=\(rootPath.rawValue, privacy: .public) count=\(skippedPackages.count, privacy: .public)"
             )
         }
     }

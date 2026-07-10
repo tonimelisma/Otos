@@ -69,7 +69,7 @@ private final class WindowStateObserver {
 func fixedViewModelSelectionScanner(filesByRoot: [LibraryRootPath: String]) -> CatalogScanner {
     CatalogScanner { rootPath, _, batchHandler in
         guard let fileName = filesByRoot[rootPath] else {
-            return []
+            return .empty
         }
         let relativePath = MediaRelativePath(rawValue: fileName)
         try await batchHandler([
@@ -82,6 +82,6 @@ func fixedViewModelSelectionScanner(filesByRoot: [LibraryRootPath: String]) -> C
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
         ])
-        return [relativePath]
+        return .mediaOnly([relativePath])
     }
 }

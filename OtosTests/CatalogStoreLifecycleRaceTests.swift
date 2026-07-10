@@ -8,7 +8,7 @@ struct CatalogStoreLifecycleRaceTests {
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let gate = InitialLoadGate()
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,
@@ -47,7 +47,7 @@ struct CatalogStoreLifecycleRaceTests {
         try FileManager.default.createDirectory(at: savedRoot, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: addedRoot, withIntermediateDirectories: true)
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
-        let emptyScanner = CatalogScanner { _, _, _ in [] }
+        let emptyScanner = CatalogScanner { _, _, _ in .empty }
 
         let firstStore = CatalogStore(
             location: .databaseFile(databaseURL),
@@ -60,7 +60,7 @@ struct CatalogStoreLifecycleRaceTests {
         let recorder = ScanInvocationRecorder()
         let recordingScanner = CatalogScanner { rootPath, _, _ in
             await recorder.record(rootPath)
-            return []
+            return .empty
         }
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),
@@ -102,7 +102,7 @@ struct CatalogStoreLifecycleRaceTests {
             // back late. Store ownership, not scanner cooperation, protects the
             // replacement root.
             try? await batchHandler([file])
-            return [file.relativePath]
+            return .mediaOnly([file.relativePath])
         }
         let store = CatalogStore(
             location: .inMemory,

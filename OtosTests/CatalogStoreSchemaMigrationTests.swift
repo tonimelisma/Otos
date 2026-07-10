@@ -429,6 +429,10 @@ private extension CatalogStoreSchemaMigrationTests {
         try CatalogStore.migrator.migrate(dbQueue)
         try dbQueue.writeWithoutTransaction { db in
             try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [
+                "v7_media_companion",
+            ])
+            try db.execute(sql: "DROP TABLE IF EXISTS media_companion")
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [
                 "v6_import_history_and_capture_wall",
             ])
             try db.execute(sql: "DROP INDEX IF EXISTS idx_media_asset_import_batch")

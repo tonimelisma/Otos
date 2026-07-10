@@ -14,6 +14,14 @@ nonisolated enum MediaEligibility {
         "avf_info",
     ]
 
+    /// Device-artifact and trash directory names ignored for all roots (inventory
+    /// only — never deletions). Matches gomediaimport's ignore set plus existing
+    /// Spotlight/trash exclusions.
+    private static let ignoredTrashDirectoryPrefixes: [String] = [
+        ".trash-",
+        "$recycle.bin",
+    ]
+
     static func isCatalogMedia(contentType: UTType?) -> Bool {
         MediaKind.classify(contentType) != nil
     }
@@ -38,7 +46,11 @@ nonisolated enum MediaEligibility {
         else {
             return false
         }
-        return ignoredDirectoryNames.contains(normalizedName)
+        if ignoredDirectoryNames.contains(normalizedName) {
+            return true
+        }
+        return ignoredTrashDirectoryPrefixes.contains { normalizedName.hasPrefix($0) }
+            || normalizedName == "$recycle.bin"
     }
 
     static func shouldSkipRelativePath(_ relativePath: MediaRelativePath) -> Bool {
@@ -54,8 +66,31 @@ nonisolated enum MediaEligibility {
         if components.contains(where: { ignoredDirectoryNames.contains(String($0)) }) {
             return true
         }
-        return zip(components, components.dropFirst()).contains { parent, child in
-            parent == "m4root" && child == "sub"
+        if components.contains(where: { name in
+            ignoredTrashDirectoryPrefixes.contains { name.hasPrefix($0) } || name == "$recycle.bin"
+        }) {
+            return true
         }
+        // Sony camcorder artifact trees: M4ROOT/SUB (existing), M4ROOT/THMBNL,
+        // and M4ROOT/CLIP/*.xml (XML clip metadata — not catalog media).
+        if zip(components, components.dropFirst()).contains(where: { parent, child in
+            parent == "m4root" && (child == "sub" || child == "thmbnl")
+        }) {
+            return true
+        }
+        if components.count >= 3,
+           components[components.count - 3] == "m4root",
+           components[components.count - 2] == "clip",
+           components.last?.hasSuffix(".xml") == true
+        {
+            return true
+        }
+        return false
+    }
+
+    /// Recognized useful companions are inventoried separately from catalog media.
+    static func isRecognizedCompanion(relativePath: MediaRelativePath) -> Bool {
+        let ext = URL(fileURLWithPath: relativePath.rawValue).pathExtension
+        return MediaCompanionKind.recognize(fileExtension: ext) != nil
     }
 }

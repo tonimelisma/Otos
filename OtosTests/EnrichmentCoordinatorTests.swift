@@ -344,7 +344,7 @@ func fixedScanner(_ files: [(relativeName: String, byteSize: Int64)]) -> Catalog
             )
         }
         try await batchHandler(scanned)
-        return Set(files.map { MediaRelativePath(rawValue: $0.relativeName) })
+        return .mediaOnly(Set(files.map { MediaRelativePath(rawValue: $0.relativeName) }))
     }
 }
 

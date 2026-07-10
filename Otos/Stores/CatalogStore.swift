@@ -324,6 +324,21 @@ extension CatalogStore {
         }
     }
 
+    /// Companions inventoried under a root. Never appear in media queries.
+    func companions(in rootPath: LibraryRootPath) async throws -> [MediaCompanion] {
+        guard let rootRowID = roots[rootPath]?.rowID else {
+            return []
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Self.fetchCompanions(libraryRootID: rootRowID, db: db)
+        }
+    }
+
+    func skippedPackageCount(for rootPath: LibraryRootPath) -> Int {
+        roots[rootPath]?.skippedPackageCount ?? 0
+    }
+
     func orderedAssetIDs(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
@@ -1311,7 +1326,8 @@ extension CatalogStore {
             rowID: rootRowID,
             availability: previous?.availability ?? .unknown,
             activity: previous?.activity ?? .idle,
-            isEjectable: previous?.isEjectable ?? false
+            isEjectable: previous?.isEjectable ?? false,
+            skippedPackageCount: previous?.skippedPackageCount ?? 0
         ))
     }
 
@@ -1524,7 +1540,8 @@ extension CatalogStore {
 
     func completeDeviceCatalogEnumeration(
         scan: ActiveScan,
-        observedPaths: Set<MediaRelativePath>
+        observedPaths: Set<MediaRelativePath>,
+        companions: [MediaCompanion] = []
     ) async throws {
         guard owns(scan),
               roots[scan.rootPath]?.root.kind == .deviceMTP,
@@ -1537,6 +1554,21 @@ extension CatalogStore {
                 scan: scan,
                 observedPaths: observedPaths
             )
+            let dbQueue = try database()
+            _ = try await timedWrite(dbQueue) { db in
+                var changed = 0
+                for companion in companions {
+                    if try Self.upsertCompanion(companion, libraryRootID: scan.rootRowID, db: db) {
+                        changed += 1
+                    }
+                }
+                changed += try Self.reconcileMissingCompanions(
+                    libraryRootID: scan.rootRowID,
+                    observedPaths: Set(companions.map(\.relativePath)),
+                    db: db
+                )
+                return changed
+            }
         } catch {
             OtosLog.catalog.error(
                 "Device catalog reconciliation failed error=\(String(describing: error), privacy: .public)"
@@ -2026,10 +2058,10 @@ private extension CatalogStore {
             // `ActiveScan` lease before mutating actor state.
             currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence] in
                 do {
-                    let observedPaths = try await scanner.scanRoot(nextPath, scanCadence) { batch in
+                    let observation = try await scanner.scanRoot(nextPath, scanCadence) { batch in
                         try await self.recordScannedBatch(batch, scan: scan)
                     }
-                    await self.scanCompleted(scan: scan, observedPaths: observedPaths)
+                    await self.scanCompleted(scan: scan, observation: observation)
                 } catch is CancellationError {
                     await self.scanCancelled(scan: scan)
                 } catch {
@@ -2111,7 +2143,7 @@ private extension CatalogStore {
         )
     }
 
-    private func scanCompleted(scan: ActiveScan, observedPaths: Set<MediaRelativePath>) async {
+    private func scanCompleted(scan: ActiveScan, observation: CatalogScanObservation) async {
         guard owns(scan) else {
             await recordIgnoredStaleCallback(scan, callback: "completion")
             return
@@ -2120,17 +2152,31 @@ private extension CatalogStore {
         do {
             let deletedCount = try await reconcileMissingAssets(
                 scan: scan,
-                observedPaths: observedPaths
+                observedPaths: observation.mediaPaths
             )
+            let companionChanged = try await applyAndReconcileCompanions(
+                scan: scan,
+                companions: observation.companions
+            )
+            if var state = roots[scan.rootPath] {
+                state.skippedPackageCount = observation.skippedPackageCount
+                upsert(state)
+            }
+            if companionChanged || observation.skippedPackageCount > 0 {
+                notifyCatalogChanged()
+            }
             OtosLog.catalog.info(
                 """
                 Catalog scan completed path=\(scan.rootPath.rawValue, privacy: .public) \
-                observed=\(observedPaths.count, privacy: .public) deleted=\(deletedCount, privacy: .public)
+                observed=\(observation.mediaPaths.count, privacy: .public) \
+                companions=\(observation.companions.count, privacy: .public) \
+                deleted=\(deletedCount, privacy: .public) \
+                skippedPackages=\(observation.skippedPackageCount, privacy: .public)
                 """
             )
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
-                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observedPaths.count, privacy: .public) deleted=\(deletedCount, privacy: .public)"
+                "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
             )
         } catch is CancellationError {
             await recordIgnoredStaleCallback(scan, callback: "reconciliation")
@@ -2149,6 +2195,33 @@ private extension CatalogStore {
         }
 
         clearCurrentScan(scan, armFilesystemWatching: true)
+    }
+
+    private func applyAndReconcileCompanions(
+        scan: ActiveScan,
+        companions: [ScannedCompanionFile]
+    ) async throws -> Bool {
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        let dbQueue = try database()
+        let timed = try await timedWrite(dbQueue) { db in
+            let upserted = try Self.applyScannedCompanions(
+                companions,
+                libraryRootID: scan.rootRowID,
+                db: db
+            )
+            let deleted = try Self.reconcileMissingCompanions(
+                libraryRootID: scan.rootRowID,
+                observedPaths: Set(companions.map(\.relativePath)),
+                db: db
+            )
+            return upserted + deleted
+        }
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        return timed.value > 0
     }
 
     /// Reconciliation changes durable membership as one actor-owned operation.
@@ -2541,7 +2614,7 @@ private extension CatalogStore {
             return false
         }
 
-        return await deleteCatalogedFile(relativePath: relativePath, rootRowID: rootRowID)
+        return await deleteCatalogedPath(relativePath: relativePath, rootRowID: rootRowID)
     }
 
     private func reconcileUpsertedFile(
@@ -2553,17 +2626,17 @@ private extension CatalogStore {
         guard FileManager.default.fileExists(atPath: absolutePath) else {
             return false
         }
-        let scannedFile: ScannedMediaFile?
+        let observed: CatalogScannedFileReader.ObservedItem?
         do {
-            scannedFile = try CatalogScannedFileReader.scannedFile(fileURL: fileURL, rootPath: root)
+            observed = try CatalogScannedFileReader.observedItem(fileURL: fileURL, rootPath: root)
         } catch {
             return false
         }
-        guard let scannedFile else {
+        guard let observed else {
             guard let relativePath = CatalogPath.relativePath(rootPath: root, fileURL: fileURL) else {
                 return false
             }
-            return await deleteCatalogedFile(relativePath: relativePath, rootRowID: rootRowID)
+            return await deleteCatalogedPath(relativePath: relativePath, rootRowID: rootRowID)
         }
 
         let dbQueue: (any DatabaseWriter)?
@@ -2578,33 +2651,84 @@ private extension CatalogStore {
 
         do {
             return try await dbQueue.write { db in
-                try Self.upsertScannedFile(
-                    scannedFile,
-                    libraryRootPath: root,
-                    libraryRootID: rootRowID,
-                    db: db
-                )
+                switch observed {
+                case let .media(scannedFile):
+                    // A path that was a companion and became media must leave the
+                    // companion table so identity stays exclusive.
+                    _ = try Self.deleteCompanionRow(
+                        rootRowID: rootRowID,
+                        relativePath: scannedFile.relativePath,
+                        db: db
+                    )
+                    let mediaChanged = try Self.upsertScannedFile(
+                        scannedFile,
+                        libraryRootPath: root,
+                        libraryRootID: rootRowID,
+                        db: db
+                    )
+                    let pairingChanged = try Self.repairCompanionsInDirectory(
+                        of: scannedFile.relativePath,
+                        libraryRootID: rootRowID,
+                        db: db
+                    )
+                    return mediaChanged || pairingChanged
+                case let .companion(companion):
+                    // A path that was media and became a companion must leave media.
+                    let mediaDeleted = try Self.deleteAssetRow(
+                        rootRowID: rootRowID,
+                        relativePath: companion.relativePath,
+                        db: db
+                    )
+                    let directoryKey = MediaCompanionPairing.directoryKey(of: companion.relativePath)
+                    let primaries = try Self.fetchPrimariesInDirectory(
+                        libraryRootID: rootRowID,
+                        directoryKey: directoryKey,
+                        db: db
+                    )
+                    let paired = MediaCompanionPairing.pair(
+                        companions: [companion],
+                        primaries: primaries
+                    )
+                    var companionChanged = false
+                    for item in paired {
+                        if try Self.upsertCompanion(item, libraryRootID: rootRowID, db: db) {
+                            companionChanged = true
+                        }
+                    }
+                    return mediaDeleted || companionChanged
+                }
             }
         } catch {
             return false
         }
     }
 
-    private func deleteCatalogedFile(relativePath: MediaRelativePath, rootRowID: Int64) async -> Bool {
+    private func deleteCatalogedPath(relativePath: MediaRelativePath, rootRowID: Int64) async -> Bool {
         guard let dbQueue = try? database() else {
             return false
         }
 
-        let deletionTarget: CatalogedFileDeletionTarget
+        let deletionTarget: CatalogedFileDeletionTarget?
         do {
-            guard let target = try await dbQueue.read({ db in
+            deletionTarget = try await dbQueue.read { db in
                 try Self.catalogedFileDeletionTarget(relativePath: relativePath, rootRowID: rootRowID, db: db)
-            }) else {
-                return false
             }
-            deletionTarget = target
-            let deleted = try await dbQueue.write { db in
-                try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db)
+            let deleted = try await dbQueue.write { db -> Bool in
+                var changed = false
+                if try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
+                    changed = true
+                }
+                if try Self.deleteCompanionRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
+                    changed = true
+                }
+                if try Self.repairCompanionsInDirectory(
+                    of: relativePath,
+                    libraryRootID: rootRowID,
+                    db: db
+                ) {
+                    changed = true
+                }
+                return changed
             }
             guard deleted else {
                 return false
@@ -2613,7 +2737,7 @@ private extension CatalogStore {
             return false
         }
 
-        if let thumbnailPath = deletionTarget.thumbnailPath, let thumbnailDirectory {
+        if let thumbnailPath = deletionTarget?.thumbnailPath, let thumbnailDirectory {
             ThumbnailStore.delete(thumbnailPath, in: thumbnailDirectory)
         }
         return true

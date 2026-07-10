@@ -56,8 +56,10 @@ Captured owner guidance for verification:
   durable filesystem identifiers, or generated UUIDs. Out-of-app moves are an edge
   case; a future convenience could detect them by matching thumbnails, but that is
   not a foundation.
-- No sidecars. Do not pollute the user's media folders. The catalog can be made
-  exportable if portability is ever needed.
+- No generated sidecars. Do not pollute the user's media folders with Otos-authored
+  identity or overlay files. Existing user-owned useful companions (`.xmp` / `.srt`)
+  may be inventoried and transferred during explicit import/reorganization. The
+  catalog can be made exportable if portability is ever needed.
 - Persisting one thumbnail per asset is acceptable even at a million assets;
   regenerating thumbnails is expensive precisely because most originals are in the
   cloud, so thumbnails are kept, not evicted.
@@ -69,7 +71,9 @@ This ADR owns:
 - The product contract that the filesystem is the single source of truth and the
   catalog plus all overlay is a subordinate, rebuildable projection.
 - The no-hostage rule: no opaque app-owned media vault, no writes into the user's
-  media folders, and no sidecar files. Catalog export is the portability answer.
+  media folders, and no generated sidecar files for identity or authored overlay.
+  Existing useful companions may be inventoried/transferred only under explicit
+  import or reorganization. Catalog export is the portability answer.
 - The single overlay lifecycle: overlay is held while its item exists inside a
   tracked library root, purged in full only on proven deletion or explicit
   library-root removal, and never purged on temporary absence.
@@ -108,8 +112,11 @@ Treat the filesystem as the single source of truth and the catalog as a
 subordinate, rebuildable overlay.
 
 1. Otos never relocates originals, never writes into the user's media folders, and
-   never stores sidecars. All overlay, derived or user-authored, lives only in the
-   Application Support catalog. If portability is needed, export the catalog.
+   never generates sidecars for identity or authored overlay. Existing user-owned
+   useful companions may be inventoried in `media_companion` and transferred only
+   during explicit import/reorganization. All overlay Otos derives or the user
+   authors lives only in the Application Support catalog. If portability is needed,
+   export the catalog.
 2. Otos mutates the user's files only through explicit, opt-in, user-initiated
    actions. Absent such an action, nothing on disk changes.
 3. Every overlay for an item shares one lifecycle. It is held for as long as the

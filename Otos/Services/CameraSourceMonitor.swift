@@ -12,8 +12,17 @@ nonisolated struct DeviceCameraCatalogItem: Hashable {
     let captureDate: Date?
 }
 
+nonisolated struct DeviceCameraCompanionItem: Hashable {
+    let relativePath: MediaRelativePath
+    let primaryRelativePath: MediaRelativePath
+    let kind: MediaCompanionKind
+    let byteSize: Int64?
+    let contentModifiedAt: Date?
+}
+
 nonisolated struct DeviceCameraCatalogSnapshot: Hashable {
     let items: [DeviceCameraCatalogItem]
+    let companions: [DeviceCameraCompanionItem]
     let isStable: Bool
 }
 
@@ -217,7 +226,11 @@ final class DeviceCameraSession: NSObject {
     func catalogSnapshot() async throws -> DeviceCameraCatalogSnapshot {
         try await openAndWaitForCatalogReady()
         let isStable = await waitForCatalogStability(timeout: .seconds(30))
-        return DeviceCameraCatalogSnapshot(items: currentCatalogItems(), isStable: isStable)
+        return DeviceCameraCatalogSnapshot(
+            items: currentCatalogItems(),
+            companions: currentCompanionItems(),
+            isStable: isStable
+        )
     }
 
     private func currentCatalogItems() -> [DeviceCameraCatalogItem] {
@@ -233,6 +246,58 @@ final class DeviceCameraSession: NSObject {
             items.append(item)
         }
         return items.sorted {
+            $0.relativePath.rawValue.localizedStandardCompare($1.relativePath.rawValue) == .orderedAscending
+        }
+    }
+
+    /// Maps `ICCameraFile.sidecarFiles` property values onto recognized companions.
+    /// Hardware may also surface some companions inside `mediaFiles`; those are
+    /// inventoried only when they match `.xmp`/`.srt` and are not already paired
+    /// here. Findings without attached hardware are recorded in
+    /// `docs/research/2026-07-10-camera-sidecar-surfacing.md`.
+    private func currentCompanionItems() -> [DeviceCameraCompanionItem] {
+        var companions: [DeviceCameraCompanionItem] = []
+        var seen = Set<MediaRelativePath>()
+        for (primaryPath, file) in filesByRelativePath {
+            let sidecars = file.sidecarFiles ?? []
+            for sidecar in sidecars {
+                guard let cameraFile = sidecar as? ICCameraFile else {
+                    continue
+                }
+                guard let name = firstNonEmpty(
+                    cameraFile.originalFilename,
+                    cameraFile.name,
+                    cameraFile.createdFilename
+                ) else {
+                    continue
+                }
+                guard let kind = MediaCompanionKind.recognize(
+                    fileExtension: URL(fileURLWithPath: name).pathExtension
+                ) else {
+                    continue
+                }
+                let relativePath = MediaRelativePath(
+                    rawValue: cameraRelativePath(for: cameraFile, name: name)
+                )
+                guard seen.insert(relativePath).inserted else {
+                    continue
+                }
+                let size = cameraFile.fileSize >= 0 ? Int64(cameraFile.fileSize) : nil
+                let modified = validCameraDate(cameraFile.modificationDate)
+                    ?? validCameraDate(cameraFile.fileModificationDate)
+                    ?? validCameraDate(cameraFile.exifModificationDate)
+                companions.append(
+                    DeviceCameraCompanionItem(
+                        relativePath: relativePath,
+                        primaryRelativePath: primaryPath,
+                        kind: kind,
+                        byteSize: size,
+                        contentModifiedAt: modified
+                    )
+                )
+            }
+        }
+        return companions.sorted {
             $0.relativePath.rawValue.localizedStandardCompare($1.relativePath.rawValue) == .orderedAscending
         }
     }
