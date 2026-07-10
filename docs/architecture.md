@@ -74,6 +74,11 @@ everything expensive happens on an actor off the main thread.
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings UI
   lands later).
+- **Import planning** (Stage C): `MediaTransferPlanner` is pure; occupancy via
+  `FilesystemNamespaceSemantics`, equality via `ContentEqualityChecker` (ephemeral
+  memo). Store publishes `planRevision` / `RootPlanningChange` and builds
+  `ImportPlanningSnapshot` through `MediaOperationGateway` helpers. Coordinator UI
+  lands in Stage D.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.
