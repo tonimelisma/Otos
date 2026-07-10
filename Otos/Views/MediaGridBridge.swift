@@ -56,7 +56,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var columnCount: Int = GridColumnCount.defaultValue
     /// The pinch gesture never mutates the layout itself — it requests a new count
     /// through this closure, which the caller wires to the same ViewModel intent the
-    /// View menu and toolbar slider call directly.
+    /// View menu and toolbar −/+ buttons call directly.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
 
     func makeNSViewController(context _: Context) -> MediaGridViewController {

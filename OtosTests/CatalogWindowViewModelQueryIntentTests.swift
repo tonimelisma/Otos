@@ -9,7 +9,7 @@ struct CatalogWindowViewModelQueryIntentTests {
 
         model.start()
         try await gate.waitForBuildCount(1)
-        model.setSortField(.bestDate)
+        model.setSortOrder(.dateNewest)
         await gate.releaseAll()
         _ = try await waitForWindowState(model) { state in
             state.title == "Build 1"
@@ -30,7 +30,7 @@ struct CatalogWindowViewModelQueryIntentTests {
 
         model.start()
         try await gate.waitForBuildCount(1)
-        model.setSortField(.name)
+        model.setSortOrder(.filenameAscending)
         await gate.releaseNext()
 
         _ = try await waitForWindowState(model) { state in
@@ -48,7 +48,7 @@ struct CatalogWindowViewModelQueryIntentTests {
                 request.descriptor == CatalogQueryDescriptor(
                     scope: .allMedia,
                     filter: MediaFilter(kinds: [.image]),
-                    sort: .defaultForField(.name)
+                    sort: .filenameAscending
                 )
                     && request.generation > 0
             }
@@ -63,7 +63,7 @@ struct CatalogWindowViewModelQueryIntentTests {
 
         model.start()
         try await gate.waitForBuildCount(1)
-        model.setSortField(.name)
+        model.setSortOrder(.filenameAscending)
         await gate.releaseNext()
 
         _ = try await waitForWindowState(model) { state in
@@ -71,7 +71,7 @@ struct CatalogWindowViewModelQueryIntentTests {
         }
         try await gate.waitForBuildCount(2)
 
-        model.setSortField(.bestDate)
+        model.setSortOrder(.dateNewest)
         #expect(model.queryDescriptor == .default)
 
         await gate.releaseNext()

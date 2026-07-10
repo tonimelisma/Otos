@@ -111,6 +111,7 @@ actor CatalogStore {
         var appliedCount = 0
         var promotionFailed = false
         var discardedThumbnails: [GeneratedThumbnail] = []
+        var supersededThumbnailPaths: Set<String> = []
         var waitMs = 0
         var execMs = 0
 
@@ -124,6 +125,15 @@ actor CatalogStore {
         mutating func failPromotion(_ thumbnail: GeneratedThumbnail?) {
             promotionFailed = true
             discard(thumbnail)
+        }
+
+        mutating func replaceThumbnail(oldPath: String?, newPath: String?) {
+            if let newPath {
+                supersededThumbnailPaths.remove(newPath)
+            }
+            if let oldPath, oldPath != newPath {
+                supersededThumbnailPaths.insert(oldPath)
+            }
         }
     }
 
@@ -798,6 +808,7 @@ extension CatalogStore {
         }
         OtosSignpost.persistence.endInterval("CatalogEnrichmentBatchWrite", state)
         discardGeneratedThumbnails(writeOutcome.discardedThumbnails)
+        deleteSupersededThumbnails(writeOutcome.supersededThumbnailPaths)
 
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
         await recordWALDiagnostics(reason: "enrichmentBatch")
@@ -817,7 +828,7 @@ extension CatalogStore {
     ) async {
         OtosLog.metadata.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) discardedThumbnails=\(writeOutcome.discardedThumbnails.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
+            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) discardedThumbnails=\(writeOutcome.discardedThumbnails.count, privacy: .public) supersededThumbnails=\(writeOutcome.supersededThumbnailPaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
         )
     }
 
@@ -886,7 +897,17 @@ extension CatalogStore {
                 return
             }
         }
+        let oldThumbnailPath: String? = try String.fetchOne(
+            db,
+            sql: """
+            SELECT thumbnail_path
+            FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootID, result.id.relativePath.rawValue]
+        )
         try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
+        outcome.replaceThumbnail(oldPath: oldThumbnailPath, newPath: result.thumbnailPath)
         outcome.appliedCount += 1
     }
 
@@ -896,6 +917,15 @@ extension CatalogStore {
         }
         for thumbnail in thumbnails {
             ThumbnailStore.discard(thumbnail, in: thumbnailDirectory)
+        }
+    }
+
+    private func deleteSupersededThumbnails(_ paths: Set<String>) {
+        guard let thumbnailDirectory else {
+            return
+        }
+        for path in paths {
+            ThumbnailStore.delete(path, in: thumbnailDirectory)
         }
     }
 
@@ -1927,7 +1957,7 @@ private extension CatalogStore {
         let visibleChange = changedCount > 0
         // SQLite reported whether this batch inserted a new row or changed existing
         // filesystem facts. Identical rescans publish nothing; changed dates still
-        // count because Best Date sort and enrichment priority fall back to them.
+        // count because Date sort and enrichment priority fall back to them.
         if visibleChange {
             notifyCatalogChanged()
         }

@@ -109,10 +109,19 @@ flush cadence, filesystem-event debounce, and enrichment apply flushing align to
 that same background scale. Viewport priority hints remain immediate because
 they affect scheduling, not UI publication.
 
-Toolbar filter controls and View menu filter commands share
-`CatalogFilterMenuContent`, so kind availability and partial-selection symbols
-cannot drift between the two command surfaces while both still call the same
-ViewModel descriptor intents.
+Toolbar and View menu controls share `CatalogFilterMenuContent` and
+`CatalogSortMenuContent`, so native checked/mixed state, scoped availability, and
+complete sort-order copy cannot drift between the two command surfaces. Sort is
+presented as six complete field-and-direction choices but still writes the same
+`MediaSortOrder` value. Filter uses native collection-backed toggles: All Items is
+the empty descriptor, kind rows cover every child file type, partial child
+selection gives the kind row a mixed state, and selecting every scoped kind
+canonicalizes back to All Items.
+
+Exact `best_format` tokens remain catalog facts. `MediaFileTypeOption` is a query-
+surface grouping only: HEIC and HEIF appear as one `HEIF / HEIC` choice whose
+filter predicate contains both exact tokens. The grouping neither changes the
+generated `best_format` column nor discards the original extension fact.
 
 ## Alternatives Considered
 

@@ -448,30 +448,21 @@ extension CatalogWindowViewModel {
         setMediaFilter(.all)
     }
 
-    func toggleMediaKind(_ kind: MediaKind, formatsInKind: [MediaFormatToken]) {
-        var filter = queryDescriptor.filter
-        if filter.kinds.remove(kind) == nil {
-            filter.kinds.insert(kind)
-        }
-        filter.formats.subtract(formatsInKind)
-        setMediaFilter(filter)
+    func setMediaKind(_ kind: MediaKind, included: Bool) {
+        setMediaFilter(queryDescriptor.filter.settingKind(
+            kind,
+            included: included,
+            options: state.filterOptions
+        ))
     }
 
-    func toggleMediaFormat(_ format: MediaFormatToken, kind: MediaKind) {
-        var filter = queryDescriptor.filter
-        filter.kinds.remove(kind)
-        if filter.formats.remove(format) == nil {
-            filter.formats.insert(format)
-        }
-        setMediaFilter(filter)
-    }
-
-    func setSortField(_ field: MediaSortField) {
-        setSortOrder(.defaultForField(field))
-    }
-
-    func setSortDirection(_ direction: MediaSortDirection) {
-        setSortOrder(MediaSortOrder(field: queryDescriptor.sort.field, direction: direction))
+    func setMediaFileType(_ fileType: MediaFileTypeOption, kind: MediaKind, included: Bool) {
+        setMediaFilter(queryDescriptor.filter.settingFileType(
+            fileType,
+            kind: kind,
+            included: included,
+            options: state.filterOptions
+        ))
     }
 
     func setSortOrder(_ sort: MediaSortOrder) {
@@ -571,7 +562,7 @@ extension CatalogWindowViewModel {
 /// User-adjustable grid density (spec 0048), 3–9. This is rendering/UI state, not catalog
 /// truth, so it never touches the query-descriptor stream or Store/Projection: it is a
 /// plain published property with a persistence side effect. Every zoom surface — the View
-/// menu and toolbar slider directly, the AppKit pinch gesture through a callback — calls
+/// menu, toolbar buttons, and AppKit pinch gesture through a callback — calls
 /// `setGridColumnCount(_:)`, and `gridColumnCount` is `private(set)`, so there is exactly
 /// one clamp/persist/publish path regardless of which surface originated the request.
 extension CatalogWindowViewModel {

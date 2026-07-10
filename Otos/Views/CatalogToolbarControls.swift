@@ -10,8 +10,8 @@ import SwiftUI
 struct CatalogFilterMenu: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
-    let toggleKind: (MediaKind, [MediaFormatToken]) -> Void
-    let toggleFormat: (MediaFormatToken, MediaKind) -> Void
+    let setKind: (MediaKind, Bool) -> Void
+    let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
     let clearFilters: () -> Void
 
     var body: some View {
@@ -19,47 +19,47 @@ struct CatalogFilterMenu: View {
             CatalogFilterMenuContent(
                 descriptor: descriptor,
                 options: options,
-                toggleKind: toggleKind,
-                toggleFormat: toggleFormat,
+                setKind: setKind,
+                setFileType: setFileType,
                 clearFilters: clearFilters
             )
         } label: {
-            Image(systemName: descriptor.filter.isActive
-                ? "line.3.horizontal.decrease.circle.fill"
-                : "line.3.horizontal.decrease")
+            Image(systemName: "line.3.horizontal.decrease")
+                .foregroundStyle(descriptor.filter.isActive ? Color.accentColor : Color.primary)
         }
-        .help("Filter")
+        .help(descriptor.filter.isActive ? "Filter (Active)" : "Filter")
     }
 }
 
 struct CatalogFilterMenuContent: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
-    let toggleKind: (MediaKind, [MediaFormatToken]) -> Void
-    let toggleFormat: (MediaFormatToken, MediaKind) -> Void
+    let setKind: (MediaKind, Bool) -> Void
+    let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
     let clearFilters: () -> Void
 
     var body: some View {
-        if descriptor.filter.isActive {
-            Button("Show Everything", action: clearFilters)
-            Divider()
-        }
+        Toggle("All Items", isOn: allItemsBinding)
+        Divider()
         ForEach(availableKinds, id: \.self) { kind in
-            let formats = options.formats(for: kind)
-            Button {
-                toggleKind(kind, formats)
-            } label: {
-                Label(kind.label, systemImage: kindSymbol(kind, formats: formats))
-            }
-            ForEach(formats, id: \.self) { format in
-                Button {
-                    toggleFormat(format, kind)
-                } label: {
-                    Label(format.rawValue, systemImage: formatSymbol(format))
+            Toggle(kind.label, sources: kindToggleSources(kind), isOn: \.isOn)
+        }
+        if hasFileTypes {
+            Divider()
+            Menu("File Types") {
+                ForEach(availableKinds, id: \.self) { kind in
+                    let fileTypes = options.fileTypes(for: kind)
+                    if !fileTypes.isEmpty {
+                        Section(kind.label) {
+                            ForEach(fileTypes, id: \.self) { fileType in
+                                Toggle(
+                                    fileType.label,
+                                    isOn: fileTypeBinding(fileType, kind: kind)
+                                )
+                            }
+                        }
+                    }
                 }
-            }
-            if kind != availableKinds.last {
-                Divider()
             }
         }
     }
@@ -68,82 +68,119 @@ struct CatalogFilterMenuContent: View {
         options.availableKinds
     }
 
-    private func kindSymbol(_ kind: MediaKind, formats: [MediaFormatToken]) -> String {
-        if descriptor.filter.kinds.contains(kind) {
-            return "checkmark"
-        }
-        if formats.contains(where: { descriptor.filter.formats.contains($0) }) {
-            return "minus"
-        }
-        return "circle"
+    private var hasFileTypes: Bool {
+        availableKinds.contains { !options.fileTypes(for: $0).isEmpty }
     }
 
-    private func formatSymbol(_ format: MediaFormatToken) -> String {
-        descriptor.filter.formats.contains(format) ? "checkmark" : "circle"
+    private var allItemsBinding: Binding<Bool> {
+        Binding(
+            get: { !descriptor.filter.isActive },
+            set: { isAllItems in
+                if isAllItems {
+                    clearFilters()
+                }
+            }
+        )
     }
+
+    /// A collection-backed Toggle gives macOS its native mixed state. Every
+    /// source setter calls the one kind-level owner intent, so clicking a mixed
+    /// parent still produces one effective descriptor change; repeated setter
+    /// calls from SwiftUI become normalized no-ops.
+    private func kindToggleSources(_ kind: MediaKind) -> [MenuToggleSource] {
+        let fileTypes = options.fileTypes(for: kind)
+        if fileTypes.isEmpty {
+            return [MenuToggleSource(isOn: kindBinding(kind))]
+        }
+        return fileTypes.map { fileType in
+            MenuToggleSource(isOn: Binding(
+                get: { isFileTypeIncluded(fileType, kind: kind) },
+                set: { setKind(kind, $0) }
+            ))
+        }
+    }
+
+    private func kindBinding(_ kind: MediaKind) -> Binding<Bool> {
+        Binding(
+            get: { descriptor.filter.kinds.contains(kind) },
+            set: { setKind(kind, $0) }
+        )
+    }
+
+    private func fileTypeBinding(_ fileType: MediaFileTypeOption, kind: MediaKind) -> Binding<Bool> {
+        Binding(
+            get: { isFileTypeIncluded(fileType, kind: kind) },
+            set: { setFileType(fileType, kind, $0) }
+        )
+    }
+
+    private func isFileTypeIncluded(_ fileType: MediaFileTypeOption, kind: MediaKind) -> Bool {
+        descriptor.filter.kinds.contains(kind)
+            || Set(fileType.formats).isSubset(of: descriptor.filter.formats)
+    }
+}
+
+private struct MenuToggleSource {
+    let isOn: Binding<Bool>
 }
 
 struct CatalogSortMenu: View {
     let sort: MediaSortOrder
-    let setField: (MediaSortField) -> Void
-    let setDirection: (MediaSortDirection) -> Void
+    let setOrder: (MediaSortOrder) -> Void
 
     var body: some View {
         Menu {
-            Section("Sort By") {
-                ForEach(MediaSortField.allCases, id: \.self) { field in
-                    Button {
-                        setField(field)
-                    } label: {
-                        Label(field.label, systemImage: field == sort.field ? "checkmark" : "circle")
-                    }
-                }
-            }
-            Section("Direction") {
-                ForEach(MediaSortDirection.allCases, id: \.self) { direction in
-                    Button {
-                        setDirection(direction)
-                    } label: {
-                        Label(direction.label, systemImage: direction == sort.direction ? "checkmark" : "circle")
-                    }
-                }
-            }
+            CatalogSortMenuContent(sort: sort, setOrder: setOrder)
         } label: {
             Image(systemName: "arrow.up.arrow.down")
         }
-        .help("Sort")
+        .help("Sort: \(sort.label)")
     }
 }
 
-/// Grid zoom slider (spec 0048). Right = zoom in (Photos convention): the slider's own
-/// `0...6` value is only a display detail, converted at the boundary so this view's
-/// public contract is the same `columnCount` every other zoom surface uses.
-struct CatalogZoomSlider: View {
-    let columnCount: Int
-    let requestColumnCount: (Int) -> Void
-
-    private var sliderValue: Binding<Double> {
-        Binding(
-            get: { Double(GridColumnCount.sliderValue(forColumnCount: columnCount)) },
-            set: { requestColumnCount(GridColumnCount.columnCount(forSliderValue: Int($0.rounded()))) }
-        )
-    }
+struct CatalogSortMenuContent: View {
+    let sort: MediaSortOrder
+    let setOrder: (MediaSortOrder) -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "photo")
-                .imageScale(.small)
-                .foregroundStyle(.secondary)
-            Slider(
-                value: sliderValue,
-                in: 0 ... Double(GridColumnCount.maximum - GridColumnCount.minimum),
-                step: 1
-            )
-            .frame(width: 100)
-            Image(systemName: "photo")
-                .imageScale(.large)
-                .foregroundStyle(.secondary)
+        Picker("Sort Order", selection: sortBinding) {
+            ForEach(MediaSortOrder.allCases, id: \.self) { order in
+                Text(order.label).tag(order)
+            }
         }
-        .help("Grid Zoom")
+        .pickerStyle(.inline)
+        .labelsHidden()
+    }
+
+    private var sortBinding: Binding<MediaSortOrder> {
+        Binding(
+            get: { sort },
+            set: { order in setOrder(order) }
+        )
+    }
+}
+
+/// Photos-style discrete thumbnail sizing. The grid itself makes the effect
+/// visible, while tooltips and menu commands expose the semantic zoom names.
+struct CatalogZoomControl: View {
+    let columnCount: Int
+    let makeThumbnailsSmaller: () -> Void
+    let makeThumbnailsLarger: () -> Void
+
+    var body: some View {
+        ControlGroup {
+            Button(action: makeThumbnailsSmaller) {
+                Image(systemName: "minus")
+            }
+            .help("Smaller Thumbnails")
+            .disabled(columnCount >= GridColumnCount.maximum)
+
+            Button(action: makeThumbnailsLarger) {
+                Image(systemName: "plus")
+            }
+            .help("Larger Thumbnails")
+            .disabled(columnCount <= GridColumnCount.minimum)
+        }
+        .accessibilityLabel("Thumbnail Size")
     }
 }

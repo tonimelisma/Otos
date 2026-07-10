@@ -74,6 +74,39 @@ nonisolated struct MediaFormatToken: Hashable, Codable, RawRepresentable, Compar
     }
 }
 
+/// A user-facing file-type choice can cover multiple exact catalog format facts.
+/// HEIC is a specific HEIF-family type, but separating HEIC and HEIF in the filter
+/// does not serve a useful browser task. The catalog keeps both exact tokens; this
+/// value groups only the query/control surface so future metadata consumers lose
+/// no information.
+nonisolated struct MediaFileTypeOption: Hashable, Comparable {
+    let label: String
+    let formats: [MediaFormatToken]
+
+    private static let heifFormats = [
+        MediaFormatToken(rawValue: "HEIC"),
+        MediaFormatToken(rawValue: "HEIF"),
+    ]
+
+    init(format: MediaFormatToken) {
+        if Self.heifFormats.contains(format) {
+            label = "HEIF / HEIC"
+            formats = Self.heifFormats
+        } else {
+            label = format.rawValue
+            formats = [format]
+        }
+    }
+
+    static func grouped(_ formats: [MediaFormatToken]) -> [MediaFileTypeOption] {
+        Set(formats.map(MediaFileTypeOption.init(format:))).sorted()
+    }
+
+    static func < (left: MediaFileTypeOption, right: MediaFileTypeOption) -> Bool {
+        left.label.localizedStandardCompare(right.label) == .orderedAscending
+    }
+}
+
 nonisolated struct MediaFilter: Hashable {
     var kinds: Set<MediaKind> = []
     var formats: Set<MediaFormatToken> = []
@@ -94,56 +127,110 @@ nonisolated struct MediaFilter: Hashable {
         }
         return false
     }
+
+    func settingKind(
+        _ kind: MediaKind,
+        included: Bool,
+        options: CatalogFilterOptions
+    ) -> MediaFilter {
+        var updated = self
+        let formatsInKind = options.availableFormatTokens(for: kind)
+        updated.kinds.remove(kind)
+        updated.formats.subtract(formatsInKind)
+        if included {
+            updated.kinds.insert(kind)
+        }
+        return updated.canonicalized(options: options)
+    }
+
+    func settingFileType(
+        _ fileType: MediaFileTypeOption,
+        kind: MediaKind,
+        included: Bool,
+        options: CatalogFilterOptions
+    ) -> MediaFilter {
+        var updated = self
+        let formatsInKind = options.availableFormatTokens(for: kind)
+        var selectedFormats = updated.kinds.contains(kind)
+            ? formatsInKind
+            : updated.formats.intersection(formatsInKind)
+
+        if included {
+            selectedFormats.formUnion(fileType.formats)
+        } else {
+            selectedFormats.subtract(fileType.formats)
+        }
+
+        updated.kinds.remove(kind)
+        updated.formats.subtract(formatsInKind)
+        if !formatsInKind.isEmpty, selectedFormats == formatsInKind {
+            updated.kinds.insert(kind)
+        } else {
+            updated.formats.formUnion(selectedFormats)
+        }
+        return updated.canonicalized(options: options)
+    }
+
+    private func canonicalized(options: CatalogFilterOptions) -> MediaFilter {
+        let availableKinds = Set(options.availableKinds)
+        let selectsEveryAvailableKind = !availableKinds.isEmpty
+            && kinds == availableKinds
+            && formats.isEmpty
+        if selectsEveryAvailableKind {
+            return .all
+        }
+        return self
+    }
 }
 
-nonisolated enum MediaSortField: String, CaseIterable, Hashable {
+nonisolated enum MediaSortField: String, Hashable {
     case bestDate
     case name
     case size
-
-    var label: String {
-        switch self {
-        case .bestDate:
-            "Best Date"
-        case .name:
-            "File Name"
-        case .size:
-            "File Size"
-        }
-    }
-
-    var defaultDirection: MediaSortDirection {
-        switch self {
-        case .bestDate, .size:
-            .descending
-        case .name:
-            .ascending
-        }
-    }
 }
 
-nonisolated enum MediaSortDirection: String, CaseIterable, Hashable {
+nonisolated enum MediaSortDirection: String, Hashable {
     case ascending
     case descending
-
-    var label: String {
-        switch self {
-        case .ascending:
-            "Ascending"
-        case .descending:
-            "Descending"
-        }
-    }
 }
 
-nonisolated struct MediaSortOrder: Hashable {
+nonisolated struct MediaSortOrder: Hashable, CaseIterable {
     var field: MediaSortField
     var direction: MediaSortDirection
 
-    static let defaultOrder = MediaSortOrder(field: .bestDate, direction: .descending)
+    static let dateNewest = MediaSortOrder(field: .bestDate, direction: .descending)
+    static let dateOldest = MediaSortOrder(field: .bestDate, direction: .ascending)
+    static let filenameAscending = MediaSortOrder(field: .name, direction: .ascending)
+    static let filenameDescending = MediaSortOrder(field: .name, direction: .descending)
+    static let sizeLargest = MediaSortOrder(field: .size, direction: .descending)
+    static let sizeSmallest = MediaSortOrder(field: .size, direction: .ascending)
 
-    static func defaultForField(_ field: MediaSortField) -> MediaSortOrder {
-        MediaSortOrder(field: field, direction: field.defaultDirection)
+    static let allCases: [MediaSortOrder] = [
+        .dateNewest,
+        .dateOldest,
+        .filenameAscending,
+        .filenameDescending,
+        .sizeLargest,
+        .sizeSmallest,
+    ]
+
+    static let defaultOrder = dateNewest
+
+    var label: String {
+        switch (field, direction) {
+        case (.bestDate, .descending):
+            "Date — Newest First"
+        case (.bestDate, .ascending):
+            "Date — Oldest First"
+        case (.name, .ascending):
+            "Filename — A to Z"
+        case (.name, .descending):
+            "Filename — Z to A"
+        case (.size, .descending):
+            "Size — Largest First"
+        case (.size, .ascending):
+            "Size — Smallest First"
+        }
     }
 }
 
@@ -198,5 +285,13 @@ nonisolated struct CatalogFilterOptions: Equatable {
 
     func formats(for kind: MediaKind) -> [MediaFormatToken] {
         formatsByKind[kind] ?? []
+    }
+
+    func fileTypes(for kind: MediaKind) -> [MediaFileTypeOption] {
+        MediaFileTypeOption.grouped(formats(for: kind))
+    }
+
+    func availableFormatTokens(for kind: MediaKind) -> Set<MediaFormatToken> {
+        Set(fileTypes(for: kind).flatMap(\.formats))
     }
 }
