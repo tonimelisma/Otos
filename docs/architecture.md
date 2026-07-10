@@ -44,7 +44,8 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | --- | --- | --- | --- |
 | `CatalogStore` | actor | SQLite, `RootRegistry`/`RootRuntimeState`, `FilesystemReconciler` (pure batch classify), `ScanLeaseController` (lease/queue bookkeeping), `CatalogQueryGateway` (read SQL/mapping), `EnrichmentLeaseGateway` (enrichment claim leases + SQL), removable-source state, change notifications, all catalog queries | serializes every mutation/query for free; a remove can be processed mid-scan safely (lease re-checked after every await); owned helpers are not second actors |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
-| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import (execution gated) | serializes per-source dirtiness; filesystem probes run off the actor |
+| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import | serializes per-source dirtiness; filesystem probes run off the actor |
+| `MediaImportExecutor` | actor | journaled filesystem import: copyfile staging, exclusive publish, settlement, startup recovery | serializes one active import; copyfile/progress off the actor |
 | `EnrichmentCoordinator` | actor | two worker pools (enrich local / download cloud), in-flight tracking, claim leases | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, dataless materialization gate, per-id coalesce + small LRU | serializes decode/cache state; byte reads off the actor |
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
@@ -79,10 +80,11 @@ everything expensive happens on an actor off the main thread.
   `FilesystemNamespaceSemantics`, equality via `ContentEqualityChecker`. Store
   publishes `planRevision` / `RootPlanningChange` and builds
   `ImportPlanningSnapshot`. `MediaOperationCoordinator` greedily plans attached
-  removable sources and publishes scalar footer presentation; Import queues start
-  but execution stays gated until the filesystem executor. Imports sidebar scopes
-  via `import_batch_unix_ms`. Plan details use `ImportPlanDetailReader` (no full
-  plan map on `CatalogWindowState`).
+  removable sources and publishes scalar footer presentation. Removable filesystem
+  volumes execute through `MediaImportExecutor` (journal + copyfile + exclusive
+  publish + settlement); camera Import remains gated until Stage F. Imports
+  sidebar scopes via `import_batch_unix_ms`. Plan details use
+  `ImportPlanDetailReader` (no full plan map on `CatalogWindowState`).
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.

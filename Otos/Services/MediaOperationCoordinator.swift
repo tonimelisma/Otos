@@ -6,8 +6,8 @@ import OSLog
 /// Owns greedy import-plan lifecycle for every attached removable source.
 /// Subscribes weakly to Store planning revisions, builds immutable plans through
 /// `MediaTransferPlanner` + occupancy/equality probes, and publishes per-source
-/// presentation state for the footer. Execution is feature-gated until Stage E:
-/// Import queues a start intent and surfaces `.executionUnavailable` once ready.
+/// presentation state for the footer. Filesystem-volume Import executes through
+/// `MediaImportExecutor`; camera Import remains gated until Stage F.
 ///
 /// Isolation: this actor serializes per-source dirtiness (at most one build in
 /// flight and one dirty bit). Heavy filesystem probes run off the actor via
@@ -52,6 +52,8 @@ actor MediaOperationCoordinator {
         }
         isStarted = true
         loadDestinationMappings()
+        let executor = MediaImportExecutor(store: store)
+        await executor.recoverJournal()
         await refreshSources(reason: "start")
         let changes = await store.planningChangeNotifications()
         consumerTask = Task { [weak self] in
@@ -94,16 +96,35 @@ actor MediaOperationCoordinator {
         queuedStart[source] = planGeneration
         if var presentation = presentations[source] {
             switch presentation.state {
-            case let .ready(summary, generation, _),
-                 let .executionUnavailable(summary, generation):
-                presentation = MediaOperationSourcePresentation(
+            case let .ready(summary, generation, skipped):
+                presentations[source] = MediaOperationSourcePresentation(
                     sourcePath: source,
                     destinationPath: presentation.destinationPath,
-                    state: .executionUnavailable(summary: summary, generation: generation),
+                    state: .queuedForReadiness,
                     attachToReadyMs: presentation.attachToReadyMs
                 )
-                presentations[source] = presentation
                 publish()
+                await beginExecutionIfPossible(
+                    source: source,
+                    summary: summary,
+                    generation: generation,
+                    skippedPackageCount: skipped
+                )
+            case let .executionUnavailable(summary, generation):
+                // Legacy gated state from Stage D — treat as ready queue.
+                presentations[source] = MediaOperationSourcePresentation(
+                    sourcePath: source,
+                    destinationPath: presentation.destinationPath,
+                    state: .queuedForReadiness,
+                    attachToReadyMs: presentation.attachToReadyMs
+                )
+                publish()
+                await beginExecutionIfPossible(
+                    source: source,
+                    summary: summary,
+                    generation: generation,
+                    skippedPackageCount: 0
+                )
             default:
                 presentations[source] = MediaOperationSourcePresentation(
                     sourcePath: source,
@@ -119,6 +140,123 @@ actor MediaOperationCoordinator {
         OtosLog.catalog.notice(
             "op=import.queue phase=start rootPath=\(source.rawValue, privacy: .public)"
         )
+    }
+
+    private func beginExecutionIfPossible(
+        source: LibraryRootPath,
+        summary: MediaOperationPlanTotals,
+        generation: UInt64,
+        skippedPackageCount: Int
+    ) async {
+        let libraries = await store.currentLibraries()
+        let sourceState = libraries.first { $0.path == source }
+        guard let sourceState else {
+            return
+        }
+        // Stage E enables filesystem volumes only; cameras remain Stage F.
+        guard sourceState.root.kind == .removableVolume else {
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: destinationBySource[source],
+                state: .executionUnavailable(summary: summary, generation: generation),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+            publish()
+            return
+        }
+        guard let plan = readyPlans[source], plan.generation == generation else {
+            dirty.insert(source)
+            await scheduleBuildIfNeeded(source)
+            return
+        }
+        if summary.copyCount == 0, summary.companionCopyCount == 0 {
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: destinationBySource[source],
+                state: .ready(
+                    summary: summary,
+                    generation: generation,
+                    skippedPackageCount: skippedPackageCount
+                ),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+            publish()
+            return
+        }
+
+        let executor = MediaImportExecutor(store: store)
+        let prefs = ImportPreferencesStore.load()
+        presentations[source] = MediaOperationSourcePresentation(
+            sourcePath: source,
+            destinationPath: destinationBySource[source],
+            state: .executing(
+                progress: MediaOperationProgress(
+                    completedCount: 0,
+                    totalCount: summary.copyCount,
+                    completedBytes: 0,
+                    totalBytes: summary.copyBytes
+                )
+            ),
+            attachToReadyMs: attachToReadyMs[source]
+        )
+        publish()
+
+        let result = await executor.execute(
+            plan: plan,
+            sourceKind: sourceState.root.kind,
+            sourceDeviceIdentity: sourceState.root.deviceIdentity,
+            deleteSourceRequested: prefs.deleteSourceAfterImport
+        ) { progress in
+            Task {
+                await self.applyExecutionProgress(source: source, progress: progress)
+            }
+        }
+
+        queuedStart.removeValue(forKey: source)
+        switch result {
+        case .completed:
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: destinationBySource[source],
+                state: .completed(summary: summary),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+        case .cancelled:
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: destinationBySource[source],
+                state: .ready(
+                    summary: summary,
+                    generation: generation,
+                    skippedPackageCount: skippedPackageCount
+                ),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+        case let .failed(problem):
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: destinationBySource[source],
+                state: .failed(problem: problem),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+        }
+        publish()
+        dirty.insert(source)
+        await scheduleBuildIfNeeded(source)
+    }
+
+    private func applyExecutionProgress(source: LibraryRootPath, progress: MediaOperationProgress) {
+        guard var presentation = presentations[source] else {
+            return
+        }
+        presentation = MediaOperationSourcePresentation(
+            sourcePath: source,
+            destinationPath: presentation.destinationPath,
+            state: .executing(progress: progress),
+            attachToReadyMs: presentation.attachToReadyMs
+        )
+        presentations[source] = presentation
+        publish()
     }
 
     func currentPresentations() -> [MediaOperationSourcePresentation] {
@@ -283,7 +421,7 @@ actor MediaOperationCoordinator {
         let skipped = await store.skippedPackageCount(for: source)
         recordAttachToReadyIfNeeded(source: source, plan: plan)
         let state: MediaOperationSourceState = if queuedStart[source] != nil {
-            .executionUnavailable(summary: plan.totals, generation: plan.generation)
+            .queuedForReadiness
         } else {
             .ready(
                 summary: plan.totals,
@@ -299,7 +437,14 @@ actor MediaOperationCoordinator {
         )
         building.remove(source)
         publish()
-        if dirty.contains(source) {
+        if queuedStart[source] != nil {
+            await beginExecutionIfPossible(
+                source: source,
+                summary: plan.totals,
+                generation: plan.generation,
+                skippedPackageCount: skipped
+            )
+        } else if dirty.contains(source) {
             await scheduleBuildIfNeeded(source)
         }
     }

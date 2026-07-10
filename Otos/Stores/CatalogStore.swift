@@ -2472,7 +2472,7 @@ private extension CatalogStore {
     }
 
     @discardableResult
-    private func bumpPlanRevision(for path: LibraryRootPath) -> UInt64? {
+    func bumpPlanRevision(for path: LibraryRootPath) -> UInt64? {
         guard var state = roots[path] else {
             return nil
         }
@@ -2924,5 +2924,107 @@ private extension CatalogStore {
             // swiftlint:disable:next line_length
             "op=catalog.scan.staleCallback phase=ignored rootPath=\(scan.rootPath.rawValue, privacy: .public) rootRowID=\(scan.rootRowID, privacy: .public) callback=\(callback, privacy: .public)"
         )
+    }
+
+    // MARK: - Import journal / settlement (Stage E)
+
+    internal func fetchActiveFileOperations() async throws -> [ActiveFileOperation] {
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Self.fetchAllActiveFileOperations(db: db)
+        }
+    }
+
+    internal func insertActiveFileOperation(_ operation: ActiveFileOperation) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.insertActiveFileOperation(operation, db: db)
+        }
+    }
+
+    internal func updateActiveFileOperation(_ operation: ActiveFileOperation) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.updateActiveFileOperation(operation, db: db)
+        }
+    }
+
+    internal func deleteActiveFileOperation(key: ActiveFileOperationKey) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.deleteActiveFileOperation(key: key, db: db)
+        }
+    }
+
+    internal func settleImportedFile(
+        operation: ActiveFileOperation,
+        byteSize: Int64,
+        contentModifiedAt: Date,
+        batch: ImportBatchID,
+        companions: [MediaCompanion]
+    ) async throws {
+        guard let rootRowID = roots[operation.destinationRootPath]?.rowID else {
+            throw CatalogStoreError.catalogUnavailable
+        }
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.settleImportedAsset(
+                destinationRootID: rootRowID,
+                destinationRootPath: operation.destinationRootPath,
+                relativePath: operation.destinationRelativePath,
+                byteSize: byteSize,
+                contentModifiedAt: contentModifiedAt,
+                batch: batch,
+                companions: companions,
+                db: db
+            )
+            try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
+        }
+        _ = bumpPlanRevision(for: operation.destinationRootPath)
+        notifyCatalogChanged()
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=mediaOperation.settle phase=finish destination=\(operation.destinationRelativePath.rawValue, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
+        )
+    }
+
+    internal func recordForeignOccupant(root: LibraryRootPath, relativePath: MediaRelativePath) async {
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=mediaOperation.publish phase=foreignOccupant rootPath=\(root.rawValue, privacy: .public) relative=\(relativePath.rawValue, privacy: .public)"
+        )
+        _ = bumpPlanRevision(for: root)
+    }
+
+    /// Removes abandoned staging files in the given parent directories only.
+    /// Never walks whole library trees — that hangs on large cloud roots.
+    internal func removeOrphanedImportStagingFiles(near parentDirectories: [URL]) async {
+        let journaledStaging: Set<String>
+        do {
+            journaledStaging = try await Set(fetchActiveFileOperations().compactMap(\.stagingPath))
+        } catch {
+            return
+        }
+        let parents = parentDirectories
+        await Task.detached {
+            let fileManager = FileManager.default
+            for parent in parents {
+                guard let items = try? fileManager.contentsOfDirectory(
+                    at: parent,
+                    includingPropertiesForKeys: nil,
+                    options: []
+                ) else {
+                    continue
+                }
+                for item in items where item.lastPathComponent.hasSuffix(".otos-import-staging") {
+                    guard !journaledStaging.contains(item.path) else { continue }
+                    try? fileManager.removeItem(at: item)
+                    OtosLog.catalog.notice(
+                        // swiftlint:disable:next line_length
+                        "op=mediaOperation.recover phase=orphanStagingRemoved path=\(item.path, privacy: .public)"
+                    )
+                }
+            }
+        }.value
     }
 }
