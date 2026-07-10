@@ -162,59 +162,39 @@ struct MediaGridSelectionControllerTests {
         #expect(harness.selectedIDs() == Set([harness.ids[1]] + harness.ids[4 ... 7]))
     }
 
-    // MARK: - Structural-apply prune (rows 15–16)
+    // MARK: - Model → view render (structural apply no longer writes the model)
 
-    @Test func row15_structuralApplyRemovingAnItemPrunesItFromSelectionAndBase() throws {
-        // F6: click C, ⇧-click D → {C,D} (anchor C, base {C}); apply removes D → {C}, base {C}.
-        // ⇧-click (not ⌘-click) is used so the anchor stays on C while the range covers D.
+    @Test func structuralApplyRendersPrunedModelWithoutWritingIt() throws {
+        // Prune lives in ViewModel.applyState; the controller only renders.
         let harness = try makeHarness(itemCount: 8)
         try harness.click(harness.ids[2], modifiers: [])
         try harness.click(harness.ids[3], modifiers: [.shift])
+        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 3]))
 
-        let survivors = [harness.ids[0], harness.ids[1], harness.ids[2]] + Array(harness.ids[4 ... 7])
-        harness.controller.restoreSelection([harness.ids[2], harness.ids[3]], in: survivors)
+        harness.setModelSelection(
+            GridSelection(
+                selection: [harness.ids[2]],
+                anchor: harness.ids[2],
+                base: [harness.ids[2]]
+            )
+        )
+        harness.controller.renderSelectionFromModel(reason: "structuralApply")
 
         #expect(harness.controller.gridSelection.selection == [harness.ids[2]])
-        #expect(harness.controller.gridSelection.anchor == harness.ids[2])
-        #expect(harness.controller.gridSelection.base == [harness.ids[2]])
+        #expect(harness.selectedIDs() == [harness.ids[2]])
     }
 
-    @Test func row16_structuralApplyRemovingTheAnchorClearsAnchorAndBase() throws {
-        // click C, ⇧-click D → {C,D} (anchor C, base {C}); apply removes C → {D}, anchor nil.
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-        try harness.click(harness.ids[3], modifiers: [.shift])
-
-        let survivors = [harness.ids[0], harness.ids[1]] + Array(harness.ids[3 ... 7]) // C removed
-        harness.controller.restoreSelection([harness.ids[2], harness.ids[3]], in: survivors)
-
-        #expect(harness.controller.gridSelection.selection == [harness.ids[3]])
-        #expect(harness.controller.gridSelection.anchor == nil)
-        #expect(harness.controller.gridSelection.base.isEmpty)
-    }
-
-    @Test func descriptorChangeClearsSelectionAnchorAndBase() throws {
-        let harness = try makeHarness(itemCount: 8)
-        try harness.click(harness.ids[2], modifiers: [])
-
-        harness.controller.clearSelection(reason: "descriptorChange")
-
-        #expect(harness.controller.gridSelection == .empty)
-        #expect(harness.selectedIDs().isEmpty)
-    }
-
-    @Test func descriptorChangingApplyClearsAnchorEvenWhenTheAnchoredAssetSurvives() throws {
+    @Test func structuralApplyRendersEmptyModelAfterDescriptorClear() throws {
         let harness = try makeHarness(itemCount: 8)
         try harness.click(harness.ids[1], modifiers: [])
 
+        harness.setModelSelection(.empty)
         let grid = CatalogMediaGridState(
             scope: .library(LibraryRootPath(rawValue: "/Pictures")),
-            orderedAssetIDs: harness.ids // the anchored asset is still present
+            orderedAssetIDs: harness.ids
         )
         let context = MediaGridViewController.StructuralApplyCompletionContext(
             grid: grid,
-            preservedSelection: [],
-            resetSelection: true,
             resetScroll: true,
             applyStart: Date(),
             applyCallStart: Date(),
@@ -235,6 +215,38 @@ struct MediaGridSelectionControllerTests {
 
         #expect(harness.controller.gridSelection == .empty)
         #expect(harness.selectedIDs().isEmpty)
+    }
+
+    @Test func programmaticDeltaDoesNotReconcile() throws {
+        let harness = try makeHarness(itemCount: 4)
+        var reconcileCount = 0
+        harness.installSpyHandlers(onReconcile: { reconcileCount += 1 })
+
+        try harness.click(harness.ids[0], modifiers: [])
+        reconcileCount = 0
+        harness.controller.applySelectionDelta(
+            from: [harness.ids[0]],
+            to: [harness.ids[1]]
+        )
+        #expect(reconcileCount == 0)
+        #expect(harness.selectedIDs() == [harness.ids[1]])
+
+        harness.controller.collectionView(
+            harness.controller.collectionView,
+            didSelectItemsAt: []
+        )
+        #expect(reconcileCount == 1)
+    }
+
+    @Test func shiftChainContractionAfterNativeEcho() throws {
+        // Guards the base-stomp regression: programmatic echoes must not reset base.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[1], modifiers: [])
+        try harness.click(harness.ids[4], modifiers: [.shift])
+        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 4]))
+
+        try harness.click(harness.ids[3], modifiers: [.shift])
+        #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
     }
 
     // MARK: - Thumbnail-only hit area (spec 0049)
@@ -345,8 +357,7 @@ private final class GridSelectionTestHarness {
     private func installSelectionHandlers() {
         controller.selectionHandlers = MediaGridSelectionHandlers(
             currentSelection: { [unowned self] in modelSelection },
-            applyClick: { [unowned self] hit, modifiers, orderedIDs, live in
-                modelSelection = modelSelection.reconcilingSelection(live)
+            applyClick: { [unowned self] hit, modifiers, orderedIDs in
                 let shift = modifiers.contains(.shift)
                 let command = modifiers.contains(.command)
                 guard let hit else {
@@ -373,16 +384,45 @@ private final class GridSelectionTestHarness {
             reconcileNative: { [unowned self] live in
                 modelSelection = modelSelection.reconcilingSelection(live)
                 return modelSelection
-            },
-            prune: { [unowned self] preserved, ordered in
-                let reconciled = modelSelection.reconcilingSelection(preserved)
-                modelSelection = reconciled.selection.isEmpty
-                    ? .empty
-                    : reconciled.pruned(to: ordered)
+            }
+        )
+    }
+
+    func setModelSelection(_ selection: GridSelection) {
+        modelSelection = selection
+    }
+
+    func installSpyHandlers(onReconcile: @escaping () -> Void) {
+        controller.selectionHandlers = MediaGridSelectionHandlers(
+            currentSelection: { [unowned self] in modelSelection },
+            applyClick: { [unowned self] hit, modifiers, orderedIDs in
+                let shift = modifiers.contains(.shift)
+                let command = modifiers.contains(.command)
+                guard let hit else {
+                    if !shift, !command {
+                        modelSelection = modelSelection.clearedBySpace()
+                    }
+                    return modelSelection
+                }
+                switch (shift, command) {
+                case (false, false):
+                    modelSelection = modelSelection.plainClick(hit)
+                case (false, true):
+                    modelSelection = modelSelection.commandClick(hit)
+                case (true, false):
+                    modelSelection = modelSelection.shiftClick(hit, orderedIDs: orderedIDs)
+                case (true, true):
+                    modelSelection = modelSelection.commandShiftClick(
+                        hit,
+                        orderedIDs: orderedIDs
+                    )
+                }
                 return modelSelection
             },
-            clear: { [unowned self] _ in
-                modelSelection = .empty
+            reconcileNative: { [unowned self] live in
+                onReconcile()
+                modelSelection = modelSelection.reconcilingSelection(live)
+                return modelSelection
             }
         )
     }

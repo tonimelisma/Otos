@@ -59,7 +59,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     /// View menu and toolbar −/+ buttons call directly.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
     /// ViewModel-owned selection intents. The controller never stores `GridSelection`
-    /// itself — every gesture/prune/clear routes through these closures.
+    /// itself — every gesture and native-keyboard reconcile routes through these closures.
     var selectionHandlers: MediaGridSelectionHandlers = .init()
     /// Grid vs filmstrip presentation. Strip disables pinch zoom and forwards arrows.
     var presentation: MediaGridPresentation = .grid(columnCount: GridColumnCount.defaultValue)
@@ -91,7 +91,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
             controller.receiveColumnCount(columnCount)
         }
         controller.receive(grid)
-        controller.syncSelectionFromModel()
+        controller.renderSelectionFromModel(reason: "swiftuiUpdate")
     }
 }
 
@@ -151,6 +151,11 @@ final class MediaGridViewController: NSViewController {
     /// `CatalogWindowViewModel`; this controller only renders it into
     /// `selectionIndexPaths` and reconciles native keyboard selection upward.
     var selectionHandlers = MediaGridSelectionHandlers()
+    /// True while `applySelectionDelta` is writing `selectionIndexPaths`. The
+    /// didSelect/didDeselect delegates fire synchronously for programmatic writes;
+    /// while this is set they must not reconcile the (by definition half-applied)
+    /// live set into the model. Written only by `applySelectionDelta`.
+    var isApplyingModelSelection = false
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.
@@ -452,13 +457,6 @@ extension MediaGridViewController {
         configureScrollView()
     }
 
-    /// Writes AppKit selection from the ViewModel model after a controller recreate or
-    /// SwiftUI update so mode switches keep the shared selection visible.
-    func syncSelectionFromModel() {
-        let target = selectionHandlers.currentSelection().selection
-        applySelectionDelta(from: selectedIdentities(), to: target)
-    }
-
     private func installScrollObserver() {
         let clipView = scrollView.contentView
         clipView.postsBoundsChangedNotifications = true
@@ -484,7 +482,8 @@ extension MediaGridViewController {
                 )
             case let .refreshVisible(_, resetScroll, resetSelection):
                 if resetSelection {
-                    clearSelection(reason: "descriptorChange")
+                    // Model was already cleared in ViewModel.applyState; render only.
+                    renderSelectionFromModel(reason: "descriptorRefresh")
                 }
                 if resetScroll {
                     scrollToTop()
@@ -495,7 +494,6 @@ extension MediaGridViewController {
                 applyStructure(
                     grid,
                     resetScroll: descriptorChanged,
-                    resetSelection: descriptorChanged,
                     descriptorChanged: descriptorChanged
                 )
             case let .zoomSwap(columnCount):

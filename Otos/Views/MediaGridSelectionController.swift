@@ -8,26 +8,25 @@ import OSLog
 // in `CatalogWindowViewModel` as a pure `GridSelection` value; this controller is a
 // renderer of that value plus the responder-chain copy path.
 //
-// Mouse selection is model-owned (spec 0046). `MediaGridCollectionView.mouseDown(with:)`
-// does **not** call `super.mouseDown`, so AppKit's native mouse-selection tracking loop
+// Mouse selection is model-owned. `MediaGridCollectionView.mouseDown(with:)` does
+// **not** call `super.mouseDown`, so AppKit's native mouse-selection tracking loop
 // never runs and there is no commit to race; it forwards `(hit, modifiers)` here.
 // `applyMouseSelection(hit:modifiers:)` calls the injected ViewModel intent
 // synchronously, receives the updated `GridSelection` as the return value, and writes
 // `selectionIndexPaths` from it as the last operation of the gesture via
 // `applySelectionDelta`. Because the model is the truth and the write is last, the
 // mouseDown-vs-mouseUp timing that broke the prior read-then-correct design is
-// irrelevant. Programmatic `selectItems`/`deselectItems` do not re-enter `mouseDown`,
-// so there is no feedback loop.
+// irrelevant.
 //
 // `selectedIdentities()` (a read of `selectionIndexPaths`) is used only to (a) reconcile
 // the model's `selection` field after native *keyboard* selection (⌘A, ⇧-arrows — which
 // stay native and write `selectionIndexPaths` directly) and (b) compute the minimal write
-// delta. It is never used to *decide* a gesture: the gesture is computed solely from
-// the ViewModel-owned model.
+// delta. It is never used to *decide* a gesture or to prune/clear the model after a
+// structural apply — those writes live in `CatalogWindowViewModel.applyState`.
 //
-// The `didSelectItemsAt`/`didDeselectItemsAt` delegate methods reconcile native keyboard
-// selection upward (idempotent when a programmatic delta write echoes an equal set) and
-// emit telemetry.
+// Programmatic `selectItems`/`deselectItems` fire `didSelect`/`didDeselect` synchronously.
+// `isApplyingModelSelection` suppresses those echoes so a half-applied live set never
+// stomps the model (and never resets `base`, which would break ⇧-chain contraction).
 //
 // Copy writes original file URLs to the pasteboard in display order. It does not read
 // media bytes, decode thumbnails, or materialize cloud placeholders; it only maps the
@@ -36,15 +35,23 @@ import OSLog
 // MARK: - Selection and copy
 
 extension MediaGridViewController: NSCollectionViewDelegate {
-    /// Reconcile native keyboard selection upward, then emit telemetry. Programmatic
-    /// delta writes also land here; `reconcileNativeSelection` is idempotent when the
-    /// live set already equals the model, so there is no feedback loop.
+    /// Reconcile native keyboard selection upward. Programmatic delta writes also land
+    /// here synchronously; while `isApplyingModelSelection` is set they must not adopt
+    /// the (by definition half-applied) live set into the model.
     func collectionView(_: NSCollectionView, didSelectItemsAt _: Set<IndexPath>) {
+        guard !isApplyingModelSelection else {
+            logSelection(reason: "select")
+            return
+        }
         _ = selectionHandlers.reconcileNative(selectedIdentities())
         logSelection(reason: "select")
     }
 
     func collectionView(_: NSCollectionView, didDeselectItemsAt _: Set<IndexPath>) {
+        guard !isApplyingModelSelection else {
+            logSelection(reason: "deselect")
+            return
+        }
         _ = selectionHandlers.reconcileNative(selectedIdentities())
         logSelection(reason: "deselect")
     }
@@ -74,7 +81,7 @@ extension MediaGridViewController {
             return
         }
 
-        let updated = selectionHandlers.applyClick(clicked, modifiers, orderedIDs, live)
+        let updated = selectionHandlers.applyClick(clicked, modifiers, orderedIDs)
         let reason = if clicked == nil {
             "emptySpace"
         } else {
@@ -94,10 +101,12 @@ extension MediaGridViewController {
     }
 
     /// Applies only the identities that actually change between `current` and `target`,
-    /// so a survivor present in both never receives a select/deselect call (spec 0047:
-    /// this is what keeps the animated selection ring from blinking on a survivor).
+    /// so a survivor present in both never receives a select/deselect call (this is what
+    /// keeps the animated selection ring from blinking on a survivor).
     func applySelectionDelta(from current: Set<MediaAssetID>, to target: Set<MediaAssetID>) {
         let delta = GridSelection.selectionDelta(current: current, target: target)
+        isApplyingModelSelection = true
+        defer { isApplyingModelSelection = false }
         if !delta.toDeselect.isEmpty {
             let paths = Set(delta.toDeselect.compactMap { dataSource.indexPath(for: $0) })
             collectionView.deselectItems(at: paths)
@@ -140,20 +149,21 @@ extension MediaGridViewController {
     /// The live selection as stable identities, read from the collection view's own
     /// selection. This is a *render output* read: used only to compute the minimal write
     /// delta and to reconcile the model after native keyboard selection — never to decide
-    /// a gesture.
+    /// a gesture or to prune the model after a structural apply.
     func selectedIdentities() -> Set<MediaAssetID> {
         Set(collectionView.selectionIndexPaths.compactMap { dataSource.itemIdentifier(for: $0) })
     }
 
-    /// Restores selection after a structural apply by pruning the ViewModel-owned model
-    /// to the surviving identities, then writing the delta. Applying only the delta —
-    /// rather than deselecting everything and reselecting survivors — means a surviving
-    /// tile's `isSelected` never changes, so its animated selection ring (spec 0047) never
-    /// blinks on an apply that does not actually touch its selection state.
-    func restoreSelection(_ preserved: Set<MediaAssetID>, in ordered: [MediaAssetID]) {
-        let updated = selectionHandlers.prune(preserved, ordered)
-        applySelectionDelta(from: selectedIdentities(), to: updated.selection)
-        logSelection(reason: "restore")
+    /// Model → view, one direction. Idempotent; safe to call at any point where the
+    /// data source already contains the model's identities (apply completion, SwiftUI
+    /// update). Identities not yet in the data source are skipped and re-rendered by
+    /// the next apply completion.
+    func renderSelectionFromModel(reason: String) {
+        applySelectionDelta(
+            from: selectedIdentities(),
+            to: selectionHandlers.currentSelection().selection
+        )
+        logSelection(reason: reason)
     }
 
     func logSelection(reason: String) {
@@ -167,16 +177,6 @@ extension MediaGridViewController {
             reason=\(reason, privacy: .public)
             """
         )
-    }
-
-    func clearSelection(reason: String) {
-        selectionHandlers.clear(reason)
-        let current = collectionView.selectionIndexPaths
-        guard !current.isEmpty else {
-            return
-        }
-        collectionView.deselectItems(at: current)
-        logSelection(reason: reason)
     }
 
     /// Current ViewModel-owned selection model (test and diagnostic read).
