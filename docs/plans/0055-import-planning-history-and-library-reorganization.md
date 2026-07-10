@@ -2,8 +2,15 @@
 
 Status: active architecture and implementation plan.  Product contract confirmed
 by Taylor on 2026-07-10.  Research: [Import planning, filesystem operations, and
-recovery](../research/2026-07-10-import-planning-filesystem-operations.md).
+recovery](../research/2026-07-10-import-planning-filesystem-operations.md) and
+[Plan 0055 review findings: naming, publication, durability, and camera
+facts](../research/2026-07-10-plan-0055-review-findings.md).
 Delete this file when every stage is implemented and landed.
+
+`MediaMetadata` (github.com/tonimelisma/MediaMetadata) is a first-party library.
+Its API may be broken and extended freely by this plan; required library changes
+are listed in section 4.5 and land as versioned MediaMetadata releases before the
+Otos stage that consumes them.
 
 This plan adds a deterministic import-plan overlay for every attached removable
 filesystem volume and MTP/PTP camera, imports the complete source into any fixed
@@ -28,7 +35,14 @@ These are requirements, not implementation suggestions.
    user-configured fixed Otos library. Any source can target any fixed library.
 2. An import always covers **every catalog-eligible image/raw/video asset on the
    source**. Browser selection, sidebar filters, media filters, and search never
-   narrow it. Partial import is explicitly deferred.
+   narrow it. Partial import is explicitly deferred. Coverage is an *accounting*
+   guarantee: every eligible asset ends the run imported, proven pre-existing, or
+   **visibly blocked** — never silently omitted. Structural scanner exclusions
+   that hide media the user would expect to import (most importantly package
+   directories such as AVCHD camcorder structures, which the current scanner
+   skips) must surface as a visible attention state on the source; an import that
+   skipped packages is not presented as complete coverage, and auto-eject is
+   withheld while any blocked or skipped-package attention state exists.
 3. Otos inventories immediately, enriches in the background, and greedily builds
    a complete ready plan for every attached source once that source's inventory,
    required metadata, companion enumeration, and destination choice are complete.
@@ -39,9 +53,20 @@ These are requirements, not implementation suggestions.
    a second import.
 5. Every media asset has a real best date. Embedded metadata wins; the final
    fallback is the source filesystem/camera modification date. A fabricated date
-   such as planning time, staging time, download time, or “now” is forbidden. If a
-   source API genuinely supplies no usable date, the source is blocked as invalid
-   rather than producing dateless media.
+   such as planning time, staging time, download time, or “now” is forbidden.
+   Filesystem sources always have an mtime, so this is total for them. If a
+   camera API genuinely supplies no usable date for an item (every embedded and
+   camera date field absent or invalid), that **item** becomes a visible
+   `.blocked(.noUsableDate)` plan entry: it stays in inventory and in the plan,
+   the rest of the source imports normally, and cleanup/auto-eject are withheld
+   while any blocked entry exists. Never silently drop the item from inventory,
+   and never block the whole source for one undatable item.
+   The fabricated-date rule extends through the copy: the **destination** file's
+   modification date must equal the planned source modification date (preserved
+   by the OS copy or explicitly stamped on the staged file before publication),
+   because destination mtime is itself the best-date fallback for the imported
+   asset. A destination file whose mtime is the download/copy moment is a
+   fabricated date and a test failure.
 
 ### Destination policy and duplicate behavior
 
@@ -51,11 +76,39 @@ These are requirements, not implementation suggestions.
    `YYYYMMDD_HHMMSS`; filename extensions are lowercased consistently with current
    catalog format handling. Same-second/conflicting names receive `_001`, `_002`,
    and so on in natural source-relative-path order.
+   **Date folders and date-time names are derived from the embedded wall-clock
+   timestamp verbatim** — the `year…second` components the camera wrote, exactly
+   as parsed (`CaptureTime` components in MediaMetadata) — never from a UTC
+   instant re-rendered in the Mac's current time zone. Most EXIF timestamps carry
+   no UTC offset (they are floating wall-clock values whose `instant` is `nil`),
+   so instant-based naming would silently fall back to file dates for most
+   photos and would change names when the user travels, breaking idempotence.
+   Formatting the parsed components verbatim is zone-independent, matches
+   `gomediaimport`/exiftool conventions, and applies uniformly: floating EXIF
+   names use camera-local wall time; UTC-anchored video timestamps name by their
+   UTC wall clock (identical to the CLI's behavior); offset-bearing timestamps
+   name by their embedded local wall clock. Only the filesystem-mtime fallback
+   renders an instant, using the user's current calendar/time zone at plan time;
+   the plan records that rendering policy, and mtime-fallback names are
+   documented as not portable across time-zone changes.
 7. Import duplicate classification applies only when a planned destination
    candidate already exists. Equal byte size is a cheap gate; exact equality is
    then proved by an on-demand content comparison. An unreadable/detached/provider-
    failed candidate is **blocked comparison**, not “probably duplicate.” A
    different file keeps both originals through deterministic suffixing.
+   Whether a candidate "already exists" is a **live filesystem fact**, not a
+   catalog fact: the catalog contains only eligible media and recognized
+   companions, so it cannot prove a candidate path is free (a symlink, package,
+   hidden file, or not-yet-reconciled file may occupy it). Import planning
+   resolves candidate occupancy through the same targeted
+   `NamespaceOccupancyRequest` boundary reorganization uses (section 9.4).
+   Source-internal duplicates are **never collapsed** in the first
+   implementation: two byte-identical files on the same source each import under
+   their own deterministic name. This deliberately diverges from
+   `gomediaimport`'s optional checksum collapse of same-source duplicates; keeping
+   every original represented matches the reorganization rule and keeps
+   execution/recovery per-entry independent. Revisit only with a confirmed
+   product requirement.
 8. A successful OS copy/download is trusted. Do not reread or checksum the new
    destination to prove it byte-identical. Staging plus no-overwrite publication
    prevents partial final files; OS errors are operation failures.
@@ -63,21 +116,37 @@ These are requirements, not implementation suggestions.
    contents, and settings, repeating plan plus execute creates no additional
    destination files and no new import-batch timestamps. It may only finish
    durable settlement, requested source cleanup, or eject left pending by an
-   interrupted earlier execution.
+   interrupted earlier execution. Because embedded-dated media names from the
+   wall clock verbatim (item 6), idempotence for embedded-dated media holds
+   across Mac time-zone changes; only mtime-fallback names are zone-sensitive,
+   and that boundary is documented and tested.
 
 ### Sidecars, cleanup, and history
 
-10. Recognized useful source companions are `.xmp`, `.srt`, and `.lrc` (case
-    insensitive). A new global **Import sidecar files** toggle lives in an Import
-    tab in Settings. When enabled, a recognized companion follows its primary's
-    chosen directory and basename. Unknown companions and known device artifacts
-    are ignored, never silently deleted. Otos does not generate metadata sidecars.
+10. Recognized useful source companions are `.xmp` and `.srt` (case insensitive) —
+    exactly `gomediaimport`'s copy set. `.lrc` is deliberately excluded: research
+    found no camera ecosystem that produces it (DJI produces `.srt` telemetry and
+    `.lrf` low-res proxies; `.lrc` is a lyrics format, audio-domain), and the
+    retired app's inclusion of it carried no recorded justification. Re-add only
+    with evidence of a real device producing useful `.lrc` companions. A new
+    global **Import sidecar files** toggle lives in an Import tab in Settings.
+    When enabled, a recognized companion follows its primary's chosen directory
+    and basename. Unknown companions and known device artifacts are ignored,
+    never silently deleted. Otos does not generate metadata sidecars.
+    Pairing must handle RAW+JPEG: when one companion basename matches multiple
+    eligible primaries in the same directory (`IMG_1.CR3` + `IMG_1.JPG` +
+    `IMG_1.xmp`), the companion pairs to the **raw** primary (the Lightroom
+    convention); with no raw among the matches, pair to the deterministically
+    first primary by natural name. Zero matches leave it unpaired. Silently
+    leaving RAW+JPEG shooters' `.xmp` edits behind is not acceptable.
 11. Source-original deletion is explicit opt-in and defaults off. Delete only a
     source whose destination outcome is a newly published copy or a proved
     pre-existing equal file. Sidecar cleanup follows the same rule. Auto-eject is
     explicit opt-in and happens only after every media/sidecar operation and
-    requested source deletion succeeded. Cleanup/eject failure does not roll back
-    a completed destination copy and is visible/retryable.
+    requested source deletion succeeded, **and** only when the run has zero
+    blocked entries and zero skipped-package attention states (items 2 and 5).
+    Cleanup/eject failure does not roll back a completed destination copy and is
+    visible/retryable.
 12. Every media asset newly published by an **import** receives the same import
     batch timestamp. Proved pre-existing skips do not acquire a new timestamp.
     Reorganization never creates a batch and preserves any existing batch value.
@@ -92,6 +161,12 @@ These are requirements, not implementation suggestions.
     and each file operation checks its planned source size/mtime immediately
     before mutation. A race at publication fails safely without overwrite, then
     invalidates/replans. There is no whole-source byte-reading “preflight.”
+    **Revisions guard starts, never continuation:** an executing operation's own
+    settlements and requested source deletions increment revisions but must not
+    flip the executing source to `.needsReplan`, cancel execution, or trigger a
+    greedy rebuild mid-run. Foreign events observed during execution mark the
+    root dirty; the rebuild happens once after the execution finishes. Per-entry
+    source-fact checks and no-overwrite publication are the mid-run guards.
 14. Library reorganization uses the same date/name/reservation planning core but
     distinct namespace-transformation semantics. Before any conflict work, compare
     the exact standardized source and proposed relative-path spelling: exact
@@ -101,11 +176,16 @@ These are requirements, not implementation suggestions.
     even when two files are byte-identical. Occupied targets use a dependency-aware
     move or deterministic suffix so every original remains represented.
 15. Execution is user-started, bounded, observable, and crash-recoverable. Import
-    cancellation stops between files; reorganization cancellation stops between
-    dependency components. Cancellation does not undo already committed units.
-    Import recovery may settle already-published files, finish requested cleanup,
-    or remove abandoned staging; it never resumes an unstarted byte copy without a
-    new user start intent.
+    cancellation takes effect **mid-file**: the staged copy uses the OS copy
+    primitive's progress callback (`copyfile(3)`; section 8.1), so a multi-gigabyte
+    video reports byte progress and aborts promptly, discarding its staging.
+    Both reference engines (gomediaimport, the retired executor) had byte-level
+    progress and mid-file cancellation; regressing to per-file granularity is not
+    acceptable. Reorganization cancellation stops between dependency components.
+    Cancellation does not undo already committed units. Import recovery may
+    settle already-published files, finish requested cleanup, or remove abandoned
+    staging; it never resumes an unstarted byte copy without a new user start
+    intent.
 16. A reorganization dependency component is the smallest interruption boundary.
     Once its first filesystem move starts, cancellation waits until that entire
     component is committed or restored. A crash recovery pass runs before normal
@@ -153,7 +233,16 @@ These are requirements, not implementation suggestions.
 
 One existing persistence policy must change before history ships: destructive
 schema reset is incompatible with non-rebuildable import history. Stage A replaces
-it with additive migrations and a clear future-schema refusal policy.
+it with additive migrations and a clear future-schema refusal policy. There are
+**two** erase paths to remove, not one: `migrator.eraseDatabaseOnSchemaChange`
+(`CatalogStorePersistence.migrator`) and the independent
+`databaseNeedsCleanSchemaReset` check plus `dbWriter.erase()` and the thumbnail
+purge behind it (`CatalogStore.database()` /
+`performThumbnailStoreStartupMaintenance`). Removing only the migrator flag
+leaves the second nuke live.
+
+`MediaMetadata` is first-party and versioned with this plan; section 4.5 lists
+the library contract this plan depends on.
 
 ---
 
@@ -281,6 +370,8 @@ Add these files/types; names are part of the plan so implementation stays cohere
 - `Otos/Services/ContentEqualityChecker.swift`: deliberate, ephemeral comparison.
 - `Otos/Services/FilesystemNamespaceSemantics.swift`: off-main, volume-aware name,
   occupancy, ancestor, and resource-identity observations for planner requests.
+  It serves **both** operation modes: reorganization namespace classification
+  (section 9.3) and import destination-candidate occupancy probes (section 7.2).
 - `Otos/Services/MediaFileOperator.swift`: coordinated copy/move/publish/delete.
 - `Otos/Stores/MediaOperationGateway.swift`: Store-owned planning snapshot,
   history, revision, settlement, and journal SQL/mapping. This is an owned helper,
@@ -303,15 +394,36 @@ validation, reorganization leases, staging, component settlement, and recovery.
 In `CatalogStorePersistence.swift`:
 
 1. Remove `migrator.eraseDatabaseOnSchemaChange = true`.
-2. Replace automatic unsupported-schema erasure with:
+2. Remove the second erase path: `databaseNeedsCleanSchemaReset(_:)` plus the
+   `dbWriter.erase()` call in `CatalogStore.database()` and the thumbnail-purge
+   branch of `performThumbnailStoreStartupMaintenance`. Replace both with:
    - apply every known additive/transform migration in order;
    - if the database was written by a future unsupported app schema, refuse to
-     open it and log/present a specific compatibility problem without erasing;
+     open it and log/present a specific compatibility problem without erasing.
+     Define the refusal UX concretely: the app launches, the window shows the
+     existing empty/error surface with a typed "catalog was written by a newer
+     Otos" problem, no root is loaded, no scan runs, and nothing is written to
+     the database file. Detection: a `user_version`/migration identifier newer
+     than the running app knows, or unknown required tables/columns;
    - reserve an explicit user-confirmed “Rebuild Catalog” operation for a later
      requirement. Do not silently use it as migration behavior.
 3. Add migration tests starting from every checked-in prior schema fixture plus a
-   future-version fixture whose history row survives refusal.
-4. Rewrite the persistence/version section of ADR 0008 (or supersede it with a
+   future-version fixture whose history row survives refusal. Check binary or
+   SQL-dump fixtures into the test bundle from this stage forward — every future
+   schema change gets a fixture.
+4. Decide and document the journal durability model. The pool runs WAL with
+   `synchronous = NORMAL`, which is durable across an app crash but can lose
+   committed transactions on power loss/kernel panic (rollback to the last
+   checkpoint). A lost settlement transaction silently loses a batch stamp for a
+   file that exists, and a lost `sourceDeletionPending` row forgets a requested
+   deletion. Selected policy: journal and settlement write transactions escalate
+   to `synchronous = FULL` for their commit (flip the pragma inside the write
+   closure on the single writer connection; restore after). Measure the cost in
+   Stage E; if measured cost is prohibitive on real imports, fall back to the
+   documented app-crash-only guarantee with explicit owner sign-off. Either way
+   the recovery pass must tolerate an orphaned staging or temp file whose journal
+   row is absent (log, remove staging, never touch published finals).
+5. Rewrite the persistence/version section of ADR 0008 (or supersede it with a
    persistence ADR) before adding history. Update `docs/architecture.md` and the
    affected ARC requirements in the same implementation PR.
 
@@ -327,13 +439,27 @@ CREATE INDEX idx_media_asset_import_batch
 ON media_asset(import_batch_unix_ms, library_root_id, relative_path)
 WHERE import_batch_unix_ms IS NOT NULL;
 
+-- Embedded capture wall clock for date naming (contract item 6). Compact
+-- YYYYMMDDHHMMSS integer (e.g. 20260101120000) selected by enrichment with the
+-- same role precedence as the instant columns (original → quickTimeCreation →
+-- digitized → gps); precision records localWithOffset / localFloating /
+-- absolute for diagnostics and tests. NULL means "no embedded timestamp" and
+-- naming falls back to source mtime.
+ALTER TABLE media_asset
+ADD COLUMN capture_wall_compact INTEGER;
+ALTER TABLE media_asset
+ADD COLUMN capture_wall_precision TEXT;
+
 CREATE TABLE media_companion (
     library_root_id INTEGER NOT NULL,
     relative_path TEXT NOT NULL,
     primary_relative_path TEXT,
     kind TEXT NOT NULL,
-    byte_size INTEGER NOT NULL,
-    content_modified_at DOUBLE NOT NULL,
+    -- Nullable: ImageCapture may not expose size/mtime for camera sidecars.
+    -- NULL facts mean cleanup-safety comparisons are unavailable → the
+    -- companion may copy but is never source-deleted without proof.
+    byte_size INTEGER,
+    content_modified_at DOUBLE,
     PRIMARY KEY (library_root_id, relative_path),
     FOREIGN KEY (library_root_id) REFERENCES library_root(id) ON DELETE CASCADE
 );
@@ -427,6 +553,16 @@ the sidebar rows, and a batch naturally disappears when its last asset is proven
 deleted. Introduce a table only when a verified requirement adds batch-authored
 metadata that cannot live on assets.
 
+Backfilling `capture_wall_compact`: already-enriched rows will not re-enrich
+(their size/mtime staleness signature is unchanged), so the Stage A migration
+backfills the column by decoding each row's `asset_metadata.metadata_extra_json`
+in Swift (the `timestamps` array already persists `year…second`, offset, and
+precision per role) and applying the same role precedence. Rows without stored
+metadata stay NULL and are filled by their next enrichment. Enrichment writes the
+column as part of `writeEnrichmentOverlay` from Stage A forward; the scan upsert
+never touches it (disjoint writers, matching the existing enrichment-column
+pattern).
+
 ### 4.3 Set-based path remap and foreign keys
 
 Reorganization changes the `media_asset` composite primary key. Make the existing
@@ -453,10 +589,15 @@ It must:
    transaction-private relative path, then from those private keys to final paths;
    the private keys never commit or publish;
 4. rely on `ON UPDATE CASCADE` or explicit set-based updates to carry metadata and
-   preserve `import_batch_unix_ms` unchanged;
-5. update every companion relative path in the same transaction;
-6. mark the component `.catalogCommitted` in that transaction;
-7. return one complete old→new batch for ViewModel selection and
+   preserve `import_batch_unix_ms`, `capture_wall_compact`, and every enrichment
+   column unchanged;
+5. recompute every path-derived stored value for the new identity in the same
+   transaction: `sort_key`, `name_sort_key`, and `name` (the
+   `updateLibraryRootPath` root-remap precedent already does this; forgetting it
+   here silently corrupts grid ordering with no failing test);
+6. update every companion relative path in the same transaction;
+7. mark the component `.catalogCommitted` in that transaction;
+8. return one complete old→new batch for ViewModel selection and
    `TileContentStore`, then publish one lossless catalog mutation and one root
    revision increment—never one event per member.
 
@@ -475,7 +616,7 @@ If any proof fails, roll back the catalog transaction and keep the root under it
 reorganization recovery lease; never create a second catalog row, publish a
 partial remap, or let a normal scan interpret temporary absence as deletion.
 
-### 4.4 Best-date invariant
+### 4.4 Best-date invariant and the wall-clock naming fact
 
 Change the persisted best-date contract from nullable to logically total for every
 cataloged media row:
@@ -489,13 +630,51 @@ embedded capture candidates
 Do not use enrichment completion time. The scanner already owns source mtime and
 must store a valid value for every regular file. Camera enumeration must use the
 first valid real value from `fileModificationDate`, `modificationDate`, and
-`exifModificationDate` when embedded metadata has no date. Add a planning query
-that explicitly reports any invariant violation rather than silently omitting it.
+`exifModificationDate` when embedded metadata has no date; an item with no valid
+value in any field stays in inventory with NULL date columns and becomes a
+`.blocked(.noUsableDate)` plan entry (contract item 5) — it is never silently
+dropped. Add a planning query that explicitly reports any invariant violation
+rather than silently omitting it.
 
 The generated `best_capture_unix` expression may remain if its final mtime branch
 is non-null by schema, or migrate to a non-null stored scalar if making the
 invariant legible requires it. Compare both in the Stage A migration PR; prefer the
 generated expression unless tests demonstrate ambiguity.
+
+**Naming and sorting are two different reads of capture time, and Stage A must
+keep them coherent.** The instant columns (`ts_original_unix` and siblings) are
+UTC instants and are NULL for floating EXIF timestamps (no offset in the file) —
+which is most photos — so `best_capture_unix` already sorts most photos by file
+dates. That is a known, accepted sorting behavior and this plan does not change
+it. Naming, however, must use `capture_wall_compact` (section 4.2): the embedded
+wall clock verbatim per contract item 6. The two can disagree for one asset
+(named into `2025/12` by camera wall clock, sorted/displayed by a January file
+date); this is documented, expected, and preferable to naming by copy mtimes.
+Promoting floating wall clocks into the app-wide sort/display best date is a
+separate future ADR, explicitly out of this plan's scope.
+
+### 4.5 MediaMetadata library requirements
+
+`MediaMetadata` is first-party; these land as a versioned library release before
+the Otos stage that consumes them (Stage A for the first two):
+
+1. **Wall-clock completeness contract (required, Stage A).** Every emitted
+   `CaptureTime` carries complete `year…second` components, `precision`
+   (`localWithOffset` / `localFloating` / `absolute`), and `utcOffsetSeconds`
+   when known. Inspection shows every current parser path (TIFF/EXIF, ISOBMFF,
+   GoPro GPMF, RIFF) already constructs full `dateComponents` — UTC components
+   for absolute instants, local components for floating/offset timestamps — so
+   this is a *stated and test-pinned contract*, not a parser rewrite. Add
+   library contract tests asserting components/precision for: floating EXIF,
+   offset-bearing EXIF, GPS-anchored, QuickTime UTC epoch, and GPMF epoch
+   fixtures. Pin the Otos dependency to the release that carries these tests.
+2. **Documented instant semantics (required, Stage A).** Document in the library
+   API that `instant` is `nil` for `localFloating` by design, and that callers
+   needing calendar behavior (naming, foldering) must consume components, not
+   instants. This is the contract Otos's enrichment and planner build on.
+3. **EXIF sub-second components (optional, deferred).** `SubSecTimeOriginal`
+   exposure would reduce same-second suffix collisions. Not required for this
+   plan; record as a library roadmap item only.
 
 ---
 
@@ -531,22 +710,53 @@ defined.
 
 ### Pairing and behavior
 
-- Recognize `.xmp`, `.srt`, `.lrc` case-insensitively.
+- Recognize `.xmp` and `.srt` case-insensitively (contract item 10; `.lrc`
+  deliberately excluded pending device evidence).
 - Pair only within the same directory by case-insensitive basename before the
   final extension. If exactly one eligible primary matches, set
-  `primary_relative_path`. If zero or multiple match, retain the companion fact
-  but mark it unpaired; do not import/delete it automatically.
+  `primary_relative_path`. If multiple match (RAW+JPEG), pair to the raw primary;
+  with no raw among the matches, pair to the deterministically first primary by
+  natural name (contract item 10). If zero match, retain the companion fact but
+  mark it unpaired; do not import/delete it automatically.
+- Pairing is maintained under targeted FSEvents reconciliation, not only full
+  scans: a single-file delete/rename/upsert of a primary or companion must
+  re-derive `primary_relative_path` for the affected directory's companions in
+  the same reconciliation, so an out-of-app rename cannot leave a stale pairing.
 - Filesystem scanner reads only URL resource facts, never sidecar bytes.
-- Camera enumeration sets `.sidecarFiles: true` and maps `ICCameraFile.sidecarFiles`
-  to the owning camera primary directly.
+- Camera sidecar grouping comes from the `ICCameraFile.sidecarFiles` *property*
+  (populated by ImageCapture during enumeration); `.sidecarFiles` is a download
+  option, not an enumeration switch, and current code passes it `false`. Map each
+  sidecar `ICCameraItem` to the owning camera primary directly and treat each as
+  its own downloadable item during import. Whether specific devices surface XMPs
+  in `mediaFiles`, only via `sidecarFiles`, or both must be probed on real
+  hardware in Stage B (record findings in `docs/research/`). Camera sidecar
+  size/mtime facts may be absent — the `media_companion` columns are nullable and
+  NULL facts block cleanup proof, never copying.
 - Import with setting off ignores companion actions. With setting on, copy each
-  paired useful companion using its primary's final basename.
+  paired useful companion using its primary's final basename. Companion
+  destination conflicts are evaluated at the **bundle** level because a companion
+  cannot be suffixed independently of its primary: if the primary's candidate is
+  free but a companion's candidate is occupied, prove companion equality (equal →
+  companion skips, primary proceeds), otherwise advance the whole bundle to the
+  next suffix. Companions are never overwritten and never silently dropped.
 - Reorganization always relocates paired recognized companions with their primary
   so an existing library is not internally orphaned; the import-only setting does
   not disable this.
 - Never delete THM/CTG/AAE/LRF/MPL/CPI or source trash in the first implementation.
   They are not useful Otos companions and destructive artifact cleanup is not a
   confirmed requirement.
+- Extend the scanner's structural exclusions with `gomediaimport`'s device
+  artifact set as *ignore-only* rules so "import everything" does not import
+  camera junk: Sony `M4ROOT/THMBNL` directories and `M4ROOT/CLIP/*.xml` (current
+  code excludes only `M4ROOT/SUB`), `.Trash-NNN`/`$RECYCLE.BIN` trash roots, and
+  AppleDouble `._*` (already excluded). Verify against real Sony/GoPro card
+  fixtures which of these actually classify as catalog media today; exclusions
+  are inventory rules for all roots, never deletions.
+- Package directories the scanner skips (AVCHD and similar) are counted per
+  source and surfaced as the contract item 2 skipped-package attention state on
+  the import footer. Deciding to *traverse* AVCHD packages is a separate future
+  product decision; this plan only forbids pretending coverage while skipping
+  them.
 
 Stage B must update the “no sidecars” wording in AGENTS, ADR 0008, ARC-007/031/033,
 and scanner requirements precisely: Otos still generates no sidecars and uses none
@@ -640,6 +850,12 @@ Destination changes invalidate every source targeting that root, but still use o
 build at a time. Do not create a generalized worker pool until profiling demands
 it.
 
+While an execution is running (contract item 13): the executing source ignores
+revision changes for continuation purposes; other sources' greedy rebuilds that
+target the executing destination root are deferred (dirty bit retained) until the
+execution finishes, because every settlement would otherwise re-trigger a full
+plan build per copied file. One rebuild after completion replaces the storm.
+
 ### 6.4 What “no pre-execution validation” means
 
 There is no second complete enumeration, duplicate sweep, checksum sweep, or disk
@@ -651,6 +867,14 @@ that an asynchronous watcher cannot close.
 If revisions mismatch, transition to `.needsReplan`, keep the user's queued start,
 and greedily rebuild. If a file changes after the guard, fail only that operation
 safely, stop new scheduling, invalidate, and show a retryable stale-plan result.
+
+A no-overwrite publication failure (`EEXIST`) is a special invalidation: the
+occupant may be invisible to the catalog (symlink, package, foreign file), so
+plain replanning from catalog facts would choose the same candidate name and loop
+forever. The executor records the occupied final key as a known-foreign-occupant
+fact for that destination root; the next plan build's occupancy probes (section
+7.2) treat that key as occupied, so the rebuilt plan advances to the next suffix
+instead of reproducing the failure.
 
 ---
 
@@ -668,32 +892,52 @@ or dictionary iteration.
 
 For each media:
 
-1. derive directory (`destination root` or `root/YYYY/MM`);
-2. derive basename (original stem or local-calendar `YYYYMMDD_HHMMSS` using one
-   documented calendar/time-zone policy; use the capture instant rendered in the
-   user's current zone at plan time and store the policy in the plan);
-3. normalize extension and construct ideal path;
-4. consult snapshot occupants plus paths already reserved by this plan;
+1. derive directory (`destination root` or `root/YYYY/MM`) from the same
+   timestamp fact as the basename;
+2. derive basename per contract item 6: when `capture_wall_compact` is present,
+   format those embedded wall-clock components verbatim as `YYYYMMDD_HHMMSS` —
+   no zone conversion, no instant rendering; when absent, render the source
+   mtime in the user's current calendar/zone at plan time and record that
+   rendering policy in the plan;
+3. normalize extension (lowercase; contract item 6 — deliberately *not*
+   `gomediaimport`'s canonical-extension rewrite such as `.jpeg → .jpg`, so an
+   original-name import never changes an extension's spelling beyond case) and
+   construct the ideal path;
+4. consult catalog snapshot occupants plus paths already reserved by this plan,
+   **plus a live occupancy probe for every final candidate key**: the pure
+   planner emits the same `NamespaceOccupancyRequest` values reorganization uses
+   (section 9.4), the coordinator resolves them off-main through
+   `FilesystemNamespaceSemantics` (one `lstat`-scale observation per candidate),
+   and planning resumes with typed results. Known-foreign-occupant facts recorded
+   by a failed publication (section 6.4) join this occupancy set;
 5. apply the operation-mode collision policy below;
-6. reserve the final media and companion destinations together;
+6. reserve the final media and companion destinations together (bundle
+   reservation; section 5);
 7. emit summary counts/bytes from dispositions, not a second pass over filesystem.
 
 ### 7.2 Import collision algorithm
 
 For candidate `ideal`, then `ideal_001`, `ideal_002`, ...:
 
-1. absent in destination snapshot/reservations → `.copy(candidate)` and reserve;
-2. occupied with different size → try next suffix;
-3. occupied with equal size → coordinator asks `ContentEqualityChecker` for exact
-   equality; equal → `.skipPreexisting(candidate)`; different → next suffix;
+1. absent per snapshot, reservations, and occupancy probe → `.copy(candidate)`
+   and reserve;
+2. occupied by a cataloged media file with different size → try next suffix;
+3. occupied by a cataloged media file with equal size → coordinator asks
+   `ContentEqualityChecker` for exact equality; equal →
+   `.skipPreexisting(candidate)`; different → next suffix;
 4. equality cannot be read/proved → `.blocked(.comparisonUnavailable(candidate,
    underlyingProblem))`; do not skip, overwrite, or guess;
-5. an equal file reserved earlier in the same plan is a skip only if its published
-   source will exist before cleanup; otherwise reserve a distinct suffix to keep
-   execution/recovery simple in the first implementation.
+5. occupied by a non-catalog occupant (probe reports a foreign file, symlink,
+   directory, or a recorded foreign-occupant fact) → try next suffix; Otos never
+   compares against, overwrites, or deletes a foreign occupant;
+6. a path reserved earlier in the same plan is simply occupied → try next
+   suffix. Source-internal duplicates are never collapsed (contract item 7):
+   equality against *planned* copies is never requested, only against files that
+   already exist at the destination.
 
-Equality checks are planning effects around the pure reservation loop. Express
-them as `ComparisonRequest` values and resume planning with typed results; do not
+Equality checks and occupancy probes are planning effects around the pure
+reservation loop. Express them as `ComparisonRequest` /
+`NamespaceOccupancyRequest` values and resume planning with typed results; do not
 inject an async closure into the pure planner.
 
 ### 7.3 Exact equality alternatives
@@ -734,7 +978,24 @@ a source/destination candidate; background greedy planning must not unexpectedly
 materialize dataless fixed-library candidates. If a greedy comparison encounters a
 dataless file, leave the plan `.blocked(.comparisonRequiresMaterialization)` and
 let the explicit Import intent authorize the read, then finish planning. Log this
-distinction.
+distinction. Camera-source comparisons read bytes by staging the camera item
+through the existing `DeviceStagingRegistry` download path — permitted background
+work under ADR 0013's eager camera staging, and the staged copy is reused for the
+subsequent import copy.
+
+**Comparison results survive replans.** The single heaviest greedy-planning case
+is the most common one: re-attaching an already-imported card makes every file an
+equal-size candidate and byte-compares the whole card against the destination.
+With a strictly per-generation memo, any destination revision bump mid-sweep (a
+cloud sync engine writing one file) discards all completed comparisons and
+restarts — on an active cloud destination the sweep may never converge. Keep an
+**ephemeral, in-memory, cross-generation comparison memo** keyed by both sides'
+`(rootPath, relativePath, byteSize, mtime)` tuples: a rebuilt plan reuses a
+completed verdict when both files' cheap facts are unchanged. The memo is
+process-lifetime at most, bounded (LRU), never persisted, and never used as
+identity — it caches "these two byte streams compared equal/unequal at these
+facts," which the per-file execution guard revalidates anyway. Instrument bytes
+compared and memo hit rate per plan build (section 11).
 
 ### 7.4 Idempotence tests
 
@@ -748,7 +1009,13 @@ Property/fixture tests must assert:
 - collision sets produce the same suffixes under shuffled input/enrichment order;
 - changing one source file changes only its necessary reservation chain;
 - attaching the same stable source at a different mount path does not change
-  source-relative deterministic names.
+  source-relative deterministic names;
+- embedded-dated media plans identical names under two different simulated Mac
+  time zones (wall-clock verbatim); mtime-fallback names differ and are the
+  documented exception;
+- a foreign (non-catalog) occupant at a candidate path yields the next suffix at
+  plan time, and a publication `EEXIST` feeds the recorded occupant into the next
+  plan so the same failing candidate is never chosen twice.
 
 ---
 
@@ -761,25 +1028,52 @@ Property/fixture tests must assert:
 Pros: smallest native implementation; OS handles APFS clones, metadata, and
 cross-volume moves; documented move fails if destination exists.
 
-Cons: does not coordinate with file providers/presenters; synchronous cancellation
-is only between operations; the final no-overwrite race deserves a focused probe.
+Cons: does not coordinate with file providers/presenters; no byte progress and no
+mid-file cancellation, so a 50 GB video copy is unobservable and unabortable — a
+regression against both reference engines; the documented no-overwrite move is a
+check-then-act, not atomic. Rejected.
 
-#### B. Per-operation `NSFileCoordinator` plus `FileManager` (selected)
+#### B. Per-operation `NSFileCoordinator` plus `copyfile(3)` for copies and `FileManager` for moves/deletes (selected)
 
-Pros: coordinates user-owned/cloud-provider paths while retaining OS copy/move;
-clear read/write/move intent; no custom byte-copy loop.
+Pros: coordinates user-owned/cloud-provider paths; `copyfile(3)` *is* the OS copy
+`FileManager` wraps (APFS clones, metadata, xattrs preserved via `COPYFILE_ALL`)
+while additionally providing a progress callback whose return value cancels the
+copy mid-file — satisfying contract item 15's byte progress and mid-file
+cancellation without a custom byte loop; moves/deletes keep the small
+`FileManager` surface.
 
-Cons: blocking and more failure modes; must be isolated off-main and never use one
-coordinator concurrently across workers.
+Cons: coordination is blocking and adds failure modes; must be isolated off-main,
+one fresh coordinator per operation, never shared across workers, and its per-op
+latency on cloud roots must be instrumented before accepting it inside the copy
+lanes (a coordinator that blocks hundreds of ms per file reshapes the executor).
 
-#### C. Raw `copyfile`/POSIX rename implementation
+#### C. Full custom POSIX read/write copy loop (retired-engine style)
 
-Pros: explicit exclusive flags, clone/copy flags, progress callbacks, and finer
-cancellation.
+Pros: total control of chunking, cancellation, and progress; the retired engine
+proved it works.
 
-Cons: metadata/xattr/error behavior becomes Otos's responsibility; substantially
-more code despite the requirement to trust OS copy. Keep only as a narrow final-
-publish fallback if Stage E's probe proves Foundation insufficient.
+Cons: metadata/xattr/clone behavior becomes Otos's responsibility; strictly more
+code than `copyfile(3)`, which provides the same progress/cancellation through
+the OS primitive. Rejected.
+
+#### Final publication primitive
+
+`FileManager.moveItem`'s "fails if destination exists" is a user-space existence
+check before `rename(2)` — a check-then-act window, not an atomic guarantee. The
+realistic concurrent writer is a cloud sync engine materializing a same-named
+file synced from another device. Selected ladder, verified by the Stage E probe:
+
+1. `renamex_np(..., RENAME_EXCL)` when the destination volume advertises
+   `VOL_CAP_INT_RENAME_EXCL` via `getattrlist` — atomic `EEXIST`, supported by
+   APFS, which covers local libraries and every File Provider domain replica;
+2. `link(2)` + `unlink(2)` where hard links exist but the capability bit is
+   absent;
+3. documented check-then-act `FileManager.moveItem` as the last resort on
+   volumes with neither (exFAT/SMB destinations), with the residual race
+   recorded.
+
+The probe's job is to confirm the capability matrix on real volumes, not to
+decide whether Foundation alone suffices — it does not.
 
 ### 8.2 Import operation phases
 
@@ -800,18 +1094,33 @@ For each `.copy` entry:
    persistent cache. Remove empty temporary directories immediately; never leave
    originals in an opaque long-lived vault;
 5. insert `active_file_operation(phase = copying)` before bytes move;
-6. coordinate and `FileManager.copyItem` (or ImageCapture download) to staging;
-7. on OS success, transactionally set phase `readyToPublish`;
-8. publish staging to the final absent URL without overwrite; then set phase
-   `publishedPendingSettlement`;
-9. call Store settlement to upsert destination facts, set the operation's batch
-   timestamp, add companion rows, and increment destination revision;
-10. if source deletion was requested, set `sourceDeletionPending`, perform it,
+6. coordinate and copy to staging with `copyfile(3)` (progress callback for byte
+   progress and mid-file cancellation), or ImageCapture download for camera
+   items;
+7. verify/stamp the staged file's timestamps: its modification date must equal
+   the planned source modification date (contract item 5). `copyfile` with
+   `COPYFILE_ALL` preserves it for filesystem sources; ImageCapture downloads
+   have no documented mtime contract, so probe on real hardware in Stage F and
+   stamp explicitly whenever the staged mtime differs from planned source facts;
+8. on OS success, transactionally set phase `readyToPublish`;
+9. publish staging to the final absent URL using the exclusive-publication
+   ladder (section 8.1); then set phase `publishedPendingSettlement`. On
+   `EEXIST`, record the foreign-occupant fact (section 6.4), fail this entry
+   safely, and continue policy;
+10. call Store settlement to upsert destination facts, set the operation's batch
+    timestamp, add companion rows, and increment destination revision;
+11. if source deletion was requested, set `sourceDeletionPending`, perform it,
     explicitly settle the source removal, then clear the journal row;
-11. otherwise clear the journal row after destination settlement.
+12. otherwise clear the journal row after destination settlement.
 
-Do not expose final filenames until step 8. On cancellation, finish the current OS
-operation and its safe settlement, then stop scheduling new entries.
+Do not expose final filenames until step 9. On cancellation, abort the in-flight
+copy via its progress callback and remove its staging, finish any already-published
+entry's safe settlement, then stop scheduling new entries.
+
+The camera analog of step 1's guard: an MTP source cannot be `stat`ed, so before
+each camera download revalidate the item against current `ICCameraFile` facts
+(size and the planned date field) and session liveness; a changed or missing item
+fails that entry as a stale-plan result exactly like a changed filesystem source.
 
 For `.skipPreexisting`, write no journal/copy/history. If source deletion is
 requested, use a small journal row in `sourceDeletionPending` before deleting so
@@ -860,6 +1169,12 @@ before new execution and never assumes temporary source absence means deletion.
 When a removable source path changed, resolve the journal's existing device
 identity through Store before retrying cleanup; never treat the stale mount path as
 the durable source identity.
+
+Recovery must also handle the durability gap (section 4.1 item 4): an orphaned
+staging file with no journal row (possible after power loss under WAL) is removed
+as abandoned app-owned staging; a published final with no journal row is left
+untouched — the next plan proves it `skipPreexisting`. The batch stamp lost in
+that power-loss window is the accepted residual documented in section 4.1.
 
 ### 8.4 Import history settlement
 
@@ -1125,8 +1440,9 @@ the remaining namespace.
 
 ### 9.7 Root lease, scanner, enrichment, and UI publication
 
-Before persisting a component, `CatalogStore` acquires one typed reorganization
-lease for the fixed root. While held:
+Before persisting the first component of an execution run, `CatalogStore`
+acquires one typed reorganization lease for the fixed root; the lease spans the
+whole run (see the lease-scope paragraph below). While held:
 
 - filesystem scans and targeted reconciliation for that root do not run;
 - external FSEvents mark the root dirty and increment a deferred mutation fact,
@@ -1153,10 +1469,33 @@ focus, pane requests, visible-detail generations, and `TileContentStore`. Move a
 already-painted in-process thumbnail from old key to new key before publishing the
 new ordered IDs so the grid's never-blank invariant survives the identity change.
 
-Release the root lease only after catalog/UI settlement or a proven rollback. Then
-run one deferred reconciliation scan before building the next plan. Completed
-components remain completed if the user cancels; a fresh idempotent plan sees them
-as no-op and the remaining components as work.
+**Lease scope and per-component overhead.** The reorganization lease is acquired
+once per execution run and spans every component of that run; it is not
+re-acquired per component. The deferred reconciliation scan runs **once, at lease
+release, and only when external events marked the root dirty during the run** —
+never between components. This matters because most components are singletons
+(chains and cycles are the rare case): a 20k-file policy flip is ~20k one-member
+components, and per-component scans or replans would be catastrophic. To bound
+per-file ceremony, the executor **may batch consecutive independent components**
+into one journal-insert transaction, one settlement transaction, and one
+`CatalogIdentityRemapBatch` publication, provided each component inside the batch
+still satisfies its own recovery invariants (the component remains the recovery
+and cancellation unit; batching is an execution/commit optimization only, and a
+batched settlement still publishes all-or-nothing per component). Instrument
+components per second and settlement transactions per run.
+
+Release the root lease only after the run's catalog/UI settlement or a proven
+rollback. Completed components remain completed if the user cancels; a fresh
+idempotent plan sees them as no-op and the remaining components as work.
+
+The `.otos-reorg-*` temporary names and operation-created directories are writes
+inside the user's library and need the same explicit ARC-031 carve-out wording
+that import staging already has (short-lived, journaled, hidden, removed by
+commit/rollback/recovery — never an app-owned vault). In a cloud-synced root the
+temp file itself syncs: the provider may briefly propagate the rename dance, and
+a provider echo re-materializing a temp-named file after its move lands in
+recovery's exists/exists ambiguity row, which correctly freezes. Include a
+cloud-synced root in the Stage G adversarial fixtures for exactly this case.
 
 ### 9.8 Crash, failure, and cancellation semantics
 
@@ -1310,6 +1649,9 @@ user imports. With multiple libraries, require selection the first time.
 
 `SettingsView` gains a third `Import` tab receiving only bindings/closures for
 these settings. It must not receive `CatalogWindowViewModel` or plan payloads.
+`ImportPreferences` itself lands in Stage B (planner and tests need it), but the
+user-visible Settings tab ships in Stage D with the rest of the import UI so no
+dead preference surface is exposed before any import behavior exists.
 
 ### 10.2 Sidebar history
 
@@ -1350,14 +1692,20 @@ When a removable source is selected, a bottom `ImportPlanFooter` shows:
 
 - destination picker (fixed libraries only);
 - readiness: inventory, waiting for metadata count, planning, ready, blocked;
-- planned copy/pre-existing/companion counts and bytes;
-- Import button, or Cancel while executing;
-- cleanup/eject policy summary so destructive behavior is never hidden.
+- planned copy/pre-existing/companion counts and bytes, plus explicit
+  blocked-entry and skipped-package counts (contract items 2 and 5) so partial
+  coverage is never invisible;
+- Import button, or Cancel while executing; executing progress shows bytes
+  copied within the current file (contract item 15), not only whole-file counts;
+- cleanup/eject policy summary so destructive behavior is never hidden, including
+  that cleanup/eject are withheld while blocked/skipped-package states exist.
 
 The button is enabled during metadata wait and records queued intent. It is
 disabled only without a destination, during inventory with no complete item set,
-for a blocked plan, or while another global operation runs. Filters/selection do
-not alter footer totals.
+for a **fully** blocked plan (a plan whose only entries are blocked), or while
+another global operation runs. A plan with some blocked entries may execute its
+unblocked entries; cleanup and eject remain withheld (contract item 11).
+Filters/selection do not alter footer totals.
 
 Errors are typed and actionable: source unavailable, destination unavailable,
 comparison needs explicit materialization, insufficient space, source changed,
@@ -1400,14 +1748,34 @@ Before claiming a stage complete, instrument through `OtosLog`/signposts:
   destination candidate, outcome;
 - `op=mediaOperation.ui`: queued/start/cancel/destination-change/error-retry.
 
-Never log raw metadata, filenames, full paths, content digests, or diagnostic plan
-payloads. Reuse privacy-safe path/ID descriptions. Plan details are bounded scalar
-diagnostics, not a second retained full plan.
+Logging policy for this subsystem: import/reorganization is the only code that
+deletes and moves user originals, so it gets the **most** forensic logging in the
+app, not the least. Log root paths and relative paths `privacy: .public` exactly
+as the existing Store/scanner logs do — when a user reports a lost file, the
+unified log must reconstruct which path went where; hashed paths would make the
+destructive subsystem the only unreconstructable one. Never log raw embedded
+metadata, file contents, content digests, or full retained plan payloads. Plan
+details are bounded scalar diagnostics, not a second retained full plan.
+
+Add to the field lists above: `op=mediaOperation.plan` gains
+`comparisonBytes`, `comparisonMemoHits`, and `probeCount`;
+`op=mediaOperation.execute` gains per-file `bytesCopied` progress markers; and a
+new `op=mediaOperation.readiness` records per-source time from attach to
+`.ready` with `mediaCount` so the enrichment-gated readiness cost (section 6.3)
+is measured on real cards.
 
 Performance evidence:
 
 - fixtures at 10, 1,000, and the largest locally available real removable corpus;
-- signpost worst and p95 plan time, comparison time, and Store snapshot time;
+- the re-attach fixture: a fully-imported corpus re-attached, measuring total
+  comparison bytes, memo hit rate, and time to `.ready` (the worst greedy case is
+  the most common one);
+- signpost worst and p95 plan time, comparison time, occupancy-probe time, and
+  Store snapshot time;
+- time from source attach to `.ready` versus corpus size (enrichment-gated
+  readiness reads the source once for metadata/thumbnails before the copy reads
+  it again; this cost is accepted for the first release but must be measured, and
+  a metadata-first readiness split is the designated follow-up if it dominates);
 - Time Profiler during greedy planning, active copy, and 23k-item grid scrolling;
 - prove MainActor spans stay below 100 ms and grid behavior does not regress;
 - prove at most one source plan build per source plus one dirty rerun;
@@ -1421,11 +1789,21 @@ Performance evidence:
 ### Pure planner tests (`MediaTransferPlannerTests.swift`)
 
 - four folder/name policy combinations;
-- mtime fallback and no synthetic date;
+- wall-clock verbatim naming: floating EXIF names by camera wall clock, UTC
+  video timestamps name by UTC wall clock, offset-bearing timestamps by embedded
+  local; identical names under two simulated Mac time zones;
+- mtime fallback and no synthetic date; mtime-fallback zone sensitivity is pinned
+  as the documented exception;
 - natural deterministic same-second suffixes;
 - existing equal/different/unreadable candidates;
-- same-plan collision reservations;
-- companion pairing/naming and setting off;
+- foreign-occupant probe results (symlink/directory/foreign file/recorded
+  occupant) advance the suffix and never request comparison;
+- same-plan collision reservations; source-internal byte-identical files are
+  never collapsed;
+- companion pairing/naming and setting off; RAW+JPEG prefers the raw primary;
+  companion-side destination conflicts advance or skip the whole bundle and never
+  overwrite;
+- one undatable camera item yields `.blocked(.noUsableDate)` for that entry only;
 - shuffled input produces identical plan;
 - import idempotence fixtures;
 - reorg exact-path no-op first;
@@ -1446,9 +1824,14 @@ Performance evidence:
 
 ### Store/migration tests
 
-- prior schema migrates without erase;
-- future schema refuses without erase;
-- scan upsert preserves import batch;
+- prior schema migrates without erase (both former erase paths removed);
+- future schema refuses without erase and presents the typed compatibility
+  problem;
+- `capture_wall_compact` backfill from stored metadata JSON matches role
+  precedence; rows without metadata stay NULL and fill on next enrichment;
+- scan upsert preserves import batch and capture wall columns;
+- companion re-pairing under targeted FSEvents (primary delete/rename updates
+  `primary_relative_path` without a full scan);
 - imported settlement and journal phase are atomic;
 - distinct nonempty batch queries and deletion disappearance;
 - companion full-scan/FSEvent reconcile;
@@ -1480,7 +1863,13 @@ Performance evidence:
 - each recovery table row produces the specified outcome;
 - no recovery resumes an unstarted copy;
 - all-preexisting run creates no batch;
-- cleanup/eject ordering and retry.
+- cleanup/eject ordering and retry; eject withheld while blocked entries or
+  skipped-package attention states exist;
+- an executing operation's own settlements/deletions never flip it to
+  `.needsReplan` or cancel it; foreign events during execution defer the rebuild
+  until completion;
+- comparison memo survives a replan when both sides' facts are unchanged and is
+  invalidated when either side's size/mtime changes;
 - reorganization Cancel before a component stops immediately;
 - Cancel after `.willMove` becomes stop-after-component;
 - coordinator never schedules two components concurrently;
@@ -1491,12 +1880,22 @@ Performance evidence:
 ### File-operator integration tests
 
 - destination-local staging never exposes partial final file;
-- final publication never overwrites a concurrently created target;
+- final publication never overwrites a concurrently created target
+  (`renamex_np(RENAME_EXCL)` on APFS; ladder fallbacks exercised per volume
+  capability);
+- publication `EEXIST` records the foreign occupant and the next plan avoids the
+  candidate;
 - successful copy is not reopened for verification;
+- staged file's mtime equals the planned source mtime for filesystem copies and
+  (after Stage F stamping) camera downloads — a destination file dated "now"
+  fails the test;
+- mid-file cancellation via the copy progress callback removes staging and stops
+  promptly on a large fixture;
 - source size/mtime race fails before copy;
 - cancellation during OS call settles or removes staging deterministically;
 - source deletion only after durable destination settlement;
-- MTP download/delete fakes preserve the same phase semantics;
+- MTP download/delete fakes preserve the same phase semantics, including the
+  ICCameraFile-facts revalidation guard before each download;
 - coordinated file-provider failure maps to a typed problem;
 - same-volume chain executes from free end;
 - two-/three-way cycles and case-only relabels use collision-free temp paths;
@@ -1516,7 +1915,8 @@ Performance evidence:
 - visible plan detail request rejects stale generation;
 - sidebar batch selection/query/remove behavior;
 - import sidecar Settings binding and persistence;
-- errors and destructive policy are visible;
+- errors and destructive policy are visible; blocked-entry and skipped-package
+  counts render and withhold eject;
 - thumbnail already displayed remains displayed across overlay changes;
 - one remap batch preserves selection, Image/Compare focus, and painted tile
   content across a swap;
@@ -1554,32 +1954,51 @@ available. Do not require the user to operate the app.
 
 ## 13. Delivery stages
 
-### Stage A — Durable-history-safe persistence and total best dates
+### Stage A — Durable-history-safe persistence, total best dates, and wall-clock naming facts
 
 Branch: `refactor/import-persistence-foundation`
 
-- replace destructive schema reset policy;
-- add import batch scalar/index and migration/future-schema tests;
-- enforce total best date including camera date cascade;
+Prerequisite: land the MediaMetadata wall-clock contract release (section 4.5
+items 1–2) and pin Otos to it.
+
+- replace the destructive schema reset policy — **both** erase paths (section
+  4.1), with the defined future-schema refusal UX;
+- add import batch scalar/index and migration/future-schema tests; start the
+  checked-in schema-fixture convention;
+- add `capture_wall_compact`/`capture_wall_precision`, enrichment writes, and the
+  metadata-JSON backfill (sections 4.2/4.4);
+- enforce total best date including the camera date cascade wired at the
+  camera-item mapping point (`CatalogWindowViewModelSourceMonitoring`); an
+  undatable camera item stays cataloged with NULL dates (blocked at plan time,
+  never dropped);
+- decide/implement the journal durability escalation (section 4.1 item 4);
 - add Store import-history queries, no sidebar yet;
 - update/supersede persistence ADR, current architecture, and affected requirement
   rows only for behavior actually shipped.
 
 Done when old catalog fixtures migrate without loss, future schema is retained and
-refused, and every cataloged planning candidate has a real best date.
+refused, every cataloged planning candidate has a real best date, and
+embedded-dated fixtures expose their verbatim wall clock through the new columns.
 
-### Stage B — Companion inventory and Import Settings
+### Stage B — Companion inventory, artifact exclusions, and import preferences
 
 Branch: `feat/import-companion-inventory`
 
-- add `media_companion`, filesystem/camera enumeration, pairing/reconcile tests;
-- request ImageCapture sidecars;
-- add `ImportPreferences` and Import Settings tab;
+- add `media_companion` (nullable camera facts), filesystem/camera enumeration,
+  pairing (RAW+JPEG prefer-raw), targeted-event re-pairing, and reconcile tests;
+- probe real camera hardware for sidecar surfacing (`ICCameraFile.sidecarFiles`
+  property vs `mediaFiles`) and record findings in `docs/research/`;
+- extend scanner structural exclusions with the device-artifact ignore list and
+  count skipped packages per source (section 5); verify against real Sony/GoPro
+  card fixtures and an AVCHD camcorder card (does macOS classify the AVCHD
+  structure as a package on FAT/exFAT?) — record findings;
+- add `ImportPreferences` (no Settings tab yet — that ships with Stage D UI);
 - revise no-sidecar docs precisely (existing companions supported; no generation,
   identity, or authored-overlay sidecars).
 
 Done when useful companions survive scan/event/camera lifecycles without entering
-media queries and the setting persists.
+media queries, RAW+JPEG pairs resolve to the raw primary, artifact/package facts
+are inventoried, and the preferences owner persists.
 
 ### Stage C — Planning snapshots, revisions, and pure planner
 
@@ -1587,68 +2006,118 @@ Branch: `feat/import-planner`
 
 - add planning models/gateway/root revision stream;
 - fix event-during-scan loss;
-- implement deterministic pure planner plus comparison-request protocol;
-- implement ContentEqualityChecker and dataless authorization boundary;
-- prove collision, duplicate, companion, and idempotence cases.
+- implement the deterministic pure planner with wall-clock verbatim naming and
+  the comparison-request **and occupancy-request** protocols (import candidates
+  are probed against the live filesystem via `FilesystemNamespaceSemantics`, not
+  trusted to the catalog);
+- implement ContentEqualityChecker, the dataless authorization boundary, and the
+  ephemeral cross-generation comparison memo;
+- prove collision, duplicate, foreign-occupant, companion-bundle, blocked-entry,
+  time-zone, and idempotence cases.
 
-Done when an immutable ready plan can be produced from Store snapshots with no UI
-or file mutation and stale inputs cannot publish.
+Done when an immutable ready plan can be produced from Store snapshots plus
+targeted probes with no UI or file mutation, and stale inputs cannot publish.
 
 ### Stage D — Greedy coordinator and plan UI overlay
 
 Branch: `feat/import-plan-overlay`
 
-- add coordinator eager lifecycle for all attached sources;
+- add coordinator eager lifecycle for all attached sources, including
+  execution-time invalidation semantics (revisions guard starts, not
+  continuation; deferred rebuilds during execution);
 - add queued start state but keep actual execution unavailable/feature-gated;
-- add destination mapping, footer, visible detail reader/overlay;
+- add destination mapping, footer (with blocked/skipped-package counts), visible
+  detail reader/overlay, and the Import Settings tab;
 - add import batch sidebar scope using Stage A data;
+- instrument attach-to-ready time per source (section 11);
 - update architecture/requirements for shipped plan/history UI.
 
 Done when attach/enrich/invalidate/replan is automatic, Import can queue while
-metadata finishes, filter/selection do not affect totals, and the grid publishes
-no full plan map.
+metadata finishes, filter/selection do not affect totals, partial coverage is
+visible, and the grid publishes no full plan map.
 
 ### Stage E — Import journal and filesystem executor
 
 Branch: `feat/removable-media-import`
 
-- add active operation journal and startup recovery;
-- implement coordinated staging/copy/no-overwrite publish/settlement;
-- run exclusive-publication probe and document whether a narrow POSIX primitive is
-  necessary;
-- implement bounded filesystem execution, cancellation, free-space handling;
+- add active operation journal and startup recovery, including the
+  journal-less-orphan rules and the durability decision's measured evidence;
+- implement coordinated staging via `copyfile(3)` with progress/cancellation,
+  timestamp verification/stamping, and settlement;
+- implement the exclusive-publication ladder and run the volume-capability probe
+  (`VOL_CAP_INT_RENAME_EXCL` matrix on APFS/exFAT/SMB) confirming it; wire
+  `EEXIST` foreign-occupant feedback into replanning;
+- measure per-operation `NSFileCoordinator` latency on a cloud-synced destination
+  before accepting it inside the copy lanes;
+- implement bounded filesystem execution, cancellation, free-space handling
+  (local-volume capacity; provider quota is unobservable and documented);
 - enable Import for removable filesystem volumes;
-- establish runtime/instrumentation/idempotence proof.
+- establish runtime/instrumentation/idempotence proof, including the re-attach
+  fixture.
 
 Done when repeated and crash-injected filesystem imports cannot overwrite, create
-extra suffix copies, or lose history.
+extra suffix copies, fabricate destination dates, or lose history, and a mid-file
+cancel aborts promptly with byte progress visible.
 
 ### Stage F — Camera import, cleanup, and eject
 
 Branch: `feat/camera-import-cleanup`
 
-- adapt ImageCapture downloads to the same journal/settlement phases;
-- implement explicit source deletion for filesystem and camera sources;
-- implement auto-eject only after complete success;
+- adapt ImageCapture downloads to the same journal/settlement phases, with the
+  ICCameraFile-facts revalidation guard replacing the stat guard;
+- probe download mtime behavior on real hardware; stamp staged camera files
+  whenever the OS/device does not preserve the planned date (contract item 5);
+- implement per-item `.blocked(.noUsableDate)` execution semantics: unblocked
+  entries import, cleanup/eject withheld while any blocked entry exists;
+- implement explicit source deletion for filesystem and camera sources (device
+  delete-capability checked);
+- implement auto-eject only after complete success with zero blocked/attention
+  states;
 - expose cleanup/eject retry outcomes;
 - verify detach/recovery/device capability paths.
 
-Done when all removable source kinds share one user-visible import semantics and
-destructive actions never precede durable settlement.
+Done when all removable source kinds share one user-visible import semantics,
+camera-imported files carry real dates, and destructive actions never precede
+durable settlement.
 
 ### Stage G — Library reorganization planner/executor
 
-Branch: `feat/library-reorganization`
+Stage G is the largest stage in the plan; it lands as **three sequential PRs on
+three branches**, each with its own review and verify evidence. No filesystem
+mutation is reachable before G2 completes its recovery matrix.
 
-- add volume-aware namespace semantics and APFS/cloud-provider name probes;
+#### G1 — Namespace semantics and pure reorganization planner (no mutation)
+
+Branch: `feat/library-reorganization-planner`
+
+- add volume-aware namespace semantics and APFS/cloud-provider name probes
+  (case-sensitivity, composed/decomposed Unicode), shared with import occupancy;
 - add the complete physical-member reservation graph, companion grouping,
-  deterministic component/chain/cycle recipes, and cross-volume blocker;
-- add normalized active component recovery tables and typed root reorganization
-  lease before enabling any filesystem mutation;
+  deterministic component/chain/cycle recipes, cross-volume blocker, and every
+  section 9.11 planner invariant;
+- prove the planner test matrix from section 12 with zero filesystem writes.
+
+#### G2 — Component journal, executor, recovery, and set-based settlement
+
+Branch: `feat/library-reorganization-executor`
+
+- add normalized active component recovery tables and the typed root
+  reorganization lease (execution-run scope; deferred dirty-only reconciliation
+  at release) before enabling any filesystem mutation;
 - add coordinated same-volume step execution, directory prerequisites, forward/
-  rollback recovery, and cancellation only at component boundaries;
-- add Store set-based identity/overlay/companion remap transaction plus the chosen
-  thumbnail preservation mechanism;
+  rollback recovery, cancellation only at component boundaries, and independent-
+  component commit batching with per-second instrumentation;
+- add the Store set-based identity/overlay/companion remap transaction (including
+  sort-key/name recomputation) plus the chosen thumbnail preservation mechanism;
+- add the ARC-031 carve-out wording for `.otos-reorg-*` temp paths and
+  operation-created directories to the docs updated in this PR;
+- run termination/ambiguity adversarial passes, including a cloud-synced root
+  with provider temp-name echoes.
+
+#### G3 — Reorganization UI and remap delivery
+
+Branch: `feat/library-reorganization-ui`
+
 - add atomic ViewModel/selection/TileContentStore remap-batch delivery;
 - add confirmation UI for one selected fixed library;
 - preserve import history and move useful companions as the same recovery unit;
@@ -1685,7 +2154,8 @@ otherwise attach evidence to Stage G and create no code PR)
   equal originals, orphan a sidecar, apply stale async results, and purge a
   temporarily absent source.
 - Confirm no MainActor file/database/hash work and no unchecked Sendable escape.
-- Confirm no raw path/content/metadata/hash diagnostic leaks.
+- Confirm diagnostics follow the section 11 policy: paths are logged for
+  forensics; raw embedded metadata, file contents, and digests are not.
 - Confirm changes to originals occur only after an explicit user start/confirmation
   and match the visible plan/policy.
 - Run `script/verify.sh`; inspect logs; attach profiles for stages touching byte I/O
