@@ -79,8 +79,7 @@ struct ContentView: View {
     @ViewBuilder
     private var detailContent: some View {
         switch viewModel.viewMode {
-        case .grid, .compare:
-            // Compare UI lands in Increment 3; setViewMode(.compare) currently opens loupe.
+        case .grid:
             MediaGridView(
                 title: viewModel.state.title,
                 grid: viewModel.state.mediaGrid,
@@ -117,6 +116,25 @@ struct ContentView: View {
                 },
                 onEscape: viewModel.exitToGrid,
                 onDoubleClickPreview: viewModel.exitToGrid
+            )
+            .navigationTitle(viewModel.state.title)
+        case .compare:
+            CompareView(
+                grid: viewModel.state.mediaGrid,
+                leftID: viewModel.comparePair.panes(in: viewModel.state.mediaGrid.orderedAssetIDs).left,
+                rightID: viewModel.comparePair.panes(in: viewModel.state.mediaGrid.orderedAssetIDs).right,
+                leftPreview: viewModel.previewImage,
+                rightPreview: viewModel.compareRightPreviewImage,
+                previewIsDownloading: viewModel.previewIsDownloading,
+                thumbnailDirectory: viewModel.thumbnailDirectory,
+                detailReader: viewModel.tileDetailReader,
+                stallMonitor: viewModel.uiStallMonitor,
+                selectionHandlers: .from(viewModel),
+                onViewportChanged: viewModel.viewportChanged,
+                onStripArrow: { delta in
+                    viewModel.slideCompare(delta)
+                },
+                onEscape: viewModel.exitToGrid
             )
             .navigationTitle(viewModel.state.title)
         }

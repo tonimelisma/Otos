@@ -75,6 +75,10 @@ final class CatalogWindowViewModel {
     var previewImage: CGImage?
     /// True while a deliberate materialization is in flight for the focused original.
     var previewIsDownloading = false
+    /// Symmetric compare pair (capped selection). Empty outside compare mode.
+    var comparePair = ComparePair.empty
+    /// Full-size preview for the compare right pane (left uses `previewImage`).
+    var compareRightPreviewImage: CGImage?
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.

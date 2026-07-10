@@ -79,6 +79,7 @@ everything expensive happens on an actor off the main thread.
 | heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader` (ADR 0016); mode intents on `CatalogWindowViewModel` |
+| compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |
 
 Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main
