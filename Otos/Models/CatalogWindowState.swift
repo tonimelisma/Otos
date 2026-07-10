@@ -18,6 +18,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     case libraryChecking
     case libraryUnavailable
     case deviceEnumerating(String)
+    /// Catalog file was written by a newer or unrecognized Otos; nothing is loaded.
+    case catalogIncompatible(String)
 
     var diagnosticDescription: String {
         switch self {
@@ -35,6 +37,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
             "libraryUnavailable"
         case .deviceEnumerating:
             "deviceEnumerating"
+        case .catalogIncompatible:
+            "catalogIncompatible"
         }
     }
 }

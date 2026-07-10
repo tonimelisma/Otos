@@ -7,8 +7,11 @@ does lives in `docs/requirements.md`; file guides in the source explain each fil
 ## The one idea
 
 The user's filesystem is the source of truth. Everything Otos stores (catalog +
-thumbnail/metadata overlay) lives in Application Support and is a subordinate,
-rebuildable projection. When they disagree, the filesystem wins.
+thumbnail/metadata overlay) lives in Application Support and is a subordinate
+projection. When they disagree, the filesystem wins. Most overlay is rebuildable
+by re-observing the filesystem; import-batch stamps are the first non-rebuildable
+overlay fact, so schema changes migrate additively and future/unrecognized
+schemas refuse to open instead of erasing.
 
 ## One-directional dataflow
 

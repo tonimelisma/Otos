@@ -590,6 +590,7 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case notDirectory
     case overlappingRoot(existingPath: LibraryRootPath, relationship: LibraryRootRelationship)
     case catalogUnavailable
+    case unsupportedCatalogSchema(CatalogSchemaCompatibility)
 
     var errorDescription: String? {
         switch self {
@@ -606,6 +607,64 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             }
         case .catalogUnavailable:
             "The catalog is unavailable."
+        case let .unsupportedCatalogSchema(problem):
+            problem.errorDescription
         }
     }
+}
+
+/// Result of the pre-migration catalog schema compatibility check.
+nonisolated enum CatalogSchemaCompatibility: Equatable, Sendable {
+    /// Empty database or a known partial/current schema that additive migrations can advance.
+    case readyToMigrate
+    /// Applied migration identifiers include ones this app does not know — written by a newer Otos.
+    case writtenByNewerOtos
+    /// User tables exist but no known migration identifiers are present.
+    case unrecognized
+
+    var errorDescription: String {
+        switch self {
+        case .readyToMigrate:
+            "The catalog schema is compatible."
+        case .writtenByNewerOtos:
+            "This catalog was written by a newer version of Otos."
+        case .unrecognized:
+            "This catalog is not compatible with this version of Otos."
+        }
+    }
+
+    var isSupported: Bool {
+        if case .readyToMigrate = self {
+            return true
+        }
+        return false
+    }
+}
+
+/// Typed UTC epoch milliseconds shared by every asset newly published in one import.
+/// Rendered in the user's locale/time zone only in the sidebar.
+nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
+    let unixMilliseconds: Int64
+
+    init(unixMilliseconds: Int64) {
+        self.unixMilliseconds = unixMilliseconds
+    }
+
+    init(date: Date = Date()) {
+        unixMilliseconds = Int64((date.timeIntervalSince1970 * 1000.0).rounded(.down))
+    }
+
+    var date: Date {
+        Date(timeIntervalSince1970: TimeInterval(unixMilliseconds) / 1000.0)
+    }
+
+    static func < (lhs: ImportBatchID, rhs: ImportBatchID) -> Bool {
+        lhs.unixMilliseconds < rhs.unixMilliseconds
+    }
+}
+
+/// One nonempty import batch for Store history queries (sidebar consumes these later).
+nonisolated struct ImportBatchSummary: Equatable, Sendable {
+    let batchID: ImportBatchID
+    let assetCount: Int
 }

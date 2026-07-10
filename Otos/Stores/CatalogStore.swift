@@ -214,6 +214,116 @@ extension CatalogStore {
         roots.values.map { catalogLibraryState(from: $0) }
     }
 
+    /// Nonempty import batches newest-first. Stage A exposes Store queries only;
+    /// the Imports sidebar section lands with the plan UI.
+    func importBatches() async throws -> [ImportBatchSummary] {
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT import_batch_unix_ms AS batch_ms, COUNT(*) AS asset_count
+                FROM media_asset
+                WHERE import_batch_unix_ms IS NOT NULL
+                GROUP BY import_batch_unix_ms
+                ORDER BY import_batch_unix_ms DESC
+                """
+            ).map { row in
+                let batchMs: Int64 = row["batch_ms"]
+                let count: Int = row["asset_count"]
+                return ImportBatchSummary(
+                    batchID: ImportBatchID(unixMilliseconds: batchMs),
+                    assetCount: count
+                )
+            }
+        }
+    }
+
+    /// Surviving assets that carry the given import batch stamp, across fixed libraries.
+    func assetIDs(inImportBatch batchID: ImportBatchID) async throws -> [MediaAssetID] {
+        let dbWriter = try database()
+        let pathsByRowID = roots.pathsByRowID
+        return try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT library_root_id, relative_path
+                FROM media_asset
+                WHERE import_batch_unix_ms = ?
+                ORDER BY library_root_id, relative_path
+                """,
+                arguments: [batchID.unixMilliseconds]
+            ).compactMap { row in
+                let rootRowID: Int64 = row["library_root_id"]
+                let relativePath: String = row["relative_path"]
+                guard let rootPath = pathsByRowID[rootRowID] else {
+                    return nil
+                }
+                return MediaAssetID(
+                    libraryRootPath: rootPath,
+                    relativePath: MediaRelativePath(rawValue: relativePath)
+                )
+            }
+        }
+    }
+
+    /// Reports cataloged assets that violate the total best-date invariant for
+    /// planning (no embedded date and no filesystem/camera modification date).
+    /// Camera items without any usable date are expected here and become
+    /// `.blocked(.noUsableDate)` plan entries later — they are never silently dropped.
+    func assetsMissingBestDateFacts() async throws -> [MediaAssetID] {
+        let dbWriter = try database()
+        let pathsByRowID = roots.pathsByRowID
+        return try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT library_root_id, relative_path
+                FROM media_asset
+                WHERE best_capture_unix IS NULL
+                ORDER BY library_root_id, relative_path
+                """
+            ).compactMap { row in
+                let rootRowID: Int64 = row["library_root_id"]
+                let relativePath: String = row["relative_path"]
+                guard let rootPath = pathsByRowID[rootRowID] else {
+                    return nil
+                }
+                return MediaAssetID(
+                    libraryRootPath: rootPath,
+                    relativePath: MediaRelativePath(rawValue: relativePath)
+                )
+            }
+        }
+    }
+
+    /// Capture-wall naming fact for one asset, when enrichment selected a local-authority timestamp.
+    func captureWall(for id: MediaAssetID) async throws -> CaptureWallClock.Selection? {
+        guard let rootRowID = roots[id.libraryRootPath]?.rowID else {
+            return nil
+        }
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT capture_wall_compact, capture_wall_precision
+                FROM media_asset
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [rootRowID, id.relativePath.rawValue]
+            ) else {
+                return nil
+            }
+            let compact: Int64? = row["capture_wall_compact"]
+            let precision: String? = row["capture_wall_precision"]
+            guard let compact, let precision else {
+                return nil
+            }
+            return CaptureWallClock.Selection(compact: compact, precision: precision)
+        }
+    }
+
     func orderedAssetIDs(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
@@ -1557,14 +1667,20 @@ private extension CatalogStore {
 
         let openResult = try openDatabaseWriter()
         let dbWriter = openResult.dbWriter
-        let needsCleanReset = try dbWriter.read { db in
-            try Self.databaseNeedsCleanSchemaReset(db)
+        let compatibility = try dbWriter.read { db in
+            try Self.catalogSchemaCompatibility(db)
         }
-        if needsCleanReset {
-            try dbWriter.erase()
+        guard compatibility.isSupported else {
+            OtosLog.persistence.error(
+                "Catalog schema refused problem=\(compatibility.errorDescription, privacy: .public)"
+            )
+            OtosLog.catalog.error(
+                "op=catalog.start phase=schemaRefused problem=\(String(describing: compatibility), privacy: .public)"
+            )
+            throw CatalogStoreError.unsupportedCatalogSchema(compatibility)
         }
         try Self.migrator.migrate(dbWriter)
-        performThumbnailStoreStartupMaintenance(needsCleanReset: needsCleanReset)
+        performThumbnailStoreStartupMaintenance()
         self.dbWriter = dbWriter
         databaseFileURL = openResult.openedFileURL
         recordDatabaseOpenDiagnostics(dbWriter: dbWriter, storageKind: openResult.storageKind)
@@ -1614,13 +1730,9 @@ private extension CatalogStore {
         }
     }
 
-    private func performThumbnailStoreStartupMaintenance(needsCleanReset: Bool) {
+    private func performThumbnailStoreStartupMaintenance() {
         guard let thumbnailDirectory else {
             return
-        }
-        if needsCleanReset {
-            ThumbnailStore.deleteAll(in: thumbnailDirectory)
-            OtosLog.thumbnails.info("Thumbnail directory purged after clean catalog schema reset")
         }
         let removedTemps = ThumbnailStore.deleteStagedTemporaryFiles(in: thumbnailDirectory)
         guard removedTemps > 0 else {

@@ -84,6 +84,9 @@ final class CatalogWindowViewModel {
     var panePreviews: [PaneSlot: PanePreview] = [:]
     /// Slots currently awaiting deliberate materialization / retry.
     var downloadingSlots: Set<PaneSlot> = []
+    /// Set when catalog open refuses a future/unrecognized schema. Projection
+    /// publications must not clear the incompatible empty surface while this is set.
+    @ObservationIgnored private(set) var catalogCompatibilityProblem: CatalogSchemaCompatibility?
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.
@@ -379,9 +382,19 @@ extension CatalogWindowViewModel {
     }
 
     private func startCatalog(store: CatalogStore) {
-        catalogStartupTask = Task { [store] in
+        catalogStartupTask = Task { [weak self, store] in
             do {
                 try await store.start()
+            } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
+                OtosLog.persistence.error(
+                    "Catalog start refused problem=\(problem.errorDescription, privacy: .public)"
+                )
+                OtosLog.catalog.error(
+                    "op=catalog.start phase=schemaRefused problem=\(String(describing: problem), privacy: .public)"
+                )
+                await MainActor.run {
+                    self?.applyCatalogCompatibilityProblem(problem)
+                }
             } catch {
                 OtosLog.persistence.error("Catalog start failed")
                 OtosLog.catalog.error(
@@ -391,11 +404,30 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Surfaces a typed catalog-schema refusal on the empty/error surface without
+    /// loading roots or starting scans. Projection publications must not overwrite it.
+    func applyCatalogCompatibilityProblem(_ problem: CatalogSchemaCompatibility) {
+        catalogCompatibilityProblem = problem
+        var next = state
+        next.libraries = []
+        next.removableSources = []
+        next.mediaGrid = .empty
+        next.mediaEmptyState = .catalogIncompatible(problem.errorDescription)
+        applyState(next)
+    }
+
     /// Projection → ViewModel state assignment. Selection prune/clear for grid
     /// identity changes runs here (before SwiftUI re-renders and before any
     /// AppKit structural apply) so the collection view only ever *renders* the
     /// already-updated model.
     func applyState(_ nextState: CatalogWindowState) {
+        var nextState = nextState
+        if let catalogCompatibilityProblem {
+            nextState.libraries = []
+            nextState.removableSources = []
+            nextState.mediaGrid = .empty
+            nextState.mediaEmptyState = .catalogIncompatible(catalogCompatibilityProblem.errorDescription)
+        }
         let previousState = state
         applySidebarSelectionPolicy(previous: previousState, next: nextState)
 

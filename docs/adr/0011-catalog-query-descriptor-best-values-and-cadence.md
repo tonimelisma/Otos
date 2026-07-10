@@ -193,8 +193,9 @@ definition, and keeps the UI passive.
 
 ## Consequences
 
-- The catalog schema resets cleanly because this is a rebuildable pre-user
-  projection.
+- Catalog schema advances are additive migrations. Future or unrecognized schemas
+  refuse to open without erase so non-rebuildable overlay (import history) is not
+  destroyed; see ADR 0010.
 - Tile date, date sort, and future date consumers cannot drift while they consume
   `best_capture_unix`.
 - The toolbar and menu commands can update one descriptor state and share one

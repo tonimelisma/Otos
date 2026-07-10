@@ -62,13 +62,18 @@ extension CatalogStore {
         return configuration
     }
 
+    /// Known migration identifiers in registration order. Future-schema refusal
+    /// compares applied identifiers against this set before any write.
+    static var knownMigrationIdentifiers: [String] {
+        migrator.migrations
+    }
+
     static var migrator: DatabaseMigrator {
         var migrator = DatabaseMigrator()
-        migrator.eraseDatabaseOnSchemaChange = true
+        // Import history and other non-rebuildable overlay forbid destructive
+        // schema reset. Unknown future migrations refuse to open; known schemas
+        // migrate additively. See ADR 0010 / plan 0055 Stage A.
 
-        // The catalog is a rebuildable filesystem projection. With no active users
-        // and no authoritative user data in this schema, incompatible old local
-        // databases are intentionally erased and rebuilt instead of migrated.
         migrator.registerMigration("v3_sort_key_separator") { db in
             try db.create(table: "library_root") { table in
                 table.autoIncrementedPrimaryKey("id")
@@ -169,7 +174,55 @@ extension CatalogStore {
                 """
             )
         }
+        migrator.registerMigration("v6_import_history_and_capture_wall") { db in
+            try addImportHistoryAndCaptureWallColumns(db)
+            try backfillCaptureWallFromMetadataJSON(db)
+        }
         return migrator
+    }
+
+    /// Compatibility check run before any migrator write. Future or unrecognized
+    /// schemas refuse without erase so non-rebuildable overlay cannot be destroyed.
+    static func catalogSchemaCompatibility(_ db: Database) throws -> CatalogSchemaCompatibility {
+        if try migrator.hasBeenSuperseded(db) {
+            return .writtenByNewerOtos
+        }
+        let userTables = try Set(String.fetchAll(
+            db,
+            sql: """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'grdb_%'
+            """
+        ))
+        if userTables.isEmpty {
+            return .readyToMigrate
+        }
+        let applied = try migrator.appliedIdentifiers(db)
+        let known = Set(migrator.migrations)
+        if applied.isDisjoint(with: known) {
+            return .unrecognized
+        }
+        return .readyToMigrate
+    }
+
+    /// Escalates `synchronous = FULL` for the duration of one write transaction so
+    /// journal and settlement commits survive power loss, not only app crashes.
+    /// The pool's default remains `NORMAL`; restore after the body returns.
+    static func writeWithJournalDurability<T>(
+        _ dbWriter: any DatabaseWriter,
+        _ body: (Database) throws -> T
+    ) throws -> T {
+        try dbWriter.write { db in
+            try db.execute(sql: "PRAGMA synchronous = FULL")
+            do {
+                let result = try body(db)
+                try db.execute(sql: "PRAGMA synchronous = NORMAL")
+                return result
+            } catch {
+                try? db.execute(sql: "PRAGMA synchronous = NORMAL")
+                throw error
+            }
+        }
     }
 
     static func fetchCatalog(_ db: Database) throws -> (roots: [StoredRoot], assetCount: Int) {
@@ -340,44 +393,6 @@ extension CatalogStore {
         return CatalogedFileDeletionTarget(thumbnailPath: row["thumbnail_path"])
     }
 
-    /// Detects an incompatible pre-user catalog before Store erases and rebuilds it, so
-    /// Store can purge thumbnail files whose SQLite references are about to disappear.
-    static func databaseNeedsCleanSchemaReset(_ db: Database) throws -> Bool {
-        let userTables = try Set(String.fetchAll(
-            db,
-            sql: """
-            SELECT name FROM sqlite_master
-            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-            """
-        ))
-        guard !userTables.isEmpty else {
-            return false
-        }
-        guard userTables.contains("library_root"),
-              userTables.contains("media_asset")
-        else {
-            return true
-        }
-
-        let libraryRootColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('library_root')"))
-        guard requiredCurrentLibraryRootColumns().isSubset(of: libraryRootColumns) else {
-            return true
-        }
-
-        let mediaAssetColumns = try Set(String.fetchAll(
-            db,
-            sql: "SELECT name FROM pragma_table_xinfo('media_asset')"
-        ))
-        guard requiredCurrentMediaAssetColumns().isSubset(of: mediaAssetColumns),
-              userTables.contains("asset_metadata")
-        else {
-            return true
-        }
-
-        let metadataColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('asset_metadata')"))
-        return !requiredCurrentMetadataColumns().isSubset(of: metadataColumns)
-    }
-
     static func enrichmentResultMatchesCurrentRow(
         _ result: EnrichmentResult,
         libraryRootID: Int64,
@@ -409,6 +424,7 @@ extension CatalogStore {
     }
 
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
+        let captureWall = CaptureWallClock.select(from: result.metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
@@ -421,7 +437,9 @@ extension CatalogStore {
                 enriched_format = ?,
                 duration_seconds = ?,
                 enriched_source_size = ?,
-                enriched_source_mtime = ?
+                enriched_source_mtime = ?,
+                capture_wall_compact = ?,
+                capture_wall_precision = ?
             WHERE library_root_id = ?
                 AND relative_path = ?
             """,
@@ -436,6 +454,8 @@ extension CatalogStore {
                 result.metadata.durationSeconds,
                 result.sourceSize,
                 result.sourceMTimeSeconds,
+                captureWall?.compact,
+                captureWall?.precision,
                 libraryRootID,
                 result.id.relativePath.rawValue,
             ]
@@ -574,6 +594,65 @@ extension CatalogStore {
         try db.execute(
             sql: upsertAssetMetadataSQL(),
             arguments: arguments
+        )
+    }
+}
+
+private nonisolated func addImportHistoryAndCaptureWallColumns(_ db: Database) throws {
+    let columns = try Set(String.fetchAll(
+        db,
+        sql: "SELECT name FROM pragma_table_xinfo('media_asset')"
+    ))
+    if !columns.contains("import_batch_unix_ms") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_batch_unix_ms INTEGER")
+    }
+    if !columns.contains("capture_wall_compact") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN capture_wall_compact INTEGER")
+    }
+    if !columns.contains("capture_wall_precision") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN capture_wall_precision TEXT")
+    }
+    try db.execute(
+        sql: """
+        CREATE INDEX IF NOT EXISTS idx_media_asset_import_batch
+        ON media_asset(import_batch_unix_ms, library_root_id, relative_path)
+        WHERE import_batch_unix_ms IS NOT NULL
+        """
+    )
+}
+
+/// Backfills `capture_wall_*` from already-persisted metadata JSON so enriched rows
+/// do not wait for a size/mtime change to re-enrich. Rows without stored metadata
+/// stay NULL until their next enrichment write.
+private nonisolated func backfillCaptureWallFromMetadataJSON(_ db: Database) throws {
+    let rows = try Row.fetchAll(
+        db,
+        sql: """
+        SELECT m.library_root_id, m.relative_path, a.metadata_extra_json
+        FROM media_asset m
+        LEFT JOIN asset_metadata a
+            ON a.library_root_id = m.library_root_id
+           AND a.relative_path = m.relative_path
+        WHERE m.capture_wall_compact IS NULL
+          AND a.metadata_extra_json IS NOT NULL
+        """
+    )
+    for row in rows {
+        let libraryRootID: Int64 = row["library_root_id"]
+        let relativePath: String = row["relative_path"]
+        let json: String = row["metadata_extra_json"]
+        guard let metadata = CatalogStore.decodeMetadataExtraJSON(json),
+              let wall = CaptureWallClock.select(from: metadata.timestamps)
+        else {
+            continue
+        }
+        try db.execute(
+            sql: """
+            UPDATE media_asset
+            SET capture_wall_compact = ?, capture_wall_precision = ?
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [wall.compact, wall.precision, libraryRootID, relativePath]
         )
     }
 }
@@ -763,6 +842,9 @@ private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
         "thumbnail_path",
         "duration_seconds",
         "enrichment_claimed_until",
+        "import_batch_unix_ms",
+        "capture_wall_compact",
+        "capture_wall_precision",
     ]
 }
 

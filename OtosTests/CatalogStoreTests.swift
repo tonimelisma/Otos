@@ -35,7 +35,7 @@ struct CatalogStoreTests {
         try await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
-    @Test func incompatibleLegacyDatabaseIsResetInsteadOfMigrated() async throws {
+    @Test func incompatibleLegacyDatabaseIsRefusedWithoutErase() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -74,19 +74,20 @@ struct CatalogStoreTests {
         }
 
         let store = CatalogStore(location: .databaseFile(databaseURL))
-        try await store.start(scansSavedLibraries: false)
-        let snapshot = try await catalogStoreTestState(store)
-
-        #expect(snapshot.libraries.isEmpty)
-        #expect(snapshot.testAssets.isEmpty)
-        #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
-        #expect(!FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
-
-        let newSchema = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
-            try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('media_asset')"))
+        do {
+            try await store.start(scansSavedLibraries: false)
+            Issue.record("Expected unsupportedCatalogSchema for legacy v1")
+        } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
+            #expect(problem == .writtenByNewerOtos || problem == .unrecognized)
         }
-        #expect(newSchema.contains("sort_key"))
-        #expect(!newSchema.contains("metadata_blob"))
+
+        #expect(FileManager.default.fileExists(atPath: original.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
+
+        let rootCount = try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_root") ?? 0
+        }
+        #expect(rootCount == 1)
     }
 
     @Test func addLibraryScansRegularFilesAndReloadsFromDisk() async throws {

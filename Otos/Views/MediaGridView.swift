@@ -138,6 +138,8 @@ private extension CatalogMediaEmptyState {
             "Library Unavailable"
         case .deviceEnumerating:
             "Reading Items"
+        case .catalogIncompatible:
+            "Catalog Incompatible"
         }
     }
 
@@ -160,6 +162,8 @@ private extension CatalogMediaEmptyState {
             Reading items from \(name). This can take several minutes on this connection. \
             For faster browsing and import, insert the memory card directly or use the camera's Mass Storage USB mode.
             """
+        case let .catalogIncompatible(detail):
+            detail
         }
     }
 
@@ -175,6 +179,8 @@ private extension CatalogMediaEmptyState {
             "externaldrive.badge.questionmark"
         case .deviceEnumerating:
             "camera.metering.matrix"
+        case .catalogIncompatible:
+            "exclamationmark.triangle"
         }
     }
 
