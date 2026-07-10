@@ -310,6 +310,35 @@ evidence step: `script/profile.sh "SwiftUI" 60s` (or Hangs) during continuous
 scroll with enrichment active, then decide decode-format vs idle animation
 duration.
 
+## Plan 0009 final verification run (2026-07-09, all parts landed)
+
+Owner scroll session, ~2 min attach with enrichment active (~5.1k/23,048):
+log `logs/run-20260710T021345Z-p19675-prod.log`, trace
+`build/Profiles/SwiftUI-plan0009-20260709-191352.trace`.
+
+- **Instruments Hangs table: 0 rows** (plan-0008 verification run: 31; original
+  diagnosis run: 11). The apply-path jank is fixed at the platform-authoritative
+  detector.
+- 17 structural applies, all animated true-diffs; 6 ran with
+  `animationSuppressed=true` during live scroll. Per-apply bookkeeping as
+  designed: `diffPolicyMs` 8–10, `snapshotBuildMs` 16–19, `completionMs` 10–11.
+  Unsuppressed (idle) applies report `applyCallMs` ≈ 385–401 — that is the
+  completion waiting out the 0.35 s move animation (wall time), not main-thread
+  blockage; the hangs table confirms.
+- Frame hitches: 1,718 total (p50 12.5 ms, p90 25 ms — one to three 120 Hz
+  frame periods under heavy scroll), of which 43 ≥ 100 ms, worst 441 ms,
+  clustered in the hardest-scroll windows. Those windows contain **no
+  structural applies** — activity is scroll flushes, visible reconfigures, and
+  cloud-download completions painting thumbnails — consistent with the Part D
+  CA-commit/IOSurface-upload diagnosis, now demoted from "hangs" to "bursty
+  late frames while the main thread stays responsive." Part D remains
+  open/evidence-first; whether it proceeds is an owner feel/priority call.
+- Debug `MainRunLoopStallMonitor` logged 65 faults (worst 637 ms) against the
+  0-row hangs table; its timer-lateness signal over-reports under continuous
+  display load and its `lastOp` attribution can reference operations tens of
+  seconds old. Follow-up: tighten the monitor (tolerance, attribution decay)
+  so it agrees with Instruments about what a stall is.
+
 ## Sources
 
 - Local SDK headers (primary): `NSDiffableDataSource.h`, `NSCollectionView.h`,
