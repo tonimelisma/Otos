@@ -339,6 +339,44 @@ log `logs/run-20260710T021345Z-p19675-prod.log`, trace
   seconds old. Follow-up: tighten the monitor (tolerance, attribution decay)
   so it agrees with Instruments about what a stall is.
 
+## Mid-scroll residual analysis (2026-07-09, plan 0009 final trace)
+
+Aggregating main-thread stacks inside the 43 ≥100 ms hitch windows of
+`SwiftUI-plan0009-20260709-191352.trace` (owner still feels brief mid-scroll
+pauses despite the 0-row hangs table):
+
+- Dominant: render-pipeline commit — `CA::Transaction::commit` blocked in
+  `mach_msg` (~650 ms across windows), `CVPixelBuffer` → IOSurface copies of
+  thumbnail contents (~102 ms), `NSViewBackingLayer display` (~90 ms),
+  `_NSViewSubViewMutationSafeApply` (~78 ms). The main thread stays responsive
+  (no Hangs rows) but frames arrive late while commits wait on the render
+  server.
+- Notable app-side slices inside the same windows: **signpost/OSLog emission
+  ~107 ms** (debug-build observability cost on the scroll path),
+  apply-adjacent work (`applySnapshot` 39, gate completion 37,
+  `GridSelection.pruned` 40, `mediaSnapshot` 26), `videoBadgeText` formatting
+  per bind (~31), `visibleAssetIDs` (27), fingerprint computation (28).
+- Scroll coalescing itself is healthy: ~44–68 bounds ticks/s collapse to 1–4
+  flushes with detail queries mostly skipped-unchanged.
+
+Evidence-ranked levers for the remaining mid-scroll tail:
+
+1. Defer structural applies while a live scroll is in progress (park
+   `pendingGrid` in the gate; drain on ~250 ms quiet — same signal Part B
+   uses). Removes apply-driven layout/commit churn from scroll entirely;
+   applies resume immediately on pause. Owner sign-off required (adjacent to,
+   but distinct from, the rejected cadence holdback: publication cadence is
+   untouched; adoption defers only while the finger is down).
+2. Part D decode-format: decode thumbnails into IOSurface-friendly
+   premultiplied BGRA so `layer.contents` assignment stops copying at commit.
+3. Debug observability cost: move per-flush scroll-path signposts/logs behind
+   a verbosity gate; capture one RELEASE-build trace to measure true UX
+   numbers (all captures so far are Debug builds).
+4. Cache the formatted duration string per detail (avoid `Duration.formatted`
+   on every bind), and only mutate badge subviews on content change (subview
+   mutation appears in commit stacks).
+5. Micro: skip `GridSelection.pruned` when selection is empty.
+
 ## Sources
 
 - Local SDK headers (primary): `NSDiffableDataSource.h`, `NSCollectionView.h`,
