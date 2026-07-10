@@ -58,6 +58,25 @@ carry unmarked local time indistinguishable from UTC. Excluding it from naming
 and falling back to the card mtime (which the camera wrote in local time — see
 1b) is strictly more reliable.
 
+The exclusion is scoped precisely: **UTC is banned only when the capture zone
+is unrecoverable.** A UTC-anchored timestamp accompanied by a recorded capture
+zone converts to the local wall clock and is a first-class naming input:
+
+- explicit `±hhmm` offsets (including `+0000`) are affirmative zone claims and
+  already parse as `.localWithOffset` with local components;
+- a UTC epoch beside a recorded device timezone converts to a derived local
+  candidate. Concrete case found in MediaMetadata: the GPMF parser reads
+  GoPro's `TimeZone` minutes field (`GoProMetadata.timeZoneMinutes`,
+  ISOBMFFMetadataParser) but records it only as a diagnostic finding next to
+  the `.absoluteInstant` creation epoch — the combination is discarded today.
+  Combining them is a required MediaMetadata change (plan §4.5 item 4);
+- bare `Z`-suffixed strings stay excluded: `Z` is the normalization idiom of
+  encoders that do not know their zone, not a claim that capture happened in
+  UTC+0, and trusting it would misname the common normalized case to gain only
+  the rare genuinely-UTC+0 case;
+- deriving the zone from GPS coordinates via a tz database is sound in
+  principle but needs offline historical zone data; explicitly deferred.
+
 Source: [ExifTool QuickTime tags](https://exiftool.sourceforge.net/TagNames/QuickTime.html)
 
 ### 1b. mtime fallback semantics: FAT/exFAT and PTP preserve local wall time

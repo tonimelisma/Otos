@@ -93,12 +93,24 @@ These are requirements, not implementation suggestions.
      `com.apple.quicktime.creationdate` ISO 8601 with offset —
      `.localWithOffset`) carry local components directly. Format the
      `year…second` components exactly as written; no zone math ever applies.
-   - **UTC-anchored timestamps are excluded entirely.** QuickTime/ISO BMFF
-     container `creation_time` (spec-UTC, and per ExifTool many cameras violate
-     the spec and write unmarked local time, making it unreliable in both
-     directions), GPS timestamps, and GPMF epochs — every
-     `.absolute`-precision candidate — never feed a name or folder. They fall
-     through to the mtime fallback below.
+   - **UTC-anchored timestamp plus a recorded capture-zone offset is local
+     time, recovered by conversion.** The ban is on UTC *without* zone
+     knowledge, not on UTC per se: when the file also records the device's
+     zone, converting instant + offset yields the capture-local wall clock and
+     it is used exactly like an embedded local timestamp. Explicit `±hhmm`
+     offsets (including `+0000`) are affirmative zone claims and already parse
+     as `.localWithOffset`; a UTC epoch with a co-present device timezone fact
+     (GoPro GPMF records a `TimeZone` minutes field beside its UTC creation
+     epoch) becomes a derived `.localWithOffset` candidate in MediaMetadata
+     (section 4.5 item 4).
+   - **UTC-anchored timestamps with no recoverable zone are excluded
+     entirely.** QuickTime/ISO BMFF container `creation_time` (spec-UTC, and
+     per ExifTool many cameras violate the spec and write unmarked local time,
+     making it unreliable in both directions), GPS timestamps, and bare
+     `Z`-suffixed strings — `Z` is the "normalized to UTC" idiom of encoders
+     that do not know their zone, not a claim that capture happened in UTC+0 —
+     never feed a name or folder. They fall through to the mtime fallback
+     below.
    - **Source modification date fallback, rendered in the current zone.** For
      the dominant sources this *reconstructs the camera's local wall clock*:
      FAT/exFAT store local wall time on disk and the OS derives the epoch using
@@ -239,6 +251,10 @@ These are requirements, not implementation suggestions.
 - Multiple simultaneous imports/reorganizations. Start with one global execution.
 - Undo after a completed reorganization. Recovery protects interruption; it is not
   a user-facing historical undo stack.
+- Deriving the capture zone from GPS coordinates (tz-database lookup) to
+  localize zone-less UTC timestamps. Sound in principle, but it needs an
+  offline timezone database with historical rules and its own accuracy story —
+  a separate confirmed increment if ever wanted.
 
 ---
 
@@ -476,13 +492,15 @@ WHERE import_batch_unix_ms IS NOT NULL;
 
 -- Embedded LOCAL capture wall clock for date naming (contract item 6). Compact
 -- YYYYMMDDHHMMSS integer (e.g. 20260101120000) selected by enrichment from
--- local-authority candidates only (precision localFloating or localWithOffset),
--- role precedence original → digitized → quickTimeCreation →
--- quickTimeContentCreate. UTC-anchored candidates (.absolute: container
--- creation_time, GPS, GPMF epochs) are NEVER selected — a UTC wall clock is not
--- the local capture time. Precision records localWithOffset / localFloating
--- for diagnostics and tests. NULL means "no embedded local timestamp" and
--- naming falls back to source mtime.
+-- local-authority candidates only (precision localFloating or localWithOffset,
+-- including candidates MediaMetadata derives from a UTC timestamp plus a
+-- recorded device zone such as GPMF TimeZone), role precedence original →
+-- digitized → quickTimeCreation → quickTimeContentCreate. UTC-anchored
+-- candidates with no recoverable zone (.absolute: container creation_time,
+-- GPS, bare-Z strings) are NEVER selected — a UTC wall clock without the
+-- capture zone is not the local capture time. Precision records
+-- localWithOffset / localFloating for diagnostics and tests. NULL means "no
+-- embedded local timestamp" and naming falls back to source mtime.
 ALTER TABLE media_asset
 ADD COLUMN capture_wall_compact INTEGER;
 ALTER TABLE media_asset
@@ -736,7 +754,18 @@ the Otos stage that consumes them (Stage A for the first two):
    selection must prefer local-authority candidates within each role (or the
    library must additionally expose all candidates so callers can). Add fixture
    tests for the shadowing case.
-4. **Documented per-spec timestamp semantics (required, Stage A).** Document on
+4. **Combine UTC timestamps with co-present zone facts (required, Stage A).**
+   When a file carries both a UTC-anchored timestamp and a recorded device
+   timezone, emit a derived `.localWithOffset` candidate with converted local
+   components (evidence linking both findings) alongside the raw absolute
+   candidate. Concrete today: the GPMF parser reads a `TimeZone` minutes field
+   (`GoProMetadata.timeZoneMinutes`) but records it only as a diagnostic
+   finding next to the `.absoluteInstant` creation epoch — the combination is
+   currently discarded. Bare `Z`-suffixed strings stay `.absolute` (a
+   normalization idiom, not a zone claim); explicit `±hhmm` offsets, including
+   `+0000`, remain `.localWithOffset`. Add GoPro fixtures proving the derived
+   local candidate and its conversion.
+5. **Documented per-spec timestamp semantics (required, Stage A).** Document on
    the API what each source means by specification: EXIF `DateTimeOriginal` is
    local capture time (CIPA DC-008; offset only via EXIF 2.31 `OffsetTime*`);
    QuickTime/ISO BMFF container `creation_time` is UTC per spec **and**
@@ -746,7 +775,7 @@ the Otos stage that consumes them (Stage A for the first two):
    PTP DateTime strings are local device time with an optional `Z`/`±hhmm`
    suffix (ISO 15740 §5.3.4.1). Document that `instant` is `nil` for
    `localFloating` by design and that calendar consumers must use components.
-5. **EXIF sub-second components (optional, deferred).** `SubSecTimeOriginal`
+6. **EXIF sub-second components (optional, deferred).** `SubSecTimeOriginal`
    exposure would reduce same-second suffix collisions. Not required for this
    plan; record as a library roadmap item only.
 
@@ -1888,8 +1917,10 @@ Performance evidence:
 
 - four folder/name policy combinations;
 - capture-local naming cascade: floating EXIF names by camera wall clock
-  verbatim; offset-bearing timestamps by embedded local wall clock; **every
-  `.absolute` candidate (container creation_time, GPS, GPMF) is excluded from
+  verbatim; offset-bearing timestamps by embedded local wall clock; a UTC
+  timestamp with a recorded device zone (GPMF TimeZone fixture) names by the
+  converted local wall clock; **every `.absolute` candidate with no recoverable
+  zone (container creation_time, GPS, bare-Z strings) is excluded from
   naming** and the entry falls to the mtime fallback; identical names under two
   simulated Mac time zones for embedded-dated media;
 - mtime fallback and no synthetic date; FAT/PTP wall-time invariance across
@@ -2067,8 +2098,9 @@ available. Do not require the user to operate the app.
 Branch: `refactor/import-persistence-foundation`
 
 Prerequisite: land the MediaMetadata capture-local release (section 4.5 items
-1–4: wall-clock contract, `captureLocalComponents` accessor, local-preferring
-role selection, per-spec documentation) and pin Otos to it.
+1–5: wall-clock contract, `captureLocalComponents` accessor, local-preferring
+role selection, UTC+zone combination, per-spec documentation) and pin Otos to
+it.
 
 - replace the destructive schema reset policy — **both** erase paths (section
   4.1), with the defined future-schema refusal UX;
