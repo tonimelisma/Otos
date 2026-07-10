@@ -15,8 +15,10 @@ struct CompareView: View {
     let rightPreview: PanePreview?
     let leftIsDownloading: Bool
     let rightIsDownloading: Bool
-    /// Newest pair member — centered in the strip on entry/replacement.
+    /// Most recently replaced slot's asset — centered in the strip.
     var focusTargetID: MediaAssetID?
+    let stripTileEdge: CGFloat
+    let setStripTileEdge: (CGFloat) -> Void
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
     var stallMonitor: MainRunLoopStallMonitor?
@@ -32,8 +34,12 @@ struct CompareView: View {
                 pane(id: rightID, preview: rightPreview, isDownloading: rightIsDownloading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            FilmstripResizeHandle(
+                stripTileEdge: stripTileEdge,
+                setStripTileEdge: setStripTileEdge
+            )
             filmstrip
-                .frame(height: MediaGridPresentation.defaultStripTileEdge + 12)
+                .frame(height: stripTileEdge + 12)
         }
     }
 
@@ -75,7 +81,7 @@ struct CompareView: View {
             stallMonitor: stallMonitor,
             onViewportChanged: onViewportChanged,
             selectionHandlers: selectionHandlers,
-            presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge),
+            presentation: .strip(tileEdge: stripTileEdge),
             onEscapeKey: onEscape,
             onArrowKey: onStripArrow,
             focusTargetID: focusTargetID

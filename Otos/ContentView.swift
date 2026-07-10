@@ -47,6 +47,8 @@ struct ContentView: View {
                     sort: viewModel.queryDescriptor.sort,
                     setOrder: viewModel.setSortOrder
                 )
+            }
+            ToolbarItem(placement: .primaryAction) {
                 CatalogZoomControl(
                     columnCount: viewModel.gridColumnCount,
                     makeThumbnailsSmaller: viewModel.zoomOutGrid,
@@ -103,6 +105,8 @@ struct ContentView: View {
                 focusedAssetID: viewModel.focusedAssetID,
                 panePreview: viewModel.panePreviews[.loupe],
                 isDownloading: viewModel.downloadingSlots.contains(.loupe),
+                stripTileEdge: viewModel.stripTileEdge,
+                setStripTileEdge: viewModel.setStripTileEdge,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 stallMonitor: viewModel.uiStallMonitor,
@@ -129,6 +133,8 @@ struct ContentView: View {
                 leftIsDownloading: viewModel.downloadingSlots.contains(.compareLeft),
                 rightIsDownloading: viewModel.downloadingSlots.contains(.compareRight),
                 focusTargetID: viewModel.compareStripFocusTargetID,
+                stripTileEdge: viewModel.stripTileEdge,
+                setStripTileEdge: viewModel.setStripTileEdge,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 stallMonitor: viewModel.uiStallMonitor,

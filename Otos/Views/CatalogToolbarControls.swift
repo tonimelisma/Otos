@@ -160,28 +160,90 @@ struct CatalogSortMenuContent: View {
     }
 }
 
-/// Photos-style discrete thumbnail sizing. The grid itself makes the effect
-/// visible, while tooltips and menu commands expose the semantic zoom names.
+/// Photos-style discrete thumbnail sizing. Uses AppKit `NSSegmentedControl` with
+/// momentary tracking so the −/+ pair renders as one fused control (SwiftUI
+/// `ControlGroup` only applies logical spacing on modern macOS toolbars).
 struct CatalogZoomControl: View {
     let columnCount: Int
     let makeThumbnailsSmaller: () -> Void
     let makeThumbnailsLarger: () -> Void
 
     var body: some View {
-        ControlGroup {
-            Button(action: makeThumbnailsSmaller) {
-                Image(systemName: "minus")
-            }
-            .help("Smaller Thumbnails")
-            .disabled(columnCount >= GridColumnCount.maximum)
-
-            Button(action: makeThumbnailsLarger) {
-                Image(systemName: "plus")
-            }
-            .help("Larger Thumbnails")
-            .disabled(columnCount <= GridColumnCount.minimum)
-        }
+        ZoomSegmentedControl(
+            columnCount: columnCount,
+            makeThumbnailsSmaller: makeThumbnailsSmaller,
+            makeThumbnailsLarger: makeThumbnailsLarger
+        )
+        .frame(width: 64, height: 24)
         .accessibilityLabel("Thumbnail Size")
+        .help("Thumbnail Size")
+    }
+}
+
+/// Native fused momentary −/+ segment for the toolbar.
+struct ZoomSegmentedControl: NSViewRepresentable {
+    let columnCount: Int
+    let makeThumbnailsSmaller: () -> Void
+    let makeThumbnailsLarger: () -> Void
+
+    final class Coordinator: NSObject {
+        var makeThumbnailsSmaller: () -> Void
+        var makeThumbnailsLarger: () -> Void
+
+        init(
+            makeThumbnailsSmaller: @escaping () -> Void,
+            makeThumbnailsLarger: @escaping () -> Void
+        ) {
+            self.makeThumbnailsSmaller = makeThumbnailsSmaller
+            self.makeThumbnailsLarger = makeThumbnailsLarger
+        }
+
+        @objc func segmentClicked(_ sender: NSSegmentedControl) {
+            switch sender.selectedSegment {
+            case 0:
+                makeThumbnailsSmaller()
+            case 1:
+                makeThumbnailsLarger()
+            default:
+                break
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            makeThumbnailsSmaller: makeThumbnailsSmaller,
+            makeThumbnailsLarger: makeThumbnailsLarger
+        )
+    }
+
+    func makeNSView(context: Context) -> NSSegmentedControl {
+        let minus = NSImage(systemSymbolName: "minus", accessibilityDescription: "Smaller Thumbnails")
+            ?? NSImage()
+        let plus = NSImage(systemSymbolName: "plus", accessibilityDescription: "Larger Thumbnails")
+            ?? NSImage()
+        let control = NSSegmentedControl(
+            images: [minus, plus],
+            trackingMode: .momentary,
+            target: context.coordinator,
+            action: #selector(Coordinator.segmentClicked(_:))
+        )
+        control.segmentStyle = .automatic
+        control.setToolTip("Smaller Thumbnails", forSegment: 0)
+        control.setToolTip("Larger Thumbnails", forSegment: 1)
+        applyEnablement(control)
+        return control
+    }
+
+    func updateNSView(_ control: NSSegmentedControl, context: Context) {
+        context.coordinator.makeThumbnailsSmaller = makeThumbnailsSmaller
+        context.coordinator.makeThumbnailsLarger = makeThumbnailsLarger
+        applyEnablement(control)
+    }
+
+    private func applyEnablement(_ control: NSSegmentedControl) {
+        control.setEnabled(columnCount < GridColumnCount.maximum, forSegment: 0)
+        control.setEnabled(columnCount > GridColumnCount.minimum, forSegment: 1)
     }
 }
 
