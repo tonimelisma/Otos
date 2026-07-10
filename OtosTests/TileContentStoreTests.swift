@@ -109,6 +109,45 @@ struct TileContentStoreTests {
         #expect(store.content(for: drop.id) == nil)
     }
 
+    @Test func formattedDurationCachesUntilDurationOrKindChanges() throws {
+        let store = TileContentStore()
+        let video = makeDetail(
+            path: "v.mov",
+            thumbnailPath: "t.jpg",
+            kind: .video,
+            duration: 42
+        )
+        _ = store.mergeDetail(video)
+        let first = try #require(store.content(for: video.id)?.formattedDuration)
+        #expect(first == MediaAssetTilePresentation.videoBadgeText(video))
+
+        // Unrelated stamp change must keep the same cached string.
+        let sameDuration = makeDetail(
+            path: "v.mov",
+            thumbnailPath: "t.jpg",
+            kind: .video,
+            duration: 42,
+            size: 200,
+            mtime: 2
+        )
+        _ = store.mergeDetail(sameDuration)
+        let second = try #require(store.content(for: video.id)?.formattedDuration)
+        #expect(second == first)
+
+        let longer = makeDetail(
+            path: "v.mov",
+            thumbnailPath: "t.jpg",
+            kind: .video,
+            duration: 99,
+            size: 200,
+            mtime: 2
+        )
+        _ = store.mergeDetail(longer)
+        let third = try #require(store.content(for: video.id)?.formattedDuration)
+        #expect(third == MediaAssetTilePresentation.videoBadgeText(longer))
+        #expect(third != first)
+    }
+
     @Test func imageBudgetDropsLRUUnpinnedImagesButNeverPinned() {
         let small = makeImage(width: 8)
         let cost = TileContentStore.byteCost(of: small)

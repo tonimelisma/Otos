@@ -103,6 +103,9 @@ nonisolated struct GridSelection: Equatable {
     /// from a stale anchor. A *descriptor* change resets to `.empty` (handled by the
     /// caller, not here).
     func pruned(to orderedIDs: [MediaAssetID]) -> GridSelection {
+        guard !selection.isEmpty else {
+            return .empty
+        }
         let orderSet = Set(orderedIDs)
         let prunedSelection = selection.intersection(orderSet)
         guard let anchor, orderSet.contains(anchor) else {
