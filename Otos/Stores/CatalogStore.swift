@@ -381,6 +381,13 @@ extension CatalogStore {
         }
 
         let queryMs = timedDetails.totalMs
+        OtosLog.catalog.debug(
+            """
+            op=catalog.store.query.tileDetail phase=finish requested=\(ids.count, privacy: .public) \
+            returned=\(detailsByID.count, privacy: .public) waitMs=\(timedDetails.waitMs, privacy: .public) \
+            execMs=\(timedDetails.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
+            """
+        )
         if queryMs > Self.slowQueryDiagnosticThresholdMs {
             await recordSlowTileDetailQuery(
                 requestedCount: ids.count,

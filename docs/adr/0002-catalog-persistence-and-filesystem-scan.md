@@ -1,7 +1,7 @@
 # ADR 0002: Catalog Persistence And Filesystem Reconciliation
 
 - Status: Accepted
-- Last updated: 2026-07-01
+- Last updated: 2026-07-10
 
 ## Context
 
@@ -150,8 +150,16 @@ recovery.
 Use `DatabasePool` with WAL for file-backed locations so Store-owned projection,
 grid-detail, and enrichment reads can run alongside serialized writes. Keep
 `.inMemory` test locations on `DatabaseQueue`, because GRDB pools require files.
-Do not add a second cache layer or query-paging architecture until measurements or
-implemented requirements prove the current Store-owned query model insufficient.
+File-backed pools use `maximumReaderCount = 4`. GRDB's reader pool can surface a
+QoS inversion warning (User-initiated waiter blocked on `Pool.get` while a
+lower-QoS holder runs) because `DispatchSemaphore` does not donate priority;
+measured UI-facing `waitMs` p95 under real ~23k load stays in the low teens of
+milliseconds, so the warning is accepted as benign — do not raise the reader
+count or add a second UI-only pool until unbiased `waitMs` evidence shows a
+real queueing problem (see
+`docs/research/2026-07-10-grdb-reader-pool-qos.md`). Do not add a second cache
+layer or query-paging architecture until measurements or implemented
+requirements prove the current Store-owned query model insufficient.
 
 ### macOS Scan Input
 
