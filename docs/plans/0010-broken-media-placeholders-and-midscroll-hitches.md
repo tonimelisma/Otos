@@ -94,6 +94,49 @@ add/extend a test asserting a failed generation still stamps the asset
 (definitive outcome, no retry churn) if not already covered by
 `CatalogStoreEnrichmentTests`.
 
+## Part A2 — Zero-byte short-circuit: no materialization, no metadata read, no thumbnail attempt
+
+**Files:** [Otos/Services/EnrichmentCoordinator.swift](../../Otos/Services/EnrichmentCoordinator.swift)
+(dispatch path), [Otos/Services/EnrichmentCoordinatorWorkSelection.swift](../../Otos/Services/EnrichmentCoordinatorWorkSelection.swift);
+docs: `docs/requirements.md` ENR-009 acceptance.
+
+**Why:** a `byte_size = 0` file (any kind — image, RAW, video) can never
+contain media. Without this part, the toy-camera stubs still get claimed,
+`FileMaterialization`-checked, download-dispatched through the file provider,
+metadata-probed, and QuickLook-attempted — all to learn nothing. The scanner
+already recorded the zero size as a filesystem fact, and the claim query
+already returns `byte_size` on the claimed asset
+(EnrichmentLeaseGateway.swift:303, mapped at :326), so the coordinator knows
+before touching any bytes.
+
+1. In the coordinator's dispatch path, **before** the `FileMaterialization`
+   dataless check, when the claimed asset's `byteSize == 0`: skip
+   materialization and the enricher entirely and synthesize the same
+   definitive-but-empty completed result the enricher produces for
+   unreadable media — no metadata JSON, no timestamp facts, no thumbnail —
+   stamped with the claimed row's scanned `(size, mtime)` source signature
+   (the exact signature ENR-007's staleness compares against). The result
+   flows through the normal pending-apply buffer and
+   `CatalogStore.applyEnrichmentBatch` — one lifecycle, no side path.
+2. Staleness self-heals: if the camera (or a sync repair) later replaces the
+   0-byte stub with real bytes, `(size, mtime)` changes, `needsEnrichment`
+   flips true, and the file enriches normally (ENR-007 unchanged).
+3. Diagnostics: emit the visible-lifecycle line with a distinct outcome
+   (e.g. `outcome=emptySource`) so a capture can prove zero downloads were
+   dispatched for zero-byte assets.
+4. The tile outcome is identical to Part A's: stamped enriched,
+   `thumbnail_path` NULL → `thumbnailUnavailable` → broken placeholder, no
+   badge.
+5. Docs: ENR-009's acceptance gains "given a claimed asset whose scanned byte
+   size is zero, no materialization or download is dispatched and a
+   definitive empty enrichment result stamps the asset in the normal flush."
+   Keep ENR-007 untouched.
+
+**Oracle:** `EnrichmentCoordinatorTests` gains: zero-byte claimed asset →
+no materialization/download dispatched, no enricher invocation, definitive
+stamp applied through the normal batch, correct lifecycle outcome logged;
+non-zero assets unaffected.
+
 ## Part B — Broken-media placeholders and badge suppression
 
 **Files:** [Otos/Views/MediaAssetTilePresentation.swift](../../Otos/Views/MediaAssetTilePresentation.swift),
@@ -277,7 +320,7 @@ change → new string; unrelated detail change → same instance).
 
 | PR | Contents | Oracle |
 | --- | --- | --- |
-| 1 | Parts A + B (no-icon policy, broken placeholders, badge suppression) + ENR-004/ADR 0009/APP-006/ADR 0006 | Presentation-table + enrichment-outcome tests; paint-invariant tests unmodified |
+| 1 | Parts A + A2 + B (no-icon policy, zero-byte short-circuit, broken placeholders, badge suppression) + ENR-004/ENR-009/ADR 0009/APP-006/ADR 0006 | Presentation-table + enrichment-outcome + coordinator zero-byte tests; paint-invariant tests unmodified |
 | 2 | Part C (scroll-hold gate) | Gate truth-table tests; capture: no applies inside sustained scroll, adoption ≤ ~300 ms after quiet |
 | 3 | Parts D + E + F (render/observability/bind perf) | Trace evidence for D (CVPixelBuffer slice) and E (verbose-off chatter gone); F unit tests; Release capture recorded |
 
@@ -310,7 +353,9 @@ latency unregressed.
   automatically post-rebuild.
 - No catalog repair/migration for already-stored icon thumbnails (owner nukes
   the database).
-- No zero-byte scanner special-casing — the QuickLook error path covers all
-  breakage shapes with one mechanism.
+- No scanner-side special-casing beyond what Part A2 does in the coordinator:
+  the scanner keeps recording filesystem facts only; zero-byte handling is an
+  enrichment-scheduling decision (one owner), and truncated-but-nonzero files
+  are covered by Part A's QuickLook error path.
 - No materialization-concurrency change (roadmap), no cadence changes, no
   reloadData for same-descriptor reorders.
