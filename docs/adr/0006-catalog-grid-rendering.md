@@ -110,7 +110,11 @@ bounds have tickled within the last 250 ms, the group still calls
 `apply(animatingDifferences: true)` but sets `duration = 0` — mid-scroll move
 animations are invisible churn that feeds Core Animation commit pressure
 (plan 0009). Never downgrade to `animatingDifferences: false` for that case;
-that is the reloadData teardown path. A `MediaGridAnimatedLayout` fades and
+that is the reloadData teardown path. Separately, `MediaGridMutationGate`
+holds same-descriptor structural-apply *adoption* while scroll is live
+(`scrollHold`, released after the same 250 ms quiet threshold): enrichment
+reorders park newest-wins and apply once on quiet; descriptor-changed grids
+bypass the hold; zoom swaps are unaffected. A `MediaGridAnimatedLayout` fades and
 shrinks only the index paths a given apply batch actually inserted or deleted,
 leaving every other appearing/disappearing item (scroll dequeue, a future zoom
 swap) — and every moved item in a move-only batch — at `super`'s unmodified

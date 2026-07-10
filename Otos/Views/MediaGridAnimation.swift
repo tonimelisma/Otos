@@ -14,8 +14,9 @@ nonisolated enum MediaGridAnimation {
     static let applyDuration: TimeInterval = 0.35
 
     /// Quiet window after the last scroll-bounds tick before a move animation is
-    /// allowed. One coalesced scroll flush is 16 ms; 250 ms of quiet means the
-    /// user has plausibly stopped.
+    /// allowed and before the mutation gate releases scroll-hold (Part C). One
+    /// coalesced scroll flush is 16 ms; 250 ms of quiet means the user has
+    /// plausibly stopped. Shared by animation suppress and `endScrollHold`.
     static let applyAnimationScrollQuietThreshold: TimeInterval = 0.25
 
     /// During live scrolling a move animation is invisible churn; apply instantly

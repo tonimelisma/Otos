@@ -71,6 +71,7 @@ struct MediaGridZoomTests {
             animatingDifferences: true,
             animationSuppressed: false,
             usesReloadDataFallback: false,
+            heldDuringScroll: false,
             signpost: .beginState(id: .exclusive)
         )
         controller.completeStructuralApply(context, operation: nil, stallMonitor: nil)
