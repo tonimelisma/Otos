@@ -1,24 +1,24 @@
 {
-  "originHash" : "ce1308a9c645fa4a2eb6bf6ded2659e6e4bb1b54746c0ce6d496e33c745535be",
-  "pins" : [
+  "originHash": "ce1308a9c645fa4a2eb6bf6ded2659e6e4bb1b54746c0ce6d496e33c745535be",
+  "pins": [
     {
-      "identity" : "grdb.swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/groue/GRDB.swift.git",
-      "state" : {
-        "revision" : "9ed8c8457e00ff9c7aedb3bf213f20a2cfdf509e",
-        "version" : "7.11.0"
+      "identity": "grdb.swift",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/groue/GRDB.swift.git",
+      "state": {
+        "revision": "9ed8c8457e00ff9c7aedb3bf213f20a2cfdf509e",
+        "version": "7.11.0"
       }
     },
     {
-      "identity" : "mediametadata",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tonimelisma/MediaMetadata.git",
-      "state" : {
-        "branch" : "main",
-        "revision" : "d685701cd1e1e5f97f2ceafac0c9a09508312a1e"
+      "identity": "mediametadata",
+      "kind": "remoteSourceControl",
+      "location": "https://github.com/tonimelisma/MediaMetadata.git",
+      "state": {
+        "branch": "main",
+        "revision": "37590ba1c1ae800c2ec7a814e211b5d8978d12d2"
       }
     }
   ],
-  "version" : 3
+  "version": 3
 }
