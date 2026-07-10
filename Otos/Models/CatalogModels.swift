@@ -10,14 +10,67 @@ import UniformTypeIdentifiers
 // stay separate from durable root identity because the filesystem can change
 // independently of SQLite.
 //
+// `LibraryRootPath`, `MediaRelativePath`, and `MediaAssetID` carry a derived
+// FNV-1a `fingerprint` so Hashable / ObjC-bridged diffable hashing is O(1) after
+// construction. The fingerprint is never persisted, never logged as identity,
+// and never substitutes for string equality (colliding fingerprints still
+// compare the full path strings).
+//
 // Store owns durable truth in SQLite and exposes small immutable values at query
 // boundaries. `CatalogWindowState` is the UI-ready value built by Projection.
+
+/// Stable FNV-1a 64-bit over UTF-8. Used only as derived Hashable state for path
+/// identity types — never persisted, never logged as identity, never a substitute
+/// for string equality (collisions fall back to full string compare).
+nonisolated enum PathFingerprint {
+    static let offsetBasis: UInt64 = 14_695_981_039_346_656_037
+    static let prime: UInt64 = 1_099_511_628_211
+
+    static func fnv1a64(_ bytes: some Sequence<UInt8>) -> UInt64 {
+        fnv1a64(offsetBasis, bytes)
+    }
+
+    static func fnv1a64(_ seed: UInt64, _ bytes: some Sequence<UInt8>) -> UInt64 {
+        var hash = seed
+        for byte in bytes {
+            hash ^= UInt64(byte)
+            hash = hash &* prime
+        }
+        return hash
+    }
+
+    /// Root path, then a NUL separator, then the relative path — process-independent.
+    static func mediaAsset(root: String, relative: String) -> UInt64 {
+        var hash = fnv1a64(root.utf8)
+        hash ^= 0
+        hash = hash &* prime
+        return fnv1a64(hash, relative.utf8)
+    }
+}
 
 /// Typed filesystem paths keep domain roles visible at call sites. A library
 /// root path and a media relative path are both text under the hood, but mixing
 /// them up would be a real catalog bug, so they are not plain Strings.
 nonisolated struct LibraryRootPath: Hashable, Codable, RawRepresentable, CustomStringConvertible {
     let rawValue: String
+    /// Derived FNV-1a of `rawValue` UTF-8. Cheap Hashable only — not identity.
+    let fingerprint: UInt64
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+        fingerprint = PathFingerprint.fnv1a64(rawValue.utf8)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self.init(rawValue: rawValue)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
     var description: String {
         rawValue
@@ -31,13 +84,53 @@ nonisolated struct LibraryRootPath: Hashable, Codable, RawRepresentable, CustomS
         let name = url.lastPathComponent
         return name.isEmpty ? rawValue : name
     }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(fingerprint)
+    }
+
+    static func == (lhs: LibraryRootPath, rhs: LibraryRootPath) -> Bool {
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        return lhs.rawValue == rhs.rawValue
+    }
 }
 
 nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, CustomStringConvertible {
     let rawValue: String
+    /// Derived FNV-1a of `rawValue` UTF-8. Cheap Hashable only — not identity.
+    let fingerprint: UInt64
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+        fingerprint = PathFingerprint.fnv1a64(rawValue.utf8)
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let rawValue = try container.decode(String.self)
+        self.init(rawValue: rawValue)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
 
     var description: String {
         rawValue
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(fingerprint)
+    }
+
+    static func == (lhs: MediaRelativePath, rhs: MediaRelativePath) -> Bool {
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        return lhs.rawValue == rhs.rawValue
     }
 }
 
@@ -47,6 +140,18 @@ nonisolated struct MediaRelativePath: Hashable, Codable, RawRepresentable, Custo
 nonisolated struct MediaAssetID: Hashable {
     let libraryRootPath: LibraryRootPath
     let relativePath: MediaRelativePath
+    /// Derived FNV-1a over both path strings' UTF-8. Cheap Hashable / ObjC
+    /// `hashValue` for diffable snapshots — never persisted or logged as identity.
+    let fingerprint: UInt64
+
+    init(libraryRootPath: LibraryRootPath, relativePath: MediaRelativePath) {
+        self.libraryRootPath = libraryRootPath
+        self.relativePath = relativePath
+        fingerprint = PathFingerprint.mediaAsset(
+            root: libraryRootPath.rawValue,
+            relative: relativePath.rawValue
+        )
+    }
 
     /// The absolute filesystem URL of the original file this identity names. Built
     /// from identity alone — no Store round-trip and no byte read — so the clipboard
@@ -55,6 +160,18 @@ nonisolated struct MediaAssetID: Hashable {
     /// always a file.
     var fileURL: URL {
         libraryRootPath.url.appending(path: relativePath.rawValue, directoryHint: .notDirectory)
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(fingerprint)
+    }
+
+    static func == (lhs: MediaAssetID, rhs: MediaAssetID) -> Bool {
+        if lhs.fingerprint != rhs.fingerprint {
+            return false
+        }
+        return lhs.libraryRootPath == rhs.libraryRootPath
+            && lhs.relativePath == rhs.relativePath
     }
 }
 

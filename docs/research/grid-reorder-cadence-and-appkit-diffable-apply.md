@@ -265,6 +265,50 @@ Remediation: `docs/plans/0009-grid-jank-residuals-and-tile-badges.md`
 owner-confirmed 2026-07-09 that mid-scroll animations are unnecessary;
 measured `MediaAssetID` fingerprint hashing; CA-commit/IOSurface spike).
 
+## Plan 0009 PR1 capture (2026-07-09, Parts A+B)
+
+Log `logs/run-20260710T002818Z-p10790-prod.log` (smoke scroll against OneDrive
+library). Representative same-descriptor reorder at n = 23,016:
+
+- `diffPolicyMs=18` (was 27–65) — retained `displayedOrderedIDSet`
+- `completionMs=13` (was ~27) — prune skipped on reorder-only
+- `animationSuppressed=true` during scroll
+- `applyMs=108` (was 128–166); `snapshotBuildMs=31` / `applyCallMs=47` unchanged
+  (Part C owns those)
+
+## Plan 0009 PR2 capture (2026-07-09, Part C fingerprint)
+
+Log `logs/run-20260710T003453Z-p14102-prod.log`. Three reorder-only applies at
+n = 23,016 while scrolling with enrichment active:
+
+| metric | post-PR1 | post-fingerprint | delta |
+| --- | --- | --- | --- |
+| `diffPolicyMs` | 18 | 8–9 | ~half again |
+| `snapshotBuildMs` | 31 | 16–17 | ~half |
+| `applyCallMs` | 47 | 29–36 | ~30% |
+| `snapshotBuildMs+applyCallMs` | ~78 | med 46 / max 53 | clear win; ~40 ms target nearly met |
+| `completionMs` | 13 | 7–8 | — |
+| `applyMs` | 108 | 63–68 | ~40% |
+
+Measurement gate: land Part C — combined snapshot+apply is a clear reduction
+from the hash-dominated baseline even though median 46 ms sits slightly above
+the ~40 ms aspirational line. Codable/persistence remain raw path strings only;
+fingerprint is derived Hashable state.
+
+## Plan 0009 Part D spike (2026-07-09, after A–C)
+
+Same PR2 smoke log: 14 `mainThreadStall` mentions remain in a ~70 s settle+scroll
+window (down from 95 in the post-0008 ~3 min baseline, not hang-zero). Reorder
+`applyMs` is now 63–68 ms — under the 100 ms hang threshold for the apply itself —
+so residual stalls during continuous scroll are consistent with the earlier
+CA-commit / IOSurface diagnosis (Part D), not the O(n) bookkeeping Part C
+targeted. No decode-format or animation-duration code ships in this PR: Part D
+requires a before/after Instruments hang-window stack showing
+`CA::Transaction::commit` / `mach_msg` shrinking before any change. Next
+evidence step: `script/profile.sh "SwiftUI" 60s` (or Hangs) during continuous
+scroll with enrichment active, then decide decode-format vs idle animation
+duration.
+
 ## Sources
 
 - Local SDK headers (primary): `NSDiffableDataSource.h`, `NSCollectionView.h`,

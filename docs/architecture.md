@@ -48,7 +48,9 @@ everything expensive happens on an actor off the main thread.
 ## Key subsystems
 
 - **Identity** is typed: `LibraryRootPath` + `MediaRelativePath` = `MediaAssetID`. No
-  invented durable IDs; the filesystem path is the identity (ADR 0003/0008).
+  invented durable IDs; the filesystem path is the identity (ADR 0003/0008). Each
+  identity value carries a derived FNV-1a `fingerprint` for cheap Hashable /
+  diffable hashing only — never persisted, never a second identity.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps. Mouse selection is
