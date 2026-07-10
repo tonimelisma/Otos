@@ -376,7 +376,11 @@ extension CatalogWindowViewModel {
         }
     }
 
-    private func applyState(_ nextState: CatalogWindowState) {
+    /// Projection → ViewModel state assignment. Selection prune/clear for grid
+    /// identity changes runs here (before SwiftUI re-renders and before any
+    /// AppKit structural apply) so the collection view only ever *renders* the
+    /// already-updated model.
+    func applyState(_ nextState: CatalogWindowState) {
         let previousState = state
         applySidebarSelectionPolicy(previous: previousState, next: nextState)
 
@@ -405,12 +409,28 @@ extension CatalogWindowViewModel {
         }
 
         state = nextState
+
+        let descriptorChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
+        let orderChanged = previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
+        if descriptorChanged {
+            clearGridSelection(reason: "descriptorChange")
+        } else if orderChanged {
+            gridSelection = gridSelection.selection.isEmpty
+                ? .empty
+                : gridSelection.pruned(to: nextState.mediaGrid.orderedAssetIDs)
+        }
+        if descriptorChanged || orderChanged {
+            reconcileFocusAfterGridChange(
+                previousOrderedIDs: previousState.mediaGrid.orderedAssetIDs,
+                descriptorChanged: descriptorChanged
+            )
+        }
+
         OtosSignpost.ui.endInterval("CatalogWindowStateApply", signpost)
 
         let itemCount = nextState.mediaGrid.orderedAssetIDs.count
         let previousItemCount = previousState.mediaGrid.orderedAssetIDs.count
-        let mediaIdentityChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
-            || previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
+        let mediaIdentityChanged = descriptorChanged || orderChanged
         let handoff = CatalogGridHandoff(
             updateID: updateID,
             itemCount: itemCount,

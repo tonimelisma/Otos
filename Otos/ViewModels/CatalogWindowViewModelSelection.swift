@@ -14,12 +14,17 @@ import OSLog
 /// Why the ViewModel owns selection rather than the collection-view controller: loupe and
 /// compare both need the selection + anchor, and the AppKit controller deallocates when
 /// SwiftUI swaps the detail surface. Two renderers of one selection truth means the truth
-/// must live above both. Spec 0046's race-free property is preserved exactly — only the
-/// owner of the value moved.
+/// must live above both.
+///
+/// Selection writers are exactly four classes: (1) mouse-gesture intents, (2) view-mode
+/// intents, (3) gated native-keyboard reconcile, (4) state-driven prune/clear in
+/// `applyState`. AppKit's `selectionIndexPaths` is render output only — no structural-apply
+/// or programmatic-delta path may compute a model write from `selectedIdentities()` except
+/// the gated native-keyboard reconcile.
 ///
 /// Native keyboard selection (⌘A, ⇧-arrows) still writes `selectionIndexPaths` directly;
-/// the controller reconciles upward through `reconcileNativeSelection`, which is
-/// idempotent when a programmatic delta write echoes an equal set (no feedback loop).
+/// the controller reconciles upward through `reconcileNativeSelection` only when it is
+/// not mid-programmatic delta write.
 extension CatalogWindowViewModel {
     /// The ⇧-range / "active photo" anchor, if any.
     var selectionAnchor: MediaAssetID? {
@@ -34,18 +39,23 @@ extension CatalogWindowViewModel {
         )
     }
 
-    /// Synchronous mouse-gesture intent. Reconciles any native keyboard selection that
-    /// landed since the last model write, applies the gesture against the model alone,
+    /// Synchronous mouse-gesture intent. Applies the gesture against the model alone
     /// and returns the updated value so the controller can write `selectionIndexPaths`
-    /// as the gesture's last operation.
+    /// as the gesture's last operation. Does not read AppKit live selection.
     @discardableResult
     func applyGridClick(
         hit: MediaAssetID?,
         modifiers: NSEvent.ModifierFlags,
-        orderedIDs: [MediaAssetID],
-        liveSelection: Set<MediaAssetID>
+        orderedIDs: [MediaAssetID]
     ) -> GridSelection {
-        gridSelection = gridSelection.reconcilingSelection(liveSelection)
+        let shift = modifiers.contains(.shift)
+        let command = modifiers.contains(.command)
+
+        // Loupe/compare: empty-space clicks are no-ops — selection must keep
+        // mirroring focus (loupe) / the pair (compare).
+        if viewMode != .grid, hit == nil {
+            return gridSelection
+        }
 
         if viewMode == .compare {
             guard let hit else {
@@ -54,9 +64,6 @@ extension CatalogWindowViewModel {
             applyCompareClick(hit, orderedIDs: orderedIDs)
             return gridSelection
         }
-
-        let shift = modifiers.contains(.shift)
-        let command = modifiers.contains(.command)
 
         guard let hit else {
             if !shift, !command {
@@ -80,34 +87,14 @@ extension CatalogWindowViewModel {
 
     /// Adopts a live AppKit selection written by native keyboard handling (⌘A,
     /// ⇧-arrows). Idempotent when `live` already equals `gridSelection.selection`.
+    /// Compare ignores native multi-selection writes — the pair is model-owned and
+    /// strip multi-select is disabled in Stage C.
     @discardableResult
     func reconcileNativeSelection(_ live: Set<MediaAssetID>) -> GridSelection {
         if viewMode == .compare {
-            // Cap-2: adopt at most two live identities in display order as the pair.
-            let ordered = GridSelection.orderedSelection(live, in: state.mediaGrid.orderedAssetIDs)
-            let capped = Array(ordered.prefix(2))
-            applyComparePair(
-                ComparePair(members: capped, older: capped.first),
-                orderedIDs: state.mediaGrid.orderedAssetIDs
-            )
             return gridSelection
         }
         gridSelection = gridSelection.reconcilingSelection(live)
-        return gridSelection
-    }
-
-    /// Structural-apply survivor prune. Reconciles against the pre-apply snapshot, then
-    /// drops identities that left the display order (and clears anchor/base when the
-    /// anchor itself left). An empty post-reconcile selection collapses to `.empty`.
-    @discardableResult
-    func pruneSelection(
-        preserved: Set<MediaAssetID>,
-        to orderedIDs: [MediaAssetID]
-    ) -> GridSelection {
-        let reconciled = gridSelection.reconcilingSelection(preserved)
-        gridSelection = reconciled.selection.isEmpty
-            ? GridSelection.empty
-            : reconciled.pruned(to: orderedIDs)
         return gridSelection
     }
 
@@ -131,37 +118,24 @@ struct MediaGridSelectionHandlers {
     var applyClick: (
         _ hit: MediaAssetID?,
         _ modifiers: NSEvent.ModifierFlags,
-        _ orderedIDs: [MediaAssetID],
-        _ liveSelection: Set<MediaAssetID>
-    ) -> GridSelection = { _, _, _, _ in .empty }
-    var reconcileNative: (Set<MediaAssetID>) -> GridSelection = { _ in .empty }
-    var prune: (
-        _ preserved: Set<MediaAssetID>,
         _ orderedIDs: [MediaAssetID]
-    ) -> GridSelection = { _, _ in .empty }
-    var clear: (String) -> Void = { _ in }
+    ) -> GridSelection = { _, _, _ in .empty }
+    var reconcileNative: (Set<MediaAssetID>) -> GridSelection = { _ in .empty }
 
     /// Wires the ViewModel's selection intents into the bridge.
     @MainActor
     static func from(_ viewModel: CatalogWindowViewModel) -> MediaGridSelectionHandlers {
         MediaGridSelectionHandlers(
             currentSelection: { viewModel.gridSelection },
-            applyClick: { hit, modifiers, orderedIDs, live in
+            applyClick: { hit, modifiers, orderedIDs in
                 viewModel.applyGridClick(
                     hit: hit,
                     modifiers: modifiers,
-                    orderedIDs: orderedIDs,
-                    liveSelection: live
+                    orderedIDs: orderedIDs
                 )
             },
             reconcileNative: { live in
                 viewModel.reconcileNativeSelection(live)
-            },
-            prune: { preserved, ordered in
-                viewModel.pruneSelection(preserved: preserved, to: ordered)
-            },
-            clear: { reason in
-                viewModel.clearGridSelection(reason: reason)
             }
         )
     }

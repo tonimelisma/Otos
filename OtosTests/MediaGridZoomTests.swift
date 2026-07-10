@@ -57,8 +57,6 @@ struct MediaGridZoomTests {
 
         let context = MediaGridViewController.StructuralApplyCompletionContext(
             grid: newGrid,
-            preservedSelection: [],
-            resetSelection: false,
             resetScroll: false,
             applyStart: Date(),
             applyCallStart: Date(),

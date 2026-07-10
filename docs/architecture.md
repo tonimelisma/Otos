@@ -58,7 +58,9 @@ everything expensive happens on an actor off the main thread.
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps. Mouse selection is
   model-owned (`GridSelection` lives in `CatalogWindowViewModel`; the AppKit controller
-  renders it and the subclass never calls `super.mouseDown`). Paint truth lives in
+  renders it and the subclass never calls `super.mouseDown`). AppKit surfaces never
+  write selection truth; the model flows one way, ViewModel → renderer, and
+  `selectionIndexPaths` is render output. Paint truth lives in
   `TileContentStore` (sole decoded-image owner; visible IDs pinned; cost-bounded);
   tiles never blank a painted same-asset thumbnail (ADR 0006).
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach

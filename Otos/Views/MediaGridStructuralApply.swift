@@ -5,8 +5,6 @@ import OSLog
 extension MediaGridViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
-        let preservedSelection: Set<MediaAssetID>
-        let resetSelection: Bool
         let resetScroll: Bool
         let applyStart: Date
         let applyCallStart: Date
@@ -26,7 +24,6 @@ extension MediaGridViewController {
     func applyStructure(
         _ grid: CatalogMediaGridState,
         resetScroll: Bool,
-        resetSelection: Bool,
         descriptorChanged: Bool
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
@@ -39,14 +36,12 @@ extension MediaGridViewController {
             descriptorChanged: descriptorChanged
         )
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
-        // Snapshot the selected identities before the diffable apply can drop or shift
-        // them. Query-descriptor changes are user context changes, so they intentionally
-        // start from an empty selection instead of restoring surviving identities.
-        let preservedSelection = resetSelection ? [] : selectedIdentities()
 
         // Identity order is the complete structural contract. Tile details are
         // read for visible identities after the structural apply, so thumbnail
         // or video-badge changes never require this O(n) diffable snapshot path.
+        // Selection truth lives in the ViewModel and is already pruned/cleared in
+        // `applyState` before this apply runs; completion only renders the model.
         let snapshotStart = Date()
         let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
         let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
@@ -61,8 +56,6 @@ extension MediaGridViewController {
             )
         let context = StructuralApplyCompletionContext(
             grid: grid,
-            preservedSelection: preservedSelection,
-            resetSelection: resetSelection,
             resetScroll: resetScroll,
             applyStart: applyStart,
             applyCallStart: applyCallStart,
@@ -183,17 +176,8 @@ extension MediaGridViewController {
         case .reused, .skipped:
             0
         }
-        // A descriptor-changing apply is a user context change and must clear the
-        // ViewModel-owned selection model unconditionally, exactly like the
-        // `.refreshVisible` descriptor-change path — `restoreSelection`'s prune only
-        // clears an anchor whose *asset* left the new ordered IDs, which is not the same
-        // thing as "the descriptor changed" (the previously anchored asset can still be
-        // present in a new scope/sort/filter's results).
-        if context.resetSelection {
-            clearSelection(reason: "descriptorChange")
-        } else {
-            restoreSelection(context.preservedSelection, in: context.grid.orderedAssetIDs)
-        }
+        // Model → view only. Prune/clear already ran in ViewModel.applyState.
+        renderSelectionFromModel(reason: "structuralApply")
 
         let completionMs = DiagnosticsTiming.milliseconds(since: completionStart)
         let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)

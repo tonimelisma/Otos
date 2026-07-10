@@ -20,8 +20,8 @@ final class MediaGridItem: NSCollectionViewItem {
     /// re-fades its ring on scroll-in. That is accepted as polish, not a defect:
     /// distinguishing the two would need a hook AppKit does not expose, and the fade
     /// reads as intentional. During a *structural apply* a surviving on-screen tile
-    /// still never re-fades, because `restoreSelection` is delta-based and never reassigns
-    /// a survivor's `isSelected`.
+    /// still never re-fades, because `renderSelectionFromModel` is delta-based and never
+    /// reassigns a survivor's `isSelected`.
     override var isSelected: Bool {
         didSet { tileView?.setSelected(isSelected, animated: true) }
     }
