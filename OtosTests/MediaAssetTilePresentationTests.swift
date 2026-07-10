@@ -43,7 +43,7 @@ struct MediaAssetTilePresentationTests {
         )) == "1:02:33")
     }
 
-    // MARK: - Kind badge content table (plan 0009 Part E)
+    // MARK: - Kind badge content table (plan 0009 Part E / 0010 Part B)
 
     @Test func placeholderTilesNeverShowLowerRightBadge() {
         #expect(MediaAssetTilePresentation.badgeContent(
@@ -60,51 +60,106 @@ struct MediaAssetTilePresentationTests {
         ) == .none)
     }
 
+    @Test func brokenTilesSuppressBadgeEvenIfPaintedFlagWereTrue() {
+        let brokenVideo = makeDetail(
+            path: "broken.avi",
+            kind: .video,
+            enrichedMTime: 1000,
+            durationSeconds: 12
+        )
+        #expect(brokenVideo.thumbnailUnavailable)
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: brokenVideo,
+            thumbnailPainted: true
+        ) == .none)
+
+        let brokenRaw = makeDetail(path: "broken.CR3", kind: .raw, enrichedMTime: 1000)
+        #expect(brokenRaw.thumbnailUnavailable)
+        #expect(MediaAssetTilePresentation.badgeContent(
+            detail: brokenRaw,
+            thumbnailPainted: true
+        ) == .none)
+    }
+
     @Test func paintedVideoWithDurationShowsCenteredDurationText() {
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "clip.mp4", kind: .video, durationSeconds: 5),
+            detail: makeDetail(path: "clip.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 5),
             thumbnailPainted: true
         ) == .durationText("0:05"))
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "long.mp4", kind: .video, durationSeconds: 5025),
+            detail: makeDetail(path: "long.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 5025),
             thumbnailPainted: true
         ) == .durationText("1:23:45"))
     }
 
     @Test func paintedVideoWithoutDurationShowsFilmIcon() {
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "movie.mp4", kind: .video, durationSeconds: nil),
+            detail: makeDetail(path: "movie.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: nil),
             thumbnailPainted: true
         ) == .filmIcon)
     }
 
     @Test func paintedRawShowsRawLabel() {
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "shot.CR3", kind: .raw),
+            detail: makeDetail(path: "shot.CR3", kind: .raw, thumbnailPath: "t.jpg"),
             thumbnailPainted: true
         ) == .rawLabel)
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "shot.NEF", kind: .raw, durationSeconds: 42),
+            detail: makeDetail(path: "shot.NEF", kind: .raw, thumbnailPath: "t.jpg", durationSeconds: 42),
             thumbnailPainted: true
         ) == .rawLabel)
     }
 
     @Test func paintedPlainImageShowsNoBadge() {
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "image.jpg", kind: .image),
+            detail: makeDetail(path: "image.jpg", kind: .image, thumbnailPath: "t.jpg"),
             thumbnailPainted: true
         ) == .none)
         #expect(MediaAssetTilePresentation.badgeContent(
-            detail: makeDetail(path: "unknown.bin", kind: nil),
+            detail: makeDetail(path: "unknown.bin", kind: nil, thumbnailPath: "t.jpg"),
             thumbnailPainted: true
         ) == .none)
     }
 
-    @Test func accessibilityLabelMatchesBadgeContent() {
-        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .durationText("0:42")) == "Video, 0:42")
-        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .filmIcon) == "Video")
-        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .rawLabel) == "RAW image")
-        #expect(MediaAssetTilePresentation.accessibilityLabel(for: .none) == nil)
+    @Test func accessibilityLabelCoversBrokenLoadingAndPaintedStates() {
+        let brokenImage = makeDetail(path: "x.jpg", kind: .image, enrichedMTime: 1)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: brokenImage,
+            badgeContent: .none
+        ) == "Image unavailable")
+        let brokenVideo = makeDetail(path: "x.mp4", kind: .video, enrichedMTime: 1)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: brokenVideo,
+            badgeContent: .none
+        ) == "Video unavailable")
+        let brokenRaw = makeDetail(path: "x.CR3", kind: .raw, enrichedMTime: 1)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: brokenRaw,
+            badgeContent: .none
+        ) == "Image unavailable")
+
+        let loadingVideo = makeDetail(path: "v.mp4", kind: .video)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: loadingVideo,
+            badgeContent: .none
+        ) == "Video")
+        let loadingRaw = makeDetail(path: "r.CR3", kind: .raw)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: loadingRaw,
+            badgeContent: .none
+        ) == "RAW image")
+
+        let painted = makeDetail(path: "v.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 42)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: painted,
+            badgeContent: .durationText("0:42")
+        ) == "Video, 0:42")
+    }
+
+    @Test func thumbnailUnavailableIsDerivedFromStampWithoutPath() {
+        #expect(!makeDetail(path: "a.jpg").thumbnailUnavailable)
+        #expect(!makeDetail(path: "a.jpg", thumbnailPath: "t.jpg", enrichedMTime: 1).thumbnailUnavailable)
+        #expect(makeDetail(path: "a.jpg", enrichedMTime: 1).thumbnailUnavailable)
     }
 
     @Test func contentRectAspectFitsImageInsideSquareCell() {
@@ -238,26 +293,26 @@ struct MediaAssetTilePresentationTests {
     }
 
     @Test func imageContentKeyDistinguishesThumbnailPathStampAndSize() {
-        let base = makeDetail(thumbnailPath: "t.jpg")
-        let sameAgain = makeDetail(thumbnailPath: "t.jpg")
+        let base = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 1)
+        let sameAgain = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 1)
         #expect(
             MediaAssetTilePresentation.imageContentKey(base)
                 == MediaAssetTilePresentation.imageContentKey(sameAgain)
         )
 
-        let newThumbnail = makeDetail(thumbnailPath: "u.jpg")
+        let newThumbnail = makeDetail(thumbnailPath: "u.jpg", enrichedMTime: 10, enrichedSize: 1)
         #expect(
             MediaAssetTilePresentation.imageContentKey(base)
                 != MediaAssetTilePresentation.imageContentKey(newThumbnail)
         )
 
-        let newStamp = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 11)
+        let newStamp = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 11, enrichedSize: 1)
         #expect(
             MediaAssetTilePresentation.imageContentKey(base)
                 != MediaAssetTilePresentation.imageContentKey(newStamp)
         )
 
-        let newSize = makeDetail(thumbnailPath: "t.jpg", enrichedSize: 999)
+        let newSize = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 999)
         #expect(
             MediaAssetTilePresentation.imageContentKey(base)
                 != MediaAssetTilePresentation.imageContentKey(newSize)
@@ -265,8 +320,13 @@ struct MediaAssetTilePresentationTests {
     }
 
     @Test func imageContentKeyIgnoresDurationBadgeChanges() {
-        let base = makeDetail(thumbnailPath: "t.jpg")
-        let newDuration = makeDetail(thumbnailPath: "t.jpg", durationSeconds: 42)
+        let base = makeDetail(thumbnailPath: "t.jpg", enrichedMTime: 10, enrichedSize: 1)
+        let newDuration = makeDetail(
+            thumbnailPath: "t.jpg",
+            enrichedMTime: 10,
+            enrichedSize: 1,
+            durationSeconds: 42
+        )
         #expect(
             MediaAssetTilePresentation.imageContentKey(base)
                 == MediaAssetTilePresentation.imageContentKey(newDuration)
@@ -275,22 +335,58 @@ struct MediaAssetTilePresentationTests {
 
     // MARK: - Placeholder icon (spec 0047)
 
-    @Test func placeholderIconIsFilmForVideoAndPhotoOtherwise() {
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .video) == "film")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .image) == "photo")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: .raw) == "photo")
-        #expect(MediaAssetTilePresentation.placeholderIconSystemName(for: nil) == "photo")
+    @Test func placeholderIconUsesKindAndBrokenGlyphs() {
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: .video,
+            thumbnailUnavailable: false
+        ) == "film")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: .raw,
+            thumbnailUnavailable: false
+        ) == "r.square")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: .image,
+            thumbnailUnavailable: false
+        ) == "photo")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: nil,
+            thumbnailUnavailable: false
+        ) == "photo")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: .video,
+            thumbnailUnavailable: true
+        ) == "video.slash")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: .image,
+            thumbnailUnavailable: true
+        ) == "photo.slash")
+        #expect(MediaAssetTilePresentation.placeholderIconSystemName(
+            for: .raw,
+            thumbnailUnavailable: true
+        ) == "photo.slash")
     }
 
-    @Test func placeholderIconCacheReturnsSameInstanceForSameKind() throws {
+    @Test func placeholderIconCacheReturnsSameInstanceForSameName() throws {
         let photoA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .image))
         let photoB = try #require(MediaAssetTilePresentation.placeholderIcon(for: nil))
         let filmA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .video))
         let filmB = try #require(MediaAssetTilePresentation.placeholderIcon(for: .video))
+        let rawA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .raw))
+        let slashA = try #require(MediaAssetTilePresentation.placeholderIcon(
+            for: .image,
+            thumbnailUnavailable: true
+        ))
+        let slashB = try #require(MediaAssetTilePresentation.placeholderIcon(
+            for: .raw,
+            thumbnailUnavailable: true
+        ))
 
         #expect(photoA === photoB)
         #expect(filmA === filmB)
         #expect(photoA !== filmA)
+        #expect(rawA !== photoA)
+        #expect(slashA === slashB)
+        #expect(slashA !== photoA)
     }
 
     @Test func placeholderIconSideIsAQuarterOfTheShorterContentDimension() {
@@ -324,10 +420,10 @@ struct MediaAssetTilePresentationTests {
 @MainActor
 private func makeDetail(
     path: String = "a.jpg",
-    thumbnailPath: String? = nil,
-    enrichedMTime: Int? = 10,
-    enrichedSize: Int64 = 1,
     kind: MediaKind? = nil,
+    thumbnailPath: String? = nil,
+    enrichedMTime: Int? = nil,
+    enrichedSize: Int64? = nil,
     durationSeconds: Double? = nil
 ) -> MediaTileDetail {
     MediaTileDetail(

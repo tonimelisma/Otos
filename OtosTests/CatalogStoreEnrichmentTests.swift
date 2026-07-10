@@ -312,6 +312,48 @@ struct CatalogStoreEnrichmentTests {
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.testAssets.isEmpty)
     }
+
+    @Test func enrichmentWithoutThumbnailStampsDefinitiveUnavailableOutcome() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let rel = MediaRelativePath(rawValue: "broken.jpg")
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
+
+        let store = CatalogStore(
+            location: .databaseFile(databaseURL),
+            scanner: singleFileScanner(rel, mtime: MutableSeconds(1000))
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: id,
+                metadata: AssetMetadata(),
+                enrichedKind: .image,
+                thumbnailPath: nil,
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000,
+                generatedThumbnail: nil
+            ),
+        ])
+
+        let asset = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
+        #expect(asset.thumbnailPath == nil)
+        #expect(asset.enrichedSourceSize == 100)
+        #expect(asset.enrichedSourceMTimeSeconds == 1000)
+        #expect(!asset.needsEnrichment)
+
+        let details = try await store.mediaTileDetails(for: [id])
+        let detail = try #require(details[id])
+        #expect(detail.thumbnailUnavailable)
+        #expect(detail.thumbnailPath == nil)
+        #expect(detail.enrichedSourceMTimeSeconds == 1000)
+    }
 }
 
 // MARK: - Helpers

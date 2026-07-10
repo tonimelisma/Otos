@@ -41,6 +41,30 @@ struct MediaEnricherTests {
         #expect(FileManager.default.fileExists(atPath: stagedURL.path(percentEncoded: false)))
     }
 
+    @Test func zeroByteStubIsDefinitiveCompleteWithoutThumbnail() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        // 0-byte stubs (toy-camera AVI/JPG shape) cannot yield real QuickLook imagery
+        // once `.icon` is rejected from representationTypes.
+        let stubURL = temp.appending(path: "broken.jpg")
+        try Data().write(to: stubURL)
+        let enricher = MediaEnricher.live(thumbnailDirectory: thumbnailDirectory)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+            relativePath: MediaRelativePath(rawValue: "broken.jpg")
+        )
+
+        let outcome = await enricher.enrich(id, stubURL, 0, 1000)
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete for zero-byte stub, got \(outcome)")
+            return
+        }
+        #expect(result.thumbnailPath == nil)
+        #expect(result.generatedThumbnail == nil)
+        #expect(result.sourceSize == 0)
+        #expect(result.sourceMTimeSeconds == 1000)
+    }
+
     @Test func unsupportedFileIsDefinitiveComplete() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)

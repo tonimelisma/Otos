@@ -127,7 +127,9 @@ extension MediaAssetTileView {
         )
         badgeContent = content
         applyBadgeContent(content)
-        setAccessibilityLabel(MediaAssetTilePresentation.accessibilityLabel(for: content))
+        setAccessibilityLabel(
+            MediaAssetTilePresentation.accessibilityLabel(detail: detail, badgeContent: content)
+        )
     }
 
     private func applyBadgeContent(_ content: TileBadgeContent) {
@@ -275,9 +277,16 @@ extension MediaAssetTileView {
         guard isPlaceholder else {
             return
         }
-        let iconName = MediaAssetTilePresentation.placeholderIconSystemName(for: renderedBestKind)
+        let unavailable = renderedDetail?.thumbnailUnavailable == true
+        let iconName = MediaAssetTilePresentation.placeholderIconSystemName(
+            for: renderedBestKind,
+            thumbnailUnavailable: unavailable
+        )
         if appliedPlaceholderIconName != iconName {
-            placeholderIconView.image = MediaAssetTilePresentation.placeholderIcon(for: renderedBestKind)
+            placeholderIconView.image = MediaAssetTilePresentation.placeholderIcon(
+                for: renderedBestKind,
+                thumbnailUnavailable: unavailable
+            )
             appliedPlaceholderIconName = iconName
         }
         placeholderIconView.frame = Layout.placeholderIconFrame(contentBounds: contentView.bounds)

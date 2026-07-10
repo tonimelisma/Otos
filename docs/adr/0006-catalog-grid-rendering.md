@@ -86,15 +86,16 @@ documented way to drive a transition incrementally from a pinch gesture.
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. Each square collection cell is transparent; the visible tile
 face is the loaded thumbnail's native aspect-fit rect, or a full-square neutral
-placeholder before the thumbnail is known. A dim, centered media-kind icon (film
-for a known video, photo otherwise) sits on the placeholder until a thumbnail
-paints for that tile for the first time — never a spinner or shimmer, which would
-fabricate progress that is not happening (spec 0047). Tiles do not render
-filename or relative date text. Lower-right shaded badges appear only after a
-thumbnail has painted: video tiles show center-justified clip length when known,
-otherwise a film icon (duration extraction failed); raw image tiles show the
-word `RAW` in the same shaded style; plain images and all placeholder tiles show
-no lower-right badge (the centered placeholder glyph already communicates kind).
+placeholder before a real thumbnail is known. A dim, centered glyph sits on the
+placeholder — never a spinner or shimmer: loading uses `photo` / `r.square`
+(RAW) / `film` (video); enrichment that stamped the asset with no obtainable
+thumbnail (QuickLook icon fallback rejected) uses `photo.slash` (image and RAW)
+or `video.slash` (video). Broken tiles never show a lower-right kind badge.
+Tiles do not render filename or relative date text. Lower-right shaded badges
+appear only after a real thumbnail has painted: video tiles show
+center-justified clip length when known, otherwise a film icon (duration
+extraction failed); raw image tiles show the word `RAW` in the same shaded
+style; plain images and all placeholder/broken tiles show no lower-right badge.
 The badge darkened area is right-aligned to the thumbnail face with no outer
 inset; text is centered on its measured width within the badge (including when
 the min-width clamp wins). Faces under 56 pt hide the badge. Images have no

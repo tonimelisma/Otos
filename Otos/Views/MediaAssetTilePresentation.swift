@@ -4,13 +4,13 @@ import Foundation
 
 // Pure tile presentation guide
 //
-// These helpers keep kind-badge policy, thumbnail face geometry, and
-// thumbnail-load policy independent from reusable AppKit view state. The AppKit
-// tile calls into this file, and tests assert these value-level decisions directly.
-// Lower-right badges appear only after a thumbnail has painted: video duration
-// (or a film icon when duration is missing), or a RAW label for raw images.
-// Placeholder tiles never show a lower-right badge — the centered kind glyph
-// already communicates kind.
+// These helpers keep kind-badge policy, placeholder glyph selection (loading vs
+// broken-media slash icons), thumbnail face geometry, and thumbnail-load policy
+// independent from reusable AppKit view state. The AppKit tile calls into this
+// file, and tests assert these value-level decisions directly. Lower-right badges
+// appear only after a real thumbnail has painted; broken/unavailable tiles never
+// show a corner badge. Accessibility is derived from detail + badge content so
+// loading placeholders keep kind labels for VoiceOver.
 
 struct LoadedTile {
     let image: CGImage?
@@ -121,13 +121,15 @@ enum MediaAssetTilePresentation {
         return duration.formatted(.time(pattern: .minuteSecond))
     }
 
-    /// Lower-right badge policy. Placeholder tiles never get a badge; painted
-    /// video shows duration or a film-icon fallback; painted raw shows `RAW`.
+    /// Lower-right badge policy. Broken / not-yet-enriched tiles never get a
+    /// badge; painted video shows duration or a film-icon fallback; painted raw
+    /// shows `RAW`. `thumbnailUnavailable` is an explicit gate so a future paint
+    /// of non-thumbnail content cannot resurrect badges on broken tiles.
     nonisolated static func badgeContent(
         detail: MediaTileDetail,
         thumbnailPainted: Bool
     ) -> TileBadgeContent {
-        guard thumbnailPainted else {
+        guard thumbnailPainted, !detail.thumbnailUnavailable else {
             return .none
         }
         switch detail.bestKind {
@@ -143,33 +145,66 @@ enum MediaAssetTilePresentation {
         }
     }
 
-    /// Accessibility label for the tile given badge content.
-    nonisolated static func accessibilityLabel(for content: TileBadgeContent) -> String? {
-        switch content {
+    /// Accessibility for the whole tile: broken state, then painted badge
+    /// content, then loading-kind labels so VoiceOver keeps kind info while the
+    /// centered placeholder glyph is showing (lower-right badges stay hidden).
+    nonisolated static func accessibilityLabel(
+        detail: MediaTileDetail,
+        badgeContent: TileBadgeContent
+    ) -> String? {
+        if detail.thumbnailUnavailable {
+            return detail.bestKind == .video ? "Video unavailable" : "Image unavailable"
+        }
+        switch badgeContent {
         case let .durationText(text):
-            "Video, \(text)"
+            return "Video, \(text)"
         case .filmIcon:
-            "Video"
+            return "Video"
         case .rawLabel:
-            "RAW image"
+            return "RAW image"
         case .none:
-            nil
+            break
+        }
+        switch detail.bestKind {
+        case .video:
+            return "Video"
+        case .raw:
+            return "RAW image"
+        case .image:
+            return "Image"
+        case .none:
+            return nil
         }
     }
 
-    /// SF Symbol name for the placeholder icon: a film reel for a known video, a
-    /// photo otherwise — covers both a known image and a not-yet-known kind.
-    /// No spinner: a spinner on a merely queued tile would fabricate progress.
-    nonisolated static func placeholderIconSystemName(for kind: MediaKind?) -> String {
-        kind == .video ? "film" : "photo"
+    /// SF Symbol for the centered placeholder glyph. Loading uses kind glyphs
+    /// (`r.square` for RAW); broken uses slash "unavailable" grammar. No spinner.
+    nonisolated static func placeholderIconSystemName(
+        for kind: MediaKind?,
+        thumbnailUnavailable: Bool
+    ) -> String {
+        if thumbnailUnavailable {
+            return kind == .video ? "video.slash" : "photo.slash"
+        }
+        switch kind {
+        case .video:
+            return "film"
+        case .raw:
+            return "r.square"
+        case .image, .none:
+            return "photo"
+        }
     }
 
     /// Cached SF Symbol image for placeholder tiles. `NSImage(systemSymbolName:)` creates
-    /// a new image per call; there are only two icons (photo, film), so resolve once and
-    /// reuse. Main-actor confined — tiles are `@MainActor` AppKit views.
+    /// a new image per call; resolve once per name and reuse. Main-actor confined —
+    /// tiles are `@MainActor` AppKit views.
     @MainActor
-    static func placeholderIcon(for kind: MediaKind?) -> NSImage? {
-        let name = placeholderIconSystemName(for: kind)
+    static func placeholderIcon(
+        for kind: MediaKind?,
+        thumbnailUnavailable: Bool = false
+    ) -> NSImage? {
+        let name = placeholderIconSystemName(for: kind, thumbnailUnavailable: thumbnailUnavailable)
         if let cached = placeholderIconCache[name] {
             return cached
         }
