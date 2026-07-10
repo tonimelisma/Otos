@@ -289,6 +289,9 @@ private final class GridSelectionTestHarness {
     let controller: MediaGridViewController
     let ids: [MediaAssetID]
     private let window: NSWindow
+    /// Local selection owner standing in for `CatalogWindowViewModel` so controller
+    /// tests stay hermetic while exercising the same injected-closure path.
+    private var modelSelection = GridSelection.empty
 
     enum ClickTarget {
         case thumbnailFaceCenter
@@ -325,6 +328,53 @@ private final class GridSelectionTestHarness {
         // Run a run-loop pass so AppKit completes layout and the data source reflects
         // the applied snapshot for hit-testing.
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+
+        installSelectionHandlers()
+    }
+
+    private func installSelectionHandlers() {
+        controller.selectionHandlers = MediaGridSelectionHandlers(
+            currentSelection: { [unowned self] in modelSelection },
+            applyClick: { [unowned self] hit, modifiers, orderedIDs, live in
+                modelSelection = modelSelection.reconcilingSelection(live)
+                let shift = modifiers.contains(.shift)
+                let command = modifiers.contains(.command)
+                guard let hit else {
+                    if !shift, !command {
+                        modelSelection = modelSelection.clearedBySpace()
+                    }
+                    return modelSelection
+                }
+                switch (shift, command) {
+                case (false, false):
+                    modelSelection = modelSelection.plainClick(hit)
+                case (false, true):
+                    modelSelection = modelSelection.commandClick(hit)
+                case (true, false):
+                    modelSelection = modelSelection.shiftClick(hit, orderedIDs: orderedIDs)
+                case (true, true):
+                    modelSelection = modelSelection.commandShiftClick(
+                        hit,
+                        orderedIDs: orderedIDs
+                    )
+                }
+                return modelSelection
+            },
+            reconcileNative: { [unowned self] live in
+                modelSelection = modelSelection.reconcilingSelection(live)
+                return modelSelection
+            },
+            prune: { [unowned self] preserved, ordered in
+                let reconciled = modelSelection.reconcilingSelection(preserved)
+                modelSelection = reconciled.selection.isEmpty
+                    ? .empty
+                    : reconciled.pruned(to: ordered)
+                return modelSelection
+            },
+            clear: { [unowned self] _ in
+                modelSelection = .empty
+            }
+        )
     }
 
     /// Seeds a decoded thumbnail in `TileContentStore` for `id` so its tile has a real

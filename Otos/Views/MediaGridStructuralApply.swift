@@ -184,7 +184,7 @@ extension MediaGridViewController {
             0
         }
         // A descriptor-changing apply is a user context change and must clear the
-        // selection model (`gridSelection = .empty`) unconditionally, exactly like the
+        // ViewModel-owned selection model unconditionally, exactly like the
         // `.refreshVisible` descriptor-change path — `restoreSelection`'s prune only
         // clears an anchor whose *asset* left the new ordered IDs, which is not the same
         // thing as "the descriptor changed" (the previously anchored asset can still be

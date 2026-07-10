@@ -39,7 +39,8 @@ struct ContentView: View {
                 onViewportChanged: viewModel.viewportChanged,
                 clearFilters: viewModel.clearMediaFilter,
                 gridColumnCount: viewModel.gridColumnCount,
-                onGridColumnCountChangeRequested: viewModel.setGridColumnCount
+                onGridColumnCountChangeRequested: viewModel.setGridColumnCount,
+                selectionHandlers: .from(viewModel)
             )
         }
         .toolbar {

@@ -57,6 +57,12 @@ final class CatalogWindowViewModel {
     /// property default, because its initial value depends on the injected
     /// `gridColumnCountDefaults`.
     private(set) var gridColumnCount: Int
+    /// Ephemeral mouse-selection truth (selection, ⇧-range anchor, base islands). Owned
+    /// here so grid and filmstrip renderers share one model across mode switches; mutated
+    /// only through the intents in `CatalogWindowViewModelSelection.swift`. Not
+    /// `private(set)` because those intents live in a separate file and Swift's
+    /// `private(set)` is file-scoped.
+    var gridSelection = GridSelection.empty
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.

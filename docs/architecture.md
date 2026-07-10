@@ -40,7 +40,7 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `CatalogStore` | actor | SQLite, `RootRegistry`/`RootRuntimeState`, `FilesystemReconciler` (pure batch classify), `ScanLeaseController` (lease/queue bookkeeping), `CatalogQueryGateway` (read SQL/mapping), `EnrichmentLeaseGateway` (enrichment claim leases + SQL), removable-source state, change notifications, all catalog queries | serializes every mutation/query for free; a remove can be processed mid-scan safely (lease re-checked after every await); owned helpers are not second actors |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
 | `EnrichmentCoordinator` | actor | two worker pools (enrich local / download cloud), in-flight tracking, claim leases | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.
@@ -54,9 +54,10 @@ everything expensive happens on an actor off the main thread.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps. Mouse selection is
-  model-owned (`GridSelection`; the subclass never calls `super.mouseDown`). Paint
-  truth lives in `TileContentStore` (sole decoded-image owner; visible IDs pinned;
-  cost-bounded); tiles never blank a painted same-asset thumbnail (ADR 0006).
+  model-owned (`GridSelection` lives in `CatalogWindowViewModel`; the AppKit controller
+  renders it and the subclass never calls `super.mouseDown`). Paint truth lives in
+  `TileContentStore` (sole decoded-image owner; visible IDs pinned; cost-bounded);
+  tiles never blank a painted same-asset thumbnail (ADR 0006).
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
 - **Enrichment** reads bytes and may materialize cloud placeholders; the scanner
@@ -73,7 +74,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
-| grid rendering/selection/zoom | the `MediaGrid*`/`MediaGrid*` boundary (ADR 0006) |
+| grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
 
 Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main
