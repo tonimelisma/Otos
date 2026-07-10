@@ -94,7 +94,8 @@ struct ContentView: View {
                 onGridColumnCountChangeRequested: viewModel.setGridColumnCount,
                 selectionHandlers: .from(viewModel),
                 onItemDoubleClick: { viewModel.openLoupe(id: $0) },
-                onReturnKey: { viewModel.openLoupe(id: nil) }
+                onReturnKey: { viewModel.openLoupe(id: nil) },
+                focusTargetID: viewModel.focusedAssetID
             )
         case .loupe:
             LoupeView(
@@ -127,6 +128,11 @@ struct ContentView: View {
                 rightPreview: viewModel.panePreviews[.compareRight],
                 leftIsDownloading: viewModel.downloadingSlots.contains(.compareLeft),
                 rightIsDownloading: viewModel.downloadingSlots.contains(.compareRight),
+                focusTargetID: viewModel.comparePair.members.first {
+                    $0 != viewModel.comparePair.older
+                } ?? viewModel.comparePair.panes(
+                    in: viewModel.state.mediaGrid.orderedAssetIDs
+                ).left,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
                 detailReader: viewModel.tileDetailReader,
                 stallMonitor: viewModel.uiStallMonitor,

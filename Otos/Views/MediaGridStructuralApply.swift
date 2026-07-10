@@ -178,6 +178,9 @@ extension MediaGridViewController {
         }
         // Model → view only. Prune/clear already ran in ViewModel.applyState.
         renderSelectionFromModel(reason: "structuralApply")
+        if let pending = pendingFocusTargetID {
+            scrollToFocusTarget(pending)
+        }
 
         let completionMs = DiagnosticsTiming.milliseconds(since: completionStart)
         let applyMs = DiagnosticsTiming.milliseconds(since: context.applyStart)

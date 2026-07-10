@@ -51,6 +51,9 @@ nonisolated enum MediaGridAnimatedLayoutPolicy {
 /// (called after the batch's animation completes), matching the documented AppKit update
 /// lifecycle (`NSCollectionViewLayout.h`). When no update is in flight both tracking sets
 /// are empty and this subclass is behaviorally identical to its superclass.
+///
+/// Grid only: the filmstrip uses a plain horizontal compositional layout (no insert/remove
+/// choreography) so horizontal `scrollDirection` does not go through this subclass.
 final class MediaGridAnimatedLayout: NSCollectionViewCompositionalLayout {
     private var insertedIndexPaths: Set<IndexPath> = []
     private var deletedIndexPaths: Set<IndexPath> = []

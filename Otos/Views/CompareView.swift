@@ -15,6 +15,8 @@ struct CompareView: View {
     let rightPreview: PanePreview?
     let leftIsDownloading: Bool
     let rightIsDownloading: Bool
+    /// Newest pair member — centered in the strip on entry/replacement.
+    var focusTargetID: MediaAssetID?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
     var stallMonitor: MainRunLoopStallMonitor?
@@ -75,7 +77,8 @@ struct CompareView: View {
             selectionHandlers: selectionHandlers,
             presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge),
             onEscapeKey: onEscape,
-            onArrowKey: onStripArrow
+            onArrowKey: onStripArrow,
+            focusTargetID: focusTargetID
         )
     }
 }

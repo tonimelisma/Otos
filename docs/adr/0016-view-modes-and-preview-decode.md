@@ -73,10 +73,16 @@ placeholder).
   `expectedAsset(for: slot) == id`. Generation counters are not used. A slot
   whose expected id already matches keeps its preview across pair/focus churn;
   a mismatched or nil expectation clears that slot and re-requests.
+- The filmstrip uses a horizontal `NSCollectionViewCompositionalLayout`
+  configuration (plain layout, not `MediaGridAnimatedLayout`) so the outer clip
+  view scrolls horizontally. Orthogonal section scrolling was rejected: an
+  embedded orthogonal scroller never posts the controller's clip-view bounds
+  changes, which starves scroll-driven detail queries and preheat. The animated
+  subclass stays grid-only — the strip needs no insert/remove choreography.
 - Same-session file-content staleness (original bytes change while a cache entry
   remains) is an accepted limitation; no stamp plumbing.
-- Requirements APP-020 / APP-021 / APP-023 record loupe/compare entry and preview
-  decode policy.
+- Requirements APP-020 / APP-021 / APP-022 / APP-023 record loupe/compare entry,
+  strip scroll loading, and preview decode policy.
 - Instrumentation: `MediaIO` signposts + `op=preview.decode` notice logs with
   `decodeMs`, `source` (imageio / embedded / quicklook), and materialization
   outcome.

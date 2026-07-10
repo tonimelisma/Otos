@@ -18,6 +18,8 @@ struct MediaGridView: View {
     var selectionHandlers: MediaGridSelectionHandlers = .init()
     var onItemDoubleClick: (MediaAssetID) -> Void = { _ in }
     var onReturnKey: () -> Void = {}
+    /// Centers the grid on this asset after loupe/compare exit (fresh controller).
+    var focusTargetID: MediaAssetID?
     @AppStorage("dismissedCameraConnectionBannerIdentities") private var dismissedCameraBannerIdentities = ""
 
     var body: some View {
@@ -58,7 +60,8 @@ struct MediaGridView: View {
                         selectionHandlers: selectionHandlers,
                         presentation: .grid(columnCount: gridColumnCount),
                         onItemDoubleClick: onItemDoubleClick,
-                        onReturnKey: onReturnKey
+                        onReturnKey: onReturnKey,
+                        focusTargetID: focusTargetID
                     )
                 }
             }
