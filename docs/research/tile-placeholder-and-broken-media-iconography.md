@@ -74,8 +74,8 @@ The catalog has no stored fact separating icon-fallback thumbnails from real
 ones, so existing wrong rows cannot be found directly. Practical proxies:
 
 - videos with a thumbnail and `duration_seconds IS NULL` (the broken AVIs) —
-  this same population needs re-enrichment anyway once AVI duration extraction
-  lands (separate MediaMetadata work stream);
+  re-enrich after MediaMetadata ≥ 0.2.2 (AVI duration parsing; Otos already maps
+  `result.video?.durationSeconds` through `MediaEnricher`);
 - images with `byte_size = 0`.
 
 Zero-byte files can also be short-circuited before any cloud download: a
