@@ -273,24 +273,78 @@ struct EnrichmentCoordinatorTests {
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
         #expect(await attempts.total >= 2)
     }
+
+    @Test func zeroByteClaimedAssetShortCircuitsWithoutMaterializeOrEnricher() async throws {
+        let root = try makeCatalogStoreTemporaryDirectory().appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: fixedScanner([("empty.jpg", 0), ("ok.jpg", 100)])
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+
+        let enrichCalls = AttemptCounter()
+        let materializeCalls = AttemptCounter()
+        let enricher = MediaEnricher { id, _, size, mtime in
+            _ = await enrichCalls.next()
+            #expect(id.relativePath.rawValue == "ok.jpg")
+            return .complete(EnrichmentResult(
+                id: id, metadata: AssetMetadata(), thumbnailPath: "t.jpg",
+                sourceSize: size, sourceMTimeSeconds: mtime
+            ))
+        }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: enricher,
+            materialize: { _ in
+                _ = await materializeCalls.next()
+                Issue.record("materialize must not run for zero-byte short-circuit")
+                return .testMaterialized
+            },
+            applyFlushInterval: .milliseconds(1)
+        )
+        await coordinator.start()
+        let enriched = try await waitForCatalogStoreState(store) {
+            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment }
+        }
+        await coordinator.shutdown()
+
+        let empty = try #require(enriched.testAssets.first { $0.relativePath.rawValue == "empty.jpg" })
+        let ok = try #require(enriched.testAssets.first { $0.relativePath.rawValue == "ok.jpg" })
+        #expect(empty.byteSize == 0)
+        #expect(empty.thumbnailPath == nil)
+        #expect(empty.enrichedSourceSize == 0)
+        #expect(empty.enrichedSourceMTimeSeconds == 1000)
+        #expect(!empty.needsEnrichment)
+        #expect(ok.thumbnailPath == "t.jpg")
+        #expect(!ok.needsEnrichment)
+        #expect(await enrichCalls.total == 1)
+        #expect(await materializeCalls.total == 0)
+    }
 }
 
 // MARK: - Helpers
 
 func fixedScanner(_ relativeNames: [String]) -> CatalogScanner {
+    fixedScanner(relativeNames.map { ($0, 100) })
+}
+
+func fixedScanner(_ files: [(relativeName: String, byteSize: Int64)]) -> CatalogScanner {
     CatalogScanner { _, _, batchHandler in
-        let files = relativeNames.map { name in
+        let scanned = files.map { file in
             ScannedMediaFile(
-                relativePath: MediaRelativePath(rawValue: name),
-                name: name,
+                relativePath: MediaRelativePath(rawValue: file.relativeName),
+                name: file.relativeName,
                 contentTypeIdentifier: "public.jpeg",
-                byteSize: 100,
+                byteSize: file.byteSize,
                 createdAt: nil,
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             )
         }
-        try await batchHandler(files)
-        return Set(relativeNames.map { MediaRelativePath(rawValue: $0) })
+        try await batchHandler(scanned)
+        return Set(files.map { MediaRelativePath(rawValue: $0.relativeName) })
     }
 }
 
