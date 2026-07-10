@@ -29,9 +29,14 @@ nonisolated enum CatalogQueryGateway {
     static func fetchOrderedAssetIDRows(
         descriptor: CatalogQueryDescriptor,
         rootIDs: [Int64],
-        db: Database
+        db: Database,
+        importBatchUnixMs: Int64? = nil
     ) throws -> [(Int64, MediaRelativePath)] {
-        guard let query = orderedAssetIDQuery(descriptor: descriptor, rootIDs: rootIDs) else {
+        guard let query = orderedAssetIDQuery(
+            descriptor: descriptor,
+            rootIDs: rootIDs,
+            importBatchUnixMs: importBatchUnixMs
+        ) else {
             return []
         }
         return try Row.fetchAll(
@@ -43,7 +48,11 @@ nonisolated enum CatalogQueryGateway {
         }
     }
 
-    static func orderedAssetIDQuery(descriptor: CatalogQueryDescriptor, rootIDs: [Int64]) -> SQLQuery? {
+    static func orderedAssetIDQuery(
+        descriptor: CatalogQueryDescriptor,
+        rootIDs: [Int64],
+        importBatchUnixMs: Int64? = nil
+    ) -> SQLQuery? {
         guard !rootIDs.isEmpty else {
             return nil
         }
@@ -58,6 +67,11 @@ nonisolated enum CatalogQueryGateway {
             rootPredicate = "library_root_id IN (\(placeholders))"
             arguments.append(contentsOf: rootIDs)
         }
+        var batchSQL = ""
+        if let importBatchUnixMs {
+            batchSQL = "\n  AND import_batch_unix_ms = ?"
+            arguments.append(importBatchUnixMs)
+        }
         let filter = filterPredicate(for: descriptor.filter)
         arguments.append(contentsOf: filter.arguments)
         let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
@@ -65,7 +79,7 @@ nonisolated enum CatalogQueryGateway {
             sql: """
             SELECT library_root_id, relative_path
             FROM media_asset INDEXED BY \(order.indexName)
-            WHERE \(rootPredicate)\(filterSQL)
+            WHERE \(rootPredicate)\(batchSQL)\(filterSQL)
             ORDER BY \(order.orderBy)
             """,
             arguments: StatementArguments(arguments)

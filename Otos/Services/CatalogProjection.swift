@@ -295,10 +295,20 @@ private extension CatalogProjection {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
         let availableLibraryPaths = CatalogWindowPolicy.availablePaths(from: allRoots)
+        let importBatches: [ImportBatchSummary]
+        do {
+            importBatches = try await store.importBatches()
+        } catch {
+            OtosLog.catalog.error(
+                "Catalog import batch query failed error=\(String(describing: error), privacy: .public)"
+            )
+            importBatches = []
+        }
         let resolvedDescriptor = CatalogWindowPolicy.resolvedDescriptor(
             request.descriptor,
             libraries: sources.libraries,
-            removableSources: sources.removableSources
+            removableSources: sources.removableSources,
+            importBatches: importBatches
         )
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
@@ -323,6 +333,7 @@ private extension CatalogProjection {
             resolvedDescriptor: resolvedDescriptor,
             store: store,
             availableLibraryPaths: availableLibraryPaths,
+            importBatches: importBatches,
             orderQueryMs: orderQueryMs
         )
     }
@@ -334,6 +345,7 @@ private extension CatalogProjection {
         resolvedDescriptor providedResolvedDescriptor: CatalogQueryDescriptor? = nil,
         store: CatalogStore? = nil,
         availableLibraryPaths providedAvailableLibraryPaths: Set<LibraryRootPath>? = nil,
+        importBatches providedImportBatches: [ImportBatchSummary]? = nil,
         orderQueryMs: Int = 0
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         if let injectedState = await injectedWindowState(
@@ -353,11 +365,24 @@ private extension CatalogProjection {
         let rootsByPath = CatalogWindowPolicy.rootsByPath(from: allRoots)
         let availableLibraryPaths = providedAvailableLibraryPaths
             ?? CatalogWindowPolicy.availablePaths(from: allRoots)
+        let importBatches: [ImportBatchSummary]
+        if let providedImportBatches {
+            importBatches = providedImportBatches
+        } else if let store {
+            do {
+                importBatches = try await store.importBatches()
+            } catch {
+                importBatches = []
+            }
+        } else {
+            importBatches = []
+        }
         let resolvedDescriptor = providedResolvedDescriptor
             ?? CatalogWindowPolicy.resolvedDescriptor(
                 request.descriptor,
                 libraries: sources.libraries,
-                removableSources: sources.removableSources
+                removableSources: sources.removableSources,
+                importBatches: importBatches
             )
         let resolvedSidebarSelection = resolvedDescriptor.scope
         let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: allRoots)
@@ -382,6 +407,7 @@ private extension CatalogProjection {
             title: title,
             libraries: sources.libraries,
             removableSources: sources.removableSources,
+            importBatches: importBatches,
             resolvedDescriptor: resolvedDescriptor,
             queryGeneration: request.generation,
             scopedAssetIDs: scopedAssetIDs,

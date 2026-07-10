@@ -6,6 +6,7 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let title: String
     let libraries: [CatalogLibraryState]
     let removableSources: [CatalogLibraryState]
+    let importBatches: [ImportBatchSummary]
     let resolvedDescriptor: CatalogQueryDescriptor
     let queryGeneration: UInt64
     let scopedAssetIDs: [MediaAssetID]

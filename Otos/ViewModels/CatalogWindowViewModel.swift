@@ -122,6 +122,16 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var removableVolumeMonitor: RemovableVolumeMonitor?
     @ObservationIgnored var cameraSourceMonitor: CameraSourceMonitor?
     @ObservationIgnored var deviceCatalogTasks: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored var mediaOperationCoordinator: MediaOperationCoordinator?
+    @ObservationIgnored var importPresentationTask: Task<Void, Never>?
+    @ObservationIgnored var mediaOperationStartTask: Task<Void, Never>?
+
+    /// Per-source import plan summaries for the footer (scalar only; no full plan map).
+    var importPresentations: [MediaOperationSourcePresentation] = []
+    /// When true, the plan detail overlay sheet is presented for the selected source.
+    var showsImportPlanOverlay = false
+    /// Settings Import tab bindings; persisted through `ImportPreferencesStore`.
+    var importPreferences: ImportPreferences = ImportPreferencesStore.load()
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
@@ -211,6 +221,8 @@ final class CatalogWindowViewModel {
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()
+        importPresentationTask?.cancel()
+        mediaOperationStartTask?.cancel()
         removableVolumeMonitor?.stop()
         cameraSourceMonitor?.stop()
         for task in deviceCatalogTasks.values {
@@ -225,6 +237,9 @@ final class CatalogWindowViewModel {
         queryContinuation.finish()
         mutationContinuation.finish()
         viewportContinuation.finish()
+        if let mediaOps = mediaOperationCoordinator {
+            Task { await mediaOps.shutdown() }
+        }
         if let coordinator = enrichmentCoordinator {
             // The coordinator's supervisor strongly retains the coordinator, so it must be
             // told to stop or it (and the store) would outlive this window. shutdown() is
@@ -269,6 +284,7 @@ extension CatalogWindowViewModel {
         startCatalog(store: store)
         startRemovableVolumeMonitoring()
         startDeviceStagingSweepThenCameraMonitoring()
+        startMediaOperationsIfNeeded()
         if startsEnrichment {
             startEnrichment()
         }
@@ -640,11 +656,15 @@ extension CatalogWindowViewModel {
     }
 
     func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {
-        guard case let .library(path) = queryDescriptor.scope else {
-            return false
+        switch queryDescriptor.scope {
+        case let .library(path):
+            !nextState.libraries.contains { $0.path == path }
+                && !nextState.removableSources.contains { $0.path == path }
+        case let .importBatch(batchID):
+            !nextState.importBatches.contains { $0.batchID == batchID }
+        case .allMedia:
+            false
         }
-        return !nextState.libraries.contains { $0.path == path }
-            && !nextState.removableSources.contains { $0.path == path }
     }
 }
 

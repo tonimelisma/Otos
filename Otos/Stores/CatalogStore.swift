@@ -290,8 +290,8 @@ extension CatalogStore {
         roots.values.map { catalogLibraryState(from: $0) }
     }
 
-    /// Nonempty import batches newest-first. Stage A exposes Store queries only;
-    /// the Imports sidebar section lands with the plan UI.
+    /// Nonempty import batches newest-first. Projection publishes these for the
+    /// Imports sidebar section.
     func importBatches() async throws -> [ImportBatchSummary] {
         let dbWriter = try database()
         return try await dbWriter.read { db in
@@ -419,7 +419,21 @@ extension CatalogStore {
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> [MediaAssetID] {
-        let rootIDs = rootIDsForQuery(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
+        let importBatchUnixMs: Int64?
+        let rootIDs: [Int64]
+        if case let .importBatch(batchID) = descriptor.scope {
+            importBatchUnixMs = batchID.unixMilliseconds
+            // Batch scope is fixed-library assets only (plan §10.2).
+            rootIDs = availableLibraryPaths.compactMap { path in
+                guard roots[path]?.root.kind == .library else {
+                    return nil
+                }
+                return roots[path]?.rowID
+            }.sorted()
+        } else {
+            importBatchUnixMs = nil
+            rootIDs = rootIDsForQuery(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
+        }
         guard !rootIDs.isEmpty else {
             return []
         }
@@ -427,7 +441,12 @@ extension CatalogStore {
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
         let dbWriter = try database()
         let timedRows = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(
+                descriptor: descriptor,
+                rootIDs: rootIDs,
+                db: db,
+                importBatchUnixMs: importBatchUnixMs
+            )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
@@ -505,7 +524,16 @@ extension CatalogStore {
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> CatalogFilterOptions {
-        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        let rootIDs: [Int64] = if case .importBatch = selection {
+            availableLibraryPaths.compactMap { path in
+                guard roots[path]?.root.kind == .library else {
+                    return nil
+                }
+                return roots[path]?.rowID
+            }.sorted()
+        } else {
+            rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        }
         guard !rootIDs.isEmpty else {
             return .empty
         }

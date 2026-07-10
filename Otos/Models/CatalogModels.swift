@@ -535,6 +535,7 @@ nonisolated struct CatalogMediaGridState: Equatable {
 nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case library(LibraryRootPath)
+    case importBatch(ImportBatchID)
 
     var diagnosticDescription: String {
         switch self {
@@ -542,6 +543,8 @@ nonisolated enum SidebarSelection: Hashable {
             "allMedia"
         case let .library(path):
             "library:\(path.rawValue)"
+        case let .importBatch(batchID):
+            "importBatch:\(batchID.unixMilliseconds)"
         }
     }
 }
@@ -663,7 +666,7 @@ nonisolated struct ImportBatchID: Hashable, Sendable, Comparable {
     }
 }
 
-/// One nonempty import batch for Store history queries (sidebar consumes these later).
+/// One nonempty import batch for Store history queries and the Imports sidebar.
 nonisolated struct ImportBatchSummary: Equatable, Sendable {
     let batchID: ImportBatchID
     let assetCount: Int

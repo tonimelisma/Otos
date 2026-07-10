@@ -6,6 +6,7 @@ import SwiftUI
 struct SidebarView: View {
     let showsAllMedia: Bool
     let libraries: [CatalogLibraryState]
+    let importBatches: [ImportBatchSummary]
     let removableSources: [CatalogLibraryState]
     let sidebarSelection: SidebarSelection
     let ejectingSourceIdentities: Set<String>
@@ -27,6 +28,25 @@ struct SidebarView: View {
                         EmptyView()
                     }
                     .tag(SidebarSelection.library(library.path))
+                }
+            }
+
+            if !importBatches.isEmpty {
+                Section("Imports") {
+                    ForEach(importBatches, id: \.batchID) { batch in
+                        SidebarRow(
+                            systemImage: "square.and.arrow.down.on.square",
+                            title: ImportBatchFormatting.sidebarTitle(
+                                for: batch.batchID,
+                                among: importBatches
+                            )
+                        ) {
+                            Text("\(batch.assetCount)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        .tag(SidebarSelection.importBatch(batch.batchID))
+                    }
                 }
             }
 
@@ -104,6 +124,12 @@ private struct SidebarRow<Trailing: View>: View {
                 root: LibraryRoot(path: LibraryRootPath(rawValue: "/Volumes/Archive")),
                 availability: .unavailable,
                 activity: .idle
+            ),
+        ],
+        importBatches: [
+            ImportBatchSummary(
+                batchID: ImportBatchID(unixMilliseconds: 1_704_067_200_000),
+                assetCount: 12
             ),
         ],
         removableSources: [

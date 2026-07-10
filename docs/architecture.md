@@ -44,9 +44,10 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | --- | --- | --- | --- |
 | `CatalogStore` | actor | SQLite, `RootRegistry`/`RootRuntimeState`, `FilesystemReconciler` (pure batch classify), `ScanLeaseController` (lease/queue bookkeeping), `CatalogQueryGateway` (read SQL/mapping), `EnrichmentLeaseGateway` (enrichment claim leases + SQL), removable-source state, change notifications, all catalog queries | serializes every mutation/query for free; a remove can be processed mid-scan safely (lease re-checked after every await); owned helpers are not second actors |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
+| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import (execution gated) | serializes per-source dirtiness; filesystem probes run off the actor |
 | `EnrichmentCoordinator` | actor | two worker pools (enrich local / download cloud), in-flight tracking, claim leases | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, dataless materialization gate, per-id coalesce + small LRU | serializes decode/cache state; byte reads off the actor |
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.
@@ -72,13 +73,16 @@ everything expensive happens on an actor off the main thread.
   reads only filesystem facts and materializes nothing (ADR 0008/0009).
 - **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
   stem during scan/FSEvents/camera inventory. They never enter media queries or
-  enrichment. `ImportPreferences` owns persisted import policy keys (Settings UI
-  lands later).
-- **Import planning** (Stage C): `MediaTransferPlanner` is pure; occupancy via
-  `FilesystemNamespaceSemantics`, equality via `ContentEqualityChecker` (ephemeral
-  memo). Store publishes `planRevision` / `RootPlanningChange` and builds
-  `ImportPlanningSnapshot` through `MediaOperationGateway` helpers. Coordinator UI
-  lands in Stage D.
+  enrichment. `ImportPreferences` owns persisted import policy keys (Settings
+  Import tab).
+- **Import planning**: `MediaTransferPlanner` is pure; occupancy via
+  `FilesystemNamespaceSemantics`, equality via `ContentEqualityChecker`. Store
+  publishes `planRevision` / `RootPlanningChange` and builds
+  `ImportPlanningSnapshot`. `MediaOperationCoordinator` greedily plans attached
+  removable sources and publishes scalar footer presentation; Import queues start
+  but execution stays gated until the filesystem executor. Imports sidebar scopes
+  via `import_batch_unix_ms`. Plan details use `ImportPlanDetailReader` (no full
+  plan map on `CatalogWindowState`).
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.
@@ -90,6 +94,7 @@ everything expensive happens on an actor off the main thread.
 | what the UI shows | `CatalogProjection` (derivation) or `CatalogWindowViewModel` (final assignment) — never a view |
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
+| import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
 | heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader` (ADR 0016); mode intents on `CatalogWindowViewModel` |
