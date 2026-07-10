@@ -26,19 +26,17 @@ struct PreviewImageLoaderTests {
             }
         )
 
-        let result = await loader.preview(
+        let outcome = await loader.preview(
             for: PreviewImageLoader.Request(
                 id: id,
                 detail: nil,
-                targetLongEdge: 512,
-                generation: 1
+                targetLongEdge: 512
             )
         )
-        guard case .image = result.outcome else {
-            Issue.record("Expected decoded image, got \(String(describing: result.outcome))")
+        guard case .image = outcome else {
+            Issue.record("Expected decoded image, got \(String(describing: outcome))")
             return
         }
-        #expect(result.generation == 1)
     }
 
     @Test func datalessReturnsDownloadingWithoutByteRead() async {
@@ -55,15 +53,14 @@ struct PreviewImageLoaderTests {
             }
         )
 
-        let result = await loader.preview(
+        let outcome = await loader.preview(
             for: PreviewImageLoader.Request(
                 id: id,
                 detail: nil,
-                targetLongEdge: 512,
-                generation: 7
+                targetLongEdge: 512
             )
         )
-        guard case .downloading = result.outcome else {
+        guard case .downloading = outcome else {
             Issue.record("Expected downloading")
             return
         }
@@ -90,14 +87,45 @@ struct PreviewImageLoaderTests {
         )
 
         async let a = loader.preview(
-            for: .init(id: id, detail: nil, targetLongEdge: 256, generation: 1)
+            for: .init(id: id, detail: nil, targetLongEdge: 256)
         )
         async let b = loader.preview(
-            for: .init(id: id, detail: nil, targetLongEdge: 256, generation: 2)
+            for: .init(id: id, detail: nil, targetLongEdge: 256)
         )
         let (ra, rb) = await (a, b)
-        guard case .image = ra.outcome, case .image = rb.outcome else {
+        guard case .image = ra, case .image = rb else {
             Issue.record("Both requests should decode")
+            return
+        }
+    }
+
+    @Test func cacheMissesWhenStoredLongEdgeIsSmaller() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "otos-preview-edge-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "sample.jpg")
+        try writeTinyJPEG(to: file)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
+            relativePath: MediaRelativePath(rawValue: "sample.jpg")
+        )
+        let loader = PreviewImageLoader(
+            status: { _ in .materialized },
+            materialize: { _ in
+                MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
+            }
+        )
+        let first = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 128))
+        guard case .image = first else {
+            Issue.record("first decode failed")
+            return
+        }
+        // Larger target must not reuse the undersized cache entry as a hit that
+        // skips decode bookkeeping — outcome is still an image either way.
+        let second = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 1024))
+        guard case .image = second else {
+            Issue.record("second decode failed")
             return
         }
     }

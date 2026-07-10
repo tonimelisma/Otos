@@ -5,9 +5,9 @@ import OSLog
 /// Catalog window view-mode intents guide
 ///
 /// Owns session-only `viewMode`, loupe `focusedAssetID`, compare pair, and the
-/// preview-loader lifetime. Every entry/exit/navigation rule from plan 0052 is either
-/// a pure `BrowserModePolicy` / `ComparePairPolicy` call or a thin intent that applies
-/// that policy and kicks preview decode. Views stay passive.
+/// pane-preview request lifecycle. Every entry/exit/navigation rule is either a pure
+/// `BrowserModePolicy` / `ComparePairPolicy` call or a thin intent that applies that
+/// policy and reconciles pane slots via `refreshPanePreviews()`. Views stay passive.
 extension CatalogWindowViewModel {
     /// Target long edge for loupe/compare decode (points × backing scale of the main
     /// display, clamped). Computed on the MainActor when a decode is requested.
@@ -46,11 +46,9 @@ extension CatalogWindowViewModel {
             gridSelection = gridSelection.plainClick(focus)
         }
         comparePair = .empty
-        compareRightPreviewImage = nil
         focusedAssetID = focus
         viewMode = .loupe
-        previewGeneration &+= 1
-        requestPreview(for: focus, generation: previewGeneration, slot: .loupe)
+        refreshPanePreviews()
         OtosLog.ui.notice(
             "op=viewMode.set mode=loupe focus=\(focus.relativePath.rawValue, privacy: .public)"
         )
@@ -62,8 +60,10 @@ extension CatalogWindowViewModel {
             return
         }
         let pair = ComparePairPolicy.entry(selection: gridSelection, orderedIDs: ordered)
-        applyComparePair(pair, orderedIDs: ordered)
+        // viewMode must be .compare before applyComparePair → refreshPanePreviews,
+        // otherwise expectedAsset(for: compare*) returns nil and no decode starts.
         viewMode = .compare
+        applyComparePair(pair, orderedIDs: ordered)
         OtosLog.ui.notice(
             "op=viewMode.set mode=compare count=\(pair.members.count, privacy: .public)"
         )
@@ -74,9 +74,8 @@ extension CatalogWindowViewModel {
             return
         }
         viewMode = .grid
-        previewImage = nil
-        compareRightPreviewImage = nil
-        previewIsDownloading = false
+        panePreviews = [:]
+        downloadingSlots = []
         comparePair = .empty
         OtosLog.ui.notice("op=viewMode.set mode=grid")
     }
@@ -123,9 +122,8 @@ extension CatalogWindowViewModel {
                 focusedAssetID = ordered.first
                 if let focus = focusedAssetID {
                     gridSelection = gridSelection.plainClick(focus)
-                    previewGeneration &+= 1
-                    requestPreview(for: focus, generation: previewGeneration, slot: .loupe)
                 }
+                refreshPanePreviews()
                 return
             }
             let next = BrowserModePolicy.pruneFocus(
@@ -139,9 +137,8 @@ extension CatalogWindowViewModel {
             focusedAssetID = next
             if let next {
                 gridSelection = gridSelection.plainClick(next)
-                previewGeneration &+= 1
-                requestPreview(for: next, generation: previewGeneration, slot: .loupe)
             }
+            refreshPanePreviews()
         case .compare:
             if descriptorChanged {
                 let pair = ComparePairPolicy.entry(selection: .empty, orderedIDs: ordered)
@@ -161,18 +158,36 @@ extension CatalogWindowViewModel {
             anchor: panes.left ?? pair.members.first,
             base: Set(pair.members)
         )
-        focusedAssetID = panes.left
-        previewGeneration &+= 1
-        let generation = previewGeneration
-        if let left = panes.left {
-            requestPreview(for: left, generation: generation, slot: .compareLeft)
-        } else {
-            previewImage = nil
+        // Compare must not retarget loupe focus — exit/re-enter loupe keeps
+        // BrowserModePolicy.loupeEntryFocus / prior focusedAssetID semantics.
+        refreshPanePreviews()
+    }
+
+    /// Single source for "which asset should this pane show right now".
+    func expectedAsset(for slot: PaneSlot) -> MediaAssetID? {
+        let ordered = state.mediaGrid.orderedAssetIDs
+        switch slot {
+        case .loupe:
+            return viewMode == .loupe ? focusedAssetID : nil
+        case .compareLeft:
+            return viewMode == .compare ? comparePair.panes(in: ordered).left : nil
+        case .compareRight:
+            return viewMode == .compare ? comparePair.panes(in: ordered).right : nil
         }
-        if let right = panes.right {
-            requestPreview(for: right, generation: generation, slot: .compareRight)
-        } else {
-            compareRightPreviewImage = nil
+    }
+
+    /// Idempotent reconciliation of all three slots against expectation. Call after
+    /// EVERY focus/pair/mode mutation — this is the only pane-request entry point.
+    func refreshPanePreviews() {
+        for slot in PaneSlot.allCases {
+            let expected = expectedAsset(for: slot)
+            if panePreviews[slot]?.id != expected {
+                panePreviews[slot] = nil
+                downloadingSlots.remove(slot)
+            }
+            if let expected, panePreviews[slot] == nil {
+                requestPanePreview(expected, slot: slot)
+            }
         }
     }
 
@@ -191,72 +206,48 @@ extension CatalogWindowViewModel {
         }
         focusedAssetID = next
         gridSelection = gridSelection.plainClick(next)
-        previewGeneration &+= 1
-        requestPreview(for: next, generation: previewGeneration, slot: .loupe)
+        refreshPanePreviews()
     }
 
-    private enum PreviewSlot {
-        case loupe
-        case compareLeft
-        case compareRight
-    }
-
-    private func requestPreview(for id: MediaAssetID, generation: UInt64, slot: PreviewSlot) {
-        previewIsDownloading = false
+    private func requestPanePreview(_ id: MediaAssetID, slot: PaneSlot) {
         let loader = previewLoader
         let detailReader = tileDetailReader
         let target = Self.previewTargetLongEdge()
         Task { [weak self] in
             let details = await detailReader.details(for: [id])
             let detail = details[id]
-            let result = await loader.preview(
+            let outcome = await loader.preview(
                 for: PreviewImageLoader.Request(
                     id: id,
                     detail: detail,
-                    targetLongEdge: target,
-                    generation: generation
+                    targetLongEdge: target
                 )
             )
             await MainActor.run {
                 guard let self else {
                     return
                 }
-                guard result.generation == self.previewGeneration else {
+                // Sole staleness guard: asset identity vs current expectation.
+                guard self.expectedAsset(for: slot) == id else {
                     return
                 }
-                switch slot {
-                case .loupe:
-                    guard self.viewMode == .loupe, self.focusedAssetID == id else {
-                        return
-                    }
-                case .compareLeft, .compareRight:
-                    guard self.viewMode == .compare, self.comparePair.members.contains(id) else {
-                        return
-                    }
-                }
-                switch result.outcome {
+                switch outcome {
                 case let .image(image):
-                    switch slot {
-                    case .loupe, .compareLeft:
-                        self.previewImage = image
-                    case .compareRight:
-                        self.compareRightPreviewImage = image
-                    }
-                    self.previewIsDownloading = false
+                    self.panePreviews[slot] = PanePreview(id: id, image: image)
+                    self.downloadingSlots.remove(slot)
                 case .downloading:
-                    self.previewIsDownloading = true
+                    self.downloadingSlots.insert(slot)
                     Task { [weak self] in
                         try? await Task.sleep(for: .milliseconds(500))
                         await MainActor.run {
-                            guard let self, result.generation == self.previewGeneration else {
+                            guard let self, self.expectedAsset(for: slot) == id else {
                                 return
                             }
-                            self.previewGeneration &+= 1
-                            self.requestPreview(for: id, generation: self.previewGeneration, slot: slot)
+                            self.requestPanePreview(id, slot: slot)
                         }
                     }
                 case .unavailable:
-                    self.previewIsDownloading = false
+                    self.downloadingSlots.remove(slot)
                 }
             }
         }
