@@ -47,18 +47,18 @@ struct ContentView: View {
                 CatalogFilterMenu(
                     descriptor: viewModel.queryDescriptor,
                     options: viewModel.state.filterOptions,
-                    toggleKind: viewModel.toggleMediaKind,
-                    toggleFormat: viewModel.toggleMediaFormat,
+                    setKind: viewModel.setMediaKind,
+                    setFileType: viewModel.setMediaFileType,
                     clearFilters: viewModel.clearMediaFilter
                 )
                 CatalogSortMenu(
                     sort: viewModel.queryDescriptor.sort,
-                    setField: viewModel.setSortField,
-                    setDirection: viewModel.setSortDirection
+                    setOrder: viewModel.setSortOrder
                 )
-                CatalogZoomSlider(
+                CatalogZoomControl(
                     columnCount: viewModel.gridColumnCount,
-                    requestColumnCount: viewModel.setGridColumnCount
+                    makeThumbnailsSmaller: viewModel.zoomOutGrid,
+                    makeThumbnailsLarger: viewModel.zoomInGrid
                 )
             }
         }

@@ -56,7 +56,7 @@ This ADR owns:
 - Staleness is the `(size, mtime)` source signature; `needsEnrichment` derives
   from it. mtime-only changes count.
 - Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
-  supplies Best Date sort and enrichment priority. Video duration is a hot scalar
+  supplies Date sort and enrichment priority. Video duration is a hot scalar
   because the tile surface needs it for every visible video; other metadata
   dimensions and details remain cold.
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
@@ -144,7 +144,7 @@ Adjacent decisions requiring separate ADRs or specs:
    Enrichment writes timestamp role facts (original, QuickTime creation,
    digitized, and GPS) instead of a pre-resolved winner. SQLite's
    `best_capture_unix` generated column ranks those role facts ahead of
-   filesystem creation and modification dates, so Best Date sort and enrichment
+   filesystem creation and modification dates, so Date sort and enrichment
    priority read the same best value without keeping full metadata resident. The
    metadata detail row still preserves all date roles, and the generated best date
    remains nil only when nothing is known. Grid tiles do not render this date.

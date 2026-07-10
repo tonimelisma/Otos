@@ -30,45 +30,19 @@ struct OtosApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {}
             CommandMenu("View") {
-                Menu("Sort By") {
-                    ForEach(MediaSortField.allCases, id: \.self) { field in
-                        Button {
-                            catalogViewModel.setSortField(field)
-                        } label: {
-                            Label(
-                                field.label,
-                                systemImage: catalogViewModel.queryDescriptor.sort.field == field
-                                    ? "checkmark"
-                                    : "circle"
-                            )
-                        }
-                    }
-                }
-                Menu("Sort Direction") {
-                    ForEach(MediaSortDirection.allCases, id: \.self) { direction in
-                        Button {
-                            catalogViewModel.setSortDirection(direction)
-                        } label: {
-                            Label(
-                                direction.label,
-                                systemImage: catalogViewModel.queryDescriptor.sort.direction == direction
-                                    ? "checkmark"
-                                    : "circle"
-                            )
-                        }
-                    }
+                Menu("Sort") {
+                    CatalogSortMenuContent(
+                        sort: catalogViewModel.queryDescriptor.sort,
+                        setOrder: catalogViewModel.setSortOrder
+                    )
                 }
                 Divider()
                 Menu("Filter") {
                     CatalogFilterMenuContent(
                         descriptor: catalogViewModel.queryDescriptor,
                         options: catalogViewModel.state.filterOptions,
-                        toggleKind: { kind, formats in
-                            catalogViewModel.toggleMediaKind(kind, formatsInKind: formats)
-                        },
-                        toggleFormat: { format, kind in
-                            catalogViewModel.toggleMediaFormat(format, kind: kind)
-                        },
+                        setKind: catalogViewModel.setMediaKind,
+                        setFileType: catalogViewModel.setMediaFileType,
                         clearFilters: catalogViewModel.clearMediaFilter
                     )
                 }

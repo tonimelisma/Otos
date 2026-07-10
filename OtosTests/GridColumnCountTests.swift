@@ -34,25 +34,4 @@ struct GridColumnCountTests {
         #expect(GridColumnCount.validated(10) == 6)
         #expect(GridColumnCount.validated(-1) == 6)
     }
-
-    // MARK: - slider mapping
-
-    @Test func sliderValueMapsMaximumColumnsToZeroAndMinimumToSix() {
-        #expect(GridColumnCount.sliderValue(forColumnCount: 9) == 0)
-        #expect(GridColumnCount.sliderValue(forColumnCount: 3) == 6)
-        #expect(GridColumnCount.sliderValue(forColumnCount: 6) == 3)
-    }
-
-    @Test func columnCountForSliderValueIsTheInverseMapping() {
-        #expect(GridColumnCount.columnCount(forSliderValue: 0) == 9)
-        #expect(GridColumnCount.columnCount(forSliderValue: 6) == 3)
-        #expect(GridColumnCount.columnCount(forSliderValue: 3) == 6)
-    }
-
-    @Test func sliderMappingRoundTripsForEveryValidColumnCount() {
-        for columnCount in GridColumnCount.minimum ... GridColumnCount.maximum {
-            let value = GridColumnCount.sliderValue(forColumnCount: columnCount)
-            #expect(GridColumnCount.columnCount(forSliderValue: value) == columnCount)
-        }
-    }
 }

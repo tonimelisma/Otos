@@ -135,6 +135,44 @@ struct MediaGridBridgeTests {
         #expect(gate.lastDrainedHeldDuringScroll)
     }
 
+    @Test func descriptorChangeParkedDuringApplyBypassesScrollHoldOnCompletion() {
+        let gate = MediaGridMutationGate()
+        let initial = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        #expect(gate.receive(initial) == [.apply(initial, descriptorChanged: false)])
+
+        gate.beginScrollHold()
+        let library = makeGrid(
+            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
+            paths: ["b.jpg"]
+        )
+        #expect(gate.receive(library) == [.pending(replacedExisting: false)])
+        #expect(
+            gate.completeStructuralApply(applied: initial)
+                == [.apply(library, descriptorChanged: true)]
+        )
+        #expect(gate.scrollHold)
+    }
+
+    @Test func descriptorChangeParkedDuringZoomBypassesScrollHoldOnCompletion() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let initial = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        _ = gate.receive(initial)
+        _ = gate.completeStructuralApply(applied: initial)
+
+        gate.beginScrollHold()
+        #expect(gate.receiveColumnCount(5) == [.zoomSwap(columnCount: 5)])
+        let library = makeGrid(
+            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
+            paths: ["b.jpg"]
+        )
+        #expect(gate.receive(library) == [.pending(replacedExisting: false)])
+        #expect(
+            gate.completeZoomSwap(installed: 5)
+                == [.apply(library, descriptorChanged: true)]
+        )
+        #expect(gate.scrollHold)
+    }
+
     @Test func zoomSwapIgnoresScrollHold() {
         let gate = MediaGridMutationGate(columnCount: 6)
         let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])

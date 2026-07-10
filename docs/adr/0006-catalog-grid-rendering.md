@@ -42,7 +42,7 @@ is enforced by `TileContentStore` (cost-bounded decoded images, visible IDs pinn
 against prune and budget eviction) so a painted thumbnail never regresses to nil
 for a visible asset; tiles are pure renderers of that store value. Diffable apply
 semantics only affect how much work AppKit does. Same-descriptor same-membership
-reorders (the enrichment trickle that publishes ~1/s while Best Date enrichment
+reorders (the enrichment trickle that publishes ~1/s while Date-sort enrichment
 runs) animate with `animatingDifferences: true`, which moves surviving items
 instead of recreating them — measured `applyCallMs` for K = 1–3 movers at n ≈ 23k
 is in the low tens of milliseconds (`docs/research/grid-reorder-cadence-and-appkit-diffable-apply.md`).
@@ -70,8 +70,8 @@ current column count, 12-point section insets, and 8-point effective gaps.
 Column count is user-selected, 3–9, default 6 (spec 0048) — not an invariant six
 — owned by `CatalogWindowViewModel.gridColumnCount` and persisted across
 launches; the AppKit controller only ever renders the published value through
-one `receiveColumnCount(_:)` path, whether the request came from the View menu, a
-toolbar slider, or a pinch gesture. That path and the diffable structural-apply
+one `receiveColumnCount(_:)` path, whether the request came from the View menu,
+toolbar −/+ buttons, or a pinch gesture. That path and the diffable structural-apply
 path are arbitrated by a single owner, `MediaGridMutationGate`, which holds
 column-count truth (`installedColumnCount`/`requestedColumnCount`) and guarantees a
 zoom swap and a structural apply never run concurrently in either direction: a zoom

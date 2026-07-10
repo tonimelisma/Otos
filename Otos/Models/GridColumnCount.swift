@@ -25,16 +25,4 @@ nonisolated enum GridColumnCount {
     static func validated(_ stored: Int) -> Int {
         (minimum ... maximum).contains(stored) ? stored : defaultValue
     }
-
-    /// The toolbar slider's own scale is `0...(maximum - minimum)`, sliding right
-    /// (higher value) toward fewer, bigger columns — the Photos zoom-in convention.
-    /// These two conversions are the only place that mapping is expressed, so the
-    /// slider view and its tests share one definition.
-    static func sliderValue(forColumnCount columnCount: Int) -> Int {
-        maximum - clamped(columnCount)
-    }
-
-    static func columnCount(forSliderValue value: Int) -> Int {
-        clamped(maximum - value)
-    }
 }

@@ -3,7 +3,7 @@ import Foundation
 import Testing
 
 /// The catalog database must always store the latest scanned filesystem facts. A
-/// whole-second date change affects Best Date sort and enrichment priority, so it
+/// whole-second date change affects Date sort and enrichment priority, so it
 /// also republishes (FND-062).
 struct CatalogStoreScanFreshnessTests {
     @Test func reScanRefreshesInMemoryDatesWhenOnlySizeUnchanged() async throws {

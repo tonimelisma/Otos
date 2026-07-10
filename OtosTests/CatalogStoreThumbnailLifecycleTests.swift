@@ -51,6 +51,33 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(current.needsEnrichment)
     }
 
+    @Test func acceptedThumbnaillessResultDeletesSupersededAppOwnedThumbnail() async throws {
+        let fixture = try await makeThumbnailLifecycleFixture()
+        let finalName = ThumbnailStore.relativeName(for: fixture.id)
+        let finalURL = ThumbnailStore.url(for: finalName, in: fixture.thumbnailDirectory)
+        try FileManager.default.createDirectory(at: fixture.thumbnailDirectory, withIntermediateDirectories: true)
+        try Data("old".utf8).write(to: finalURL)
+        await fixture.store.applyEnrichmentBatch([fixture.acceptedResult(thumbnailPath: finalName)])
+
+        let outcome = await fixture.store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: fixture.id,
+                metadata: AssetMetadata(),
+                thumbnailPath: nil,
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000
+            ),
+        ])
+
+        #expect(outcome == .applied(count: 1))
+        #expect(!FileManager.default.fileExists(atPath: finalURL.path(percentEncoded: false)))
+        let current = try #require(
+            try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id }
+        )
+        #expect(current.thumbnailPath == nil)
+        #expect(!current.needsEnrichment)
+    }
+
     @Test func failedThumbnailPromotionReleasesEnrichmentClaimForRetry() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
         let candidates = try await fixture.store.enrichmentCandidates(prioritizing: [], limit: 1)

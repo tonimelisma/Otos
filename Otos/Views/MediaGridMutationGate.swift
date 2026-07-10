@@ -16,8 +16,9 @@ import Foundation
 /// state arriving mid-zoom parks as `pendingGrid` because `receive` checks `inFlight` for
 /// *any* mutation kind, not just a structural apply. Live scrolling sets `scrollHold` so
 /// same-descriptor grids park as newest-wins pending until quiet; descriptor-changed
-/// grids bypass the hold (user context change). `drain` runs only when both `inFlight`
-/// and `scrollHold` are clear. Zoom swaps ignore the hold — they are user intents.
+/// grids bypass the hold (user context change), including when they first arrive during
+/// an in-flight mutation and are drained at completion. Zoom swaps ignore the hold —
+/// they are user intents.
 ///
 /// Column state lives here as exactly two values — `installedColumnCount` (what the
 /// layout currently shows) and `requestedColumnCount` (the newest requested value,
@@ -187,7 +188,7 @@ final class MediaGridMutationGate {
         displayedOrderedIDSet = Set(grid.orderedAssetIDs)
         displayedDescriptor = grid.descriptor
         inFlight = .none
-        guard !scrollHold else {
+        guard canDrainPendingGrid else {
             return []
         }
         return drain()
@@ -200,7 +201,7 @@ final class MediaGridMutationGate {
     func completeZoomSwap(installed: Int) -> [Action] {
         installedColumnCount = installed
         inFlight = .none
-        guard !scrollHold else {
+        guard canDrainPendingGrid else {
             return []
         }
         return drain()
@@ -230,7 +231,7 @@ final class MediaGridMutationGate {
     /// apply's own completion drains again. A same-identity parked grid is a cheap
     /// `refreshVisible` that can precede a trailing zoom swap in the same drain.
     private func drain() -> [Action] {
-        guard !scrollHold else {
+        guard canDrainPendingGrid else {
             return []
         }
         var actions: [Action] = []
@@ -249,5 +250,12 @@ final class MediaGridMutationGate {
             actions.append(.zoomSwap(columnCount: requestedColumnCount))
         }
         return actions
+    }
+
+    /// Live scroll delays only background changes in the current query. A descriptor
+    /// change is a user intent, so a grid parked behind an exclusive mutation must run
+    /// as soon as that mutation completes instead of waiting for scroll quiet.
+    private var canDrainPendingGrid: Bool {
+        !scrollHold || pendingGrid?.descriptor != displayedDescriptor
     }
 }
