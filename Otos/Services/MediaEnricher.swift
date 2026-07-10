@@ -19,11 +19,12 @@ import UniformTypeIdentifiers
 ///
 /// Outcomes drive the store's stamp-vs-retry. A definitive metadata read (`parsed` or
 /// `unsupported`) yields `.complete` and is stamped, so it is not retried until the file
-/// changes — even if the file embeds no metadata and QuickLook could only render an icon.
-/// Thumbnail bytes are staged, not published to their final deterministic filename, so
-/// Store remains the owner that decides whether a derived product matches current catalog
-/// truth. A transient read failure yields `.transient` (retry); a regressed-to-dataless
-/// file yields `.notMaterialized` (route back to download).
+/// changes — even when QuickLook cannot produce a real thumbnail (icon fallback is
+/// rejected; the grid shows a broken-media placeholder instead). Thumbnail bytes are
+/// staged, not published to their final deterministic filename, so Store remains the
+/// owner that decides whether a derived product matches current catalog truth. A
+/// transient read failure yields `.transient` (retry); a regressed-to-dataless file
+/// yields `.notMaterialized` (route back to download).
 nonisolated struct MediaEnricher {
     var enrich: @Sendable (
         _ id: MediaAssetID,
@@ -71,8 +72,11 @@ nonisolated struct MediaEnricher {
     }
 
     /// Generates a 256 px thumbnail and stages it, returning the staged/final names.
-    /// Accepts QuickLook's icon fallback (a generic tile beats none); a generation failure
-    /// returns `nil` and is not fatal — the definitive metadata is still recorded.
+    /// Requests only real imagery (`.thumbnail` / `.lowQualityThumbnail`) — never
+    /// QuickLook's generic `.icon` fallback. A generation failure returns `nil` and is
+    /// a definitive "no thumbnail available" outcome; enrichment still stamps metadata
+    /// so the asset is not retried until the file changes, and the grid shows a
+    /// broken-media placeholder.
     static func generateThumbnail(id: MediaAssetID, url: URL, directory: URL) async -> GeneratedThumbnail? {
         let generationStart = Date()
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailGenerate")
@@ -84,7 +88,7 @@ nonisolated struct MediaEnricher {
             fileAt: url,
             size: CGSize(width: ThumbnailStore.maxPixelSize, height: ThumbnailStore.maxPixelSize),
             scale: 1,
-            representationTypes: [.thumbnail, .lowQualityThumbnail, .icon]
+            representationTypes: [.thumbnail, .lowQualityThumbnail]
         )
         do {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(for: request)
@@ -104,8 +108,13 @@ nonisolated struct MediaEnricher {
             )
             return thumbnail
         } catch {
-            OtosLog.thumbnails.error(
-                "Thumbnail generation failed path=\(url.path(percentEncoded: false), privacy: .public)"
+            OtosLog.thumbnails.errorOperation(
+                "catalog.thumbnails.generate",
+                phase: "unavailable",
+                fields: [
+                    "path": url.path(percentEncoded: false),
+                    "error": String(describing: error),
+                ]
             )
             return nil
         }

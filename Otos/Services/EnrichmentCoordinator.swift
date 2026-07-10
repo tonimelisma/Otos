@@ -267,6 +267,8 @@ extension EnrichmentCoordinator {
     ///
     /// The signal stream is consumed inline here (not via a stored iterator) because an
     /// actor cannot call a mutating `next()` on one of its own stored properties.
+    /// Zero-byte claimed assets short-circuit before materialization or the enricher:
+    /// they cannot contain media, so a definitive empty stamp is synthesized instead.
     func runLoop() async {
         await withDiscardingTaskGroup { group in
             for await _ in signalStream {
@@ -274,6 +276,12 @@ extension EnrichmentCoordinator {
                     break
                 }
                 for work in await dequeueEnrichmentWork() {
+                    if work.sourceSize == 0 {
+                        group.addTask {
+                            await self.finishEmptySource(work)
+                        }
+                        continue
+                    }
                     let enricher = enricher
                     group.addTask {
                         let outcome = await enricher.enrich(

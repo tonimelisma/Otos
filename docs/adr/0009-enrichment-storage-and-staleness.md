@@ -37,7 +37,8 @@ This ADR owns:
 
 - Thumbnails are files on disk; the catalog stores only the relative path. Size,
   format, and generator (256 px long edge, JPEG generated from QuickLook with
-  icon fallback accepted). Generated files are staged until Store validates and
+  icon fallback rejected — a definitive thumbnail-unavailable stamp when no real
+  imagery can be produced). Generated files are staged until Store validates and
   stamps the result. The visible grid may hold a bounded decoded-thumbnail memory
   cache for synchronous repaint, but that cache is rendering state only, never
   catalog truth or durable overlay.
@@ -99,8 +100,12 @@ Adjacent decisions requiring separate ADRs or specs:
    deleted results discard their staged file and cannot overwrite the previous
    final thumbnail. The final promotion is atomic (replace or move) so a tile
    never reads a half-written file during a re-enrichment overwrite. QuickLook
-   generates the image and its icon fallback is accepted (a generic tile beats
-   none). The catalog stores `thumbnail_path`. 256 px is a true grid thumbnail;
+   generates the image from real imagery only (`.thumbnail` /
+   `.lowQualityThumbnail`); the generic `.icon` fallback is rejected. A
+   generation failure is a definitive thumbnail-unavailable outcome: enrichment
+   still stamps the asset (no retry until the file changes) and the grid shows
+   a broken-media placeholder. The catalog stores `thumbnail_path` (NULL when
+   unavailable). 256 px is a true grid thumbnail;
    the max-zoom path that loads originals is a separate future decision.
 
    Spec 0038's no-blank grid invariant is owned by `TileContentStore`: it is the

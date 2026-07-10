@@ -437,6 +437,13 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     var id: MediaAssetID {
         MediaAssetID(libraryRootPath: libraryRootPath, relativePath: relativePath)
     }
+
+    /// Enrichment ran and could not produce a real thumbnail (icon fallback is
+    /// never stored). Distinguishes "broken/unsupported media" from "not yet
+    /// enriched" (both have `thumbnailPath == nil`).
+    var thumbnailUnavailable: Bool {
+        enrichedSourceMTimeSeconds != nil && thumbnailPath == nil
+    }
 }
 
 /// Builds the cheap, precomputed display-order key for a media asset. Digit runs

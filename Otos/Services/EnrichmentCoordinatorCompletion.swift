@@ -49,6 +49,39 @@ extension EnrichmentCoordinator {
         signal()
     }
 
+    /// Scanned `byteSize == 0`: no media bytes exist, so skip materialization,
+    /// metadata, and QuickLook. Synthesize the same definitive empty stamp the
+    /// enricher would produce for unreadable media and flush through the normal
+    /// apply path (ENR-007 self-heals if real bytes appear later).
+    func finishEmptySource(_ work: EnrichWork) async {
+        let id = work.id
+        guard !isShuttingDown else {
+            await releaseClaims([id], visibleID: id)
+            return
+        }
+        inFlightEnrich.remove(id)
+        let result = EnrichmentResult(
+            id: id,
+            metadata: AssetMetadata(),
+            thumbnailPath: nil,
+            sourceSize: work.sourceSize,
+            sourceMTimeSeconds: work.sourceMTimeSeconds
+        )
+        await recordVisibleThumbnailLifecycle(
+            phase: "emptySource",
+            id: id,
+            fields: [
+                "outcome": "emptySource",
+                "sourceSize": "0",
+                "hasThumbnail": "false",
+            ]
+        )
+        pendingApply.append(result)
+        pendingApplyIDs.insert(id)
+        scheduleApplyFlushIfNeeded()
+        signal()
+    }
+
     func finishDownload(
         _ work: DownloadWork,
         result: MaterializationResult,
