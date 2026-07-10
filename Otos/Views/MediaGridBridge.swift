@@ -61,9 +61,15 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     /// ViewModel-owned selection intents. The controller never stores `GridSelection`
     /// itself — every gesture/prune/clear routes through these closures.
     var selectionHandlers: MediaGridSelectionHandlers = .init()
+    /// Grid vs filmstrip presentation. Strip disables pinch zoom and forwards arrows.
+    var presentation: MediaGridPresentation = .grid(columnCount: GridColumnCount.defaultValue)
+    var onItemDoubleClick: (MediaAssetID) -> Void = { _ in }
+    var onReturnKey: () -> Void = {}
+    var onEscapeKey: () -> Void = {}
+    var onArrowKey: (Int) -> Void = { _ in }
 
     func makeNSViewController(context _: Context) -> MediaGridViewController {
-        MediaGridViewController()
+        MediaGridViewController(presentation: presentation)
     }
 
     func updateNSViewController(
@@ -76,8 +82,16 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.stallMonitor = stallMonitor
         controller.onViewportChanged = onViewportChanged
         controller.onColumnCountChangeRequested = onColumnCountChangeRequested
-        controller.receiveColumnCount(columnCount)
+        controller.onItemDoubleClick = onItemDoubleClick
+        controller.onReturnKey = onReturnKey
+        controller.onEscapeKey = onEscapeKey
+        controller.onArrowKey = onArrowKey
+        controller.applyPresentation(presentation)
+        if case .grid = presentation {
+            controller.receiveColumnCount(columnCount)
+        }
         controller.receive(grid)
+        controller.syncSelectionFromModel()
     }
 }
 
@@ -141,6 +155,12 @@ final class MediaGridViewController: NSViewController {
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.
     var onColumnCountChangeRequested: (Int) -> Void = { _ in }
+    var onItemDoubleClick: (MediaAssetID) -> Void = { _ in }
+    var onReturnKey: () -> Void = {}
+    var onEscapeKey: () -> Void = {}
+    var onArrowKey: (Int) -> Void = { _ in }
+    /// Current presentation; strip disables pinch and forwards arrow keys.
+    private(set) var presentation: MediaGridPresentation
     /// The item under the gesture location at pinch start, held for the gesture's
     /// duration so a chain of pinch steps all anchor to the same tile.
     var pinchAnchorIndexPath: IndexPath?
@@ -160,6 +180,16 @@ final class MediaGridViewController: NSViewController {
 
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
 
+    init(presentation: MediaGridPresentation = .grid(columnCount: GridColumnCount.defaultValue)) {
+        self.presentation = presentation
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     override func loadView() {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.layoutInstall")
         defer {
@@ -167,16 +197,20 @@ final class MediaGridViewController: NSViewController {
                 stallMonitor?.endOperation(operation)
             }
         }
-        let installedColumnCount = mutationGate.installedColumnCount
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
-        collectionView.collectionViewLayout = Self.makeLayout(columnCount: installedColumnCount)
+        collectionView.collectionViewLayout = Self.makeLayout(presentation: presentation)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
 
         configureCollectionView()
         configureScrollView()
         installScrollObserver()
-        configurePinchZoomGesture()
-        OtosLog.ui.info("Media grid layout installed columns=\(installedColumnCount, privacy: .public)")
+        if !presentation.isStrip {
+            configurePinchZoomGesture()
+        }
+        let presentationDescription = String(describing: presentation)
+        OtosLog.ui.info(
+            "Media grid layout installed presentation=\(presentationDescription, privacy: .public)"
+        )
     }
 
     deinit {
@@ -325,6 +359,9 @@ final class MediaGridViewController: NSViewController {
     /// the same intent). Input, not command: the gate decides whether a swap runs now,
     /// converges at the next completion, or is a no-op.
     func receiveColumnCount(_ requested: Int) {
+        guard !presentation.isStrip else {
+            return
+        }
         perform(mutationGate.receiveColumnCount(requested))
     }
 }
@@ -340,6 +377,22 @@ extension MediaGridViewController {
         collectionView.onMouseSelection = { [weak self] hit, modifiers in
             self?.applyMouseSelection(hit: hit, modifiers: modifiers)
         }
+        collectionView.onDoubleClickHit = { [weak self] hit in
+            guard let self, let id = dataSource.itemIdentifier(for: hit) else {
+                return
+            }
+            onItemDoubleClick(id)
+        }
+        collectionView.onReturnKey = { [weak self] in
+            self?.onReturnKey()
+        }
+        collectionView.onEscapeKey = { [weak self] in
+            self?.onEscapeKey()
+        }
+        collectionView.onArrowKey = { [weak self] delta in
+            self?.onArrowKey(delta)
+        }
+        collectionView.forwardsArrowKeys = presentation.isStrip
         collectionView.register(
             MediaGridItem.self,
             forItemWithIdentifier: Self.itemIdentifier
@@ -372,10 +425,38 @@ extension MediaGridViewController {
     private func configureScrollView() {
         scrollView.documentView = collectionView
         scrollView.drawsBackground = false
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
+        if presentation.isStrip {
+            scrollView.hasVerticalScroller = false
+            scrollView.hasHorizontalScroller = true
+            scrollView.horizontalScrollElasticity = .allowed
+            scrollView.verticalScrollElasticity = .none
+        } else {
+            scrollView.hasVerticalScroller = true
+            scrollView.hasHorizontalScroller = false
+        }
         scrollView.autohidesScrollers = true
         view = scrollView
+    }
+
+    /// Applies a new presentation when the representable updates. No-op when unchanged.
+    func applyPresentation(_ next: MediaGridPresentation) {
+        guard next != presentation else {
+            collectionView.forwardsArrowKeys = next.isStrip
+            return
+        }
+        presentation = next
+        collectionView.forwardsArrowKeys = next.isStrip
+        let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
+        collectionView.collectionViewLayout = Self.makeLayout(presentation: next)
+        OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
+        configureScrollView()
+    }
+
+    /// Writes AppKit selection from the ViewModel model after a controller recreate or
+    /// SwiftUI update so mode switches keep the shared selection visible.
+    func syncSelectionFromModel() {
+        let target = selectionHandlers.currentSelection().selection
+        applySelectionDelta(from: selectedIdentities(), to: target)
     }
 
     private func installScrollObserver() {

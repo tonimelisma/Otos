@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 import OSLog
@@ -63,6 +64,17 @@ final class CatalogWindowViewModel {
     /// `private(set)` because those intents live in a separate file and Swift's
     /// `private(set)` is file-scoped.
     var gridSelection = GridSelection.empty
+    /// Session-only browser presentation (grid / loupe / compare). Default `.grid`.
+    /// Mutated only through view-mode intents (separate file; Swift `private(set)` is
+    /// file-scoped).
+    var viewMode: BrowserViewMode = .grid
+    /// Loupe (and later compare) focus identity within the current display order.
+    var focusedAssetID: MediaAssetID?
+    /// Latest full-size preview for the focused asset; nil until the first decode lands.
+    /// The loupe paints the 256 px thumbnail underneath until this arrives (APP-015).
+    var previewImage: CGImage?
+    /// True while a deliberate materialization is in flight for the focused original.
+    var previewIsDownloading = false
 
     /// Where tiles resolve `thumbnailPath` into a file URL. Comes straight from the
     /// store's `nonisolated` directory so the view layer needs no store access.
@@ -111,6 +123,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
+    @ObservationIgnored var previewGeneration: UInt64 = 0
+    @ObservationIgnored let previewLoader = PreviewImageLoader()
 
     init(
         catalogStore: CatalogStore = CatalogStore(),

@@ -28,23 +28,14 @@ struct ContentView: View {
                 ejectSource: viewModel.ejectRemovableSource
             )
         } detail: {
-            MediaGridView(
-                title: viewModel.state.title,
-                grid: viewModel.state.mediaGrid,
-                emptyState: viewModel.state.mediaEmptyState,
-                deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
-                thumbnailDirectory: viewModel.thumbnailDirectory,
-                detailReader: viewModel.tileDetailReader,
-                stallMonitor: viewModel.uiStallMonitor,
-                onViewportChanged: viewModel.viewportChanged,
-                clearFilters: viewModel.clearMediaFilter,
-                gridColumnCount: viewModel.gridColumnCount,
-                onGridColumnCountChangeRequested: viewModel.setGridColumnCount,
-                selectionHandlers: .from(viewModel)
-            )
+            detailContent
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                ViewModePicker(
+                    viewMode: viewModel.viewMode,
+                    setViewMode: viewModel.setViewMode
+                )
                 CatalogFilterMenu(
                     descriptor: viewModel.queryDescriptor,
                     options: viewModel.state.filterOptions,
@@ -61,6 +52,7 @@ struct ContentView: View {
                     makeThumbnailsSmaller: viewModel.zoomOutGrid,
                     makeThumbnailsLarger: viewModel.zoomInGrid
                 )
+                .disabled(viewModel.viewMode != .grid)
             }
         }
         .alert(
@@ -81,6 +73,52 @@ struct ContentView: View {
             if let message = viewModel.ejectAlertMessage {
                 Text(message)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
+        switch viewModel.viewMode {
+        case .grid, .compare:
+            // Compare UI lands in Increment 3; setViewMode(.compare) currently opens loupe.
+            MediaGridView(
+                title: viewModel.state.title,
+                grid: viewModel.state.mediaGrid,
+                emptyState: viewModel.state.mediaEmptyState,
+                deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
+                thumbnailDirectory: viewModel.thumbnailDirectory,
+                detailReader: viewModel.tileDetailReader,
+                stallMonitor: viewModel.uiStallMonitor,
+                onViewportChanged: viewModel.viewportChanged,
+                clearFilters: viewModel.clearMediaFilter,
+                gridColumnCount: viewModel.gridColumnCount,
+                onGridColumnCountChangeRequested: viewModel.setGridColumnCount,
+                selectionHandlers: .from(viewModel),
+                onItemDoubleClick: { viewModel.openLoupe(id: $0) },
+                onReturnKey: { viewModel.openLoupe(id: nil) }
+            )
+        case .loupe:
+            LoupeView(
+                grid: viewModel.state.mediaGrid,
+                focusedAssetID: viewModel.focusedAssetID,
+                previewImage: viewModel.previewImage,
+                previewIsDownloading: viewModel.previewIsDownloading,
+                thumbnailDirectory: viewModel.thumbnailDirectory,
+                detailReader: viewModel.tileDetailReader,
+                stallMonitor: viewModel.uiStallMonitor,
+                selectionHandlers: .from(viewModel),
+                onViewportChanged: viewModel.viewportChanged,
+                onStripArrow: { delta in
+                    if delta < 0 {
+                        viewModel.focusPrevious()
+                    } else {
+                        viewModel.focusNext()
+                    }
+                },
+                onEscape: viewModel.exitToGrid,
+                onDoubleClickPreview: viewModel.exitToGrid
+            )
+            .navigationTitle(viewModel.state.title)
         }
     }
 }

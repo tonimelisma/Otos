@@ -184,3 +184,35 @@ struct CatalogZoomControl: View {
         .accessibilityLabel("Thumbnail Size")
     }
 }
+
+/// Segmented Grid / Loupe control (Compare joins in plan 0052 Increment 3).
+/// Both surfaces call the same ViewModel `setViewMode` intent as the View menu.
+struct ViewModePicker: View {
+    let viewMode: BrowserViewMode
+    let setViewMode: (BrowserViewMode) -> Void
+
+    private var visibleModes: [BrowserViewMode] {
+        [.grid, .loupe]
+    }
+
+    var body: some View {
+        Picker("View Mode", selection: modeBinding) {
+            ForEach(visibleModes) { mode in
+                Image(systemName: mode.systemImage)
+                    .tag(mode)
+                    .help(mode.help)
+            }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .help(viewMode.help)
+        .accessibilityLabel("View Mode")
+    }
+
+    private var modeBinding: Binding<BrowserViewMode> {
+        Binding(
+            get: { visibleModes.contains(viewMode) ? viewMode : .grid },
+            set: { setViewMode($0) }
+        )
+    }
+}

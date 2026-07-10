@@ -18,36 +18,65 @@ import AppKit
 /// Programmatic `selectionIndexPaths =` / `selectItems` / `deselectItems` do not re-enter
 /// `mouseDown`, so there is no feedback loop.
 ///
-/// The controller is the only thing that owns selection semantics; this subclass forwards
-/// the observed click and nothing else, keeping the AppKit boundary a thin renderer.
+/// Double-click (`clickCount == 2`) on an unmodified hit forwards `onDoubleClickHit`
+/// after the selection write so loupe entry sees the updated selection. Return opens
+/// loupe from grid; Escape / arrows in strip mode are forwarded via key handlers.
 final class MediaGridCollectionView: NSCollectionView {
     /// Delivered from `mouseDown(with:)` with the item under the click location (`nil` for
     /// empty space) and the click's modifier flags. The controller wires this to
     /// `applyMouseSelection(hit:modifiers:)`, which owns the selection model and writes
     /// `selectionIndexPaths` as the last operation of the gesture.
     var onMouseSelection: ((IndexPath?, NSEvent.ModifierFlags) -> Void)?
+    /// Unmodified double-click hit; the controller resolves the identity.
+    var onDoubleClickHit: ((IndexPath) -> Void)?
+    /// Grid: Return opens loupe. Strip: Esc exits; arrows move focus when forwarded.
+    var onReturnKey: (() -> Void)?
+    var onEscapeKey: (() -> Void)?
+    var onArrowKey: ((Int) -> Void)?
+    /// When true, ←/→ are forwarded to `onArrowKey` instead of native collection nav.
+    var forwardsArrowKeys = false
 
     override func mouseDown(with event: NSEvent) {
         let pointInCollectionView = convert(event.locationInWindow, from: nil)
         var hit = indexPathForItem(at: pointInCollectionView)
-        // When the item is not yet materialized as a MediaAssetTileView (rare mid-scroll),
-        // accept the full-square hit rather than treating it as a face miss — a miss would
-        // make clicks during scroll feel dead. Letterbox rejection only applies once the
-        // tile view is resolvable.
         if let candidate = hit, !clickHitsThumbnailFace(candidate, event: event) {
             hit = nil
         }
 
-        let modifiers = event.modifierFlags
-        // `super.mouseDown` is intentionally not called: AppKit's native selection tracking
-        // loop is the exact race the model-owned design removes. `makeFirstResponder`
-        // preserves the keyboard focus that `super` would otherwise have handled.
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         window?.makeFirstResponder(self)
-        onMouseSelection?(hit, modifiers)
+        onMouseSelection?(hit, event.modifierFlags)
+
+        if modifiers.isEmpty, event.clickCount == 2, let hit {
+            onDoubleClickHit?(hit)
+        }
     }
 
-    /// Returns `true` when the click is inside the tile's aspect-fit thumbnail face, or
-    /// when the tile view is not yet resolvable (mid-scroll) so the full-square hit stands.
+    override func keyDown(with event: NSEvent) {
+        let chars = event.charactersIgnoringModifiers ?? ""
+        if chars == "\r" || chars == "\n" {
+            onReturnKey?()
+            return
+        }
+        if event.keyCode == 53 { // Escape
+            onEscapeKey?()
+            return
+        }
+        if forwardsArrowKeys {
+            switch event.keyCode {
+            case 123: // left
+                onArrowKey?(-1)
+                return
+            case 124: // right
+                onArrowKey?(1)
+                return
+            default:
+                break
+            }
+        }
+        super.keyDown(with: event)
+    }
+
     private func clickHitsThumbnailFace(_ candidate: IndexPath, event: NSEvent) -> Bool {
         guard let item = item(at: candidate) as? MediaGridItem,
               let tileView = item.view as? MediaAssetTileView
