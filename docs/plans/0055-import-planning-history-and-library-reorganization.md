@@ -61,12 +61,17 @@ These are requirements, not implementation suggestions.
    the rest of the source imports normally, and cleanup/auto-eject are withheld
    while any blocked entry exists. Never silently drop the item from inventory,
    and never block the whole source for one undatable item.
-   The fabricated-date rule extends through the copy: the **destination** file's
-   modification date must equal the planned source modification date (preserved
-   by the OS copy or explicitly stamped on the staged file before publication),
-   because destination mtime is itself the best-date fallback for the imported
-   asset. A destination file whose mtime is the download/copy moment is a
-   fabricated date and a test failure.
+   The fabricated-date rule extends through the copy: an imported file's
+   modification date is **the original capture date, never the import moment**.
+   Concretely, the staged file (which becomes the published file — publication
+   is a rename of the same inode) is stamped before publication with, in
+   precedence order: the embedded local-authority capture time (item 6's
+   cascade) interpreted in the Mac's current zone, else the planned source
+   modification date preserved/stamped verbatim. This matches `gomediaimport`'s
+   `setFileTimes` behavior with defined zone semantics. Reorganization moves
+   never touch modification dates — a renamed original keeps its mtime exactly;
+   reorganization stamps nothing. A destination file whose mtime is the
+   download/copy/reorganization moment is a fabricated date and a test failure.
 
 ### Destination policy and duplicate behavior
 
@@ -76,21 +81,48 @@ These are requirements, not implementation suggestions.
    `YYYYMMDD_HHMMSS`; filename extensions are lowercased consistently with current
    catalog format handling. Same-second/conflicting names receive `_001`, `_002`,
    and so on in natural source-relative-path order.
-   **Date folders and date-time names are derived from the embedded wall-clock
-   timestamp verbatim** — the `year…second` components the camera wrote, exactly
-   as parsed (`CaptureTime` components in MediaMetadata) — never from a UTC
-   instant re-rendered in the Mac's current time zone. Most EXIF timestamps carry
-   no UTC offset (they are floating wall-clock values whose `instant` is `nil`),
-   so instant-based naming would silently fall back to file dates for most
-   photos and would change names when the user travels, breaking idempotence.
-   Formatting the parsed components verbatim is zone-independent, matches
-   `gomediaimport`/exiftool conventions, and applies uniformly: floating EXIF
-   names use camera-local wall time; UTC-anchored video timestamps name by their
-   UTC wall clock (identical to the CLI's behavior); offset-bearing timestamps
-   name by their embedded local wall clock. Only the filesystem-mtime fallback
-   renders an instant, using the user's current calendar/time zone at plan time;
-   the plan records that rendering policy, and mtime-fallback names are
-   documented as not portable across time-zone changes.
+   **Date folders and date-time names represent the local wall-clock time when
+   and where the item was captured — nothing else.** The Mac's time zone is
+   never a naming input for embedded timestamps, and a timestamp known to be
+   UTC-anchored without local-offset information **must not be used** for
+   naming. The cascade, in precedence order:
+   - **Embedded local-authority timestamp, components verbatim.** EXIF
+     `DateTimeOriginal`/`Digitized` are local capture time by specification
+     (floating, no offset — `CaptureTime.precision == .localFloating`), and
+     offset-bearing timestamps (EXIF 2.31 `OffsetTime*`, Apple
+     `com.apple.quicktime.creationdate` ISO 8601 with offset —
+     `.localWithOffset`) carry local components directly. Format the
+     `year…second` components exactly as written; no zone math ever applies.
+   - **UTC-anchored timestamps are excluded entirely.** QuickTime/ISO BMFF
+     container `creation_time` (spec-UTC, and per ExifTool many cameras violate
+     the spec and write unmarked local time, making it unreliable in both
+     directions), GPS timestamps, and GPMF epochs — every
+     `.absolute`-precision candidate — never feed a name or folder. They fall
+     through to the mtime fallback below.
+   - **Source modification date fallback, rendered in the current zone.** For
+     the dominant sources this *reconstructs the camera's local wall clock*:
+     FAT/exFAT store local wall time on disk and the OS derives the epoch using
+     the machine's current offset, so rendering that epoch in the current zone
+     returns the on-card wall time regardless of what zone the Mac is in — the
+     offset cancels. PTP `CaptureDate`/`ModificationDate` strings are likewise
+     local device time (ISO 15740 §5.3.4.1; suffix-less means "zone
+     unspecified") parsed through the same current-zone lens. A camcorder video
+     whose only embedded date is the unreliable UTC atom therefore names
+     correctly from its card mtime — the camera wrote it in local time. The
+     narrow residual: sources on epoch-native filesystems (an APFS-formatted
+     external drive, network volumes) render differently after the Mac changes
+     zones; this is the one documented zone-sensitive case.
+   **Same-directory, same-stem eligible media form one naming bundle.** A
+   RAW+JPEG pair (`IMG_1.CR3` + `IMG_1.JPG`) and a Live Photo pair
+   (`IMG_2.HEIC` + `IMG_2.MOV`) are one shot: the bundle derives a single
+   naming timestamp from its highest-precedence local-authority member (the
+   photo's EXIF when the video side has only a UTC atom), all members share the
+   stem, directory, and any collision suffix, and paired companions follow the
+   bundle stem. Without bundling, a Live Photo's MOV falling back to mtime
+   could land a different second than its HEIC and split the pair, and
+   mixed-burst suffix ladders could pair `_002.cr3` with `_003.jpg` from a
+   different shot. Same-stem-same-directory is treated as one capture; this is
+   a documented simplification matching Lightroom's stem grouping.
 7. Import duplicate classification applies only when a planned destination
    candidate already exists. Equal byte size is a cheap gate; exact equality is
    then proved by an on-demand content comparison. An unreadable/detached/provider-
@@ -116,10 +148,13 @@ These are requirements, not implementation suggestions.
    contents, and settings, repeating plan plus execute creates no additional
    destination files and no new import-batch timestamps. It may only finish
    durable settlement, requested source cleanup, or eject left pending by an
-   interrupted earlier execution. Because embedded-dated media names from the
-   wall clock verbatim (item 6), idempotence for embedded-dated media holds
-   across Mac time-zone changes; only mtime-fallback names are zone-sensitive,
-   and that boundary is documented and tested.
+   interrupted earlier execution. Naming is zone-independent for embedded-dated
+   media (components verbatim) **and** for mtime-fallback media on FAT/exFAT
+   cards and PTP sources (local wall time is the on-disk invariant; the
+   current-zone rendering cancels the offset), so idempotence holds across Mac
+   time-zone changes for the dominant cases. The residual zone-sensitive case —
+   mtime fallback on epoch-native source filesystems — is documented and
+   tested.
 
 ### Sidecars, cleanup, and history
 
@@ -439,11 +474,14 @@ CREATE INDEX idx_media_asset_import_batch
 ON media_asset(import_batch_unix_ms, library_root_id, relative_path)
 WHERE import_batch_unix_ms IS NOT NULL;
 
--- Embedded capture wall clock for date naming (contract item 6). Compact
--- YYYYMMDDHHMMSS integer (e.g. 20260101120000) selected by enrichment with the
--- same role precedence as the instant columns (original → quickTimeCreation →
--- digitized → gps); precision records localWithOffset / localFloating /
--- absolute for diagnostics and tests. NULL means "no embedded timestamp" and
+-- Embedded LOCAL capture wall clock for date naming (contract item 6). Compact
+-- YYYYMMDDHHMMSS integer (e.g. 20260101120000) selected by enrichment from
+-- local-authority candidates only (precision localFloating or localWithOffset),
+-- role precedence original → digitized → quickTimeCreation →
+-- quickTimeContentCreate. UTC-anchored candidates (.absolute: container
+-- creation_time, GPS, GPMF epochs) are NEVER selected — a UTC wall clock is not
+-- the local capture time. Precision records localWithOffset / localFloating
+-- for diagnostics and tests. NULL means "no embedded local timestamp" and
 -- naming falls back to source mtime.
 ALTER TABLE media_asset
 ADD COLUMN capture_wall_compact INTEGER;
@@ -477,6 +515,10 @@ CREATE TABLE active_file_operation (
     import_batch_unix_ms INTEGER,
     source_byte_size INTEGER NOT NULL,
     source_modified_at DOUBLE NOT NULL,
+    -- Planned destination mtime stamp (capture-derived or source mtime;
+    -- contract item 5). Recovery/settlement verify the published file
+    -- against this, never against "now".
+    destination_modified_at DOUBLE,
     phase TEXT NOT NULL,
     delete_source_requested INTEGER NOT NULL,
     updated_at DOUBLE NOT NULL
@@ -646,12 +688,23 @@ keep them coherent.** The instant columns (`ts_original_unix` and siblings) are
 UTC instants and are NULL for floating EXIF timestamps (no offset in the file) —
 which is most photos — so `best_capture_unix` already sorts most photos by file
 dates. That is a known, accepted sorting behavior and this plan does not change
-it. Naming, however, must use `capture_wall_compact` (section 4.2): the embedded
-wall clock verbatim per contract item 6. The two can disagree for one asset
-(named into `2025/12` by camera wall clock, sorted/displayed by a January file
-date); this is documented, expected, and preferable to naming by copy mtimes.
-Promoting floating wall clocks into the app-wide sort/display best date is a
-separate future ADR, explicitly out of this plan's scope.
+it: UTC-anchored instants are fine for *ordering*, they are only forbidden as
+*naming* inputs. Naming must use `capture_wall_compact` (section 4.2): the
+embedded local wall clock verbatim per contract item 6, with UTC-anchored
+candidates excluded from selection. The two can disagree for one asset (named
+into `2025/12` by camera wall clock, sorted/displayed by a January file date);
+this is documented, expected, and preferable to naming by copy mtimes or by a
+zone-shifted UTC render. Promoting floating wall clocks into the app-wide
+sort/display best date is a separate future ADR, explicitly out of this plan's
+scope.
+
+For deviceMTP sources, plan readiness does not require byte-reading enrichment
+to obtain dates: PTP `CaptureDate`/`ModificationDate` are local device time by
+specification (ISO 15740 §5.3.4.1), the same trust level as floating EXIF, and
+ImageCapture surfaces them at enumeration without downloading. Camera items are
+therefore date-ready from enumeration; a later byte-read enrichment that refines
+the embedded local timestamp is an ordinary planning-input change that replans.
+This keeps camera plan-readiness from requiring a full-card staging download.
 
 ### 4.5 MediaMetadata library requirements
 
@@ -668,11 +721,32 @@ the Otos stage that consumes them (Stage A for the first two):
    library contract tests asserting components/precision for: floating EXIF,
    offset-bearing EXIF, GPS-anchored, QuickTime UTC epoch, and GPMF epoch
    fixtures. Pin the Otos dependency to the release that carries these tests.
-2. **Documented instant semantics (required, Stage A).** Document in the library
-   API that `instant` is `nil` for `localFloating` by design, and that callers
-   needing calendar behavior (naming, foldering) must consume components, not
-   instants. This is the contract Otos's enrichment and planner build on.
-3. **EXIF sub-second components (optional, deferred).** `SubSecTimeOriginal`
+2. **Capture-local accessor (required, Stage A).** Add
+   `CaptureTime.captureLocalComponents: CaptureDateComponents?` (or equivalent)
+   returning wall-clock components **only** when precision is `localFloating`
+   or `localWithOffset`, and `nil` for `absolute` — so a caller cannot mistake
+   a UTC wall clock for local capture time. A UTC-anchored timestamp without a
+   local offset is not the time "when and where the item was captured" and must
+   be structurally unusable for calendar naming.
+3. **Local-preferring role selection (required, Stage A).**
+   `CaptureTimestamps` currently exposes the *first parsed candidate* per role;
+   a UTC-anchored candidate (e.g., a GoPro GPMF epoch recorded under
+   `quickTimeCreationDate`) can shadow a local-authority candidate of the same
+   role (e.g., Apple's `com.apple.quicktime.creationdate` with offset). Role
+   selection must prefer local-authority candidates within each role (or the
+   library must additionally expose all candidates so callers can). Add fixture
+   tests for the shadowing case.
+4. **Documented per-spec timestamp semantics (required, Stage A).** Document on
+   the API what each source means by specification: EXIF `DateTimeOriginal` is
+   local capture time (CIPA DC-008; offset only via EXIF 2.31 `OffsetTime*`);
+   QuickTime/ISO BMFF container `creation_time` is UTC per spec **and**
+   frequently violated by cameras writing unmarked local time (ExifTool's
+   `QuickTimeUTC` option exists precisely because of this), which is why it is
+   classified `absolute` and excluded from capture-local use; GPS time is UTC;
+   PTP DateTime strings are local device time with an optional `Z`/`±hhmm`
+   suffix (ISO 15740 §5.3.4.1). Document that `instant` is `nil` for
+   `localFloating` by design and that calendar consumers must use components.
+5. **EXIF sub-second components (optional, deferred).** `SubSecTimeOriginal`
    exposure would reduce same-second suffix collisions. Not required for this
    plan; record as a library roadmap item only.
 
@@ -830,8 +904,11 @@ For each source:
 
 1. no fixed library/mapping → `.waitingForDestination`;
 2. inventory active → `.inventory`;
-3. inventory complete but any media is not enriched to a definitive best date →
-   `.waitingForMetadata(done:total:)`;
+3. inventory complete but any media lacks a definitive date fact →
+   `.waitingForMetadata(done:total:)`. For filesystem sources the definitive
+   fact is enrichment's embedded-metadata read; for deviceMTP sources the PTP
+   capture/modification dates delivered at enumeration already satisfy it
+   (section 4.4), so cameras do not wait for byte-reading enrichment to plan;
 4. all inputs ready → capture one immutable source+destination snapshot and
    revisions, set `.planning`, invoke the pure planner;
 5. after every awaited equality check/planner phase, refetch scalar revisions;
@@ -890,15 +967,19 @@ destinations. When date-time naming is enabled, sort primarily by best date and
 then natural relative path. Do not use enrichment completion order, SQLite rowid,
 or dictionary iteration.
 
-For each media:
+Group same-directory same-stem eligible media into naming bundles first
+(contract item 6); a bundle takes one timestamp, one stem, and one suffix
+decision for all members and their companions. Then, for each bundle:
 
 1. derive directory (`destination root` or `root/YYYY/MM`) from the same
    timestamp fact as the basename;
-2. derive basename per contract item 6: when `capture_wall_compact` is present,
-   format those embedded wall-clock components verbatim as `YYYYMMDD_HHMMSS` —
-   no zone conversion, no instant rendering; when absent, render the source
-   mtime in the user's current calendar/zone at plan time and record that
-   rendering policy in the plan;
+2. derive the bundle timestamp per contract item 6: the highest-precedence
+   `capture_wall_compact` among members — embedded **local** wall-clock
+   components formatted verbatim as `YYYYMMDD_HHMMSS`, no zone conversion, no
+   instant rendering, UTC-anchored candidates never eligible; when no member
+   has one, render the primary member's source mtime in the current
+   calendar/zone at plan time (which reconstructs camera-local wall time for
+   FAT/exFAT/PTP sources) and record that rendering policy in the plan;
 3. normalize extension (lowercase; contract item 6 — deliberately *not*
    `gomediaimport`'s canonical-extension rewrite such as `.jpeg → .jpg`, so an
    original-name import never changes an extension's spelling beyond case) and
@@ -910,8 +991,10 @@ For each media:
    `FilesystemNamespaceSemantics` (one `lstat`-scale observation per candidate),
    and planning resumes with typed results. Known-foreign-occupant facts recorded
    by a failed publication (section 6.4) join this occupancy set;
-5. apply the operation-mode collision policy below;
-6. reserve the final media and companion destinations together (bundle
+5. apply the operation-mode collision policy below; a collision on any member's
+   full path advances the entire bundle to the next suffix so members never
+   desynchronize stems;
+6. reserve every member and companion destination together (bundle
    reservation; section 5);
 7. emit summary counts/bytes from dispositions, not a second pass over filesystem.
 
@@ -1010,9 +1093,9 @@ Property/fixture tests must assert:
 - changing one source file changes only its necessary reservation chain;
 - attaching the same stable source at a different mount path does not change
   source-relative deterministic names;
-- embedded-dated media plans identical names under two different simulated Mac
-  time zones (wall-clock verbatim); mtime-fallback names differ and are the
-  documented exception;
+- embedded-dated media and FAT/PTP mtime-fallback media plan identical names
+  under two different simulated Mac time zones; only epoch-native-source mtime
+  fallback differs and is the documented exception;
 - a foreign (non-catalog) occupant at a candidate path yields the next suffix at
   plan time, and a publication `EEXIST` feeds the recorded occupant into the next
   plan so the same failing candidate is never chosen twice.
@@ -1095,13 +1178,21 @@ For each `.copy` entry:
    originals in an opaque long-lived vault;
 5. insert `active_file_operation(phase = copying)` before bytes move;
 6. coordinate and copy to staging with `copyfile(3)` (progress callback for byte
-   progress and mid-file cancellation), or ImageCapture download for camera
-   items;
-7. verify/stamp the staged file's timestamps: its modification date must equal
-   the planned source modification date (contract item 5). `copyfile` with
-   `COPYFILE_ALL` preserves it for filesystem sources; ImageCapture downloads
-   have no documented mtime contract, so probe on real hardware in Stage F and
-   stamp explicitly whenever the staged mtime differs from planned source facts;
+   progress and mid-file cancellation). Camera items reuse bytes already staged
+   by enrichment (`DeviceStagingRegistry`) when present and matching planned
+   facts — move/clone the local staged copy instead of a second device
+   download, the retired engine's proven staging-reuse optimization — and
+   otherwise download via ImageCapture;
+7. stamp the staged file's modification date per contract item 5: the embedded
+   local-authority capture time (interpreted in the current zone) when the
+   entry has one, else the planned source modification date. `copyfile` with
+   `COPYFILE_ALL` preserves source mtime for filesystem copies, so the
+   no-metadata case is usually a verify, not a write; ImageCapture downloads
+   have no documented mtime contract (probe on real hardware in Stage F) and
+   are stamped explicitly. Record the stamped value in the journal row
+   (`destination_modified_at`) so recovery and settlement verify the same fact.
+   Publication is a rename of this same inode, so this staged stamp *is* the
+   imported file's mtime — there is no second stamping step;
 8. on OS success, transactionally set phase `readyToPublish`;
 9. publish staging to the final absent URL using the exclusive-publication
    ladder (section 8.1); then set phase `publishedPendingSettlement`. On
@@ -1314,8 +1405,11 @@ Algorithm:
 
 1. Read one immutable Store snapshot containing every in-scope media/companion,
    current namespace key, volume identifier, size/mtime, and ideal logical target.
-2. Derive the exact target for every physical member. Companion targets follow the
-   primary's final directory and basename before any graph construction.
+2. Derive the exact target for every physical member. Naming bundles from
+   section 7.1 apply identically in reorganization: same-directory same-stem
+   media members share one timestamp, stem, and suffix decision. Companion
+   targets follow the bundle's final directory and basename before any graph
+   construction.
 3. Mark only exact same-spelling media/companion paths as no-op.
 4. Reserve final lookup keys globally. When two planned members want the same key,
    deterministically suffix the later logical media bundle; recalculate and reserve
@@ -1554,6 +1648,10 @@ termination is tested at both sides of every durable phase transition.
 - Same-volume moves must preserve extended attributes, resource forks, sparse-file
   representation, and hard-link relationships according to OS move semantics;
   integration fixtures inspect these where the filesystem supports them.
+- Reorganization never modifies modification dates: a rename leaves mtime
+  untouched by OS semantics, and the executor performs no stamping of any kind
+  (contract item 5). A fixture asserts every relocated file's mtime is
+  byte-for-byte identical before and after the component.
 
 ### 9.10 Volume and provider boundaries
 
@@ -1789,11 +1887,18 @@ Performance evidence:
 ### Pure planner tests (`MediaTransferPlannerTests.swift`)
 
 - four folder/name policy combinations;
-- wall-clock verbatim naming: floating EXIF names by camera wall clock, UTC
-  video timestamps name by UTC wall clock, offset-bearing timestamps by embedded
-  local; identical names under two simulated Mac time zones;
-- mtime fallback and no synthetic date; mtime-fallback zone sensitivity is pinned
-  as the documented exception;
+- capture-local naming cascade: floating EXIF names by camera wall clock
+  verbatim; offset-bearing timestamps by embedded local wall clock; **every
+  `.absolute` candidate (container creation_time, GPS, GPMF) is excluded from
+  naming** and the entry falls to the mtime fallback; identical names under two
+  simulated Mac time zones for embedded-dated media;
+- mtime fallback and no synthetic date; FAT/PTP wall-time invariance across
+  simulated zone changes (offset cancels), epoch-native-source zone sensitivity
+  pinned as the documented exception;
+- naming bundles: RAW+JPEG and photo+MOV same-stem pairs share timestamp, stem,
+  directory, and suffix; a video-only UTC atom inherits the photo member's EXIF
+  wall clock; a member collision advances the whole bundle; mixed bursts never
+  desynchronize pair stems;
 - natural deterministic same-second suffixes;
 - existing equal/different/unreadable candidates;
 - foreign-occupant probe results (symlink/directory/foreign file/recorded
@@ -1886,9 +1991,12 @@ Performance evidence:
 - publication `EEXIST` records the foreign occupant and the next plan avoids the
   candidate;
 - successful copy is not reopened for verification;
-- staged file's mtime equals the planned source mtime for filesystem copies and
-  (after Stage F stamping) camera downloads — a destination file dated "now"
-  fails the test;
+- staged/published file's mtime equals the journaled `destination_modified_at`
+  (embedded capture time when available, else planned source mtime) for
+  filesystem copies and (after Stage F stamping) camera downloads — a
+  destination file dated "now" fails the test;
+- camera import reuses matching enrichment-staged bytes without a second device
+  download and falls back to download when staging is absent or stale;
 - mid-file cancellation via the copy progress callback removes staging and stops
   promptly on a large fixture;
 - source size/mtime race fails before copy;
@@ -1958,8 +2066,9 @@ available. Do not require the user to operate the app.
 
 Branch: `refactor/import-persistence-foundation`
 
-Prerequisite: land the MediaMetadata wall-clock contract release (section 4.5
-items 1–2) and pin Otos to it.
+Prerequisite: land the MediaMetadata capture-local release (section 4.5 items
+1–4: wall-clock contract, `captureLocalComponents` accessor, local-preferring
+role selection, per-spec documentation) and pin Otos to it.
 
 - replace the destructive schema reset policy — **both** erase paths (section
   4.1), with the defined future-schema refusal UX;
@@ -2064,9 +2173,10 @@ cancel aborts promptly with byte progress visible.
 Branch: `feat/camera-import-cleanup`
 
 - adapt ImageCapture downloads to the same journal/settlement phases, with the
-  ICCameraFile-facts revalidation guard replacing the stat guard;
+  ICCameraFile-facts revalidation guard replacing the stat guard, and
+  enrichment-staging byte reuse before any second device download;
 - probe download mtime behavior on real hardware; stamp staged camera files
-  whenever the OS/device does not preserve the planned date (contract item 5);
+  with the capture-derived `destination_modified_at` (contract item 5);
 - implement per-item `.blocked(.noUsableDate)` execution semantics: unblocked
   entries import, cleanup/eject withheld while any blocked entry exists;
 - implement explicit source deletion for filesystem and camera sources (device

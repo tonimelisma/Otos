@@ -33,10 +33,92 @@ filesystem dates. Consequences:
   wall time for EXIF, UTC wall time for bare QuickTime `creation_time`.
 
 Conclusion adopted by the plan (contract item 6, sections 4.2/4.4/4.5, planner
-7.1): format the parsed wall-clock components verbatim; persist a compact
-`capture_wall_compact` scalar chosen by the existing role precedence; backfill
-from stored metadata JSON; only the mtime fallback renders a zone. MediaMetadata
-needs a stated/test-pinned contract, not a parser rewrite.
+7.1): names and date folders represent the **local capture time only**. Format
+parsed local-authority wall-clock components verbatim (`localFloating` /
+`localWithOffset`); persist a compact `capture_wall_compact` scalar selected
+from local-authority candidates only; backfill from stored metadata JSON; only
+the mtime fallback renders a zone. **UTC-anchored timestamps
+(`precision == .absolute`) are excluded from naming entirely** — a UTC wall
+clock without a local offset is not the time where the item was captured (owner
+directive 2026-07-10). MediaMetadata needs a stated/test-pinned contract, a
+capture-local accessor that returns `nil` for absolute candidates, and
+local-preferring role selection (a GPMF UTC epoch can currently shadow an Apple
+local `creationdate` under the same `quickTimeCreationDate` role because
+`CaptureTimestamps` takes the first parsed candidate per role).
+
+### 1a. QuickTime container `creation_time` is unreliable in both directions
+
+The QTFF/ISO 14496-12 specification stores container creation/modification
+times as UTC, but ExifTool documents that "digital cameras often store local
+time values instead (presumably because they don't know the time zone)," which
+is why its `QuickTimeUTC` conversion is off by default. The atom is therefore
+untrustworthy for local capture time whether or not the spec is honored:
+spec-honoring files need a zone Otos does not have, and spec-violating files
+carry unmarked local time indistinguishable from UTC. Excluding it from naming
+and falling back to the card mtime (which the camera wrote in local time — see
+1b) is strictly more reliable.
+
+Source: [ExifTool QuickTime tags](https://exiftool.sourceforge.net/TagNames/QuickTime.html)
+
+### 1b. mtime fallback semantics: FAT/exFAT and PTP preserve local wall time
+
+FAT stores pure local wall time on disk; exFAT stores local time plus an
+optional 15-minute-granularity UTC offset field whose validity bit cameras
+generally do not set (and whose handling is inconsistent across OS drivers per
+the forensics literature). OS drivers (macOS msdosfs, Linux vfat) derive the
+epoch by applying the *machine's current* offset. Rendering that epoch back in
+the machine's current zone therefore reconstructs the on-card wall time
+regardless of what zone the Mac is in — the offset cancels. PTP
+`CaptureDate`/`ModificationDate` are DateTime strings in local device time
+(ISO 15740 §5.3.4.1: optional `Z`/`±hhmm` suffix; "appending neither indicates
+the time zone is unspecified"), parsed through the same current-zone lens by
+ImageCaptureCore. Consequences:
+
+- The earlier claim that mtime-fallback names "break idempotence across time
+  zones" was **overbroad**: for FAT/exFAT cards and PTP sources — the dominant
+  cases — wall time is the on-disk invariant and current-zone rendering is
+  stable across Mac zone changes.
+- The narrow residual zone-sensitive case is an epoch-native source filesystem
+  (APFS external drive, network volume), plus a minor DST edge (kernel
+  conversion uses a single current offset while Foundation applies historical
+  DST rules for the file's date).
+
+Sources:
+
+- [exFAT specification (UtcOffset fields)](https://learn.microsoft.com/en-us/windows/win32/fileio/exfat-specification)
+- [exFAT timestamp handling inconsistencies across OSes](https://www.sciencedirect.com/science/article/pii/S2666281722001573)
+- [Linux vfat local-time conversion / tz=UTC option](https://lwn.net/Articles/287428/)
+- [PIMA/ISO 15740 PTP spec §5.3.4.1 DateTime string](https://people.ece.cornell.edu/land/courses/ece4760/FinalProjects/f2012/jmv87/site/files/pima15740-2000.pdf)
+
+### 1c. PTP CaptureDate/ModificationDate are optional
+
+ISO 15740 defines both ObjectInfo date fields as optional ("CaptureDate: A
+static optional field… ModificationDate: An optional field…"), so a
+spec-conforming device may deliver dateless items; current Otos code already
+observes zero/invalid values (`validCameraDate` rejects ~epoch-zero). This is
+why the per-item `.blocked(.noUsableDate)` path exists even though filesystem
+sources always have an mtime; in practice the case is rare.
+
+### 1d. Naming bundles (RAW+JPEG, Live Photos)
+
+RAW+JPEG pairs and Live Photo HEIC+MOV pairs share a directory and stem on
+camera media and represent one shot. Without bundling, a MOV whose only
+embedded date is the unreliable UTC atom would take the mtime fallback and
+could land a different second than its HEIC (splitting the pair), and
+mixed-burst suffix ladders could pair `_002.cr3` with `_003.jpg` from a
+different shot. The plan groups same-directory same-stem eligible media into
+one naming bundle sharing timestamp, stem, and suffix, with companions
+following the bundle — Lightroom-consistent stem grouping.
+
+### 1e. Imported-file mtime policy
+
+Imported files' mtimes are the original capture date, never the import moment
+(owner directive 2026-07-10): stamp the staged file (publication is a rename of
+the same inode) with the embedded local-authority capture time interpreted in
+the current zone when available, else preserve the planned source mtime — the
+defined-zone version of `gomediaimport`'s `setFileTimes`. The stamped value is
+journaled (`destination_modified_at`). Reorganization renames never touch
+mtimes and the executor stamps nothing.
 
 ## 2. `FileManager.moveItem` no-overwrite is not atomic; `renamex_np(RENAME_EXCL)` is
 
@@ -72,12 +154,14 @@ dates for filesystem copies (see finding 4).
 
 Because destination mtime is the best-date fallback for imported assets
 (contract item 5), a copy path that stamps "now" fabricates a date. Both
-reference implementations preserved timestamps explicitly (`gomediaimport
-setFileTimes`; retired `preserveTimestamps` on the staged file before finalize).
+reference implementations set timestamps explicitly (`gomediaimport
+setFileTimes` stamps the extracted capture datetime; the retired engine's
+`preserveTimestamps` copied source times onto the staged file before finalize).
 `copyfile(COPYFILE_ALL)` preserves mtime for filesystem sources; **ImageCapture
 `requestDownload` has no documented mtime contract** and must be probed on real
-hardware (Stage F), with explicit stamping of the staged file whenever the
-downloaded mtime differs from planned source facts.
+hardware (Stage F). Per finding 1e the plan goes further than preservation:
+imported files are stamped with the embedded capture time when available, else
+the source mtime.
 
 ## 5. WAL + `synchronous=NORMAL` is app-crash durable, not power-loss durable
 
@@ -177,8 +261,12 @@ destination revision bump (e.g., one cloud-sync write), so convergence is not
 guaranteed on active cloud destinations. Plan section 7.3 adds an ephemeral
 in-memory cross-generation memo keyed by both sides' `(path, size, mtime)` and
 the section 11 re-attach fixture measures total comparison bytes and memo hit
-rate. Plan readiness remains enrichment-gated (the source is read once for
-metadata/thumbnails before the copy reads it again); this cost is accepted for
-the first release and measured via the new `op=mediaOperation.readiness`
-instrumentation, with a metadata-first readiness split as the designated
-follow-up if it dominates.
+rate. Plan readiness remains enrichment-gated for filesystem sources (the
+source is read once for metadata/thumbnails before the copy reads it again);
+this cost is accepted for the first release and measured via the new
+`op=mediaOperation.readiness` instrumentation, with a metadata-first readiness
+split as the designated follow-up if it dominates. Camera (deviceMTP) sources
+are exempt: PTP capture/modification dates arrive at enumeration without
+downloads (finding 1b), so camera plan readiness never requires staging the
+card, and import execution reuses enrichment-staged bytes when present instead
+of a second device download (the retired engine's staging-reuse optimization).
