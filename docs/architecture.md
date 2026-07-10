@@ -43,7 +43,7 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
 | `EnrichmentCoordinator` | actor | two worker pools (enrich local / download cloud), in-flight tracking, claim leases | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, dataless materialization gate, per-id coalesce + small LRU | serializes decode/cache state; byte reads off the actor |
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.

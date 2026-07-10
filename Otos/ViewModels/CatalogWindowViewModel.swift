@@ -122,6 +122,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
     @ObservationIgnored var gridTelemetryTask: Task<Void, Never>?
+    /// One owned pane-preview request (or downloading retry) per slot. Superseded
+    /// requests cancel before enqueueing another full-size decode.
+    @ObservationIgnored var paneRequestTasks: [PaneSlot: Task<Void, Never>] = [:]
     @ObservationIgnored private var hasStarted = false
     @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
@@ -204,6 +207,10 @@ final class CatalogWindowViewModel {
         }
         deviceCatalogTasks.removeAll()
         gridTelemetryTask?.cancel()
+        for task in paneRequestTasks.values {
+            task.cancel()
+        }
+        paneRequestTasks.removeAll()
         queryContinuation.finish()
         mutationContinuation.finish()
         viewportContinuation.finish()
@@ -344,7 +351,7 @@ extension CatalogWindowViewModel {
         store: CatalogStore,
         initialRequest: CatalogQueryRequest
     ) {
-        stateConsumptionTask = Task { [weak self, projection, store, initialRequest] in
+        stateConsumptionTask = Task(priority: .userInitiated) { [weak self, projection, store, initialRequest] in
             let signpost = OtosSignpost.ui.beginInterval("CatalogWindowStateStream")
             let states = await projection.states(
                 store: store,
