@@ -19,6 +19,7 @@ extension MediaGridViewController {
         let animatingDifferences: Bool
         let animationSuppressed: Bool
         let usesReloadDataFallback: Bool
+        let heldDuringScroll: Bool
         let signpost: OSSignpostIntervalState
     }
 
@@ -74,6 +75,7 @@ extension MediaGridViewController {
             animatingDifferences: summary.animatingDifferences,
             animationSuppressed: animationSuppressed,
             usesReloadDataFallback: summary.usesReloadDataFallback,
+            heldDuringScroll: mutationGate.lastDrainedHeldDuringScroll,
             signpost: signpost
         )
         let completion = { [weak self, operation, stallMonitor, context] in
@@ -239,6 +241,7 @@ extension MediaGridViewController {
             largeApply=\(context.largeApply, privacy: .public) \
             animating=\(context.animatingDifferences, privacy: .public) \
             animationSuppressed=\(context.animationSuppressed, privacy: .public) \
+            heldDuringScroll=\(context.heldDuringScroll, privacy: .public) \
             reloadDataFallback=\(context.usesReloadDataFallback, privacy: .public) \
             visibleDetailRequestCount=\(visibleDetailRequestCount, privacy: .public) \
             preheatCount=\(preheatCount, privacy: .public) \
@@ -271,6 +274,7 @@ extension MediaGridViewController {
                 "largeApply": "\(context.largeApply)",
                 "animatingDifferences": "\(context.animatingDifferences)",
                 "animationSuppressed": "\(context.animationSuppressed)",
+                "heldDuringScroll": "\(context.heldDuringScroll)",
                 "reloadDataFallback": "\(context.usesReloadDataFallback)",
                 "visibleDetailRequestCount": "\(visibleDetailRequestCount)",
                 "preheatCount": "\(preheatCount)",

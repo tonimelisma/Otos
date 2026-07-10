@@ -14,7 +14,10 @@ import Foundation
 /// currently installed count converges to "no swap" because the drain compares
 /// requested-vs-installed at drain time and never keeps a stashed command; and a grid
 /// state arriving mid-zoom parks as `pendingGrid` because `receive` checks `inFlight` for
-/// *any* mutation kind, not just a structural apply.
+/// *any* mutation kind, not just a structural apply. Live scrolling sets `scrollHold` so
+/// same-descriptor grids park as newest-wins pending until quiet; descriptor-changed
+/// grids bypass the hold (user context change). `drain` runs only when both `inFlight`
+/// and `scrollHold` are clear. Zoom swaps ignore the hold — they are user intents.
 ///
 /// Column state lives here as exactly two values — `installedColumnCount` (what the
 /// layout currently shows) and `requestedColumnCount` (the newest requested value,
@@ -93,13 +96,22 @@ final class MediaGridMutationGate {
     /// there is never a stale separate request to drain.
     private(set) var requestedColumnCount: Int
     private(set) var inFlight: InFlight = .none
+    /// True while scroll-bounds ticks are recent. Same-descriptor grids park;
+    /// descriptor-changed grids bypass. Cleared by `endScrollHold` after quiet.
+    private(set) var scrollHold = false
     private var pendingGrid: CatalogMediaGridState?
+    /// Set when a grid is parked because of `scrollHold` (not merely in-flight).
+    /// Consumed when that pending grid is drained into an apply/refresh.
+    private var pendingHeldDuringScroll = false
+    /// Last drained pending grid was held for live scroll — for apply diagnostics.
+    private(set) var lastDrainedHeldDuringScroll = false
 
     /// Scalar gate facts for stall correlation — no grid payload retained.
     var stallDiagnosticFields: [String: String] {
         [
             "inFlightExclusive": inFlight.diagnosticDescription,
             "pendingGrid": pendingGrid == nil ? "false" : "true",
+            "scrollHold": scrollHold ? "true" : "false",
         ]
     }
 
@@ -108,15 +120,46 @@ final class MediaGridMutationGate {
         requestedColumnCount = columnCount
     }
 
-    /// A new background grid state. While any mutation is in flight the newest grid wins
-    /// (only the latest survives as `pendingGrid`); otherwise it is evaluated immediately.
+    /// A new background grid state. While any exclusive mutation is in flight, or while
+    /// live scroll is holding same-descriptor adoption, the newest grid wins as
+    /// `pendingGrid`. Descriptor-changed grids bypass scroll hold (not in-flight).
     func receive(_ grid: CatalogMediaGridState) -> [Action] {
-        guard inFlight == .none else {
+        let descriptorChanged = grid.descriptor != displayedDescriptor
+        var shouldPark = inFlight != .none
+        if !shouldPark, scrollHold, !descriptorChanged {
+            shouldPark = true
+        }
+        if shouldPark {
             let replacedExisting = pendingGrid != nil
             pendingGrid = grid
+            if scrollHold, !descriptorChanged {
+                pendingHeldDuringScroll = true
+            }
             return [.pending(replacedExisting: replacedExisting)]
         }
+        // Descriptor-changed adoption bypasses hold; drop any same-descriptor
+        // park so quiet drain cannot re-apply a pre-change enrichment reorder.
+        if descriptorChanged {
+            pendingGrid = nil
+            pendingHeldDuringScroll = false
+        }
+        lastDrainedHeldDuringScroll = false
         return [idleGridAction(grid)]
+    }
+
+    /// Controller: call on every scroll-bounds tick. Parks same-descriptor adoption.
+    func beginScrollHold() {
+        scrollHold = true
+    }
+
+    /// Controller: call after scroll quiet. Clears the hold and drains parked work
+    /// when no exclusive mutation is in flight.
+    func endScrollHold() -> [Action] {
+        scrollHold = false
+        guard inFlight == .none else {
+            return []
+        }
+        return drain()
     }
 
     /// A new requested column count from any zoom surface. The newest request is the only
@@ -144,6 +187,9 @@ final class MediaGridMutationGate {
         displayedOrderedIDSet = Set(grid.orderedAssetIDs)
         displayedDescriptor = grid.descriptor
         inFlight = .none
+        guard !scrollHold else {
+            return []
+        }
         return drain()
     }
 
@@ -154,6 +200,9 @@ final class MediaGridMutationGate {
     func completeZoomSwap(installed: Int) -> [Action] {
         installedColumnCount = installed
         inFlight = .none
+        guard !scrollHold else {
+            return []
+        }
         return drain()
     }
 
@@ -181,9 +230,14 @@ final class MediaGridMutationGate {
     /// apply's own completion drains again. A same-identity parked grid is a cheap
     /// `refreshVisible` that can precede a trailing zoom swap in the same drain.
     private func drain() -> [Action] {
+        guard !scrollHold else {
+            return []
+        }
         var actions: [Action] = []
         if let grid = pendingGrid {
             pendingGrid = nil
+            lastDrainedHeldDuringScroll = pendingHeldDuringScroll
+            pendingHeldDuringScroll = false
             let action = idleGridAction(grid)
             if case .apply = action {
                 return [action]

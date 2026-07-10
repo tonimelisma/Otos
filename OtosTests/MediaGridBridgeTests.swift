@@ -62,6 +62,92 @@ struct MediaGridBridgeTests {
         )
     }
 
+    // MARK: - Scroll hold
+
+    @Test func scrollHoldParksSameDescriptorAndDrainsNewestOnRelease() {
+        let gate = MediaGridMutationGate()
+        let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.completeStructuralApply(applied: first) == [])
+
+        gate.beginScrollHold()
+        let intermediate = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
+        let newest = makeGrid(scope: .allMedia, paths: ["c.jpg"])
+        #expect(gate.receive(intermediate) == [.pending(replacedExisting: false)])
+        #expect(gate.receive(newest) == [.pending(replacedExisting: true)])
+        #expect(gate.scrollHold)
+        #expect(gate.endScrollHold() == [.apply(newest, descriptorChanged: false)])
+        #expect(!gate.scrollHold)
+        #expect(gate.lastDrainedHeldDuringScroll)
+    }
+
+    @Test func scrollHoldBypassesDescriptorChangedAndClearsParkedPending() {
+        let gate = MediaGridMutationGate()
+        let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        #expect(gate.receive(allMedia) == [.apply(allMedia, descriptorChanged: false)])
+        #expect(gate.completeStructuralApply(applied: allMedia) == [])
+
+        gate.beginScrollHold()
+        let parked = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
+        #expect(gate.receive(parked) == [.pending(replacedExisting: false)])
+
+        // Same IDs + new scope is refreshVisible (not apply); still bypasses hold.
+        let library = makeGrid(
+            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
+            paths: ["a.jpg"]
+        )
+        #expect(
+            gate.receive(library)
+                == [.refreshVisible(library, resetScroll: true, resetSelection: true)]
+        )
+        #expect(gate.endScrollHold() == [])
+        #expect(!gate.lastDrainedHeldDuringScroll)
+
+        // Different IDs + new scope still bypasses as an immediate apply.
+        gate.beginScrollHold()
+        let parkedAgain = makeGrid(
+            scope: .library(LibraryRootPath(rawValue: "/Pictures")),
+            paths: ["a.jpg", "extra.jpg"]
+        )
+        #expect(gate.receive(parkedAgain) == [.pending(replacedExisting: false)])
+        let otherLibrary = makeGrid(
+            scope: .library(LibraryRootPath(rawValue: "/Other")),
+            paths: ["z.jpg"]
+        )
+        #expect(gate.receive(otherLibrary) == [.apply(otherLibrary, descriptorChanged: true)])
+        #expect(gate.endScrollHold() == [])
+    }
+
+    @Test func scrollHoldDuringInFlightKeepsNewestWinsUntilBothClear() {
+        let gate = MediaGridMutationGate()
+        let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+
+        gate.beginScrollHold()
+        let intermediate = makeGrid(scope: .allMedia, paths: ["b.jpg"])
+        let newest = makeGrid(scope: .allMedia, paths: ["c.jpg"])
+        #expect(gate.receive(intermediate) == [.pending(replacedExisting: false)])
+        #expect(gate.receive(newest) == [.pending(replacedExisting: true)])
+
+        #expect(gate.completeStructuralApply(applied: first) == [])
+        #expect(gate.scrollHold)
+        #expect(gate.endScrollHold() == [.apply(newest, descriptorChanged: false)])
+        #expect(gate.lastDrainedHeldDuringScroll)
+    }
+
+    @Test func zoomSwapIgnoresScrollHold() {
+        let gate = MediaGridMutationGate(columnCount: 6)
+        let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
+        #expect(gate.receive(base) == [.apply(base, descriptorChanged: false)])
+        #expect(gate.completeStructuralApply(applied: base) == [])
+
+        gate.beginScrollHold()
+        #expect(gate.receiveColumnCount(4) == [.zoomSwap(columnCount: 4)])
+        #expect(gate.completeZoomSwap(installed: 4) == [])
+        #expect(gate.installedColumnCount == 4)
+        #expect(gate.endScrollHold() == [])
+    }
+
     // MARK: - Zoom / apply cross-arbitration (F1 and F2 regressions)
 
     /// F1: a zoom that is superseded back to the currently installed count while an apply

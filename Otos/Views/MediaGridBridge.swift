@@ -114,6 +114,9 @@ final class MediaGridViewController: NSViewController {
     private var scrollPreheatReused = 0
     private var scrollWorkDirty = false
     private var scrollCoalesceTask: Task<Void, Never>?
+    /// Cancels/restarts on each scroll tick; fires after the shared quiet
+    /// threshold to release the mutation gate's scroll hold.
+    private var scrollHoldQuietTask: Task<Void, Never>?
     private var lastDetailQueryIDs: [MediaAssetID] = []
     /// Last scroll-bounds notification time. Structural applies suppress move
     /// animation while this is recent (`MediaGridAnimation.suppressesApplyAnimation`).
@@ -178,6 +181,7 @@ final class MediaGridViewController: NSViewController {
         detailQueryTask?.cancel()
         preheatTask?.cancel()
         scrollCoalesceTask?.cancel()
+        scrollHoldQuietTask?.cancel()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -185,6 +189,8 @@ final class MediaGridViewController: NSViewController {
         lastScrollTickAt = Date()
         scrollBoundsTickCount += 1
         scrollWorkDirty = true
+        mutationGate.beginScrollHold()
+        scheduleScrollHoldQuietRelease()
         scrollCoalesceTask?.cancel()
         scrollCoalesceTask = Task { [weak self] in
             do {
@@ -202,6 +208,24 @@ final class MediaGridViewController: NSViewController {
             flushScrollDrivenWork()
         }
         flushScrollBoundsDiagnosticsIfNeeded()
+    }
+
+    /// Restart the quiet timer on every tick; when it fires, release scroll hold
+    /// and perform any drained gate actions (newest parked grid / pending zoom).
+    private func scheduleScrollHoldQuietRelease() {
+        scrollHoldQuietTask?.cancel()
+        let quietMs = Int(MediaGridAnimation.applyAnimationScrollQuietThreshold * 1000)
+        scrollHoldQuietTask = Task { [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(quietMs))
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled else {
+                return
+            }
+            perform(mutationGate.endScrollHold())
+        }
     }
 
     private func flushScrollDrivenWork() {
@@ -276,9 +300,9 @@ final class MediaGridViewController: NSViewController {
     }
 
     /// Projection coalesces incoming background state. This method adds only AppKit
-    /// backpressure: while any exclusive mutation (structural apply or zoom swap) is in
-    /// flight the newest grid is parked rather than queued; otherwise the gate decides
-    /// whether to refresh visible details in place or run one structural apply.
+    /// backpressure: while any exclusive mutation is in flight, or while live scroll
+    /// holds same-descriptor adoption, the newest grid is parked; descriptor-changed
+    /// grids bypass scroll hold. Otherwise the gate decides refresh vs apply.
     func receive(_ grid: CatalogMediaGridState) {
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStateReceive")
         defer { OtosSignpost.ui.endInterval("MediaGridStateReceive", signpost) }
