@@ -93,16 +93,26 @@ These are requirements, not implementation suggestions.
     before mutation. A race at publication fails safely without overwrite, then
     invalidates/replans. There is no whole-source byte-reading “preflight.”
 14. Library reorganization uses the same date/name/reservation planning core but
-    distinct move semantics. Before any conflict work, compare the normalized
-    source and proposed destination paths: equality is a no-op. Reorganization
-    **never content-deduplicates or collapses originals**, even when two files are
-    byte-identical. Occupied targets use a dependency-aware move or deterministic
-    suffix so every original remains represented.
-15. Execution is user-started, cancellable between files, bounded, observable, and
-    crash-recoverable. Cancellation stops scheduling new work but does not undo
-    successfully published items. Recovery may settle already-published files,
-    finish requested cleanup, or remove abandoned staging; it never resumes an
-    unstarted byte copy without a new user start intent.
+    distinct namespace-transformation semantics. Before any conflict work, compare
+    the exact standardized source and proposed relative-path spelling: exact
+    equality is a no-op. A case-only or Unicode-spelling change that addresses the
+    same filesystem name is a real relabel operation through a temporary path, not
+    a no-op. Reorganization **never content-deduplicates or collapses originals**,
+    even when two files are byte-identical. Occupied targets use a dependency-aware
+    move or deterministic suffix so every original remains represented.
+15. Execution is user-started, bounded, observable, and crash-recoverable. Import
+    cancellation stops between files; reorganization cancellation stops between
+    dependency components. Cancellation does not undo already committed units.
+    Import recovery may settle already-published files, finish requested cleanup,
+    or remove abandoned staging; it never resumes an unstarted byte copy without a
+    new user start intent.
+16. A reorganization dependency component is the smallest interruption boundary.
+    Once its first filesystem move starts, cancellation waits until that entire
+    component is committed or restored. A crash recovery pass runs before normal
+    scanning, finishes an unambiguous already-authorized component forward, or
+    rolls its completed steps back when forward completion is unsafe. It never
+    exposes a temporary path as durable media identity and never guesses when the
+    observed namespace is ambiguous.
 
 ### Explicitly deferred
 
@@ -255,6 +265,13 @@ Add these files/types; names are part of the plan so implementation stays cohere
   - `MediaOperationPlanEntry`: source facts, ideal/final destination, companions,
     and `MediaOperationDisposition`.
   - dispositions: `.copy`, `.skipPreexisting`, `.relocate`, `.noOp`, `.blocked`.
+  - `PlannedNamespacePath`, `FilesystemNameKey`, and `VolumeIdentifier`: typed,
+    volume-aware reorganization path facts; never bare comparison strings.
+  - `ReorganizationPhysicalMember`, `ReorganizationMoveStep`, and
+    `ReorganizationComponent`: pure complete-namespace graph/recipe values.
+  - `ReorganizationComponentKey`: active-operation key only, never media identity.
+  - `CatalogIdentityRemapBatch`: complete component old→new media mapping delivered
+    atomically to Store/UI owners.
   - `MediaOperationSourceState`: `.inventory`, `.waitingForDestination`,
     `.waitingForMetadata(done:total:)`, `.planning`, `.ready(summary:generation:)`,
     `.queuedForReadiness`, `.executing(progress:)`, `.needsReplan`,
@@ -262,6 +279,8 @@ Add these files/types; names are part of the plan so implementation stays cohere
 - `Otos/Services/MediaTransferPlanner.swift`: nonisolated pure planning functions.
 - `Otos/Services/MediaOperationCoordinator.swift`: actor and lifecycle owner.
 - `Otos/Services/ContentEqualityChecker.swift`: deliberate, ephemeral comparison.
+- `Otos/Services/FilesystemNamespaceSemantics.swift`: off-main, volume-aware name,
+  occupancy, ancestor, and resource-identity observations for planner requests.
 - `Otos/Services/MediaFileOperator.swift`: coordinated copy/move/publish/delete.
 - `Otos/Stores/MediaOperationGateway.swift`: Store-owned planning snapshot,
   history, revision, settlement, and journal SQL/mapping. This is an owned helper,
@@ -272,8 +291,8 @@ Add these files/types; names are part of the plan so implementation stays cohere
 - `Otos/Views/ImportPlanOverlay.swift`: optional per-visible-item disposition.
 
 Keep architecture-boundary guides at the top of the coordinator, planner, gateway,
-and file operator explaining isolation, cancellation, revision validation, staging,
-and settlement.
+namespace service, and file operator explaining isolation, cancellation, revision
+validation, reorganization leases, staging, component settlement, and recovery.
 
 ---
 
@@ -336,10 +355,69 @@ CREATE TABLE active_file_operation (
     delete_source_requested INTEGER NOT NULL,
     updated_at DOUBLE NOT NULL
 );
+
+CREATE TABLE active_reorganization_component (
+    component_key TEXT PRIMARY KEY,
+    library_root_path TEXT NOT NULL,
+    plan_generation INTEGER NOT NULL,
+    planned_root_revision INTEGER NOT NULL,
+    phase TEXT NOT NULL,
+    next_step_index INTEGER NOT NULL,
+    created_at DOUBLE NOT NULL,
+    updated_at DOUBLE NOT NULL
+);
+
+CREATE TABLE active_reorganization_member (
+    component_key TEXT NOT NULL,
+    member_index INTEGER NOT NULL,
+    member_kind TEXT NOT NULL,
+    logical_source_relative_path TEXT NOT NULL,
+    current_relative_path TEXT NOT NULL,
+    final_relative_path TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    content_modified_at DOUBLE NOT NULL,
+    PRIMARY KEY (component_key, member_index),
+    FOREIGN KEY (component_key)
+        REFERENCES active_reorganization_component(component_key)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE active_reorganization_step (
+    component_key TEXT NOT NULL,
+    step_index INTEGER NOT NULL,
+    member_index INTEGER NOT NULL,
+    source_relative_path TEXT NOT NULL,
+    destination_relative_path TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    PRIMARY KEY (component_key, step_index),
+    FOREIGN KEY (component_key, member_index)
+        REFERENCES active_reorganization_member(component_key, member_index)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE active_reorganization_directory (
+    component_key TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    phase TEXT NOT NULL,
+    PRIMARY KEY (component_key, relative_path),
+    FOREIGN KEY (component_key)
+        REFERENCES active_reorganization_component(component_key)
+        ON DELETE CASCADE
+);
 ```
 
 Refine column spelling to current conventions, but do not add a durable plan table,
-content hash, asset UUID, import-batch table, or per-file completed-operation log.
+content hash, asset UUID, import-batch table, or permanent per-file operation log.
+The reorganization tables contain only the one dependency component that has
+crossed its mutation boundary. They are a bounded recovery recipe, not persistence
+for ready plans or completed history, and are deleted after component commit or
+rollback.
+`active_file_operation` is the import/copy settlement journal; reorganization uses
+the component tables because its moves cannot be recovered independently. Component
+phases are `prepared`, `moving`, `filesystemComplete`, `catalogCommitted`,
+`rollingBack`, and `blocked`; step phases are `planned`, `willMove`, `didMove`, and
+`rolledBack`; directory phases are `planned`, `created`, and `preexisting`. Use
+typed Swift enums at the Store boundary and reject unknown durable phase strings.
 `source_device_identity` is the existing removable-source identity, not a new media
 identity; it lets pending cleanup find the same source after a remount/path change.
 
@@ -349,32 +427,53 @@ the sidebar rows, and a batch naturally disappears when its last asset is proven
 deleted. Introduce a table only when a verified requirement adds batch-authored
 metadata that cannot live on assets.
 
-### 4.3 Path remap and foreign keys
+### 4.3 Set-based path remap and foreign keys
 
 Reorganization changes the `media_asset` composite primary key. Make the existing
 `asset_metadata` relationship `ON UPDATE CASCADE` (rebuild the table in the
-migration if SQLite requires it). Add one Store transaction:
+migration if SQLite requires it). A component containing a swap cannot update rows
+one at a time because the first update would collide with the other row's primary
+key. Add one set-based Store transaction:
 
 ```swift
-func settleRelocation(
-    from: MediaAssetID,
-    to: MediaAssetID,
-    observedFacts: ScannedFileFacts
-) throws -> CatalogIdentityRemap
+func settleRelocationComponent(
+    component: ReorganizationComponentKey,
+    remaps: [CatalogIdentityRemap],
+    observedFacts: [MediaAssetID: ScannedFileFacts]
+) throws -> CatalogIdentityRemapBatch
 ```
 
 It must:
 
-1. prove the old row still has the planned size/mtime and the target row is absent;
-2. update path identity and current scan facts;
-3. carry metadata and `import_batch_unix_ms` unchanged;
-4. update companion relative paths;
-5. update/rename the deterministic thumbnail file and stored thumbnail reference;
-6. return an old→new typed remap for ViewModel selection and `TileContentStore`;
-7. increment the affected root revision and publish one lossless mutation event.
+1. require the journaled component to be `.filesystemComplete` and prove every
+   final media/companion path has the planned size/mtime and no unplanned occupant;
+2. prove every logical source row still exists with its pre-operation facts and the
+   exact source→final mapping matches the journal;
+3. inside one SQLite transaction, remap every source row first to a unique
+   transaction-private relative path, then from those private keys to final paths;
+   the private keys never commit or publish;
+4. rely on `ON UPDATE CASCADE` or explicit set-based updates to carry metadata and
+   preserve `import_batch_unix_ms` unchanged;
+5. update every companion relative path in the same transaction;
+6. mark the component `.catalogCommitted` in that transaction;
+7. return one complete old→new batch for ViewModel selection and
+   `TileContentStore`, then publish one lossless catalog mutation and one root
+   revision increment—never one event per member.
 
-If any proof fails, roll back the database transaction and report stale settlement;
-never create a second catalog row for the moved original.
+Thumbnail files live in Application Support and are derived overlay, but they must
+not be discarded merely because identity moved. Preserve the existing thumbnail
+file and validation stamps by carrying its stored relative reference with the row;
+the filename does not need to be renamed just because its original deterministic
+ID-derived name reflects the old identity. A later genuinely stale enrichment may
+write the new identity's deterministic filename and delete the superseded stored
+file through the existing lifecycle. This is smaller and safer than making an
+original-file commit depend on an Application Support rename or thumbnail
+regeneration. Add startup-cleanup, deletion, and re-enrichment tests for this
+noncanonical-but-referenced filename state.
+
+If any proof fails, roll back the catalog transaction and keep the root under its
+reorganization recovery lease; never create a second catalog row, publish a
+partial remap, or let a normal scan interpret temporary absence as deletion.
 
 ### 4.4 Best-date invariant
 
@@ -790,25 +889,34 @@ it with the row.
 
 ## 9. Reorganization using the same engine
 
-### 9.1 Shared and different behavior
+Reorganization is not a list of independent moves. It is a transformation from one
+filesystem namespace to another while catalog identity remains path-based. The
+planner must reason about the complete current and final namespaces at once, and
+the executor must make each connected dependency component recoverable.
 
-Shared:
+### 9.1 Shared planning core, distinct operation semantics
+
+Shared with import:
 
 - best-date/name/directory derivation;
 - natural deterministic ordering;
 - destination snapshot and reservation table;
 - root revision invalidation and per-file size/mtime guard;
 - companion association;
-- journal, cancellation, progress, logging, and Store settlement.
+- progress, logging, typed problems, and Store settlement.
 
-Different:
+Distinct reorganization behavior:
 
 - source and destination are the same fixed root;
-- first rule is normalized source URL == ideal destination URL → `.noOp`;
+- exact standardized relative-path spelling equality is `.noOp`;
+- namespace-equivalent but differently spelled paths are relabel moves;
 - content equality is never requested and never produces a skip;
 - an occupied path may be vacated by another planned move;
-- operation is relocate, not copy+delete, whenever the filesystem can move;
-- import batch is nil and existing batch overlay is preserved.
+- media and companion paths participate in one namespace graph;
+- same-volume relocation is a rename/move, never copy+delete;
+- import batch is nil and every existing import-batch value is preserved;
+- cancellation is accepted between dependency components, never in the middle of
+  one component's physical transformation.
 
 ### 9.2 Move strategy alternatives
 
@@ -821,54 +929,361 @@ layout does not match the policy's natural result. Correct but materially worse.
 
 #### B. Build a move dependency graph; use one temporary hop for cycles (selected)
 
-For every relocation `source → target`, add a dependency when `target` is another
-planned source. Topologically execute nodes whose target is free. For each cycle,
-move one source to a journaled same-volume temporary URL, rotate the remaining
-moves, then publish the temporary file to its target.
+For every physical relocation `source → target`, add a dependency when `target` is
+another planned physical source. Execute chains from their free end. For each
+cycle, move one member to a journaled same-volume temporary URL, rotate the
+remaining moves, then move the temporary member to its final target.
 
 Pros: produces the intended names without collapsing originals or unnecessary
-suffixes; bounded temporary storage; deterministic graph tests.
+suffixes; bounds temporary storage to one member per cycle; exposes formal graph
+invariants and deterministic recovery units.
 
-Cons: more planner/executor logic and recovery states; path remap must be lossless.
+Cons: component recipes, catalog batch remaps, recovery, and cancellation boundaries
+must all be explicit. A one-line “topological sort” implementation is insufficient.
 
 #### C. Stage every moving file, then publish all targets
 
-Pros: cycles disappear and phase order is simple.
+Pros: cycles disappear and phase order is conceptually simple.
 
-Cons: temporarily relocates the entire library, doubles cross-volume work in bad
-cases, requires large storage, and maximizes interruption exposure. Not selected.
+Cons: temporarily relocates the entire library, may require library-sized staging,
+does extra I/O, and maximizes interruption exposure. Not selected.
 
-### 9.3 Reorganization algorithm
+### 9.3 Filesystem namespace semantics
 
-1. Build ideal targets for every in-scope library asset.
-2. Mark exact normalized source==ideal as no-op before looking at occupancy.
-3. Build `movingSources` set. An ideal target occupied by a no-op/nonmoving asset
-   is a real conflict → deterministically suffix until target is absent, reserved,
-   or occupied by another moving source.
-4. Reserve one unique final path per original and pair companions.
-5. Build directed dependencies for moving-source occupancy.
-6. Execute acyclic leaves, then deterministic cycles (lowest natural source path
-   is the temporary-hop pivot).
-7. After each filesystem move, immediately call `settleRelocation`; update the
-   remaining graph's current path only after Store accepts the remap.
-8. If settlement fails, stop. The journal and observed filesystem paths drive
-   recovery; never continue with a guessed identity.
+String equality, URL standardization, and filesystem name equality are three
+different questions. Add a concrete `FilesystemNamespaceSemantics` service that
+captures facts from the actual root volume before the pure planner runs:
 
-Add a pure invariant check over every ready reorganization plan:
+```swift
+nonisolated struct PlannedNamespacePath: Sendable, Equatable {
+    let relativePath: String          // intended on-disk spelling
+    let lookupKey: FilesystemNameKey  // occupancy/equality on this volume
+    let volumeIdentifier: VolumeIdentifier
+}
+```
 
-- number of media sources == number of no-op+relocate outcomes;
-- all final paths unique;
-- no equality/skip dispositions;
-- every relocation has a recoverable dependency order;
-- companions never reserve a media destination;
-- all existing import batch values are carried, never synthesized.
+The implementation must distinguish:
 
-### 9.4 Scope for first reorganization UI
+- **exact path:** standardized relative components and spelling are identical →
+  no-op;
+- **namespace-equivalent self:** lookup keys identify the same existing directory
+  entry but spelling differs (for example `IMG_1.JPG → IMG_1.jpg` on a
+  case-insensitive volume) → a one-member cycle requiring a temporary hop;
+- **occupied by another path:** lookup key matches a different physical member →
+  dependency or stationary conflict;
+- **free:** no current entry or reservation owns the lookup key.
+
+Do not implement `FilesystemNameKey` as an unconditional `.lowercased()` string.
+Stage G first probes APFS case-sensitive/case-insensitive volumes and the configured
+cloud-provider filesystem, including composed/decomposed Unicode spellings. Use
+volume capability facts plus Foundation filesystem representations, and retain the
+OS no-overwrite result as the final namespace oracle. If two spellings cannot be
+classified confidently, block before mutation with `.ambiguousFilesystemName`.
+
+Symlinked files or target ancestors are blocked in the first implementation rather
+than followed during mutation. Hard-linked paths remain separate path identities;
+renaming one directory entry must not cause Otos to collapse or “deduplicate” the
+other. A temporary filesystem resource identifier may be used as an execution
+observation when available, but is never persisted as asset identity or content
+identity.
+
+### 9.4 Build the complete physical namespace first
+
+Planning has two levels:
+
+1. **Logical media entries** carry `MediaAssetID`, overlay, and batch history.
+2. **Physical members** are every media file plus every paired recognized companion
+   that must move with it. All physical members share one reservation namespace.
+
+Algorithm:
+
+1. Read one immutable Store snapshot containing every in-scope media/companion,
+   current namespace key, volume identifier, size/mtime, and ideal logical target.
+2. Derive the exact target for every physical member. Companion targets follow the
+   primary's final directory and basename before any graph construction.
+3. Mark only exact same-spelling media/companion paths as no-op.
+4. Reserve final lookup keys globally. When two planned members want the same key,
+   deterministically suffix the later logical media bundle; recalculate and reserve
+   its companion targets with it. Never suffix one companion independently from its
+   primary.
+5. If a final key is occupied by a stationary/no-op member, suffix the moving
+   bundle. If occupied by a moving member, retain it as a dependency.
+6. Check every target ancestor. An existing regular file or symlink where a
+   directory is required blocks the entire plan; a missing directory becomes an
+   explicit creation prerequisite.
+7. Build a directed graph over physical members. An edge means “this member's
+   target must be vacated by that member.” Add undirected grouping edges between a
+   primary and its companions so they share one recovery component even when their
+   path dependencies are otherwise independent.
+8. Partition the combined graph into deterministic connected components, ordered
+   by the lowest natural logical source path. Each component contains chains,
+   cycles, or namespace-equivalent self-renames plus its companion members.
+9. Reject the plan if any final lookup key is duplicated, any physical member is
+   absent from exactly one component, or a component cannot produce a finite
+   no-overwrite move recipe.
+
+The catalog intentionally contains only eligible media and recognized companions,
+so it cannot prove that another user file does not occupy a proposed target. Like
+the import planner's equality-request boundary, the pure reorganization planner
+emits `NamespaceOccupancyRequest` values for every target/ancestor key not answered
+by catalog facts. `MediaOperationCoordinator` resolves them off-main through
+`FilesystemNamespaceSemantics` as `.free`, `.sameEntry`, `.regularFile`,
+`.directory`, `.symlink`, or `.ambiguous`, then resumes the pure planner. Recheck
+root revision after the await. This is targeted namespace observation, not a second
+media scan, and is how unknown stationary files participate without being added to
+the catalog.
+
+Once final keys are unique, an ungrouped file graph has at most one outgoing move
+per source and one incoming owner per final path. Its connected pieces reduce to
+chains ending at free paths and cycles. Companion grouping may join pieces into one
+larger recovery component but does not change their internal move order.
+
+### 9.5 Deterministic component recipes
+
+For a chain `A→B`, `B→C`, with `C` free, execute:
+
+```text
+B → C
+A → B
+```
+
+For a swap `A→B`, `B→A`, execute:
+
+```text
+A → .otos-reorg-<component>-<member>
+B → A
+.otos-reorg-<component>-<member> → B
+```
+
+Longer cycles use the same rotation. A namespace-equivalent self-rename uses
+`source → temporary → final`. Select the cycle pivot deterministically by the
+lowest natural source path. Generate a collision-resistant operation key solely
+for the active journal/temp name; it is not media identity. The temp path must:
+
+- be a hidden sibling of the source on the same volume;
+- be outside every current/final namespace key;
+- be created/reserved with no-overwrite semantics;
+- be persisted before the first move;
+- never be cataloged or published as a `MediaAssetID`.
+
+Before any physical mutation, Store persists the component row, all physical
+members, every ordered step, and every directory-creation prerequisite with phase
+`.planned` in one SQLite transaction. This bounded recipe is the mutation boundary.
+It is not a durable ready plan.
+
+For each step:
+
+1. revalidate the component/root lease and expected current source facts;
+2. prove the target is absent under actual filesystem semantics;
+3. transactionally mark the step `.willMove` and record the member's expected
+   current/next path;
+4. use a fresh `NSFileCoordinator` off-main and a no-overwrite same-volume move;
+5. transactionally mark `.didMove`, update member `current_relative_path`, and
+   advance `next_step_index`;
+6. after every await, reject a stale component owner before scheduling another
+   step.
+
+When all physical members are at final paths, mark the component
+`.filesystemComplete`, then call the set-based Store settlement from section 4.3.
+No logical catalog identity changes before this point. After catalog commit and
+one UI remap publication, remove temporary/empty operation-created directories
+when safe and delete the component journal.
+
+### 9.6 Recovery-journal alternatives
+
+#### A. Reuse one independent `active_file_operation` row per move
+
+Pros: no additional schema and import recovery code is reusable.
+
+Cons: a swap is not independently settleable; per-row recovery cannot know the
+ordered component recipe or apply catalog identities atomically. Not correct.
+
+#### B. Store the complete component recipe as JSON in one row
+
+Pros: one table, atomic recipe insertion, easy in-memory decode.
+
+Cons: every step rewrites an opaque payload; SQL cannot constrain member/step
+relationships or inspect recovery state; schema evolution and adversarial fixture
+construction are harder. Viable, but not selected.
+
+#### C. Normalized active component/member/step tables (selected)
+
+Pros: explicit invariants and phases, atomic batch updates, precise recovery tests,
+and bounded state that disappears after completion.
+
+Cons: four small tables rather than one. The added schema is justified by the
+filesystem operation's real component-level atomicity boundary, not anticipated
+scale.
+
+The connected dependency component—not one file and not the whole library—is the
+selected commit/cancellation unit. A single file is too small because swaps and
+companion groups are inseparable. The whole library is too large because disjoint
+components share no path dependency; pretending they are atomic would require
+library-sized staging or rollback after already safe independent commits. Component
+commit permits bounded recovery, useful cancellation, and idempotent replanning of
+the remaining namespace.
+
+### 9.7 Root lease, scanner, enrichment, and UI publication
+
+Before persisting a component, `CatalogStore` acquires one typed reorganization
+lease for the fixed root. While held:
+
+- filesystem scans and targeted reconciliation for that root do not run;
+- external FSEvents mark the root dirty and increment a deferred mutation fact,
+  but never reconcile intermediate paths;
+- enrichment stops claiming new rows from the root and in-flight completions are
+  rejected by the changed lease/generation if they target a remapped identity;
+- Projection continues to show the pre-component catalog identities; temporary
+  paths are invisible;
+- `IgnoreSelf` continues to suppress Otos-authored move events; component
+  settlement explicitly updates Store;
+- detach/unavailability or an external event does not prove deletion and prevents
+  scheduling the next component until reconciliation/replanning.
+
+While a component is physically moving but not catalog-committed, its old path IDs
+may not currently resolve on disk. Keep their already-painted thumbnails visible,
+show the root/component as reorganizing, and temporarily disable byte-reading,
+Reveal in Finder, clipboard-file-URL, Image/Compare decode, and other path-based
+intents for affected IDs. Do not report them missing or feed their temporary
+absence into normal availability/deletion policy.
+
+After `settleRelocationComponent` commits, ViewModel receives one
+`CatalogIdentityRemapBatch`. Apply it atomically to media selection, compare/image
+focus, pane requests, visible-detail generations, and `TileContentStore`. Move an
+already-painted in-process thumbnail from old key to new key before publishing the
+new ordered IDs so the grid's never-blank invariant survives the identity change.
+
+Release the root lease only after catalog/UI settlement or a proven rollback. Then
+run one deferred reconciliation scan before building the next plan. Completed
+components remain completed if the user cancels; a fresh idempotent plan sees them
+as no-op and the remaining components as work.
+
+### 9.8 Crash, failure, and cancellation semantics
+
+Recovery runs before ordinary startup scanning/enrichment. For each active
+component, reconstruct the current physical location of every member from the
+journal and actual paths. For a `.willMove` step whose post-step transaction may
+not have committed:
+
+| Source path | Target path | Interpretation |
+|---|---|---|
+| exists with planned facts | absent | move did not happen; step may run |
+| absent | exists with planned facts | move happened; mark `.didMove` |
+| exists | exists | ambiguous/external mutation; do not overwrite or guess |
+| absent | absent | ambiguous/lost namespace; do not guess |
+
+Temporary paths make every cycle step compare two distinct namespace keys, even
+for case-only relabels. Validate size, mtime, regular-file type, and optional
+ephemeral filesystem resource identifier at the observed path. Do not read bytes or
+content-deduplicate during reorganization recovery.
+
+Selected recovery policy:
+
+1. If the observed namespace matches exactly one prefix of the journaled recipe,
+   continue that already-authorized component forward to its final namespace.
+2. If the next forward step is no longer safe, validate the exact reverse of every
+   completed step and roll the component back when all reverse targets are free.
+3. If neither direction is provably safe, retain the journal and root lease, show a
+   blocking recovery problem with affected relative paths, and perform no scan,
+   purge, overwrite, suffix improvisation, or new reorganization.
+4. A component already `.filesystemComplete` retries only set-based catalog
+   settlement. A `.catalogCommitted` component performs idempotent derived cleanup
+   and journal deletion.
+
+The Cancel intent sets `stopAfterCurrentComponent`. Before the first step of the
+next component it stops immediately. Once any step is `.willMove`, cancellation
+cannot strand the component; the coordinator completes or rolls it back. A process
+termination is tested at both sides of every durable phase transition.
+
+### 9.9 Directories, companions, and non-media filesystem facts
+
+- Create missing target directories shallowest-first after journal insertion and
+  before the first file move. Move a directory prerequisite from `.planned` to
+  `.created` only after Otos successfully created it; if another process created a
+  compatible directory first, mark it `.preexisting` so rollback never removes it.
+- On rollback, remove those recorded directories deepest-first only when empty. A
+  nonempty or externally modified directory is retained and logged, never removed.
+- Do not remove old source directories in the first implementation. Empty-folder
+  cleanup is a separate destructive product decision and not required for a
+  correct reorganization.
+- A media file and every paired recognized companion must be physically final
+  before the component can become `.filesystemComplete`; catalog settlement remaps
+  them together. Failure after moving a primary but before its companion invokes
+  the same component recovery, not “success with an orphan.”
+- Unknown files are stationary namespace occupants. They can force a deterministic
+  suffix or block an ancestor directory, but Otos never moves/deletes them.
+- Same-volume moves must preserve extended attributes, resource forks, sparse-file
+  representation, and hard-link relationships according to OS move semantics;
+  integration fixtures inspect these where the filesystem supports them.
+
+### 9.10 Volume and provider boundaries
+
+Capture `volumeIdentifier` for every physical source and target. The first
+reorganization implementation supports only components whose members move within
+one filesystem volume. A library root may contain a separately mounted descendant;
+if any planned member crosses a volume boundary, block the whole reorganization
+before mutation with `.crossVolumeReorganizationUnsupported` and list its count.
+
+Alternatives considered:
+
+- **Allow `FileManager.moveItem` to cross volumes implicitly:** smallest call site,
+  but hides copy/delete progress and crash semantics inside an API used elsewhere
+  as rename. It cannot satisfy the component journal as specified.
+- **Reuse import staging to support cross-volume copy/publish/delete now:** can be
+  made correct, but a cross-volume cycle requires destination-volume staging for
+  several members before any source deletion and a new multi-volume recovery
+  protocol. This is a serious future design, not a small executor branch.
+- **Block before mutation (selected first release):** leaves every original
+  untouched and makes the unsupported boundary visible. It is the only current
+  choice that preserves the same-volume component proof without adding an
+  unverified multi-volume product increment.
+
+This boundary does not assume that one library can never span volumes. A separately
+confirmed extension can add the second design later. Do not silently let
+`FileManager.moveItem` turn the first release into copy/delete.
+
+Cloud-synced paths on one reported volume remain eligible but use coordinated
+moves. A provider refusal, eviction, or delayed rename is a typed step failure and
+enters component recovery. Reorganization performs no deliberate byte read, so it
+must not materialize dataless media merely to rename it.
+
+### 9.11 Required invariants
+
+Assert these in the planner and again before a component crosses its mutation
+boundary:
+
+- logical media count equals no-op plus relocate count;
+- every physical media/companion source has exactly one final path;
+- final namespace lookup keys are globally unique;
+- exact source==final entries are no-op and never enter a move component;
+- namespace-equivalent different-spelling entries use a temporary hop;
+- no equality/duplicate/skip disposition exists in reorganization;
+- every occupied moving target is represented by a graph dependency;
+- every stationary conflict was suffixed or blocks the plan;
+- every component has a deterministic finite recipe and at most one temporary
+  physical member per simple cycle;
+- no component crosses a filesystem volume;
+- no temporary filesystem or transaction-private database path can publish as
+  durable identity;
+- media and companions commit together;
+- Store publishes either the complete component remap or none of it;
+- import-batch values and every authored/derived overlay field are preserved;
+- cancellation can leave only whole committed components, never a partial one;
+- rerunning the same policy after completion produces only no-op outcomes and no
+  new paths.
+
+### 9.12 Scope for first reorganization UI
 
 Expose reorganization from the selected fixed library only, never All Media or a
 removable source. The confirmation sheet shows plan counts, no-op count, moves,
-companion moves, and conflicts/suffixes. It must state that originals will move on
+companion moves, suffix conflicts, dependency-component/cycle counts, and any
+cross-volume or namespace blockers. It must state that originals will move on
 disk. No execution button is enabled while any blocked entry exists.
+
+During execution, progress is component-based. Cancel says “Stopping after the
+current group” when a component has crossed its mutation boundary. Recovery-blocked
+roots surface a dedicated action/error state rather than disappearing into generic
+catalog diagnostics.
 
 This UI ships only after import/recovery is proven; do not leave an enabled seam in
 earlier stages.
@@ -975,6 +1390,12 @@ Before claiming a stage complete, instrument through `OtosLog`/signposts:
 - `op=mediaOperation.recover`: operationKey, durablePhase, observed staging/final/
   source booleans, outcome;
 - `op=mediaOperation.settle`: import/relocate/delete, old/new ID hashes, outcome;
+- `op=mediaOperation.reorgComponent`: componentKey, generation, memberCount,
+  chainCount, cycleCount, stepIndex, stepCount, phase, elapsedMs;
+- `op=mediaOperation.reorgRecovery`: componentKey, durablePhase, observedPrefix,
+  direction=forward|rollback|blocked, ambiguousMemberCount, outcome;
+- `op=mediaOperation.reorgLease`: root hash, phase=acquire|deferEvent|release,
+  deferredEventCount, outcome;
 - `op=mediaOperation.materialize`: background vs user-authorized, source vs
   destination candidate, outcome;
 - `op=mediaOperation.ui`: queued/start/cancel/destination-change/error-retry.
@@ -1011,7 +1432,17 @@ Performance evidence:
 - byte-identical reorg sources remain two outcomes;
 - occupied stationary target suffix;
 - vacating dependency chain and two-/three-node cycles;
-- no plan has duplicate final destinations.
+- exact swap produces one temporary-hop rotation;
+- case-only and composed/decomposed Unicode spelling fixtures under injected
+  case-sensitive and case-insensitive namespace semantics;
+- case-only relabel is not incorrectly classified as no-op;
+- primary/companion grouping joins otherwise independent path components;
+- fan-in collisions suffix the whole bundle deterministically;
+- file/symlink in a required directory ancestor blocks before mutation;
+- unknown stationary files participate in occupancy but never become move nodes;
+- cross-volume component blocks the whole plan;
+- every component recipe is finite and deterministic;
+- no plan has duplicate final namespace lookup keys.
 
 ### Store/migration tests
 
@@ -1023,8 +1454,17 @@ Performance evidence:
 - companion full-scan/FSEvent reconcile;
 - revision increments exactly for planning facts, not thumbnail-only changes;
 - events during scan cause a follow-up reconciliation;
-- relocation cascades metadata, history, companion, thumbnail identity;
-- stale relocation settlement rolls back.
+- normalized active component/member/step/directory journal relationships and
+  cascade cleanup;
+- set-based two-way and three-way catalog identity swaps succeed without a
+  transient uniqueness violation;
+- set-based settlement publishes all remaps or none;
+- relocation preserves metadata, import history, companions, and selected
+  thumbnail strategy;
+- transaction-private catalog paths cannot survive commit or rollback;
+- root reorganization lease defers scans/events and rejects stale enrichment;
+- one batch remap/revision notification is emitted per component;
+- stale or partial relocation settlement retains the recovery lease and journal.
 
 ### Coordinator tests
 
@@ -1041,6 +1481,12 @@ Performance evidence:
 - no recovery resumes an unstarted copy;
 - all-preexisting run creates no batch;
 - cleanup/eject ordering and retry.
+- reorganization Cancel before a component stops immediately;
+- Cancel after `.willMove` becomes stop-after-component;
+- coordinator never schedules two components concurrently;
+- external root mutation between components reconciles/replans before proceeding;
+- startup recovery runs before scan/enrichment for an active reorganization root;
+- completed components remain committed and replan as no-op after cancellation.
 
 ### File-operator integration tests
 
@@ -1051,7 +1497,16 @@ Performance evidence:
 - cancellation during OS call settles or removes staging deterministically;
 - source deletion only after durable destination settlement;
 - MTP download/delete fakes preserve the same phase semantics;
-- coordinated file-provider failure maps to a typed problem.
+- coordinated file-provider failure maps to a typed problem;
+- same-volume chain executes from free end;
+- two-/three-way cycles and case-only relabels use collision-free temp paths;
+- temp move preserves xattrs/resource forks/hard-link directory entries where the
+  test filesystem supports them;
+- no-overwrite failure at every reorganization step enters recovery;
+- primary/companion partial movement cannot settle the component;
+- operation-created directories are removed on rollback only when still empty;
+- preexisting/external directories are never removed;
+- dataless same-volume rename performs no deliberate byte read.
 
 ### ViewModel/UI tests
 
@@ -1062,7 +1517,11 @@ Performance evidence:
 - sidebar batch selection/query/remove behavior;
 - import sidecar Settings binding and persistence;
 - errors and destructive policy are visible;
-- thumbnail already displayed remains displayed across overlay changes.
+- thumbnail already displayed remains displayed across overlay changes;
+- one remap batch preserves selection, Image/Compare focus, and painted tile
+  content across a swap;
+- cancellation text changes to stop-after-current-group inside a component;
+- recovery and cross-volume blockers remain visible and actionable.
 
 ### Runtime adversarial passes
 
@@ -1076,9 +1535,19 @@ available. Do not require the user to operate the app.
 5. fill destination disk before and during copy;
 6. make candidate unreadable and dataless;
 7. import twice and assert tree+history unchanged on second run;
-8. run reorganization cycles and terminate after every move;
-9. confirm originals are never overwritten or collapsed;
-10. run `script/verify.sh`, `script/logs.sh`, and relevant `script/profile.sh`
+8. run free-ended chains, two-way swaps, longer cycles, and case-only relabels;
+9. terminate immediately before/after every component, directory, step, filesystem-
+   complete, catalog-commit, and cleanup transition;
+10. inject external files/events at every vacated target and temp path;
+11. prove unambiguous recovery completes forward, blocked forward recovery rolls
+    back, and both/neither path ambiguity freezes without catalog deletion;
+12. cancel before every step and prove only whole components are visible;
+13. exercise companion failure, directory conflicts, hard links, symlinks,
+    Unicode aliases, cloud-provider refusal, and a nested mounted volume;
+14. confirm originals are never overwritten/collapsed and temporary paths never
+    become catalog identities;
+15. rerun the same completed reorganization and assert an all-no-op plan;
+16. run `script/verify.sh`, `script/logs.sh`, and relevant `script/profile.sh`
     templates; attach machine-readable evidence to each PR.
 
 ---
@@ -1171,14 +1640,26 @@ destructive actions never precede durable settlement.
 
 Branch: `feat/library-reorganization`
 
-- add reorganization mode, move graph, cycle staging, and invariant tests;
-- add Store identity/overlay/thumbnail remap transaction;
+- add volume-aware namespace semantics and APFS/cloud-provider name probes;
+- add the complete physical-member reservation graph, companion grouping,
+  deterministic component/chain/cycle recipes, and cross-volume blocker;
+- add normalized active component recovery tables and typed root reorganization
+  lease before enabling any filesystem mutation;
+- add coordinated same-volume step execution, directory prerequisites, forward/
+  rollback recovery, and cancellation only at component boundaries;
+- add Store set-based identity/overlay/companion remap transaction plus the chosen
+  thumbnail preservation mechanism;
+- add atomic ViewModel/selection/TileContentStore remap-batch delivery;
 - add confirmation UI for one selected fixed library;
-- preserve import history and move useful companions;
-- run termination tests at every graph/journal phase.
+- preserve import history and move useful companions as the same recovery unit;
+- run the full namespace, uniqueness, termination, ambiguity, and idempotence
+  matrix from section 12.
 
-Done when every original remains represented, exact-path items are no-op, no
-content dedup occurs, overlay follows path, and interrupted cycles recover.
+Done when every original remains represented, exact-path items are no-op,
+case/Unicode relabels are real moves, no content dedup occurs, no temporary path is
+published, overlay follows the component atomically, cancellation exposes only
+whole components, ambiguous recovery freezes safely, and rerunning the policy is
+all no-op.
 
 ### Stage H — Final integration and measurement
 
