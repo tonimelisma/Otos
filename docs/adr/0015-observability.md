@@ -56,3 +56,7 @@ consumes them; use a log line instead.
 - Smoke `--verify` asserts `op=catalog.library.ensure` via `log show`, not JSONL.
 - Stall detection logs `op=mainThreadStall` at `.fault`.
 - Session correlation: `op=sessionStart session=… kind=…` once at launch.
+- Store query paths emit `waitMs` (pool acquisition) and `execMs` separately so
+  GRDB reader-pool contention is measurable without Instruments; tile-detail
+  always logs those fields at `.debug`, and slow queries (`queryMs > 50`) also
+  at `.notice`. See `docs/research/2026-07-10-grdb-reader-pool-qos.md`.
