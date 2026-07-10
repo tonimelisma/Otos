@@ -76,7 +76,7 @@ actor PreviewImageLoader: PreviewLoading {
         if let existing = inFlight[request.id] {
             return await existing.value
         }
-        let task = Task {
+        let task = Task(priority: .userInitiated) {
             await self.decode(request)
         }
         inFlight[request.id] = task

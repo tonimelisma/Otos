@@ -45,6 +45,12 @@ import UniformTypeIdentifiers
 /// loses or shifts the selection. ⌘C / Edit ▸ Copy reaches this controller through the
 /// responder chain and writes the selected assets' original file URLs to the pasteboard
 /// (ADR 0012), reading no bytes.
+///
+/// Focus centering (`receiveFocusTarget` / `scrollToFocusTarget`) parks when the item
+/// is missing, the view is not window-hosted, or the collection frame is still zero.
+/// `viewDidAppear`, `viewDidLayout`, structural-apply completion, and same-id
+/// redelivery retry the parked target so mode switches center immediately without
+/// waiting on decode or a later enrichment apply.
 struct MediaGridBridgeView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
     var thumbnailDirectory: URL?
@@ -162,6 +168,9 @@ final class MediaGridViewController: NSViewController {
     var isApplyingModelSelection = false
     private var lastFocusTargetID: MediaAssetID?
     var pendingFocusTargetID: MediaAssetID?
+    /// True while a deferred `viewDidLayout` focus retry is queued. Scrolling
+    /// mid-layout is a silent no-op, so the retry hops to the next main-queue turn.
+    private var focusLayoutRetryScheduled = false
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.
@@ -238,6 +247,35 @@ final class MediaGridViewController: NSViewController {
                     return
                 }
                 view.window?.makeFirstResponder(collectionView)
+            }
+        }
+        // Fresh controllers park focus until window attach; retry here so centering
+        // does not wait on a later structural apply or decode landing.
+        if let pending = pendingFocusTargetID {
+            scrollToFocusTarget(pending)
+        }
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        // Window can attach before the first non-zero layout; scrolling a zero-sized
+        // clip is a silent no-op. Scrolling *during* layout is also a silent no-op,
+        // so hop once to the next turn after the frame has size.
+        guard pendingFocusTargetID != nil,
+              collectionView.frame.width > 0,
+              view.window != nil,
+              !focusLayoutRetryScheduled
+        else {
+            return
+        }
+        focusLayoutRetryScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            focusLayoutRetryScheduled = false
+            if let pending = pendingFocusTargetID {
+                scrollToFocusTarget(pending)
             }
         }
     }
@@ -487,11 +525,14 @@ extension MediaGridViewController {
     }
 
     /// Scrolls the target to center when it changes. If the item is not in the data
-    /// source yet (fresh controller before its first apply), parks it; the apply
-    /// completion retries. Never scrolls when the target is unchanged, so user
-    /// scrolling is not fought.
+    /// source yet (fresh controller before its first apply), parks it; appear,
+    /// layout, apply completion, and same-id redelivery retry. Never scrolls when
+    /// the target is unchanged and already scrolled, so user scrolling is not fought.
     func receiveFocusTarget(_ id: MediaAssetID?) {
         guard id != lastFocusTargetID else {
+            if let pending = pendingFocusTargetID {
+                scrollToFocusTarget(pending)
+            }
             return
         }
         lastFocusTargetID = id
@@ -503,21 +544,67 @@ extension MediaGridViewController {
             pendingFocusTargetID = nil
             return
         }
+        let presentationDescription = String(describing: presentation)
         guard let path = dataSource.indexPath(for: id) else {
             pendingFocusTargetID = id
+            OtosLog.ui.debug(
+                """
+                op=ui.mediaGrid.focusTarget phase=park \
+                id=\(id.relativePath.rawValue, privacy: .public) \
+                presentation=\(presentationDescription, privacy: .public) reason=missingItem
+                """
+            )
             return
         }
-        // scrollToItems before the view is window-hosted leaves AppKit in a bad
-        // state on this OS; park and let the next appear/apply retry.
-        guard view.window != nil else {
+        // scrollToItems / clip scroll before window host or first non-zero layout is a
+        // silent no-op; park and let appear/layout/apply/redelivery retry.
+        guard view.window != nil, collectionView.frame.width > 0 else {
             pendingFocusTargetID = id
+            OtosLog.ui.debug(
+                """
+                op=ui.mediaGrid.focusTarget phase=park \
+                id=\(id.relativePath.rawValue, privacy: .public) \
+                presentation=\(presentationDescription, privacy: .public) reason=window/layout
+                """
+            )
+            return
+        }
+        collectionView.layoutSubtreeIfNeeded()
+        guard let attributes = collectionView.layoutAttributesForItem(at: path) else {
+            pendingFocusTargetID = id
+            OtosLog.ui.debug(
+                """
+                op=ui.mediaGrid.focusTarget phase=park \
+                id=\(id.relativePath.rawValue, privacy: .public) \
+                presentation=\(presentationDescription, privacy: .public) reason=missingLayout
+                """
+            )
             return
         }
         pendingFocusTargetID = nil
-        collectionView.scrollToItems(
-            at: [path],
-            scrollPosition: presentation.isStrip ? .centeredHorizontally : .centeredVertically
+        OtosLog.ui.debug(
+            """
+            op=ui.mediaGrid.focusTarget phase=scroll \
+            id=\(id.relativePath.rawValue, privacy: .public) \
+            presentation=\(presentationDescription, privacy: .public) reason=ready
+            """
         )
+        // Explicit clip-view scroll: `scrollToItems` is a silent no-op when the
+        // collection view was first laid out unhosted (mode-switch recreation).
+        let clip = scrollView.contentView
+        let frame = attributes.frame
+        if presentation.isStrip {
+            let targetX = frame.midX - clip.bounds.width / 2
+            let maxX = max(0, collectionView.bounds.width - clip.bounds.width)
+            let x = min(max(0, targetX), maxX)
+            clip.scroll(to: NSPoint(x: x, y: clip.bounds.origin.y))
+        } else {
+            let targetY = frame.midY - clip.bounds.height / 2
+            let maxY = max(0, collectionView.bounds.height - clip.bounds.height)
+            let y = min(max(0, targetY), maxY)
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        }
+        scrollView.reflectScrolledClipView(clip)
     }
 
     private func installScrollObserver() {

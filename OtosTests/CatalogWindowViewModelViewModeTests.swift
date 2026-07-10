@@ -107,21 +107,21 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.focusedAssetID == ids[0])
         await fake.waitUntilPending(atLeast: 1)
 
-        // Move focus before the first decode completes.
+        // Move focus before the first decode completes; owned slot task cancels.
         model.focusNext()
         #expect(model.focusedAssetID == ids[1])
         await fake.waitUntilPending(atLeast: 2)
 
         let imageX = makeViewModeCGImage(seed: 1)
         await fake.release(id: ids[0], with: .image(imageX))
-        await Task.yield()
-        await Task.yield()
 
-        #expect(model.panePreviews[.loupe]?.id != ids[0])
-
+        let loupeTask = model.paneRequestTasks[.loupe]
         let imageY = makeViewModeCGImage(seed: 2)
         await fake.release(id: ids[1], with: .image(imageY))
-        await waitForPane(model, slot: .loupe, id: ids[1])
+        await loupeTask?.value
+
+        #expect(model.panePreviews[.loupe]?.id == ids[1])
+        #expect(model.panePreviews[.loupe]?.id != ids[0])
     }
 
     @Test func loupeStripClickMovesFocusSelectionAndPreview() async {
@@ -132,13 +132,15 @@ struct CatalogWindowViewModelViewModeTests {
         let ids = makeViewModeIDs(count: 4)
         model.applyState(makeViewModeState(orderedIDs: ids))
         model.openLoupe(id: ids[0])
-        await waitForPane(model, slot: .loupe, id: ids[0])
+        await model.paneRequestTasks[.loupe]?.value
+        #expect(model.panePreviews[.loupe]?.id == ids[0])
 
         _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
 
         #expect(model.focusedAssetID == ids[2])
         #expect(model.gridSelection.selection == [ids[2]])
-        await waitForPane(model, slot: .loupe, id: ids[2])
+        await model.paneRequestTasks[.loupe]?.value
+        #expect(model.panePreviews[.loupe]?.id == ids[2])
         let requested = await fake.requested()
         #expect(requested.contains(ids[2]))
     }
@@ -153,12 +155,14 @@ struct CatalogWindowViewModelViewModeTests {
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
         model.enterCompare()
-        await waitForPane(model, slot: .compareLeft, id: ids[0])
-        await waitForPane(model, slot: .compareRight, id: ids[1])
+        await model.paneRequestTasks[.compareLeft]?.value
+        await model.paneRequestTasks[.compareRight]?.value
+        #expect(model.panePreviews[.compareLeft]?.id == ids[0])
+        #expect(model.panePreviews[.compareRight]?.id == ids[1])
         _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
         // FIFO: (A,B) + C → (B,C). Left becomes B; matching preview must not be cleared.
         #expect(Set(model.comparePair.members) == Set([ids[1], ids[2]]))
-        await waitForPane(model, slot: .compareRight, id: ids[2])
+        await model.paneRequestTasks[.compareRight]?.value
         #expect(model.panePreviews[.compareLeft]?.id == ids[1])
         #expect(model.panePreviews[.compareLeft] != nil)
     }
@@ -174,19 +178,15 @@ struct CatalogWindowViewModelViewModeTests {
         model.enterCompare()
         await fake.waitUntilPending(atLeast: 2)
 
+        let rightTask = model.paneRequestTasks[.compareRight]
         let rightImage = makeViewModeCGImage(seed: 5)
         await fake.release(id: ids[1], with: .image(rightImage))
-        await waitForPane(model, slot: .compareRight, id: ids[1])
+        await rightTask?.value
+        #expect(model.panePreviews[.compareRight]?.id == ids[1])
 
+        let leftTask = model.paneRequestTasks[.compareLeft]
         await fake.release(id: ids[0], with: .downloading)
-        // Give MainActor a turn to apply .downloading into downloadingSlots.
-        for _ in 0 ..< 20 {
-            if model.downloadingSlots.contains(.compareLeft) {
-                break
-            }
-            await Task.yield()
-            try? await Task.sleep(for: .milliseconds(5))
-        }
+        await leftTask?.value
         #expect(model.downloadingSlots.contains(.compareLeft))
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
     }
@@ -261,9 +261,10 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(finalFocus == ids[7] || finalFocus == ids.last)
         await fake.waitUntilPending(id: finalFocus)
 
+        let finalTask = model.paneRequestTasks[.loupe]
         let image = makeViewModeCGImage(seed: 9)
         await fake.releaseAll(with: .image(image))
-        await waitForPane(model, slot: .loupe, id: finalFocus)
+        await finalTask?.value
         #expect(!publishedWrong)
         #expect(model.panePreviews[.loupe]?.id == finalFocus)
     }
@@ -316,21 +317,4 @@ private func makeViewModeCGImage(seed: Int) -> CGImage {
     context.setFillColor(red: CGFloat(seed % 5) / 5, green: 0.3, blue: 0.7, alpha: 1)
     context.fill(CGRect(x: 0, y: 0, width: 16 + seed, height: 16))
     return context.makeImage()!
-}
-
-@MainActor
-private func waitForPane(
-    _ model: CatalogWindowViewModel,
-    slot: PaneSlot,
-    id: MediaAssetID
-) async {
-    let deadline = Date().addingTimeInterval(2)
-    while Date() < deadline {
-        if model.panePreviews[slot]?.id == id {
-            return
-        }
-        await Task.yield()
-        try? await Task.sleep(for: .milliseconds(10))
-    }
-    Issue.record("Timed out waiting for pane \(slot) id \(id.relativePath.rawValue)")
 }

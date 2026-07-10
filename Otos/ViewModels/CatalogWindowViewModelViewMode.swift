@@ -7,7 +7,10 @@ import OSLog
 /// Owns session-only `viewMode`, loupe `focusedAssetID`, compare pair, and the
 /// pane-preview request lifecycle. Every entry/exit/navigation rule is either a pure
 /// `BrowserModePolicy` / `ComparePairPolicy` call or a thin intent that applies that
-/// policy and reconciles pane slots via `refreshPanePreviews()`. Views stay passive.
+/// policy and reconciles pane slots via `refreshPanePreviews()`. Each `PaneSlot` has
+/// at most one owned `paneRequestTasks` entry (request or downloading retry) at
+/// `.userInitiated`; superseded requests cancel before enqueueing another decode.
+/// Views stay passive.
 extension CatalogWindowViewModel {
     /// Target long edge for loupe/compare decode (points × backing scale of the main
     /// display, clamped). Computed on the MainActor when a decode is requested.
@@ -77,6 +80,7 @@ extension CatalogWindowViewModel {
         panePreviews = [:]
         downloadingSlots = []
         comparePair = .empty
+        cancelAllPaneRequestTasks()
         OtosLog.ui.notice("op=viewMode.set mode=grid")
     }
 
@@ -213,8 +217,12 @@ extension CatalogWindowViewModel {
         let loader = previewLoader
         let detailReader = tileDetailReader
         let target = Self.previewTargetLongEdge()
-        Task { [weak self] in
+        paneRequestTasks[slot]?.cancel()
+        paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
             let details = await detailReader.details(for: [id])
+            guard !Task.isCancelled else {
+                return
+            }
             let detail = details[id]
             let outcome = await loader.preview(
                 for: PreviewImageLoader.Request(
@@ -223,6 +231,9 @@ extension CatalogWindowViewModel {
                     targetLongEdge: target
                 )
             )
+            guard !Task.isCancelled else {
+                return
+            }
             await MainActor.run {
                 guard let self else {
                     return
@@ -237,8 +248,11 @@ extension CatalogWindowViewModel {
                     self.downloadingSlots.remove(slot)
                 case .downloading:
                     self.downloadingSlots.insert(slot)
-                    Task { [weak self] in
+                    self.paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
                         try? await Task.sleep(for: .milliseconds(500))
+                        guard !Task.isCancelled else {
+                            return
+                        }
                         await MainActor.run {
                             guard let self, self.expectedAsset(for: slot) == id else {
                                 return
@@ -251,5 +265,12 @@ extension CatalogWindowViewModel {
                 }
             }
         }
+    }
+
+    private func cancelAllPaneRequestTasks() {
+        for task in paneRequestTasks.values {
+            task.cancel()
+        }
+        paneRequestTasks.removeAll()
     }
 }

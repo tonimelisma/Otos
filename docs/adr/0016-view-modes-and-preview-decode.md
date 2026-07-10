@@ -72,7 +72,11 @@ placeholder).
   `MediaAssetID`, and the ViewModel's sole staleness guard is
   `expectedAsset(for: slot) == id`. Generation counters are not used. A slot
   whose expected id already matches keeps its preview across pair/focus churn;
-  a mismatched or nil expectation clears that slot and re-requests.
+  a mismatched or nil expectation clears that slot and re-requests. Each
+  `PaneSlot` owns at most one `paneRequestTasks` entry (request or downloading
+  retry) at `.userInitiated`; superseded requests cancel after the detail fetch
+  before enqueueing another decode. `PreviewImageLoader`'s per-id dedup task is
+  also `.userInitiated` so decode does not inherit ambient/default QoS.
 - The filmstrip uses a horizontal `NSCollectionViewCompositionalLayout`
   configuration (plain layout, not `MediaGridAnimatedLayout`) so the outer clip
   view scrolls horizontally. Orthogonal section scrolling was rejected: an
