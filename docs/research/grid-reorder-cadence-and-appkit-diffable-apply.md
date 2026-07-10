@@ -260,10 +260,11 @@ enrichment active at ~4.9k/23,045 enriched).
   OneDrive materialization through the 4-worker download pool before its ~1.5 s
   enrich-and-paint. Grid is not the bottleneck; recorded as a roadmap idea.
 
-Remediation: `docs/plans/0009-grid-jank-residuals-and-tile-badges.md`
-(prune skip + retained previous-order Set; scroll-time animation suppression —
-owner-confirmed 2026-07-09 that mid-scroll animations are unnecessary;
-measured `MediaAssetID` fingerprint hashing; CA-commit/IOSurface spike).
+Remediation landed as plan 0009 (PRs #81–#83): prune skip + retained
+previous-order Set; scroll-time animation suppression; measured
+`MediaAssetID` fingerprint hashing; CA-commit/IOSurface spike deferred to
+Instruments evidence; tile badge rework (painted-only video duration / film
+fallback / RAW). The plan file was deleted when Part E landed.
 
 ## Plan 0009 PR1 capture (2026-07-09, Parts A+B)
 
