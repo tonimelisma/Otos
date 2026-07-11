@@ -7,7 +7,7 @@ struct CatalogProjectionLifecycleTests {
         let temp = try makeProjectionLifecycleTemporaryDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
         let projection = CatalogProjection(cadence: .milliseconds(50))
         let recorder = LifecycleStateRecorder()
@@ -44,7 +44,7 @@ struct CatalogProjectionLifecycleTests {
         let temp = try makeProjectionLifecycleTemporaryDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
         let projection = CatalogProjection(cadence: .milliseconds(10))
         let recorder = LifecycleStateRecorder()

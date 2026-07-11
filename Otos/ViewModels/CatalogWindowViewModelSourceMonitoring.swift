@@ -90,7 +90,8 @@ extension CatalogWindowViewModel {
             if snapshot.isStable {
                 try await catalogStore.completeDeviceCatalogEnumeration(
                     scan: scan,
-                    observedPaths: Set(items.map(\.relativePath))
+                    observedPaths: Set(items.map(\.relativePath)),
+                    companions: mediaCompanions(for: snapshot.companions)
                 )
             } else {
                 OtosLog.catalog.notice(
@@ -123,6 +124,18 @@ extension CatalogWindowViewModel {
                 byteSize: item.byteSize,
                 createdAt: item.captureDate,
                 contentModifiedAt: item.captureDate
+            )
+        }
+    }
+
+    private func mediaCompanions(for items: [DeviceCameraCompanionItem]) -> [MediaCompanion] {
+        items.map { item in
+            MediaCompanion(
+                relativePath: item.relativePath,
+                primaryRelativePath: item.primaryRelativePath,
+                kind: item.kind,
+                byteSize: item.byteSize,
+                contentModifiedAt: item.contentModifiedAt
             )
         }
     }

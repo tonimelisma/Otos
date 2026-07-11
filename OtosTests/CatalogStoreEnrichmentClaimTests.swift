@@ -104,7 +104,7 @@ struct CatalogStoreEnrichmentClaimTests {
                 contentModifiedAt: Date(timeIntervalSince1970: fixture.modifiedAt)
             )
             try await batchHandler([file])
-            return [file.relativePath]
+            return .mediaOnly([file.relativePath])
         }
         let store = CatalogStore(
             location: .inMemory,
@@ -162,7 +162,7 @@ private func claimTestSingleFileScanner(_ rel: MediaRelativePath) -> CatalogScan
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
         ])
-        return [rel]
+        return .mediaOnly([rel])
     }
 }
 
@@ -179,6 +179,6 @@ private func claimTestMultiFileScanner(_ fixtures: [EnrichmentClaimScanFixture])
             )
         }
         try await batchHandler(files)
-        return Set(files.map(\.relativePath))
+        return .mediaOnly(Set(files.map(\.relativePath)))
     }
 }

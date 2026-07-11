@@ -266,6 +266,6 @@ private func thumbnailLifecycleScanner(
                 contentModifiedAt: Date(timeIntervalSince1970: TimeInterval(seconds))
             ),
         ])
-        return [rel]
+        return .mediaOnly([rel])
     }
 }

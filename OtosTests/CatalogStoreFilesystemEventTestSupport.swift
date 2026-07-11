@@ -5,7 +5,7 @@ import Testing
 func recordingScanner(_ recorder: FilesystemEventScanInvocationRecorder) -> CatalogScanner {
     CatalogScanner { rootPath, _, _ in
         await recorder.record(rootPath)
-        return []
+        return .empty
     }
 }
 
@@ -26,7 +26,7 @@ func deferredHangingScanner(
         if invocation == 2 {
             await probe.waitForRelease(invocation)
         }
-        return []
+        return .empty
     }
 }
 
@@ -40,7 +40,7 @@ func firstScanHangingScanner(
         if invocation == 1 {
             await probe.waitForRelease(invocation)
         }
-        return []
+        return .empty
     }
 }
 

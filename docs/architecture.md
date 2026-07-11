@@ -70,9 +70,13 @@ everything expensive happens on an actor off the main thread.
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
 - **Enrichment** reads bytes and may materialize cloud placeholders; the scanner
   reads only filesystem facts and materializes nothing (ADR 0008/0009).
+- **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
+  stem during scan/FSEvents/camera inventory. They never enter media queries or
+  enrichment. `ImportPreferences` owns persisted import policy keys (Settings UI
+  lands later).
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
-  `MediaGridZoomPolicy`, `GridSelection`.
+  `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.
 
 ## Where to make a change
 

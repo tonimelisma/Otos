@@ -17,10 +17,29 @@ nonisolated enum CatalogScannedFileReader {
         .contentTypeKey,
     ]
 
+    /// Observed inventory classification for one absolute path. Companions are
+    /// never catalog media; unrecognized non-media is neither.
+    nonisolated enum ObservedItem: Equatable, Sendable {
+        case media(ScannedMediaFile)
+        case companion(ScannedCompanionFile)
+    }
+
     static func scannedFile(
         fileURL: URL,
         rootPath: LibraryRootPath
     ) throws -> ScannedMediaFile? {
+        switch try observedItem(fileURL: fileURL, rootPath: rootPath) {
+        case let .media(file):
+            file
+        case .companion, .none:
+            nil
+        }
+    }
+
+    static func observedItem(
+        fileURL: URL,
+        rootPath: LibraryRootPath
+    ) throws -> ObservedItem? {
         let values = try fileURL.resourceValues(forKeys: resourceKeys)
         guard values.isHidden != true else {
             return nil
@@ -34,22 +53,36 @@ nonisolated enum CatalogScannedFileReader {
         guard values.isRegularFile == true else {
             return nil
         }
-        guard MediaEligibility.isCatalogMedia(contentType: values.contentType) else {
-            return nil
-        }
         guard let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL) else {
             throw CatalogScannedFileReaderIssue.relativePathUnavailable
         }
         guard !MediaEligibility.shouldSkipRelativePath(relativePath) else {
             return nil
         }
-        return ScannedMediaFile(
-            relativePath: relativePath,
-            name: values.name,
-            contentTypeIdentifier: values.contentType?.identifier,
-            byteSize: values.fileSize.map(Int64.init),
-            createdAt: values.creationDate,
-            contentModifiedAt: values.contentModificationDate
+        if let kind = MediaCompanionKind.recognize(
+            fileExtension: URL(fileURLWithPath: relativePath.rawValue).pathExtension
+        ) {
+            return .companion(
+                ScannedCompanionFile(
+                    relativePath: relativePath,
+                    kind: kind,
+                    byteSize: values.fileSize.map(Int64.init),
+                    contentModifiedAt: values.contentModificationDate
+                )
+            )
+        }
+        guard MediaEligibility.isCatalogMedia(contentType: values.contentType) else {
+            return nil
+        }
+        return .media(
+            ScannedMediaFile(
+                relativePath: relativePath,
+                name: values.name,
+                contentTypeIdentifier: values.contentType?.identifier,
+                byteSize: values.fileSize.map(Int64.init),
+                createdAt: values.creationDate,
+                contentModifiedAt: values.contentModificationDate
+            )
         )
     }
 }

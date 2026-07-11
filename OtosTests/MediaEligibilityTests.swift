@@ -29,4 +29,15 @@ struct MediaEligibilityTests {
         #expect(!MediaEligibility.isVideo(contentTypeIdentifier: "public.jpeg"))
         #expect(!MediaEligibility.isVideo(contentTypeIdentifier: nil))
     }
+
+    @Test func skipsDeviceArtifactAndTrashPaths() {
+        #expect(MediaEligibility.shouldSkipDirectory(name: ".Trash-1000"))
+        #expect(MediaEligibility.shouldSkipDirectory(name: "$RECYCLE.BIN"))
+        #expect(MediaEligibility.shouldSkipRelativePath(MediaRelativePath(rawValue: "M4ROOT/THMBNL/a.jpg")))
+        #expect(MediaEligibility.shouldSkipRelativePath(MediaRelativePath(rawValue: "M4ROOT/CLIP/clip.xml")))
+        #expect(MediaEligibility.shouldSkipRelativePath(MediaRelativePath(rawValue: "M4ROOT/SUB/a.jpg")))
+        #expect(!MediaEligibility.shouldSkipRelativePath(MediaRelativePath(rawValue: "M4ROOT/CLIP/clip.mp4")))
+        #expect(MediaEligibility.isRecognizedCompanion(relativePath: MediaRelativePath(rawValue: "a.xmp")))
+        #expect(!MediaEligibility.isRecognizedCompanion(relativePath: MediaRelativePath(rawValue: "a.lrc")))
+    }
 }

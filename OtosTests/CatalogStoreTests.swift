@@ -8,7 +8,7 @@ struct CatalogStoreTests {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
         let recorder = ChangeRecorder()
         let stream = await store.changeNotifications()

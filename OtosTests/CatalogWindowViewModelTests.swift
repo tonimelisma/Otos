@@ -195,7 +195,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -226,7 +226,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: firstURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
         let model = CatalogWindowViewModel(
             catalogStore: store,
@@ -258,7 +258,7 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: secondURL, withIntermediateDirectories: true)
 
         let loadGate = ViewModelInitialLoadGate()
-        let scanner = CatalogScanner { _, _, _ in [] }
+        let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(
             location: .inMemory,
             scanner: scanner,

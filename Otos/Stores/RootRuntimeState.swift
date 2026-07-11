@@ -12,8 +12,27 @@ nonisolated struct RootRuntimeState: Equatable {
     /// in `CatalogStore.activity(for:)` and is not written here.
     var activity: CatalogLibraryActivity
     var isEjectable: Bool
+    /// Package directories skipped by the last completed scan (AVCHD and similar).
+    /// Surfaced as import-footer attention in Stage D; inventory-only here.
+    var skippedPackageCount: Int
 
     var path: LibraryRootPath {
         root.path
+    }
+
+    init(
+        root: LibraryRoot,
+        rowID: Int64,
+        availability: LibraryAvailability,
+        activity: CatalogLibraryActivity,
+        isEjectable: Bool,
+        skippedPackageCount: Int = 0
+    ) {
+        self.root = root
+        self.rowID = rowID
+        self.availability = availability
+        self.activity = activity
+        self.isEjectable = isEjectable
+        self.skippedPackageCount = skippedPackageCount
     }
 }
