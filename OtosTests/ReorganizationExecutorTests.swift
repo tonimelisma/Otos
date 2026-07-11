@@ -236,6 +236,86 @@ struct ReorganizationSettlementTests {
         let paths = Set(state.testAssets.map(\.relativePath.rawValue))
         #expect(paths == ["a.jpg", "b.jpg"])
     }
+
+    @Test func journalStepsBindCurrentPathNotFinal() {
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        // Build a synthetic plan with A→B, B→C chain steps.
+        let root = LibraryRootPath(rawValue: "/Library")
+        let memberA = ReorganizationPhysicalMember(
+            id: "media:a.jpg",
+            source: MediaRelativePath(rawValue: "a.jpg"),
+            idealDestination: MediaRelativePath(rawValue: "b.jpg"),
+            finalDestination: MediaRelativePath(rawValue: "b.jpg"),
+            isCompanion: false,
+            primarySource: nil,
+            mediaID: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        )
+        let memberB = ReorganizationPhysicalMember(
+            id: "media:b.jpg",
+            source: MediaRelativePath(rawValue: "b.jpg"),
+            idealDestination: MediaRelativePath(rawValue: "c.jpg"),
+            finalDestination: MediaRelativePath(rawValue: "c.jpg"),
+            isCompanion: false,
+            primarySource: nil,
+            mediaID: MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "b.jpg"))
+        )
+        let plan = ReorganizationPlan(
+            generation: 1,
+            libraryRoot: root,
+            rootRevision: 1,
+            policy: ImportPolicy.from(prefs),
+            members: [memberA, memberB],
+            components: [
+                ReorganizationComponent(
+                    id: "component-0",
+                    memberIDs: [memberB.id, memberA.id],
+                    steps: [
+                        .move(
+                            from: MediaRelativePath(rawValue: "b.jpg"),
+                            to: MediaRelativePath(rawValue: "c.jpg")
+                        ),
+                        .move(
+                            from: MediaRelativePath(rawValue: "a.jpg"),
+                            to: MediaRelativePath(rawValue: "b.jpg")
+                        ),
+                    ]
+                ),
+            ],
+            mediaDispositions: [:]
+        )
+        let now = Date(timeIntervalSince1970: 1)
+        let facts: [MediaRelativePath: (byteSize: Int64, contentModifiedAt: Date)] = [
+            MediaRelativePath(rawValue: "a.jpg"): (1, now),
+            MediaRelativePath(rawValue: "b.jpg"): (1, now),
+        ]
+        guard let journal = ReorganizationExecutor.makeJournalComponent(
+            plan: plan,
+            plannerComponent: plan.components[0],
+            snapshot: ReorganizationPlanningSnapshot(
+                libraryRoot: root,
+                volumeIdentifier: "vol",
+                capabilities: .caseInsensitiveAPFS,
+                generation: 1,
+                rootRevision: 1,
+                policy: ImportPolicy.from(prefs),
+                media: [],
+                knownForeignOccupants: []
+            ),
+            factsByPath: facts
+        ) else {
+            Issue.record("journal build failed")
+            return
+        }
+        #expect(journal.steps.count == 2)
+        // First step from b.jpg must bind member B (index of b.jpg source), not A whose final is b.jpg.
+        let bIndex = journal.members.first { $0.logicalSourceRelativePath.rawValue == "b.jpg" }?.memberIndex
+        let aIndex = journal.members.first { $0.logicalSourceRelativePath.rawValue == "a.jpg" }?.memberIndex
+        #expect(journal.steps[0].memberIndex == bIndex)
+        #expect(journal.steps[1].memberIndex == aIndex)
+        #expect(journal.steps[0].memberIndex != aIndex)
+    }
 }
 
 struct ReorganizationExecutorMoveTests {

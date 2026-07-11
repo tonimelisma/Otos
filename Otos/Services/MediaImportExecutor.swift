@@ -80,7 +80,7 @@ actor MediaImportExecutor {
             return false
         }
         let allowSourceDeletion = deleteSourceRequested && !hasBlockedEntries
-        let publishedCount = await runPlanEntries(
+        let entryTotals = await runPlanEntries(
             plan: plan,
             batch: batch,
             sourceKind: sourceKind,
@@ -92,15 +92,17 @@ actor MediaImportExecutor {
         )
         if cancelFlag.isCancelled {
             return .cancelled(
-                publishedCount: publishedCount,
-                batch: publishedCount > 0 ? batch : nil,
-                hasBlockedEntries: hasBlockedEntries
+                publishedCount: entryTotals.publishedCount,
+                batch: entryTotals.publishedCount > 0 ? batch : nil,
+                hasBlockedEntries: hasBlockedEntries,
+                hasEntryFailures: entryTotals.failedCount > 0
             )
         }
         return .completed(
-            publishedCount: publishedCount,
-            batch: publishedCount > 0 ? batch : nil,
-            hasBlockedEntries: hasBlockedEntries
+            publishedCount: entryTotals.publishedCount,
+            batch: entryTotals.publishedCount > 0 ? batch : nil,
+            hasBlockedEntries: hasBlockedEntries,
+            hasEntryFailures: entryTotals.failedCount > 0
         )
     }
 
@@ -134,10 +136,11 @@ actor MediaImportExecutor {
         totalCount: Int,
         totalBytes: Int64,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
-    ) async -> Int {
+    ) async -> (publishedCount: Int, failedCount: Int) {
         var completed = 0
         var completedBytes: Int64 = 0
         var publishedCount = 0
+        var failedCount = 0
         for entry in plan.entries {
             if cancelFlag.isCancelled {
                 break
@@ -169,7 +172,10 @@ actor MediaImportExecutor {
                     completedBytes += entry.source.byteSize ?? 0
                 case .cancelled:
                     cancelFlag.cancel()
-                case .skippedForeign, .failed:
+                case .skippedForeign:
+                    completed += 1
+                case .failed:
+                    failedCount += 1
                     completed += 1
                 }
                 onProgress(MediaOperationProgress(
@@ -192,7 +198,7 @@ actor MediaImportExecutor {
                 continue
             }
         }
-        return publishedCount
+        return (publishedCount, failedCount)
     }
 
     private enum EntryOutcome {
@@ -326,6 +332,37 @@ actor MediaImportExecutor {
         case .completed:
             if let size = try? stagingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
                 onByteProgress(Int64(size))
+            }
+            // Download planned companions into the staging directory before settlement.
+            for (sourceRelative, _) in entry.companionDestinations {
+                let leaf = (sourceRelative.rawValue as NSString).lastPathComponent
+                let companionEnrichment = enrichmentURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(leaf)
+                let companionStaging = stagingURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(leaf)
+                switch await cameraImport.ensureImportBytes(
+                    identity: identity,
+                    relativePath: sourceRelative,
+                    enrichmentURL: companionEnrichment,
+                    importStagingURL: companionStaging
+                ) {
+                case .completed:
+                    continue
+                case .cancelled:
+                    try? FileManager.default.removeItem(at: stagingURL)
+                    try? await store.deleteActiveFileOperation(key: operationKey)
+                    return .cancelled
+                case let .failed(message):
+                    try? FileManager.default.removeItem(at: stagingURL)
+                    try? await store.deleteActiveFileOperation(key: operationKey)
+                    OtosLog.catalog.error(
+                        // swiftlint:disable:next line_length
+                        "op=mediaOperation.camera phase=companionFailed detail=\(message, privacy: .public)"
+                    )
+                    return .failed
+                }
             }
             return nil
         case .cancelled:
@@ -677,11 +714,26 @@ actor MediaImportExecutor {
                 return nil
             }
             // Copy companion bytes beside the published primary when present.
+            // Camera imports stage companions next to the primary staging file; after
+            // publish the primary is at finalURL, so also accept companions beside it.
             let sourceURL = entry.source.sourceURL
                 .deletingLastPathComponent()
                 .appendingPathComponent((sourceRelative.rawValue as NSString).lastPathComponent)
+            let stagedBesidePrimary = destinationRoot.url
+                .appendingPathComponent(entry.finalDestination.rawValue)
+                .deletingLastPathComponent()
+                .appendingPathComponent((sourceRelative.rawValue as NSString).lastPathComponent)
             let destURL = destinationRoot.url.appendingPathComponent(destinationRelative.rawValue)
-            if FileManager.default.fileExists(atPath: sourceURL.path),
+            let companionSource: URL? = if FileManager.default.fileExists(atPath: sourceURL.path) {
+                sourceURL
+            } else if FileManager.default.fileExists(atPath: stagedBesidePrimary.path),
+                      stagedBesidePrimary.path != destURL.path
+            {
+                stagedBesidePrimary
+            } else {
+                nil
+            }
+            if let companionSource,
                !FileManager.default.fileExists(atPath: destURL.path)
             {
                 try? FileManager.default.createDirectory(
@@ -689,7 +741,7 @@ actor MediaImportExecutor {
                     withIntermediateDirectories: true
                 )
                 _ = CopyfileTransfer.copy(
-                    from: sourceURL,
+                    from: companionSource,
                     to: destURL,
                     onProgress: { _ in },
                     shouldContinue: { true }
@@ -757,8 +809,18 @@ actor MediaImportExecutor {
 }
 
 nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
-    case completed(publishedCount: Int, batch: ImportBatchID?, hasBlockedEntries: Bool)
-    case cancelled(publishedCount: Int, batch: ImportBatchID?, hasBlockedEntries: Bool)
+    case completed(
+        publishedCount: Int,
+        batch: ImportBatchID?,
+        hasBlockedEntries: Bool,
+        hasEntryFailures: Bool
+    )
+    case cancelled(
+        publishedCount: Int,
+        batch: ImportBatchID?,
+        hasBlockedEntries: Bool,
+        hasEntryFailures: Bool
+    )
     case failed(problem: String)
 }
 

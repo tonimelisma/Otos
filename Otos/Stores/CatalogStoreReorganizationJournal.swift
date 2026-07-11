@@ -219,36 +219,14 @@ extension CatalogStore {
             )
         }
 
-        for member in component.members where member.kind == .companion {
-            try db.execute(
-                sql: """
-                UPDATE media_companion
-                SET relative_path = ?
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [
-                    member.finalRelativePath.rawValue,
-                    rootRowID,
-                    member.logicalSourceRelativePath.rawValue,
-                ]
-            )
-        }
-        // Remap companion primary pointers for media remaps.
-        for remap in remaps {
-            try db.execute(
-                sql: """
-                UPDATE media_companion
-                SET primary_relative_path = ?
-                WHERE library_root_id = ?
-                  AND primary_relative_path = ?
-                """,
-                arguments: [
-                    remap.newID.relativePath.rawValue,
-                    rootRowID,
-                    remap.oldID.relativePath.rawValue,
-                ]
-            )
-        }
+        // Companion relative_path swaps need the same private-key hop as media_asset.
+        try remapCompanionPathsForSettlement(
+            rootRowID: rootRowID,
+            privatePrefix: privatePrefix,
+            companions: component.members.filter { $0.kind == .companion },
+            remaps: remaps,
+            db: db
+        )
 
         try updateComponentPhase(
             key: component.componentKey,
@@ -264,6 +242,77 @@ extension CatalogStore {
             remaps: remaps,
             rootRevision: 0
         )
+    }
+
+    private static func remapCompanionPathsForSettlement(
+        rootRowID: Int64,
+        privatePrefix: String,
+        companions: [ActiveReorganizationMember],
+        remaps: [CatalogIdentityRemap],
+        db: Database
+    ) throws {
+        for (index, member) in companions.enumerated() {
+            let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/companion/\(index)")
+            try db.execute(
+                sql: """
+                UPDATE media_companion
+                SET relative_path = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [
+                    privatePath.rawValue,
+                    rootRowID,
+                    member.logicalSourceRelativePath.rawValue,
+                ]
+            )
+        }
+        for (index, member) in companions.enumerated() {
+            let privatePath = MediaRelativePath(rawValue: "\(privatePrefix)/companion/\(index)")
+            try db.execute(
+                sql: """
+                UPDATE media_companion
+                SET relative_path = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
+                arguments: [
+                    member.finalRelativePath.rawValue,
+                    rootRowID,
+                    privatePath.rawValue,
+                ]
+            )
+        }
+        for (index, remap) in remaps.enumerated() {
+            let privatePrimary = MediaRelativePath(rawValue: "\(privatePrefix)/primary/\(index)")
+            try db.execute(
+                sql: """
+                UPDATE media_companion
+                SET primary_relative_path = ?
+                WHERE library_root_id = ?
+                  AND primary_relative_path = ?
+                """,
+                arguments: [
+                    privatePrimary.rawValue,
+                    rootRowID,
+                    remap.oldID.relativePath.rawValue,
+                ]
+            )
+        }
+        for (index, remap) in remaps.enumerated() {
+            let privatePrimary = MediaRelativePath(rawValue: "\(privatePrefix)/primary/\(index)")
+            try db.execute(
+                sql: """
+                UPDATE media_companion
+                SET primary_relative_path = ?
+                WHERE library_root_id = ?
+                  AND primary_relative_path = ?
+                """,
+                arguments: [
+                    remap.newID.relativePath.rawValue,
+                    rootRowID,
+                    privatePrimary.rawValue,
+                ]
+            )
+        }
     }
 
     private static func remapMediaAssetPath(

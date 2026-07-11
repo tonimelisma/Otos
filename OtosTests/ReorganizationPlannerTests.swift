@@ -221,4 +221,129 @@ struct ReorganizationPlannerTests {
         }
         #expect(Set(keys).count == keys.count)
     }
+
+    @Test func existingDirectoryAncestorsDoNotBlock() {
+        let item = media(path: "inbox/shot.jpg", compact: 20_260_710_120_000)
+        var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
+        var outcome = ReorganizationPlanner.plan(snapshot: snapshot(media: [item]), occupancy: occupancy)
+        if case let .needsProbes(requests) = outcome {
+            for request in requests {
+                let leaf = request.relativePath.rawValue
+                if leaf == "2026" || leaf == "2026/07" {
+                    occupancy[request] = .foreign(kind: .directory)
+                } else {
+                    occupancy[request] = .absent
+                }
+            }
+            outcome = ReorganizationPlanner.plan(snapshot: snapshot(media: [item]), occupancy: occupancy)
+        }
+        guard case let .ready(plan) = outcome else {
+            Issue.record("expected ready, got \(outcome)")
+            return
+        }
+        #expect(plan.blockedCount == 0)
+        #expect(plan.mediaDispositions[item.id] != .blocked(.ancestorConflict(MediaRelativePath(rawValue: "2026"))))
+    }
+
+    @Test func occupiedFinalDestinationIsSuffixed() {
+        let item = media(path: "inbox/shot.jpg", compact: 20_260_710_120_000)
+        var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
+        var outcome = ReorganizationPlanner.plan(snapshot: snapshot(media: [item]), occupancy: occupancy)
+        if case let .needsProbes(requests) = outcome {
+            for request in requests {
+                if request.relativePath.rawValue == "2026/07/20260710_120000.jpg" {
+                    occupancy[request] = .regularFile(byteSize: 1, contentModifiedAt: nil)
+                } else if request.relativePath.rawValue == "2026" || request.relativePath.rawValue == "2026/07" {
+                    occupancy[request] = .foreign(kind: .directory)
+                } else {
+                    occupancy[request] = .absent
+                }
+            }
+            outcome = ReorganizationPlanner.plan(snapshot: snapshot(media: [item]), occupancy: occupancy)
+            // Resuffix may request another probe round.
+            if case let .needsProbes(more) = outcome {
+                for request in more {
+                    occupancy[request] = .absent
+                }
+                outcome = ReorganizationPlanner.plan(snapshot: snapshot(media: [item]), occupancy: occupancy)
+            }
+        }
+        guard case let .ready(plan) = outcome else {
+            Issue.record("expected ready, got \(outcome)")
+            return
+        }
+        guard case let .relocate(destination) = plan.mediaDispositions[item.id] else {
+            Issue.record("expected relocate, got \(String(describing: plan.mediaDispositions[item.id]))")
+            return
+        }
+        #expect(destination.rawValue != "2026/07/20260710_120000.jpg")
+        #expect(destination.rawValue.contains("20260710_120000"))
+    }
+
+    @Test func chainVacatesFreeEndFirst() {
+        // A at b.jpg wants the date path currently occupied by B; B vacates to a free date path.
+        let chainA = media(path: "b.jpg", compact: 20_260_710_120_000)
+        let chainB = media(path: "2026/07/20260710_120000.jpg", compact: 20_260_710_120_001)
+        guard let plan = planReady(snapshot: snapshot(media: [chainA, chainB])) else { return }
+        guard let component = plan.components.first else {
+            Issue.record("expected a chain component")
+            return
+        }
+        let steps = component.steps.compactMap { step -> (String, String)? in
+            if case let .move(from, to) = step {
+                return (from.rawValue, to.rawValue)
+            }
+            return nil
+        }
+        #expect(steps.count >= 2)
+        // Free end (B→C) must precede predecessor (A→B).
+        let freeEndIndex = steps.firstIndex { $0.0 == "2026/07/20260710_120000.jpg" }
+        let predIndex = steps.firstIndex { $0.0 == "b.jpg" }
+        guard let freeEndIndex, let predIndex else {
+            Issue.record("missing chain steps: \(steps)")
+            return
+        }
+        #expect(freeEndIndex < predIndex)
+    }
+
+    @Test func temporaryPathTokenIsStable() {
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        let item = PlanningFileFacts(
+            id: MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Library"),
+                relativePath: MediaRelativePath(rawValue: "Photo.JPG")
+            ),
+            sourceURL: URL(fileURLWithPath: "/Library/Photo.JPG"),
+            relativePath: MediaRelativePath(rawValue: "Photo.JPG"),
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 1),
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "jpg",
+            companions: []
+        )
+        let snap = ReorganizationPlanningSnapshot(
+            libraryRoot: LibraryRootPath(rawValue: "/Library"),
+            volumeIdentifier: "vol",
+            capabilities: .caseInsensitiveAPFS,
+            generation: 1,
+            rootRevision: 1,
+            policy: ImportPolicy.from(prefs),
+            media: [item],
+            knownForeignOccupants: []
+        )
+        guard let plan1 = planReady(snapshot: snap),
+              let plan2 = planReady(snapshot: snap),
+              let step1 = plan1.components.first?.steps.first,
+              let step2 = plan2.components.first?.steps.first,
+              case let .moveViaTemporary(_, temp1, _) = step1,
+              case let .moveViaTemporary(_, temp2, _) = step2
+        else {
+            return
+        }
+        #expect(temp1 == temp2)
+        #expect(!temp1.rawValue.contains("hashValue"))
+    }
 }

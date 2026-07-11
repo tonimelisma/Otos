@@ -38,12 +38,19 @@ nonisolated enum ReorganizationExecutor {
             )
         }
 
+        // Map steps from the member that currently occupies `from`, updating as steps emit.
+        // Matching `finalRelativePath` would mis-bind chain steps (A→B binds to A when looking up B).
+        var memberIndexByCurrentPath: [String: Int] = [:]
+        for member in members {
+            memberIndexByCurrentPath[member.currentRelativePath.rawValue] = member.memberIndex
+        }
+
         var steps: [ActiveReorganizationStep] = []
         var stepIndex = 0
         for move in plannerComponent.steps {
             switch move {
             case let .move(from, to):
-                guard let memberIndex = memberIndex(for: from, in: members) else {
+                guard let memberIndex = memberIndexByCurrentPath[from.rawValue] else {
                     return nil
                 }
                 steps.append(
@@ -56,8 +63,10 @@ nonisolated enum ReorganizationExecutor {
                     )
                 )
                 stepIndex += 1
+                memberIndexByCurrentPath.removeValue(forKey: from.rawValue)
+                memberIndexByCurrentPath[to.rawValue] = memberIndex
             case let .moveViaTemporary(from, temporary, to):
-                guard let memberIndex = memberIndex(for: from, in: members) else {
+                guard let memberIndex = memberIndexByCurrentPath[from.rawValue] else {
                     return nil
                 }
                 steps.append(
@@ -70,6 +79,8 @@ nonisolated enum ReorganizationExecutor {
                     )
                 )
                 stepIndex += 1
+                memberIndexByCurrentPath.removeValue(forKey: from.rawValue)
+                memberIndexByCurrentPath[temporary.rawValue] = memberIndex
                 steps.append(
                     ActiveReorganizationStep(
                         stepIndex: stepIndex,
@@ -80,6 +91,8 @@ nonisolated enum ReorganizationExecutor {
                     )
                 )
                 stepIndex += 1
+                memberIndexByCurrentPath.removeValue(forKey: temporary.rawValue)
+                memberIndexByCurrentPath[to.rawValue] = memberIndex
             }
         }
 
@@ -219,17 +232,6 @@ nonisolated enum ReorganizationExecutor {
         } catch {
             return .failed(reason: "markFilesystemComplete")
         }
-    }
-
-    private static func memberIndex(
-        for path: MediaRelativePath,
-        in members: [ActiveReorganizationMember]
-    ) -> Int? {
-        members.first {
-            $0.logicalSourceRelativePath == path
-                || $0.currentRelativePath == path
-                || $0.finalRelativePath == path
-        }?.memberIndex
     }
 
     private static func directoryPrerequisites(

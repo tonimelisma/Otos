@@ -280,7 +280,7 @@ actor MediaOperationCoordinator {
         prefs: ImportPreferences
     ) async {
         switch result {
-        case let .completed(_, _, hasBlockedEntries):
+        case let .completed(_, _, hasBlockedEntries, hasEntryFailures):
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
@@ -288,7 +288,11 @@ actor MediaOperationCoordinator {
                 attachToReadyMs: attachToReadyMs[source]
             )
             publish()
-            if prefs.autoEjectAfterImport, !hasBlockedEntries, summary.blockedCount == 0 {
+            if prefs.autoEjectAfterImport,
+               !hasBlockedEntries,
+               !hasEntryFailures,
+               summary.blockedCount == 0
+            {
                 await autoEjectIfRequested(sourceRoot)
             }
         case .cancelled:
