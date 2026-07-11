@@ -29,6 +29,12 @@ struct OtosApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
+            CommandMenu("Library") {
+                Button("Reorganize Library…") {
+                    catalogViewModel.requestReorganizationConfirmation()
+                }
+                .disabled(!catalogViewModel.canRequestReorganization)
+            }
             CommandMenu("View") {
                 Button("Grid") {
                     catalogViewModel.setViewMode(.grid)

@@ -238,6 +238,35 @@ extension CatalogStore {
         roots[rootPath]?.planRevision
     }
 
+    /// Planning media facts for reorganization of one fixed library root.
+    func planningMedia(for rootPath: LibraryRootPath) async -> [PlanningFileFacts]? {
+        guard let state = roots[rootPath] else {
+            return nil
+        }
+        do {
+            let dbWriter = try database()
+            let companions = try await dbWriter.read { db in
+                try Self.fetchCompanions(libraryRootID: state.rowID, db: db)
+            }
+            let companionsByPrimary = Dictionary(grouping: companions) {
+                $0.primaryRelativePath?.rawValue ?? ""
+            }
+            return try await dbWriter.read { db in
+                try MediaOperationGateway.fetchPlanningSourceMedia(
+                    libraryRootID: state.rowID,
+                    sourceRoot: rootPath,
+                    companionsByPrimary: companionsByPrimary,
+                    db: db
+                )
+            }
+        } catch {
+            OtosLog.catalog.error(
+                "op=reorganization.snapshot phase=failed rootPath=\(rootPath.rawValue, privacy: .public)"
+            )
+            return nil
+        }
+    }
+
     /// Immutable import planning snapshot for one source→destination pair.
     func importPlanningSnapshot(
         source: LibraryRootPath,

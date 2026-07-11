@@ -20,6 +20,8 @@ struct MediaGridView: View {
     var onReturnKey: () -> Void = {}
     /// Centers the grid on this asset after loupe/compare exit (fresh controller).
     var focusTargetID: MediaAssetID?
+    var identityRemapEpoch: UInt64 = 0
+    var identityRemapBatch: CatalogIdentityRemapBatch?
     @AppStorage("dismissedCameraConnectionBannerIdentities") private var dismissedCameraBannerIdentities = ""
 
     var body: some View {
@@ -61,7 +63,9 @@ struct MediaGridView: View {
                         presentation: .grid(columnCount: gridColumnCount),
                         onItemDoubleClick: onItemDoubleClick,
                         onReturnKey: onReturnKey,
-                        focusTargetID: focusTargetID
+                        focusTargetID: focusTargetID,
+                        identityRemapEpoch: identityRemapEpoch,
+                        identityRemapBatch: identityRemapBatch
                     )
                 }
             }

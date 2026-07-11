@@ -95,6 +95,43 @@ struct ContentView: View {
                 Text(message)
             }
         }
+        .confirmationDialog(
+            "Reorganize Library?",
+            isPresented: $viewModel.showsReorganizationConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Reorganize", role: .destructive) {
+                viewModel.confirmReorganization()
+            }
+            Button("Cancel", role: .cancel) {
+                viewModel.cancelReorganizationConfirmation()
+            }
+        } message: {
+            if let summary = viewModel.reorganizationSummaryText {
+                Text(summary)
+            } else {
+                Text("Apply the current import naming policy to this library.")
+            }
+        }
+        .alert(
+            "Reorganization",
+            isPresented: Binding(
+                get: { viewModel.reorganizationAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.reorganizationAlertMessage = nil
+                    }
+                }
+            )
+        ) {
+            Button("OK") {
+                viewModel.reorganizationAlertMessage = nil
+            }
+        } message: {
+            if let message = viewModel.reorganizationAlertMessage {
+                Text(message)
+            }
+        }
         .sheet(isPresented: Binding(
             get: { viewModel.showsImportPlanOverlay },
             set: { presented in
@@ -139,7 +176,9 @@ struct ContentView: View {
                 selectionHandlers: .from(viewModel),
                 onItemDoubleClick: { viewModel.openLoupe(id: $0) },
                 onReturnKey: { viewModel.openLoupe(id: nil) },
-                focusTargetID: viewModel.focusedAssetID
+                focusTargetID: viewModel.focusedAssetID,
+                identityRemapEpoch: viewModel.identityRemapEpoch,
+                identityRemapBatch: viewModel.identityRemapBatch
             )
         case .loupe:
             LoupeView(
