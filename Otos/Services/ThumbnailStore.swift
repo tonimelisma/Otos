@@ -23,10 +23,11 @@ import UniformTypeIdentifiers
 /// matching SQLite row validates, so stale enrichment work cannot overwrite the last
 /// good thumbnail. `load` decodes off the main actor and returns an immutable
 /// `CGImage`; the caller only assigns that already-decoded bitmap on the main actor.
-/// `delete`/`deleteAll` are the purge side for proven deletion, library removal, and
-/// clean pre-user schema reset. `deleteStagedTemporaryFiles` is startup hygiene for
+/// `delete`/`deleteAll` are the purge side for proven deletion and library removal.
+/// `deleteStagedTemporaryFiles` is startup hygiene for
 /// app-owned staged files abandoned by a prior process; it never reaches into media
-/// library roots.
+/// library roots. Catalog schema changes never purge thumbnails via a destructive
+/// database reset — future/unrecognized schemas refuse to open instead.
 nonisolated enum ThumbnailStore {
     /// 256 px long edge keeps a true grid thumbnail (max zoom loads originals, separately).
     static let maxPixelSize = 256

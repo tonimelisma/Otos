@@ -101,12 +101,15 @@ loaded off the main actor.
 Enrichment selection moves from a resident map scan to a Store claim query:
 `enrichmentCandidates(prioritizing:limit:)`.
 
-Because the app has no active users, schema changes use a clean destructive reset:
-discard the old local catalog and thumbnail state, create the new schema from
-zero, rescan originals, and re-enrich derived products. Originals on disk are
-untouched. The reset implementation detects incompatible pre-user schemas before
-GRDB rebuilds them and purges the app-owned thumbnail directory after the current
-schema is created, so discarded rows do not leave orphaned derived files behind.
+Catalog schema advances are additive GRDB migrations. Destructive schema reset
+(`eraseDatabaseOnSchemaChange` and the former clean-reset erase path) is retired
+because import history and other non-rebuildable overlay must survive app upgrades.
+A database whose applied migration identifiers include ones this app does not know,
+or whose user tables exist without any known migration identifiers, refuses to open:
+no roots load, no scans run, and nothing is written to the catalog file. The window
+surfaces a typed "catalog was written by a newer Otos" / incompatible empty state.
+An explicit user-confirmed Rebuild Catalog operation is reserved for a later
+requirement and is never used as silent migration behavior.
 
 ## Alternatives Considered
 

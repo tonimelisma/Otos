@@ -1,0 +1,461 @@
+import Foundation
+import GRDB
+@testable import Otos
+import Testing
+
+struct CaptureWallClockTests {
+    @Test func selectsLocalFloatingOriginalOverAbsoluteQuickTime() {
+        let records = [
+            CaptureTimestampRecord(
+                role: "quickTimeCreation",
+                instant: Date(timeIntervalSince1970: 1_700_000_000),
+                utcOffsetSeconds: 0,
+                precision: "absolute",
+                year: 2023,
+                month: 11,
+                day: 14,
+                hour: 22,
+                minute: 13,
+                second: 20
+            ),
+            CaptureTimestampRecord(
+                role: "original",
+                instant: nil,
+                utcOffsetSeconds: nil,
+                precision: "localFloating",
+                year: 2026,
+                month: 1,
+                day: 1,
+                hour: 12,
+                minute: 0,
+                second: 0
+            ),
+        ]
+
+        let wall = CaptureWallClock.select(from: records)
+        #expect(wall?.compact == 20_260_101_120_000)
+        #expect(wall?.precision == "localFloating")
+    }
+
+    @Test func prefersOriginalOverDigitizedWhenBothLocal() {
+        let records = [
+            CaptureTimestampRecord(
+                role: "digitized",
+                instant: nil,
+                utcOffsetSeconds: -25200,
+                precision: "localWithOffset",
+                year: 2025,
+                month: 6,
+                day: 1,
+                hour: 8,
+                minute: 0,
+                second: 0
+            ),
+            CaptureTimestampRecord(
+                role: "original",
+                instant: nil,
+                utcOffsetSeconds: nil,
+                precision: "localFloating",
+                year: 2024,
+                month: 12,
+                day: 25,
+                hour: 15,
+                minute: 30,
+                second: 45
+            ),
+        ]
+
+        let wall = CaptureWallClock.select(from: records)
+        #expect(wall?.compact == 20_241_225_153_045)
+    }
+
+    @Test func rejectsAbsoluteOnlyCandidates() {
+        let records = [
+            CaptureTimestampRecord(
+                role: "original",
+                instant: Date(),
+                utcOffsetSeconds: 0,
+                precision: "absolute",
+                year: 2026,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0
+            ),
+            CaptureTimestampRecord(
+                role: "gps",
+                instant: Date(),
+                utcOffsetSeconds: 0,
+                precision: "absolute",
+                year: 2026,
+                month: 1,
+                day: 1,
+                hour: 0,
+                minute: 0,
+                second: 0
+            ),
+        ]
+        #expect(CaptureWallClock.select(from: records) == nil)
+    }
+
+    @Test func roundTripsCompactComponents() {
+        let compact: Int64 = 20_260_101_120_000
+        let components = CaptureWallClock.components(fromCompact: compact)
+        #expect(components?.year == 2026)
+        #expect(components?.month == 1)
+        #expect(components?.day == 1)
+        #expect(components?.hour == 12)
+        #expect(components?.minute == 0)
+        #expect(components?.second == 0)
+    }
+}
+
+struct CatalogStoreSchemaMigrationTests {
+    @Test func v5FixtureMigratesToImportHistoryAndCaptureWallWithoutErase() async throws {
+        let fixture = try await Self.makeV5EnrichedFixture()
+        let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
+        try await store.start(scansSavedLibraries: false)
+
+        let columns = try await Self.mediaAssetColumns(fixture.databaseURL)
+        #expect(columns.contains("import_batch_unix_ms"))
+        #expect(columns.contains("capture_wall_compact"))
+        #expect(columns.contains("capture_wall_precision"))
+
+        let snapshot = try await catalogStoreTestState(store)
+        #expect(snapshot.libraries.count == 1)
+        #expect(snapshot.testAssets.count == 1)
+
+        let id = try #require(snapshot.testAssets.first?.id)
+        let wall = try await store.captureWall(for: id)
+        #expect(wall?.compact == 20_260_426_145_735)
+        #expect(wall?.precision == "localFloating")
+
+        // Original media and any pre-existing thumbnail path stay put — no erase.
+        #expect(FileManager.default.fileExists(atPath: fixture.original.path(percentEncoded: false)))
+        #expect(FileManager.default.fileExists(atPath: fixture.thumbnail.path(percentEncoded: false)))
+    }
+
+    @Test func futureSchemaIsRefusedWithoutErase() async throws {
+        let fixture = try await Self.makeFutureSchemaFixture()
+        let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
+
+        do {
+            try await store.start(scansSavedLibraries: false)
+            Issue.record("Expected unsupportedCatalogSchema")
+        } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
+            #expect(problem == .writtenByNewerOtos)
+        }
+
+        let rootCount = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM library_root") ?? 0
+        }
+        #expect(rootCount == 1)
+        #expect(FileManager.default.fileExists(atPath: fixture.thumbnail.path(percentEncoded: false)))
+
+        let applied = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
+            try String.fetchSet(db, sql: "SELECT identifier FROM grdb_migrations")
+        }
+        #expect(applied.contains("v999_future_history"))
+    }
+
+    @Test func unrecognizedLegacySchemaIsRefusedWithoutErase() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        let staleThumbnail = thumbnailDirectory.appending(path: "keep-me.jpg", directoryHint: .notDirectory)
+        try Data("keep".utf8).write(to: staleThumbnail)
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try await dbQueue.write { db in
+            try db.execute(sql: """
+            CREATE TABLE library_root (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL UNIQUE
+            )
+            """)
+            try db.execute(sql: """
+            CREATE TABLE media_asset (
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                PRIMARY KEY (library_root_id, relative_path)
+            )
+            """)
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/legacy"])
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        do {
+            try await store.start(scansSavedLibraries: false)
+            Issue.record("Expected unsupportedCatalogSchema")
+        } catch let CatalogStoreError.unsupportedCatalogSchema(problem) {
+            #expect(problem == .unrecognized)
+        }
+        #expect(FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
+    }
+
+    @Test func importBatchQueriesReturnNewestFirst() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "a")
+        try writeCatalogStoreFile(root.appending(path: "b.jpg"), contents: "b")
+        try writeCatalogStoreFile(root.appending(path: "c.jpg"), contents: "c")
+
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
+
+        let older = ImportBatchID(unixMilliseconds: 1_700_000_000_000)
+        let newer = ImportBatchID(unixMilliseconds: 1_800_000_000_000)
+        try await Self.stampImportBatches(
+            databaseURL: databaseURL,
+            stamps: [
+                "a.jpg": older.unixMilliseconds,
+                "b.jpg": newer.unixMilliseconds,
+                "c.jpg": newer.unixMilliseconds,
+            ]
+        )
+
+        let batches = try await store.importBatches()
+        #expect(batches.map(\.batchID) == [newer, older])
+        #expect(batches.map(\.assetCount) == [2, 1])
+
+        let newerIDs = try await store.assetIDs(inImportBatch: newer)
+        #expect(Set(newerIDs.map(\.relativePath.rawValue)) == ["b.jpg", "c.jpg"])
+    }
+
+    @Test func enrichmentWritesCaptureWallCompact() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "shot.jpg"), contents: "jpeg")
+
+        let store = CatalogStore(
+            location: .databaseFile(temp.appending(path: "db/catalog.sqlite")),
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let id = try #require(scanned.testAssets.first?.id)
+
+        let metadata = AssetMetadata(
+            timestamps: [
+                CaptureTimestampRecord(
+                    role: "original",
+                    instant: nil,
+                    utcOffsetSeconds: -25200,
+                    precision: "localWithOffset",
+                    year: 2026,
+                    month: 7,
+                    day: 10,
+                    hour: 15,
+                    minute: 30,
+                    second: 0
+                ),
+            ]
+        )
+        let outcome = try await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: id,
+                metadata: metadata,
+                timestampFacts: EnrichmentTimestampFacts(
+                    original: Date(timeIntervalSince1970: 1_720_000_000)
+                ),
+                thumbnailPath: nil,
+                sourceSize: 4,
+                sourceMTimeSeconds: Int(scanned.testAssets[0].contentModifiedAt?.timeIntervalSince1970 ?? 0)
+            ),
+        ])
+        #expect(outcome == .applied(count: 1))
+
+        let wall = try await store.captureWall(for: id)
+        #expect(wall?.compact == 20_260_710_153_000)
+        #expect(wall?.precision == "localWithOffset")
+    }
+}
+
+private extension CatalogStoreSchemaMigrationTests {
+    struct V5Fixture {
+        let databaseURL: URL
+        let original: URL
+        let thumbnail: URL
+    }
+
+    struct FutureFixture {
+        let databaseURL: URL
+        let thumbnail: URL
+    }
+
+    static func makeV5EnrichedFixture() async throws -> V5Fixture {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let original = root.appending(path: "dated.jpg", directoryHint: .notDirectory)
+        try writeCatalogStoreFile(original, contents: "jpeg")
+
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        let thumbnail = thumbnailDirectory.appending(path: "dated.jpg", directoryHint: .notDirectory)
+        try Data("thumb".utf8).write(to: thumbnail)
+
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try migrateThroughV5(dbQueue)
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO library_root (path, kind, device_identity, display_name, last_seen_at)
+                VALUES (?, ?, NULL, NULL, NULL)
+                """,
+                arguments: [rootPath.rawValue, LibraryRootKind.library.rawValue]
+            )
+            let rootID = db.lastInsertedRowID
+            let relative = "dated.jpg"
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id, relative_path, sort_key, name_sort_key, name,
+                    content_type_identifier, kind, format, byte_size,
+                    created_at_unix, content_modified_at_unix, thumbnail_path,
+                    enriched_source_size, enriched_source_mtime
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    rootID,
+                    relative,
+                    MediaSortKey.make(
+                        libraryRootPath: rootPath,
+                        relativePath: MediaRelativePath(rawValue: relative)
+                    ),
+                    MediaSortKey.naturalKey(relative),
+                    relative,
+                    "public.jpeg",
+                    "image",
+                    "jpg",
+                    4,
+                    Date().timeIntervalSince1970,
+                    Date().timeIntervalSince1970,
+                    "dated.jpg",
+                    4,
+                    Int(Date().timeIntervalSince1970),
+                ]
+            )
+            let metadata = AssetMetadata(
+                timestamps: [
+                    CaptureTimestampRecord(
+                        role: "original",
+                        instant: nil,
+                        utcOffsetSeconds: nil,
+                        precision: "localFloating",
+                        year: 2026,
+                        month: 4,
+                        day: 26,
+                        hour: 14,
+                        minute: 57,
+                        second: 35
+                    ),
+                ]
+            )
+            let json = try #require(CatalogStore.encodeMetadataExtraJSON(metadata))
+            try db.execute(
+                sql: """
+                INSERT INTO asset_metadata (library_root_id, relative_path, metadata_extra_json)
+                VALUES (?, ?, ?)
+                """,
+                arguments: [rootID, relative, json]
+            )
+        }
+        return V5Fixture(databaseURL: databaseURL, original: original, thumbnail: thumbnail)
+    }
+
+    static func makeFutureSchemaFixture() async throws -> FutureFixture {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let thumbnailDirectory = databaseURL.deletingLastPathComponent()
+            .appending(path: "Thumbnails", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: thumbnailDirectory, withIntermediateDirectories: true)
+        let thumbnail = thumbnailDirectory.appending(path: "future.jpg", directoryHint: .notDirectory)
+        try Data("future".utf8).write(to: thumbnail)
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try migrateThroughV5(dbQueue)
+        try await dbQueue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/future"])
+            try db.execute(
+                sql: "INSERT INTO grdb_migrations (identifier) VALUES (?)",
+                arguments: ["v999_future_history"]
+            )
+            try db.execute(sql: """
+            CREATE TABLE IF NOT EXISTS future_only_table (
+                id INTEGER PRIMARY KEY
+            )
+            """)
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id, relative_path, sort_key, name_sort_key, name
+                ) VALUES (1, 'kept.jpg', 'k', 'kept.jpg', 'kept.jpg')
+                """
+            )
+        }
+        return FutureFixture(databaseURL: databaseURL, thumbnail: thumbnail)
+    }
+
+    static func migrateThroughV5(_ dbQueue: DatabaseQueue) throws {
+        try createV5SchemaMatchingProduction(dbQueue)
+    }
+
+    static func createV5SchemaMatchingProduction(_ dbQueue: DatabaseQueue) throws {
+        try CatalogStore.migrator.migrate(dbQueue)
+        try dbQueue.writeWithoutTransaction { db in
+            try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = ?", arguments: [
+                "v6_import_history_and_capture_wall",
+            ])
+            try db.execute(sql: "DROP INDEX IF EXISTS idx_media_asset_import_batch")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN import_batch_unix_ms")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN capture_wall_compact")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN capture_wall_precision")
+        }
+    }
+
+    static func mediaAssetColumns(_ databaseURL: URL) async throws -> Set<String> {
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')"))
+        }
+    }
+
+    static func stampImportBatches(databaseURL: URL, stamps: [String: Int64]) async throws {
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).write { db in
+            for (relativePath, batch) in stamps {
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset
+                    SET import_batch_unix_ms = ?
+                    WHERE relative_path = ?
+                    """,
+                    arguments: [batch, relativePath]
+                )
+            }
+        }
+    }
+}

@@ -1,5 +1,5 @@
 --swiftversion 6.0
---exclude build,DerivedData
+--exclude build,DerivedData,script
 --indent 4
 --linebreaks lf
 --semicolons never

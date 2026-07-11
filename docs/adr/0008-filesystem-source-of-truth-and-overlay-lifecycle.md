@@ -1,7 +1,7 @@
 # ADR 0008: Filesystem Source Of Truth And Overlay Lifecycle
 
 - Status: Accepted
-- Last updated: 2026-06-26
+- Last updated: 2026-07-10
 
 ## Context
 
@@ -177,9 +177,13 @@ subordinate, rebuildable overlay.
    media metadata.
 
 Because no user-authored overlay exists yet, the purge-on-proven-deletion or
-library-removal rule is currently lossless: everything purged is rebuildable by
-re-observing the filesystem after the root is re-added. The rule is stated now so
-that future authored overlay inherits a single, predictable lifecycle.
+library-removal rule is currently lossless for derived overlay: everything purged
+is rebuildable by re-observing the filesystem after the root is re-added. Import
+batch stamps (`import_batch_unix_ms`) are the first non-rebuildable overlay fact:
+they cannot be reconstructed from the filesystem alone, so catalog schema changes
+must migrate additively and must never erase an unrecognized or future schema
+(see ADR 0010). The overlay lifecycle rule is stated now so future authored overlay
+inherits a single, predictable lifecycle.
 
 ## Alternatives Considered
 

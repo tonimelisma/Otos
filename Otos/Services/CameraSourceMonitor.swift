@@ -437,6 +437,8 @@ final class DeviceCameraSession: NSObject {
             ?? validCameraDate(file.exifCreationDate)
             ?? validCameraDate(file.fileCreationDate)
             ?? validCameraDate(file.modificationDate)
+            ?? validCameraDate(file.fileModificationDate)
+            ?? validCameraDate(file.exifModificationDate)
         let contentType = URL(fileURLWithPath: name).pathExtension.isEmpty
             ? nil
             : UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)

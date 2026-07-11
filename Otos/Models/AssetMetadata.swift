@@ -10,9 +10,9 @@ import Foundation
 /// prove it round-trips. "Persist everything" lives here: every timestamp role,
 /// location, and camera/video field round-trips.
 ///
-/// Metadata format is versioned by the current catalog schema, not per row: a future
-/// incompatible shape change resets the rebuildable catalog/enrichment overlay instead
-/// of carrying decode-time version branches.
+/// Metadata format is versioned by the current catalog schema, not per row. Schema
+/// advances are additive migrations; a future unsupported schema refuses to open
+/// rather than erasing non-rebuildable overlay such as import history.
 nonisolated struct AssetMetadata: Codable, Equatable {
     var family: String?
     var fileExtension: String?
