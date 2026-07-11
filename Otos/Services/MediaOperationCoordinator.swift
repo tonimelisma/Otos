@@ -6,8 +6,9 @@ import OSLog
 /// Owns greedy import-plan lifecycle for every attached removable source.
 /// Subscribes weakly to Store planning revisions, builds immutable plans through
 /// `MediaTransferPlanner` + occupancy/equality probes, and publishes per-source
-/// presentation state for the footer. Filesystem-volume Import executes through
-/// `MediaImportExecutor`; camera Import remains gated until Stage F.
+/// presentation state for the footer. Filesystem-volume and MTP camera Import
+/// execute through `MediaImportExecutor` (Stage F). Auto-eject runs only after
+/// complete success with zero blocked entries.
 ///
 /// Isolation: this actor serializes per-source dirtiness (at most one build in
 /// flight and one dirty bit). Heavy filesystem probes run off the actor via
@@ -15,6 +16,8 @@ import OSLog
 actor MediaOperationCoordinator {
     private let store: CatalogStore
     private let equality: ContentEqualityChecker
+    private let cameraImport: CameraImportAccess?
+    private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
     private var presentations: [LibraryRootPath: MediaOperationSourcePresentation] = [:]
     private var readyPlans: [LibraryRootPath: MediaOperationPlan] = [:]
     private var destinationBySource: [LibraryRootPath: LibraryRootPath] = [:]
@@ -28,9 +31,16 @@ actor MediaOperationCoordinator {
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
 
-    init(store: CatalogStore, authorizeMaterialization: Bool = false) {
+    init(
+        store: CatalogStore,
+        authorizeMaterialization: Bool = false,
+        cameraImport: CameraImportAccess? = nil,
+        autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
+    ) {
         self.store = store
         equality = ContentEqualityChecker(authorizeMaterialization: authorizeMaterialization)
+        self.cameraImport = cameraImport
+        self.autoEjectHandler = autoEjectHandler
     }
 
     func presentationsStream() -> AsyncStream<[MediaOperationSourcePresentation]> {
@@ -52,7 +62,7 @@ actor MediaOperationCoordinator {
         }
         isStarted = true
         loadDestinationMappings()
-        let executor = MediaImportExecutor(store: store)
+        let executor = MediaImportExecutor(store: store, cameraImport: cameraImport)
         await executor.recoverJournal()
         await refreshSources(reason: "start")
         let changes = await store.planningChangeNotifications()
@@ -149,19 +159,11 @@ actor MediaOperationCoordinator {
         skippedPackageCount: Int
     ) async {
         let libraries = await store.currentLibraries()
-        let sourceState = libraries.first { $0.path == source }
-        guard let sourceState else {
+        guard let sourceState = libraries.first(where: { $0.path == source }) else {
             return
         }
-        // Stage E enables filesystem volumes only; cameras remain Stage F.
-        guard sourceState.root.kind == .removableVolume else {
-            presentations[source] = MediaOperationSourcePresentation(
-                sourcePath: source,
-                destinationPath: destinationBySource[source],
-                state: .executionUnavailable(summary: summary, generation: generation),
-                attachToReadyMs: attachToReadyMs[source]
-            )
-            publish()
+        guard isExecutableSource(sourceState) else {
+            markExecutionUnavailable(source: source, summary: summary, generation: generation)
             return
         }
         guard let plan = readyPlans[source], plan.generation == generation else {
@@ -183,8 +185,50 @@ actor MediaOperationCoordinator {
             publish()
             return
         }
+        await runExecution(
+            source: source,
+            sourceState: sourceState,
+            plan: plan,
+            summary: summary,
+            generation: generation,
+            skippedPackageCount: skippedPackageCount
+        )
+    }
 
-        let executor = MediaImportExecutor(store: store)
+    private func isExecutableSource(_ sourceState: CatalogLibraryState) -> Bool {
+        switch sourceState.root.kind {
+        case .removableVolume:
+            true
+        case .deviceMTP:
+            cameraImport != nil
+        case .library:
+            false
+        }
+    }
+
+    private func markExecutionUnavailable(
+        source: LibraryRootPath,
+        summary: MediaOperationPlanTotals,
+        generation: UInt64
+    ) {
+        presentations[source] = MediaOperationSourcePresentation(
+            sourcePath: source,
+            destinationPath: destinationBySource[source],
+            state: .executionUnavailable(summary: summary, generation: generation),
+            attachToReadyMs: attachToReadyMs[source]
+        )
+        publish()
+    }
+
+    private func runExecution(
+        source: LibraryRootPath,
+        sourceState: CatalogLibraryState,
+        plan: MediaOperationPlan,
+        summary: MediaOperationPlanTotals,
+        generation: UInt64,
+        skippedPackageCount: Int
+    ) async {
+        let executor = MediaImportExecutor(store: store, cameraImport: cameraImport)
         let prefs = ImportPreferencesStore.load()
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,
@@ -213,14 +257,40 @@ actor MediaOperationCoordinator {
         }
 
         queuedStart.removeValue(forKey: source)
+        await applyExecutionResult(
+            result,
+            source: source,
+            sourceRoot: sourceState.root,
+            summary: summary,
+            generation: generation,
+            skippedPackageCount: skippedPackageCount,
+            prefs: prefs
+        )
+        dirty.insert(source)
+        await scheduleBuildIfNeeded(source)
+    }
+
+    private func applyExecutionResult(
+        _ result: MediaImportExecutionResult,
+        source: LibraryRootPath,
+        sourceRoot: LibraryRoot,
+        summary: MediaOperationPlanTotals,
+        generation: UInt64,
+        skippedPackageCount: Int,
+        prefs: ImportPreferences
+    ) async {
         switch result {
-        case .completed:
+        case let .completed(_, _, hasBlockedEntries):
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
                 state: .completed(summary: summary),
                 attachToReadyMs: attachToReadyMs[source]
             )
+            publish()
+            if prefs.autoEjectAfterImport, !hasBlockedEntries, summary.blockedCount == 0 {
+                await autoEjectIfRequested(sourceRoot)
+            }
         case .cancelled:
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
@@ -232,6 +302,7 @@ actor MediaOperationCoordinator {
                 ),
                 attachToReadyMs: attachToReadyMs[source]
             )
+            publish()
         case let .failed(problem):
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
@@ -239,10 +310,24 @@ actor MediaOperationCoordinator {
                 state: .failed(problem: problem),
                 attachToReadyMs: attachToReadyMs[source]
             )
+            publish()
         }
-        publish()
-        dirty.insert(source)
-        await scheduleBuildIfNeeded(source)
+    }
+
+    private func autoEjectIfRequested(_ root: LibraryRoot) async {
+        if root.kind == .deviceMTP {
+            guard let identity = root.deviceIdentity, let cameraImport else {
+                return
+            }
+            let outcome = await cameraImport.eject(identity: identity)
+            OtosLog.catalog.notice(
+                "op=import.autoEject phase=camera outcome=\(String(describing: outcome), privacy: .public)"
+            )
+            return
+        }
+        if let autoEjectHandler {
+            await autoEjectHandler(root)
+        }
     }
 
     private func applyExecutionProgress(source: LibraryRootPath, progress: MediaOperationProgress) {

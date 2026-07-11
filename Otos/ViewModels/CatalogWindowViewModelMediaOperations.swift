@@ -42,7 +42,19 @@ extension CatalogWindowViewModel {
         guard mediaOperationCoordinator == nil else {
             return
         }
-        let coordinator = MediaOperationCoordinator(store: catalogStore)
+        let cameraImport = deviceStagingRegistry.makeCameraImportAccess()
+        let store = catalogStore
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            cameraImport: cameraImport,
+            autoEjectHandler: { root in
+                _ = await CatalogWindowViewModel.performCatalogMutation(
+                    .ejectRemovableSource(root),
+                    store: store,
+                    coordinator: nil
+                )
+            }
+        )
         mediaOperationCoordinator = coordinator
         mediaOperationStartTask = Task { [weak self] in
             await coordinator.start()

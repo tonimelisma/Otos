@@ -1,4 +1,5 @@
 import Foundation
+import ImageCaptureCore
 import OSLog
 
 /// Routes byte materialization for MTP-backed virtual roots.
@@ -153,5 +154,150 @@ final class DeviceStagingRegistry {
         return caches
             .appending(path: "net.melisma.Otos", directoryHint: .isDirectory)
             .appending(path: "DeviceStaging", directoryHint: .isDirectory)
+    }
+
+    // MARK: - Import gateway (Stage F)
+
+    /// Builds a Sendable import gateway over the live session map.
+    func makeCameraImportAccess() -> CameraImportAccess {
+        CameraImportAccess(
+            revalidate: { [weak self] identity, relativePath, byteSize, modifiedAt in
+                await MainActor.run {
+                    self?.sessionsByIdentity[identity]?.revalidate(
+                        relativePath: relativePath,
+                        byteSize: byteSize,
+                        modifiedAt: modifiedAt
+                    ) ?? false
+                }
+            },
+            ensureBytes: { [weak self] identity, relativePath, enrichmentURL, importStagingURL in
+                await self?.ensureImportBytes(
+                    identity: identity,
+                    relativePath: relativePath,
+                    enrichmentURL: enrichmentURL,
+                    importStagingURL: importStagingURL
+                ) ?? .failed("cameraRegistryGone")
+            },
+            deleteItem: { [weak self] identity, relativePath in
+                guard let registry = self else { return false }
+                return await registry.sessionsByIdentity[identity]?.deleteItem(relativePath: relativePath) ?? false
+            },
+            canDelete: { [weak self] identity in
+                await MainActor.run {
+                    self?.sessionsByIdentity[identity]?.canDeleteOneFile ?? false
+                }
+            },
+            eject: { [weak self] identity in
+                guard let registry = self else { return .failed(description: "cameraGone") }
+                return await registry.sessionsByIdentity[identity]?.eject()
+                    ?? .failed(description: "cameraGone")
+            }
+        )
+    }
+
+    private func ensureImportBytes(
+        identity: String,
+        relativePath: MediaRelativePath,
+        enrichmentURL: URL,
+        importStagingURL: URL
+    ) async -> CameraByteOutcome {
+        guard let session = sessionsByIdentity[identity] else {
+            return .failed("cameraSessionMissing")
+        }
+        try? FileManager.default.createDirectory(
+            at: importStagingURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        if FileManager.default.fileExists(atPath: enrichmentURL.path),
+           let size = try? enrichmentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           let file = session.file(for: relativePath),
+           file.fileSize >= 0,
+           Int64(size) == Int64(file.fileSize)
+        {
+            let outcome = CopyfileTransfer.copy(
+                from: enrichmentURL,
+                to: importStagingURL,
+                onProgress: { _ in },
+                shouldContinue: { true }
+            )
+            switch outcome {
+            case .completed:
+                OtosLog.fileAccess.notice(
+                    // swiftlint:disable:next line_length
+                    "op=mediaOperation.camera phase=reuseEnrichmentStaging path=\(relativePath.rawValue, privacy: .public)"
+                )
+                return .completed
+            case .cancelled:
+                return .cancelled
+            case let .failed(message):
+                return .failed(message)
+            }
+        }
+        do {
+            try await session.download(relativePath: relativePath, to: importStagingURL)
+            return .completed
+        } catch {
+            return .failed(String(describing: error))
+        }
+    }
+}
+
+/// Outcome of placing camera bytes into import staging.
+nonisolated enum CameraByteOutcome: Equatable, Sendable {
+    case completed
+    case cancelled
+    case failed(String)
+}
+
+/// Camera-side import hooks used by `MediaImportExecutor` (plan 0055 Stage F).
+nonisolated struct CameraImportAccess: Sendable {
+    private let revalidate: @Sendable (String, MediaRelativePath, Int64?, Date?) async -> Bool
+    private let ensureBytes: @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome
+    private let deleteItemHook: @Sendable (String, MediaRelativePath) async -> Bool
+    private let canDeleteHook: @Sendable (String) async -> Bool
+    private let ejectHook: @Sendable (String) async -> RemovableEjectOutcome
+
+    init(
+        revalidate: @escaping @Sendable (String, MediaRelativePath, Int64?, Date?) async -> Bool,
+        ensureBytes: @escaping @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome,
+        deleteItem: @escaping @Sendable (String, MediaRelativePath) async -> Bool,
+        canDelete: @escaping @Sendable (String) async -> Bool,
+        eject: @escaping @Sendable (String) async -> RemovableEjectOutcome
+    ) {
+        self.revalidate = revalidate
+        self.ensureBytes = ensureBytes
+        deleteItemHook = deleteItem
+        canDeleteHook = canDelete
+        ejectHook = eject
+    }
+
+    func revalidateItem(
+        identity: String,
+        relativePath: MediaRelativePath,
+        byteSize: Int64?,
+        modifiedAt: Date?
+    ) async -> Bool {
+        await revalidate(identity, relativePath, byteSize, modifiedAt)
+    }
+
+    func ensureImportBytes(
+        identity: String,
+        relativePath: MediaRelativePath,
+        enrichmentURL: URL,
+        importStagingURL: URL
+    ) async -> CameraByteOutcome {
+        await ensureBytes(identity, relativePath, enrichmentURL, importStagingURL)
+    }
+
+    func deleteItem(identity: String, relativePath: MediaRelativePath) async -> Bool {
+        await deleteItemHook(identity, relativePath)
+    }
+
+    func canDelete(identity: String) async -> Bool {
+        await canDeleteHook(identity)
+    }
+
+    func eject(identity: String) async -> RemovableEjectOutcome {
+        await ejectHook(identity)
     }
 }
