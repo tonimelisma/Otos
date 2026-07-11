@@ -184,7 +184,129 @@ extension CatalogStore {
         migrator.registerMigration("v8_active_file_operation") { db in
             try createActiveFileOperationTable(db)
         }
+        migrator.registerMigration("v9_active_reorganization") { db in
+            try rebuildAssetMetadataWithUpdateCascade(db)
+            try createActiveReorganizationTables(db)
+        }
         return migrator
+    }
+
+    /// Rebuilds `asset_metadata` so path remaps cascade with media_asset PK updates
+    /// (plan 0055 §4.3). SQLite cannot ALTER an existing FK action in place.
+    static func rebuildAssetMetadataWithUpdateCascade(_ db: Database) throws {
+        try db.execute(sql: "PRAGMA foreign_keys = OFF")
+        try db.execute(
+            sql: """
+            CREATE TABLE asset_metadata_new (
+                library_root_id INTEGER NOT NULL,
+                relative_path TEXT NOT NULL,
+                family TEXT,
+                file_extension TEXT,
+                brand TEXT,
+                camera_make TEXT,
+                camera_model TEXT,
+                lens_model TEXT,
+                serial_number TEXT,
+                orientation INTEGER,
+                pixel_width INTEGER,
+                pixel_height INTEGER,
+                duration_seconds DOUBLE,
+                frame_rate DOUBLE,
+                video_codec TEXT,
+                primary_latitude DOUBLE,
+                primary_longitude DOUBLE,
+                primary_altitude_meters DOUBLE,
+                metadata_extra_json TEXT,
+                PRIMARY KEY (library_root_id, relative_path),
+                FOREIGN KEY (library_root_id, relative_path)
+                    REFERENCES media_asset(library_root_id, relative_path)
+                    ON DELETE CASCADE
+                    ON UPDATE CASCADE
+            )
+            """
+        )
+        try db.execute(
+            sql: """
+            INSERT INTO asset_metadata_new SELECT * FROM asset_metadata
+            """
+        )
+        try db.execute(sql: "DROP TABLE asset_metadata")
+        try db.execute(sql: "ALTER TABLE asset_metadata_new RENAME TO asset_metadata")
+        try db.create(
+            index: "idx_asset_metadata_camera_model",
+            on: "asset_metadata",
+            columns: ["camera_model"]
+        )
+        try db.create(
+            index: "idx_asset_metadata_dimensions",
+            on: "asset_metadata",
+            columns: ["pixel_width", "pixel_height"]
+        )
+        try db.execute(sql: "PRAGMA foreign_keys = ON")
+    }
+
+    static func createActiveReorganizationTables(_ db: Database) throws {
+        try db.execute(
+            sql: """
+            CREATE TABLE active_reorganization_component (
+                component_key TEXT PRIMARY KEY NOT NULL,
+                library_root_path TEXT NOT NULL,
+                plan_generation INTEGER NOT NULL,
+                planned_root_revision INTEGER NOT NULL,
+                phase TEXT NOT NULL,
+                next_step_index INTEGER NOT NULL,
+                created_at DOUBLE NOT NULL,
+                updated_at DOUBLE NOT NULL
+            )
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE TABLE active_reorganization_member (
+                component_key TEXT NOT NULL,
+                member_index INTEGER NOT NULL,
+                member_kind TEXT NOT NULL,
+                logical_source_relative_path TEXT NOT NULL,
+                current_relative_path TEXT NOT NULL,
+                final_relative_path TEXT NOT NULL,
+                byte_size INTEGER NOT NULL,
+                content_modified_at DOUBLE NOT NULL,
+                PRIMARY KEY (component_key, member_index),
+                FOREIGN KEY (component_key)
+                    REFERENCES active_reorganization_component(component_key)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE TABLE active_reorganization_step (
+                component_key TEXT NOT NULL,
+                step_index INTEGER NOT NULL,
+                member_index INTEGER NOT NULL,
+                source_relative_path TEXT NOT NULL,
+                destination_relative_path TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                PRIMARY KEY (component_key, step_index),
+                FOREIGN KEY (component_key, member_index)
+                    REFERENCES active_reorganization_member(component_key, member_index)
+                    ON DELETE CASCADE
+            )
+            """
+        )
+        try db.execute(
+            sql: """
+            CREATE TABLE active_reorganization_directory (
+                component_key TEXT NOT NULL,
+                relative_path TEXT NOT NULL,
+                phase TEXT NOT NULL,
+                PRIMARY KEY (component_key, relative_path),
+                FOREIGN KEY (component_key)
+                    REFERENCES active_reorganization_component(component_key)
+                    ON DELETE CASCADE
+            )
+            """
+        )
     }
 
     static func createActiveFileOperationTable(_ db: Database) throws {
