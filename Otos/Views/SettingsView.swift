@@ -9,6 +9,8 @@ struct SettingsView: View {
     let addLibrary: (URL) -> Void
     let removeLibrary: (LibraryRoot) -> Void
     let forgetRemovableSource: (LibraryRoot) -> Void
+    let importPreferences: ImportPreferences
+    let setImportPreferences: (ImportPreferences) -> Void
 
     var body: some View {
         TabView {
@@ -28,9 +30,66 @@ struct SettingsView: View {
             .tabItem {
                 Label("Removable Media", systemImage: "sdcard")
             }
+
+            ImportSettingsView(
+                preferences: importPreferences,
+                setPreferences: setImportPreferences
+            )
+            .tabItem {
+                Label("Import", systemImage: "square.and.arrow.down")
+            }
         }
         .frame(width: 660, height: 380)
         .scenePadding()
+    }
+}
+
+private struct ImportSettingsView: View {
+    let preferences: ImportPreferences
+    let setPreferences: (ImportPreferences) -> Void
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(
+                    "Import sidecar files (.xmp / .srt)",
+                    isOn: binding(\.importSidecarFiles)
+                )
+                Toggle(
+                    "Delete source files after successful import",
+                    isOn: binding(\.deleteSourceAfterImport)
+                )
+                Toggle(
+                    "Eject source after successful import",
+                    isOn: binding(\.autoEjectAfterImport)
+                )
+            }
+
+            Section("Destination folders") {
+                Picker("Folder policy", selection: binding(\.destinationFolderPolicy)) {
+                    Text("None").tag(DestinationFolderPolicy.none)
+                    Text("Year / Month").tag(DestinationFolderPolicy.yearMonth)
+                }
+                Picker("Filename policy", selection: binding(\.destinationNamePolicy)) {
+                    Text("Keep original name").tag(DestinationNamePolicy.original)
+                    Text("Capture date and time").tag(DestinationNamePolicy.captureDateTime)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func binding<Value>(
+        _ keyPath: WritableKeyPath<ImportPreferences, Value>
+    ) -> Binding<Value> {
+        Binding(
+            get: { preferences[keyPath: keyPath] },
+            set: { newValue in
+                var next = preferences
+                next[keyPath: keyPath] = newValue
+                setPreferences(next)
+            }
+        )
     }
 }
 
@@ -221,7 +280,9 @@ private struct LibrariesSettingsView: View {
         removableSources: [],
         addLibrary: { _ in },
         removeLibrary: { _ in },
-        forgetRemovableSource: { _ in }
+        forgetRemovableSource: { _ in },
+        importPreferences: .default,
+        setImportPreferences: { _ in }
     )
 }
 

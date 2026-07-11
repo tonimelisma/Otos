@@ -37,7 +37,8 @@ nonisolated enum CatalogWindowPolicy {
     static func resolvedSidebarSelection(
         _ sidebarSelection: SidebarSelection,
         libraries: [CatalogLibraryState],
-        removableSources: [CatalogLibraryState]
+        removableSources: [CatalogLibraryState],
+        importBatches: [ImportBatchSummary] = []
     ) -> SidebarSelection {
         switch sidebarSelection {
         case .allMedia:
@@ -60,19 +61,29 @@ nonisolated enum CatalogWindowPolicy {
                     removableSources: removableSources
                 )
             }
+        case let .importBatch(batchID):
+            if importBatches.contains(where: { $0.batchID == batchID }) {
+                return sidebarSelection
+            }
+            return SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
+                libraries: libraries,
+                removableSources: removableSources
+            )
         }
     }
 
     static func resolvedDescriptor(
         _ descriptor: CatalogQueryDescriptor,
         libraries: [CatalogLibraryState],
-        removableSources: [CatalogLibraryState]
+        removableSources: [CatalogLibraryState],
+        importBatches: [ImportBatchSummary] = []
     ) -> CatalogQueryDescriptor {
         CatalogQueryDescriptor(
             scope: resolvedSidebarSelection(
                 descriptor.scope,
                 libraries: libraries,
-                removableSources: removableSources
+                removableSources: removableSources,
+                importBatches: importBatches
             ),
             filter: descriptor.filter,
             sort: descriptor.sort
@@ -94,6 +105,9 @@ nonisolated enum CatalogWindowPolicy {
                 return rootsByPath[id.libraryRootPath]?.kind == .library
             case let .library(path):
                 return id.libraryRootPath == path
+            case .importBatch:
+                // Batch membership is applied by Store.orderedAssetIDs before projection.
+                return true
             }
         }
     }
@@ -104,6 +118,8 @@ nonisolated enum CatalogWindowPolicy {
             "All Media"
         case let .library(path):
             libraries.first { $0.path == path }?.displayName ?? "Library"
+        case let .importBatch(batchID):
+            ImportBatchFormatting.sidebarTitle(for: batchID)
         }
     }
 
@@ -139,6 +155,8 @@ nonisolated enum CatalogWindowPolicy {
             case .available, .none:
                 return .noMedia
             }
+        case .importBatch:
+            return .noMedia
         }
     }
 
@@ -150,6 +168,7 @@ nonisolated enum CatalogWindowPolicy {
             title: parts.title,
             libraries: parts.libraries,
             removableSources: parts.removableSources,
+            importBatches: parts.importBatches,
             mediaGrid: CatalogMediaGridState(
                 descriptor: parts.resolvedDescriptor,
                 orderedAssetIDs: parts.scopedAssetIDs,

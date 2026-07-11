@@ -100,6 +100,9 @@ nonisolated struct RootRegistry {
                 return []
             }
             return [rootID]
+        case .importBatch:
+            // Batch scope is resolved by Store via import_batch_unix_ms, not root IDs.
+            return []
         }
     }
 

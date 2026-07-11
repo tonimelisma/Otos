@@ -15,12 +15,14 @@ import SwiftUI
 /// the model. The model decides; the view renders.
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
+    @State private var overlayPlan: MediaOperationPlan?
 
     var body: some View {
         NavigationSplitView {
             SidebarView(
                 showsAllMedia: SidebarSelectionPolicy.showsAllMedia(libraries: viewModel.state.libraries),
                 libraries: viewModel.state.libraries,
+                importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
                 sidebarSelection: viewModel.sidebarSelection,
                 ejectingSourceIdentities: viewModel.ejectingSourceIdentities,
@@ -28,7 +30,24 @@ struct ContentView: View {
                 ejectSource: viewModel.ejectRemovableSource
             )
         } detail: {
-            detailContent
+            VStack(spacing: 0) {
+                detailContent
+                if let presentation = viewModel.selectedImportPresentation {
+                    ImportPlanFooter(
+                        presentation: presentation,
+                        fixedLibraries: viewModel.state.libraries.filter { $0.availability == .available },
+                        setDestination: { destination in
+                            viewModel.setImportDestination(destination, for: presentation.sourcePath)
+                        },
+                        queueImport: {
+                            viewModel.queueImport(for: presentation.sourcePath)
+                        },
+                        showPlanDetails: {
+                            viewModel.toggleImportPlanOverlay()
+                        }
+                    )
+                }
+            }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
@@ -74,6 +93,29 @@ struct ContentView: View {
         } message: {
             if let message = viewModel.ejectAlertMessage {
                 Text(message)
+            }
+        }
+        .sheet(isPresented: Binding(
+            get: { viewModel.showsImportPlanOverlay },
+            set: { presented in
+                if !presented {
+                    viewModel.dismissImportPlanOverlay()
+                    overlayPlan = nil
+                }
+            }
+        )) {
+            if let presentation = viewModel.selectedImportPresentation {
+                ImportPlanOverlay(
+                    presentation: presentation,
+                    plan: overlayPlan,
+                    dismiss: {
+                        viewModel.dismissImportPlanOverlay()
+                        overlayPlan = nil
+                    }
+                )
+                .task(id: presentation.sourcePath) {
+                    overlayPlan = await viewModel.readyImportPlan(for: presentation.sourcePath)
+                }
             }
         }
     }

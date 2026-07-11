@@ -117,8 +117,7 @@ nonisolated enum MediaCompanionPairing {
 }
 
 /// User preferences for import behavior. Persisted via `@AppStorage` keys owned by
-/// Settings; Stage B introduces the typed owner without the Settings Import tab
-/// (that ships with Stage D UI).
+/// Settings; Stage B introduced the typed owner; Stage D ships the Settings Import tab.
 nonisolated struct ImportPreferences: Equatable, Sendable {
     static let sidecarImportKey = "import.sidecarFiles"
     static let deleteSourceAfterImportKey = "import.deleteSourceAfterImport"
@@ -152,7 +151,7 @@ nonisolated enum DestinationNamePolicy: String, Equatable, Sendable, CaseIterabl
 }
 
 /// Typed read/write owner for import preferences. Keys are stable for the
-/// Settings Import tab (Stage D); Stage B only introduces persistence.
+/// Settings Import tab.
 nonisolated enum ImportPreferencesStore {
     static func load(defaults: UserDefaults = .standard) -> ImportPreferences {
         ImportPreferences(

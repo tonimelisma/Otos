@@ -53,6 +53,8 @@ nonisolated struct CatalogWindowState: Equatable {
     var title: String
     var libraries: [CatalogLibraryState]
     var removableSources: [CatalogLibraryState]
+    /// Nonempty import batches newest-first (sidebar Imports section).
+    var importBatches: [ImportBatchSummary] = []
     var mediaGrid: CatalogMediaGridState
     var filterOptions: CatalogFilterOptions
     var resolvedSidebarSelection: SidebarSelection
@@ -68,6 +70,7 @@ nonisolated struct CatalogWindowState: Equatable {
         title: "All Media",
         libraries: [],
         removableSources: [],
+        importBatches: [],
         mediaGrid: .empty,
         filterOptions: .empty,
         resolvedSidebarSelection: .allMedia,

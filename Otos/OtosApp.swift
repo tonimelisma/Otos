@@ -89,7 +89,9 @@ struct OtosApp: App {
                 removableSources: catalogViewModel.state.removableSources,
                 addLibrary: { catalogViewModel.addLibrary(url: $0) },
                 removeLibrary: { catalogViewModel.removeLibrary($0) },
-                forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) }
+                forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) },
+                importPreferences: catalogViewModel.importPreferences,
+                setImportPreferences: catalogViewModel.setImportPreferences
             )
         }
     }

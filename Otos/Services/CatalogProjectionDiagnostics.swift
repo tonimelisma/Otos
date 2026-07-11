@@ -74,7 +74,9 @@ nonisolated struct CatalogProjectionChangeSummary {
             previousSelectedScopeAssetCount: previous.mediaGrid.orderedAssetIDs.count,
             titleChanged: previous.title != current.title,
             mediaIdentityChanged: mediaIdentityChanged,
-            librariesChanged: previous.libraries != current.libraries,
+            librariesChanged: previous.libraries != current.libraries
+                || previous.removableSources != current.removableSources
+                || previous.importBatches != current.importBatches,
             filterOptionsChanged: previous.filterOptions != current.filterOptions,
             emptyStateChanged: previous.mediaEmptyState != current.mediaEmptyState,
             resolvedSelectionChanged: previous.resolvedSidebarSelection != current.resolvedSidebarSelection,

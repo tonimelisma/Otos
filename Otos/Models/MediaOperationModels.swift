@@ -96,6 +96,40 @@ nonisolated struct RootPlanningChange: Equatable, Sendable {
     let planRevision: UInt64
 }
 
+/// Per-source import lifecycle published to the footer/overlay (plan 0055 §6.3).
+nonisolated enum MediaOperationSourceState: Equatable, Sendable {
+    case inventory
+    case waitingForDestination
+    case waitingForMetadata(done: Int, total: Int)
+    case planning
+    case ready(summary: MediaOperationPlanTotals, generation: UInt64, skippedPackageCount: Int)
+    case queuedForReadiness
+    case executing(progress: MediaOperationProgress)
+    case needsReplan
+    case completed(summary: MediaOperationPlanTotals)
+    case failed(problem: String)
+    /// Execution is intentionally unavailable until Stage E lands.
+    case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64)
+}
+
+nonisolated struct MediaOperationProgress: Equatable, Sendable {
+    let completedCount: Int
+    let totalCount: Int
+    let completedBytes: Int64
+    let totalBytes: Int64
+}
+
+nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identifiable {
+    let sourcePath: LibraryRootPath
+    let destinationPath: LibraryRootPath?
+    let state: MediaOperationSourceState
+    let attachToReadyMs: Int?
+
+    var id: String {
+        sourcePath.rawValue
+    }
+}
+
 nonisolated struct NamespaceOccupancyRequest: Hashable, Sendable {
     let rootPath: LibraryRootPath
     let relativePath: MediaRelativePath
