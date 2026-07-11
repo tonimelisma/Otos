@@ -128,7 +128,7 @@ nonisolated enum CaptureWallClock {
               (1 ... 31).contains(day),
               (0 ... 23).contains(hour),
               (0 ... 59).contains(minute),
-              (0 ... 60).contains(second)
+              (0 ... 59).contains(second)
         else {
             return nil
         }
@@ -140,5 +140,20 @@ nonisolated enum CaptureWallClock {
             minute: minute,
             second: second
         )
+    }
+
+    /// Interprets a compact local wall clock in the current calendar/time zone.
+    static func date(fromCompact compact: Int64, calendar: Calendar = .current) -> Date? {
+        guard let components = components(fromCompact: compact) else {
+            return nil
+        }
+        var dateComponents = DateComponents()
+        dateComponents.year = components.year
+        dateComponents.month = components.month
+        dateComponents.day = components.day
+        dateComponents.hour = components.hour
+        dateComponents.minute = components.minute
+        dateComponents.second = components.second
+        return calendar.date(from: dateComponents)
     }
 }

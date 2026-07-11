@@ -181,7 +181,35 @@ extension CatalogStore {
         migrator.registerMigration("v7_media_companion") { db in
             try createMediaCompanionTable(db)
         }
+        migrator.registerMigration("v8_active_file_operation") { db in
+            try createActiveFileOperationTable(db)
+        }
         return migrator
+    }
+
+    static func createActiveFileOperationTable(_ db: Database) throws {
+        try db.execute(
+            sql: """
+            CREATE TABLE active_file_operation (
+                operation_key TEXT PRIMARY KEY NOT NULL,
+                mode TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_device_identity TEXT,
+                source_root_path TEXT NOT NULL,
+                source_relative_path TEXT NOT NULL,
+                destination_root_path TEXT NOT NULL,
+                destination_relative_path TEXT NOT NULL,
+                staging_path TEXT,
+                import_batch_unix_ms INTEGER,
+                source_byte_size INTEGER NOT NULL,
+                source_modified_at DOUBLE NOT NULL,
+                destination_modified_at DOUBLE,
+                phase TEXT NOT NULL,
+                delete_source_requested INTEGER NOT NULL,
+                updated_at DOUBLE NOT NULL
+            )
+            """
+        )
     }
 
     static func createMediaCompanionTable(_ db: Database) throws {
@@ -233,20 +261,25 @@ extension CatalogStore {
     /// Escalates `synchronous = FULL` for the duration of one write transaction so
     /// journal and settlement commits survive power loss, not only app crashes.
     /// The pool's default remains `NORMAL`; restore after the body returns.
+    ///
+    /// SQLite forbids changing the safety level inside a transaction, so the
+    /// pragma is set on the writer connection before `BEGIN` and restored after
+    /// commit/rollback.
     static func writeWithJournalDurability<T>(
         _ dbWriter: any DatabaseWriter,
         _ body: (Database) throws -> T
     ) throws -> T {
-        try dbWriter.write { db in
+        try dbWriter.writeWithoutTransaction { db in
             try db.execute(sql: "PRAGMA synchronous = FULL")
-            do {
-                let result = try body(db)
-                try db.execute(sql: "PRAGMA synchronous = NORMAL")
-                return result
-            } catch {
+            defer {
                 try? db.execute(sql: "PRAGMA synchronous = NORMAL")
-                throw error
             }
+            var result: T!
+            try db.inTransaction {
+                result = try body(db)
+                return .commit
+            }
+            return result
         }
     }
 
