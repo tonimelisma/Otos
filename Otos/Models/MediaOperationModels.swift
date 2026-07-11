@@ -108,7 +108,7 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case needsReplan
     case completed(summary: MediaOperationPlanTotals)
     case failed(problem: String)
-    /// Execution is intentionally unavailable until Stage E lands.
+    /// Source kind cannot execute import (for example a fixed library selected as source).
     case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64)
 }
 

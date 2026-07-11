@@ -89,6 +89,10 @@ everything expensive happens on an actor off the main thread.
   withhold cleanup and auto-eject. Imports
   sidebar scopes via `import_batch_unix_ms`. Plan details use
   `ImportPlanDetailReader` (no full plan map on `CatalogWindowState`).
+- **Library reorganization**: `ReorganizationPlanner` builds physical-member
+  recipes; `ReorganizationExecutor` + normalized `active_reorganization_*` journals
+  mutate under a typed root lease; `LibraryReorganizationRunner` is the confirmed
+  UI path; ViewModel/`TileContentStore` apply `CatalogIdentityRemapBatch` atomically.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.
@@ -101,6 +105,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
+| library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader` (ADR 0016); mode intents on `CatalogWindowViewModel` |
