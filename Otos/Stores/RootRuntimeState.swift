@@ -15,6 +15,9 @@ nonisolated struct RootRuntimeState: Equatable {
     /// Package directories skipped by the last completed scan (AVCHD and similar).
     /// Surfaced as import-footer attention in Stage D; inventory-only here.
     var skippedPackageCount: Int
+    /// Monotonic planning dependency revision. Bumped only when import/reorg
+    /// planning inputs change (plan 0055 §6.1).
+    var planRevision: UInt64
 
     var path: LibraryRootPath {
         root.path
@@ -26,7 +29,8 @@ nonisolated struct RootRuntimeState: Equatable {
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
-        skippedPackageCount: Int = 0
+        skippedPackageCount: Int = 0,
+        planRevision: UInt64 = 0
     ) {
         self.root = root
         self.rowID = rowID
@@ -34,5 +38,6 @@ nonisolated struct RootRuntimeState: Equatable {
         self.activity = activity
         self.isEjectable = isEjectable
         self.skippedPackageCount = skippedPackageCount
+        self.planRevision = planRevision
     }
 }

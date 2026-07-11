@@ -161,12 +161,16 @@ actor CatalogStore {
     private var unrequestedLoadedRootPaths: [LibraryRootPath] = []
     private var roots = RootRegistry()
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
+    private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
     private var scanLeases = ScanLeaseController()
     private var currentScanTask: Task<Void, Never>?
     private var filesystemWatchingStarted = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
+    /// Destination-relative paths known to be foreign occupants after EEXIST
+    /// publication failures (plan 0055 §6.4). Ephemeral; Stage E records them.
+    private var knownForeignOccupantsByRoot: [LibraryRootPath: Set<MediaRelativePath>] = [:]
 
     init(
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
@@ -208,6 +212,78 @@ extension CatalogStore {
             }
         }
         return stream
+    }
+
+    /// Lossless planning-input revision stream (plan 0055 §6.1). Separate from
+    /// coarse `CatalogStoreChange` so thumbnail-only mutations do not replan.
+    func planningChangeNotifications() -> AsyncStream<RootPlanningChange> {
+        let (stream, continuation) = AsyncStream<RootPlanningChange>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        let id = UUID()
+        planningChangeContinuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task {
+                await self?.removePlanningChangeContinuation(id)
+            }
+        }
+        return stream
+    }
+
+    func planRevision(for rootPath: LibraryRootPath) -> UInt64? {
+        roots[rootPath]?.planRevision
+    }
+
+    /// Immutable import planning snapshot for one source→destination pair.
+    func importPlanningSnapshot(
+        source: LibraryRootPath,
+        destination: LibraryRootPath,
+        policy: ImportPolicy,
+        generation: UInt64,
+        calendar: Calendar = .current,
+        timeZone: TimeZone = .current
+    ) async throws -> ImportPlanningSnapshot? {
+        guard let sourceState = roots[source],
+              let destinationState = roots[destination]
+        else {
+            return nil
+        }
+        let dbWriter = try database()
+        let sourceRowID = sourceState.rowID
+        let destinationRowID = destinationState.rowID
+        let companions = try await dbWriter.read { db in
+            try Self.fetchCompanions(libraryRootID: sourceRowID, db: db)
+        }
+        let companionsByPrimary = Dictionary(grouping: companions) {
+            $0.primaryRelativePath?.rawValue ?? ""
+        }
+        let sourceMedia = try await dbWriter.read { db in
+            try MediaOperationGateway.fetchPlanningSourceMedia(
+                libraryRootID: sourceRowID,
+                sourceRoot: source,
+                companionsByPrimary: companionsByPrimary,
+                db: db
+            )
+        }
+        let destinationOccupants = try await dbWriter.read { db in
+            try MediaOperationGateway.fetchDestinationOccupants(
+                libraryRootID: destinationRowID,
+                db: db
+            )
+        }
+        return ImportPlanningSnapshot(
+            generation: generation,
+            sourceRoot: source,
+            destinationRoot: destination,
+            sourceRevision: sourceState.planRevision,
+            destinationRevision: destinationState.planRevision,
+            sourceMedia: sourceMedia,
+            destinationOccupants: destinationOccupants,
+            knownForeignOccupants: knownForeignOccupantsByRoot[destination] ?? [],
+            policy: policy,
+            calendar: calendar,
+            timeZone: timeZone
+        )
     }
 
     func currentLibraries() -> [CatalogLibraryState] {
@@ -1327,7 +1403,8 @@ extension CatalogStore {
             availability: previous?.availability ?? .unknown,
             activity: previous?.activity ?? .idle,
             isEjectable: previous?.isEjectable ?? false,
-            skippedPackageCount: previous?.skippedPackageCount ?? 0
+            skippedPackageCount: previous?.skippedPackageCount ?? 0,
+            planRevision: (previous?.planRevision ?? 0) &+ 1
         ))
     }
 
@@ -2046,6 +2123,8 @@ private extension CatalogStore {
             setAvailability(.available, for: nextPath)
             let scan = scanLeases.makeActiveScan(rootPath: nextPath, rootRowID: rootRowID)
             scanLeases.beginFilesystemScan(scan)
+            filesystemWatchingArmed.insert(nextPath)
+            filesystemWatcher.addRoot(nextPath)
             notifyCatalogChanged()
             OtosLog.catalog.info("Catalog scan started path=\(nextPath.rawValue, privacy: .public)")
             recordDiagnostic(
@@ -2163,7 +2242,10 @@ private extension CatalogStore {
                 upsert(state)
             }
             if companionChanged || observation.skippedPackageCount > 0 {
+                bumpPlanRevision(for: scan.rootPath)
                 notifyCatalogChanged()
+            } else {
+                bumpPlanRevision(for: scan.rootPath)
             }
             OtosLog.catalog.info(
                 """
@@ -2361,8 +2443,30 @@ private extension CatalogStore {
         }
     }
 
+    @discardableResult
+    private func bumpPlanRevision(for path: LibraryRootPath) -> UInt64? {
+        guard var state = roots[path] else {
+            return nil
+        }
+        state.planRevision &+= 1
+        upsert(state)
+        let change = RootPlanningChange(rootPath: path, planRevision: state.planRevision)
+        for continuation in planningChangeContinuations.values {
+            continuation.yield(change)
+        }
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.planRevision phase=bump rootPath=\(path.rawValue, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
+        )
+        return state.planRevision
+    }
+
     private func removeChangeContinuation(_ id: UUID) {
         changeContinuations.removeValue(forKey: id)
+    }
+
+    private func removePlanningChangeContinuation(_ id: UUID) {
+        planningChangeContinuations.removeValue(forKey: id)
     }
 
     private func rootIsAvailable(_ path: LibraryRootPath) -> Bool {
@@ -2438,9 +2542,17 @@ private extension CatalogStore {
             return
         }
 
-        guard filesystemWatchingArmed.contains(root) else {
-            recordFilesystemEventDrop(path: event.path, root: root, reason: "unarmed")
-            return
+        let hasActiveScan = scanLeases.hasActiveFilesystemScan(for: root)
+        // Arm watching as soon as the root is known and available, and never
+        // drop events while a scan lease owns the root (plan 0055 §6.2).
+        if !filesystemWatchingArmed.contains(root) {
+            if hasActiveScan || roots[root]?.availability == .available {
+                filesystemWatchingArmed.insert(root)
+                bumpPlanRevision(for: root)
+            } else {
+                recordFilesystemEventDrop(path: event.path, root: root, reason: "unarmed")
+                return
+            }
         }
 
         OtosLog.catalog.debug(
@@ -2549,6 +2661,7 @@ private extension CatalogStore {
             filesystemEventBatches.removeValue(forKey: root)
         case let .deferUntilScanCompletes(eventCount):
             scanLeases.markRescanAfterCurrentScan(root)
+            bumpPlanRevision(for: root)
             filesystemEventBatches.removeValue(forKey: root)
             OtosLog.catalog.debug(
                 "Filesystem reconcile deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
@@ -2575,6 +2688,7 @@ private extension CatalogStore {
                 catalogChanged = true
             }
             if catalogChanged {
+                bumpPlanRevision(for: root)
                 notifyCatalogChanged()
             }
             OtosLog.catalog.notice(

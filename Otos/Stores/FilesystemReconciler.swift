@@ -30,15 +30,16 @@ nonisolated enum FilesystemReconciler {
         guard rootExists else {
             return .drop(reason: "removed")
         }
+        // Events during an active scan must not be lost when watching is not yet
+        // armed (plan 0055 §6.2): defer a follow-up reconciliation.
+        if hasActiveScanForRoot {
+            return .deferUntilScanCompletes(eventCount: events.count)
+        }
         guard isArmed else {
             return .drop(reason: "unarmed")
         }
         guard isAvailable else {
             return .drop(reason: "unavailable")
-        }
-
-        if hasActiveScanForRoot {
-            return .deferUntilScanCompletes(eventCount: events.count)
         }
 
         guard !events.isEmpty else {
