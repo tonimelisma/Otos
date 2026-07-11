@@ -53,7 +53,139 @@ struct MediaOperationCoordinatorTests {
             Issue.record("Unexpected import presentation state \(card.state)")
         }
     }
+
+    /// Regression: an enriching cloud destination bumps `planRevision` every few
+    /// seconds without changing occupancy. Planning must settle to `.ready` and
+    /// stay there — never livelock back into `.planning` — while a real occupancy
+    /// change still forces a replan.
+    @Test func noOpPlanRevisionChurnDoesNotDisturbReadyPlan() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:churn-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let coordinator = MediaOperationCoordinator(store: store, authorizeMaterialization: false)
+        await coordinator.start()
+        defer {
+            Task { await coordinator.shutdown() }
+        }
+        await coordinator.setDestination(fixedPath, for: cardPath)
+
+        // The real bug's destination changes occupancy while scanning, which primes
+        // the coordinator's occupancy memory for that root. Reproduce that priming
+        // (an unseen root's first wake is conservatively treated as a possible
+        // change) with one bump, then settle so the baseline is past it.
+        _ = await store.bumpPlanRevision(for: fixedPath)
+        try await Task.sleep(for: .milliseconds(150))
+        let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        // No-op planRevision churn on the destination — the exact livelock trigger.
+        for _ in 0 ..< 8 {
+            _ = await store.bumpPlanRevision(for: fixedPath)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+
+        let afterChurn = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+        )
+        guard case let .ready(_, churnGeneration, _) = afterChurn.state else {
+            Issue.record("Expected .ready after planRevision churn, got \(afterChurn.state)")
+            return
+        }
+        #expect(churnGeneration == baseline)
+
+        // A real occupancy change still forces a replan.
+        _ = await store.bumpOccupancyRevision(for: cardPath)
+        let replanned = try await readyGeneration(
+            coordinator,
+            source: cardPath,
+            greaterThan: baseline
+        )
+        #expect(replanned > baseline)
+    }
+
+    /// Wait for the source to reach `.ready` (optionally with a generation past
+    /// `minimum`) and return that generation.
+    private func readyGeneration(
+        _ coordinator: MediaOperationCoordinator,
+        source: LibraryRootPath,
+        greaterThan minimum: UInt64? = nil,
+        timeout: Duration = .seconds(5)
+    ) async throws -> UInt64 {
+        let deadline = ContinuousClock().now + timeout
+        while ContinuousClock().now < deadline {
+            if let generation = await currentReadyGeneration(coordinator, source: source),
+               minimum.map({ generation > $0 }) ?? true
+            {
+                return generation
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw ReadyPlanTimeout()
+    }
+
+    /// Wait until the source's ready generation stops changing for `settleFor`,
+    /// then return it — so a later assertion is not raced by initial planning churn.
+    private func settledReadyGeneration(
+        _ coordinator: MediaOperationCoordinator,
+        source: LibraryRootPath,
+        settleFor: Duration = .milliseconds(400),
+        timeout: Duration = .seconds(8)
+    ) async throws -> UInt64 {
+        let deadline = ContinuousClock().now + timeout
+        var lastGeneration: UInt64?
+        var stableSince: ContinuousClock.Instant?
+        while ContinuousClock().now < deadline {
+            let generation = await currentReadyGeneration(coordinator, source: source)
+            if let generation, generation == lastGeneration {
+                if let stableSince, stableSince.duration(to: .now) >= settleFor {
+                    return generation
+                }
+            } else {
+                lastGeneration = generation
+                stableSince = generation == nil ? nil : ContinuousClock().now
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw ReadyPlanTimeout()
+    }
+
+    private func currentReadyGeneration(
+        _ coordinator: MediaOperationCoordinator,
+        source: LibraryRootPath
+    ) async -> UInt64? {
+        let presentations = await coordinator.currentPresentations()
+        guard let card = presentations.first(where: { $0.sourcePath == source }),
+              case let .ready(_, generation, _) = card.state
+        else {
+            return nil
+        }
+        return generation
+    }
 }
+
+private struct ReadyPlanTimeout: Error {}
 
 struct ImportBatchSidebarPolicyTests {
     @Test func missingBatchFallsBackToDefaultSelection() {

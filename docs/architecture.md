@@ -81,9 +81,13 @@ everything expensive happens on an actor off the main thread.
   Import tab).
 - **Import planning**: `MediaTransferPlanner` is pure; occupancy via
   `FilesystemNamespaceSemantics`, equality via `ContentEqualityChecker`. Store
-  publishes `planRevision` / `RootPlanningChange` and builds
-  `ImportPlanningSnapshot`. `MediaOperationCoordinator` greedily plans attached
-  removable sources and publishes scalar footer presentation. Removable filesystem
+  tracks two per-root revisions: `planRevision` (general, reorg-polled, bumps on
+  no-op rescans too) and `occupancyRevision` (advances only on real media-namespace
+  changes). Import-plan staleness and the `RootPlanningChange` stream key on
+  `occupancyRevision`, so enrichment/no-op-rescan churn on a cloud destination does
+  not livelock planning. Store builds `ImportPlanningSnapshot`;
+  `MediaOperationCoordinator` greedily plans attached removable sources and
+  publishes scalar footer presentation. Removable filesystem
   volumes and MTP cameras execute through `MediaImportExecutor` (journal +
   copyfile/camera download + exclusive publish + settlement); blocked entries
   withhold cleanup and auto-eject. Imports

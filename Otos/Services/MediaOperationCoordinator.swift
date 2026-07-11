@@ -24,6 +24,13 @@ actor MediaOperationCoordinator {
     private var queuedStart: [LibraryRootPath: UInt64] = [:]
     private var dirty: Set<LibraryRootPath> = []
     private var building: Set<LibraryRootPath> = []
+    /// Last occupancy revision observed per root (source or destination) from the
+    /// planning-change stream. A change whose occupancy revision differs from this
+    /// is a real namespace change worth replanning; an unchanged one is
+    /// `planRevision`-only churn (no-op cloud rescans, event deferrals) and is
+    /// ignored. Using inequality — not `>` — keeps a removed-then-re-added root,
+    /// whose revision resets, from being suppressed by a stale high value.
+    private var lastSeenOccupancy: [LibraryRootPath: UInt64] = [:]
     private var planGeneration: UInt64 = 0
     private var attachStartedAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var attachToReadyMs: [LibraryRootPath: Int] = [:]
@@ -357,19 +364,23 @@ actor MediaOperationCoordinator {
     }
 
     private func handlePlanningChange(_ change: RootPlanningChange) async {
-        let libraries = await store.currentLibraries()
-        let removable = libraries.filter { $0.root.kind != .library }
-        if removable.contains(where: { $0.path == change.rootPath })
-            || destinationBySource.values.contains(change.rootPath)
-        {
+        // Only a real occupancy change (media/companion inventory, import/reorg
+        // settlement, foreign occupant) invalidates an import plan. A wake carrying
+        // the same occupancy revision is planRevision-only churn — refresh source
+        // membership cheaply, but do not rebuild.
+        let occupancyChanged = lastSeenOccupancy[change.rootPath] != change.occupancyRevision
+        lastSeenOccupancy[change.rootPath] = change.occupancyRevision
+
+        if occupancyChanged {
+            let libraries = await store.currentLibraries()
+            let removable = libraries.filter { $0.root.kind != .library }
             if removable.contains(where: { $0.path == change.rootPath }) {
                 dirty.insert(change.rootPath)
                 await scheduleBuildIfNeeded(change.rootPath)
-            } else {
-                for (source, destination) in destinationBySource where destination == change.rootPath {
-                    dirty.insert(source)
-                    await scheduleBuildIfNeeded(source)
-                }
+            }
+            for (source, destination) in destinationBySource where destination == change.rootPath {
+                dirty.insert(source)
+                await scheduleBuildIfNeeded(source)
             }
         }
         await refreshSources(reason: "planningChange")
@@ -389,6 +400,7 @@ actor MediaOperationCoordinator {
             if attachStartedAt[source.path] == nil {
                 attachStartedAt[source.path] = ContinuousClock().now
             }
+            let previousMapping = destinationBySource[source.path]
             // Auto-map only when exactly one fixed library exists and nothing is saved.
             if destinationBySource[source.path] == nil, let soleDestination {
                 destinationBySource[source.path] = soleDestination
@@ -399,7 +411,8 @@ actor MediaOperationCoordinator {
             {
                 destinationBySource.removeValue(forKey: source.path)
             }
-            if presentations[source.path] == nil {
+            let isNewSource = presentations[source.path] == nil
+            if isNewSource {
                 presentations[source.path] = MediaOperationSourcePresentation(
                     sourcePath: source.path,
                     destinationPath: destinationBySource[source.path],
@@ -407,8 +420,14 @@ actor MediaOperationCoordinator {
                     attachToReadyMs: nil
                 )
             }
-            dirty.insert(source.path)
-            await scheduleBuildIfNeeded(source.path)
+            // Plan a source only when it first appears or its destination mapping
+            // changed. Re-dirtying stable sources on every wake is exactly the churn
+            // that livelocked planning against an enriching cloud destination —
+            // occupancy-driven rebuilds arrive through handlePlanningChange instead.
+            if isNewSource || destinationBySource[source.path] != previousMapping {
+                dirty.insert(source.path)
+                await scheduleBuildIfNeeded(source.path)
+            }
         }
         for path in presentations.keys where !seen.contains(path) {
             presentations.removeValue(forKey: path)
@@ -418,6 +437,7 @@ actor MediaOperationCoordinator {
             building.remove(path)
             attachStartedAt.removeValue(forKey: path)
             attachToReadyMs.removeValue(forKey: path)
+            lastSeenOccupancy.removeValue(forKey: path)
         }
         persistDestinationMappings()
         publish()
@@ -494,10 +514,13 @@ actor MediaOperationCoordinator {
             equality: equality,
             knownForeignOccupants: snapshot.knownForeignOccupants
         )
-        let sourceRevision = await store.planRevision(for: source)
-        let destinationRevision = await store.planRevision(for: destination)
-        guard sourceRevision == snapshot.sourceRevision,
-              destinationRevision == snapshot.destinationRevision,
+        // Key staleness on occupancy, not planRevision: a destination that keeps
+        // enriching bumps planRevision every few seconds without changing which
+        // paths are occupied, and guarding on that livelocks planning.
+        let sourceOccupancy = await store.occupancyRevision(for: source)
+        let destinationOccupancy = await store.occupancyRevision(for: destination)
+        guard sourceOccupancy == snapshot.sourceOccupancyRevision,
+              destinationOccupancy == snapshot.destinationOccupancyRevision,
               generation == planGeneration || dirty.contains(source) == false
         else {
             building.remove(source)

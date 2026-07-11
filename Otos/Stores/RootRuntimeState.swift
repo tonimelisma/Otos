@@ -15,9 +15,20 @@ nonisolated struct RootRuntimeState: Equatable {
     /// Package directories skipped by the last completed scan (AVCHD and similar).
     /// Surfaced as import-footer attention in Stage D; inventory-only here.
     var skippedPackageCount: Int
-    /// Monotonic planning dependency revision. Bumped only when import/reorg
-    /// planning inputs change (plan 0055 §6.1).
+    /// Monotonic general planning revision. Bumped whenever reorganization planning
+    /// inputs may have changed, including no-op rescans and event deferrals. Reorg
+    /// planning polls this. Import planning does NOT key staleness on it — it churns
+    /// under cloud-sync/enrichment materialization noise that never changes import
+    /// occupancy. See `occupancyRevision`.
     var planRevision: UInt64
+    /// Monotonic import-occupancy revision. Bumped only when the root's occupied
+    /// media namespace actually changes: a media asset added, removed, renamed, or
+    /// resized; a companion inventory change; an import/reorg settlement; or a
+    /// discovered foreign occupant. Enrichment overlay writes and identical rescans
+    /// never bump it. Import-plan staleness keys on this so planning settles while a
+    /// large cloud destination keeps enriching. Every `occupancyRevision` bump also
+    /// advances `planRevision` (an occupancy change is a superset planning change).
+    var occupancyRevision: UInt64
 
     var path: LibraryRootPath {
         root.path
@@ -30,7 +41,8 @@ nonisolated struct RootRuntimeState: Equatable {
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
         skippedPackageCount: Int = 0,
-        planRevision: UInt64 = 0
+        planRevision: UInt64 = 0,
+        occupancyRevision: UInt64 = 0
     ) {
         self.root = root
         self.rowID = rowID
@@ -39,5 +51,6 @@ nonisolated struct RootRuntimeState: Equatable {
         self.isEjectable = isEjectable
         self.skippedPackageCount = skippedPackageCount
         self.planRevision = planRevision
+        self.occupancyRevision = occupancyRevision
     }
 }

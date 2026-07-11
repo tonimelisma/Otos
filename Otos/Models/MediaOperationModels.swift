@@ -84,16 +84,20 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
 nonisolated struct MediaOperationPlan: Equatable, Sendable {
     let generation: UInt64
     let mode: MediaOperationMode
-    let sourceRevision: UInt64
-    let destinationRevision: UInt64
+    let sourceOccupancyRevision: UInt64
+    let destinationOccupancyRevision: UInt64
     let policy: ImportPolicy
     let entries: [MediaOperationPlanEntry]
     let totals: MediaOperationPlanTotals
 }
 
+/// Import-planning wake published on the Store's planning-change stream. Carries
+/// the root's current `occupancyRevision` so the import coordinator can cheaply
+/// distinguish a real occupancy change from `planRevision`-only churn (no-op
+/// rescans, event deferrals) and skip a needless replan.
 nonisolated struct RootPlanningChange: Equatable, Sendable {
     let rootPath: LibraryRootPath
-    let planRevision: UInt64
+    let occupancyRevision: UInt64
 }
 
 /// Per-source import lifecycle published to the footer/overlay (plan 0055 §6.3).
@@ -195,8 +199,8 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let generation: UInt64
     let sourceRoot: LibraryRootPath
     let destinationRoot: LibraryRootPath
-    let sourceRevision: UInt64
-    let destinationRevision: UInt64
+    let sourceOccupancyRevision: UInt64
+    let destinationOccupancyRevision: UInt64
     let sourceMedia: [PlanningFileFacts]
     let destinationOccupants: [MediaRelativePath: DestinationOccupantFacts]
     let knownForeignOccupants: Set<MediaRelativePath>

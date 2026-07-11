@@ -238,6 +238,50 @@ extension CatalogStore {
         roots[rootPath]?.planRevision
     }
 
+    func occupancyRevision(for rootPath: LibraryRootPath) -> UInt64? {
+        roots[rootPath]?.occupancyRevision
+    }
+
+    /// General planning revision bump for changes that may invalidate reorganization
+    /// planning but never change import occupancy (no-op rescans, event deferrals,
+    /// watch arming). Wakes the import coordinator with an unchanged
+    /// `occupancyRevision`, which the coordinator treats as a cheap no-op.
+    @discardableResult
+    func bumpPlanRevision(for path: LibraryRootPath) -> UInt64? {
+        guard var state = roots[path] else {
+            return nil
+        }
+        state.planRevision &+= 1
+        upsert(state)
+        emitPlanningChange(rootPath: path, occupancyRevision: state.occupancyRevision)
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.planRevision phase=bump rootPath=\(path.rawValue, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
+        )
+        return state.planRevision
+    }
+
+    /// Occupancy bump for a real import-namespace change (media added/removed/
+    /// renamed/resized, companion inventory change, import/reorg settlement, foreign
+    /// occupant). Also advances `planRevision` — an occupancy change is a superset
+    /// planning change — and wakes the import coordinator with the advanced
+    /// `occupancyRevision` so it replans.
+    @discardableResult
+    func bumpOccupancyRevision(for path: LibraryRootPath) -> UInt64? {
+        guard var state = roots[path] else {
+            return nil
+        }
+        state.occupancyRevision &+= 1
+        state.planRevision &+= 1
+        upsert(state)
+        emitPlanningChange(rootPath: path, occupancyRevision: state.occupancyRevision)
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.occupancyRevision phase=bump rootPath=\(path.rawValue, privacy: .public) occupancyRevision=\(state.occupancyRevision, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
+        )
+        return state.occupancyRevision
+    }
+
     /// Planning media facts for reorganization of one fixed library root.
     func planningMedia(for rootPath: LibraryRootPath) async -> [PlanningFileFacts]? {
         guard let state = roots[rootPath] else {
@@ -308,8 +352,8 @@ extension CatalogStore {
             generation: generation,
             sourceRoot: source,
             destinationRoot: destination,
-            sourceRevision: sourceState.planRevision,
-            destinationRevision: destinationState.planRevision,
+            sourceOccupancyRevision: sourceState.occupancyRevision,
+            destinationOccupancyRevision: destinationState.occupancyRevision,
             sourceMedia: sourceMedia,
             destinationOccupants: destinationOccupants,
             knownForeignOccupants: knownForeignOccupantsByRoot[destination] ?? [],
@@ -1466,7 +1510,8 @@ extension CatalogStore {
             activity: previous?.activity ?? .idle,
             isEjectable: previous?.isEjectable ?? false,
             skippedPackageCount: previous?.skippedPackageCount ?? 0,
-            planRevision: (previous?.planRevision ?? 0) &+ 1
+            planRevision: (previous?.planRevision ?? 0) &+ 1,
+            occupancyRevision: (previous?.occupancyRevision ?? 0) &+ 1
         ))
     }
 
@@ -2254,8 +2299,12 @@ private extension CatalogStore {
         let visibleChange = changedCount > 0
         // SQLite reported whether this batch inserted a new row or changed existing
         // filesystem facts. Identical rescans publish nothing; changed dates still
-        // count because Date sort and enrichment priority fall back to them.
+        // count because Date sort and enrichment priority fall back to them. A
+        // changed batch is a real import-occupancy change (added row or resized
+        // file), so it advances the occupancy revision; identical rescans do not,
+        // which is what lets import planning settle against a churning cloud root.
         if visibleChange {
+            bumpOccupancyRevision(for: scan.rootPath)
             notifyCatalogChanged()
         }
         await recordScanBatchWrite(
@@ -2308,11 +2357,18 @@ private extension CatalogStore {
                 state.skippedPackageCount = observation.skippedPackageCount
                 upsert(state)
             }
-            if companionChanged || observation.skippedPackageCount > 0 {
-                bumpPlanRevision(for: scan.rootPath)
-                notifyCatalogChanged()
+            // Media additions/resizes already advanced occupancy per changed batch.
+            // Deletions and companion-inventory changes surface only at completion,
+            // so bump occupancy here for those; an identical rescan (no deletions,
+            // no companion change) advances only the general planRevision, which the
+            // import coordinator treats as a cheap no-op wake.
+            if deletedCount > 0 || companionChanged {
+                bumpOccupancyRevision(for: scan.rootPath)
             } else {
                 bumpPlanRevision(for: scan.rootPath)
+            }
+            if companionChanged || observation.skippedPackageCount > 0 {
+                notifyCatalogChanged()
             }
             OtosLog.catalog.info(
                 """
@@ -2510,22 +2566,11 @@ private extension CatalogStore {
         }
     }
 
-    @discardableResult
-    func bumpPlanRevision(for path: LibraryRootPath) -> UInt64? {
-        guard var state = roots[path] else {
-            return nil
-        }
-        state.planRevision &+= 1
-        upsert(state)
-        let change = RootPlanningChange(rootPath: path, planRevision: state.planRevision)
+    private func emitPlanningChange(rootPath: LibraryRootPath, occupancyRevision: UInt64) {
+        let change = RootPlanningChange(rootPath: rootPath, occupancyRevision: occupancyRevision)
         for continuation in planningChangeContinuations.values {
             continuation.yield(change)
         }
-        OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
-            "op=catalog.planRevision phase=bump rootPath=\(path.rawValue, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
-        )
-        return state.planRevision
     }
 
     private func removeChangeContinuation(_ id: UUID) {
@@ -2764,7 +2809,7 @@ private extension CatalogStore {
                 catalogChanged = true
             }
             if catalogChanged {
-                bumpPlanRevision(for: root)
+                bumpOccupancyRevision(for: root)
                 notifyCatalogChanged()
             }
             OtosLog.catalog.notice(
@@ -3028,7 +3073,7 @@ private extension CatalogStore {
             )
             try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
         }
-        _ = bumpPlanRevision(for: operation.destinationRootPath)
+        _ = bumpOccupancyRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -3041,7 +3086,7 @@ private extension CatalogStore {
             // swiftlint:disable:next line_length
             "op=mediaOperation.publish phase=foreignOccupant rootPath=\(root.rawValue, privacy: .public) relative=\(relativePath.rawValue, privacy: .public)"
         )
-        _ = bumpPlanRevision(for: root)
+        _ = bumpOccupancyRevision(for: root)
     }
 
     /// Removes abandoned staging files in the given parent directories only.
@@ -3222,7 +3267,11 @@ private extension CatalogStore {
                 db: db
             )
         }
-        let revision = bumpPlanRevision(for: settled.libraryRootPath) ?? 0
+        // Relocation moves media on disk: advance occupancy so import planning
+        // against this root replans. Reorg's own `rootRevision` stays the general
+        // planRevision, which the occupancy bump also advances.
+        bumpOccupancyRevision(for: settled.libraryRootPath)
+        let revision = planRevision(for: settled.libraryRootPath) ?? 0
         notifyCatalogChanged()
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
