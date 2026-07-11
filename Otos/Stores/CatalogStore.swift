@@ -3248,9 +3248,29 @@ private extension CatalogStore {
             case .filesystemComplete:
                 OtosLog.catalog.notice(
                     // swiftlint:disable:next line_length
-                    "op=reorganization.recover phase=awaitingSettlement key=\(component.componentKey.rawValue, privacy: .public)"
+                    "op=reorganization.recover phase=retrySettlement key=\(component.componentKey.rawValue, privacy: .public)"
                 )
-                _ = acquireReorganizationLease(for: component.libraryRootPath)
+                let remaps = component.members.compactMap { member -> CatalogIdentityRemap? in
+                    guard member.kind == .media else { return nil }
+                    return CatalogIdentityRemap(
+                        oldID: MediaAssetID(
+                            libraryRootPath: component.libraryRootPath,
+                            relativePath: member.logicalSourceRelativePath
+                        ),
+                        newID: MediaAssetID(
+                            libraryRootPath: component.libraryRootPath,
+                            relativePath: member.finalRelativePath
+                        )
+                    )
+                }
+                do {
+                    _ = try await settleRelocationComponent(key: component.componentKey, remaps: remaps)
+                } catch {
+                    OtosLog.catalog.error(
+                        // swiftlint:disable:next line_length
+                        "op=reorganization.recover phase=settlementFailed key=\(component.componentKey.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                    )
+                }
             case .prepared, .moving, .rollingBack, .blocked:
                 OtosLog.catalog.notice(
                     // swiftlint:disable:next line_length

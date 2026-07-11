@@ -214,12 +214,20 @@ final class DeviceStagingRegistry {
            file.fileSize >= 0,
            Int64(size) == Int64(file.fileSize)
         {
-            let outcome = CopyfileTransfer.copy(
-                from: enrichmentURL,
-                to: importStagingURL,
-                onProgress: { _ in },
-                shouldContinue: { true }
-            )
+            let source = enrichmentURL
+            let destination = importStagingURL
+            let outcome = await withCheckedContinuation {
+                (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
+                Task.detached {
+                    let copyOutcome = CopyfileTransfer.copy(
+                        from: source,
+                        to: destination,
+                        onProgress: { _ in },
+                        shouldContinue: { true }
+                    )
+                    continuation.resume(returning: copyOutcome)
+                }
+            }
             switch outcome {
             case .completed:
                 OtosLog.fileAccess.notice(

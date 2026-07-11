@@ -155,22 +155,103 @@ nonisolated enum ReorganizationPlanner {
             return .needsProbes(occupancy: uniqueOccupancy(pendingOccupancy))
         }
 
-        // 5. Apply probe results: block on symlink/file ancestors; treat foreign as stationary.
+        // 5. Apply probe results.
+        // Ancestors: only non-directory occupants block (existing date folders are valid).
         for member in members where member.source != member.finalDestination {
             for ancestor in directoryAncestors(of: member.finalDestination) {
                 let ancestorRequest = NamespaceOccupancyRequest(
                     rootPath: snapshot.libraryRoot,
                     relativePath: ancestor
                 )
-                switch occupancy[ancestorRequest] {
-                case .regularFile, .foreign:
-                    if let mediaID = member.mediaID {
-                        mediaDispositions[mediaID] = .blocked(.ancestorConflict(ancestor))
-                    }
-                default:
-                    break
+                if isBlockingAncestorOccupancy(occupancy[ancestorRequest]),
+                   let mediaID = member.mediaID
+                {
+                    mediaDispositions[mediaID] = .blocked(.ancestorConflict(ancestor))
                 }
             }
+        }
+
+        // Finals: occupied non-catalog paths force suffixing like knownForeignOccupants.
+        var pendingAfterResuffix: [NamespaceOccupancyRequest] = []
+        for index in members.indices where members[index].source != members[index].finalDestination {
+            if let mediaID = members[index].mediaID,
+               case .blocked = mediaDispositions[mediaID]
+            {
+                continue
+            }
+            let destination = members[index].finalDestination
+            let finalRequest = NamespaceOccupancyRequest(
+                rootPath: snapshot.libraryRoot,
+                relativePath: destination
+            )
+            guard isOccupiedFinalOccupancy(occupancy[finalRequest]) else {
+                continue
+            }
+            // Release prior reservation for this member, then suffix away from the occupant.
+            let priorKey = FilesystemNamespaceSemantics.nameKey(
+                relativePath: destination,
+                capabilities: capabilities
+            )
+            if reservedKeys[priorKey] == members[index].id {
+                reservedKeys.removeValue(forKey: priorKey)
+            }
+            var suffix = 1
+            var candidate = suffixed(members[index].idealDestination, suffix: suffix)
+            var key = FilesystemNamespaceSemantics.nameKey(
+                relativePath: candidate,
+                capabilities: capabilities
+            )
+            while reservedKeys[key] != nil
+                || snapshot.knownForeignOccupants.contains(candidate)
+                || isOccupiedFinalOccupancy(
+                    occupancy[
+                        NamespaceOccupancyRequest(
+                            rootPath: snapshot.libraryRoot,
+                            relativePath: candidate
+                        )
+                    ]
+                )
+            {
+                suffix += 1
+                candidate = suffixed(members[index].idealDestination, suffix: suffix)
+                key = FilesystemNamespaceSemantics.nameKey(
+                    relativePath: candidate,
+                    capabilities: capabilities
+                )
+            }
+            members[index].finalDestination = candidate
+            reservedKeys[key] = members[index].id
+            let newRequest = NamespaceOccupancyRequest(
+                rootPath: snapshot.libraryRoot,
+                relativePath: candidate
+            )
+            if occupancy[newRequest] == nil {
+                pendingAfterResuffix.append(newRequest)
+            }
+            for ancestor in directoryAncestors(of: candidate) {
+                let ancestorRequest = NamespaceOccupancyRequest(
+                    rootPath: snapshot.libraryRoot,
+                    relativePath: ancestor
+                )
+                if occupancy[ancestorRequest] == nil {
+                    pendingAfterResuffix.append(ancestorRequest)
+                }
+            }
+        }
+        // Keep companion finals aligned after any primary resuffix.
+        for index in members.indices where members[index].isCompanion {
+            guard let primarySource = members[index].primarySource,
+                  let primary = members.first(where: { $0.source == primarySource && !$0.isCompanion })
+            else {
+                continue
+            }
+            members[index].finalDestination = companionDestination(
+                companionRelative: members[index].source,
+                primaryIdeal: primary.finalDestination
+            )
+        }
+        if !pendingAfterResuffix.isEmpty {
+            return .needsProbes(occupancy: uniqueOccupancy(pendingAfterResuffix))
         }
 
         // 6. Build move graph among relocating members.
@@ -482,7 +563,10 @@ nonisolated enum ReorganizationPlanner {
         moved: inout Set<String>,
         steps: inout [ReorganizationMoveStep]
     ) {
-        // Find who moves into end's source, recursively, then move end.
+        // Vacate the free end first, then move whoever claims the vacated source.
+        guard !moved.contains(end.id) else { return }
+        steps.append(.move(from: end.source, to: end.finalDestination))
+        moved.insert(end.id)
         let predecessorKey = next.first(where: { $0.value == end.source.rawValue })?.key
         if let predecessorKey,
            let predecessor = bySource[predecessorKey],
@@ -496,9 +580,6 @@ nonisolated enum ReorganizationPlanner {
                 steps: &steps
             )
         }
-        guard !moved.contains(end.id) else { return }
-        steps.append(.move(from: end.source, to: end.finalDestination))
-        moved.insert(end.id)
     }
 
     private static func isSingleCycle(_ next: [String: String]) -> Bool {
@@ -515,11 +596,35 @@ nonisolated enum ReorganizationPlanner {
     private static func temporaryPath(for member: ReorganizationPhysicalMember) -> MediaRelativePath {
         let url = URL(fileURLWithPath: member.source.rawValue)
         let dir = url.deletingLastPathComponent().path
-        let name = ".otos-reorg-\(member.id.hashValue)-\(url.lastPathComponent)"
+        // member.id is stable across processes (media:/companion: + path); never use hashValue.
+        let token = member.id
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        let name = ".otos-reorg-\(token)-\(url.lastPathComponent)"
         if dir == "." || dir.isEmpty {
             return MediaRelativePath(rawValue: name)
         }
         return MediaRelativePath(rawValue: "\(dir)/\(name)")
+    }
+
+    private static func isBlockingAncestorOccupancy(_ result: NamespaceOccupancyResult?) -> Bool {
+        switch result {
+        case .regularFile:
+            true
+        case let .foreign(kind):
+            kind != .directory
+        case .absent, .none:
+            false
+        }
+    }
+
+    private static func isOccupiedFinalOccupancy(_ result: NamespaceOccupancyResult?) -> Bool {
+        switch result {
+        case .regularFile, .foreign:
+            true
+        case .absent, .none:
+            false
+        }
     }
 }
 
