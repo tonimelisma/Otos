@@ -132,6 +132,12 @@ final class CatalogWindowViewModel {
     var showsImportPlanOverlay = false
     /// Settings Import tab bindings; persisted through `ImportPreferencesStore`.
     var importPreferences: ImportPreferences = ImportPreferencesStore.load()
+    var showsReorganizationConfirmation = false
+    var reorganizationSummaryText: String?
+    var reorganizationAlertMessage: String?
+    var identityRemapEpoch: UInt64 = 0
+    var identityRemapBatch: CatalogIdentityRemapBatch?
+    @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?

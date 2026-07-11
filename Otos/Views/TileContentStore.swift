@@ -191,6 +191,35 @@ final class TileContentStore {
         enforceImageBudget()
     }
 
+    /// Moves painted tile content from old identities to new ones before the grid
+    /// publishes remapped ordered IDs (plan 0055 Stage G3 / never-blank invariant).
+    func applyIdentityRemapBatch(_ batch: CatalogIdentityRemapBatch) {
+        guard !batch.remaps.isEmpty else { return }
+        var next = entries
+        var nextPinned = pinnedIDs
+        for remap in batch.remaps {
+            if let entry = next.removeValue(forKey: remap.oldID) {
+                var moved = entry
+                moved.content.detail = MediaTileDetail(
+                    libraryRootPath: remap.newID.libraryRootPath,
+                    relativePath: remap.newID.relativePath,
+                    thumbnailPath: moved.content.detail.thumbnailPath,
+                    bestKind: moved.content.detail.bestKind,
+                    durationSeconds: moved.content.detail.durationSeconds,
+                    enrichedSourceSize: moved.content.detail.enrichedSourceSize,
+                    enrichedSourceMTimeSeconds: moved.content.detail.enrichedSourceMTimeSeconds
+                )
+                // Keep imageKey/image so the painted thumbnail survives the identity change.
+                next[remap.newID] = moved
+            }
+            if nextPinned.remove(remap.oldID) != nil {
+                nextPinned.insert(remap.newID)
+            }
+        }
+        entries = next
+        pinnedIDs = nextPinned
+    }
+
     /// While over budget, nils the LRU unpinned entry that still has an image (keeps
     /// detail + imageKey). Never touches a pinned entry's image.
     func enforceImageBudget() {

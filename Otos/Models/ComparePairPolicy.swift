@@ -21,6 +21,17 @@ nonisolated struct ComparePair: Equatable {
     var members: [MediaAssetID] {
         [left, right].compactMap(\.self)
     }
+
+    func remapped(by batch: CatalogIdentityRemapBatch) -> ComparePair {
+        guard !batch.remaps.isEmpty else {
+            return self
+        }
+        let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
+        return ComparePair(
+            left: left.map { map[$0] ?? $0 },
+            right: right.map { map[$0] ?? $0 }
+        )
+    }
 }
 
 nonisolated enum ComparePairPolicy {

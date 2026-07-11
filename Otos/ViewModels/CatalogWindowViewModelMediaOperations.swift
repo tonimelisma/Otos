@@ -117,4 +117,89 @@ extension CatalogWindowViewModel {
     func dismissImportPlanOverlay() {
         showsImportPlanOverlay = false
     }
+
+    // MARK: - Library reorganization (Stage G3)
+
+    private var selectedFixedLibraryPath: LibraryRootPath? {
+        guard case let .library(path) = sidebarSelection else {
+            return nil
+        }
+        guard state.libraries.contains(where: { $0.path == path }) else {
+            return nil
+        }
+        return path
+    }
+
+    var canRequestReorganization: Bool {
+        selectedFixedLibraryPath != nil
+    }
+
+    func requestReorganizationConfirmation() {
+        guard let path = selectedFixedLibraryPath else {
+            return
+        }
+        let runner = reorganizationRunner ?? LibraryReorganizationRunner(store: catalogStore)
+        reorganizationRunner = runner
+        Task { [weak self] in
+            let outcome = await runner.preview(libraryRoot: path)
+            guard let self else { return }
+            switch outcome {
+            case let .needsConfirmation(summary):
+                reorganizationSummaryText =
+                    "\(summary.relocateCount) relocate · \(summary.noOpCount) no-op · \(summary.blockedCount) blocked · \(summary.componentCount) components"
+                showsReorganizationConfirmation = true
+            case let .blocked(reason), let .failed(reason):
+                reorganizationAlertMessage = reason
+            case .completed, .cancelled:
+                break
+            }
+        }
+    }
+
+    func cancelReorganizationConfirmation() {
+        showsReorganizationConfirmation = false
+        reorganizationSummaryText = nil
+    }
+
+    func confirmReorganization() {
+        guard let path = selectedFixedLibraryPath else {
+            return
+        }
+        showsReorganizationConfirmation = false
+        let runner = reorganizationRunner ?? LibraryReorganizationRunner(store: catalogStore)
+        reorganizationRunner = runner
+        Task { [weak self] in
+            let outcome = await runner.run(libraryRoot: path)
+            guard let self else { return }
+            switch outcome {
+            case let .completed(batches, _, _):
+                for batch in batches {
+                    applyIdentityRemapBatch(batch)
+                }
+            case let .blocked(reason), let .failed(reason):
+                reorganizationAlertMessage = reason
+            case .cancelled, .needsConfirmation:
+                break
+            }
+        }
+    }
+
+    /// Atomically remaps selection, loupe/compare focus, and publishes a batch for
+    /// `TileContentStore` via `identityRemapEpoch`.
+    func applyIdentityRemapBatch(_ batch: CatalogIdentityRemapBatch) {
+        guard !batch.remaps.isEmpty else { return }
+        let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
+        gridSelection = gridSelection.remapped(by: batch)
+        if let focus = focusedAssetID {
+            focusedAssetID = map[focus] ?? focus
+        }
+        comparePair = comparePair.remapped(by: batch)
+        identityRemapBatch = batch
+        identityRemapEpoch &+= 1
+        let epoch = identityRemapEpoch
+        OtosLog.ui.notice(
+            // swiftlint:disable:next line_length
+            "op=reorganization.remapUI phase=applied remapCount=\(batch.remaps.count, privacy: .public) epoch=\(epoch, privacy: .public)"
+        )
+    }
 }

@@ -75,6 +75,9 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onArrowKey: (Int) -> Void = { _ in }
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
+    /// Catalog identity remap batch from reorganization settlement (Stage G3).
+    var identityRemapEpoch: UInt64 = 0
+    var identityRemapBatch: CatalogIdentityRemapBatch?
 
     func makeNSViewController(context _: Context) -> MediaGridViewController {
         MediaGridViewController(presentation: presentation)
@@ -94,6 +97,12 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onReturnKey = onReturnKey
         controller.onEscapeKey = onEscapeKey
         controller.onArrowKey = onArrowKey
+        if identityRemapEpoch != controller.appliedIdentityRemapEpoch,
+           let batch = identityRemapBatch
+        {
+            controller.tileContents.applyIdentityRemapBatch(batch)
+            controller.appliedIdentityRemapEpoch = identityRemapEpoch
+        }
         controller.applyPresentation(presentation)
         if case .grid = presentation {
             controller.receiveColumnCount(columnCount)
@@ -123,6 +132,8 @@ final class MediaGridViewController: NSViewController {
     /// in the diffable data source; this store is the single paint truth so a tile never
     /// blanks a painted same-asset thumbnail (APP-015 by construction).
     let tileContents = TileContentStore()
+    /// Last applied reorganization remap epoch from SwiftUI (Stage G3).
+    var appliedIdentityRemapEpoch: UInt64 = 0
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0
     /// In-flight decode keys `"id|imageKey"` owned by the controller, not the tile.

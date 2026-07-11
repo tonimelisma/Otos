@@ -116,6 +116,22 @@ nonisolated struct GridSelection: Equatable {
         return GridSelection(selection: prunedSelection, anchor: anchor, base: base.intersection(orderSet))
     }
 
+    /// Applies a catalog identity remap batch atomically (plan 0055 Stage G3).
+    func remapped(by batch: CatalogIdentityRemapBatch) -> GridSelection {
+        guard !batch.remaps.isEmpty else {
+            return self
+        }
+        let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
+        func mapID(_ id: MediaAssetID) -> MediaAssetID {
+            map[id] ?? id
+        }
+        return GridSelection(
+            selection: Set(selection.map(mapID)),
+            anchor: anchor.map(mapID),
+            base: Set(base.map(mapID))
+        )
+    }
+
     /// The selected identities in display order. Copy emits URLs in the order the user
     /// sees tiles, not in hash order, so a pasted multi-selection is stable.
     nonisolated static func orderedSelection(
