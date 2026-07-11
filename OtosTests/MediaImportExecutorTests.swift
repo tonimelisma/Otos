@@ -119,6 +119,51 @@ struct ActiveFileOperationJournalTests {
     }
 }
 
+struct CameraImportAccessTests {
+    @Test func mockGatewayRevalidatesAndReportsDeleteCapability() async throws {
+        let access = CameraImportAccess(
+            revalidate: { identity, path, size, _ in
+                identity == "cam-1" && path.rawValue == "IMG_1.JPG" && size == 10
+            },
+            ensureBytes: { _, _, enrichment, staging in
+                do {
+                    let data = try Data(contentsOf: enrichment)
+                    try data.write(to: staging)
+                    return .completed
+                } catch {
+                    return .failed(String(describing: error))
+                }
+            },
+            deleteItem: { _, _ in true },
+            canDelete: { $0 == "cam-1" },
+            eject: { _ in .ejected }
+        )
+        #expect(
+            await access.revalidateItem(
+                identity: "cam-1",
+                relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+                byteSize: 10,
+                modifiedAt: nil
+            )
+        )
+        #expect(await access.canDelete(identity: "cam-1"))
+        #expect(await access.eject(identity: "cam-1") == .ejected)
+
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let enrichment = temp.appending(path: "enrich.bin")
+        let staging = temp.appending(path: "stage.bin")
+        try Data([0x01, 0x02]).write(to: enrichment)
+        let result = await access.ensureImportBytes(
+            identity: "cam-1",
+            relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+            enrichmentURL: enrichment,
+            importStagingURL: staging
+        )
+        #expect(result == .completed)
+        #expect(try Data(contentsOf: staging) == Data([0x01, 0x02]))
+    }
+}
+
 struct VolumeRenameCapabilityTests {
     @Test func temporaryDirectoryReportsAKnownCapability() throws {
         let temp = try makeCatalogStoreTemporaryDirectory()

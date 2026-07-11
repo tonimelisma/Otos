@@ -354,6 +354,74 @@ final class DeviceCameraSession: NSObject {
         }
     }
 
+    func file(for relativePath: MediaRelativePath) -> ICCameraFile? {
+        filesByRelativePath[relativePath]
+    }
+
+    /// Revalidates planned size/date against live `ICCameraFile` facts (Stage F guard).
+    func revalidate(
+        relativePath: MediaRelativePath,
+        byteSize: Int64?,
+        modifiedAt: Date?
+    ) -> Bool {
+        guard !isClosed, device.hasOpenSession, let file = filesByRelativePath[relativePath] else {
+            return false
+        }
+        if let byteSize {
+            guard file.fileSize >= 0, Int64(file.fileSize) == byteSize else {
+                return false
+            }
+        }
+        if let modifiedAt {
+            let live = validCameraDate(file.modificationDate)
+                ?? validCameraDate(file.fileModificationDate)
+                ?? validCameraDate(file.exifModificationDate)
+                ?? validCameraDate(file.creationDate)
+                ?? validCameraDate(file.exifCreationDate)
+                ?? validCameraDate(file.fileCreationDate)
+            guard let live, abs(live.timeIntervalSince(modifiedAt)) < 1.0 else {
+                return false
+            }
+        }
+        return true
+    }
+
+    var canDeleteOneFile: Bool {
+        let token = ICDeviceCapability.cameraDeviceCanDeleteOneFile.rawValue
+        return device.capabilities.contains(token)
+    }
+
+    func deleteItem(relativePath: MediaRelativePath) async -> Bool {
+        guard canDeleteOneFile, let file = filesByRelativePath[relativePath] else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            _ = device.requestDeleteFiles(
+                [file],
+                deleteFailed: { _ in },
+                completion: { _, error in
+                    continuation.resume(returning: error == nil)
+                }
+            )
+        }
+    }
+
+    func eject() async -> RemovableEjectOutcome {
+        let token = ICDeviceCapability.canEjectOrDisconnect.rawValue
+        guard device.capabilities.contains(token) else {
+            return .failed(description: "cameraCannotEject")
+        }
+        return await withCheckedContinuation { continuation in
+            device.requestEject { error in
+                if let error {
+                    continuation.resume(returning: .failed(description: error.localizedDescription))
+                } else {
+                    continuation.resume(returning: .ejected)
+                }
+            }
+        }
+    }
+
     func close() {
         failAllWaiters(DeviceCameraSessionError.disconnected)
         if device.hasOpenSession {

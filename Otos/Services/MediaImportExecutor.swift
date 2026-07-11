@@ -3,16 +3,19 @@ import OSLog
 
 /// Filesystem import executor (plan 0055 Stage E).
 ///
-/// Runs bounded copy lanes for one ready plan: journal → copyfile staging →
-/// exclusive publish → durable settlement. Camera downloads remain Stage F.
-/// Cancellation aborts the in-flight copyfile, removes staging, settles any
-/// already-published entries, and stops scheduling new ones.
+/// Runs bounded copy lanes for one ready plan: journal → copyfile/camera staging →
+/// exclusive publish → durable settlement. Camera downloads reuse enrichment
+/// staging when present, revalidate `ICCameraFile` facts, and stamp
+/// `destination_modified_at`. Cancellation aborts the in-flight transfer, removes
+/// staging, settles any already-published entries, and stops scheduling new ones.
 actor MediaImportExecutor {
     private let store: CatalogStore
+    private let cameraImport: CameraImportAccess?
     private let cancelFlag = CancelFlag()
 
-    init(store: CatalogStore) {
+    init(store: CatalogStore, cameraImport: CameraImportAccess? = nil) {
         self.store = store
+        self.cameraImport = cameraImport
     }
 
     func cancel() {
@@ -56,28 +59,8 @@ actor MediaImportExecutor {
             return .failed(problem: "notAnImportPlan")
         }
         await recoverJournal()
-        var destinationParents = Set<URL>()
-        let destinationRoot = URL(fileURLWithPath: destination.rawValue, isDirectory: true)
-        for entry in plan.entries {
-            switch entry.disposition {
-            case let .copy(destRel):
-                destinationParents.insert(
-                    destinationRoot.appending(path: destRel.rawValue).deletingLastPathComponent()
-                )
-            default:
-                break
-            }
-            for companionDest in entry.companionDestinations.values {
-                destinationParents.insert(
-                    destinationRoot.appending(path: companionDest.rawValue).deletingLastPathComponent()
-                )
-            }
-        }
-        await removeOrphanedStaging(near: Array(destinationParents))
-        // Batch ID is minted once at execution start (plan §8.4).
+        await removeOrphanedStaging(near: destinationParentURLs(plan: plan, destination: destination))
         let batch = ImportBatchID()
-        var completed = 0
-        var completedBytes: Int64 = 0
         let copyEntries = plan.entries.filter {
             if case .copy = $0.disposition {
                 return true
@@ -85,15 +68,75 @@ actor MediaImportExecutor {
             return false
         }
         let totalBytes = copyEntries.reduce(Int64(0)) { $0 + ($1.source.byteSize ?? 0) }
-        let totalCount = copyEntries.count
-
-        // Free-space gate for remaining planned copy bytes + 64 MiB margin.
         if let needed = freeSpaceRequired(for: copyEntries),
            !hasEnoughFreeSpace(at: destination.url, required: needed)
         {
             return .failed(problem: "insufficientSpace")
         }
+        let hasBlockedEntries = plan.entries.contains {
+            if case .blocked = $0.disposition {
+                return true
+            }
+            return false
+        }
+        let allowSourceDeletion = deleteSourceRequested && !hasBlockedEntries
+        let publishedCount = await runPlanEntries(
+            plan: plan,
+            batch: batch,
+            sourceKind: sourceKind,
+            sourceDeviceIdentity: sourceDeviceIdentity,
+            allowSourceDeletion: allowSourceDeletion,
+            totalCount: copyEntries.count,
+            totalBytes: totalBytes,
+            onProgress: onProgress
+        )
+        if cancelFlag.isCancelled {
+            return .cancelled(
+                publishedCount: publishedCount,
+                batch: publishedCount > 0 ? batch : nil,
+                hasBlockedEntries: hasBlockedEntries
+            )
+        }
+        return .completed(
+            publishedCount: publishedCount,
+            batch: publishedCount > 0 ? batch : nil,
+            hasBlockedEntries: hasBlockedEntries
+        )
+    }
 
+    private func destinationParentURLs(
+        plan: MediaOperationPlan,
+        destination: LibraryRootPath
+    ) -> [URL] {
+        var parents = Set<URL>()
+        let destinationRoot = URL(fileURLWithPath: destination.rawValue, isDirectory: true)
+        for entry in plan.entries {
+            if case let .copy(destRel) = entry.disposition {
+                parents.insert(
+                    destinationRoot.appending(path: destRel.rawValue).deletingLastPathComponent()
+                )
+            }
+            for companionDest in entry.companionDestinations.values {
+                parents.insert(
+                    destinationRoot.appending(path: companionDest.rawValue).deletingLastPathComponent()
+                )
+            }
+        }
+        return Array(parents)
+    }
+
+    private func runPlanEntries(
+        plan: MediaOperationPlan,
+        batch: ImportBatchID,
+        sourceKind: LibraryRootKind,
+        sourceDeviceIdentity: String?,
+        allowSourceDeletion: Bool,
+        totalCount: Int,
+        totalBytes: Int64,
+        onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
+    ) async -> Int {
+        var completed = 0
+        var completedBytes: Int64 = 0
         var publishedCount = 0
         for entry in plan.entries {
             if cancelFlag.isCancelled {
@@ -109,7 +152,7 @@ actor MediaImportExecutor {
                     batch: batch,
                     sourceKind: sourceKind,
                     sourceDeviceIdentity: sourceDeviceIdentity,
-                    deleteSourceRequested: deleteSourceRequested,
+                    deleteSourceRequested: allowSourceDeletion,
                     onByteProgress: { bytes in
                         onProgress(MediaOperationProgress(
                             completedCount: completedSnapshot,
@@ -136,7 +179,7 @@ actor MediaImportExecutor {
                     totalBytes: totalBytes
                 ))
             case .skipPreexisting:
-                if deleteSourceRequested {
+                if allowSourceDeletion {
                     await deleteSourceIfRequested(
                         entry: entry,
                         plan: plan,
@@ -149,11 +192,7 @@ actor MediaImportExecutor {
                 continue
             }
         }
-
-        if cancelFlag.isCancelled {
-            return .cancelled(publishedCount: publishedCount, batch: publishedCount > 0 ? batch : nil)
-        }
-        return .completed(publishedCount: publishedCount, batch: publishedCount > 0 ? batch : nil)
+        return publishedCount
     }
 
     private enum EntryOutcome {
@@ -161,6 +200,146 @@ actor MediaImportExecutor {
         case skippedForeign
         case cancelled
         case failed
+    }
+
+    private func sourceStillMatches(
+        entry: MediaOperationPlanEntry,
+        sourceKind: LibraryRootKind,
+        sourceDeviceIdentity: String?,
+        sourceURL: URL,
+        sourceByteSize: Int64,
+        sourceModified: Date?
+    ) async -> Bool {
+        switch sourceKind {
+        case .removableVolume:
+            guard let sourceModified else {
+                return false
+            }
+            return fileMatches(url: sourceURL, byteSize: sourceByteSize, modifiedAt: sourceModified)
+        case .deviceMTP:
+            guard let identity = sourceDeviceIdentity, let cameraImport else {
+                return false
+            }
+            return await cameraImport.revalidateItem(
+                identity: identity,
+                relativePath: entry.source.relativePath,
+                byteSize: sourceByteSize,
+                modifiedAt: sourceModified
+            )
+        case .library:
+            return false
+        }
+    }
+
+    private func transferBytesToStaging(
+        entry: MediaOperationPlanEntry,
+        sourceKind: LibraryRootKind,
+        sourceDeviceIdentity: String?,
+        sourceURL: URL,
+        stagingURL: URL,
+        operationKey: ActiveFileOperationKey,
+        onByteProgress: @escaping @Sendable (Int64) -> Void
+    ) async -> EntryOutcome? {
+        switch sourceKind {
+        case .removableVolume:
+            return await transferVolumeBytes(
+                from: sourceURL,
+                to: stagingURL,
+                operationKey: operationKey,
+                onByteProgress: onByteProgress
+            )
+        case .deviceMTP:
+            return await transferCameraBytes(
+                entry: entry,
+                identity: sourceDeviceIdentity,
+                enrichmentURL: sourceURL,
+                stagingURL: stagingURL,
+                operationKey: operationKey,
+                onByteProgress: onByteProgress
+            )
+        case .library:
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            return .failed
+        }
+    }
+
+    private func transferVolumeBytes(
+        from sourceURL: URL,
+        to stagingURL: URL,
+        operationKey: ActiveFileOperationKey,
+        onByteProgress: @escaping @Sendable (Int64) -> Void
+    ) async -> EntryOutcome? {
+        let sharedCancel = cancelFlag
+        let copyOutcome = await withCheckedContinuation {
+            (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
+            Task.detached {
+                let outcome = CopyfileTransfer.copy(
+                    from: sourceURL,
+                    to: stagingURL,
+                    onProgress: { progress in
+                        onByteProgress(progress.completedBytes)
+                    },
+                    shouldContinue: { !sharedCancel.isCancelled }
+                )
+                continuation.resume(returning: outcome)
+            }
+        }
+        if sharedCancel.isCancelled || copyOutcome == .cancelled {
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            return .cancelled
+        }
+        if case let .failed(message) = copyOutcome {
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            OtosLog.catalog.error(
+                "op=mediaOperation.copy phase=failed detail=\(message, privacy: .public)"
+            )
+            return .failed
+        }
+        return nil
+    }
+
+    private func transferCameraBytes(
+        entry: MediaOperationPlanEntry,
+        identity: String?,
+        enrichmentURL: URL,
+        stagingURL: URL,
+        operationKey: ActiveFileOperationKey,
+        onByteProgress: @escaping @Sendable (Int64) -> Void
+    ) async -> EntryOutcome? {
+        guard let identity, let cameraImport else {
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            return .failed
+        }
+        if cancelFlag.isCancelled {
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            return .cancelled
+        }
+        switch await cameraImport.ensureImportBytes(
+            identity: identity,
+            relativePath: entry.source.relativePath,
+            enrichmentURL: enrichmentURL,
+            importStagingURL: stagingURL
+        ) {
+        case .completed:
+            if let size = try? stagingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                onByteProgress(Int64(size))
+            }
+            return nil
+        case .cancelled:
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            return .cancelled
+        case let .failed(message):
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.deleteActiveFileOperation(key: operationKey)
+            OtosLog.catalog.error(
+                "op=mediaOperation.camera phase=failed detail=\(message, privacy: .public)"
+            )
+            return .failed
+        }
     }
 
     private func copyEntry(
@@ -177,19 +356,21 @@ actor MediaImportExecutor {
         else {
             return .failed
         }
-        guard sourceKind == .removableVolume else {
-            // Camera path is Stage F.
-            return .failed
-        }
         let sourceURL = entry.source.sourceURL
         let finalURL = destinationRoot.url.appendingPathComponent(destinationRelative.rawValue)
-        guard let sourceByteSize = entry.source.byteSize,
-              let sourceModified = entry.source.contentModifiedAt
-        else {
+        guard let sourceByteSize = entry.source.byteSize else {
             return .failed
         }
-        // Guard: source still matches planned facts.
-        guard fileMatches(url: sourceURL, byteSize: sourceByteSize, modifiedAt: sourceModified) else {
+        let sourceModified = entry.source.contentModifiedAt
+        let matches = await sourceStillMatches(
+            entry: entry,
+            sourceKind: sourceKind,
+            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceURL: sourceURL,
+            sourceByteSize: sourceByteSize,
+            sourceModified: sourceModified
+        )
+        guard matches else {
             OtosLog.catalog.notice(
                 "op=mediaOperation.copy phase=staleSource path=\(sourceURL.path, privacy: .public)"
             )
@@ -213,7 +394,7 @@ actor MediaImportExecutor {
             stagingPath: stagingURL.path,
             importBatchUnixMs: batch.unixMilliseconds,
             sourceByteSize: sourceByteSize,
-            sourceModifiedAt: sourceModified,
+            sourceModifiedAt: sourceModified ?? destinationModified,
             destinationModifiedAt: destinationModified,
             phase: .copying,
             deleteSourceRequested: deleteSourceRequested,
@@ -229,40 +410,16 @@ actor MediaImportExecutor {
             at: stagingURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        let sharedCancel = cancelFlag
-        let copyOutcome = await withCheckedContinuation { (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
-            Task.detached {
-                let outcome = CopyfileTransfer.copy(
-                    from: sourceURL,
-                    to: stagingURL,
-                    onProgress: { progress in
-                        onByteProgress(progress.completedBytes)
-                    },
-                    shouldContinue: { !sharedCancel.isCancelled }
-                )
-                continuation.resume(returning: outcome)
-            }
-        }
-        // Re-check cancel after copy returns; mid-file cancel is handled inside copyfile.
-        if sharedCancel.isCancelled {
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.deleteActiveFileOperation(key: operation.operationKey)
-            return .cancelled
-        }
-        switch copyOutcome {
-        case .cancelled:
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.deleteActiveFileOperation(key: operation.operationKey)
-            return .cancelled
-        case let .failed(message):
-            try? FileManager.default.removeItem(at: stagingURL)
-            try? await store.deleteActiveFileOperation(key: operation.operationKey)
-            OtosLog.catalog.error(
-                "op=mediaOperation.copy phase=failed detail=\(message, privacy: .public)"
-            )
-            return .failed
-        case .completed:
-            break
+        if let early = await transferBytesToStaging(
+            entry: entry,
+            sourceKind: sourceKind,
+            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceURL: sourceURL,
+            stagingURL: stagingURL,
+            operationKey: operation.operationKey,
+            onByteProgress: onByteProgress
+        ) {
+            return early
         }
 
         return await publishAndSettle(PublishSettleRequest(
@@ -273,6 +430,9 @@ actor MediaImportExecutor {
             destinationRoot: destinationRoot,
             destinationRelative: destinationRelative,
             sourceURL: sourceURL,
+            sourceKind: sourceKind,
+            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceRelativePath: entry.source.relativePath,
             sourceByteSize: sourceByteSize,
             destinationModified: destinationModified,
             batch: batch,
@@ -288,6 +448,9 @@ actor MediaImportExecutor {
         let destinationRoot: LibraryRootPath
         let destinationRelative: MediaRelativePath
         let sourceURL: URL
+        let sourceKind: LibraryRootKind
+        let sourceDeviceIdentity: String?
+        let sourceRelativePath: MediaRelativePath
         let sourceByteSize: Int64
         let destinationModified: Date
         let batch: ImportBatchID
@@ -349,7 +512,12 @@ actor MediaImportExecutor {
             operation.phase = .sourceDeletionPending
             operation.updatedAt = Date()
             try? await store.updateActiveFileOperation(operation)
-            await deleteSourceFile(at: request.sourceURL)
+            await deleteSource(
+                kind: request.sourceKind,
+                identity: request.sourceDeviceIdentity,
+                relativePath: request.sourceRelativePath,
+                filesystemURL: request.sourceURL
+            )
             try? await store.deleteActiveFileOperation(key: operation.operationKey)
         }
         return .published
@@ -385,9 +553,12 @@ actor MediaImportExecutor {
         case .sourceDeletionPending:
             let sourceURL = operation.sourceRootPath.url
                 .appendingPathComponent(operation.sourceRelativePath.rawValue)
-            if FileManager.default.fileExists(atPath: sourceURL.path) {
-                await deleteSourceFile(at: sourceURL)
-            }
+            await deleteSource(
+                kind: operation.sourceKind,
+                identity: operation.sourceDeviceIdentity,
+                relativePath: operation.sourceRelativePath,
+                filesystemURL: sourceURL
+            )
             try? await store.deleteActiveFileOperation(key: operation.operationKey)
         }
         OtosLog.catalog.notice(
@@ -451,18 +622,48 @@ actor MediaImportExecutor {
             updatedAt: Date()
         )
         try? await store.insertActiveFileOperation(operation)
-        await deleteSourceFile(at: entry.source.sourceURL)
+        await deleteSource(
+            kind: sourceKind,
+            identity: sourceDeviceIdentity,
+            relativePath: entry.source.relativePath,
+            filesystemURL: entry.source.sourceURL
+        )
         try? await store.deleteActiveFileOperation(key: operation.operationKey)
         _ = operation
     }
 
-    private func deleteSourceFile(at url: URL) async {
-        do {
-            try FileManager.default.removeItem(at: url)
-        } catch {
-            OtosLog.catalog.error(
-                "op=mediaOperation.sourceDelete phase=failed path=\(url.path, privacy: .public)"
-            )
+    private func deleteSource(
+        kind: LibraryRootKind,
+        identity: String?,
+        relativePath: MediaRelativePath,
+        filesystemURL: URL
+    ) async {
+        switch kind {
+        case .removableVolume, .library:
+            do {
+                try FileManager.default.removeItem(at: filesystemURL)
+            } catch {
+                OtosLog.catalog.error(
+                    "op=mediaOperation.sourceDelete phase=failed path=\(filesystemURL.path, privacy: .public)"
+                )
+            }
+        case .deviceMTP:
+            guard let identity, let cameraImport else {
+                return
+            }
+            guard await cameraImport.canDelete(identity: identity) else {
+                OtosLog.catalog.notice(
+                    "op=mediaOperation.sourceDelete phase=unsupported identity=\(identity, privacy: .public)"
+                )
+                return
+            }
+            let ok = await cameraImport.deleteItem(identity: identity, relativePath: relativePath)
+            if !ok {
+                OtosLog.catalog.error(
+                    // swiftlint:disable:next line_length
+                    "op=mediaOperation.sourceDelete phase=failed identity=\(identity, privacy: .public) path=\(relativePath.rawValue, privacy: .public)"
+                )
+            }
         }
     }
 
@@ -556,8 +757,8 @@ actor MediaImportExecutor {
 }
 
 nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
-    case completed(publishedCount: Int, batch: ImportBatchID?)
-    case cancelled(publishedCount: Int, batch: ImportBatchID?)
+    case completed(publishedCount: Int, batch: ImportBatchID?, hasBlockedEntries: Bool)
+    case cancelled(publishedCount: Int, batch: ImportBatchID?, hasBlockedEntries: Bool)
     case failed(problem: String)
 }
 
