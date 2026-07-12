@@ -31,6 +31,46 @@ struct EnrichmentCoordinatorTests {
         ))
     }
 
+    @Test func admissionBlocksMultiLargeVideoFloodAndAllowsOversizedSolo() {
+        let policy = EnrichmentAdmissionPolicy.production
+        let root = LibraryRootPath(rawValue: "/library")
+        let largeVideo = EnrichmentAdmissionPolicy.Candidate(
+            sourceSize: 2 * 1024 * 1024 * 1024,
+            isVideo: true,
+            isViewportOrDevice: false,
+            rootPath: root,
+            isEagerBackground: true
+        )
+        var inFlight = EnrichmentAdmissionPolicy.InFlightSnapshot.empty
+        #expect(policy.canDispatchDownload(candidate: largeVideo, inFlight: inFlight).isSuccess)
+        inFlight.downloadCount = 2
+        inFlight.downloadBytes = 4 * 1024 * 1024 * 1024
+        inFlight.largeVideoDownloadCount = 2
+        #expect(policy.canDispatchDownload(candidate: largeVideo, inFlight: inFlight).rejection == .largeVideoDownloadCap)
+
+        let solo = EnrichmentAdmissionPolicy.InFlightSnapshot.empty
+        let huge = EnrichmentAdmissionPolicy.Candidate(
+            sourceSize: 7 * 1024 * 1024 * 1024,
+            isVideo: true,
+            isViewportOrDevice: false,
+            rootPath: root,
+            isEagerBackground: true
+        )
+        #expect(policy.canDispatchDownload(candidate: huge, inFlight: solo).isSuccess)
+
+        let unknown = EnrichmentAdmissionPolicy.Candidate(
+            sourceSize: nil,
+            isVideo: false,
+            isViewportOrDevice: false,
+            rootPath: root,
+            isEagerBackground: true
+        )
+        inFlight = .empty
+        inFlight.downloadCount = 14
+        inFlight.downloadBytes = 100
+        #expect(policy.canDispatchDownload(candidate: unknown, inFlight: inFlight).isSuccess)
+    }
+
     @Test func eagerDeviceStagingDownloadsStillItemsBeforeVideos() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let rootPath = LibraryRootPath(
@@ -457,5 +497,21 @@ private func visibleLifecycleEnricher() -> MediaEnricher {
                 sourceMTimeSeconds: mtime
             )
         )
+    }
+}
+
+private extension Result where Failure == EnrichmentAdmissionPolicy.Rejection {
+    var isSuccess: Bool {
+        if case .success = self {
+            return true
+        }
+        return false
+    }
+
+    var rejection: EnrichmentAdmissionPolicy.Rejection? {
+        if case let .failure(reason) = self {
+            return reason
+        }
+        return nil
     }
 }

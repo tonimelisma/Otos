@@ -18,6 +18,7 @@ extension EnrichmentCoordinator {
             return
         }
         inFlightEnrich.remove(id)
+        inFlightEnrichBytes.removeValue(forKey: id)
         switch outcome {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
@@ -60,6 +61,7 @@ extension EnrichmentCoordinator {
             return
         }
         inFlightEnrich.remove(id)
+        inFlightEnrichBytes.removeValue(forKey: id)
         let result = EnrichmentResult(
             id: id,
             metadata: AssetMetadata(),
@@ -93,6 +95,7 @@ extension EnrichmentCoordinator {
             return
         }
         inFlightDownload.remove(id)
+        inFlightDownloadBytes.removeValue(forKey: id)
         let outcome = result.outcome
         let materialized = outcome.isMaterialized
         let retry = retryWorkIfNeeded(work, outcome: outcome)

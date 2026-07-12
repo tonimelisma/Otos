@@ -1,32 +1,20 @@
 import Foundation
 import OSLog
 
-nonisolated enum EnrichmentDownloadSchedulingPolicy {
-    static func canDispatchDownload(
-        isViewportWork: Bool,
-        inFlightDownloadCount: Int,
-        downloadConcurrency: Int
-    ) -> Bool {
-        guard inFlightDownloadCount < downloadConcurrency else {
-            return false
-        }
-        let eagerSlotLimit = max(downloadConcurrency - 1, 0)
-        return isViewportWork || inFlightDownloadCount < eagerSlotLimit
-    }
-}
-
 /// Cursorless work-selection extension for `EnrichmentCoordinator`.
 ///
 /// Store remains the catalog truth owner: this file only asks for bounded claimed
 /// candidates, stages them in the actor-local queue, and drains that queue into free
 /// worker slots. The queue is process-local scheduling state; SQLite
-/// `enrichment_claimed_until` is the cross-query lease.
+/// `enrichment_claimed_until` is the cross-query lease. Admission uses
+/// `EnrichmentAdmissionPolicy` so byte/video/viewport/root fairness bound the
+/// 16/8 count maxima.
 extension EnrichmentCoordinator {
     func dequeueEnrichmentWork() async -> [EnrichWork] {
         guard !isShuttingDown else {
             return []
         }
-        let availableSlots = enrichConcurrency - inFlightEnrich.count
+        let availableSlots = admissionPolicy.enrichConcurrency - inFlightEnrich.count
         guard availableSlots > 0 else {
             return []
         }
@@ -56,26 +44,47 @@ extension EnrichmentCoordinator {
             return []
         }
         var items: [DownloadWork] = []
-        while inFlightDownload.count < downloadConcurrency, let work = nextDownloadWork() {
-            let isViewportWork = viewport.contains(work.id) || work.isDeviceStaging
-            guard EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
-                isViewportWork: isViewportWork,
-                inFlightDownloadCount: inFlightDownload.count,
-                downloadConcurrency: downloadConcurrency
-            ) else {
+        while true {
+            guard let work = nextDownloadWork() else {
                 break
             }
-            inFlightDownload.insert(work.id)
-            items.append(work)
-            await recordVisibleThumbnailLifecycle(
-                phase: "downloadDispatched",
-                id: work.id,
-                fields: [
-                    "sourceSize": "\(work.sourceSize ?? -1)",
-                    "viewport": "\(isViewportWork)",
-                    "deviceStaging": "\(work.isDeviceStaging)",
-                ]
+            let isViewportWork = viewport.contains(work.id) || work.isDeviceStaging
+            let candidate = EnrichmentAdmissionPolicy.Candidate(
+                sourceSize: work.sourceSize,
+                isVideo: work.isVideo,
+                isViewportOrDevice: isViewportWork,
+                rootPath: work.id.libraryRootPath,
+                isEagerBackground: !isViewportWork
             )
+            let snapshot = downloadInFlightSnapshot()
+            switch admissionPolicy.canDispatchDownload(candidate: candidate, inFlight: snapshot) {
+            case .success:
+                let estimated = admissionPolicy.estimatedBytes(work.sourceSize)
+                inFlightDownload.insert(work.id)
+                inFlightDownloadBytes[work.id] = estimated
+                items.append(work)
+                await recordVisibleThumbnailLifecycle(
+                    phase: "downloadDispatched",
+                    id: work.id,
+                    fields: [
+                        "sourceSize": "\(work.sourceSize ?? -1)",
+                        "viewport": "\(isViewportWork)",
+                        "deviceStaging": "\(work.isDeviceStaging)",
+                    ]
+                )
+                let acceptInFlight = snapshot.downloadCount + 1
+                let acceptBytes = snapshot.downloadBytes + estimated
+                OtosLog.metadata.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.enrichment.admission phase=downloadAccept rootPath=\(work.id.libraryRootPath.rawValue, privacy: .public) inFlight=\(acceptInFlight, privacy: .public) bytes=\(acceptBytes, privacy: .public) video=\(work.isVideo, privacy: .public) viewport=\(isViewportWork, privacy: .public)"
+                )
+            case let .failure(reason):
+                OtosLog.metadata.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.enrichment.admission phase=downloadReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.downloadCount, privacy: .public) bytes=\(snapshot.downloadBytes, privacy: .public) video=\(work.isVideo, privacy: .public) viewport=\(isViewportWork, privacy: .public)"
+                )
+                return items
+            }
         }
         return items
     }
@@ -137,6 +146,35 @@ extension EnrichmentCoordinator {
         !inFlightEnrich.isEmpty
     }
 
+    private func downloadInFlightSnapshot() -> EnrichmentAdmissionPolicy.InFlightSnapshot {
+        var eagerByRoot: [LibraryRootPath: Int] = [:]
+        var largeVideoCount = 0
+        var bytes: Int64 = 0
+        for id in inFlightDownload {
+            let size = inFlightDownloadBytes[id] ?? 0
+            bytes += size
+            if !viewport.contains(id),
+               !(datalessPending[id]?.isDeviceStaging ?? false)
+            {
+                eagerByRoot[id.libraryRootPath, default: 0] += 1
+            }
+            if let pending = datalessPending[id], pending.isVideo,
+               size >= admissionPolicy.largeVideoThresholdBytes
+            {
+                largeVideoCount += 1
+            }
+        }
+        return EnrichmentAdmissionPolicy.InFlightSnapshot(
+            downloadCount: inFlightDownload.count,
+            enrichCount: inFlightEnrich.count,
+            downloadBytes: bytes,
+            enrichBytes: inFlightEnrichBytes.values.reduce(0, +),
+            largeVideoDownloadCount: largeVideoCount,
+            videoEnrichCount: inFlightEnrichVideoCount,
+            eagerDownloadCountByRoot: eagerByRoot
+        )
+    }
+
     private func claimEnrichmentCandidates(
         prioritizing priorityIDs: [MediaAssetID],
         limit: Int
@@ -188,8 +226,38 @@ extension EnrichmentCoordinator {
             guard !inFlightEnrich.contains(work.id) else {
                 continue
             }
-            inFlightEnrich.insert(work.id)
-            items.append(work)
+            let isViewport = viewport.contains(work.id)
+            let candidate = EnrichmentAdmissionPolicy.Candidate(
+                sourceSize: work.sourceSize,
+                isVideo: false,
+                isViewportOrDevice: isViewport,
+                rootPath: work.id.libraryRootPath,
+                isEagerBackground: !isViewport
+            )
+            // Video kind is not on EnrichWork; size-aware enrich admission still
+            // applies. Treat unknown kind as non-video for the video cap.
+            let snapshot = EnrichmentAdmissionPolicy.InFlightSnapshot(
+                downloadCount: inFlightDownload.count,
+                enrichCount: inFlightEnrich.count,
+                downloadBytes: inFlightDownloadBytes.values.reduce(0, +),
+                enrichBytes: inFlightEnrichBytes.values.reduce(0, +),
+                largeVideoDownloadCount: 0,
+                videoEnrichCount: inFlightEnrichVideoCount,
+                eagerDownloadCountByRoot: [:]
+            )
+            switch admissionPolicy.canDispatchEnrichment(candidate: candidate, inFlight: snapshot) {
+            case .success:
+                inFlightEnrich.insert(work.id)
+                inFlightEnrichBytes[work.id] = admissionPolicy.estimatedBytes(work.sourceSize)
+                items.append(work)
+            case let .failure(reason):
+                claimedEnrichQueue.insert(work, at: 0)
+                OtosLog.metadata.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.enrichment.admission phase=enrichReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.enrichCount, privacy: .public) bytes=\(snapshot.enrichBytes, privacy: .public)"
+                )
+                return items
+            }
         }
         return items
     }
