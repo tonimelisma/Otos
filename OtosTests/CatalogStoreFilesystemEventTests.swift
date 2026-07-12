@@ -412,4 +412,163 @@ struct CatalogStoreFilesystemEventTests {
         let names = Set(reconciled.testAssets.map(\.relativePath.rawValue))
         #expect(names == ["first.jpg", "second.jpg"])
     }
+
+    @Test func fileDirtSurvivesQueuedOtherRootScan() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let rootA = temp.appending(path: "A", directoryHint: .isDirectory)
+        let rootB = temp.appending(path: "B", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootA, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: rootB, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(rootA.appending(path: "seed.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(rootB.appending(path: "seed.jpg"), contents: "jpeg")
+
+        let pathA = try CatalogPath.normalizedDirectoryPath(for: rootA)
+        let pathB = try CatalogPath.normalizedDirectoryPath(for: rootB)
+        let snapshot = FilesystemScanNameSnapshot()
+        await snapshot.set(pathA, ["seed.jpg"])
+        await snapshot.set(pathB, ["seed.jpg"])
+
+        let probe = FilesystemScanProbe()
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let debounceGate = ManualSleepGate()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: snapshotHangingScanner(
+                snapshot: snapshot,
+                probe: probe,
+                recorder: recorder,
+                hangRoot: pathA
+            ),
+            filesystemWatcher: watcher,
+            filesystemEventDebounce: .milliseconds(20),
+            filesystemEventSleep: { duration in
+                await debounceGate.sleep(for: duration)
+            }
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: rootA)
+        try await store.addLibrary(url: rootB)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 2
+        }
+
+        // Force a full-root scan of A that hangs and cannot observe later file dirt.
+        emit(FilesystemEvent(path: rootA.path, flags: 0))
+        try await debounceGate.waitForSleepRequestCount(1)
+        await debounceGate.releaseNext()
+        try await probe.waitForInvocationCount(3)
+
+        try writeCatalogStoreFile(rootA.appending(path: "during.jpg"), contents: "jpeg")
+        emit(
+            FilesystemEvent(
+                path: rootA.appending(path: "during.jpg").path,
+                flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
+            )
+        )
+        // Queue a full-root scan of B while A still holds the lease.
+        emit(FilesystemEvent(path: rootB.path, flags: 0))
+        try await debounceGate.waitForSleepRequestCount(3)
+        await debounceGate.releaseAll()
+
+        await probe.release(3)
+        let settled = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning
+                && snapshot.testAssets.contains { $0.relativePath.rawValue == "during.jpg" }
+        }
+        let names = Set(settled.testAssets.map(\.relativePath.rawValue))
+        #expect(names.contains("during.jpg"))
+        #expect(names.contains("seed.jpg"))
+    }
+
+    @Test func removedDirectoryPurgesSubtreeRowsAndCompanions() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let album = root.appending(path: "album", directoryHint: .isDirectory)
+        let sibling = root.appending(path: "keep", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: album, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(album.appending(path: "photo.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(album.appending(path: "photo.xmp"), contents: "<xmp/>")
+        try writeCatalogStoreFile(sibling.appending(path: "keep.jpg"), contents: "jpeg")
+
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingLiveScanner(recorder),
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(30)
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 2
+        }
+        let companionsBefore = try await store.companions(in: rootPath)
+        #expect(companionsBefore.map(\.relativePath.rawValue) == ["album/photo.xmp"])
+        let baseline = await recorder.invocations().count
+
+        try FileManager.default.removeItem(at: album)
+        emit(
+            FilesystemEvent(
+                path: album.path,
+                flags: UInt32(kFSEventStreamEventFlagItemRemoved | kFSEventStreamEventFlagItemIsDir)
+            )
+        )
+
+        let settled = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning
+                && snapshot.testAssets.map(\.relativePath.rawValue) == ["keep/keep.jpg"]
+        }
+        #expect(settled.testAssets.map(\.relativePath.rawValue) == ["keep/keep.jpg"])
+        let companionsAfter = try await store.companions(in: rootPath)
+        #expect(companionsAfter.isEmpty)
+        #expect(await recorder.invocations().count == baseline)
+    }
+
+    @Test func renamedDirectoryEscalatesToRootAndAvoidsDuplicates() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let oldDir = root.appending(path: "old", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: oldDir, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(oldDir.appending(path: "shot.jpg"), contents: "jpeg")
+
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingLiveScanner(recorder),
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(30)
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 1
+        }
+        let baseline = await recorder.invocations().count
+
+        let newDir = root.appending(path: "new", directoryHint: .isDirectory)
+        try FileManager.default.moveItem(at: oldDir, to: newDir)
+        emit(
+            FilesystemEvent(
+                path: oldDir.path,
+                flags: UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsDir)
+            )
+        )
+
+        let settled = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning
+                && snapshot.testAssets.map(\.relativePath.rawValue) == ["new/shot.jpg"]
+        }
+        #expect(settled.testAssets.map(\.relativePath.rawValue) == ["new/shot.jpg"])
+        #expect(await recorder.invocations().count == baseline + 1)
+    }
 }

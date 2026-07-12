@@ -122,18 +122,12 @@ nonisolated struct EnrichmentAdmissionPolicy: Equatable {
         guard inFlight.enrichCount < enrichConcurrency else {
             return .failure(.enrichCountCap)
         }
-        if candidate.isVideo,
-           inFlight.videoEnrichCount >= videoEnrichCap,
-           !(inFlight.enrichCount == 0)
-        {
+        if candidate.isVideo, inFlight.videoEnrichCount >= videoEnrichCap, inFlight.enrichCount > 0 {
             return .failure(.videoEnrichCap)
         }
         let size = estimatedBytes(candidate.sourceSize)
         if inFlight.enrichCount > 0, inFlight.enrichBytes + size > enrichByteBudget {
-            if inFlight.enrichCount == 0 {
-                return .success(())
-            }
-            // Viewport may overcommit once when nothing else is running; otherwise wait.
+            // Viewport may overcommit once when nothing else holds enrich bytes.
             if candidate.isViewportOrDevice, inFlight.enrichBytes == 0 {
                 return .success(())
             }

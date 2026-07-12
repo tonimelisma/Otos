@@ -190,9 +190,22 @@ private nonisolated enum LiveCatalogScanner {
         let startURL: URL
         if let subtreeRelativePath {
             startURL = rootURL.appendingPathComponent(subtreeRelativePath.rawValue, isDirectory: true)
-            let values = try startURL.resourceValues(forKeys: [.isDirectoryKey])
-            guard values.isDirectory == true else {
-                throw CatalogScanError.subtreeNotDirectory
+            let subtreeIsDirectory = (try? startURL.resourceValues(forKeys: [.isDirectoryKey]))?
+                .isDirectory == true
+            if !subtreeIsDirectory {
+                // Proven absence under a still-reachable root is an empty successful
+                // observation: Store deletes only rows inside this subtree boundary.
+                // If the root itself is gone, fail so Store preserves rows.
+                let rootIsDirectory = (try? rootURL.resourceValues(forKeys: [.isDirectoryKey]))?
+                    .isDirectory == true
+                guard rootIsDirectory else {
+                    throw CatalogScanError.subtreeNotDirectory
+                }
+                OtosLog.fileAccess.info(
+                    // swiftlint:disable:next line_length
+                    "Catalog subtree absent under reachable root root=\(rootPath.rawValue, privacy: .public) subtree=\(subtreeRelativePath.rawValue, privacy: .public)"
+                )
+                return .empty
             }
         } else {
             startURL = rootURL

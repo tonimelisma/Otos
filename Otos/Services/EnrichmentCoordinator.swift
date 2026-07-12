@@ -50,6 +50,7 @@ actor EnrichmentCoordinator {
         let url: URL
         let sourceSize: Int64?
         let sourceMTimeSeconds: Int?
+        let isVideo: Bool
     }
 
     struct DownloadWork {

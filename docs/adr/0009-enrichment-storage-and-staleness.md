@@ -220,8 +220,10 @@ Adjacent decisions requiring separate ADRs or specs:
    for measured OneDrive samples (research 2026-07-11): logical size and content
    mtime are unchanged, and events are regular-file metadata/content shapes. Store
    may suppress only those allowlisted shapes for normalized `MediaAssetID`s the
-   coordinator has explicitly begun materializing (15 s begin grace, 5 s end grace,
-   no final settlement). Create/remove/rename/directory/dropped/root shapes never
+   coordinator has explicitly begun materializing (active through operation
+   completion with a ≥135 s safety ceiling covering the 120 s materialization
+   timeout plus measured event lag, then 5 s post-success grace; cleared
+   immediately on failure; no final settlement). Create/remove/rename/directory/dropped/root shapes never
    suppress; launch and 24 h integrity scans repair residual misses.
 
    Claim transitions are explicit. Completed results keep their claim until

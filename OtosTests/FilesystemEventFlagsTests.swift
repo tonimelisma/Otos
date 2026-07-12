@@ -58,6 +58,19 @@ struct FilesystemEventFlagsTests {
         )
     }
 
+    @Test func directoryRenameEscalatesToRoot() {
+        let flags = FilesystemEventFlags(
+            rawValue: UInt32(kFSEventStreamEventFlagItemRenamed | kFSEventStreamEventFlagItemIsDir)
+        )
+        #expect(flags.scopeKind == .root)
+        #expect(
+            flags.classifiedScope(
+                relativePath: MediaRelativePath(rawValue: "old"),
+                isRootPath: false
+            ) == .root
+        )
+    }
+
     @Test func knownMaterializationShapeIsSuppressible() {
         let flags = FilesystemEventFlags(rawValue: 0x1D400)
         #expect(flags.isKnownMaterializationSuppressibleShape)

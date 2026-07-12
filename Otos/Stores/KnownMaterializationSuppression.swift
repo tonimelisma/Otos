@@ -9,9 +9,10 @@ import Foundation
 /// Membership/coverage shapes never suppress. Launch and periodic integrity scans
 /// repair any residual miss inside the grace window.
 nonisolated enum KnownMaterializationSuppressionPolicy {
-    /// Measured OneDrive delivery lag peaked near 9s from request; keep a 15s
-    /// active window from begin, then 5s after successful materialization ends.
-    static let beginGrace: Duration = .seconds(15)
+    /// Materialization may wait up to 120s; measured OneDrive event lag peaked
+    /// near 9s after the SF_DATALESS transition. Keep the entry active through
+    /// operation completion with this safety ceiling, then apply endGrace.
+    static let activeCeiling: Duration = .seconds(135)
     static let endGrace: Duration = .seconds(5)
 
     static func isSuppressible(
@@ -40,7 +41,8 @@ nonisolated struct KnownMaterializationSuppressionState {
 
     mutating func begin(id: MediaAssetID, now: Date = Date()) {
         pruneExpired(now: now)
-        let candidate = now.addingTimeInterval(Self.seconds(KnownMaterializationSuppressionPolicy.beginGrace))
+        let candidate = now.addingTimeInterval(Self.seconds(KnownMaterializationSuppressionPolicy.activeCeiling))
+        // A newer begin must not shorten an overlapping newer ceiling.
         if let existing = expiryByID[id] {
             expiryByID[id] = max(existing, candidate)
         } else {
@@ -50,12 +52,9 @@ nonisolated struct KnownMaterializationSuppressionState {
 
     mutating func endSuccess(id: MediaAssetID, now: Date = Date()) {
         pruneExpired(now: now)
-        let candidate = now.addingTimeInterval(Self.seconds(KnownMaterializationSuppressionPolicy.endGrace))
-        if let existing = expiryByID[id] {
-            expiryByID[id] = max(existing, candidate)
-        } else {
-            expiryByID[id] = candidate
-        }
+        // Replace the active ceiling with the measured post-completion grace so
+        // late duplicate provider events still suppress briefly.
+        expiryByID[id] = now.addingTimeInterval(Self.seconds(KnownMaterializationSuppressionPolicy.endGrace))
     }
 
     mutating func endFailure(id: MediaAssetID, now: Date = Date()) {
