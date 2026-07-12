@@ -3,37 +3,52 @@ import Foundation
 /// Filesystem reconciler guide
 ///
 /// Pure classifier for a debounced FSEvents batch under one library root.
-/// `CatalogStore` owns debounce tasks, batch accumulation, and effectful
-/// execution (targeted upsert/delete, enqueue scan, defer-until-scan). This
-/// type only answers: given the current root facts and the batch, what should
-/// the Store do next?
+/// `CatalogStore` owns debounce tasks, the per-root dirty-scope accumulator, and
+/// effectful execution (file/subtree/root reconciliation). This type only answers:
+/// given the current root facts and the batch, which typed dirty scopes should
+/// enter the accumulator?
+///
+/// Active-scan state does not discard event granularity. Safe file and subtree
+/// events still classify; Store retains them in the next dirty generation until
+/// the root lease is free.
 ///
 /// Not a second actor — confined to Store isolation like `RootRegistry`.
 nonisolated enum FilesystemReconcileDecision: Equatable {
     case drop(reason: String)
     case noop
-    case deferUntilScanCompletes(eventCount: Int)
-    case rescanRoot(eventCount: Int)
-    case targeted(events: [FilesystemEvent])
+    /// Typed dirty scopes to merge into the Store-owned accumulator for this root.
+    case accumulate(scopes: [ClassifiedFilesystemDirt])
+}
+
+nonisolated struct ClassifiedFilesystemDirt: Equatable {
+    let scope: FilesystemDirtyScope
+    let fileAction: SingleFileReconcileOperation?
+    let eventCount: Int
+
+    init(
+        scope: FilesystemDirtyScope,
+        fileAction: SingleFileReconcileOperation? = nil,
+        eventCount: Int = 1
+    ) {
+        self.scope = scope
+        self.fileAction = fileAction
+        self.eventCount = eventCount
+    }
 }
 
 nonisolated enum FilesystemReconciler {
     /// Classifies a drained event batch for one root. Callers pass Store-owned
-    /// facts (`rootExists`, armed/available, active scan) so this stays pure.
+    /// facts (`rootExists`, armed/available) so this stays pure. Active-scan
+    /// ownership is not a drop/defer signal — scopes still accumulate.
     static func decide(
         events: [FilesystemEvent],
+        root: LibraryRootPath,
         rootExists: Bool,
         isArmed: Bool,
-        isAvailable: Bool,
-        hasActiveScanForRoot: Bool
+        isAvailable: Bool
     ) -> FilesystemReconcileDecision {
         guard rootExists else {
             return .drop(reason: "removed")
-        }
-        // Events during an active scan must not be lost when watching is not yet
-        // armed (plan 0055 §6.2): defer a follow-up reconciliation.
-        if hasActiveScanForRoot {
-            return .deferUntilScanCompletes(eventCount: events.count)
         }
         guard isArmed else {
             return .drop(reason: "unarmed")
@@ -41,15 +56,35 @@ nonisolated enum FilesystemReconciler {
         guard isAvailable else {
             return .drop(reason: "unavailable")
         }
-
         guard !events.isEmpty else {
             return .noop
         }
 
-        if events.contains(where: { FilesystemEventFlags(event: $0).requiresFullRootScan }) {
-            return .rescanRoot(eventCount: events.count)
+        var dirt: [ClassifiedFilesystemDirt] = []
+        dirt.reserveCapacity(events.count)
+        for event in events {
+            dirt.append(classify(event: event, root: root))
         }
+        return .accumulate(scopes: dirt)
+    }
 
-        return .targeted(events: events)
+    static func classify(event: FilesystemEvent, root: LibraryRootPath) -> ClassifiedFilesystemDirt {
+        let flags = FilesystemEventFlags(event: event)
+        let isRootPath = event.path == root.rawValue
+        let relativePath: MediaRelativePath? = if isRootPath {
+            nil
+        } else {
+            CatalogPath.relativePath(
+                rootPath: root,
+                fileURL: URL(fileURLWithPath: event.path)
+            )
+        }
+        let scope = flags.classifiedScope(relativePath: relativePath, isRootPath: isRootPath)
+        let action: SingleFileReconcileOperation? = if case .file = scope {
+            flags.singleFileAction
+        } else {
+            nil
+        }
+        return ClassifiedFilesystemDirt(scope: scope, fileAction: action, eventCount: 1)
     }
 }

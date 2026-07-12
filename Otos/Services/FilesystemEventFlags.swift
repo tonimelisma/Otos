@@ -1,9 +1,10 @@
 import CoreServices
 import Foundation
 
-/// Classifies macOS FSEvents into targeted single-file reconciliation or a full-root
-/// scan fallback. Unknown, directory, symlink, dropped, and subtree-scan flags defer
-/// to the existing enumeration proof path in spec 0023.
+/// Classifies macOS FSEvents into the narrowest safely known reconciliation scope.
+/// Unknown, dropped, root-change, and unmappable coverage escalate to `.root`.
+/// A trustworthy descendant directory or `MustScanSubDirs` becomes `.subtree`.
+/// Supported regular-file membership/content shapes become `.file`.
 nonisolated struct FilesystemEventFlags: Equatable {
     let rawValue: UInt32
 
@@ -16,33 +17,76 @@ nonisolated struct FilesystemEventFlags: Equatable {
     }
 
     var requiresFullRootScan: Bool {
+        scopeKind == .root
+    }
+
+    /// Coarse kind used before path mapping. Prefer `classifiedScope(relativePath:isRootPath:)`
+    /// when the event path relationship to the library root is known.
+    var scopeKind: FilesystemDirtyScopeKind {
         if rawValue == 0 {
-            return true
+            return .root
         }
-        if contains(kFSEventStreamEventFlagMustScanSubDirs)
-            || contains(kFSEventStreamEventFlagKernelDropped)
+        if contains(kFSEventStreamEventFlagKernelDropped)
             || contains(kFSEventStreamEventFlagUserDropped)
-        { // swiftlint:disable:this opening_brace
-            return true
+            || contains(kFSEventStreamEventFlagRootChanged)
+        {
+            return .root
         }
-        if contains(kFSEventStreamEventFlagItemIsDir) || contains(kFSEventStreamEventFlagItemIsSymlink) {
-            return true
+        if contains(kFSEventStreamEventFlagItemIsSymlink) {
+            return .root
+        }
+        if contains(kFSEventStreamEventFlagMustScanSubDirs) {
+            return .subtree
+        }
+        if contains(kFSEventStreamEventFlagItemIsDir) {
+            return .subtree
         }
         guard contains(kFSEventStreamEventFlagItemIsFile) else {
-            return true
+            return .root
         }
         if contains(kFSEventStreamEventFlagItemRemoved) {
-            return false
+            return .file
         }
-        return !(contains(kFSEventStreamEventFlagItemCreated)
+        if contains(kFSEventStreamEventFlagItemCreated)
             || contains(kFSEventStreamEventFlagItemModified)
             || contains(kFSEventStreamEventFlagItemInodeMetaMod)
             || contains(kFSEventStreamEventFlagItemRenamed)
-            || contains(kFSEventStreamEventFlagItemXattrMod))
+            || contains(kFSEventStreamEventFlagItemXattrMod)
+            || contains(kFSEventStreamEventFlagItemChangeOwner)
+            || contains(kFSEventStreamEventFlagItemFinderInfoMod)
+        {
+            return .file
+        }
+        return .root
+    }
+
+    /// Maps an event under `root` into a typed dirty scope.
+    /// - Parameters:
+    ///   - relativePath: path relative to the library root, or `nil` when the event
+    ///     names the root itself / cannot be mapped.
+    ///   - isRootPath: true when the absolute event path equals the library root.
+    func classifiedScope(
+        relativePath: MediaRelativePath?,
+        isRootPath: Bool
+    ) -> FilesystemDirtyScope {
+        switch scopeKind {
+        case .root:
+            return .root
+        case .subtree:
+            if isRootPath || relativePath == nil {
+                return .root
+            }
+            return .subtree(relativePath!)
+        case .file:
+            guard let relativePath, !isRootPath else {
+                return .root
+            }
+            return .file(relativePath)
+        }
     }
 
     var singleFileAction: SingleFileReconcileOperation? {
-        guard !requiresFullRootScan else {
+        guard scopeKind == .file else {
             return nil
         }
         if contains(kFSEventStreamEventFlagItemRemoved) {
@@ -51,11 +95,38 @@ nonisolated struct FilesystemEventFlags: Equatable {
         return .upsert
     }
 
+    /// Proven OneDrive hydration-shaped events from the 2026-07-11 capture:
+    /// regular-file metadata/content flags with no membership or coverage bits.
+    var isKnownMaterializationSuppressibleShape: Bool {
+        guard contains(kFSEventStreamEventFlagItemIsFile) else {
+            return false
+        }
+        if contains(kFSEventStreamEventFlagItemCreated)
+            || contains(kFSEventStreamEventFlagItemRemoved)
+            || contains(kFSEventStreamEventFlagItemRenamed)
+            || contains(kFSEventStreamEventFlagItemIsDir)
+            || contains(kFSEventStreamEventFlagItemIsSymlink)
+            || contains(kFSEventStreamEventFlagMustScanSubDirs)
+            || contains(kFSEventStreamEventFlagKernelDropped)
+            || contains(kFSEventStreamEventFlagUserDropped)
+            || contains(kFSEventStreamEventFlagRootChanged)
+            || rawValue == 0
+        {
+            return false
+        }
+        return contains(kFSEventStreamEventFlagItemInodeMetaMod)
+            || contains(kFSEventStreamEventFlagItemModified)
+            || contains(kFSEventStreamEventFlagItemXattrMod)
+            || contains(kFSEventStreamEventFlagItemChangeOwner)
+            || contains(kFSEventStreamEventFlagItemFinderInfoMod)
+    }
+
     var diagnosticNames: [String] {
         var names: [String] = []
         appendName("mustScanSubDirs", for: kFSEventStreamEventFlagMustScanSubDirs, to: &names)
         appendName("kernelDropped", for: kFSEventStreamEventFlagKernelDropped, to: &names)
         appendName("userDropped", for: kFSEventStreamEventFlagUserDropped, to: &names)
+        appendName("rootChanged", for: kFSEventStreamEventFlagRootChanged, to: &names)
         appendName("itemCreated", for: kFSEventStreamEventFlagItemCreated, to: &names)
         appendName("itemRemoved", for: kFSEventStreamEventFlagItemRemoved, to: &names)
         appendName("itemInodeMetaMod", for: kFSEventStreamEventFlagItemInodeMetaMod, to: &names)
@@ -86,6 +157,12 @@ nonisolated struct FilesystemEventFlags: Equatable {
             names.append(name)
         }
     }
+}
+
+nonisolated enum FilesystemDirtyScopeKind: Equatable {
+    case file
+    case subtree
+    case root
 }
 
 nonisolated enum SingleFileReconcileOperation: Equatable {

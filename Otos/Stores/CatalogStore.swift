@@ -168,6 +168,15 @@ actor CatalogStore {
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
+    /// Per-root typed dirty-scope accumulator. Events that arrive while a lease
+    /// owns the root retain file/subtree/root granularity here instead of being
+    /// collapsed into an unconditional full-root rescan.
+    private var filesystemDirty: [LibraryRootPath: FilesystemDirtyAccumulator] = [:]
+    /// Last successful completed full-root reconciliation per root. Launch/add
+    /// scans count; used only for the long-running-session integrity sweep.
+    private var lastSuccessfulFullRootScanAt: [LibraryRootPath: Date] = [:]
+    private var integrityScanTask: Task<Void, Never>?
+    private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
     /// Destination-relative paths known to be foreign occupants after EEXIST
     /// publication failures (plan 0055 §6.4). Ephemeral; Stage E records them.
     private var knownForeignOccupantsByRoot: [LibraryRootPath: Set<MediaRelativePath>] = [:]
@@ -175,6 +184,12 @@ actor CatalogStore {
     /// execution run; deferred dirty-only reconciliation runs at release.
     private var reorganizationLeases: [LibraryRootPath: ReorganizationLease] = [:]
     private var nextReorganizationLeaseGeneration: UInt64 = 0
+
+    /// Long-running-session integrity interval. Launch scans already repair after
+    /// process death; this bounds residual FSEvents/provider misses while the app
+    /// stays open. Chosen as 24h for measurement/review (plan 0056).
+    static let integrityScanInterval: Duration = .seconds(60 * 60 * 24)
+    static let integrityScanPollInterval: Duration = .seconds(60 * 15)
 
     init(
         location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
@@ -993,6 +1008,21 @@ extension CatalogStore {
             requestLoadedRootScansIfNeeded()
         }
         startFilesystemWatchingIfNeeded()
+        startIntegrityScanSchedulerIfNeeded()
+    }
+
+    /// Registers an explicit provider materialization for known-event suppression.
+    /// Identity must be the normalized catalog path (not a raw alias spelling).
+    func beginKnownMaterialization(for id: MediaAssetID) {
+        knownMaterializationSuppression.begin(id: id)
+    }
+
+    func endKnownMaterialization(for id: MediaAssetID, success: Bool) {
+        if success {
+            knownMaterializationSuppression.endSuccess(id: id)
+        } else {
+            knownMaterializationSuppression.endFailure(id: id)
+        }
     }
 
     /// Every entry point that needs catalog truth awaits the same finite load.
@@ -1366,6 +1396,9 @@ extension CatalogStore {
     private func cancelRuntimeWork(for path: LibraryRootPath) {
         unrequestedLoadedRootPaths.removeAll { $0 == path }
         cancelFilesystemDebounce(for: path)
+        filesystemDirty.removeValue(forKey: path)
+        lastSuccessfulFullRootScanAt.removeValue(forKey: path)
+        knownMaterializationSuppression.removeAll(under: path)
         if scanLeases.cancelWork(for: path) {
             currentScanTask?.cancel()
             currentScanTask = nil
@@ -1503,6 +1536,8 @@ extension CatalogStore {
         filesystemWatchingArmed.remove(oldPath)
         scanLeases.removeRescanDeferral(oldPath)
         filesystemEventBatches.removeValue(forKey: oldPath)
+        filesystemDirty.removeValue(forKey: oldPath)
+        lastSuccessfulFullRootScanAt.removeValue(forKey: oldPath)
         upsert(RootRuntimeState(
             root: newRoot,
             rowID: rootRowID,
@@ -1805,8 +1840,13 @@ extension CatalogStore {
     func shutdown() {
         currentScanTask?.cancel()
         currentScanTask = nil
+        integrityScanTask?.cancel()
+        integrityScanTask = nil
         scanLeases.resetAll()
         cancelAllFilesystemDebounces()
+        filesystemDirty.removeAll()
+        lastSuccessfulFullRootScanAt.removeAll()
+        knownMaterializationSuppression.clear()
         filesystemWatcher.stop()
         filesystemWatchingStarted = false
         filesystemWatchingArmed.removeAll()
@@ -2383,6 +2423,7 @@ private extension CatalogStore {
                 // swiftlint:disable:next line_length
                 "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
             )
+            lastSuccessfulFullRootScanAt[scan.rootPath] = Date()
         } catch is CancellationError {
             await recordIgnoredStaleCallback(scan, callback: "reconciliation")
             return
@@ -2404,7 +2445,8 @@ private extension CatalogStore {
 
     private func applyAndReconcileCompanions(
         scan: ActiveScan,
-        companions: [ScannedCompanionFile]
+        companions: [ScannedCompanionFile],
+        underSubtree: MediaRelativePath? = nil
     ) async throws -> Bool {
         guard owns(scan) else {
             throw CancellationError()
@@ -2419,6 +2461,7 @@ private extension CatalogStore {
             let deleted = try Self.reconcileMissingCompanions(
                 libraryRootID: scan.rootRowID,
                 observedPaths: Set(companions.map(\.relativePath)),
+                underSubtree: underSubtree,
                 db: db
             )
             return upserted + deleted
@@ -2434,14 +2477,19 @@ private extension CatalogStore {
     /// maintain a second per-asset cache-invalidation fact alongside SQLite.
     private func reconcileMissingAssets(
         scan: ActiveScan,
-        observedPaths: Set<MediaRelativePath>
+        observedPaths: Set<MediaRelativePath>,
+        underSubtree: MediaRelativePath? = nil
     ) async throws -> Int {
         guard owns(scan) else {
             throw CancellationError()
         }
         let dbQueue = try database()
         let existingRows = try await dbQueue.read { db in
-            try Self.fetchExistingAssetRows(libraryRootID: scan.rootRowID, db: db)
+            try Self.fetchExistingAssetRows(
+                libraryRootID: scan.rootRowID,
+                underSubtree: underSubtree,
+                db: db
+            )
         }
         guard owns(scan) else {
             throw CancellationError()
@@ -2548,12 +2596,18 @@ private extension CatalogStore {
         }
 
         if needsRescan {
+            // Reorganization (and other independently verified owners) still use
+            // rescanAfterCurrentScan for an unconditional full-root follow-up.
             filesystemEventBatches.removeValue(forKey: rootPath)
+            filesystemDirty[rootPath, default: FilesystemDirtyAccumulator()].insertRoot()
             enqueueScans([rootPath])
         }
 
         notifyCatalogChanged()
         startNextScanIfNeeded()
+        if !needsRescan {
+            Task { await self.drainDirtyReconcile(for: rootPath) }
+        }
     }
 
     private func notifyCatalogChanged(_ change: CatalogStoreChange = .catalogChanged) {
@@ -2765,58 +2819,295 @@ private extension CatalogStore {
             OtosSignpost.catalog.endInterval("FilesystemEventBatch", signpost)
         }
 
-        let pendingEvents = filesystemEventBatches[root] ?? []
+        let pendingEvents = filesystemEventBatches.removeValue(forKey: root) ?? []
+        knownMaterializationSuppression.pruneExpired()
+        let activeSuppression = knownMaterializationSuppression.activeExpiries()
+        let now = Date()
+        var keptEvents: [FilesystemEvent] = []
+        keptEvents.reserveCapacity(pendingEvents.count)
+        var suppressedCount = 0
+        for event in pendingEvents {
+            let flags = FilesystemEventFlags(event: event)
+            let relativePath = CatalogPath.relativePath(
+                rootPath: root,
+                fileURL: URL(fileURLWithPath: event.path)
+            )
+            if let relativePath,
+               KnownMaterializationSuppressionPolicy.isSuppressible(
+                   flags: flags,
+                   id: MediaAssetID(libraryRootPath: root, relativePath: relativePath),
+                   active: activeSuppression,
+                   now: now
+               )
+            {
+                suppressedCount += 1
+                continue
+            }
+            keptEvents.append(event)
+        }
+        if suppressedCount > 0 {
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.materializationEvent phase=suppress rootPath=\(root.rawValue, privacy: .public) count=\(suppressedCount, privacy: .public)"
+            )
+        }
+
         let decision = FilesystemReconciler.decide(
-            events: pendingEvents,
+            events: keptEvents,
+            root: root,
             rootExists: roots[root] != nil,
             isArmed: filesystemWatchingArmed.contains(root),
-            isAvailable: rootIsAvailable(root),
-            hasActiveScanForRoot: scanLeases.hasActiveFilesystemScan(for: root)
+            isAvailable: rootIsAvailable(root)
         )
 
         switch decision {
         case let .drop(reason):
-            filesystemEventBatches.removeValue(forKey: root)
             await recordFilesystemEventDrop(root: root, reason: reason)
         case .noop:
-            filesystemEventBatches.removeValue(forKey: root)
-        case let .deferUntilScanCompletes(eventCount):
-            scanLeases.markRescanAfterCurrentScan(root)
-            bumpPlanRevision(for: root)
-            filesystemEventBatches.removeValue(forKey: root)
-            OtosLog.catalog.debug(
-                "Filesystem reconcile deferred until active scan finishes path=\(root.rawValue, privacy: .public)"
-            )
-            OtosLog.catalog.notice(
-                // swiftlint:disable:next line_length
-                "op=catalog.filesystemEvent phase=schedule mode=deferred rootPath=\(root.rawValue, privacy: .public) eventCount=\(eventCount, privacy: .public)"
-            )
-        case let .rescanRoot(eventCount):
-            filesystemEventBatches.removeValue(forKey: root)
-            enqueueScans([root])
-            OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
-            OtosLog.catalog.notice(
-                // swiftlint:disable:next line_length
-                "op=catalog.filesystemEvent phase=schedule mode=fullRoot rootPath=\(root.rawValue, privacy: .public) eventCount=\(eventCount, privacy: .public)"
-            )
-        case let .targeted(events):
-            filesystemEventBatches.removeValue(forKey: root)
-            var catalogChanged = false
-            for event in events {
-                guard await reconcileFilesystemEvent(event, root: root) else {
-                    continue
+            break
+        case let .accumulate(scopes):
+            var fileCount = 0
+            var subtreeCount = 0
+            var rootCount = 0
+            var accumulator = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
+            for dirt in scopes {
+                switch dirt.scope {
+                case .root:
+                    accumulator.insertRoot()
+                    rootCount += dirt.eventCount
+                case let .subtree(path):
+                    accumulator.insertSubtree(path)
+                    subtreeCount += dirt.eventCount
+                case let .file(path):
+                    accumulator.insertFile(path, action: dirt.fileAction ?? .upsert)
+                    fileCount += dirt.eventCount
                 }
-                catalogChanged = true
             }
-            if catalogChanged {
-                bumpOccupancyRevision(for: root)
-                notifyCatalogChanged()
-            }
+            filesystemDirty[root] = accumulator
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
-                "op=catalog.filesystemEvent phase=reconcile mode=targeted rootPath=\(root.rawValue, privacy: .public) eventCount=\(events.count, privacy: .public) catalogChanged=\(catalogChanged, privacy: .public)"
+                "op=catalog.filesystemEvent phase=classify rootPath=\(root.rawValue, privacy: .public) eventCount=\(keptEvents.count, privacy: .public) file=\(fileCount, privacy: .public) subtree=\(subtreeCount, privacy: .public) root=\(rootCount, privacy: .public) suppressed=\(suppressedCount, privacy: .public)"
             )
+            await drainDirtyReconcile(for: root)
         }
+    }
+
+    /// Drains typed dirty scopes for one root when no filesystem lease owns it.
+    /// Root dirt enqueues a full scan; subtree dirt runs under a lease; file dirt
+    /// settles immediately. Loops so dirt that arrives mid-await is not lost.
+    private func drainDirtyReconcile(for root: LibraryRootPath) async {
+        while true {
+            guard roots[root] != nil else {
+                filesystemDirty.removeValue(forKey: root)
+                return
+            }
+            guard reorganizationLeases[root] == nil else {
+                return
+            }
+            guard !scanLeases.hasActiveFilesystemScan(for: root) else {
+                return
+            }
+            guard currentScanTask == nil else {
+                return
+            }
+            guard filesystemWatchingArmed.contains(root), rootIsAvailable(root) else {
+                return
+            }
+            guard var accumulator = filesystemDirty[root], !accumulator.isEmpty else {
+                filesystemDirty.removeValue(forKey: root)
+                return
+            }
+            let dirt = accumulator.take()
+            filesystemDirty[root] = accumulator
+
+            if dirt.isRootDirty {
+                OtosLog.catalog.info("Filesystem rescan scheduled path=\(root.rawValue, privacy: .public)")
+                OtosLog.catalog.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.filesystemEvent phase=schedule mode=fullRoot rootPath=\(root.rawValue, privacy: .public) eventCount=\(dirt.fileCount + dirt.subtreeCount + 1, privacy: .public)"
+                )
+                enqueueScans([root])
+                return
+            }
+
+            if !dirt.subtrees.isEmpty {
+                await runScopedReconcile(root: root, dirt: dirt)
+                continue
+            }
+
+            await reconcileFileDirt(root: root, files: dirt.files)
+        }
+    }
+
+    private func reconcileFileDirt(
+        root: LibraryRootPath,
+        files: [MediaRelativePath: SingleFileReconcileOperation]
+    ) async {
+        guard let rootRowID = roots[root]?.rowID else {
+            return
+        }
+        let started = Date()
+        var catalogChanged = false
+        var changedCount = 0
+        for path in files.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+            let action = files[path] ?? .upsert
+            let absolute = root.url.appendingPathComponent(path.rawValue, isDirectory: false)
+                .path(percentEncoded: false)
+            let changed: Bool = switch action {
+            case .deleteIfMissing:
+                await reconcileDeletedFile(at: absolute, root: root, rootRowID: rootRowID)
+            case .upsert:
+                await reconcileUpsertedFile(at: absolute, root: root, rootRowID: rootRowID)
+            }
+            if changed {
+                catalogChanged = true
+                changedCount += 1
+            }
+        }
+        if catalogChanged {
+            bumpOccupancyRevision(for: root)
+            notifyCatalogChanged()
+        }
+        let totalMs = Int(Date().timeIntervalSince(started) * 1000)
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.reconcile phase=finish mode=file rootPath=\(root.rawValue, privacy: .public) scopeCount=\(files.count, privacy: .public) changed=\(changedCount, privacy: .public) totalMs=\(totalMs, privacy: .public)"
+        )
+    }
+
+    private func runScopedReconcile(root: LibraryRootPath, dirt: FilesystemDirtyAccumulator) async {
+        guard let rootRowID = roots[root]?.rowID else {
+            return
+        }
+        let scan = scanLeases.makeActiveScan(rootPath: root, rootRowID: rootRowID)
+        scanLeases.beginFilesystemScan(scan)
+        filesystemWatchingArmed.insert(root)
+        filesystemWatcher.addRoot(root)
+        notifyCatalogChanged()
+        OtosLog.catalog.info(
+            "Catalog scoped reconcile started path=\(root.rawValue, privacy: .public) subtrees=\(dirt.subtreeCount, privacy: .public)"
+        )
+        recordDiagnostic(
+            operation: "catalog.reconcile",
+            phase: "start",
+            fields: [
+                "rootPath": root.rawValue,
+                "mode": "subtree",
+                "subtreeCount": "\(dirt.subtreeCount)",
+                "fileCount": "\(dirt.fileCount)",
+            ]
+        )
+
+        currentScanTask = Task { [scanner, scanCadence] in
+            do {
+                var totalObserved = 0
+                var totalDeleted = 0
+                var catalogChanged = false
+                for subtree in dirt.subtrees.sorted(by: { $0.rawValue < $1.rawValue }) {
+                    try Task.checkCancellation()
+                    guard await self.owns(scan) else {
+                        return
+                    }
+                    let observation = try await scanner.scanSubtree(root, subtree, scanCadence) { batch in
+                        try await self.recordScannedBatch(batch, scan: scan)
+                    }
+                    totalObserved += observation.mediaPaths.count
+                    let deleted = try await self.reconcileMissingAssets(
+                        scan: scan,
+                        observedPaths: observation.mediaPaths,
+                        underSubtree: subtree
+                    )
+                    totalDeleted += deleted
+                    let companionChanged = try await self.applyAndReconcileCompanions(
+                        scan: scan,
+                        companions: observation.companions,
+                        underSubtree: subtree
+                    )
+                    if deleted > 0 || companionChanged {
+                        catalogChanged = true
+                    }
+                }
+                guard await self.owns(scan) else {
+                    return
+                }
+                if !dirt.files.isEmpty {
+                    await self.reconcileFileDirt(root: root, files: dirt.files)
+                }
+                if catalogChanged {
+                    await self.bumpOccupancyRevision(for: root)
+                } else {
+                    await self.bumpPlanRevision(for: root)
+                }
+                OtosLog.catalog.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.reconcile phase=finish mode=subtree rootPath=\(root.rawValue, privacy: .public) observed=\(totalObserved, privacy: .public) deleted=\(totalDeleted, privacy: .public)"
+                )
+                await self.scopedReconcileFinished(scan: scan)
+            } catch is CancellationError {
+                await self.scanCancelled(scan: scan)
+            } catch {
+                await self.scanFailed(scan: scan, error: error)
+            }
+        }
+    }
+
+    private func scopedReconcileFinished(scan: ActiveScan) {
+        clearCurrentScan(scan, armFilesystemWatching: true)
+    }
+
+    private func startIntegrityScanSchedulerIfNeeded() {
+        guard integrityScanTask == nil else {
+            return
+        }
+        integrityScanTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: CatalogStore.integrityScanPollInterval)
+                guard !Task.isCancelled else {
+                    return
+                }
+                await self?.scheduleOverdueIntegrityScans()
+            }
+        }
+    }
+
+    private func scheduleOverdueIntegrityScans() {
+        let now = Date()
+        let interval = Self.seconds(Self.integrityScanInterval)
+        for path in roots.keys {
+            guard roots[path]?.root.kind == .library else {
+                continue
+            }
+            guard rootIsAvailable(path), filesystemWatchingArmed.contains(path) else {
+                continue
+            }
+            guard reorganizationLeases[path] == nil else {
+                continue
+            }
+            if scanLeases.hasActiveFilesystemScan(for: path)
+                || scanLeases.pendingScanPaths.contains(path)
+            {
+                continue
+            }
+            if let accumulator = filesystemDirty[path], accumulator.isRootDirty {
+                continue
+            }
+            let last = lastSuccessfulFullRootScanAt[path]
+            let age = last.map { now.timeIntervalSince($0) } ?? interval
+            guard age >= interval else {
+                continue
+            }
+            filesystemDirty[path, default: FilesystemDirtyAccumulator()].insertRoot()
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.integrityScan phase=schedule rootPath=\(path.rawValue, privacy: .public) successfulScanAgeSec=\(Int(age), privacy: .public)"
+            )
+            Task { await self.drainDirtyReconcile(for: path) }
+        }
+    }
+
+    private static func seconds(_ duration: Duration) -> TimeInterval {
+        let components = duration.components
+        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 
     @discardableResult
@@ -2991,6 +3282,7 @@ private extension CatalogStore {
         filesystemDebounceTasks[root]?.cancel()
         filesystemDebounceTasks.removeValue(forKey: root)
         filesystemEventBatches.removeValue(forKey: root)
+        filesystemDirty.removeValue(forKey: root)
     }
 
     private func cancelAllFilesystemDebounces() {
@@ -2998,6 +3290,8 @@ private extension CatalogStore {
             task.cancel()
         }
         filesystemDebounceTasks.removeAll()
+        filesystemEventBatches.removeAll()
+        filesystemDirty.removeAll()
     }
 
     private func owns(_ scan: ActiveScan) -> Bool {
