@@ -1,417 +1,581 @@
-# Plan 0056 — Filesystem-event rescan storm on enriching cloud roots
+# Plan 0056 — Filesystem reconciliation and resource-aware cloud enrichment
 
 Status: active implementation plan. Diagnosed 2026-07-11 from live-log evidence on
 a running build while investigating the import-planning hang fixed in PR #111
 (`fix: settle import planning against enriching cloud destinations`, commit
 `b662d4f`). Delete this file when the work has landed on `main`.
 
-This plan is self-contained: an implementer does not need the diagnosis
-conversation. All line numbers are approximate and were taken against `main` at
-`b662d4f`; confirm the exact site by function name before editing.
+This is a broad architecture correction, not a timing patch for one observed storm.
+It replaces root-only invalidation with the smallest safely known reconciliation
+scope, explicitly settles filesystem effects caused by known cloud materialization,
+adds a long-running-session integrity sweep, and makes enrichment admission account
+for media size. All implementation references are approximate against `main` at
+`b662d4f`; locate sites by owner/function before editing.
 
 ---
 
-## 1. Symptoms
+## 1. Verified direction and requirements
 
-A large cloud-synced library (observed: `~/Library/CloudStorage/OneDrive-Personal/
-Pictures/Camera Roll`, 23,036 files) that is being background-materialized by
-enrichment drives an endless loop of **full-tree rescans**. Live unified-log
-evidence (`script/logs.sh show --last 5m`) showed, repeating every ~2–4 seconds
-for minutes:
+The user confirmed the following direction on 2026-07-11:
 
+1. Fix the filesystem-event architecture broadly now rather than preserve known
+   coarse seams for later.
+2. A filesystem change should reconcile the smallest scope that is safely known:
+   one file, one subtree, or the selected root.
+3. Events received while a scan owns a root must retain their useful path/scope
+   information instead of automatically scheduling another full-root scan.
+4. Cloud hydration is performed by the provider process (for the observed root,
+   OneDrive), so FSEvents `IgnoreSelf` cannot identify those events as Otos-owned.
+5. Otos may suppress the narrow, expected event shapes for the handful of paths it
+   has explicitly asked the provider to materialize. It must settle each successful
+   materialization with one targeted filesystem-fact reconcile.
+6. Otos needs a periodic integrity scan for roots in long-running app sessions;
+   launch scans remain the normal repair after the app was closed.
+7. Default materialization request concurrency becomes 16 and enrichment worker
+   concurrency becomes 8.
+8. Count-only concurrency is insufficient. Admission must account for known logical
+   size and prevent several multi-gigabyte videos from inundating either pool.
+9. Viewport/user-visible work remains favored and must not be starved by eager
+   background work.
+
+The exact integrity interval and initial byte/large-video limits are policy values
+to choose from measurement in this increment, then record in requirements/ADR. Do
+not scatter thresholds across the coordinator.
+
+## 2. Observed defect
+
+A OneDrive-backed library (`~/Library/CloudStorage/OneDrive-Personal/Pictures/
+Camera Roll`, observed 23,036 files) being background-materialized by enrichment
+entered an endless loop of full-tree rescans. Live logs repeated every roughly
+2–4 seconds for minutes:
+
+```text
+op=catalog.scan phase=finish rootPath=…/Camera Roll observed=23036 deleted=0
+op=catalog.filesystemEvent phase=schedule mode=deferred rootPath=… eventCount=1..6
+op=catalog.enrichment.batch phase=finish …
 ```
-op=catalog.scan phase=finish rootPath=…/Camera Roll observed=23036 deleted=0 … (changedCount=0)
-op=catalog.filesystemEvent phase=schedule mode=deferred rootPath=…/Camera Roll eventCount=1..6
-op=catalog.enrichment.batch phase=finish …            (materialization running concurrently)
-```
 
-Every rescan re-enumerates all 23,036 entries and finds **nothing changed**
-(`changedCount=0`), yet another rescan is scheduled seconds later. The loop ends
-only when materialization of the whole library finishes, the root is removed, or
-it goes offline.
+Each scan found no catalog change. Events that reached the debounce path during an
+active scan were classified as `.deferUntilScanCompletes` before their flags or
+paths were considered. Store discarded the batch, set `rescanAfterCurrentScan`,
+and ran another O(root-size) scan. Provider materialization continued producing
+events during every scan, sustaining the loop.
 
-## 2. Impact (what we are fixing)
+Impact:
 
-- **Sustained wasted CPU/IO.** O(23k) directory enumeration + O(23k) SQLite
-  upsert-compares every few seconds, indefinitely, for zero catalog change. On a
-  laptop: background CPU, disk churn, battery, thermals.
-- **SQLite/WAL pressure and self-interference.** Each rescan cycle contends with
-  the concurrent `enrichment.batch` writes for the same database, which can slow
-  the very enrichment that is generating the events (mild positive feedback that
-  prolongs the storm).
-- **Duration.** Persists for the entire materialization pass of the library
-  (potentially the whole library — CLAUDE.md sanctions eager materialization "up
-  to eagerly materializing the whole library"), i.e. a long time for a large cloud
-  root.
-- **Observability.** Log spam (`mode=deferred` + `scan phase=finish observed=…`
-  every few seconds) drowns other diagnostics.
+- repeated enumeration and SQLite comparisons for no namespace change;
+- database/WAL contention with enrichment writes;
+- CPU, filesystem, battery, thermal, and diagnostic noise;
+- a root-only reconciliation architecture that wastes precise FSEvent paths;
+- count-only cloud scheduling that treats a tiny image and multi-gigabyte video as
+  equivalent work.
 
-There is **no correctness defect**: originals are never touched and the catalog
-stays correct (rescans find nothing). This is purely an efficiency/energy defect.
-The import-planning livelock that this storm also used to cause is already fixed
-(PR #111): the import coordinator now ignores the `planRevision` churn.
+The import-plan livelock formerly amplified by `planRevision` churn was separately
+fixed in PR #111. This increment must remove the underlying rescan churn rather
+than rely on that consumer-side tolerance.
 
-## 3. Code smells
+## 3. Facts independently verified
 
-- **Wrong-granularity escalation.** A single-file filesystem event is answered
-  with a whole-tree re-enumeration whenever a scan happens to be active — O(1)
-  information triggering O(n) work.
-- **Information thrown away.** The defer path discards the actual events
-  (`filesystemEventBatches.removeValue`) and substitutes a blind rescan, so the
-  cheap targeted-reconcile path can never run for events that arrive during a
-  scan.
-- **Self-inflicted churn.** The system reacts to filesystem events that it itself
-  caused (enrichment materialization), with no suppression of its own writes.
-- **Unbounded self-perpetuation.** `clearCurrentScan` re-enqueues a full rescan
-  whenever any event deferred during the scan, and the rescan is long enough that
-  new materialization events always arrive during it — a self-sustaining loop with
-  no damping and no exit except external state change.
+### 3.1 Current code
 
-## 4. Investigation / research
+- `CatalogFilesystemWatcher` requests file-level events and currently passes both
+  `kFSEventStreamCreateFlagIgnoreSelf` and `MarkSelf`.
+- `IgnoreSelf` covers the process that changed the hierarchy. It cannot suppress
+  filesystem changes performed by the external cloud provider process.
+- `FilesystemReconciler.decide` checks `hasActiveScanForRoot` before classifying
+  event flags, so all events whose debounce fires during a scan lose their
+  available granularity.
+- The targeted file path already uses the shared `CatalogScannedFileReader` and
+  Store persistence edge.
+- Unsafe/directory/unknown events currently fall back to `enqueueScans([root])`.
+- There is one automatic scan for each database-restored root at launch and scans
+  caused by add/event flows. There is no periodic integrity scan.
+- `EnrichmentCoordinator` defaults to four materialization and four enrichment
+  workers. `sourceSize` and media kind already exist on scheduling work.
+- Materialization state is transient and is not a stored catalog fact. The catalog
+  stores logical filesystem facts that are available while a File Provider item is
+  dataless: path/name, content type, logical size, creation date, and content mtime.
 
-### 4.1 The codepath (trace)
+### 3.2 Apple platform contract
 
-Event source: `EnrichmentCoordinator` materializes dataless placeholders (hydrates
-them) as a deliberate, sanctioned background activity. Each hydration writes bytes,
-so macOS FSEvents emits an `itemModified`/`itemInodeMetaMod` on that file path.
+Primary sources:
 
-1. **Watcher → `handleFilesystemEvent`** (`CatalogStore.swift` ~:2646). Arms
-   watching if needed, then appends to `filesystemEventBatches[root]` (~:2682) and
-   calls `debounceFilesystemReconcile`.
-2. **Debounce** (~:2713). Waits `filesystemEventDebounce` (**1 s** default, ~:184),
-   then `processFilesystemEventBatch`.
-3. **Classify** (~:2762 → `FilesystemReconciler.decide`,
-   `FilesystemReconciler.swift:23`). The **first** check is `hasActiveScanForRoot`
-   → returns `.deferUntilScanCompletes` (`FilesystemReconciler.swift:35`),
-   short-circuiting before the single-file-vs-full classification is considered.
-4. **Defer handling** (~:2783). Does three things: `markRescanAfterCurrentScan(root)`,
-   `bumpPlanRevision(root)`, and **discards the events**
-   (`filesystemEventBatches.removeValue`, ~:2786).
-5. **Scan finishes → `clearCurrentScan`** (~:2538). `clearFilesystemScan` returns
-   `needsRescan == true`, so it calls `enqueueScans([root])` (~:2551) → a new full
-   scan of all files.
-6. **New scan runs** (`startNextScanIfNeeded` ~:2216; arms watcher at ~:2239).
-   Re-enumerates the whole tree, `upsertScannedFile` per file, `changedCount=0`.
-   More materialization events arrive during it → back to step 1.
+- [File System Events Programming Guide — Using the FSEvents Framework](https://developer.apple.com/library/archive/documentation/Darwin/Conceptual/FSEvents_ProgGuide/UsingtheFSEventsFramework/UsingtheFSEventsFramework.html)
+- [`kFSEventStreamCreateFlagIgnoreSelf`](https://developer.apple.com/documentation/coreservices/file_system_events/1455376-fseventstreamcreateflags/kfseventstreamcreateflagignoreself?language=objc)
+- [`FileManager.startDownloadingUbiquitousItem(at:)`](https://developer.apple.com/documentation/foundation/filemanager/startdownloadingubiquitousitem%28at%3A%29)
+- [Synchronizing the File Provider Extension](https://developer.apple.com/documentation/fileprovider/synchronizing-the-file-provider-extension)
+- [`URLResourceKey`](https://developer.apple.com/documentation/foundation/urlresourcekey)
 
-`markRescanAfterCurrentScan` writes to a `Set`, so the rescan is coalesced to **one
-per scan cycle** — but that one rescan is O(entire tree), and the loop frequency is
-bounded only by scan duration (~2–4 s).
+The relevant platform conclusions are:
 
-### 4.2 The cheap path already exists
+- FSEvents are invalidation hints, not a durable item-change journal.
+- File-level mode can provide individual paths, but events may be coalesced.
+- `MustScanSubDirs` requires recursively reconciling from the reported path.
+- dropped events mean coverage is unknown and require conservative reconciliation
+  of the monitored directories.
+- observation should begin before snapshot enumeration; scopes dirtied while the
+  snapshot is built must be reread afterward.
+- File Provider represents dataless items with metadata already present and adds
+  content when materialized. Hydration is not itself a logical file edit.
+- calling `startDownloadingUbiquitousItem` requests download/synchronization; the
+  provider may perform resulting filesystem work in another process.
 
-When no scan is active and the event is single-file, `decide` returns `.targeted`
-(`FilesystemReconciler.swift:53`) and `processFilesystemEventBatch` runs
-`reconcileFilesystemEvent` per event (~:2802 → ~:2822): one `lstat` + one row
-compare for that path only, bumping occupancy only if the row actually changed.
-**"Rescan only affected files" is already implemented** — the storm is purely that
-`.deferUntilScanCompletes` bypasses it while a scan is active.
+### 3.3 Provider-specific evidence still required
 
-Full re-enumeration is only genuinely required when the event carries
-`requiresFullRootScan` flags — `kFSEventStreamEventFlagMustScanSubDirs`,
-kernel/user-dropped, directory, symlink, or unknown
-(`FilesystemEventFlags.swift:18`). In those cases FSEvents will not tell us which
-files changed, so re-enumeration is the only correct reconcile. This case must be
-preserved.
+Apple documentation cannot prove what the installed OneDrive provider on the
+current macOS build emits. Before production logic is finalized, add temporary
+in-app instrumentation and capture at least 20 representative materializations:
 
-### 4.3 Materialization concurrency (the "handful" number)
+- small and large images;
+- small and large videos;
+- decoded FSEvent flags, event path, event time, and materialization generation;
+- request/start/materialized times;
+- pre/post catalog facts (logical size, creation second, content-mtime second,
+  content type, regular-file eligibility);
+- whether events name the file, a parent directory, or both;
+- delivery lag after the `SF_DATALESS` transition;
+- occurrence of `MustScanSubDirs`, dropped, rename, remove, or unknown shapes.
 
-`EnrichmentCoordinator` runs a bounded pool: `downloadConcurrency = 4` and
-`enrichConcurrency = 4` by default (`EnrichmentCoordinator.swift:130–131`), not
-overridden in production (`CatalogWindowViewModel.swift:192`). The set of files
-currently being materialized already exists in memory as
-`inFlightDownload: Set<MediaAssetID>` (`EnrichmentCoordinator.swift:107`). So at any
-instant **at most ~4 files are hydrating**, and the coordinator already knows which.
+A standalone Swift probe against `~/Desktop/OneDrive/Pictures` was attempted on
+2026-07-11. macOS privacy/TCC rejected the materialization request with
+`NSCocoaErrorDomain Code=257` before OneDrive accepted it; no file was
+materialized or modified. The diagnostic must therefore run inside the already
+authorized Otos process. Remove temporary high-volume instrumentation after the
+result is captured; preserve the bounded evidence and conclusion in
+`docs/research/2026-07-11-onedrive-materialization-fsevents.md`.
 
-### 4.4 Evidence still to capture before coding (cheap, do first)
+The capture is a design gate for the suppression allowlist and grace interval. It
+is not a gate for implementing typed reconciliation scopes.
 
-The `mode=deferred` log line does not record event flags, so we have not proven the
-storm's events are single-file `itemModified` (vs. `MustScanSubDirs` coalescing).
-Add the flags to that log line and capture a short trace from the running app:
+## 4. Target architecture
 
-- Temporarily include `flags=\(FilesystemEventFlags(event:).diagnosticDescription)`
-  in the `mode=deferred` notice (or log per retained event).
-- Run the repro (attach nothing needed — just have the enriching cloud library
-  present) and `script/logs.sh show --last 3m | grep mode=deferred`.
-- **Expectation:** predominantly `itemModified`/`itemInodeMetaMod,itemIsFile`
-  (single-file, targeted-eligible). If instead they are `mustScanSubDirs`, Part A
-  will legitimately still escalate to one rescan per cycle, and Part B (fuel cut)
-  plus the overflow cap become the primary mitigations — record that outcome in the
-  DoD.
+### 4.1 One typed dirty-scope accumulator per root
 
-## 5. Solution
+Represent pending reconciliation as the narrowest safely known scope:
 
-Two complementary changes. **Part A is the structural fix and must land; Part B is
-a cheap fuel cut that complements it.**
-
-### 5.1 Part A — retain deferred events, replay as a targeted reconcile after the scan
-
-Instead of discarding events and blindly re-enumerating, **retain** the events that
-arrive during a scan in a per-root buffer, and when the scan finishes **re-classify
-and replay** them through the existing decision path (now with no active scan): a
-targeted per-path reconcile in the common case, and a single full rescan only if a
-retained event genuinely requires it or the buffer overflows.
-
-This removes the amplifier: an event during a scan becomes O(affected paths), not
-O(entire tree), so the loop cannot sustain itself for single-file events.
-
-### 5.2 Part B — suppress self-inflicted materialization events
-
-When a filesystem event's path is currently being materialized by enrichment (or was
-within a short grace window), drop it before it enters the batch/debounce pipeline.
-This removes the dominant fuel source at the door, so we do not even do the cheap
-targeted reconcile for our own no-op hydration events.
-
-It is intentionally **best-effort** (event latency means some events arrive after the
-download completes) and it accepts a vanishingly rare miss (a real user change to a
-file at the exact moment we hydrate it), which self-corrects on the next event or
-scan. This is safe because Part A makes any missed/leaked event cheap anyway.
-
-### 5.3 Why both, and in this order
-
-- Part A alone fully fixes the perf problem for single-file events and is robust
-  (it does not depend on catching every event).
-- Part B alone is insufficient: it is best-effort and leaves the amplifier armed, so
-  a single leaked or foreign event during a scan re-triggers a full rescan.
-- Together: our materializations produce ~zero work (B), any residual/foreign
-  single-file event is a cheap targeted reconcile (A), and only genuinely ambiguous
-  coarse events trigger one full rescan (unchanged).
-
-Land **Part A first** (kills the storm), then **Part B** (trims residual self-noise).
-They can be one PR or two; if two, A precedes B.
-
-## 6. Alternatives considered and rejected
-
-- **Rate-limit / coalesce full rescans (damping).** Cap full rescans to one per root
-  per N seconds. Reduces frequency ~10× but still re-enumerates a huge tree for no
-  reason, adds a timing knob, and is damping rather than a fix. Rejected in favor of
-  removing the wrong escalation entirely (Part A). (Damping-style fixes have been
-  rejected elsewhere in this codebase for the grid invariant.)
-- **Part B alone (suppress self-events, keep full-rescan escalation).** Simplest, but
-  best-effort suppression + intact amplifier means one leaked/foreign event per scan
-  cycle re-sustains the storm. Insufficient as a standalone fix.
-- **Filter events inside `CatalogFilesystemWatcher` instead of the store.** The store
-  already has the event, the owning root, and (via Part B) the suppression set, and
-  it is where reconciliation decisions live. Filtering in the watcher would split the
-  decision across two owners for no benefit.
-- **Build an incremental/targeted scanner (avoid full re-enumeration entirely).** A
-  large new subsystem; against "simplest correct" and "measure before optimizing."
-  Part A already gets the same benefit by reusing the existing targeted-reconcile
-  path, so a new scanner is unjustified.
-- **Stop or throttle enrichment materialization.** Eager materialization is a
-  deliberate, sanctioned product decision (CLAUDE.md). The defect is how we react to
-  its events, not that it materializes.
-
-## 7. Exactly what changes where
-
-> All sites in `Otos/Stores/CatalogStore.swift` unless noted. Confirm line numbers by
-> function name; they are approximate against `main @ b662d4f`.
-
-### Part A — retain and replay
-
-**A1. New Store state** (near the other filesystem-event fields, ~:170).
 ```swift
-/// Events retained while a scan owns the root, replayed as a targeted reconcile
-/// after the scan completes (see §5.1 of plan 0056). Keyed by root; coalesced by
-/// path at replay time.
-private var deferredFilesystemEvents: [LibraryRootPath: [FilesystemEvent]] = [:]
-
-/// Distinct-path ceiling for the deferred buffer. Beyond this, replaying targeted
-/// reconciles approaches full-scan cost, so fall back to a single full rescan.
-private let deferredFilesystemEventPathCap = 512
-```
-
-**A2. `processFilesystemEventBatch`, `.deferUntilScanCompletes` case** (~:2783).
-Replace the current body (which marks a rescan, bumps planRevision, and discards):
-- Append `pendingEvents` to `deferredFilesystemEvents[root]`.
-- `filesystemEventBatches.removeValue(forKey: root)`.
-- Compute the buffer's **distinct path count**. If it exceeds
-  `deferredFilesystemEventPathCap`: clear `deferredFilesystemEvents[root]` and call
-  `scanLeases.markRescanAfterCurrentScan(root)` (the overflow fallback → one full
-  rescan via `clearCurrentScan`).
-- **Do not** call `bumpPlanRevision` here (retention is not itself a planning
-  change; the post-scan replay bumps occupancy iff a row actually changes). This
-  also removes the last remaining source of `planRevision` churn from the storm.
-- Keep the `mode=deferred` notice; add a `retainedPaths=<distinct count>` field.
-
-**A3. New drain method.**
-```swift
-/// After a scan releases a root, replay any events retained during it. With no
-/// active scan, `decide` yields `.targeted` (reconcile only affected paths) or,
-/// for coarse/dropped events, `.rescanRoot` — reusing the normal execution path.
-private func drainDeferredFilesystemEvents(for root: LibraryRootPath) async {
-    guard !scanLeases.hasActiveFilesystemScan(for: root),
-          let retained = deferredFilesystemEvents[root], !retained.isEmpty
-    else { return }
-    deferredFilesystemEvents.removeValue(forKey: root)
-    filesystemEventBatches[root, default: []].append(contentsOf: retained)
-    await processFilesystemEventBatch(for: root)
+nonisolated enum FilesystemDirtyScope: Equatable {
+    case file(MediaRelativePath)
+    case subtree(MediaRelativePath) // directory relative to selected root
+    case root
 }
 ```
-Reusing `processFilesystemEventBatch` means the retained events flow through the
-exact same `decide` + switch, so `.targeted`/`.rescanRoot`/`.drop`/`.noop` all
-behave identically to a live batch. No duplicated logic.
 
-**A4. Invoke the drain from the scan-terminal handlers**, after the lease is cleared:
-- `scanCompleted` (~:2341): after `clearCurrentScan(scan, …)` (~:2402), add
-  `await drainDeferredFilesystemEvents(for: scan.rootPath)`.
-- `scanCancelled` (~:2478, clears at ~:2487) and `scanFailed` (~:2490, clears at
-  ~:2535): same call, so retained events are never stranded.
-- Ordering note: `clearCurrentScan` calls `startNextScanIfNeeded` at its end. If the
-  overflow fallback (A2) marked a rescan, a new scan for this root may already be
-  active when the drain runs; the drain's `hasActiveFilesystemScan` guard makes it a
-  no-op in that case (the overflow rescan covers it). Non-overflow: no new scan for
-  the root, so the drain proceeds as a targeted replay.
+Store owns one process-local accumulator per `LibraryRootPath`. The concrete data
+structure may use file/subtree sets plus a root-dirty bit; do not build a general
+job framework.
 
-**A5. Do not change `clearCurrentScan`/`ScanLeaseController`.** The
-`markRescanAfterCurrentScan` / `takeRescanAfterCurrentScan` machinery stays — it is
-still used by the reorganization-lease deferral (`startNextScanIfNeeded` ~:2226 and
-lease release) and now by the Part A overflow fallback. We only stop the FS-defer
-path from using it in the common case.
+Coalescing rules:
 
-### Part B — suppress self-materialization events
+- duplicate file paths collapse;
+- repeated flags for a path merge conservatively;
+- a subtree removes/subsumes descendant file and subtree entries;
+- an existing ancestor subtree absorbs a new descendant scope;
+- `.root` clears/subsumes every narrower scope;
+- dropped, unknown-coverage, root-change, or unmappable events escalate to `.root`;
+- a reported descendant directory/`MustScanSubDirs` becomes `.subtree(path)` when
+  its boundary is trustworthy;
+- a supported regular-file event becomes `.file(path)`.
 
-**B1. New Store state and constant** (near the filesystem-event fields).
-```swift
-/// Absolute paths currently (or very recently) being materialized by enrichment,
-/// mapped to the instant the suppression expires. FS events for these are our own
-/// hydration writes and are dropped before batching (see §5.2 of plan 0056).
-private var materializationSuppressedUntil: [String: ContinuousClock.Instant] = [:]
-private let materializationSuppressionGrace: Duration = .seconds(3)
-private let materializationSuppressionCeiling: Duration = .seconds(60)
-```
+There is no fixed `512`-path or similar threshold. Such a number is not justified
+by root size or measured cost and can recreate the full-scan storm. Instrument
+scope counts and durations first. Add a cost crossover only if measurement proves
+one, owned by one policy type and based on actual root/work facts.
 
-**B2. New Store methods** (internal — the coordinator holds `store`).
-```swift
-/// Enrichment is about to hydrate `absolutePath`; suppress its FS event.
-func beginMaterializationSuppression(path absolutePath: String) {
-    materializationSuppressedUntil[absolutePath] =
-        ContinuousClock().now.advanced(by: materializationSuppressionCeiling)
-}
+### 4.2 One reconciliation state machine
 
-/// Hydration finished; keep suppressing briefly since the FS event can lag the write.
-func endMaterializationSuppression(path absolutePath: String) {
-    materializationSuppressedUntil[absolutePath] =
-        ContinuousClock().now.advanced(by: materializationSuppressionGrace)
-}
-```
-The ceiling on `begin` guarantees no permanent leak if `end` never fires (task
-cancellation); the grace on `end` covers FSEvents delivery lag.
+The Store remains the single owner. For each root:
 
-**B3. Drop check in `handleFilesystemEvent`** (~:2646), after resolving the owning
-root and after the arming block (so arming still happens), before the reorg-lease
-branch / batch append:
-```swift
-let now = ContinuousClock().now
-if let until = materializationSuppressedUntil[event.path] {
-    if until > now {
-        recordFilesystemEventDrop(path: event.path, root: root, reason: "selfMaterialization")
-        return
-    }
-    materializationSuppressedUntil.removeValue(forKey: event.path)   // lazy prune
-}
-```
-Path-matching gotcha: use the same absolute-path spelling on both sides.
-`event.path` is the raw FSEvents path; the coordinator must pass
-`work.url.path(percentEncoded: false)`. If in doubt, normalize both through the same
-helper. (A small periodic/lazy prune of expired entries keeps the map bounded; the
-map is ≤ ~4 live entries plus recently-expired, so lazy prune on lookup is enough.)
+1. Live events debounce and classify into typed dirty scopes.
+2. If no reconciliation lease owns the root, Store takes the accumulator and runs
+   the minimal required reconciliation.
+3. If a full-root scan or subtree reconciliation is active, new events accumulate
+   in the next dirty generation; no useful event information is discarded.
+4. On success, cancellation, or failure, release the lease and atomically take the
+   next dirty generation.
+5. Reconcile again only when dirt exists.
 
-**B4. Wire begin/end around materialization** in `EnrichmentCoordinator.runLoop`, the
-download worker (`EnrichmentCoordinator.swift:293–303`). The coordinator already
-holds `store` (`:193`). Change the worker body to:
-```swift
-group.addTask {
-    let start = Date()
-    let path = work.url.path(percentEncoded: false)
-    await self.store.beginMaterializationSuppression(path: path)
-    let result = await materialize(work.url)
-    await self.store.endMaterializationSuppression(path: path)
-    await self.finishDownload(work, result: result,
-                              attemptMs: DiagnosticsTiming.milliseconds(since: start))
-}
-```
-Scope: only **download** workers materialize (write bytes). Enrich workers byte-read
-already-materialized files and do not write, so they need no suppression. Confirm the
-coordinator's `store` property name.
+Do not maintain both a raw `deferredFilesystemEvents` array and
+`rescanAfterCurrentScan` for the common event path. The typed accumulator is the
+deferred state. `rescanAfterCurrentScan` may remain only for another independently
+verified owner such as reorganization until that flow is migrated deliberately.
 
-## 8. Correctness argument (for review)
+Root removal, path remap, shutdown, and unsupported future schema handling must
+cancel tasks and clear accumulator/suppression state for the old root. Stale
+completion must revalidate the typed root row/lease generation after every await.
 
-- **Retain/replay is complete for received events.** For a file X changed during the
-  scan window: if X changed *before* the scan enumerated it, the scan already wrote
-  the new state and the replayed event is a redundant no-op; if X changed *after* the
-  scan enumerated it, the scan wrote stale state and the replayed targeted reconcile
-  corrects the row. Either way the catalog ends correct.
-- **Dropped/ambiguous events still full-rescan.** FSEvents signals lost events via
-  `KernelDropped`/`UserDropped`/`MustScanSubDirs`, which set `requiresFullRootScan`.
-  Because the drain re-runs `decide`, any such retained event yields `.rescanRoot` —
-  today's "we don't know what changed → re-enumerate" guarantee is preserved.
-- **Overflow is bounded.** A pathological burst of distinct changed paths during a
-  long scan falls back to one full rescan (A2 cap), never an unbounded targeted
-  replay.
-- **Accepted residuals (same best-effort standard used elsewhere):** (1) the
-  sub-millisecond FSEvents stream-startup gap at scan start for an already-enumerated
-  file that changes with no delivered event and no dropped-flag; (2) Part B dropping a
-  genuine user change to a file at the exact instant we hydrate it. Both are
-  vanishingly rare and self-correct on the next event or scan.
+### 4.3 File reconciliation
 
-## 9. Tests
+Reuse the existing targeted path:
 
-Add to `OtosTests/` (Swift Testing). Follow the existing `CatalogStoreFilesystemEvent`
-support helpers; assert observable behavior, not internals.
+- supported upsert-shaped event: reread the one path through
+  `CatalogScannedFileReader`; upsert if eligible, otherwise remove an existing row;
+- remove-shaped event: delete only if the exact path is absent;
+- rename remains independent remove/add facts; do not invent inode identity;
+- purge overlay only on the same proof of deletion used today.
 
-1. **Deferred events replay targeted, not full rescan** (Part A, core regression):
-   with an active scan on a root, deliver single-file events for two paths; complete
-   the scan; assert the two paths are reconciled (catalog reflects them) and that **no
-   full rescan is enqueued** for the root (e.g. observe scan-start count / a test seam
-   that counts full scans). A file created-after-enumeration is picked up by the
-   replay.
-2. **Coarse event during scan still full-rescans** (Part A safety valve): a retained
-   `MustScanSubDirs`/dropped event yields exactly one `.rescanRoot` after the scan.
-3. **Overflow falls back to one rescan** (Part A cap): retaining more than
-   `deferredFilesystemEventPathCap` distinct paths escalates to a single full rescan.
-4. **Suppressed self-materialization event is dropped** (Part B): after
-   `beginMaterializationSuppression(path:)`, an event for that path is dropped
-   (`reason=selfMaterialization`) and does not reconcile; after
-   `endMaterializationSuppression` + grace, an event for the path is processed
-   normally.
-5. **No planRevision/occupancy churn from no-op deferral+replay** (guards the storm):
-   deferring then replaying no-op events (unchanged files) produces no occupancy bump
-   and no rescan loop.
+Coalesce repeated events so one path is settled once per dirty generation. The
+settlement reads current filesystem state; it does not replay historical actions.
 
-Prefer a test seam that counts full-root scans per root (or reuse an existing
-scan-start signal) so tests can assert "no full rescan" rather than sleeping.
+### 4.4 Subtree reconciliation
 
-## 10. Instrumentation and evidence
+Add a scanner entry point that enumerates one descendant directory without reading
+media bytes. It uses the same resource keys, eligibility policy, companion policy,
+package handling, instrumentation, persistence edge, cadence, cancellation, and
+ownership validation as a root scan.
 
-- **Before coding:** capture the event-flags evidence from §4.4.
-- **After A+B:** re-run the repro with the enriching cloud library present and
-  `script/logs.sh show --last 5m`. Expected: `mode=deferred` disappears (or is rare),
-  `op=catalog.scan phase=finish observed=23036 … changedCount=0` no longer recurs
-  every few seconds, and per-event `mode=targeted` reconciles (or drops with
-  `reason=selfMaterialization`) replace it. Attach the before/after worst-span summary
-  to the DoD. This is a performance change, so the DoD must carry log evidence per
-  CLAUDE.md.
+On a successfully completed reachable subtree scan:
 
-## 11. Documentation to update (same increment)
+- upsert observed eligible media and companions under that boundary;
+- fetch only catalog rows whose relative paths lie inside the subtree boundary;
+- delete only rows inside that boundary that were not observed;
+- purge overlay for those proven deletions;
+- never affect siblings or ancestors outside the subtree;
+- bump occupancy only for a real namespace/fact change.
 
-- `docs/requirements.md` **ARC-046**: the clause "events during an active scan defer
-  follow-up reconciliation instead of being dropped when watching is unarmed" now
-  becomes: events retained during a scan are **replayed as a targeted reconcile after
-  the scan** (full rescan only on coarse/dropped events or buffer overflow); and
-  enrichment-materialization events for in-flight paths are suppressed. Update the
-  behavior and add `Otos/Services/EnrichmentCoordinator.swift` +
-  `OtosTests/CatalogStoreFilesystemEventTests.swift` (or the new test file) to the
-  refs.
-- `docs/architecture.md`: update the filesystem-event / scan flow note to describe
-  retain-and-replay and the materialization-event suppression.
+On cancellation, failure, disappearance of the root, or incomplete enumeration,
+preserve existing rows. Path-prefix SQL and Swift checks must respect component
+boundaries (`a/b` must not match `a/b2`). Root itself is represented by `.root`,
+not an empty/stringly subtree.
+
+Multiple disjoint subtrees may be reconciled serially under one Store-owned lease.
+Start simple; do not add parallel scanners until profiling proves enumeration is
+the bottleneck and the ownership model remains clear.
+
+### 4.5 Full-root reconciliation
+
+Use the existing completed-snapshot proof for:
+
+- kernel/user dropped or otherwise unknown event coverage;
+- root-level `MustScanSubDirs`;
+- root move/change or ambiguous mapping;
+- unsupported/unknown event shapes whose safe boundary cannot be derived;
+- periodic integrity sweeps.
+
+Full scans remain idempotent reconciliation operations, not durable scan entities.
+
+## 5. Known cloud-materialization settlement
+
+### 5.1 Why suppression is valid here
+
+Otos explicitly selects a dataless path and asks the external provider to add its
+content locally. At any instant the candidate set is bounded by materialization
+admission. The file's logical metadata already exists while dataless; ordinary
+hydration changes residency/provider bookkeeping rather than catalog membership.
+
+It is therefore valid to suppress proven hydration-shaped events for only those
+known paths, provided Otos:
+
+- never suppresses an unsafe membership/coverage shape;
+- performs one final targeted fact reconcile;
+- bounds and expires state correctly;
+- makes the behavior observable;
+- retains launch and periodic repair.
+
+This accepts bounded eventual consistency if a logically independent modification
+occurs in the narrow overlap after final settlement but before grace expiry. That
+tradeoff is explicit and repaired by the next qualifying event, launch scan, or
+periodic integrity scan.
+
+### 5.2 Typed generation-safe state
+
+Store owns active/recent materialization suppression keyed by normalized asset
+identity, not arbitrary unnormalized strings. Each record carries:
+
+- `MediaAssetID`/root-relative identity;
+- operation generation or existing claim identity;
+- start instant;
+- phase (`active`, `settling`, `grace`);
+- expiry instant;
+- provider flag shapes proven suppressible by the diagnostic capture.
+
+An older completion must not shorten/remove a newer operation's state. Begin/end
+must be paired with `defer`-equivalent cleanup across success, timeout,
+cancellation, and request failure.
+
+Expiry must actually remove entries. Prune the whole small map on begin/end and on
+incoming events, or own one scheduled nearest-expiry task. Do not claim a map is
+bounded when expired unique paths remain until the same path emits another event.
+
+### 5.3 Event policy
+
+An event is suppressible only when all are true:
+
+- its normalized identity matches an active/recent known materialization;
+- its flags are in the provider-specific allowlist proven by the in-app capture;
+- it is a regular-file non-membership change;
+- it has no dropped/unknown/root/subtree coverage implication.
+
+Never suppress create, remove, rename, directory, symlink, root-change,
+`MustScanSubDirs`, kernel/user dropped, or unknown shapes. Those enter the normal
+dirty-scope accumulator immediately.
+
+Record bounded aggregate diagnostics by root/generation/decoded action, not one
+durable JSON object per event.
+
+### 5.4 Final settlement
+
+After the provider reports successful materialization (`SF_DATALESS` cleared):
+
+1. transition the operation to settling;
+2. enqueue/perform one `.file(path)` reconcile through the shared targeted edge;
+3. transition to a short grace interval covering already-queued provider events;
+4. expire the suppression record.
+
+If materialization fails, times out, is cancelled, or the path disappears, end the
+active state without pretending success. Any already received unsafe event still
+reconciles normally.
+
+The grace duration comes from measured event-delivery lag plus a small explicit
+margin; do not assume three seconds without the capture.
+
+## 6. Periodic integrity reconciliation
+
+Add a Store-owned long-running-session integrity scheduler. It is defense in depth
+for advisory FSEvents/provider anomalies and bounds the accepted suppression
+residual. It must not become another rescan storm.
+
+Requirements:
+
+- track each root's last successful completed full-root reconciliation;
+- launch/add scans count as successful integrity scans;
+- when the configured interval elapses, mark that root `.root` dirty once;
+- do not enqueue duplicates when the root is active, pending, already dirty, under
+  incompatible reorganization ownership, or unavailable;
+- availability return should wake overdue work;
+- use one owner task with cancellation on shutdown;
+- persist only the smallest fact needed if the interval must survive relaunch;
+  otherwise launch scanning already resets the clock;
+- no scan-history table or durable scan entity;
+- failures preserve catalog/overlay and retry on a bounded later opportunity, not
+  an immediate loop.
+
+Choose the initial interval during implementation. A 24-hour successful-scan age is
+the starting candidate for measurement/review, not yet an authoritative constant.
+
+## 7. Resource-aware materialization and enrichment
+
+### 7.1 Defaults
+
+- materialization request concurrency: **16**;
+- enrichment worker concurrency: **8**.
+
+These are maximum counts, not permission to admit sixteen huge videos or eight
+simultaneous heavyweight video decodes.
+
+### 7.2 One concrete scheduling policy owner
+
+Add a small value/pure policy type used by `EnrichmentCoordinator`, for example
+`EnrichmentAdmissionPolicy`. It receives current in-flight work and one candidate
+and answers whether it may dispatch. Do not add a generalized scheduler, protocol,
+or worker framework.
+
+Policy facts already available or cheaply derivable:
+
+- logical `sourceSize`;
+- image versus video;
+- viewport/fresh/eager/device-staging priority;
+- current in-flight counts and estimated bytes;
+- root identity;
+- retry readiness.
+
+Unknown size is conservative background work but must remain dispatchable; it must
+not deadlock behind a byte budget it cannot satisfy.
+
+### 7.3 Materialization admission
+
+The policy must enforce all of:
+
+- at most 16 outstanding materialization requests;
+- reserve capacity for viewport/device work so eager background requests cannot
+  occupy every slot;
+- an aggregate estimated in-flight logical-byte budget;
+- a separate cap for large/huge videos;
+- an oversized item may run alone rather than become permanently inadmissible;
+- bounded fairness across roots so one large root cannot monopolize all eager work;
+- eager ordering continues to prefer images before videos, then current capture
+  date/path policy unless measurement supports a simpler size-first refinement.
+
+Use size classes only if they make policy clearer. Initial candidate classes for
+measurement are small (<32 MiB), medium (32–256 MiB), large (256 MiB–1 GiB), and
+huge (>1 GiB), but these are not authoritative until real library distribution and
+traces are captured. Prefer one aggregate byte budget plus a large-video cap over a
+forest of knobs.
+
+### 7.4 Enrichment admission
+
+The policy must enforce:
+
+- at most 8 enrichment workers;
+- a smaller simultaneous video-enrichment cap;
+- size-aware admission for large/huge media to bound decoder/memory pressure;
+- viewport work priority with at most one explicit budget overcommit for an item
+  that otherwise could never run;
+- no blocking byte read before the existing immediate `FileMaterialization` check;
+- one existing buffered/serialized Store apply path.
+
+Do not assume download and enrichment cost scale identically with logical size.
+Measure them separately.
+
+### 7.5 Measurements required
+
+Before choosing final byte/large-video values, collect from the real library without
+reading file bytes:
+
+- image/video counts and logical-size percentiles (p50/p90/p95/p99/max);
+- estimated aggregate bytes for 4, 8, and 16 size-ordered candidates;
+- materialization latency and outcome by media kind/size class;
+- enrichment wall time and peak-memory/pressure observations by kind/size class;
+- provider retry/timeouts with 4 versus 16 request concurrency;
+- viewport latency while eager work is saturated.
+
+The scanner/catalog facts are sufficient for size distribution; this measurement
+must not materialize files merely to count them.
+
+## 8. Implementation sequence
+
+Keep one plan/DoD but land in reviewable commits in this dependency order:
+
+1. **Diagnostic evidence**
+   - add bounded decoded event/materialization correlation;
+   - run OneDrive capture inside Otos;
+   - record research conclusion and remove temporary high-volume logging.
+2. **Typed dirty scopes and file coalescing**
+   - replace active-scan root escalation for safe file events;
+   - add lifecycle cleanup and adversarial race tests.
+3. **Subtree reconciliation**
+   - scanner/store boundary, component-safe queries, deletion proof, tests.
+4. **Full-root fallback and periodic integrity owner**
+   - unknown/dropped/root coverage and long-session repair without duplicate work.
+5. **Known-materialization settlement**
+   - generation-safe suppression allowlist, final targeted reconcile, real expiry.
+6. **Resource-aware scheduling**
+   - library size measurement;
+   - 16/8 maxima plus byte/video/root-fairness policy;
+   - before/after latency/resource evidence.
+7. **Current-truth documentation and full verification.**
+
+If a commit temporarily changes behavior, keep it internally correct and tested;
+do not land an intermediate state that drops received events.
+
+## 9. Correctness arguments to prove in tests/review
+
+### Event/scan races
+
+- A file changed before its path is enumerated is represented by scan or redundant
+  settlement.
+- A file changed after enumeration is corrected by the next dirty generation.
+- An event whose debounce fires after scan completion is processed normally once.
+- Dirt arriving while subtree/root reconciliation awaits DB work is not lost.
+- cancellation/failure preserves old rows and drains or conservatively retains the
+  next dirty generation.
+- stale completion after remove/remap/re-add cannot mutate the replacement root.
+
+### Scope safety
+
+- file scope cannot delete a different path;
+- subtree scope cannot mutate a sibling prefix (`a/b` versus `a/b2`);
+- incomplete subtree enumeration deletes nothing;
+- dropped/unknown coverage reaches root reconciliation;
+- ancestor scope coalescing never narrows required coverage.
+
+### Materialization suppression
+
+- only a proven allowlisted event for the exact generation/path is suppressed;
+- remove/rename/create/coarse/unknown events bypass suppression;
+- success performs exactly one final targeted settlement;
+- failure/cancellation expires state and does not fabricate catalog facts;
+- old completion cannot clear a newer operation;
+- thousands of completed unique paths leave no expired map growth;
+- launch/periodic scan repairs a deliberately simulated overlapping missed fact.
+
+### Scheduling
+
+- no more than 16 materializations and 8 enrichments dispatch;
+- byte/video limits prevent a multi-large-video flood;
+- one oversized item eventually runs;
+- unknown-size work eventually runs;
+- viewport/device work is not starved by eager work;
+- roots receive bounded fair opportunity;
+- cancellation releases all count/byte/class admission facts.
+
+Tests assert observable owner behavior and typed pure-policy results. They must not
+read Swift source text or sleep when an owned gate/recorder can prove ordering.
+
+## 10. Instrumentation and acceptance evidence
+
+Use the repo facade and machine-greppable bounded summaries:
+
+- `op=catalog.filesystemEvent phase=classify` with decoded scope/action counts;
+- `op=catalog.reconcile phase=finish mode=file|subtree|root`, scope path, observed,
+  changed/deleted counts, wait/exec/total milliseconds;
+- `op=catalog.materializationEvent phase=suppress|settle` with generation and
+  aggregate flag/action counts;
+- `op=catalog.integrityScan phase=schedule|finish|error` with successful-scan age;
+- `op=catalog.enrichment.admission` aggregate in-flight count/estimated bytes,
+  image/video/large counts, priority class, and rejection reason;
+- materialization/enrichment latency summaries by size/media class.
+
+Acceptance on the original 23k OneDrive root:
+
+- enrichment no longer causes a repeating full-root scan every 2–4 seconds;
+- safe events during a scan settle as file scopes;
+- descendant coarse events settle as subtree scopes when their boundary is known;
+- only unknown/root-wide coverage produces root scans;
+- known provider hydration noise is suppressed and each successful materialization
+  gets one final targeted settlement;
+- no `planRevision`/occupancy churn occurs for identical fact settlement;
+- 16/8 scheduling respects measured byte/video limits and keeps viewport work
+  responsive;
+- periodic integrity scheduling cannot duplicate or self-perpetuate scans.
+
+Capture before/after logs and Instruments evidence appropriate to enumeration,
+database, CPU, memory, and responsiveness. Report worst spans and relevant size
+distribution, not only averages.
+
+## 11. Documentation updates
+
+This increment changes architecture and implemented behavior, so update current
+truth in the same PR:
+
+- `docs/requirements.md`
+  - ARC-041: file/subtree/root reconciliation, dirty generations, periodic integrity;
+  - ARC-046: events during active scans retain minimal scope without planning churn;
+  - ARC-034/036 or a new MECE row: known-materialization suppression plus final
+    targeted settlement;
+  - enrichment requirement: 16/8 maxima and size/video-aware admission.
+- `docs/adr/0002-catalog-persistence-and-filesystem-scan.md`
+  - replace root-only event fallback/current active-scan behavior with typed scopes,
+    subtree proof, and periodic integrity ownership.
+- `docs/adr/0009-enrichment-storage-and-staleness.md`
+  - materialization settlement and resource-aware admission policy.
+- `docs/architecture.md`
+  - current file/subtree/root dataflow, owner tasks, and scheduling policy.
+- `docs/research/2026-07-11-onedrive-materialization-fsevents.md`
+  - provider-specific capture, sources, measurements, and chosen thresholds.
+
+Do not add a new ADR unless the existing ADR ownership boundaries truly cannot hold
+these decisions; rewrite current truth rather than append increment history.
 
 ## 12. Definition of Done
 
-Standard CLAUDE.md DoD: dedicated worktree/branch; `script/verify.sh` green on Xcode
-27 beta (requirements + lint + build + test); before/after log evidence attached;
-code smells from §3 addressed or explicitly accepted; ARC-046 and architecture.md
-updated; PR + review; merge to `main`; branch/worktree cleanup; this plan file
-deleted. Remote CI is currently billing-blocked (jobs fail in ~2 s with zero steps) —
-local `script/verify.sh` is the authoritative build/test proof; waive CI only with
-that evidence pasted.
+Use the repository-standard final DoD only after merge and cleanup:
+
+- dedicated worktree/branch and intentional reviewable commits;
+- provider capture and size/resource research recorded;
+- all agent-owned unit/integration/runtime adversarial checks run;
+- `script/verify.sh` green under the configured Xcode 27 beta;
+- before/after logs and profiling evidence attached with worst-span/resource summary;
+- requirements, ADRs, architecture, and research updated as current truth;
+- media-original review confirms only explicit test materialization occurred and no
+  original contents were written;
+- diagnostics reviewed for bounded payloads and no per-event durable spam;
+- code smells reported, including owner duplication, arbitrary thresholds,
+  MainActor gravity, unsafe concurrency escape, and diagnostic sprawl;
+- last five PRs scanned and actionable unresolved comments claimed/addressed;
+- remote CI green, or exact GitHub billing/quota waiver evidence pasted;
+- PR reviewed and merged to `main`;
+- branch/worktree/stashes belonging to the increment cleaned up;
+- clean next-start branch checked out;
+- this plan deleted;
+- the same complete final DoD report posted on the PR and sent to the user.
