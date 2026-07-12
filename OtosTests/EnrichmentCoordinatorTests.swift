@@ -71,6 +71,49 @@ struct EnrichmentCoordinatorTests {
         #expect(policy.canDispatchDownload(candidate: unknown, inFlight: inFlight).isSuccess)
     }
 
+    @Test func enrichmentCoordinatorCapsVideosAndSkipsRejectedQueueHead() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: fixedScanner([
+                ("v1.mov", 100, "public.mpeg-4"),
+                ("v2.mov", 100, "public.mpeg-4"),
+                ("v3.mov", 100, "public.mpeg-4"),
+                ("still.jpg", 100, "public.jpeg"),
+            ])
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 4 }
+
+        var policy = EnrichmentAdmissionPolicy.production
+        policy.videoEnrichCap = 2
+        policy.enrichConcurrency = 8
+        let blocker = CountingBlockingEnrichment()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: blocker.enricher(),
+            materialize: { _ in .testMaterialized },
+            enrichConcurrency: 8,
+            claimBatchSize: 8,
+            applyFlushInterval: .seconds(60),
+            admissionPolicy: policy
+        )
+        await coordinator.start()
+        try await blocker.waitForStartedCount(3)
+
+        #expect(await coordinator.inFlightEnrichVideoCount == 2)
+        let started = await blocker.startedRelativePaths()
+        #expect(started.filter { $0.hasSuffix(".mov") }.count == 2)
+        #expect(started.contains("still.jpg"))
+
+        await blocker.release()
+        await coordinator.shutdown()
+    }
+
     @Test func eagerDeviceStagingDownloadsStillItemsBeforeVideos() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let rootPath = LibraryRootPath(
@@ -368,16 +411,22 @@ struct EnrichmentCoordinatorTests {
 // MARK: - Helpers
 
 func fixedScanner(_ relativeNames: [String]) -> CatalogScanner {
-    fixedScanner(relativeNames.map { ($0, 100) })
+    fixedScanner(relativeNames.map { ($0, 100, "public.jpeg") })
 }
 
 func fixedScanner(_ files: [(relativeName: String, byteSize: Int64)]) -> CatalogScanner {
+    fixedScanner(files.map { ($0.relativeName, $0.byteSize, "public.jpeg") })
+}
+
+func fixedScanner(
+    _ files: [(relativeName: String, byteSize: Int64, contentTypeIdentifier: String)]
+) -> CatalogScanner {
     CatalogScanner { _, _, batchHandler in
         let scanned = files.map { file in
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: file.relativeName),
                 name: file.relativeName,
-                contentTypeIdentifier: "public.jpeg",
+                contentTypeIdentifier: file.contentTypeIdentifier,
                 byteSize: file.byteSize,
                 createdAt: nil,
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
@@ -469,6 +518,76 @@ private actor BlockingEnrichment {
         for waiter in waiters {
             waiter.resume()
         }
+    }
+}
+
+private actor CountingBlockingEnrichment {
+    private var startedPaths: [String] = []
+    private var released = false
+    private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+
+    nonisolated func enricher() -> MediaEnricher {
+        MediaEnricher { id, _, _, _ in
+            await self.markStarted(id.relativePath.rawValue)
+            await self.waitUntilReleased()
+            return .transient
+        }
+    }
+
+    func waitForStartedCount(_ expected: Int) async throws {
+        try await withTestTimeout("counting blocking enrichment started") {
+            await self.waitForStartedCountUnbounded(expected)
+        }
+    }
+
+    func startedRelativePaths() -> [String] {
+        startedPaths
+    }
+
+    func release() {
+        released = true
+        let waiters = releaseWaiters
+        releaseWaiters.removeAll()
+        for waiter in waiters {
+            waiter.resume()
+        }
+    }
+
+    private func markStarted(_ relativePath: String) {
+        startedPaths.append(relativePath)
+        resumeCountWaiters()
+    }
+
+    private func waitForStartedCountUnbounded(_ expected: Int) async {
+        if startedPaths.count >= expected {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            countWaiters.append((expected, continuation))
+            resumeCountWaiters()
+        }
+    }
+
+    private func waitUntilReleased() async {
+        if released {
+            return
+        }
+        await withCheckedContinuation { continuation in
+            releaseWaiters.append(continuation)
+        }
+    }
+
+    private func resumeCountWaiters() {
+        var remaining: [(Int, CheckedContinuation<Void, Never>)] = []
+        for waiter in countWaiters {
+            if startedPaths.count >= waiter.0 {
+                waiter.1.resume()
+            } else {
+                remaining.append(waiter)
+            }
+        }
+        countWaiters = remaining
     }
 }
 

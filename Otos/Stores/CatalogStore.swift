@@ -165,6 +165,9 @@ actor CatalogStore {
     private var scanLeases = ScanLeaseController()
     private var currentScanTask: Task<Void, Never>?
     private var filesystemWatchingStarted = false
+    /// True while `afterFilesystemLeaseCleared` revisits every dirty root so a
+    /// mid-pass `enqueueScans` cannot start the next full-root scan early.
+    private var isRevisitingDirtyRoots = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
@@ -2214,7 +2217,12 @@ private extension CatalogStore {
     }
 
     private func activity(for path: LibraryRootPath) -> CatalogLibraryActivity {
-        if scanLeases.hasActiveFilesystemScan(for: path) {
+        // Pending full-root scans must read as scanning. clearCurrentScan clears the
+        // active lease before the async dirty-revisit Task starts the next pending
+        // root; without this, waiters can observe a false idle gap and race.
+        if scanLeases.hasActiveFilesystemScan(for: path)
+            || scanLeases.pendingScanPaths.contains(path)
+        {
             return .scanning
         }
         return roots[path]?.activity ?? .idle
@@ -2254,6 +2262,9 @@ private extension CatalogStore {
     }
 
     private func startNextScanIfNeeded() {
+        guard !isRevisitingDirtyRoots else {
+            return
+        }
         guard currentScanTask == nil else {
             return
         }
@@ -2604,9 +2615,28 @@ private extension CatalogStore {
         }
 
         notifyCatalogChanged()
+        // Drain every dirty root before starting the next queued full-root scan.
+        // Starting B first used to strand A's retained file/subtree dirt because
+        // drainDirtyReconcile exited on the global currentScanTask.
+        Task { await self.afterFilesystemLeaseCleared() }
+    }
+
+    /// Store-owned reconciliation scheduler: revisit all dirty roots whenever the
+    /// single filesystem scan lease clears, then start the next queued full scan.
+    private func afterFilesystemLeaseCleared() async {
+        // Suppress startNextScanIfNeeded while revisiting dirty roots so a
+        // root-dirty enqueue mid-pass cannot start scan B before file/subtree
+        // dirt for other roots has been considered.
+        isRevisitingDirtyRoots = true
+        await drainAllDirtyRoots()
+        isRevisitingDirtyRoots = false
         startNextScanIfNeeded()
-        if !needsRescan {
-            Task { await self.drainDirtyReconcile(for: rootPath) }
+    }
+
+    private func drainAllDirtyRoots() async {
+        let rootsToDrain = filesystemDirty.keys.sorted { $0.rawValue < $1.rawValue }
+        for root in rootsToDrain {
+            await drainDirtyReconcile(for: root)
         }
     }
 
@@ -2892,9 +2922,10 @@ private extension CatalogStore {
         }
     }
 
-    /// Drains typed dirty scopes for one root when no filesystem lease owns it.
-    /// Root dirt enqueues a full scan; subtree dirt runs under a lease; file dirt
-    /// settles immediately. Loops so dirt that arrives mid-await is not lost.
+    /// Drains typed dirty scopes for one root.
+    /// File dirt may settle while another root holds the global scan lease.
+    /// Subtree/root dirt requires the global lease to be free. Loops so dirt that
+    /// arrives mid-await is not lost.
     private func drainDirtyReconcile(for root: LibraryRootPath) async {
         while true {
             guard roots[root] != nil else {
@@ -2907,14 +2938,15 @@ private extension CatalogStore {
             guard !scanLeases.hasActiveFilesystemScan(for: root) else {
                 return
             }
-            guard currentScanTask == nil else {
-                return
-            }
             guard filesystemWatchingArmed.contains(root), rootIsAvailable(root) else {
                 return
             }
             guard var accumulator = filesystemDirty[root], !accumulator.isEmpty else {
                 filesystemDirty.removeValue(forKey: root)
+                return
+            }
+            let needsLease = accumulator.isRootDirty || !accumulator.subtrees.isEmpty
+            if needsLease, scanLeases.activeScan != nil || currentScanTask != nil {
                 return
             }
             let dirt = accumulator.take()
@@ -3044,11 +3076,34 @@ private extension CatalogStore {
                 )
                 await self.scopedReconcileFinished(scan: scan)
             } catch is CancellationError {
+                await self.restoreScopedDirt(root: root, dirt: dirt)
                 await self.scanCancelled(scan: scan)
             } catch {
+                // Incomplete enumeration must not drop taken scopes: escalate to
+                // root so the next lease drains conservatively.
+                await self.restoreScopedDirt(root: root, dirt: dirt, escalateToRoot: true)
                 await self.scanFailed(scan: scan, error: error)
             }
         }
+    }
+
+    private func restoreScopedDirt(
+        root: LibraryRootPath,
+        dirt: FilesystemDirtyAccumulator,
+        escalateToRoot: Bool = false
+    ) {
+        var accumulator = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
+        if escalateToRoot {
+            accumulator.insertRoot()
+        } else {
+            for subtree in dirt.subtrees {
+                accumulator.insertSubtree(subtree)
+            }
+            for (path, action) in dirt.files {
+                accumulator.insertFile(path, action: action)
+            }
+        }
+        filesystemDirty[root] = accumulator
     }
 
     private func scopedReconcileFinished(scan: ActiveScan) {

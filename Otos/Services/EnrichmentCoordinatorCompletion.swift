@@ -19,6 +19,9 @@ extension EnrichmentCoordinator {
         }
         inFlightEnrich.remove(id)
         inFlightEnrichBytes.removeValue(forKey: id)
+        if work.isVideo {
+            inFlightEnrichVideoCount = max(0, inFlightEnrichVideoCount - 1)
+        }
         switch outcome {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
@@ -29,7 +32,7 @@ extension EnrichmentCoordinator {
                 url: work.url,
                 sourceSize: work.sourceSize,
                 captureDate: existing?.captureDate,
-                isVideo: existing?.isVideo ?? false,
+                isVideo: existing?.isVideo ?? work.isVideo,
                 isDeviceStaging: existing?.isDeviceStaging ?? false,
                 attemptCount: existing?.attemptCount ?? 0,
                 retryNotBefore: existing?.retryNotBefore
@@ -62,6 +65,9 @@ extension EnrichmentCoordinator {
         }
         inFlightEnrich.remove(id)
         inFlightEnrichBytes.removeValue(forKey: id)
+        if work.isVideo {
+            inFlightEnrichVideoCount = max(0, inFlightEnrichVideoCount - 1)
+        }
         let result = EnrichmentResult(
             id: id,
             metadata: AssetMetadata(),

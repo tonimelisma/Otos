@@ -16,6 +16,50 @@ func recordingLiveScanner(_ recorder: FilesystemEventScanInvocationRecorder) -> 
     }
 }
 
+func snapshotHangingScanner(
+    snapshot: FilesystemScanNameSnapshot,
+    probe: FilesystemScanProbe,
+    recorder: FilesystemEventScanInvocationRecorder,
+    hangRoot: LibraryRootPath
+) -> CatalogScanner {
+    CatalogScanner { rootPath, _, batchHandler in
+        let invocation = await probe.beginInvocation()
+        await recorder.record(rootPath)
+        // Hang only the forced rescan of `hangRoot` so a queued sibling root can
+        // complete after the lease clears.
+        if rootPath == hangRoot, invocation > 2 {
+            await probe.waitForRelease(invocation)
+        }
+        let names = await snapshot.names(for: rootPath)
+        let scanned = names.sorted().map { name in
+            ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: name),
+                name: name,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 4,
+                createdAt: nil,
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            )
+        }
+        if !scanned.isEmpty {
+            try await batchHandler(scanned)
+        }
+        return .mediaOnly(Set(names.map { MediaRelativePath(rawValue: $0) }))
+    }
+}
+
+actor FilesystemScanNameSnapshot {
+    private var namesByRoot: [LibraryRootPath: Set<String>] = [:]
+
+    func set(_ root: LibraryRootPath, _ names: Set<String>) {
+        namesByRoot[root] = names
+    }
+
+    func names(for root: LibraryRootPath) -> Set<String> {
+        namesByRoot[root] ?? []
+    }
+}
+
 func deferredHangingScanner(
     probe: FilesystemScanProbe,
     recorder: FilesystemEventScanInvocationRecorder

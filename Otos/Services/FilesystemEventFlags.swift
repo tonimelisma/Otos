@@ -39,6 +39,11 @@ nonisolated struct FilesystemEventFlags: Equatable {
             return .subtree
         }
         if contains(kFSEventStreamEventFlagItemIsDir) {
+            // Directory renames are ambiguous (old vs new path spelling without
+            // inode pairing). Escalate to root rather than inventing identity.
+            if contains(kFSEventStreamEventFlagItemRenamed) {
+                return .root
+            }
             return .subtree
         }
         guard contains(kFSEventStreamEventFlagItemIsFile) else {

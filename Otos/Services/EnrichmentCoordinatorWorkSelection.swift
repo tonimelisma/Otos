@@ -8,7 +8,9 @@ import OSLog
 /// worker slots. The queue is process-local scheduling state; SQLite
 /// `enrichment_claimed_until` is the cross-query lease. Admission uses
 /// `EnrichmentAdmissionPolicy` so byte/video/viewport/root fairness bound the
-/// 16/8 count maxima.
+/// 16/8 count maxima. Rejected candidates do not block later admissible work:
+/// dispatch searches the bounded pending set and stops only after a full pass
+/// admits nothing.
 extension EnrichmentCoordinator {
     func dequeueEnrichmentWork() async -> [EnrichWork] {
         guard !isShuttingDown else {
@@ -44,8 +46,9 @@ extension EnrichmentCoordinator {
             return []
         }
         var items: [DownloadWork] = []
+        var rejectedIDs: Set<MediaAssetID> = []
         while true {
-            guard let work = nextDownloadWork() else {
+            guard let work = nextDownloadWork(excluding: rejectedIDs) else {
                 break
             }
             let isViewportWork = viewport.contains(work.id) || work.isDeviceStaging
@@ -79,11 +82,11 @@ extension EnrichmentCoordinator {
                     "op=catalog.enrichment.admission phase=downloadAccept rootPath=\(work.id.libraryRootPath.rawValue, privacy: .public) inFlight=\(acceptInFlight, privacy: .public) bytes=\(acceptBytes, privacy: .public) video=\(work.isVideo, privacy: .public) viewport=\(isViewportWork, privacy: .public)"
                 )
             case let .failure(reason):
+                rejectedIDs.insert(work.id)
                 OtosLog.metadata.notice(
                     // swiftlint:disable:next line_length
                     "op=catalog.enrichment.admission phase=downloadReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.downloadCount, privacy: .public) bytes=\(snapshot.downloadBytes, privacy: .public) video=\(work.isVideo, privacy: .public) viewport=\(isViewportWork, privacy: .public)"
                 )
-                return items
             }
         }
         return items
@@ -102,14 +105,16 @@ extension EnrichmentCoordinator {
         return ids
     }
 
-    func nextDownloadWork() -> DownloadWork? {
-        for id in viewport.reversed() where !inFlightDownload.contains(id) {
+    func nextDownloadWork(excluding rejectedIDs: Set<MediaAssetID> = []) -> DownloadWork? {
+        for id in viewport.reversed()
+            where !inFlightDownload.contains(id) && !rejectedIDs.contains(id)
+        {
             if let work = datalessPending[id], work.isReadyForRetry {
                 return work
             }
         }
         let deviceWork = datalessPending.values
-            .filter { readyDownloadWork($0) && $0.isDeviceStaging }
+            .filter { readyDownloadWork($0, excluding: rejectedIDs) && $0.isDeviceStaging }
             .min(by: downloadWorkPrecedes)
         if let deviceWork {
             return deviceWork
@@ -118,12 +123,12 @@ extension EnrichmentCoordinator {
             return nil
         }
         return datalessPending.values
-            .filter { readyDownloadWork($0) && !$0.isDeviceStaging }
+            .filter { readyDownloadWork($0, excluding: rejectedIDs) && !$0.isDeviceStaging }
             .min(by: downloadWorkPrecedes)
     }
 
-    private func readyDownloadWork(_ work: DownloadWork) -> Bool {
-        !inFlightDownload.contains(work.id) && work.isReadyForRetry
+    private func readyDownloadWork(_ work: DownloadWork, excluding rejectedIDs: Set<MediaAssetID>) -> Bool {
+        !inFlightDownload.contains(work.id) && !rejectedIDs.contains(work.id) && work.isReadyForRetry
     }
 
     private func downloadWorkPrecedes(_ left: DownloadWork, _ right: DownloadWork) -> Bool {
@@ -221,7 +226,12 @@ extension EnrichmentCoordinator {
         }
         var items: [EnrichWork] = []
         items.reserveCapacity(limit)
-        while items.count < limit, !claimedEnrichQueue.isEmpty {
+        var deferred: [EnrichWork] = []
+        while items.count < limit {
+            if claimedEnrichQueue.isEmpty {
+                // Full pass over the pending set admitted nothing further.
+                break
+            }
             let work = claimedEnrichQueue.removeFirst()
             guard !inFlightEnrich.contains(work.id) else {
                 continue
@@ -229,13 +239,11 @@ extension EnrichmentCoordinator {
             let isViewport = viewport.contains(work.id)
             let candidate = EnrichmentAdmissionPolicy.Candidate(
                 sourceSize: work.sourceSize,
-                isVideo: false,
+                isVideo: work.isVideo,
                 isViewportOrDevice: isViewport,
                 rootPath: work.id.libraryRootPath,
                 isEagerBackground: !isViewport
             )
-            // Video kind is not on EnrichWork; size-aware enrich admission still
-            // applies. Treat unknown kind as non-video for the video cap.
             let snapshot = EnrichmentAdmissionPolicy.InFlightSnapshot(
                 downloadCount: inFlightDownload.count,
                 enrichCount: inFlightEnrich.count,
@@ -249,15 +257,21 @@ extension EnrichmentCoordinator {
             case .success:
                 inFlightEnrich.insert(work.id)
                 inFlightEnrichBytes[work.id] = admissionPolicy.estimatedBytes(work.sourceSize)
+                if work.isVideo {
+                    inFlightEnrichVideoCount += 1
+                }
                 items.append(work)
             case let .failure(reason):
-                claimedEnrichQueue.insert(work, at: 0)
+                deferred.append(work)
                 OtosLog.metadata.notice(
                     // swiftlint:disable:next line_length
-                    "op=catalog.enrichment.admission phase=enrichReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.enrichCount, privacy: .public) bytes=\(snapshot.enrichBytes, privacy: .public)"
+                    "op=catalog.enrichment.admission phase=enrichReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.enrichCount, privacy: .public) bytes=\(snapshot.enrichBytes, privacy: .public) video=\(work.isVideo, privacy: .public)"
                 )
-                return items
             }
+        }
+        // Preserve rejected candidates in stable order ahead of any remaining queue.
+        if !deferred.isEmpty {
+            claimedEnrichQueue = deferred + claimedEnrichQueue
         }
         return items
     }
@@ -267,7 +281,8 @@ extension EnrichmentCoordinator {
             id: asset.id,
             url: asset.id.fileURL,
             sourceSize: asset.byteSize,
-            sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt)
+            sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+            isVideo: asset.bestKind == .video
         )
     }
 
