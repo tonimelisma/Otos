@@ -27,8 +27,9 @@ The user confirmed the following direction on 2026-07-11:
 4. Cloud hydration is performed by the provider process (for the observed root,
    OneDrive), so FSEvents `IgnoreSelf` cannot identify those events as Otos-owned.
 5. Otos may suppress the narrow, expected event shapes for the handful of paths it
-   has explicitly asked the provider to materialize. It must settle each successful
-   materialization with one targeted filesystem-fact reconcile.
+   has explicitly asked the provider to materialize when measurement shows value.
+   Final targeted settlement is required only if provider evidence shows hydration
+   can change a cataloged filesystem fact.
 6. Otos needs a periodic integrity scan for roots in long-running app sessions;
    launch scans remain the normal repair after the app was closed.
 7. Default materialization request concurrency becomes 16 and enrichment worker
@@ -80,6 +81,9 @@ than rely on that consumer-side tolerance.
 
 - `CatalogFilesystemWatcher` requests file-level events and currently passes both
   `kFSEventStreamCreateFlagIgnoreSelf` and `MarkSelf`.
+- The two flags are mostly redundant for this live `sinceNow` stream: `IgnoreSelf`
+  drops current-process events while `MarkSelf` only tags delivered current-process
+  events with `OwnEvent`. No current Otos path consumes `OwnEvent`.
 - `IgnoreSelf` covers the process that changed the hierarchy. It cannot suppress
   filesystem changes performed by the external cloud provider process.
 - `FilesystemReconciler.decide` checks `hasActiveScanForRoot` before classifying
@@ -144,9 +148,11 @@ CloudStorage path rather than the user-selected Desktop alias. Suppression ident
 must therefore use the same normalized path spelling as catalog/root identity;
 raw request-path equality is incorrect.
 
-This validates known-materialization suppression plus final targeted settlement
-for the observed shape, but one file is not enough to freeze the provider allowlist
-or delivery grace. Before production logic is finalized, capture additional
+This validates suppression eligibility for the observed shape; it does **not**
+validate a final targeted settlement. For this fact-neutral sample, settlement
+would be a guaranteed no-op. One file is not enough to decide whether all relevant
+OneDrive hydration is fact-neutral, freeze the provider allowlist, or choose a
+delivery grace. Before production logic is finalized, capture additional
 representative materializations, including:
 
 - small and large images;
@@ -166,8 +172,9 @@ in-app instrumentation. Remove temporary high-volume instrumentation afterward a
 preserve the complete evidence and conclusion in
 `docs/research/2026-07-11-onedrive-materialization-fsevents.md`.
 
-The capture is a design gate for the suppression allowlist and grace interval. It
-is not a gate for implementing typed reconciliation scopes.
+The capture is a design gate for whether suppression ships at all, its allowlist
+and grace interval, and whether final settlement is required. It is not a gate for
+implementing typed reconciliation scopes.
 
 ## 4. Target architecture
 
@@ -276,38 +283,50 @@ Use the existing completed-snapshot proof for:
 
 Full scans remain idempotent reconciliation operations, not durable scan entities.
 
-## 5. Known cloud-materialization settlement
+### 4.6 Watcher flags
 
-### 5.1 Why suppression is valid here
+When touching the watcher, keep `FileEvents`, `UseCFTypes`, and `IgnoreSelf`; add
+`WatchRoot`; remove `MarkSelf` unless a concrete consumer of `OwnEvent` is first
+introduced. Otos settles its explicit import/reorganization mutations through
+their owners, while provider hydration runs in another process and is unaffected
+by `IgnoreSelf`. `WatchRoot` closes the more relevant root move/deletion signal gap.
+
+## 5. Evidence-conditional known-materialization suppression
+
+### 5.1 Why suppression may still be valuable
 
 Otos explicitly selects a dataless path and asks the external provider to add its
 content locally. At any instant the candidate set is bounded by materialization
 admission. The file's logical metadata already exists while dataless; ordinary
 hydration changes residency/provider bookkeeping rather than catalog membership.
 
-It is therefore valid to suppress proven hydration-shaped events for only those
-known paths, provided Otos:
+Part A makes a provider event cheap instead of catastrophic, but not free: a
+full-library materialization pass can still cause roughly one targeted filesystem
+read and SQLite comparison per item. Suppression may remove that avoidable
+O(library) work even when every event is fact-neutral. Ship it only if the broader
+capture and measured targeted-reconcile volume show material benefit.
+
+It is valid to suppress proven hydration-shaped events for only known paths,
+provided Otos:
 
 - never suppresses an unsafe membership/coverage shape;
-- performs one final targeted fact reconcile;
 - bounds and expires state correctly;
 - makes the behavior observable;
 - retains launch and periodic repair.
 
 This accepts bounded eventual consistency if a logically independent modification
-occurs in the narrow overlap after final settlement but before grace expiry. That
-tradeoff is explicit and repaired by the next qualifying event, launch scan, or
-periodic integrity scan.
+occurs in the narrow suppression window. That tradeoff is explicit and repaired by
+the next qualifying event, launch scan, or periodic integrity scan.
 
-### 5.2 Typed generation-safe state
+### 5.2 Smallest state justified by evidence
 
-Store owns active/recent materialization suppression keyed by normalized asset
-identity, not arbitrary unnormalized strings. Each record carries:
+If suppression ships, Store owns active/recent suppression keyed by normalized
+asset identity, not arbitrary unnormalized strings. Start with only the state the
+measured behavior requires:
 
 - `MediaAssetID`/root-relative identity;
-- operation generation or existing claim identity;
-- start instant;
-- phase (`active`, `settling`, `grace`);
+- operation generation or existing claim identity only if overlapping attempts for
+  the same path are constructible;
 - expiry instant;
 - provider flag shapes proven suppressible by the diagnostic capture.
 
@@ -324,7 +343,7 @@ bounded when expired unique paths remain until the same path emits another event
 An event is suppressible only when all are true:
 
 - its normalized identity matches an active/recent known materialization;
-- its flags are in the provider-specific allowlist proven by the in-app capture;
+- its flags are in the provider-specific allowlist proven by the provider capture;
 - it is a regular-file non-membership change;
 - it has no dropped/unknown/root/subtree coverage implication.
 
@@ -335,18 +354,26 @@ dirty-scope accumulator immediately.
 Record bounded aggregate diagnostics by root/generation/decoded action, not one
 durable JSON object per event.
 
-### 5.4 Final settlement
+### 5.4 Evidence decision table
 
-After the provider reports successful materialization (`SF_DATALESS` cleared):
+Do not pre-commit to a settling phase or one targeted reconcile per successful
+materialization. Choose from the capture:
 
-1. transition the operation to settling;
-2. enqueue/perform one `.file(path)` reconcile through the shared targeted edge;
-3. transition to a short grace interval covering already-queued provider events;
-4. expire the suppression record.
+- **Stored facts consistently unchanged, stable safe flag shape:** suppress during
+  active/recent known materialization and expire after measured delivery lag; no
+  final settlement.
+- **Stored facts unchanged, multiple safe events per hydration:** same design;
+  suppression has greater measured value and still needs no settlement.
+- **Stored facts sometimes change:** either let those events enter normal file
+  reconciliation or coalesce provider noise and perform one final targeted
+  settlement after `SF_DATALESS` clears.
+- **Unsafe/coarse flags occur:** never suppress those flags; feed them to the typed
+  dirty-scope accumulator.
+- **Suppression produces no meaningful measured saving:** omit it. Part A remains
+  the complete structural storm fix.
 
 If materialization fails, times out, is cancelled, or the path disappears, end the
-active state without pretending success. Any already received unsafe event still
-reconciles normally.
+active state. Any already received unsafe event still reconciles normally.
 
 The grace duration comes from measured event-delivery lag plus a small explicit
 margin; do not assume three seconds without the capture.
@@ -454,7 +481,49 @@ reading file bytes:
 The scanner/catalog facts are sufficient for size distribution; this measurement
 must not materialize files merely to count them.
 
-## 8. Implementation sequence
+## 8. Concrete implementation sites
+
+Locate by owner/function rather than frozen line number:
+
+- `Otos/Services/CatalogFilesystemWatcher.swift`
+  - `WatcherState.recreateStreamLocked`: watcher flag decision (`IgnoreSelf`,
+    remove unused `MarkSelf`, add `WatchRoot`).
+  - `FilesystemEvent`/callback delivery: preserve the event facts required for
+    file/subtree/root classification.
+- `Otos/Services/FilesystemEventFlags.swift`
+  - decode root-change and any currently unhandled coverage flags;
+  - distinguish safe file, descendant subtree, and unknown/root requirements.
+- `Otos/Stores/FilesystemReconciler.swift`
+  - classify event scope before considering an active scan;
+  - replace `.deferUntilScanCompletes` with typed dirt returned to the Store.
+- `Otos/Stores/CatalogStore.swift`
+  - filesystem-event fields near `filesystemEventBatches`/debounce tasks: replace
+    duplicate raw/deferred state with the per-root dirty accumulator;
+  - `handleFilesystemEvent`: normalize identity, apply only an evidence-selected
+    materialization filter, accumulate typed dirt;
+  - `processFilesystemEventBatch`: execute or retain minimal scopes rather than
+    marking an unconditional root rescan;
+  - `scanCompleted`, `scanCancelled`, `scanFailed`, and `clearCurrentScan`: release
+    ownership and drain the next dirty generation without reordering stale work;
+  - root remove/remap/shutdown paths: clear dirt, timers, and optional suppression;
+  - persistence helpers: component-safe subtree row/companion fetch and deletion.
+- `Otos/Services/CatalogScanner.swift`
+  - add a subtree enumeration entry point sharing root-scan fact/eligibility/
+    companion/package behavior and cancellation evidence.
+- `Otos/Services/EnrichmentCoordinator.swift`
+  - raise the verified default maxima to 16 materializations and 8 enrichments;
+  - around `materialize(work.url)`, register/end optional known-materialization
+    suppression only if the evidence decision retains it.
+- `Otos/Services/EnrichmentCoordinatorWorkSelection.swift`
+  - replace count-only `EnrichmentDownloadSchedulingPolicy` with the concrete
+    byte/video/viewport/root-fairness admission policy.
+- `OtosTests/CatalogStoreFilesystemEventTests.swift`,
+  `OtosTests/FilesystemReconcilerTests.swift`, scanner tests, and
+  `OtosTests/EnrichmentCoordinatorTests.swift`
+  - add the observable scope, race, subtree proof, optional suppression, and
+    resource-admission cases in §10.
+
+## 9. Implementation sequence
 
 Keep one plan/DoD but land in reviewable commits in this dependency order:
 
@@ -469,8 +538,10 @@ Keep one plan/DoD but land in reviewable commits in this dependency order:
    - scanner/store boundary, component-safe queries, deletion proof, tests.
 4. **Full-root fallback and periodic integrity owner**
    - unknown/dropped/root coverage and long-session repair without duplicate work.
-5. **Known-materialization settlement**
-   - generation-safe suppression allowlist, final targeted reconcile, real expiry.
+5. **Evidence-conditional known-materialization optimization**
+   - choose omit, suppress-without-settlement, or coalesce-and-settle from the
+     provider capture and measured targeted-reconcile volume;
+   - implement only the smallest generation/expiry state that result requires.
 6. **Resource-aware scheduling**
    - library size measurement;
    - 16/8 maxima plus byte/video/root-fairness policy;
@@ -480,7 +551,7 @@ Keep one plan/DoD but land in reviewable commits in this dependency order:
 If a commit temporarily changes behavior, keep it internally correct and tested;
 do not land an intermediate state that drops received events.
 
-## 9. Correctness arguments to prove in tests/review
+## 10. Correctness arguments to prove in tests/review
 
 ### Event/scan races
 
@@ -503,11 +574,14 @@ do not land an intermediate state that drops received events.
 
 ### Materialization suppression
 
-- only a proven allowlisted event for the exact generation/path is suppressed;
+- if suppression ships, only a proven allowlisted event for the normalized known
+  materialization path is suppressed;
 - remove/rename/create/coarse/unknown events bypass suppression;
-- success performs exactly one final targeted settlement;
+- fact-neutral hydration performs no final settlement;
+- if evidence instead requires settlement, provider noise coalesces to exactly one;
 - failure/cancellation expires state and does not fabricate catalog facts;
-- old completion cannot clear a newer operation;
+- when overlapping same-path attempts are constructible, old completion cannot
+  clear a newer operation;
 - thousands of completed unique paths leave no expired map growth;
 - launch/periodic scan repairs a deliberately simulated overlapping missed fact.
 
@@ -524,15 +598,16 @@ do not land an intermediate state that drops received events.
 Tests assert observable owner behavior and typed pure-policy results. They must not
 read Swift source text or sleep when an owned gate/recorder can prove ordering.
 
-## 10. Instrumentation and acceptance evidence
+## 11. Instrumentation and acceptance evidence
 
 Use the repo facade and machine-greppable bounded summaries:
 
 - `op=catalog.filesystemEvent phase=classify` with decoded scope/action counts;
 - `op=catalog.reconcile phase=finish mode=file|subtree|root`, scope path, observed,
   changed/deleted counts, wait/exec/total milliseconds;
-- `op=catalog.materializationEvent phase=suppress|settle` with generation and
-  aggregate flag/action counts;
+- when the evidence-selected optimization ships,
+  `op=catalog.materializationEvent phase=suppress|settle` with only the applicable
+  bounded aggregate flag/action facts;
 - `op=catalog.integrityScan phase=schedule|finish|error` with successful-scan age;
 - `op=catalog.enrichment.admission` aggregate in-flight count/estimated bytes,
   image/video/large counts, priority class, and rejection reason;
@@ -544,8 +619,8 @@ Acceptance on the original 23k OneDrive root:
 - safe events during a scan settle as file scopes;
 - descendant coarse events settle as subtree scopes when their boundary is known;
 - only unknown/root-wide coverage produces root scans;
-- known provider hydration noise is suppressed and each successful materialization
-  gets one final targeted settlement;
+- the evidence-selected materialization policy performs no unnecessary targeted
+  settlement and measurably reduces provider-event work when suppression ships;
 - no `planRevision`/occupancy churn occurs for identical fact settlement;
 - 16/8 scheduling respects measured byte/video limits and keeps viewport work
   responsive;
@@ -555,7 +630,7 @@ Capture before/after logs and Instruments evidence appropriate to enumeration,
 database, CPU, memory, and responsiveness. Report worst spans and relevant size
 distribution, not only averages.
 
-## 11. Documentation updates
+## 12. Documentation updates
 
 This increment changes architecture and implemented behavior, so update current
 truth in the same PR:
@@ -563,14 +638,14 @@ truth in the same PR:
 - `docs/requirements.md`
   - ARC-041: file/subtree/root reconciliation, dirty generations, periodic integrity;
   - ARC-046: events during active scans retain minimal scope without planning churn;
-  - ARC-034/036 or a new MECE row: known-materialization suppression plus final
-    targeted settlement;
+  - ARC-034/036 or a new MECE row: the evidence-selected optional
+    known-materialization suppression/settlement policy;
   - enrichment requirement: 16/8 maxima and size/video-aware admission.
 - `docs/adr/0002-catalog-persistence-and-filesystem-scan.md`
   - replace root-only event fallback/current active-scan behavior with typed scopes,
     subtree proof, and periodic integrity ownership.
 - `docs/adr/0009-enrichment-storage-and-staleness.md`
-  - materialization settlement and resource-aware admission policy.
+  - evidence-selected materialization-event policy and resource-aware admission.
 - `docs/architecture.md`
   - current file/subtree/root dataflow, owner tasks, and scheduling policy.
 - `docs/research/2026-07-11-onedrive-materialization-fsevents.md`
@@ -579,7 +654,7 @@ truth in the same PR:
 Do not add a new ADR unless the existing ADR ownership boundaries truly cannot hold
 these decisions; rewrite current truth rather than append increment history.
 
-## 12. Definition of Done
+## 13. Definition of Done
 
 Use the repository-standard final DoD only after merge and cleanup:
 
