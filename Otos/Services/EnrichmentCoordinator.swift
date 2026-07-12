@@ -98,6 +98,7 @@ actor EnrichmentCoordinator {
     let claimBatchSize: Int
     let applyFlushInterval: Duration
     let applyFlushSleep: @Sendable (Duration) async -> Void
+    let admissionPolicy: EnrichmentAdmissionPolicy
 
     var viewport: [MediaAssetID] = []
     var freshly: [MediaAssetID] = []
@@ -105,6 +106,9 @@ actor EnrichmentCoordinator {
     var datalessPending: [MediaAssetID: DownloadWork] = [:]
     var inFlightEnrich: Set<MediaAssetID> = []
     var inFlightDownload: Set<MediaAssetID> = []
+    var inFlightDownloadBytes: [MediaAssetID: Int64] = [:]
+    var inFlightEnrichBytes: [MediaAssetID: Int64] = [:]
+    var inFlightEnrichVideoCount = 0
     var pendingApply: [EnrichmentResult] = []
     var pendingApplyIDs: Set<MediaAssetID> = []
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
@@ -127,18 +131,23 @@ actor EnrichmentCoordinator {
         materialize: @escaping @Sendable (URL) async -> MaterializationResult = {
             await EnrichmentCoordinator.liveMaterialize($0)
         },
-        enrichConcurrency: Int = 4,
-        downloadConcurrency: Int = 4,
+        enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
+        downloadConcurrency: Int = EnrichmentAdmissionPolicy.production.downloadConcurrency,
         claimBatchSize: Int = 32,
         applyFlushInterval: Duration = .seconds(1),
         applyFlushSleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
-        writeFailureBackoff: Duration = .seconds(5)
+        writeFailureBackoff: Duration = .seconds(5),
+        admissionPolicy: EnrichmentAdmissionPolicy = .production
     ) {
         self.store = store
         self.enricher = enricher
         self.materialize = materialize
+        var policy = admissionPolicy
+        policy.enrichConcurrency = enrichConcurrency
+        policy.downloadConcurrency = downloadConcurrency
+        self.admissionPolicy = policy
         self.enrichConcurrency = enrichConcurrency
         self.downloadConcurrency = downloadConcurrency
         self.claimBatchSize = max(claimBatchSize, enrichConcurrency)
@@ -190,6 +199,9 @@ extension EnrichmentCoordinator {
         datalessPending.removeAll()
         inFlightEnrich.removeAll()
         inFlightDownload.removeAll()
+        inFlightDownloadBytes.removeAll()
+        inFlightEnrichBytes.removeAll()
+        inFlightEnrichVideoCount = 0
         pendingApply.removeAll()
         pendingApplyIDs.removeAll()
         diagnosedThumbnailLifecycleIDs.removeAll()
@@ -292,9 +304,16 @@ extension EnrichmentCoordinator {
                 }
                 for work in await dequeueDownloadWork() {
                     let materialize = materialize
+                    let store = store
+                    let id = work.id
                     group.addTask {
+                        await store.beginKnownMaterialization(for: id)
                         let start = Date()
                         let result = await materialize(work.url)
+                        await store.endKnownMaterialization(
+                            for: id,
+                            success: result.outcome.isMaterialized
+                        )
                         await self.finishDownload(
                             work,
                             result: result,

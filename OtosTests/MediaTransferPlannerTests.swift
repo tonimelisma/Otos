@@ -266,15 +266,37 @@ struct MediaTransferPlannerTests {
 }
 
 struct FilesystemReconcilerScanRaceTests {
-    @Test func activeScanDefersEvenWhenUnarmed() {
+    @Test func activeScanStillClassifiesWhenUnarmedIsFalse() {
+        // Active-scan ownership no longer collapses events to a root deferral.
+        // Unarmed roots still drop; armed roots accumulate typed scopes.
+        let decision = FilesystemReconciler.decide(
+            events: [
+                FilesystemEvent(
+                    path: "/tmp/root/a.jpg",
+                    flags: UInt32(kFSEventStreamEventFlagItemModified | kFSEventStreamEventFlagItemIsFile)
+                ),
+            ],
+            root: LibraryRootPath(rawValue: "/tmp/root"),
+            rootExists: true,
+            isArmed: true,
+            isAvailable: true
+        )
+        guard case let .accumulate(scopes) = decision else {
+            Issue.record("expected accumulate")
+            return
+        }
+        #expect(scopes.first?.scope == .file(MediaRelativePath(rawValue: "a.jpg")))
+    }
+
+    @Test func unarmedDropsEvenWithFileEvents() {
         let decision = FilesystemReconciler.decide(
             events: [FilesystemEvent(path: "/tmp/root/a.jpg", flags: 0)],
+            root: LibraryRootPath(rawValue: "/tmp/root"),
             rootExists: true,
             isArmed: false,
-            isAvailable: true,
-            hasActiveScanForRoot: true
+            isAvailable: true
         )
-        #expect(decision == .deferUntilScanCompletes(eventCount: 1))
+        #expect(decision == .drop(reason: "unarmed"))
     }
 }
 

@@ -182,12 +182,18 @@ Adjacent decisions requiring separate ADRs or specs:
    first rule (enrich everything local before eagerly downloading the rest).
 
 8. **One coordinator, two pools, cursorless scheduling, one claim lease.** A single
-   `EnrichmentCoordinator` actor owns the scheduling and two fixed worker pools — 4
-   enrichment slots and 4 materialization slots — because a worker must never block
-   on a multi-second download, so the two are separate I/O-bound concurrency
-   budgets (neither is CPU-bound). Non-viewport eager materialization may use at
-   most `downloadConcurrency - 1` slots while viewport-dataless work is pending, so
-   eager fill cannot block what the user is looking at behind a full download pool.
+   `EnrichmentCoordinator` actor owns the scheduling and two fixed worker pools —
+   **8 enrichment slots and 16 materialization slots** as count maxima — because a
+   worker must never block on a multi-second download, so the two are separate
+   I/O-bound concurrency budgets (neither is CPU-bound). Count alone is not
+   permission: `EnrichmentAdmissionPolicy` also enforces aggregate logical-byte
+   budgets, a large-video materialization cap, a video-enrichment cap, per-root
+   eager fairness, and viewport/device reserve so eager background work cannot
+   starve visible work or admit several multi-gigabyte videos at once. Unknown
+   size remains dispatchable as a small background unit. Non-viewport eager
+   materialization may use at most `downloadConcurrency - 1` slots while
+   viewport-dataless work is pending, so eager fill cannot block what the user is
+   looking at behind a full download pool.
    Scheduling is cursorless: the next units are
    queried from Store through `enrichmentCandidates(prioritizing:limit:)`, and Store
    selects eligible candidate keys in priority/default order, claims only the rows
@@ -209,6 +215,14 @@ Adjacent decisions requiring separate ADRs or specs:
    Those process-local sets and queued claims prevent duplicate scheduling inside
    this coordinator; the SQLite lease is the SQL query gate that prevents repeated
    dequeue of already-owned rows across queries.
+
+   **Known-materialization event suppression.** Provider hydration is fact-neutral
+   for measured OneDrive samples (research 2026-07-11): logical size and content
+   mtime are unchanged, and events are regular-file metadata/content shapes. Store
+   may suppress only those allowlisted shapes for normalized `MediaAssetID`s the
+   coordinator has explicitly begun materializing (15 s begin grace, 5 s end grace,
+   no final settlement). Create/remove/rename/directory/dropped/root shapes never
+   suppress; launch and 24 h integrity scans repair residual misses.
 
    Claim transitions are explicit. Completed results keep their claim until
    `applyEnrichmentBatch` attempts the write; after that attempt, successful and

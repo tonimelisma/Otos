@@ -108,9 +108,10 @@ This ADR owns:
   by ADR 0011's two-tier publication model.
 - Scan-time media eligibility: which regular files become `media_asset` rows based on
   `NSURLContentTypeKey` and `UTType` conformance.
-- Running-app filesystem watching: macOS FSEvents are debounced hints. Supported
-  single regular-file events reconcile that path through Store; unsafe events
-  schedule debounced full-root rescans through the scan pipeline.
+- Running-app filesystem watching: macOS FSEvents are debounced hints. Store
+  accumulates typed dirty scopes (file / subtree / root) per root and reconciles
+  the narrowest safely known scope. Events during an active lease retain their
+  granularity in the next dirty generation instead of forcing a full-root rescan.
 
 This ADR references, but does not own:
 
@@ -326,31 +327,46 @@ or failed scan.
 
 While the app is running, `CatalogFilesystemWatcher` subscribes to macOS File
 System Events for each saved library root using file-level events
-(`kFSEventStreamCreateFlagFileEvents`). The watcher translates callbacks into
+(`kFSEventStreamCreateFlagFileEvents`), `IgnoreSelf`, and `WatchRoot`. `MarkSelf`
+is not used (no consumer of `OwnEvent`). The watcher translates callbacks into
 `Sendable` events and forwards them to `CatalogStore`; it never writes SQLite or
-catalog memory.
+catalog memory. Provider hydration runs outside the Otos process, so `IgnoreSelf`
+cannot identify those events.
 
 `CatalogStore` maps each event path to exactly one library root, ignores events
 until that root's first scan has completed ("arming"), and coalesces bursts with a
-per-root quiet-period debounce (roughly one second by default). When the debounce fires, Store
-classifies the batch with `FilesystemEventFlags`.
+per-root quiet-period debounce (roughly one second by default). When the debounce
+fires, Store classifies the batch with `FilesystemEventFlags` /
+`FilesystemReconciler` into typed dirty scopes and merges them into one
+process-local accumulator per root:
 
-Supported single regular-file create, modify, inode-metadata, xattr, and rename
-events read that one path's filesystem facts through `CatalogScannedFileReader`
-and upsert the row through the same `upsertScannedFile` persistence edge used by
-full scans when the path is still catalog-eligible. If the path still exists but
-the shared reader proves it no longer qualifies as catalog media, Store deletes
-the corresponding catalog row and thumbnail overlay, matching the next completed
-full scan. A supported regular-file remove event first checks the path; only if
-that exact path is absent does Store delete the row. Rename remains delete plus
-add; Otos does not correlate pairs or introduce inode identity.
+- supported regular-file events → `.file` (upsert or delete-if-missing);
+- trustworthy descendant directory / `MustScanSubDirs` → `.subtree`;
+- dropped, unknown, root-changed, symlink, unmappable, or root-path coverage →
+  `.root`.
 
-Directory events, symlinks, unknown flags, dropped events, mount/root ambiguity,
-`kFSEventStreamEventFlagMustScanSubDirs`, and any event shape that is not a single
-regular-file reconciliation fall back to the existing **full-root rescan for that
-root only** via `enqueueScans([root])`. If a debounced reconciliation is requested
-while that root is already scanning, Store records `rescanAfterCurrentScan` and
-enqueues one follow-up full-root scan when the active scan clears.
+Coalescing rules: duplicate files merge conservatively; a subtree absorbs
+descendant files/subtrees; `.root` clears every narrower scope. There is no
+fixed path-count threshold that escalates to a full-root scan.
+
+When no filesystem lease owns the root, Store drains the accumulator: file scopes
+settle through `CatalogScannedFileReader` / the shared upsert-delete edge; subtree
+scopes enumerate that descendant directory with the same scanner fact path and
+delete only component-safe rows inside the boundary; root scopes use the existing
+full-root scan proof. Dirt that arrives while a lease is active stays in the next
+dirty generation — useful path/scope information is never discarded into an
+unconditional `rescanAfterCurrentScan` for the common event path.
+`rescanAfterCurrentScan` remains only for independently verified owners such as
+reorganization.
+
+Known-materialization suppression (ADR 0009 / research 2026-07-11) may drop
+allowlisted hydration-shaped events for paths Otos has explicitly asked the
+provider to materialize; unsafe membership/coverage shapes never suppress.
+
+A Store-owned integrity scheduler marks a library root `.root` dirty once when
+24 hours have elapsed since its last successful full-root reconciliation (launch
+and add scans count). It does not duplicate work for active/pending/already-dirty
+roots.
 
 Watcher lifecycle is tied to saved roots: start after catalog load, add on
 `addLibrary`, remove on `removeLibrary`, stop on `shutdown`. Availability

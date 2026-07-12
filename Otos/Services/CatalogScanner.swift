@@ -29,8 +29,9 @@ import UniformTypeIdentifiers
 /// A returned observation proves the completed walk used for reconciliation.
 /// Cancellation or any filesystem issue prevents that success return, so Store
 /// preserves earlier rows. Package descendants and symlinks are skipped before
-/// they can expand traversal beyond the regular-file catalog contract. Full scans
-/// and targeted filesystem-event reconciliation share `CatalogScannedFileReader`
+/// they can expand traversal beyond the regular-file catalog contract. Full-root
+/// and subtree scans share the same fact/eligibility/companion/package path;
+/// targeted filesystem-event reconciliation shares `CatalogScannedFileReader`
 /// so a one-path upsert observes the same facts and media eligibility as a scan.
 nonisolated struct CatalogScanner {
     var scanRoot: @Sendable (
@@ -39,13 +40,55 @@ nonisolated struct CatalogScanner {
         _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
     ) async throws -> CatalogScanObservation
 
-    static let live = CatalogScanner { rootPath, cadence, batchHandler in
-        try await LiveCatalogScanner.scan(
-            rootPath: rootPath,
-            cadence: cadence,
-            batchHandler: batchHandler
-        )
+    var scanSubtree: @Sendable (
+        _ rootPath: LibraryRootPath,
+        _ subtreeRelativePath: MediaRelativePath,
+        _ cadence: Duration,
+        _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
+    ) async throws -> CatalogScanObservation
+
+    init(
+        scanRoot: @escaping @Sendable (
+            _ rootPath: LibraryRootPath,
+            _ cadence: Duration,
+            _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
+        ) async throws -> CatalogScanObservation,
+        scanSubtree: @escaping @Sendable (
+            _ rootPath: LibraryRootPath,
+            _ subtreeRelativePath: MediaRelativePath,
+            _ cadence: Duration,
+            _ batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
+        ) async throws -> CatalogScanObservation = { rootPath, subtree, cadence, batchHandler in
+            try await LiveCatalogScanner.scan(
+                rootPath: rootPath,
+                subtreeRelativePath: subtree,
+                cadence: cadence,
+                batchHandler: batchHandler
+            )
+        }
+    ) {
+        self.scanRoot = scanRoot
+        self.scanSubtree = scanSubtree
     }
+
+    static let live = CatalogScanner(
+        scanRoot: { rootPath, cadence, batchHandler in
+            try await LiveCatalogScanner.scan(
+                rootPath: rootPath,
+                subtreeRelativePath: nil,
+                cadence: cadence,
+                batchHandler: batchHandler
+            )
+        },
+        scanSubtree: { rootPath, subtree, cadence, batchHandler in
+            try await LiveCatalogScanner.scan(
+                rootPath: rootPath,
+                subtreeRelativePath: subtree,
+                cadence: cadence,
+                batchHandler: batchHandler
+            )
+        }
+    )
 }
 
 nonisolated struct CatalogScanIssueSummary: Equatable {
@@ -57,6 +100,7 @@ nonisolated struct CatalogScanIssueSummary: Equatable {
 
 nonisolated enum CatalogScanError: Error {
     case filesystemErrorsEncountered(count: Int, summaries: [CatalogScanIssueSummary])
+    case subtreeNotDirectory
 }
 
 private nonisolated enum LiveCatalogScanner {
@@ -138,10 +182,22 @@ private nonisolated enum LiveCatalogScanner {
 
     static func scan(
         rootPath: LibraryRootPath,
+        subtreeRelativePath: MediaRelativePath?,
         cadence: Duration,
         batchHandler: @Sendable ([ScannedMediaFile]) async throws -> Void
     ) async throws -> CatalogScanObservation {
         let rootURL = rootPath.url
+        let startURL: URL
+        if let subtreeRelativePath {
+            startURL = rootURL.appendingPathComponent(subtreeRelativePath.rawValue, isDirectory: true)
+            let values = try startURL.resourceValues(forKeys: [.isDirectoryKey])
+            guard values.isDirectory == true else {
+                throw CatalogScanError.subtreeNotDirectory
+            }
+        } else {
+            startURL = rootURL
+        }
+
         var scanState = ScanState()
         let clock = ContinuousClock()
         var lastFlush = clock.now
@@ -152,7 +208,7 @@ private nonisolated enum LiveCatalogScanner {
         }
 
         guard let enumerator = FileManager.default.enumerator(
-            at: rootURL,
+            at: startURL,
             includingPropertiesForKeys: Array(resourceKeys),
             // Packages are directories that Finder presents as files. The
             // current catalog discovers regular files only, so descending into

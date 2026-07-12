@@ -683,17 +683,37 @@ extension CatalogStore {
 
     static func fetchExistingAssetRows(
         libraryRootID: Int64,
+        underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> [(relativePath: MediaRelativePath, thumbnailPath: String?)] {
-        try Row.fetchAll(
-            db,
-            sql: """
-            SELECT relative_path, thumbnail_path
-            FROM media_asset
-            WHERE library_root_id = ?
-            """,
-            arguments: [libraryRootID]
-        ).map { row in
+        let rows: [Row] = if let underSubtree {
+            // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path, thumbnail_path
+                FROM media_asset
+                WHERE library_root_id = ?
+                  AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
+                """,
+                arguments: [
+                    libraryRootID,
+                    underSubtree.rawValue,
+                    Self.sqlSubtreePrefixPattern(underSubtree),
+                ]
+            )
+        } else {
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path, thumbnail_path
+                FROM media_asset
+                WHERE library_root_id = ?
+                """,
+                arguments: [libraryRootID]
+            )
+        }
+        return rows.map { row in
             let thumbnailPath: String? = row["thumbnail_path"]
             return (
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
@@ -704,10 +724,26 @@ extension CatalogStore {
 
     static func fetchExistingCompanionPaths(
         libraryRootID: Int64,
+        underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> Set<MediaRelativePath> {
-        try Set(
-            String.fetchAll(
+        let paths: [String] = if let underSubtree {
+            try String.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path
+                FROM media_companion
+                WHERE library_root_id = ?
+                  AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
+                """,
+                arguments: [
+                    libraryRootID,
+                    underSubtree.rawValue,
+                    Self.sqlSubtreePrefixPattern(underSubtree),
+                ]
+            )
+        } else {
+            try String.fetchAll(
                 db,
                 sql: """
                 SELECT relative_path
@@ -715,8 +751,18 @@ extension CatalogStore {
                 WHERE library_root_id = ?
                 """,
                 arguments: [libraryRootID]
-            ).map(MediaRelativePath.init(rawValue:))
-        )
+            )
+        }
+        return Set(paths.map(MediaRelativePath.init(rawValue:)))
+    }
+
+    /// LIKE pattern for paths strictly inside `subtree/` with LIKE metacharacters escaped.
+    static func sqlSubtreePrefixPattern(_ subtree: MediaRelativePath) -> String {
+        let escaped = subtree.rawValue
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        return escaped + "/%"
     }
 
     static func fetchCompanions(
@@ -921,9 +967,14 @@ extension CatalogStore {
     static func reconcileMissingCompanions(
         libraryRootID: Int64,
         observedPaths: Set<MediaRelativePath>,
+        underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> Int {
-        let existing = try fetchExistingCompanionPaths(libraryRootID: libraryRootID, db: db)
+        let existing = try fetchExistingCompanionPaths(
+            libraryRootID: libraryRootID,
+            underSubtree: underSubtree,
+            db: db
+        )
         let missing = existing.subtracting(observedPaths)
         var deleted = 0
         for path in missing {

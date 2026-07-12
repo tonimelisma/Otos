@@ -157,6 +157,93 @@ struct CatalogStoreFilesystemEventTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
     }
 
+    @Test func safeFileEventDuringActiveScanDoesNotForceFullRescan() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let probe = FilesystemScanProbe()
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let debounceGate = ManualSleepGate()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: deferredHangingScanner(probe: probe, recorder: recorder),
+            filesystemWatcher: watcher,
+            filesystemEventDebounce: .seconds(1),
+            filesystemEventSleep: { duration in
+                await debounceGate.sleep(for: duration)
+            }
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        try await probe.waitForInvocationCount(1)
+        // Keep the initial addLibrary scan hanging so a safe file event accumulates
+        // as file dirt rather than starting another full-root scan.
+        let during = root.appending(path: "during.jpg")
+        try writeCatalogStoreFile(during, contents: "jpeg")
+        emit(
+            FilesystemEvent(
+                path: during.path,
+                flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
+            )
+        )
+        try await debounceGate.waitForSleepRequestCount(1)
+        await debounceGate.releaseNext()
+
+        await probe.release(1)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.contains { $0.relativePath.rawValue == "during.jpg" }
+        }
+        #expect(await recorder.invocations().count == 1)
+    }
+
+    @Test func subtreeDirectoryEventReconcilesWithoutSiblingMutation() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let left = root.appending(path: "a/b", directoryHint: .isDirectory)
+        let sibling = root.appending(path: "a/b2", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: left, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sibling, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(left.appending(path: "keep.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(sibling.appending(path: "sibling.jpg"), contents: "jpeg")
+
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingLiveScanner(recorder),
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(30)
+        )
+
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 2
+        }
+        let baseline = await recorder.invocations().count
+
+        try writeCatalogStoreFile(left.appending(path: "new.jpg"), contents: "jpeg")
+        emit(
+            FilesystemEvent(
+                path: left.path,
+                flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsDir)
+            )
+        )
+
+        let reconciled = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 3
+        }
+        let names = Set(reconciled.testAssets.map(\.relativePath.rawValue))
+        #expect(names.contains("a/b/keep.jpg"))
+        #expect(names.contains("a/b/new.jpg"))
+        #expect(names.contains("a/b2/sibling.jpg"))
+        #expect(await recorder.invocations().count == baseline)
+    }
+
     @Test func eventsIgnoredBeforeFirstScanCompletes() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
