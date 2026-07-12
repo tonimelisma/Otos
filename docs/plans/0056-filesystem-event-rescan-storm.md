@@ -120,11 +120,34 @@ The relevant platform conclusions are:
 - calling `startDownloadingUbiquitousItem` requests download/synchronization; the
   provider may perform resulting filesystem work in another process.
 
-### 3.3 Provider-specific evidence still required
+### 3.3 Provider-specific evidence captured and still required
 
 Apple documentation cannot prove what the installed OneDrive provider on the
-current macOS build emits. Before production logic is finalized, add temporary
-in-app instrumentation and capture at least 20 representative materializations:
+current macOS build emits. One successful Terminal Swift probe on 2026-07-11
+materialized a 9,691,136-byte HEIF from the Desktop alias into its resolved
+OneDrive File Provider location:
+
+```text
+request path=~/Desktop/OneDrive/Pictures/Camera Roll/2026/03/20260315_094624.heif
+before flags=0x40000060 dataless=true size=9691136 mtime=1773593184.0
+event t=5.429 flags=0x1d400
+      itemInodeMetaMod,itemModified,itemChangeOwner,itemXattrMod,itemIsFile
+event path=~/Library/CloudStorage/OneDrive-Personal/Pictures/Camera Roll/2026/03/20260315_094624.heif
+after t=10.425 flags=0x40 dataless=false size=9691136 mtime=1773593184.0
+```
+
+For this sample, hydration preserved the logical size and content-modification
+time that Otos stores. It changed dataless/provider inode state and emitted one
+regular-file metadata/content-shaped event, with no create, remove, rename,
+directory, dropped, or `MustScanSubDirs` flag. The event used the normalized
+CloudStorage path rather than the user-selected Desktop alias. Suppression identity
+must therefore use the same normalized path spelling as catalog/root identity;
+raw request-path equality is incorrect.
+
+This validates known-materialization suppression plus final targeted settlement
+for the observed shape, but one file is not enough to freeze the provider allowlist
+or delivery grace. Before production logic is finalized, capture additional
+representative materializations, including:
 
 - small and large images;
 - small and large videos;
@@ -136,12 +159,11 @@ in-app instrumentation and capture at least 20 representative materializations:
 - delivery lag after the `SF_DATALESS` transition;
 - occurrence of `MustScanSubDirs`, dropped, rename, remove, or unknown shapes.
 
-A standalone Swift probe against `~/Desktop/OneDrive/Pictures` was attempted on
-2026-07-11. macOS privacy/TCC rejected the materialization request with
-`NSCocoaErrorDomain Code=257` before OneDrive accepted it; no file was
-materialized or modified. The diagnostic must therefore run inside the already
-authorized Otos process. Remove temporary high-volume instrumentation after the
-result is captured; preserve the bounded evidence and conclusion in
+An earlier Codex-hosted attempt was rejected by macOS privacy/TCC with
+`NSCocoaErrorDomain Code=257`; running the same probe from the user's authorized
+Terminal succeeded. Further sampling may use that probe or bounded temporary
+in-app instrumentation. Remove temporary high-volume instrumentation afterward and
+preserve the complete evidence and conclusion in
 `docs/research/2026-07-11-onedrive-materialization-fsevents.md`.
 
 The capture is a design gate for the suppression allowlist and grace interval. It
