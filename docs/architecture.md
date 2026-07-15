@@ -42,13 +42,13 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 
 | Type | Isolation | Owns | Why an actor |
 | --- | --- | --- | --- |
-| `CatalogStore` | actor | SQLite, `RootRegistry`/`RootRuntimeState`, `FilesystemReconciler` (pure batch classify into typed dirty scopes), `FilesystemDirtyAccumulator` (per-root file/subtree/root coalesce), `ScanLeaseController` (lease/queue bookkeeping), `CatalogQueryGateway` (read SQL/mapping), `EnrichmentLeaseGateway` (enrichment claim leases + SQL), known-materialization suppression, integrity scheduler, removable-source state, change notifications, all catalog queries | serializes every mutation/query for free; a remove can be processed mid-scan safely (lease re-checked after every await); owned helpers are not second actors |
+| `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; it does not execute or recover filesystem operations |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
 | `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import | serializes per-source dirtiness; filesystem probes run off the actor |
-| `MediaImportExecutor` | actor | journaled import for volumes and cameras: staging, exclusive publish, settlement, recovery | serializes one active import; copyfile/camera download off the actor |
+| `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, staging, exclusive publish, and optional source deletion | serializes one active import; Store performs requested durable transitions and atomic catalog settlement |
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
-| `ReorganizationExecutor` | pure enum + Store journal | component journal, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | Store owns lease/settlement; executor never catalogs temps |
-| `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library; returns remap batches | ViewModel confirmation + remap UI |
+| `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
+| `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
 | `EnrichmentCoordinator` | actor | two worker pools (8 enrich / 16 materialize maxima) + `EnrichmentAdmissionPolicy` (byte/video/viewport/root fairness), in-flight tracking, claim leases, known-materialization begin/end | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, dataless materialization gate, per-id coalesce + small LRU | serializes decode/cache state; byte reads off the actor |
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
@@ -88,15 +88,17 @@ everything expensive happens on an actor off the main thread.
   not livelock planning. Store builds `ImportPlanningSnapshot`;
   `MediaOperationCoordinator` greedily plans attached removable sources and
   publishes scalar footer presentation. Removable filesystem
-  volumes and MTP cameras execute through `MediaImportExecutor` (journal +
-  copyfile/camera download + exclusive publish + settlement); blocked entries
+  volumes and MTP cameras execute through `MediaImportExecutor` (recovery + orphan
+  staging cleanup + copyfile/camera download + exclusive publish); Store accepts
+  semantic journal transitions and settles the catalog atomically. Blocked entries
   withhold cleanup and auto-eject. Imports
   sidebar scopes via `import_batch_unix_ms`. Plan details use
   `ImportPlanDetailReader` (no full plan map on `CatalogWindowState`).
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
-  recipes; `ReorganizationExecutor` + normalized `active_reorganization_*` journals
-  mutate under a typed root lease; `LibraryReorganizationRunner` is the confirmed
-  UI path; ViewModel/`TileContentStore` apply `CatalogIdentityRemapBatch` atomically.
+  recipes; `ReorganizationExecutor` owns directory/move mechanics;
+  `LibraryReorganizationRunner` owns execution and recovery sequencing. Store owns
+  the typed root lease, durable `active_reorganization_*` transitions, and atomic
+  catalog remap; ViewModel/`TileContentStore` apply each remap batch atomically.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.

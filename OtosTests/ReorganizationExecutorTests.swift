@@ -102,25 +102,25 @@ struct ActiveReorganizationJournalTests {
                 ),
             ]
         )
-        try await store.insertActiveReorganizationComponent(component)
-        let loaded = try await store.fetchActiveReorganizationComponents()
+        try await store.prepareReorganizationComponent(component)
+        let loaded = try await store.activeReorganizationComponents()
         #expect(loaded.count == 1)
         #expect(loaded.first?.componentKey == component.componentKey)
         #expect(loaded.first?.members.count == 1)
         #expect(loaded.first?.steps.count == 1)
         #expect(loaded.first?.directories.count == 1)
 
-        try await store.markReorganizationStepWillMove(key: component.componentKey, stepIndex: 0)
-        try await store.markReorganizationStepDidMove(
+        try await store.recordReorganizationMoveIntent(key: component.componentKey, stepIndex: 0)
+        try await store.recordReorganizationMoveCompletion(
             key: component.componentKey,
             step: component.steps[0],
             nextStepIndex: 1
         )
-        try await store.markReorganizationFilesystemComplete(
+        try await store.recordReorganizationFilesystemCompletion(
             key: component.componentKey,
             nextStepIndex: 1
         )
-        let after = try await store.fetchActiveReorganizationComponents()
+        let after = try await store.activeReorganizationComponents()
         #expect(after.first?.phase == .filesystemComplete)
         #expect(after.first?.members.first?.currentRelativePath.rawValue == "b.jpg")
         #expect(after.first?.steps.first?.phase == .didMove)
@@ -204,7 +204,7 @@ struct ReorganizationSettlementTests {
             steps: [],
             directories: []
         )
-        try await store.insertActiveReorganizationComponent(component)
+        try await store.prepareReorganizationComponent(component)
 
         let remaps = [
             CatalogIdentityRemap(
@@ -228,9 +228,9 @@ struct ReorganizationSettlementTests {
                 )
             ),
         ]
-        let batch = try await store.settleRelocationComponent(key: key, remaps: remaps)
+        let batch = try await store.settleReorganizationComponent(key: key, remaps: remaps)
         #expect(batch.remaps.count == 2)
-        #expect(try await store.fetchActiveReorganizationComponents().isEmpty)
+        #expect(try await store.activeReorganizationComponents().isEmpty)
 
         let state = try await catalogStoreTestState(store)
         let paths = Set(state.testAssets.map(\.relativePath.rawValue))
@@ -400,7 +400,6 @@ struct ReorganizationExecutorMoveTests {
             markWillMove: { _ in counter.bumpWillMove() },
             markDidMove: { _, _ in counter.bumpDidMove() },
             markFilesystemComplete: { counter.bumpComplete() },
-            ensureDirectory: { _ in .preexisting },
             shouldContinue: { true }
         )
         #expect(outcome == .filesystemComplete(key))

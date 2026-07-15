@@ -111,7 +111,7 @@ actor MediaOperationCoordinator {
     func queueImport(for source: LibraryRootPath) async {
         planGeneration &+= 1
         queuedStart[source] = planGeneration
-        if var presentation = presentations[source] {
+        if let presentation = presentations[source] {
             switch presentation.state {
             case let .ready(summary, generation, skipped):
                 presentations[source] = MediaOperationSourcePresentation(

@@ -101,8 +101,8 @@ struct ActiveFileOperationJournalTests {
             deleteSourceRequested: false,
             updatedAt: Date()
         )
-        try await store.insertActiveFileOperation(operation)
-        let loaded = try await store.fetchActiveFileOperations()
+        try await store.beginImportOperation(operation)
+        let loaded = try await store.activeImportOperations()
         #expect(loaded.count == 1)
         #expect(loaded.first?.operationKey == operation.operationKey)
         #expect(loaded.first?.phase == .copying)
@@ -110,12 +110,12 @@ struct ActiveFileOperationJournalTests {
         var updated = operation
         updated.phase = .readyToPublish
         updated.updatedAt = Date()
-        try await store.updateActiveFileOperation(updated)
-        let reloaded = try await store.fetchActiveFileOperations()
+        try await store.recordImportOperationProgress(updated)
+        let reloaded = try await store.activeImportOperations()
         #expect(reloaded.first?.phase == .readyToPublish)
 
-        try await store.deleteActiveFileOperation(key: operation.operationKey)
-        #expect(try await store.fetchActiveFileOperations().isEmpty)
+        try await store.abandonImportOperation(key: operation.operationKey)
+        #expect(try await store.activeImportOperations().isEmpty)
     }
 }
 

@@ -28,6 +28,59 @@ actor LibraryReorganizationRunner {
         let componentCount: Int
     }
 
+    /// Interprets durable component phases before Store starts filesystem scans.
+    /// Store owns each transaction and scan-exclusion lease; this operation owner
+    /// decides what recovery action each journal state requires.
+    nonisolated static func recoverJournal(store: CatalogStore) async throws {
+        let components = try await store.activeReorganizationComponents()
+        for component in components {
+            switch component.phase {
+            case .catalogCommitted:
+                try await store.discardCommittedReorganizationComponent(component.componentKey)
+            case .filesystemComplete:
+                OtosLog.catalog.notice(
+                    // swiftlint:disable:next line_length
+                    "op=reorganization.recover phase=retrySettlement key=\(component.componentKey.rawValue, privacy: .public)"
+                )
+                do {
+                    _ = try await store.settleReorganizationComponent(
+                        key: component.componentKey,
+                        remaps: identityRemaps(for: component)
+                    )
+                } catch {
+                    OtosLog.catalog.error(
+                        // swiftlint:disable:next line_length
+                        "op=reorganization.recover phase=settlementFailed key=\(component.componentKey.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                    )
+                }
+            case .prepared, .moving, .rollingBack, .blocked:
+                OtosLog.catalog.notice(
+                    // swiftlint:disable:next line_length
+                    "op=reorganization.recover phase=retainJournal key=\(component.componentKey.rawValue, privacy: .public) componentPhase=\(component.phase.rawValue, privacy: .public)"
+                )
+                _ = await store.acquireReorganizationLease(for: component.libraryRootPath)
+            }
+        }
+    }
+
+    private nonisolated static func identityRemaps(
+        for component: ActiveReorganizationComponent
+    ) -> [CatalogIdentityRemap] {
+        component.members.compactMap { member in
+            guard member.kind == .media else { return nil }
+            return CatalogIdentityRemap(
+                oldID: MediaAssetID(
+                    libraryRootPath: component.libraryRootPath,
+                    relativePath: member.logicalSourceRelativePath
+                ),
+                newID: MediaAssetID(
+                    libraryRootPath: component.libraryRootPath,
+                    relativePath: member.finalRelativePath
+                )
+            )
+        }
+    }
+
     /// Builds a ready plan (resolving occupancy probes) without mutating the filesystem.
     func preview(libraryRoot: LibraryRootPath) async -> Outcome {
         switch await buildReadyPlan(libraryRoot: libraryRoot) {
@@ -111,7 +164,7 @@ actor LibraryReorganizationRunner {
             }
 
             do {
-                try await store.insertActiveReorganizationComponent(journal)
+                try await store.prepareReorganizationComponent(journal)
             } catch {
                 _ = await store.releaseReorganizationLease(lease)
                 return .failed(reason: "journalInsert")
@@ -122,32 +175,23 @@ actor LibraryReorganizationRunner {
                 component: journal,
                 rootURL: rootURL,
                 markWillMove: { step in
-                    try await self.store.markReorganizationStepWillMove(
+                    try await self.store.recordReorganizationMoveIntent(
                         key: key,
                         stepIndex: step.stepIndex
                     )
                 },
                 markDidMove: { step, _ in
-                    try await self.store.markReorganizationStepDidMove(
+                    try await self.store.recordReorganizationMoveCompletion(
                         key: key,
                         step: step,
                         nextStepIndex: step.stepIndex + 1
                     )
                 },
                 markFilesystemComplete: {
-                    try await self.store.markReorganizationFilesystemComplete(
+                    try await self.store.recordReorganizationFilesystemCompletion(
                         key: key,
                         nextStepIndex: journal.steps.count
                     )
-                },
-                ensureDirectory: { relative in
-                    let url = rootURL.appending(path: relative.rawValue, directoryHint: .isDirectory)
-                    var isDir: ObjCBool = false
-                    if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-                        return .preexisting
-                    }
-                    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-                    return .created
                 },
                 shouldContinue: { true }
             )
@@ -168,7 +212,7 @@ actor LibraryReorganizationRunner {
                     )
                 }
                 do {
-                    let batch = try await store.settleRelocationComponent(key: key, remaps: remaps)
+                    let batch = try await store.settleReorganizationComponent(key: key, remaps: remaps)
                     remapBatches.append(batch)
                 } catch {
                     _ = await store.releaseReorganizationLease(lease)
@@ -210,7 +254,7 @@ actor LibraryReorganizationRunner {
         let policy = ImportPolicy.from(ImportPreferencesStore.load())
         let capabilities = FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: libraryRoot.url)
         var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
-        var snapshot = ReorganizationPlanningSnapshot(
+        let snapshot = ReorganizationPlanningSnapshot(
             libraryRoot: libraryRoot,
             volumeIdentifier: libraryRoot.rawValue,
             capabilities: capabilities,

@@ -1006,7 +1006,7 @@ extension CatalogStore {
 
     func start(scansSavedLibraries: Bool = true) async throws {
         try await loadIfNeeded()
-        try await recoverActiveReorganizationComponents()
+        try await LibraryReorganizationRunner.recoverJournal(store: self)
         if scansSavedLibraries {
             requestLoadedRootScansIfNeeded()
         }
@@ -3037,7 +3037,7 @@ private extension CatalogStore {
                 var catalogChanged = false
                 for subtree in dirt.subtrees.sorted(by: { $0.rawValue < $1.rawValue }) {
                     try Task.checkCancellation()
-                    guard await self.owns(scan) else {
+                    guard self.owns(scan) else {
                         return
                     }
                     let observation = try await scanner.scanSubtree(root, subtree, scanCadence) { batch in
@@ -3059,29 +3059,29 @@ private extension CatalogStore {
                         catalogChanged = true
                     }
                 }
-                guard await self.owns(scan) else {
+                guard self.owns(scan) else {
                     return
                 }
                 if !dirt.files.isEmpty {
                     await self.reconcileFileDirt(root: root, files: dirt.files)
                 }
                 if catalogChanged {
-                    await self.bumpOccupancyRevision(for: root)
+                    self.bumpOccupancyRevision(for: root)
                 } else {
-                    await self.bumpPlanRevision(for: root)
+                    self.bumpPlanRevision(for: root)
                 }
                 OtosLog.catalog.notice(
                     // swiftlint:disable:next line_length
                     "op=catalog.reconcile phase=finish mode=subtree rootPath=\(root.rawValue, privacy: .public) observed=\(totalObserved, privacy: .public) deleted=\(totalDeleted, privacy: .public)"
                 )
-                await self.scopedReconcileFinished(scan: scan)
+                self.scopedReconcileFinished(scan: scan)
             } catch is CancellationError {
-                await self.restoreScopedDirt(root: root, dirt: dirt)
+                self.restoreScopedDirt(root: root, dirt: dirt)
                 await self.scanCancelled(scan: scan)
             } catch {
                 // Incomplete enumeration must not drop taken scopes: escalate to
                 // root so the next lease drains conservatively.
-                await self.restoreScopedDirt(root: root, dirt: dirt, escalateToRoot: true)
+                self.restoreScopedDirt(root: root, dirt: dirt, escalateToRoot: true)
                 await self.scanFailed(scan: scan, error: error)
             }
         }
@@ -3367,38 +3367,49 @@ private extension CatalogStore {
             "op=catalog.scan.staleCallback phase=ignored rootPath=\(scan.rootPath.rawValue, privacy: .public) rootRowID=\(scan.rootRowID, privacy: .public) callback=\(callback, privacy: .public)"
         )
     }
+}
 
-    // MARK: - Import journal / settlement (Stage E)
+/// Durable media-operation transitions remain actor-isolated with catalog truth.
+/// Filesystem execution and recovery sequencing belong to their operation owners.
+extension CatalogStore {
+    // MARK: - Import journal / settlement
 
-    internal func fetchActiveFileOperations() async throws -> [ActiveFileOperation] {
+    func activeImportOperations() async throws -> [ActiveFileOperation] {
         let dbWriter = try database()
         return try await dbWriter.read { db in
             try Self.fetchAllActiveFileOperations(db: db)
         }
     }
 
-    internal func insertActiveFileOperation(_ operation: ActiveFileOperation) async throws {
+    func beginImportOperation(_ operation: ActiveFileOperation) async throws {
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.insertActiveFileOperation(operation, db: db)
         }
     }
 
-    internal func updateActiveFileOperation(_ operation: ActiveFileOperation) async throws {
+    func recordImportOperationProgress(_ operation: ActiveFileOperation) async throws {
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.updateActiveFileOperation(operation, db: db)
         }
     }
 
-    internal func deleteActiveFileOperation(key: ActiveFileOperationKey) async throws {
+    func abandonImportOperation(key: ActiveFileOperationKey) async throws {
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.deleteActiveFileOperation(key: key, db: db)
         }
     }
 
-    internal func settleImportedFile(
+    func completeImportOperation(key: ActiveFileOperationKey) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.deleteActiveFileOperation(key: key, db: db)
+        }
+    }
+
+    func settleImportedAsset(
         operation: ActiveFileOperation,
         byteSize: Int64,
         contentModifiedAt: Date,
@@ -3420,7 +3431,15 @@ private extension CatalogStore {
                 companions: companions,
                 db: db
             )
-            try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
+            if operation.deleteSourceRequested {
+                var pendingDeletion = operation
+                pendingDeletion.phase = .sourceDeletionPending
+                pendingDeletion.stagingPath = nil
+                pendingDeletion.updatedAt = Date()
+                try Self.updateActiveFileOperation(pendingDeletion, db: db)
+            } else {
+                try Self.deleteActiveFileOperation(key: operation.operationKey, db: db)
+            }
         }
         _ = bumpOccupancyRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
@@ -3430,7 +3449,7 @@ private extension CatalogStore {
         )
     }
 
-    internal func recordForeignOccupant(root: LibraryRootPath, relativePath: MediaRelativePath) async {
+    func recordForeignOccupant(root: LibraryRootPath, relativePath: MediaRelativePath) async {
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
             "op=mediaOperation.publish phase=foreignOccupant rootPath=\(root.rawValue, privacy: .public) relative=\(relativePath.rawValue, privacy: .public)"
@@ -3438,41 +3457,9 @@ private extension CatalogStore {
         _ = bumpOccupancyRevision(for: root)
     }
 
-    /// Removes abandoned staging files in the given parent directories only.
-    /// Never walks whole library trees — that hangs on large cloud roots.
-    internal func removeOrphanedImportStagingFiles(near parentDirectories: [URL]) async {
-        let journaledStaging: Set<String>
-        do {
-            journaledStaging = try await Set(fetchActiveFileOperations().compactMap(\.stagingPath))
-        } catch {
-            return
-        }
-        let parents = parentDirectories
-        await Task.detached {
-            let fileManager = FileManager.default
-            for parent in parents {
-                guard let items = try? fileManager.contentsOfDirectory(
-                    at: parent,
-                    includingPropertiesForKeys: nil,
-                    options: []
-                ) else {
-                    continue
-                }
-                for item in items where item.lastPathComponent.hasSuffix(".otos-import-staging") {
-                    guard !journaledStaging.contains(item.path) else { continue }
-                    try? fileManager.removeItem(at: item)
-                    OtosLog.catalog.notice(
-                        // swiftlint:disable:next line_length
-                        "op=mediaOperation.recover phase=orphanStagingRemoved path=\(item.path, privacy: .public)"
-                    )
-                }
-            }
-        }.value
-    }
+    // MARK: - Reorganization lease and journal settlement
 
-    // MARK: - Reorganization journal / lease / settlement (Stage G2)
-
-    internal func acquireReorganizationLease(for rootPath: LibraryRootPath) -> ReorganizationLease? {
+    func acquireReorganizationLease(for rootPath: LibraryRootPath) -> ReorganizationLease? {
         guard roots[rootPath] != nil else { return nil }
         if let existing = reorganizationLeases[rootPath] {
             return existing
@@ -3491,14 +3478,14 @@ private extension CatalogStore {
         return lease
     }
 
-    internal func markReorganizationLeaseDirty(for rootPath: LibraryRootPath) {
+    private func markReorganizationLeaseDirty(for rootPath: LibraryRootPath) {
         guard var lease = reorganizationLeases[rootPath] else { return }
         lease.markedDirtyByExternalEvents = true
         reorganizationLeases[rootPath] = lease
     }
 
     @discardableResult
-    internal func releaseReorganizationLease(_ lease: ReorganizationLease) -> Bool {
+    func releaseReorganizationLease(_ lease: ReorganizationLease) -> Bool {
         guard reorganizationLeases[lease.libraryRootPath]?.generation == lease.generation else {
             return false
         }
@@ -3516,18 +3503,18 @@ private extension CatalogStore {
         return true
     }
 
-    internal func hasReorganizationLease(for rootPath: LibraryRootPath) -> Bool {
+    func hasReorganizationLease(for rootPath: LibraryRootPath) -> Bool {
         reorganizationLeases[rootPath] != nil
     }
 
-    internal func fetchActiveReorganizationComponents() async throws -> [ActiveReorganizationComponent] {
+    func activeReorganizationComponents() async throws -> [ActiveReorganizationComponent] {
         let dbWriter = try database()
         return try await dbWriter.read { db in
             try Self.fetchAllActiveReorganizationComponents(db: db)
         }
     }
 
-    internal func insertActiveReorganizationComponent(
+    func prepareReorganizationComponent(
         _ component: ActiveReorganizationComponent
     ) async throws {
         let dbWriter = try database()
@@ -3536,7 +3523,7 @@ private extension CatalogStore {
         }
     }
 
-    internal func markReorganizationStepWillMove(
+    func recordReorganizationMoveIntent(
         key: ReorganizationComponentKey,
         stepIndex: Int
     ) async throws {
@@ -3553,7 +3540,7 @@ private extension CatalogStore {
         }
     }
 
-    internal func markReorganizationStepDidMove(
+    func recordReorganizationMoveCompletion(
         key: ReorganizationComponentKey,
         step: ActiveReorganizationStep,
         nextStepIndex: Int
@@ -3577,7 +3564,7 @@ private extension CatalogStore {
         }
     }
 
-    internal func markReorganizationFilesystemComplete(
+    func recordReorganizationFilesystemCompletion(
         key: ReorganizationComponentKey,
         nextStepIndex: Int
     ) async throws {
@@ -3593,7 +3580,7 @@ private extension CatalogStore {
         }
     }
 
-    internal func settleRelocationComponent(
+    func settleReorganizationComponent(
         key: ReorganizationComponentKey,
         remaps: [CatalogIdentityRemap]
     ) async throws -> CatalogIdentityRemapBatch {
@@ -3633,49 +3620,13 @@ private extension CatalogStore {
         )
     }
 
-    /// Startup recovery for interrupted reorganization components.
-    internal func recoverActiveReorganizationComponents() async throws {
-        let components = try await fetchActiveReorganizationComponents()
-        for component in components {
-            switch component.phase {
-            case .catalogCommitted:
-                let dbWriter = try database()
-                try Self.writeWithJournalDurability(dbWriter) { db in
-                    try Self.deleteActiveReorganizationComponent(key: component.componentKey, db: db)
-                }
-            case .filesystemComplete:
-                OtosLog.catalog.notice(
-                    // swiftlint:disable:next line_length
-                    "op=reorganization.recover phase=retrySettlement key=\(component.componentKey.rawValue, privacy: .public)"
-                )
-                let remaps = component.members.compactMap { member -> CatalogIdentityRemap? in
-                    guard member.kind == .media else { return nil }
-                    return CatalogIdentityRemap(
-                        oldID: MediaAssetID(
-                            libraryRootPath: component.libraryRootPath,
-                            relativePath: member.logicalSourceRelativePath
-                        ),
-                        newID: MediaAssetID(
-                            libraryRootPath: component.libraryRootPath,
-                            relativePath: member.finalRelativePath
-                        )
-                    )
-                }
-                do {
-                    _ = try await settleRelocationComponent(key: component.componentKey, remaps: remaps)
-                } catch {
-                    OtosLog.catalog.error(
-                        // swiftlint:disable:next line_length
-                        "op=reorganization.recover phase=settlementFailed key=\(component.componentKey.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
-                    )
-                }
-            case .prepared, .moving, .rollingBack, .blocked:
-                OtosLog.catalog.notice(
-                    // swiftlint:disable:next line_length
-                    "op=reorganization.recover phase=retainJournal key=\(component.componentKey.rawValue, privacy: .public) componentPhase=\(component.phase.rawValue, privacy: .public)"
-                )
-                _ = acquireReorganizationLease(for: component.libraryRootPath)
+    func discardCommittedReorganizationComponent(_ key: ReorganizationComponentKey) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            guard try Self.fetchActiveReorganizationComponent(key: key, db: db)?.phase == .catalogCommitted else {
+                throw CatalogStoreError.catalogUnavailable
             }
+            try Self.deleteActiveReorganizationComponent(key: key, db: db)
         }
     }
 }

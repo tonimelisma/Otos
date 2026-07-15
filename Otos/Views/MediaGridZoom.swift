@@ -101,13 +101,17 @@ extension MediaGridViewController {
                 collectionView.animator().scrollToItems(at: [anchor], scrollPosition: .centeredVertically)
             }
         } completionHandler: { [weak self] in
-            self?.finishZoomSwap(
-                signpost: signpost,
-                oldCount: oldCount,
-                newCount: requested,
-                anchorPresent: anchor != nil,
-                trigger: trigger
-            )
+            // AppKit does not isolate its completion callback. Re-enter the
+            // controller's owner before reading or mutating grid state.
+            Task { @MainActor [weak self] in
+                self?.finishZoomSwap(
+                    signpost: signpost,
+                    oldCount: oldCount,
+                    newCount: requested,
+                    anchorPresent: anchor != nil,
+                    trigger: trigger
+                )
+            }
         }
     }
 

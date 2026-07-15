@@ -373,7 +373,7 @@ extension CatalogWindowViewModel {
                     coordinator: coordinator
                 )
                 if let ejectOutcome {
-                    await self?.handleEjectOutcome(ejectOutcome, for: intent)
+                    self?.handleEjectOutcome(ejectOutcome, for: intent)
                 }
             }
         }

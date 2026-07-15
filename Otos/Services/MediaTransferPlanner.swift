@@ -81,7 +81,7 @@ nonisolated enum MediaTransferPlanner {
     ) -> MediaOperationPlan {
         var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
         var comparisons: [ComparisonRequest: ComparisonResult] = [:]
-        var foreign = knownForeignOccupants.union(snapshot.knownForeignOccupants)
+        let foreign = knownForeignOccupants.union(snapshot.knownForeignOccupants)
         for _ in 0 ..< 10000 {
             switch planImport(snapshot: snapshot, occupancy: occupancy, comparisons: comparisons) {
             case let .ready(plan):

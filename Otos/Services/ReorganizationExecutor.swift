@@ -152,13 +152,12 @@ nonisolated enum ReorganizationExecutor {
         markWillMove: (ActiveReorganizationStep) async throws -> Void,
         markDidMove: (ActiveReorganizationStep, MediaRelativePath) async throws -> Void,
         markFilesystemComplete: () async throws -> Void,
-        ensureDirectory: (MediaRelativePath) async throws -> ActiveReorganizationDirectoryPhase,
         shouldContinue: () -> Bool
     ) async -> ReorganizationExecutionOutcome {
         var working = component
         for directory in working.directories where directory.phase == .planned {
             do {
-                _ = try await ensureDirectory(directory.relativePath)
+                try ensureDirectory(rootURL: rootURL, relativePath: directory.relativePath)
             } catch {
                 return .failed(reason: "directoryPrerequisite")
             }
@@ -250,6 +249,18 @@ nonisolated enum ReorganizationExecutor {
             }
         }
         return result.sorted { $0.rawValue.localizedStandardCompare($1.rawValue) == .orderedAscending }
+    }
+
+    private static func ensureDirectory(rootURL: URL, relativePath: MediaRelativePath) throws {
+        let url = rootURL.appending(path: relativePath.rawValue, directoryHint: .isDirectory)
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            guard isDirectory.boolValue else {
+                throw CocoaError(.fileWriteFileExists)
+            }
+            return
+        }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     }
 
     private static func matchesFacts(url: URL, byteSize: Int64, modifiedAt: Date) -> Bool {
