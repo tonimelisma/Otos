@@ -40,8 +40,15 @@ In the live production app on 2026-07-14, loupe opened
 - At least 919 background requests entered the coordinator in roughly 30 seconds.
 
 The OneDrive provider failed to complete the physical request, but provider
-latency does not explain the additional 67-second coordinator delay. That delay
-was application scheduler starvation.
+latency does not explain the additional 67-second coordinator delay. The code
+evidence (unbounded submission, per-enqueue scheduling passes, per-candidate
+in-flight reconstruction, per-request notice logging) makes application
+scheduler starvation the strongly supported explanation, but the exact
+mechanism inside those 67 seconds was inferred, not measured. Treat the
+attribution as a hypothesis this increment must confirm: the new
+`completionDeliveryMs` metric exists precisely to prove or disprove it on the
+first OneDrive acceptance run, and the runtime evidence must state the result
+either way.
 
 ### Regression introduced by PR #122
 
@@ -280,11 +287,14 @@ The supervisor owns each scheduling pass:
 Use one entry per `MediaAssetID`. A waiter records its requested priority; an
 entry's effective priority is the maximum priority among its current waiters.
 
-Suggested internal shapes:
+Illustrative internal shapes — the binding contract is the invariants in this
+section (per-waiter priority, per-entry effective priority as the maximum over
+waiters, dispatch-time facts frozen on the request), not these field layouts.
+The implementation chooses its own layout; for example, a waiter keyed by token
+in a dictionary need not repeat the token as a stored field.
 
 ```swift
 private struct Waiter {
-    let token: UInt64
     let priority: Priority
     let continuation: CheckedContinuation<MaterializationResult, Never>
 }
@@ -439,6 +449,16 @@ These limits govern producer handoff and claim/task retention, not physical
 provider admission. `MaterializationCoordinator` remains the only physical
 admission owner.
 
+**Constant coupling.** The two bounded layers answer different questions —
+producer flow control versus physical provider admission — but their constants
+are derived from each other and must not drift independently. The per-root
+handoff limit of two is exactly the coordinator's one-active-per-root physical
+cap plus one look-ahead (`handoffPerRoot = activePerRoot + 1`); the global
+handoff limit of 16 mirrors the 16 global transfer slots. Document this
+derivation in code next to `EnrichmentMaterializationHandoffPolicy` and in ADR
+0009 so a future change to physical admission re-derives the handoff limits
+rather than leaving a stale pairing.
+
 ### 2. Bound the complete claimed-work window
 
 The coordinator must not merely cap submitted requests while continuing to
@@ -472,9 +492,16 @@ enum ClaimedWorkState {
 }
 ```
 
-This can be an internal dictionary or an equivalent invariant-preserving owner;
-it is not persisted. Centralize transitions so an ID cannot silently appear in
-multiple sets with ambiguous claim ownership.
+This state machine is the **sole owner** of per-claim state. It replaces the
+current parallel collections (`claimedEnrichQueue`, `inFlightEnrich`,
+`datalessPending`, `submittedMaterializations`, `pendingApplyIDs`) rather than
+sitting beside them; any remaining per-state collection must be a derived view
+of the state machine, never independently mutated. Adding a sixth structure
+that must be kept consistent with five existing sets would manufacture exactly
+the state-duplication smell this plan removes — the lease and retry defects in
+the incident bred in those parallel sets. It is not persisted. Centralize
+transitions so an ID cannot silently appear in multiple states with ambiguous
+claim ownership.
 
 The normal path is:
 
@@ -540,6 +567,21 @@ One retry wake task is sufficient; schedule it for the earliest pending deadline
 6. Release every still-owned Store claim exactly once.
 7. Clear bounded working state.
 8. Return only after worker completion cannot re-enter cleared state.
+
+**Shutdown liveness invariant.** The composition shutdown order is enrichment
+first, materialization second, yet enrichment's awaited children are suspended
+inside `MaterializationCoordinator.materialize(_:)` on physical transfers that
+may run up to the 120-second provider timeout — and the materialization
+coordinator has not been shut down yet. The drain is prompt only because
+cancelling the enrichment supervisor cancels its children, whose cancellation
+handlers resume their waiters with `.cancelled` through the coordinator's
+waiter-cancellation path. This is a cross-actor liveness dependency:
+`EnrichmentCoordinator.shutdown()` promptness depends on
+`MaterializationCoordinator` waiter cancellation staying responsive even under
+a full pending queue and active transfers. Enrichment shutdown must never wait
+on provider completion, only on waiter cancellation. Treat this as an explicit
+invariant with its own test (below), not an accident of the current
+implementation.
 
 ## Preview And Device Consumers
 
@@ -764,6 +806,10 @@ Retain current enrichment correctness tests and add:
 15. Shutdown awaits workers and releases queued/in-flight claims exactly once.
 16. One hundred unchanged blocked wakes produce one blocked diagnostic and one
     later transition/unblocked record.
+17. Shutdown liveness: with a held (never-completing) executor transfer active
+    and background production ongoing, `EnrichmentCoordinator.shutdown()`
+    returns promptly via waiter cancellation without waiting for provider
+    completion or the materialization coordinator's own shutdown.
 
 ### Preview and composition
 
@@ -888,6 +934,15 @@ lifecycle, priority, or boundedness failure blocks merge.
 Implement on a dedicated conventional refactor/fix branch and worktree. Before
 opening the implementation PR, inspect the last five PRs for unresolved review
 threads and handle every in-scope comment through the normal workflow.
+
+The design ships as one coherent architecture, but delivery may be split into
+two stacked PRs along the natural seam if a single diff strains the cold-review
+bar: first the starvation fix (supervisor, bounded handoff, effective priority,
+incremental accounting, diagnostics), then lifecycle hardening (claim state
+machine consolidation, batch claim refresh, retry pacing, draining shutdowns).
+If delivered as one PR, budget review time accordingly — a confirmed
+correctness, lifecycle, priority, or boundedness failure still blocks merge
+regardless of diff size.
 
 The increment is complete only after:
 
