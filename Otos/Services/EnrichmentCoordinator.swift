@@ -120,6 +120,16 @@ actor EnrichmentCoordinator {
         let isVideo: Bool
     }
 
+    /// Pacing-only fact for a background materialization that exhausted its
+    /// in-window retry attempts: no work payload (unlike `ClaimedWorkRecord`), so
+    /// holding one per permanently-failing identity is far cheaper than the
+    /// claim-window slot it replaces.
+    struct RetryLedgerEntry: Equatable {
+        let notBefore: Date
+        let attemptCount: Int
+        let sourceSize: Int64?
+    }
+
     let store: CatalogStore
     let enricher: MediaEnricher
     let materializationRequester: any MaterializationRequesting
@@ -138,7 +148,7 @@ actor EnrichmentCoordinator {
     var claimedWork: [MediaAssetID: ClaimedWorkRecord] = [:]
     var deviceRootPaths: Set<LibraryRootPath> = []
     var nextClaimSequence: UInt64 = 0
-    var inFlightEnrichVideoCount = 0
+    var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
     var eagerMode = false
@@ -155,6 +165,7 @@ actor EnrichmentCoordinator {
     var writeRetryTask: Task<Void, Never>?
     var downloadRetryTask: Task<Void, Never>?
     var claimRefreshTask: Task<Void, Never>?
+    var ledgerRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -235,6 +246,7 @@ extension EnrichmentCoordinator {
         let capturedWriteRetryTask = writeRetryTask
         let capturedDownloadRetryTask = downloadRetryTask
         let capturedClaimRefreshTask = claimRefreshTask
+        let capturedLedgerRetryTask = ledgerRetryTask
         supervisor?.cancel()
         capturedChangeConsumer?.cancel()
         changeConsumer = nil
@@ -246,16 +258,19 @@ extension EnrichmentCoordinator {
         downloadRetryTask = nil
         capturedClaimRefreshTask?.cancel()
         claimRefreshTask = nil
+        capturedLedgerRetryTask?.cancel()
+        ledgerRetryTask = nil
         await supervisor?.value
         await capturedChangeConsumer?.value
         await capturedApplyFlushTask?.value
         await capturedWriteRetryTask?.value
         await capturedDownloadRetryTask?.value
         await capturedClaimRefreshTask?.value
+        await capturedLedgerRetryTask?.value
         self.supervisor = nil
         await releaseOutstandingClaimsForShutdown()
         claimedWork.removeAll()
-        inFlightEnrichVideoCount = 0
+        retryLedger.removeAll()
         pendingApply.removeAll()
         diagnosedThumbnailLifecycleIDs.removeAll()
         freshly.removeAll()
@@ -279,6 +294,16 @@ extension EnrichmentCoordinator {
         for seed in seeds.prefix(available) {
             guard !FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) else {
                 continue
+            }
+            // A `.tmp`-path staging write leaves `fileExists` false until completion, so a
+            // reconnect re-running the catalog flow must not clobber the active record: it
+            // already represents this seed's demand. The switch is exhaustive over
+            // `ClaimedWorkState?` so a future case forces this decision to be revisited.
+            switch claimedWork[seed.id]?.state {
+            case .materializing, .awaitingMaterialization:
+                continue
+            case .queuedEnrichment, .enriching, .awaitingApply, nil:
+                break
             }
             nextClaimSequence &+= 1
             let work = DownloadWork(

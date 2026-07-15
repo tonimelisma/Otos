@@ -31,18 +31,103 @@ extension EnrichmentCoordinator {
             let desired = max(claimBatchSize, availableSlots - items.count)
             let claimLimit = min(desired, remainingClaimCapacity)
             let priorityIDs = prioritizedEnrichmentIDs()
-            let candidates = try await claimEnrichmentCandidates(
-                prioritizing: priorityIDs,
-                limit: claimLimit
-            )
-            enqueueClaimedCandidates(candidates, submittedPriorityIDs: priorityIDs, currentItems: items)
+            let claimed = try await claimSkippingLedgerDeferrals(prioritizing: priorityIDs, limit: claimLimit)
+            if !claimed.deferredIDs.isEmpty {
+                await releaseDeferredLedgerClaims(claimed.deferredIDs)
+            }
+            enqueueClaimedCandidates(claimed.ready, submittedPriorityIDs: priorityIDs, currentItems: items)
             items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
             await recordDispatchedWork(items)
-            logClaimBatch(claimedCount: candidates.count, dispatchedCount: items.count, limit: claimLimit)
+            logClaimBatch(
+                claimedCount: claimed.totalExamined,
+                dispatchedCount: items.count,
+                limit: claimLimit,
+                deferredCount: claimed.deferredIDs.count
+            )
             return items
         } catch {
             await recordCandidateQueryFailure(error)
             return []
+        }
+    }
+
+    /// Bounds how many extra claim passes a wake will spend stepping past
+    /// ledger-paced candidates (below) before giving up for this wake. Store orders
+    /// candidates deterministically and has no knowledge of the ledger, so without
+    /// this a permanently-failing population ranked ahead of real work would
+    /// re-claim-and-defer the same rows every wake instead of ever reaching a fresh
+    /// candidate ranked behind them.
+    private static let maxLedgerSkipPasses = 4
+
+    /// Repeatedly claims from Store until a pass yields a ready (non-deferred)
+    /// candidate, Store runs out of unclaimed rows, or the pass bound is reached.
+    /// Each pass's claimed-but-deferred rows stay claimed (not yet released) so the
+    /// next pass's query naturally skips past them and surfaces different rows —
+    /// no explicit exclusion list is needed.
+    private func claimSkippingLedgerDeferrals(
+        prioritizing priorityIDs: [MediaAssetID],
+        limit: Int
+    ) async throws -> (ready: [MediaAsset], deferredIDs: [MediaAssetID], totalExamined: Int) {
+        var ready: [MediaAsset] = []
+        var deferredIDs: [MediaAssetID] = []
+        var totalExamined = 0
+        for _ in 0 ..< Self.maxLedgerSkipPasses {
+            let batch = try await claimEnrichmentCandidates(prioritizing: priorityIDs, limit: limit)
+            guard !batch.isEmpty else {
+                break
+            }
+            totalExamined += batch.count
+            let (batchReady, batchDeferred) = partitionByRetryLedger(batch)
+            ready.append(contentsOf: batchReady)
+            deferredIDs.append(contentsOf: batchDeferred)
+            if !batchReady.isEmpty || batch.count < limit {
+                break
+            }
+        }
+        return (ready, deferredIDs, totalExamined)
+    }
+
+    /// Consults the pacing ledger a bound-exceeded background retry left behind: a
+    /// candidate Store just claimed is deferred back if its earliest reclaim time
+    /// has not arrived, unless its `(sourceSize)` fragment of the `(size, mtime)`
+    /// source signature (ENR-007) changed since the ledger entry was recorded,
+    /// which resets pacing immediately.
+    private func partitionByRetryLedger(
+        _ candidates: [MediaAsset]
+    ) -> (ready: [MediaAsset], deferred: [MediaAssetID]) {
+        guard !retryLedger.isEmpty else {
+            return (candidates, [])
+        }
+        var ready: [MediaAsset] = []
+        var deferred: [MediaAssetID] = []
+        let now = Date()
+        for asset in candidates {
+            guard let entry = retryLedger[asset.id] else {
+                ready.append(asset)
+                continue
+            }
+            if entry.sourceSize != asset.byteSize {
+                retryLedger[asset.id] = nil
+                ready.append(asset)
+            } else if entry.notBefore <= now {
+                ready.append(asset)
+            } else {
+                deferred.append(asset.id)
+            }
+        }
+        return (ready, deferred)
+    }
+
+    private func releaseDeferredLedgerClaims(_ ids: [MediaAssetID]) async {
+        do {
+            try await store.releaseEnrichmentClaims(ids)
+        } catch {
+            OtosLog.metadata.error(
+                """
+                op=catalog.enrichment.coordinator phase=ledgerDeferredReleaseFailed \
+                count=\(ids.count, privacy: .public) error=\(String(describing: error), privacy: .public)
+                """
+            )
         }
     }
 
@@ -153,6 +238,16 @@ extension EnrichmentCoordinator {
                 total + estimatedBytes
             } else {
                 total
+            }
+        }
+    }
+
+    var inFlightEnrichVideoCount: Int {
+        claimedWork.values.count {
+            if case let .enriching(work, _) = $0.state {
+                work.isVideo
+            } else {
+                false
             }
         }
     }
@@ -272,9 +367,6 @@ extension EnrichmentCoordinator {
                 let estimated = admissionPolicy.estimatedBytes(work.sourceSize)
                 record.state = .enriching(work, estimatedBytes: estimated)
                 claimedWork[id] = record
-                if work.isVideo {
-                    inFlightEnrichVideoCount += 1
-                }
                 items.append(work)
             case let .failure(reason):
                 rejections[reason, default: 0] += 1
@@ -339,13 +431,14 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int) {
+    private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int, deferredCount: Int) {
         let queuedCount = queuedEnrichmentCount
         OtosLog.metadata.debug(
             """
             Enrichment claim batch claimed=\(claimedCount, privacy: .public) \
             queued=\(queuedCount, privacy: .public) \
-            dispatched=\(dispatchedCount, privacy: .public) limit=\(limit, privacy: .public)
+            dispatched=\(dispatchedCount, privacy: .public) limit=\(limit, privacy: .public) \
+            deferred=\(deferredCount, privacy: .public)
             """
         )
     }

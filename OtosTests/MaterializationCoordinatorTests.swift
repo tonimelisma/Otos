@@ -256,6 +256,59 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    // MARK: - Plan 0059 review fixes
+
+    @Test func interactiveJoinBlocksBackgroundWithTruthfulBlockedDiagnostic() async throws {
+        var policy = MaterializationAdmissionPolicy.production
+        policy.globalConcurrency = 3
+        let executor = ControlledMaterializationExecutor()
+        let diagnostics = AdmissionDiagnosticRecorder()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0) },
+            policy: policy,
+            diagnosticSink: { diagnostics.record($0) }
+        )
+        let active = Task { await coordinator.materialize(request("active.jpg", priority: .background)) }
+        try await executor.waitForStarts(1)
+        // The interactive waiter joins the in-flight background transfer rather than
+        // queuing: `effectiveInteractiveCount` rises with `interactiveQueue` empty.
+        let interactive = Task {
+            await coordinator.materialize(request("active.jpg", priority: .interactive))
+        }
+        let joinDeadline = ContinuousClock().now.advanced(by: .seconds(2))
+        while await coordinator.stateSnapshot().effectiveInteractive != 1, ContinuousClock().now < joinDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let queued = Task {
+            await coordinator.materialize(request("queued.jpg", root: "/other-library", priority: .background))
+        }
+        let queuedDeadline = ContinuousClock().now.advanced(by: .seconds(2))
+        while await coordinator.queuedRequestCount() < 1, ContinuousClock().now < queuedDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(diagnostics.blockedCount() >= 1)
+        #expect(diagnostics.unblockedCount() == 0)
+
+        interactive.cancel()
+        #expect(await !(interactive.value).isMaterialized)
+        try await executor.waitForStarts(2)
+        #expect(await executor.startedNames() == ["active.jpg", "queued.jpg"])
+
+        await executor.releaseNext()
+        await executor.releaseNext()
+        _ = await (active.value, queued.value)
+        #expect(diagnostics.unblockedCount() >= 1)
+        await coordinator.shutdown()
+    }
+
+    @Test func closureMaterializationRequesterReportsNoActiveRequests() async {
+        let requester = ClosureMaterializationRequester(operation: { _ in .testMaterialized })
+        let count = await requester.activeRequestCount(under: LibraryRootPath(rawValue: "/library"))
+        #expect(count == 0)
+    }
+
     private func request(
         _ name: String,
         root: String = "/library",
