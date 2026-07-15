@@ -31,22 +31,18 @@ extension EnrichmentCoordinator {
             let desired = max(claimBatchSize, availableSlots - items.count)
             let claimLimit = min(desired, remainingClaimCapacity)
             let priorityIDs = prioritizedEnrichmentIDs()
-            let candidates = try await claimEnrichmentCandidates(
-                prioritizing: priorityIDs,
-                limit: claimLimit
-            )
-            let (readyCandidates, deferredIDs) = partitionByRetryLedger(candidates)
-            if !deferredIDs.isEmpty {
-                await releaseDeferredLedgerClaims(deferredIDs)
+            let claimed = try await claimSkippingLedgerDeferrals(prioritizing: priorityIDs, limit: claimLimit)
+            if !claimed.deferredIDs.isEmpty {
+                await releaseDeferredLedgerClaims(claimed.deferredIDs)
             }
-            enqueueClaimedCandidates(readyCandidates, submittedPriorityIDs: priorityIDs, currentItems: items)
+            enqueueClaimedCandidates(claimed.ready, submittedPriorityIDs: priorityIDs, currentItems: items)
             items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
             await recordDispatchedWork(items)
             logClaimBatch(
-                claimedCount: candidates.count,
+                claimedCount: claimed.totalExamined,
                 dispatchedCount: items.count,
                 limit: claimLimit,
-                deferredCount: deferredIDs.count
+                deferredCount: claimed.deferredIDs.count
             )
             return items
         } catch {
@@ -55,11 +51,47 @@ extension EnrichmentCoordinator {
         }
     }
 
-    /// Consults the pacing ledger a bound-exceeded background retry left behind
-    /// (finding 1): a candidate Store just claimed is deferred back if its earliest
-    /// reclaim time has not arrived, unless its `(sourceSize)` fragment of the
-    /// `(size, mtime)` source signature (ENR-007) changed since the ledger entry was
-    /// recorded, which resets pacing immediately.
+    /// Bounds how many extra claim passes a wake will spend stepping past
+    /// ledger-paced candidates (below) before giving up for this wake. Store orders
+    /// candidates deterministically and has no knowledge of the ledger, so without
+    /// this a permanently-failing population ranked ahead of real work would
+    /// re-claim-and-defer the same rows every wake instead of ever reaching a fresh
+    /// candidate ranked behind them.
+    private static let maxLedgerSkipPasses = 4
+
+    /// Repeatedly claims from Store until a pass yields a ready (non-deferred)
+    /// candidate, Store runs out of unclaimed rows, or the pass bound is reached.
+    /// Each pass's claimed-but-deferred rows stay claimed (not yet released) so the
+    /// next pass's query naturally skips past them and surfaces different rows —
+    /// no explicit exclusion list is needed.
+    private func claimSkippingLedgerDeferrals(
+        prioritizing priorityIDs: [MediaAssetID],
+        limit: Int
+    ) async throws -> (ready: [MediaAsset], deferredIDs: [MediaAssetID], totalExamined: Int) {
+        var ready: [MediaAsset] = []
+        var deferredIDs: [MediaAssetID] = []
+        var totalExamined = 0
+        for _ in 0 ..< Self.maxLedgerSkipPasses {
+            let batch = try await claimEnrichmentCandidates(prioritizing: priorityIDs, limit: limit)
+            guard !batch.isEmpty else {
+                break
+            }
+            totalExamined += batch.count
+            let (batchReady, batchDeferred) = partitionByRetryLedger(batch)
+            ready.append(contentsOf: batchReady)
+            deferredIDs.append(contentsOf: batchDeferred)
+            if !batchReady.isEmpty || batch.count < limit {
+                break
+            }
+        }
+        return (ready, deferredIDs, totalExamined)
+    }
+
+    /// Consults the pacing ledger a bound-exceeded background retry left behind: a
+    /// candidate Store just claimed is deferred back if its earliest reclaim time
+    /// has not arrived, unless its `(sourceSize)` fragment of the `(size, mtime)`
+    /// source signature (ENR-007) changed since the ledger entry was recorded,
+    /// which resets pacing immediately.
     private func partitionByRetryLedger(
         _ candidates: [MediaAsset]
     ) -> (ready: [MediaAsset], deferred: [MediaAssetID]) {

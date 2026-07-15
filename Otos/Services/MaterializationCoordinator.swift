@@ -248,7 +248,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     }
 
     private func hasEnrichmentOriginWaiter(_ waiters: [UInt64: Waiter]) -> Bool {
-        waiters.values.contains { $0.priority != .interactive }
+        waiters.values.contains { $0.priority == .device || $0.priority == .background }
     }
 
     private func register(_ request: Request, token: UInt64, waiter: Waiter) {

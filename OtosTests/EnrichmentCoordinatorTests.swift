@@ -514,6 +514,44 @@ struct EnrichmentCoordinatorTests {
         #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
     }
 
+    @Test func retryLedgerSkipsPastBlockedCandidatesWithinBoundedPasses() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        // "blocked-*" sorts before "fresh" so Store's deterministic ordering
+        // (same capture date, tie-broken by relative path) ranks every blocked
+        // candidate ahead of the one real candidate.
+        let names = (0 ..< 4).map { "blocked-\($0).jpg" } + ["fresh.jpg"]
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(names))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) {
+            !$0.isScanning && $0.testAssets.count == names.count
+        }
+        let freshID = try #require(scanned.testAssets.first { $0.relativePath.rawValue == "fresh.jpg" }?.id)
+
+        // A small claim batch (2) against 4 blocked candidates forces multiple
+        // claim/defer passes before "fresh" is ever reached.
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            enrichConcurrency: 2,
+            claimBatchSize: 2
+        )
+        for asset in scanned.testAssets where asset.relativePath.rawValue != "fresh.jpg" {
+            await coordinator.testSeedRetryLedger(
+                id: asset.id,
+                entry: EnrichmentCoordinator.RetryLedgerEntry(
+                    notBefore: Date().addingTimeInterval(900), attemptCount: 1, sourceSize: asset.byteSize
+                )
+            )
+        }
+
+        let claimed = await coordinator.dequeueEnrichmentWork()
+        #expect(claimed.map(\.id) == [freshID])
+    }
+
     @Test func materializationSuccessClearsRetryLedgerEntry() async {
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/library"),

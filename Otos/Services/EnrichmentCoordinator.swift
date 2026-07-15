@@ -121,8 +121,9 @@ actor EnrichmentCoordinator {
     }
 
     /// Pacing-only fact for a background materialization that exhausted its
-    /// in-window retry attempts: no work payload, so it costs nothing beyond the
-    /// claim window's 32-item bound to keep around for the full backoff schedule.
+    /// in-window retry attempts: no work payload (unlike `ClaimedWorkRecord`), so
+    /// holding one per permanently-failing identity is far cheaper than the
+    /// claim-window slot it replaces.
     struct RetryLedgerEntry: Equatable {
         let notBefore: Date
         let attemptCount: Int
@@ -164,6 +165,7 @@ actor EnrichmentCoordinator {
     var writeRetryTask: Task<Void, Never>?
     var downloadRetryTask: Task<Void, Never>?
     var claimRefreshTask: Task<Void, Never>?
+    var ledgerRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -244,6 +246,7 @@ extension EnrichmentCoordinator {
         let capturedWriteRetryTask = writeRetryTask
         let capturedDownloadRetryTask = downloadRetryTask
         let capturedClaimRefreshTask = claimRefreshTask
+        let capturedLedgerRetryTask = ledgerRetryTask
         supervisor?.cancel()
         capturedChangeConsumer?.cancel()
         changeConsumer = nil
@@ -255,12 +258,15 @@ extension EnrichmentCoordinator {
         downloadRetryTask = nil
         capturedClaimRefreshTask?.cancel()
         claimRefreshTask = nil
+        capturedLedgerRetryTask?.cancel()
+        ledgerRetryTask = nil
         await supervisor?.value
         await capturedChangeConsumer?.value
         await capturedApplyFlushTask?.value
         await capturedWriteRetryTask?.value
         await capturedDownloadRetryTask?.value
         await capturedClaimRefreshTask?.value
+        await capturedLedgerRetryTask?.value
         self.supervisor = nil
         await releaseOutstandingClaimsForShutdown()
         claimedWork.removeAll()
@@ -291,12 +297,13 @@ extension EnrichmentCoordinator {
             }
             // A `.tmp`-path staging write leaves `fileExists` false until completion, so a
             // reconnect re-running the catalog flow must not clobber the active record: it
-            // already represents this seed's demand.
-            if case .materializing = claimedWork[seed.id]?.state {
+            // already represents this seed's demand. The switch is exhaustive over
+            // `ClaimedWorkState?` so a future case forces this decision to be revisited.
+            switch claimedWork[seed.id]?.state {
+            case .materializing, .awaitingMaterialization:
                 continue
-            }
-            if case .awaitingMaterialization = claimedWork[seed.id]?.state {
-                continue
+            case .queuedEnrichment, .enriching, .awaitingApply, nil:
+                break
             }
             nextClaimSequence &+= 1
             let work = DownloadWork(

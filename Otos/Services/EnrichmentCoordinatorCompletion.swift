@@ -45,9 +45,7 @@ extension EnrichmentCoordinator {
         case .transient:
             await recordVisibleThumbnailLifecycle(phase: "transient", id: id)
             claimedWork[id] = nil
-            if record.ownsStoreClaim {
-                await releaseClaims([id], visibleID: id)
-            }
+            await releaseClaimIfOwned(record, id: id)
         }
         signal()
     }
@@ -105,9 +103,7 @@ extension EnrichmentCoordinator {
         // asset: release the claim without consuming a retry attempt or pacing slot.
         if outcome == .cancelled {
             claimedWork[id] = nil
-            if record.ownsStoreClaim {
-                await releaseClaims([id], visibleID: id)
-            }
+            await releaseClaimIfOwned(record, id: id)
         } else {
             let retry = retryWorkIfNeeded(work, outcome: outcome)
             if let retry {
@@ -126,13 +122,11 @@ extension EnrichmentCoordinator {
                 }
             } else {
                 claimedWork[id] = nil
-                if record.ownsStoreClaim {
-                    await releaseClaims([id], visibleID: id)
-                }
+                await releaseClaimIfOwned(record, id: id)
                 if materialized {
                     retryLedger[id] = nil
                 } else if !work.isDeviceStaging {
-                    recordRetryLedgerFailure(for: work)
+                    await recordRetryLedgerFailure(for: work)
                 }
             }
         }
@@ -195,13 +189,50 @@ extension EnrichmentCoordinator {
         )
     }
 
-    private func recordRetryLedgerFailure(for work: DownloadWork) {
+    private func recordRetryLedgerFailure(for work: DownloadWork) async {
         let previousAttempts = retryLedger[work.id]?.attemptCount ?? 0
-        retryLedger[work.id] = RetryLedgerEntry(
+        let entry = RetryLedgerEntry(
             notBefore: Date().addingTimeInterval(900),
             attemptCount: previousAttempts + 1,
             sourceSize: work.sourceSize
         )
+        retryLedger[work.id] = entry
+        scheduleRetryLedgerSignal()
+        await recordVisibleThumbnailLifecycle(
+            phase: "retryLedgerPaced",
+            id: work.id,
+            fields: [
+                "notBefore": Self.diagnosticTimestamp(entry.notBefore),
+                "attemptCount": "\(entry.attemptCount)",
+            ]
+        )
+    }
+
+    /// Mirrors `scheduleDownloadRetrySignal`: without an owned wake, a ledger-paced
+    /// identity would sit past its `notBefore` forever once no other signal source
+    /// (viewport change, scan, unrelated completion) happens to wake the loop.
+    private func scheduleRetryLedgerSignal() {
+        ledgerRetryTask?.cancel()
+        guard let nextRetry = retryLedger.values.map(\.notBefore).min() else {
+            ledgerRetryTask = nil
+            return
+        }
+        let delay = max(nextRetry.timeIntervalSinceNow, 0)
+        ledgerRetryTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            await self?.signal()
+        }
+    }
+
+    private func releaseClaimIfOwned(_ record: ClaimedWorkRecord, id: MediaAssetID) async {
+        guard record.ownsStoreClaim else {
+            return
+        }
+        await releaseClaims([id], visibleID: id)
     }
 
     private func scheduleDownloadRetrySignal() {
