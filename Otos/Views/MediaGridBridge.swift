@@ -521,14 +521,20 @@ extension MediaGridViewController {
         view = scrollView
     }
 
-    /// Applies a new presentation when the representable updates. No-op when unchanged.
+    /// Applies a grid/strip mode change when the representable updates. Grid density is
+    /// deliberately not a presentation replacement: `receiveColumnCount(_:)` owns that
+    /// change so every zoom surface reaches the same animated, mutation-gated path.
     func applyPresentation(_ next: MediaGridPresentation) {
         guard next != presentation else {
             collectionView.forwardsArrowKeys = next.isStrip
             return
         }
+        let modeChanged = next.isStrip != presentation.isStrip
         presentation = next
         collectionView.forwardsArrowKeys = next.isStrip
+        guard modeChanged else {
+            return
+        }
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
         collectionView.collectionViewLayout = Self.makeLayout(presentation: next)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)

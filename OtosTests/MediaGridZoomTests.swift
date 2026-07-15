@@ -32,6 +32,21 @@ struct MediaGridZoomTests {
         #expect(controller.mutationGate.inFlight == .none)
     }
 
+    @Test func presentationUpdateDoesNotPreemptAnimatedGridZoomPath() {
+        let controller = makeController(itemCount: 4)
+        let originalLayout = controller.collectionView.collectionViewLayout
+
+        controller.applyPresentation(.grid(columnCount: 3))
+
+        #expect(controller.collectionView.collectionViewLayout === originalLayout)
+        #expect(controller.mutationGate.installedColumnCount == GridColumnCount.defaultValue)
+
+        controller.receiveColumnCount(3)
+
+        #expect(controller.collectionView.collectionViewLayout !== originalLayout)
+        #expect(controller.mutationGate.installedColumnCount == 3)
+    }
+
     @Test func zoomRequestedWhileApplyIsInFlightDefersAndInstallsExactlyOnceAfterCompletion() {
         let controller = makeController(itemCount: 4)
         let ids = controller.mutationGate.displayedOrderedIDs

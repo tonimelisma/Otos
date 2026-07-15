@@ -78,6 +78,8 @@ zoom swap and a structural apply never run concurrently in either direction: a z
 requested during an apply, or a grid state arriving during a zoom swap, parks and
 drains once the in-flight mutation completes. Zoom uses discrete animated layout
 swaps (`NSAnimationContext` plus `NSCollectionView.animator().collectionViewLayout`),
+and a same-mode SwiftUI presentation update never installs the new grid density
+first: `receiveColumnCount(_:)` is the sole layout-swap path for grid zoom. Zoom is
 never a continuous interactive transition: macOS exposes
 `NSCollectionViewTransitionLayout` but no `startInteractiveTransition` driver
 (that API is UIKit-only, verified against the Xcode 27 beta SDK), so there is no
