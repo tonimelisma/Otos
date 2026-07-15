@@ -257,6 +257,15 @@ for confirmation before relying on them.
   Xcode 27 build/test proof is local `script/verify.sh` evidence. CI may be waived
   only when GitHub reports a billing/quota blocker (paste the evidence); never for
   failures, syntax errors, missing tools, or flakiness.
+- **Doc-only increments** (the diff touches only documentation — `docs/`,
+  `AGENTS.md`, and similar prose; no source, tests, scripts, or config) use a
+  lightweight path: skip the last-five-PRs review-comment sweep, skip
+  `script/verify.sh` build/test (run `script/ci-text-hygiene.sh check` and
+  `script/requirements-authority-check.sh` locally instead), and integrate
+  quickly — branch, PR, merge to remote `main`, remove the worktree/branch, and
+  send the DoD report. The DoD report notes the doc-only scope; everything else
+  about the DoD (one final report, posted on the PR and sent in full) still
+  applies.
 
 ## Definition Of Done
 
