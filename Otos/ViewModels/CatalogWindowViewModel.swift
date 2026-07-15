@@ -106,6 +106,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let catalogStore: CatalogStore
     @ObservationIgnored private let catalogProjection: CatalogProjection
     @ObservationIgnored let enrichmentCoordinator: EnrichmentCoordinator?
+    @ObservationIgnored let materializationCoordinator: MaterializationCoordinator?
     @ObservationIgnored let deviceStagingRegistry: DeviceStagingRegistry
     @ObservationIgnored private let mediaTileDetailReader: MediaTileDetailReader
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
@@ -165,7 +166,7 @@ final class CatalogWindowViewModel {
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
         gridColumnCountDefaults: UserDefaults = .standard,
-        previewLoader: any PreviewLoading = PreviewImageLoader()
+        previewLoader: (any PreviewLoading)? = nil
     ) {
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
@@ -188,6 +189,16 @@ final class CatalogWindowViewModel {
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
         let deviceStagingRegistry = DeviceStagingRegistry()
         self.deviceStagingRegistry = deviceStagingRegistry
+        let materializationCoordinator = MaterializationCoordinator(
+            store: catalogStore,
+            executor: { url in
+                if let result = await deviceStagingRegistry.materialize(url) {
+                    return result
+                }
+                return await FileMaterialization.materialize(url)
+            }
+        )
+        self.materializationCoordinator = materializationCoordinator
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(
@@ -196,19 +207,18 @@ final class CatalogWindowViewModel {
                         thumbnailDirectory: catalogStore.thumbnailDirectory
                             ?? FileManager.default.temporaryDirectory
                     ),
-                    materialize: { url in
-                        if let result = await deviceStagingRegistry.materialize(url) {
-                            return result
-                        }
-                        return await EnrichmentCoordinator.liveMaterialize(url)
-                    }
+                    materializationRequester: materializationCoordinator
                 )
                 : nil
         )
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
-        self.previewLoader = previewLoader
+        if let previewLoader {
+            self.previewLoader = previewLoader
+        } else {
+            self.previewLoader = PreviewImageLoader(materializationRequester: materializationCoordinator)
+        }
         self.queryStream = queryStream
         self.queryContinuation = queryContinuation
         self.mutationStream = mutationStream
@@ -251,7 +261,14 @@ final class CatalogWindowViewModel {
             // The coordinator's supervisor strongly retains the coordinator, so it must be
             // told to stop or it (and the store) would outlive this window. shutdown() is
             // async and deinit cannot await, so hand it off; this owner is already gone.
-            Task { await coordinator.shutdown() }
+            let materializationCoordinator = materializationCoordinator
+            Task {
+                await coordinator.shutdown()
+                await materializationCoordinator?.shutdown()
+            }
+        } else {
+            let materializationCoordinator = materializationCoordinator
+            Task { await materializationCoordinator?.shutdown() }
         }
         stallMonitor.stop()
     }

@@ -6,6 +6,37 @@ import Synchronization
 import Testing
 
 struct PreviewImageLoaderTests {
+    @Test func datalessPreviewSubmitsInteractiveRequestThenDecodes() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "otos-preview-interactive-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "sample.jpg")
+        try writeTinyJPEG(to: file)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
+            relativePath: MediaRelativePath(rawValue: "sample.jpg")
+        )
+        let materialized = Mutex(false)
+        let recorder = PreviewMaterializationRecorder {
+            materialized.withLock { $0 = true }
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 1)
+        }
+        let loader = PreviewImageLoader(
+            status: { _ in materialized.withLock { $0 } ? .materialized : .dataless },
+            materializationRequester: recorder
+        )
+
+        let outcome = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 512))
+        guard case .image = outcome else {
+            Issue.record("Expected image after coordinated materialization")
+            return
+        }
+        let request = try #require(recorder.lastRequest())
+        #expect(request.id == id)
+        #expect(request.priority == .interactive)
+    }
+
     @Test func materializedLocalJPEGDecodes() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appending(path: "otos-preview-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -21,7 +52,7 @@ struct PreviewImageLoaderTests {
         )
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materialize: { _ in
+            materializationRequester: ClosureMaterializationRequester { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -47,7 +78,7 @@ struct PreviewImageLoaderTests {
         let materializeCalls = Mutex(0)
         let loader = PreviewImageLoader(
             status: { _ in .dataless },
-            materialize: { _ in
+            materializationRequester: ClosureMaterializationRequester { _ in
                 materializeCalls.withLock { $0 += 1 }
                 return MaterializationResult(outcome: .timedOut, rerequestCount: 0, elapsedMs: 1)
             }
@@ -81,7 +112,7 @@ struct PreviewImageLoaderTests {
 
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materialize: { _ in
+            materializationRequester: ClosureMaterializationRequester { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -112,7 +143,7 @@ struct PreviewImageLoaderTests {
         )
         let loader = PreviewImageLoader(
             status: { _ in .materialized },
-            materialize: { _ in
+            materializationRequester: ClosureMaterializationRequester { _ in
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
@@ -128,6 +159,25 @@ struct PreviewImageLoaderTests {
             Issue.record("second decode failed")
             return
         }
+    }
+}
+
+private final class PreviewMaterializationRecorder: MaterializationRequesting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var request: MaterializationCoordinator.Request?
+    private let result: @Sendable () async -> MaterializationResult
+
+    init(result: @escaping @Sendable () async -> MaterializationResult) {
+        self.result = result
+    }
+
+    func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
+        lock.withLock { self.request = request }
+        return await result()
+    }
+
+    func lastRequest() -> MaterializationCoordinator.Request? {
+        lock.withLock { request }
     }
 }
 

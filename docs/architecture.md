@@ -21,9 +21,11 @@ schemas refuse to open instead of erasing.
         ▼
   CatalogStore (actor)  ── the only owner of SQLite catalog truth + query APIs
         │  cheap "something changed" signal + ordered-ID / detail queries
-        ├───────────────▶ EnrichmentCoordinator (actor)  ── the one write-side branch:
-        │   writes back      asks Store for candidates, produces thumbnails + metadata
-        ▼                    (reads bytes, may materialize cloud files), writes to Store
+        ├───────────────▶ EnrichmentCoordinator (actor)  ── local metadata/thumbnail write branch
+        │   writes back      asks Store for candidates; submits dataless demand to:
+        │                    MaterializationCoordinator (actor) ── priority/coalescing/suppression
+        │                                      ▼
+        │                            FileMaterialization (one-URL mechanism)
   CatalogProjection (actor)  ── truth → UI-ready CatalogWindowState (off MainActor)
         │  coalesced ~1s for background changes, immediate for user query intents
         ▼
@@ -32,7 +34,7 @@ schemas refuse to open instead of erasing.
         ▼
   SwiftUI views  →  grid / loupe(+filmstrip) detail (mode-switched)
                      MediaGridBridgeView (AppKit NSCollectionView; .grid or .strip)
-                     PreviewImageLoader (actor) — loupe/compare full-size decode
+                     PreviewImageLoader (actor) — full-size decode; submits interactive demand
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a
@@ -49,8 +51,9 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
 | `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
 | `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
-| `EnrichmentCoordinator` | actor | two worker pools (8 enrich / 16 materialize maxima) + `EnrichmentAdmissionPolicy` (byte/video/viewport/root fairness), in-flight tracking, claim leases, known-materialization begin/end | serializes scheduling state; heavy decode/parse/download runs inside its worker tasks, off the actor |
-| `PreviewImageLoader` | actor | loupe/compare full-size decode, dataless materialization gate, per-id coalesce + small LRU | serializes decode/cache state; byte reads off the actor |
+| `EnrichmentCoordinator` | actor | eight-worker local enrichment admission, catalog claim leases, dataless submission, `freshly` handoff, batched writes | serializes enrichment state; decode/parse runs in worker tasks off the actor |
+| `MaterializationCoordinator` | actor | interactive/device/background queues, per-id coalescing, 16-transfer admission, one-background-per-root fairness, known-materialization suppression | gives every deliberate provider request one scheduling and lifecycle owner |
+| `PreviewImageLoader` | actor | loupe/compare full-size decode, live byte-read gate, per-id decode coalesce + small LRU | serializes decode/cache state and delegates interactive materialization |
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
@@ -73,8 +76,9 @@ everything expensive happens on an actor off the main thread.
   tiles never blank a painted same-asset thumbnail (ADR 0006).
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
-- **Enrichment** reads bytes and may materialize cloud placeholders; the scanner
-  reads only filesystem facts and materializes nothing (ADR 0008/0009).
+- **Materialization** has one path: preview submits interactive demand and enrichment
+  submits device/background demand to `MaterializationCoordinator`, which calls the
+  one-URL `FileMaterialization` mechanism. Scanning never materializes (ADR 0008/0009).
 - **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings

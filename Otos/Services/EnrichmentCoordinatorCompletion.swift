@@ -100,8 +100,7 @@ extension EnrichmentCoordinator {
             await releaseClaims([id], visibleID: id)
             return
         }
-        inFlightDownload.remove(id)
-        inFlightDownloadBytes.removeValue(forKey: id)
+        submittedMaterializations.remove(id)
         let outcome = result.outcome
         let materialized = outcome.isMaterialized
         let retry = retryWorkIfNeeded(work, outcome: outcome)
@@ -228,7 +227,7 @@ extension EnrichmentCoordinator {
         var ids = Set<MediaAssetID>()
         ids.formUnion(claimedEnrichQueue.map(\.id))
         ids.formUnion(inFlightEnrich)
-        ids.formUnion(inFlightDownload)
+        ids.formUnion(submittedMaterializations)
         ids.formUnion(datalessPending.keys)
         ids.formUnion(pendingApplyIDs)
         guard !ids.isEmpty else {

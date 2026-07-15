@@ -45,7 +45,7 @@ actor PreviewImageLoader: PreviewLoading {
         let longEdge: Int
     }
 
-    private let materialize: @Sendable (URL) async -> MaterializationResult
+    private let materializationRequester: any MaterializationRequesting
     private let status: @Sendable (URL) -> FileMaterializationStatus
     private let maxCacheBytes: Int
     private var cache: [MediaAssetID: CacheEntry] = [:]
@@ -56,13 +56,11 @@ actor PreviewImageLoader: PreviewLoading {
     init(
         maxCacheBytes: Int = 256 * 1024 * 1024,
         status: @escaping @Sendable (URL) -> FileMaterializationStatus = FileMaterialization.status(of:),
-        materialize: @escaping @Sendable (URL) async -> MaterializationResult = { url in
-            await FileMaterialization.materialize(url)
-        }
+        materializationRequester: any MaterializationRequesting
     ) {
         self.maxCacheBytes = maxCacheBytes
         self.status = status
-        self.materialize = materialize
+        self.materializationRequester = materializationRequester
     }
 
     /// Decodes (or materializes then decodes) a preview for `request.id`. Cached hits
@@ -101,7 +99,16 @@ actor PreviewImageLoader: PreviewLoading {
             OtosLog.mediaIO.notice(
                 "op=preview.decode phase=materialize id=\(request.id.relativePath.rawValue, privacy: .public)"
             )
-            let result = await materialize(url)
+            let isVideo = request.detail?.bestKind == .video
+                || UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true
+            let result = await materializationRequester.materialize(
+                MaterializationCoordinator.Request(
+                    id: request.id,
+                    sourceSize: request.detail?.enrichedSourceSize,
+                    isVideo: isVideo,
+                    priority: .interactive
+                )
+            )
             guard result.isMaterialized else {
                 OtosLog.mediaIO.notice(
                     """

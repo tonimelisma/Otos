@@ -46,63 +46,22 @@ extension EnrichmentCoordinator {
             return []
         }
         var items: [DownloadWork] = []
-        var rejectedIDs: Set<MediaAssetID> = []
-        var firstRejection: EnrichmentAdmissionPolicy.Rejection?
-        var unexaminedCount = 0
+        var submittedIDs: Set<MediaAssetID> = []
         lastDownloadCandidateEvaluationCount = 0
-        downloadLoop: while true {
-            guard let work = nextDownloadWork(excluding: rejectedIDs) else {
+        while true {
+            guard let work = nextDownloadWork(excluding: submittedIDs) else {
                 break
             }
-            let isViewportWork = viewport.contains(work.id) || work.isDeviceStaging
-            let candidate = EnrichmentAdmissionPolicy.Candidate(
-                sourceSize: work.sourceSize,
-                isVideo: work.isVideo,
-                isViewportOrDevice: isViewportWork,
-                rootPath: work.id.libraryRootPath,
-                isEagerBackground: !isViewportWork
-            )
-            let snapshot = downloadInFlightSnapshot()
             lastDownloadCandidateEvaluationCount += 1
-            switch admissionPolicy.canDispatchDownload(candidate: candidate, inFlight: snapshot) {
-            case .success:
-                let estimated = admissionPolicy.estimatedBytes(work.sourceSize)
-                inFlightDownload.insert(work.id)
-                inFlightDownloadBytes[work.id] = estimated
-                items.append(work)
-                await recordVisibleThumbnailLifecycle(
-                    phase: "downloadDispatched",
-                    id: work.id,
-                    fields: [
-                        "sourceSize": "\(work.sourceSize ?? -1)",
-                        "viewport": "\(isViewportWork)",
-                        "deviceStaging": "\(work.isDeviceStaging)",
-                    ]
-                )
-                let acceptInFlight = snapshot.downloadCount + 1
-                let acceptBytes = snapshot.downloadBytes + estimated
-                OtosLog.metadata.notice(
-                    // swiftlint:disable:next line_length
-                    "op=catalog.enrichment.admission phase=downloadAccept rootPath=\(work.id.libraryRootPath.rawValue, privacy: .public) inFlight=\(acceptInFlight, privacy: .public) bytes=\(acceptBytes, privacy: .public) video=\(work.isVideo, privacy: .public) viewport=\(isViewportWork, privacy: .public)"
-                )
-            case let .failure(reason):
-                rejectedIDs.insert(work.id)
-                firstRejection = firstRejection ?? reason
-                if reason.stopsEagerDequeuePass, candidate.isEagerBackground {
-                    unexaminedCount = datalessPending.values.count(where: {
-                        readyDownloadWork($0, excluding: rejectedIDs) && !$0.isDeviceStaging
-                    })
-                    break downloadLoop
-                }
-            }
-        }
-        if let firstRejection {
-            OtosLog.metadata.noticeOperation(
-                "catalog.enrichment.admission",
-                phase: "downloadReject",
+            submittedIDs.insert(work.id)
+            submittedMaterializations.insert(work.id)
+            items.append(work)
+            await recordVisibleThumbnailLifecycle(
+                phase: "materializationSubmitted",
+                id: work.id,
                 fields: [
-                    "reason": firstRejection.description,
-                    "unexamined": "\(unexaminedCount)",
+                    "sourceSize": "\(work.sourceSize ?? -1)",
+                    "priority": work.isDeviceStaging ? "device" : "background",
                 ]
             )
         }
@@ -124,7 +83,7 @@ extension EnrichmentCoordinator {
 
     func nextDownloadWork(excluding rejectedIDs: Set<MediaAssetID> = []) -> DownloadWork? {
         for id in viewport.reversed()
-            where !inFlightDownload.contains(id) && !rejectedIDs.contains(id)
+            where !submittedMaterializations.contains(id) && !rejectedIDs.contains(id)
         {
             if let work = datalessPending[id], work.isReadyForRetry {
                 return work
@@ -145,7 +104,7 @@ extension EnrichmentCoordinator {
     }
 
     private func readyDownloadWork(_ work: DownloadWork, excluding rejectedIDs: Set<MediaAssetID>) -> Bool {
-        !inFlightDownload.contains(work.id) && !rejectedIDs.contains(work.id) && work.isReadyForRetry
+        !submittedMaterializations.contains(work.id) && !rejectedIDs.contains(work.id) && work.isReadyForRetry
     }
 
     private func downloadWorkPrecedes(_ left: DownloadWork, _ right: DownloadWork) -> Bool {
@@ -166,35 +125,6 @@ extension EnrichmentCoordinator {
 
     func hasEnrichmentWorkRemaining() -> Bool {
         !inFlightEnrich.isEmpty
-    }
-
-    private func downloadInFlightSnapshot() -> EnrichmentAdmissionPolicy.InFlightSnapshot {
-        var eagerByRoot: [LibraryRootPath: Int] = [:]
-        var largeVideoCount = 0
-        var bytes: Int64 = 0
-        for id in inFlightDownload {
-            let size = inFlightDownloadBytes[id] ?? 0
-            bytes += size
-            if !viewport.contains(id),
-               !(datalessPending[id]?.isDeviceStaging ?? false)
-            {
-                eagerByRoot[id.libraryRootPath, default: 0] += 1
-            }
-            if let pending = datalessPending[id], pending.isVideo,
-               size >= admissionPolicy.largeVideoThresholdBytes
-            {
-                largeVideoCount += 1
-            }
-        }
-        return EnrichmentAdmissionPolicy.InFlightSnapshot(
-            downloadCount: inFlightDownload.count,
-            enrichCount: inFlightEnrich.count,
-            downloadBytes: bytes,
-            enrichBytes: inFlightEnrichBytes.values.reduce(0, +),
-            largeVideoDownloadCount: largeVideoCount,
-            videoEnrichCount: inFlightEnrichVideoCount,
-            eagerDownloadCountByRoot: eagerByRoot
-        )
     }
 
     private func claimEnrichmentCandidates(
@@ -244,6 +174,7 @@ extension EnrichmentCoordinator {
         var items: [EnrichWork] = []
         items.reserveCapacity(limit)
         var deferred: [EnrichWork] = []
+        var rejections: [EnrichmentAdmissionPolicy.Rejection: Int] = [:]
         while items.count < limit {
             if claimedEnrichQueue.isEmpty {
                 // Full pass over the pending set admitted nothing further.
@@ -257,18 +188,12 @@ extension EnrichmentCoordinator {
             let candidate = EnrichmentAdmissionPolicy.Candidate(
                 sourceSize: work.sourceSize,
                 isVideo: work.isVideo,
-                isViewportOrDevice: isViewport,
-                rootPath: work.id.libraryRootPath,
-                isEagerBackground: !isViewport
+                isViewportOrDevice: isViewport
             )
             let snapshot = EnrichmentAdmissionPolicy.InFlightSnapshot(
-                downloadCount: inFlightDownload.count,
                 enrichCount: inFlightEnrich.count,
-                downloadBytes: inFlightDownloadBytes.values.reduce(0, +),
                 enrichBytes: inFlightEnrichBytes.values.reduce(0, +),
-                largeVideoDownloadCount: 0,
-                videoEnrichCount: inFlightEnrichVideoCount,
-                eagerDownloadCountByRoot: [:]
+                videoEnrichCount: inFlightEnrichVideoCount
             )
             switch admissionPolicy.canDispatchEnrichment(candidate: candidate, inFlight: snapshot) {
             case .success:
@@ -280,17 +205,52 @@ extension EnrichmentCoordinator {
                 items.append(work)
             case let .failure(reason):
                 deferred.append(work)
-                OtosLog.metadata.notice(
-                    // swiftlint:disable:next line_length
-                    "op=catalog.enrichment.admission phase=enrichReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.enrichCount, privacy: .public) bytes=\(snapshot.enrichBytes, privacy: .public) video=\(work.isVideo, privacy: .public)"
-                )
+                rejections[reason, default: 0] += 1
             }
         }
         // Preserve rejected candidates in stable order ahead of any remaining queue.
         if !deferred.isEmpty {
             claimedEnrichQueue = deferred + claimedEnrichQueue
         }
+        recordEnrichmentAdmission(rejections: rejections, admitted: items.count)
         return items
+    }
+
+    func recordEnrichmentAdmission(
+        rejections: [EnrichmentAdmissionPolicy.Rejection: Int],
+        admitted: Int
+    ) {
+        guard !rejections.isEmpty else {
+            if lastEnrichmentAdmissionSnapshot != nil {
+                lastEnrichmentAdmissionSnapshot = nil
+                enrichmentAdmissionTransitionCount += 1
+                OtosLog.metadata.notice("op=catalog.enrichment.admission phase=unblocked")
+            }
+            return
+        }
+        let snapshot = AdmissionDiagnosticSnapshot(
+            rejections: rejections,
+            admitted: admitted,
+            pending: claimedEnrichQueue.count,
+            inFlight: inFlightEnrich.count,
+            bytes: inFlightEnrichBytes.values.reduce(0, +),
+            videoInFlight: inFlightEnrichVideoCount
+        )
+        guard snapshot != lastEnrichmentAdmissionSnapshot else {
+            return
+        }
+        lastEnrichmentAdmissionSnapshot = snapshot
+        enrichmentAdmissionTransitionCount += 1
+        for (reason, count) in rejections.sorted(by: { $0.key.description < $1.key.description }) {
+            OtosLog.metadata.notice(
+                """
+                op=catalog.enrichment.admission phase=blocked reason=\(reason.description, privacy: .public) \
+                rejected=\(count, privacy: .public) admitted=\(admitted, privacy: .public) \
+                pending=\(snapshot.pending, privacy: .public) inFlight=\(snapshot.inFlight, privacy: .public) \
+                bytes=\(snapshot.bytes, privacy: .public) videoInFlight=\(snapshot.videoInFlight, privacy: .public)
+                """
+            )
+        }
     }
 
     private func makeWork(_ asset: MediaAsset) -> EnrichWork {

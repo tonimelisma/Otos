@@ -45,6 +45,22 @@ import OSLog
 /// ViewModel; `shutdown()` cancels its tasks and releases process-local SQLite
 /// claims before dropping queued work (tests use it to stop cleanly).
 actor EnrichmentCoordinator {
+    struct AdmissionDiagnosticSnapshot: Equatable {
+        let rejections: [EnrichmentAdmissionPolicy.Rejection: Int]
+        let admitted: Int
+        let pending: Int
+        let inFlight: Int
+        let bytes: Int64
+        let videoInFlight: Int
+
+        static func == (lhs: AdmissionDiagnosticSnapshot, rhs: AdmissionDiagnosticSnapshot) -> Bool {
+            Set(lhs.rejections.keys) == Set(rhs.rejections.keys)
+                && lhs.inFlight == rhs.inFlight
+                && lhs.bytes == rhs.bytes
+                && lhs.videoInFlight == rhs.videoInFlight
+        }
+    }
+
     struct EnrichWork {
         let id: MediaAssetID
         let url: URL
@@ -93,9 +109,8 @@ actor EnrichmentCoordinator {
 
     let store: CatalogStore
     let enricher: MediaEnricher
-    let materialize: @Sendable (URL) async -> MaterializationResult
+    let materializationRequester: any MaterializationRequesting
     let enrichConcurrency: Int
-    let downloadConcurrency: Int
     let claimBatchSize: Int
     let applyFlushInterval: Duration
     let applyFlushSleep: @Sendable (Duration) async -> Void
@@ -106,8 +121,8 @@ actor EnrichmentCoordinator {
     var claimedEnrichQueue: [EnrichWork] = []
     var datalessPending: [MediaAssetID: DownloadWork] = [:]
     var inFlightEnrich: Set<MediaAssetID> = []
-    var inFlightDownload: Set<MediaAssetID> = []
-    var inFlightDownloadBytes: [MediaAssetID: Int64] = [:]
+    /// IDs submitted to the shared materialization owner whose results enrichment awaits.
+    var submittedMaterializations: Set<MediaAssetID> = []
     var inFlightEnrichBytes: [MediaAssetID: Int64] = [:]
     var inFlightEnrichVideoCount = 0
     var pendingApply: [EnrichmentResult] = []
@@ -116,6 +131,8 @@ actor EnrichmentCoordinator {
     var eagerMode = false
     var isShuttingDown = false
     var lastDownloadCandidateEvaluationCount = 0
+    var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
+    var enrichmentAdmissionTransitionCount = 0
 
     let writeFailureBackoff: Duration
 
@@ -130,11 +147,9 @@ actor EnrichmentCoordinator {
     init(
         store: CatalogStore,
         enricher: MediaEnricher,
-        materialize: @escaping @Sendable (URL) async -> MaterializationResult = {
-            await EnrichmentCoordinator.liveMaterialize($0)
-        },
+        materializationRequester: (any MaterializationRequesting)? = nil,
+        materialize: @escaping @Sendable (URL) async -> MaterializationResult = { _ in .cancelled },
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
-        downloadConcurrency: Int = EnrichmentAdmissionPolicy.production.downloadConcurrency,
         claimBatchSize: Int = 32,
         applyFlushInterval: Duration = .seconds(1),
         applyFlushSleep: @escaping @Sendable (Duration) async -> Void = { duration in
@@ -145,13 +160,12 @@ actor EnrichmentCoordinator {
     ) {
         self.store = store
         self.enricher = enricher
-        self.materialize = materialize
+        self.materializationRequester = materializationRequester
+            ?? ClosureMaterializationRequester(operation: materialize)
         var policy = admissionPolicy
         policy.enrichConcurrency = enrichConcurrency
-        policy.downloadConcurrency = downloadConcurrency
         self.admissionPolicy = policy
         self.enrichConcurrency = enrichConcurrency
-        self.downloadConcurrency = downloadConcurrency
         self.claimBatchSize = max(claimBatchSize, enrichConcurrency)
         self.applyFlushInterval = applyFlushInterval
         self.applyFlushSleep = applyFlushSleep
@@ -159,10 +173,6 @@ actor EnrichmentCoordinator {
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signalStream = stream
         signalContinuation = continuation
-    }
-
-    static func liveMaterialize(_ url: URL) async -> MaterializationResult {
-        await FileMaterialization.materialize(url)
     }
 }
 
@@ -200,8 +210,7 @@ extension EnrichmentCoordinator {
         claimedEnrichQueue.removeAll()
         datalessPending.removeAll()
         inFlightEnrich.removeAll()
-        inFlightDownload.removeAll()
-        inFlightDownloadBytes.removeAll()
+        submittedMaterializations.removeAll()
         inFlightEnrichBytes.removeAll()
         inFlightEnrichVideoCount = 0
         pendingApply.removeAll()
@@ -254,7 +263,7 @@ extension EnrichmentCoordinator {
 
     private func hasInFlightWork(under rootPath: LibraryRootPath) -> Bool {
         inFlightEnrich.contains { $0.libraryRootPath == rootPath }
-            || inFlightDownload.contains { $0.libraryRootPath == rootPath }
+            || submittedMaterializations.contains { $0.libraryRootPath == rootPath }
     }
 }
 
@@ -305,16 +314,16 @@ extension EnrichmentCoordinator {
                     }
                 }
                 for work in await dequeueDownloadWork() {
-                    let materialize = materialize
-                    let store = store
-                    let id = work.id
+                    let requester = materializationRequester
                     group.addTask {
-                        await store.beginKnownMaterialization(for: id)
                         let start = Date()
-                        let result = await materialize(work.url)
-                        await store.endKnownMaterialization(
-                            for: id,
-                            success: result.outcome.isMaterialized
+                        let result = await requester.materialize(
+                            MaterializationCoordinator.Request(
+                                id: work.id,
+                                sourceSize: work.sourceSize,
+                                isVideo: work.isVideo,
+                                priority: work.isDeviceStaging ? .device : .background
+                            )
                         )
                         await self.finishDownload(
                             work,

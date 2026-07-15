@@ -2,115 +2,21 @@ import Foundation
 @testable import Otos
 import Testing
 
-extension EnrichmentCoordinator {
-    func setEagerCapacityTestState(root: LibraryRootPath, pendingCount: Int) {
-        eagerMode = true
-        let inFlightID = MediaAssetID(
-            libraryRootPath: root,
-            relativePath: MediaRelativePath(rawValue: "in-flight.jpg")
-        )
-        inFlightDownload.insert(inFlightID)
-        inFlightDownloadBytes[inFlightID] = 1
-        for index in 0 ..< pendingCount {
-            let id = MediaAssetID(
-                libraryRootPath: root,
-                relativePath: MediaRelativePath(rawValue: "pending-\(index).jpg")
-            )
-            datalessPending[id] = DownloadWork(
-                id: id,
-                url: id.fileURL,
-                sourceSize: 1,
-                captureDate: nil,
-                isVideo: false
-            )
-        }
-    }
-}
-
 struct EnrichmentCoordinatorTests {
-    @Test func eagerCapacityRejectionStopsAfterOneCandidate() async {
-        let root = LibraryRootPath(rawValue: "/library")
-        var policy = EnrichmentAdmissionPolicy.production
-        policy.downloadConcurrency = 2
-        policy.eagerDownloadsPerRootSoftCap = 1
+    @Test func unchangedAdmissionRejectionsEmitOneTransitionAcrossOneHundredWakes() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _ in .transient },
-            downloadConcurrency: 2,
-            admissionPolicy: policy
+            enricher: MediaEnricher { _, _, _, _ in .transient }
         )
-        await coordinator.setEagerCapacityTestState(root: root, pendingCount: 100)
-        let work = await coordinator.dequeueDownloadWork()
-        #expect(work.isEmpty)
-        #expect(await coordinator.lastDownloadCandidateEvaluationCount == 1)
-    }
-
-    @Test func downloadSchedulingReservesFinalSlotForViewportWork() {
-        #expect(!EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
-            isViewportWork: false,
-            inFlightDownloadCount: 0,
-            downloadConcurrency: 1
-        ))
-        #expect(EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
-            isViewportWork: true,
-            inFlightDownloadCount: 0,
-            downloadConcurrency: 1
-        ))
-        #expect(EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
-            isViewportWork: false,
-            inFlightDownloadCount: 2,
-            downloadConcurrency: 4
-        ))
-        #expect(!EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
-            isViewportWork: false,
-            inFlightDownloadCount: 3,
-            downloadConcurrency: 4
-        ))
-        #expect(EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
-            isViewportWork: true,
-            inFlightDownloadCount: 3,
-            downloadConcurrency: 4
-        ))
-    }
-
-    @Test func admissionBlocksMultiLargeVideoFloodAndAllowsOversizedSolo() {
-        let policy = EnrichmentAdmissionPolicy.production
-        let root = LibraryRootPath(rawValue: "/library")
-        let largeVideo = EnrichmentAdmissionPolicy.Candidate(
-            sourceSize: 2 * 1024 * 1024 * 1024,
-            isVideo: true,
-            isViewportOrDevice: false,
-            rootPath: root,
-            isEagerBackground: true
-        )
-        var inFlight = EnrichmentAdmissionPolicy.InFlightSnapshot.empty
-        #expect(policy.canDispatchDownload(candidate: largeVideo, inFlight: inFlight).isSuccess)
-        inFlight.downloadCount = 2
-        inFlight.downloadBytes = 4 * 1024 * 1024 * 1024
-        inFlight.largeVideoDownloadCount = 2
-        #expect(policy.canDispatchDownload(candidate: largeVideo, inFlight: inFlight).rejection == .largeVideoDownloadCap)
-
-        let solo = EnrichmentAdmissionPolicy.InFlightSnapshot.empty
-        let huge = EnrichmentAdmissionPolicy.Candidate(
-            sourceSize: 7 * 1024 * 1024 * 1024,
-            isVideo: true,
-            isViewportOrDevice: false,
-            rootPath: root,
-            isEagerBackground: true
-        )
-        #expect(policy.canDispatchDownload(candidate: huge, inFlight: solo).isSuccess)
-
-        let unknown = EnrichmentAdmissionPolicy.Candidate(
-            sourceSize: nil,
-            isVideo: false,
-            isViewportOrDevice: false,
-            rootPath: root,
-            isEagerBackground: true
-        )
-        inFlight = .empty
-        inFlight.downloadCount = 14
-        inFlight.downloadBytes = 100
-        #expect(policy.canDispatchDownload(candidate: unknown, inFlight: inFlight).isSuccess)
+        for _ in 0 ..< 100 {
+            await coordinator.recordEnrichmentAdmission(
+                rejections: [.videoEnrichCap: 25],
+                admitted: 0
+            )
+        }
+        #expect(await coordinator.enrichmentAdmissionTransitionCount == 1)
+        await coordinator.recordEnrichmentAdmission(rejections: [:], admitted: 1)
+        #expect(await coordinator.enrichmentAdmissionTransitionCount == 2)
     }
 
     @Test func enrichmentCoordinatorCapsVideosAndSkipsRejectedQueueHead() async throws {
@@ -165,8 +71,7 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized },
-            downloadConcurrency: 4
+            materialize: { _ in .testMaterialized }
         )
         let seeds = [
             deviceStagingSeed(rootPath: rootPath, relativePath: "video.mov", captureDate: 50, isVideo: true),
@@ -200,7 +105,6 @@ struct EnrichmentCoordinatorTests {
             enricher: blocker.enricher(),
             materialize: { _ in .testMaterialized },
             enrichConcurrency: 1,
-            downloadConcurrency: 1,
             claimBatchSize: 3,
             applyFlushInterval: .seconds(60)
         )
@@ -641,7 +545,6 @@ private func visibleLifecycleCoordinator(
         enricher: visibleLifecycleEnricher(),
         materialize: { _ in .testMaterialized },
         enrichConcurrency: 2,
-        downloadConcurrency: 1,
         claimBatchSize: 2,
         applyFlushInterval: .milliseconds(1)
     )

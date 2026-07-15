@@ -37,8 +37,9 @@ path.** Loupe and compare call it with a target long edge (main-display backing
 scale × window long edge). It:
 
 1. Checks `FileMaterialization.status` immediately before every byte read.
-2. On `.dataless`, returns `.downloading`, requests deliberate non-blocking
-   materialization (existing injectable helpers), and re-decodes on arrival.
+2. On `.dataless`, submits an interactive request to the shared
+   `MaterializationCoordinator`, returns `.downloading` when that attempt does not
+   materialize, and re-decodes on arrival.
 3. Decodes images via Image I/O
    `CGImageSourceCreateThumbnailAtIndex` with
    `kCGImageSourceThumbnailMaxPixelSize` (bounded memory; embedded RAW previews
@@ -63,9 +64,13 @@ placeholder).
 
 ## Consequences
 
-- Two deliberate byte-reading owners exist: `EnrichmentCoordinator` (background
-  enrichment) and `PreviewImageLoader` (user-initiated loupe/compare). Both gate
-  on `FileMaterialization`.
+- `PreviewImageLoader` remains the sole full-size decode owner, while
+  `MaterializationCoordinator` is the sole provider-transfer scheduling owner shared
+  with enrichment. Both consumers recheck live `FileMaterialization` status before
+  reading bytes.
+- Interactive preview demand prevents new device/background transfer dispatch until
+  interactive work drains. Same-ID lower-priority work is promoted while queued or
+  joined in flight without a duplicate provider request.
 - Viewing a dataless original accepts its download cost (consistent with
   ADR 0008's permission for deliberate materialization).
 - Pane content is identity-keyed: `PanePreview` binds a decode to its

@@ -173,86 +173,52 @@ Adjacent decisions requiring separate ADRs or specs:
    every rescan. Stamps are stored as integer seconds to avoid floating-point
    epsilon in equality. There is no stored `is_stale` flag.
 
-7. **Eager full-library materialization.** Otos materializes every dataless media
-   file in the background to enrich it, accepting the unreclaimable local disk
-   growth as the price of complete coverage. This is the enrichment application of
-   ADR 0008's permission to download deliberately and non-blocking; the catalog is
-   already media-only, so non-media is never downloaded. What the user is looking
-   at materializes immediately; the background fill is governed by a materialized-
-   first rule (enrich everything local before eagerly downloading the rest).
+7. **Eager full-library materialization.** Otos submits every dataless media file
+   for background materialization after local enrichment drains, accepting the
+   unreclaimable local disk growth. The catalog is already media-only, so non-media
+   is never downloaded.
 
-8. **One coordinator, two pools, cursorless scheduling, one claim lease.** A single
-   `EnrichmentCoordinator` actor owns the scheduling and two fixed worker pools —
-   **8 enrichment slots and 16 materialization slots** as count maxima — because a
-   worker must never block on a multi-second download, so the two are separate
-   I/O-bound concurrency budgets (neither is CPU-bound). Count alone is not
-   permission: `EnrichmentAdmissionPolicy` also enforces aggregate logical-byte
-   budgets, a large-video materialization cap, a video-enrichment cap, per-root
-   eager fairness, and viewport/device reserve so eager background work cannot
-   starve visible work or admit several multi-gigabyte videos at once. Unknown
-   size remains dispatchable as a small background unit. Non-viewport eager
-   materialization may use at most `downloadConcurrency - 1` slots while
-   viewport-dataless work is pending, so eager fill cannot block what the user is
-   looking at behind a full download pool.
-   Scheduling is cursorless: the next units are
-   queried from Store through `enrichmentCandidates(prioritizing:limit:)`, and Store
-   selects eligible candidate keys in priority/default order, claims only the rows
-   still free with one nullable `enrichment_claimed_until` column, then fetches the
-   claimed rows back in selected order. Visible priority always outranks fallback
-   and fills past contended rows until the limit or eligible input is exhausted.
-   Fallback claim ordering first offers available connected/removable source roots,
-   then fixed-library roots; inside each source class, work follows the default
-   browser's useful order — newest `best_capture_unix` first, then stable path
-   tie-breakers — rather than path `sort_key` order. MTP camera staging seeds use
-   the same existing download pool but are ordered still/image items before videos,
-   then capture date, then path, so short still downloads do not sit behind video
-   transfers from the same device. The coordinator maintains no durable backlog or
-   SQL partition, but it does keep one small process-local queue of already claimed
-   work so a full sweep does not become one claim transaction per free worker slot.
-   The rest of its runtime state is what it cannot derive (viewport, in-flight
-   guards, the just-downloaded `freshly` LIFO hand-off, the discovered-dataless set,
-   the pending-apply buffer, and one `eagerMode` latch).
-   Those process-local sets and queued claims prevent duplicate scheduling inside
-   this coordinator; the SQLite lease is the SQL query gate that prevents repeated
-   dequeue of already-owned rows across queries.
+8. **Separate enrichment and materialization owners.** `EnrichmentCoordinator`
+   owns cursorless catalog claims, eight local byte-reading workers, claim
+   lifecycles, the `freshly` handoff, and batched writes. It does not schedule
+   physical provider transfers. `MaterializationCoordinator` is the sole owner of
+   deliberate transfers requested by preview, device staging, or enrichment.
 
-   **Known-materialization event suppression.** Provider hydration is fact-neutral
-   for measured OneDrive samples (research 2026-07-11): logical size and content
-   mtime are unchanged, and events are regular-file metadata/content shapes. Store
-   may suppress only those allowlisted shapes for normalized `MediaAssetID`s the
-   coordinator has explicitly begun materializing (active through operation
-   completion with a ≥135 s safety ceiling covering the 120 s materialization
-   timeout plus measured event lag, then 5 s post-success grace; cleared
-   immediately on failure; no final settlement). Create/remove/rename/directory/dropped/root shapes never
-   suppress; launch and 24 h integrity scans repair residual misses.
+   Materialization priority is interactive, then device, then background. Pending
+   or active interactive work prevents new lower-priority dispatch. Same-identity
+   demand promotes queued work or joins an in-flight transfer. Global admission is
+   16 transfers and 2 GiB logical bytes with two large videos (at least 256 MiB),
+   one slot reserved from background work, and one active background transfer per
+   root. Unknown size counts as 4 MiB; an oversized request may run alone.
 
-   Claim transitions are explicit. Completed results keep their claim until
-   `applyEnrichmentBatch` attempts the write; after that attempt, successful and
-   stale-dropped results release the claim. Transient enrichment releases the claim
-   so it can retry. Dataless discovery refreshes the claim while the coordinator owns
-   download state. Successful or failed materialization releases the claim before
-   the ID is rediscovered or handed back through `freshly`; persistent write failure
-   leaves the ordinary lease expiry/backoff to avoid a tight retry loop. Because
-   `enrichment_claimed_until` is a process-local scheduler lease, Store startup
-   clears abandoned claims from the prior process, and coordinator shutdown releases
-   queued, undispatched, in-flight, and pending claims before dropping runtime
-   state.
+   Apple's public `startDownloadingUbiquitousItem` API has no priority or reorder
+   parameter. Otos cannot promise to reorder an already-issued provider request;
+   it stops lower-priority admission and bounds pre-existing same-root contention
+   instead of cancelling work the provider may already be performing.
 
-   Materialization status is checked live at exactly one site — the enrichment pull,
-   immediately before the read — which is both the router (materialized → enrich;
-   dataless → download) and the ADR 0008 safety gate; it is never persisted.
-   Download workers issue a non-blocking provider request and then poll status
-   without reading bytes. If a file remains dataless, the worker re-issues the
-   provider request every second within the same overall timeout so a stalled
-   provider request becomes attributable and bounded rather than an invisible
-   120-second wait. `FileMaterialization` returns the outcome, re-request count,
-   and request-to-completion elapsed time so the coordinator can record durable
-   materialization lifecycle evidence.
-   Enrichment writes are batched (one transaction, one detail-only notification per
-   batch) because a per-asset transaction and per-asset notification would crawl and
-   re-sort the catalog on every completion. Cancellation is teardown-only: eager-
-   everything re-downloads anyway, thumbnails are durable, and staleness re-queues,
-   so per-unit cancel buys nothing.
+   Enrichment remains cursorless: Store selects and claims eligible rows through
+   `enrichmentCandidates(prioritizing:limit:)`. Visible work outranks fallback;
+   available connected/removable roots precede fixed roots, then capture date and
+   stable path break ties. MTP staging submits device-priority work, with stills
+   before videos, then capture date and path. No durable materialization queue or
+   status column exists.
+
+   `MaterializationCoordinator` brackets each coalesced physical transfer with one
+   Store known-materialization begin/end pair. Only measured regular-file hydration
+   event shapes suppress; structural and dropped-event shapes always reconcile.
+   The active window covers the 120-second timeout plus measured event lag and the
+   existing post-success grace.
+
+   Dataless discovery refreshes the enrichment claim while the shared materializer
+   runs. Success releases the old claim and returns the identity through `freshly`;
+   failure follows the existing release/retry rules. `FileMaterialization` remains
+   the one-URL mechanism: it checks `SF_DATALESS`, requests asynchronously, polls
+   without reading bytes, and re-requests once per second inside the same timeout.
+
+   Admission diagnostics are aggregate scheduler states. Rejections are counted by
+   reason after a full pass and logged only when that state changes, followed by one
+   unblocked transition. No candidate is logged again on every wake. Enrichment
+   writes remain one timed transaction and one detail notification per batch.
 
 ## Alternatives Considered
 
