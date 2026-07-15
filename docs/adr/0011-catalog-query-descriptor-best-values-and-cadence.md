@@ -113,14 +113,16 @@ Toolbar and View menu controls share `CatalogFilterMenuContent` and
 `CatalogSortMenuContent`, so native checked/mixed state, scoped availability, and
 complete sort-order copy cannot drift between the two command surfaces. Sort is
 presented as six complete field-and-direction choices but still writes the same
-`MediaSortOrder` value. Filter uses native collection-backed toggles: All Items is
-the empty descriptor, kind rows cover every child file type, partial child
-selection gives the kind row a mixed state, and selecting every scoped kind
-canonicalizes back to All Items.
+`MediaSortOrder` value. The toolbar filter uses a native popover with Images, RAW,
+and Videos parent toggles directly above their child file types. Partial child
+selection gives the parent a mixed state; selecting every scoped kind or clearing
+every selection canonicalizes back to the empty, all-items descriptor. The View
+menu opens that same popover instead of duplicating the hierarchy.
 
 Exact `best_format` tokens remain catalog facts. `MediaFileTypeOption` is a query-
-surface grouping only: HEIC and HEIF appear as one `HEIF / HEIC` choice whose
-filter predicate contains both exact tokens. The grouping neither changes the
+surface grouping only: HEIC, HEIF, and HIF appear as one `HEIF` choice whose
+filter predicate contains all exact tokens; JPEG/JPG/JPE and TIFF/TIF aliases are
+grouped similarly. The grouping neither changes the
 generated `best_format` column nor discards the original extension fact.
 
 ## Alternatives Considered

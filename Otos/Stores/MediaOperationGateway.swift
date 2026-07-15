@@ -16,7 +16,7 @@ nonisolated enum MediaOperationGateway {
         try Row.fetchAll(
             db,
             sql: """
-            SELECT relative_path, kind, byte_size,
+            SELECT relative_path, kind, content_type_identifier, byte_size,
                    content_modified_at_unix, capture_wall_compact
             FROM media_asset
             WHERE library_root_id = ?
@@ -37,7 +37,8 @@ nonisolated enum MediaOperationGateway {
                 captureWallCompact: row["capture_wall_compact"],
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
-                companions: companionsByPrimary[relative.rawValue] ?? []
+                companions: companionsByPrimary[relative.rawValue] ?? [],
+                contentTypeIdentifier: row["content_type_identifier"]
             )
         }
     }

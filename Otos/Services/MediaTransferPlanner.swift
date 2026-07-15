@@ -244,8 +244,16 @@ private nonisolated extension MediaTransferPlanner {
             var advanceSuffix = false
 
             memberLoop: for member in bundle.members {
-                let ext = member.fileExtension.lowercased()
-                let fileName = baseName + suffixToken + (ext.isEmpty ? "" : ".\(ext)")
+                let memberBaseName = switch snapshot.policy.destinationNamePolicy {
+                case .original:
+                    URL(fileURLWithPath: member.relativePath.rawValue)
+                        .deletingPathExtension()
+                        .lastPathComponent
+                case .captureDateTime:
+                    baseName
+                }
+                let ext = destinationExtension(for: member, policy: snapshot.policy)
+                let fileName = memberBaseName + suffixToken + (ext.isEmpty ? "" : ".\(ext)")
                 let relative = MediaRelativePath(
                     rawValue: folder.isEmpty ? fileName : "\(folder)/\(fileName)"
                 )
@@ -253,7 +261,7 @@ private nonisolated extension MediaTransferPlanner {
 
                 if snapshot.policy.importSidecarFiles {
                     for companion in member.companions where companion.primaryRelativePath == member.relativePath {
-                        let companionName = baseName + suffixToken + ".\(companion.kind.rawValue)"
+                        let companionName = memberBaseName + suffixToken + ".\(companion.kind.rawValue)"
                         let companionRelative = MediaRelativePath(
                             rawValue: folder.isEmpty ? companionName : "\(folder)/\(companionName)"
                         )
@@ -405,16 +413,6 @@ private nonisolated extension MediaTransferPlanner {
 
         switch probe {
         case .absent:
-            if let catalog = snapshot.destinationOccupants[candidate] {
-                return catalogDecision(
-                    member: member,
-                    candidate: candidate,
-                    catalog: catalog,
-                    snapshot: snapshot,
-                    comparisons: comparisons,
-                    pendingComparisons: &pendingComparisons
-                )
-            }
             return .copy(candidate)
         case let .regularFile(byteSize, modifiedAt):
             if let catalog = snapshot.destinationOccupants[candidate] {
@@ -422,6 +420,8 @@ private nonisolated extension MediaTransferPlanner {
                     member: member,
                     candidate: candidate,
                     catalog: catalog,
+                    liveByteSize: byteSize,
+                    liveModifiedAt: modifiedAt,
                     snapshot: snapshot,
                     comparisons: comparisons,
                     pendingComparisons: &pendingComparisons
@@ -440,6 +440,8 @@ private nonisolated extension MediaTransferPlanner {
         member: PlanningFileFacts,
         candidate: MediaRelativePath,
         catalog: DestinationOccupantFacts,
+        liveByteSize: Int64?,
+        liveModifiedAt: Date?,
         snapshot: ImportPlanningSnapshot,
         comparisons: [ComparisonRequest: ComparisonResult],
         pendingComparisons: inout [ComparisonRequest]
@@ -449,14 +451,19 @@ private nonisolated extension MediaTransferPlanner {
            catalog.importSourceByteSize == member.byteSize,
            datesMatchToFilesystemPrecision(catalog.importSourceModifiedAt, member.contentModifiedAt),
            catalog.importDestinationByteSize == catalog.byteSize,
+           catalog.byteSize == liveByteSize,
            datesMatchToFilesystemPrecision(
                catalog.importDestinationModifiedAt,
                catalog.contentModifiedAt
+           ),
+           datesMatchToFilesystemPrecision(
+               catalog.contentModifiedAt,
+               liveModifiedAt
            )
         {
             return .skip(candidate)
         }
-        guard member.byteSize != nil, catalog.byteSize != nil, member.byteSize == catalog.byteSize else {
+        guard member.byteSize != nil, liveByteSize != nil, member.byteSize == liveByteSize else {
             return .advanceSuffix
         }
         let comparison = ComparisonRequest(
@@ -466,8 +473,8 @@ private nonisolated extension MediaTransferPlanner {
             sourceModifiedAt: member.contentModifiedAt,
             destinationRoot: snapshot.destinationRoot,
             destinationRelativePath: candidate,
-            destinationByteSize: catalog.byteSize,
-            destinationModifiedAt: catalog.contentModifiedAt,
+            destinationByteSize: liveByteSize,
+            destinationModifiedAt: liveModifiedAt,
             sourceURL: member.sourceURL,
             destinationURL: snapshot.destinationRoot.url.appending(
                 path: candidate.rawValue,
@@ -553,6 +560,18 @@ private nonisolated extension MediaTransferPlanner {
             URL(fileURLWithPath: primary.relativePath.rawValue).deletingPathExtension().lastPathComponent
         case .captureDateTime:
             timestamp.dateTimeFileName
+        }
+    }
+
+    static func destinationExtension(for member: PlanningFileFacts, policy: ImportPolicy) -> String {
+        switch policy.destinationNamePolicy {
+        case .original:
+            member.fileExtension
+        case .captureDateTime:
+            CanonicalMediaExtension.forDateTimeName(
+                contentTypeIdentifier: member.contentTypeIdentifier,
+                sourceExtension: member.fileExtension
+            )
         }
     }
 

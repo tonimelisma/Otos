@@ -7,31 +7,37 @@ import SwiftUI
 // command calls a ViewModel intent so toolbar and menu-bar actions share the same
 // implementation path.
 
-struct CatalogFilterMenu: View {
+struct CatalogFilterControl: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
+    @Binding var isPresented: Bool
     let setKind: (MediaKind, Bool) -> Void
     let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
     let clearFilters: () -> Void
 
     var body: some View {
-        Menu {
-            CatalogFilterMenuContent(
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+                .foregroundStyle(descriptor.filter.isActive ? Color.accentColor : Color.primary)
+        }
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            CatalogFilterPopoverContent(
                 descriptor: descriptor,
                 options: options,
                 setKind: setKind,
                 setFileType: setFileType,
                 clearFilters: clearFilters
             )
-        } label: {
-            Image(systemName: "line.3.horizontal.decrease")
-                .foregroundStyle(descriptor.filter.isActive ? Color.accentColor : Color.primary)
+            .frame(width: 260)
+            .padding(16)
         }
         .help(descriptor.filter.isActive ? "Filter (Active)" : "Filter")
     }
 }
 
-struct CatalogFilterMenuContent: View {
+struct CatalogFilterPopoverContent: View {
     let descriptor: CatalogQueryDescriptor
     let options: CatalogFilterOptions
     let setKind: (MediaKind, Bool) -> Void
@@ -39,48 +45,32 @@ struct CatalogFilterMenuContent: View {
     let clearFilters: () -> Void
 
     var body: some View {
-        Toggle("All Items", isOn: allItemsBinding)
-        Divider()
-        ForEach(availableKinds, id: \.self) { kind in
-            Toggle(kind.label, sources: kindToggleSources(kind), isOn: \.isOn)
-        }
-        if hasFileTypes {
-            Divider()
-            Menu("File Types") {
-                ForEach(availableKinds, id: \.self) { kind in
-                    let fileTypes = options.fileTypes(for: kind)
-                    if !fileTypes.isEmpty {
-                        Section(kind.label) {
-                            ForEach(fileTypes, id: \.self) { fileType in
-                                Toggle(
-                                    fileType.label,
-                                    isOn: fileTypeBinding(fileType, kind: kind)
-                                )
-                            }
-                        }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Filter")
+                .font(.headline)
+            ForEach(availableKinds, id: \.self) { kind in
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle(kind.label, sources: kindToggleSources(kind), isOn: \.isOn)
+                        .fontWeight(.semibold)
+                        .accessibilityLabel(kind.label)
+                    ForEach(options.fileTypes(for: kind), id: \.self) { fileType in
+                        Toggle(fileType.label, isOn: fileTypeBinding(fileType, kind: kind))
+                            .padding(.leading, 20)
+                            .accessibilityLabel(fileType.label)
                     }
                 }
+                .toggleStyle(.checkbox)
             }
+            Divider()
+            Button("Clear Filters", action: clearFilters)
+                .disabled(!descriptor.filter.isActive)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private var availableKinds: [MediaKind] {
         options.availableKinds
-    }
-
-    private var hasFileTypes: Bool {
-        availableKinds.contains { !options.fileTypes(for: $0).isEmpty }
-    }
-
-    private var allItemsBinding: Binding<Bool> {
-        Binding(
-            get: { !descriptor.filter.isActive },
-            set: { isAllItems in
-                if isAllItems {
-                    clearFilters()
-                }
-            }
-        )
     }
 
     /// A collection-backed Toggle gives macOS its native mixed state. Every

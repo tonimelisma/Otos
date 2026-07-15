@@ -3,11 +3,46 @@ import Foundation
 import Testing
 
 struct MediaTransferPlannerTests {
+    @Test func dateTimePolicyUsesCanonicalAppleExtension() {
+        let source = LibraryRootPath(rawValue: "/tmp/card")
+        let destination = LibraryRootPath(rawValue: "/tmp/library")
+        let relative = MediaRelativePath(rawValue: "IMG_1.JPG")
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: source, relativePath: relative),
+            sourceURL: source.url.appending(path: relative.rawValue),
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 100),
+            captureWallCompact: 20_260_714_153_012,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .captureDateTime
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1, sourceRoot: source, destinationRoot: destination,
+            sourceOccupancyRevision: 1, destinationOccupancyRevision: 1,
+            sourceMedia: [facts], destinationOccupants: [:], knownForeignOccupants: [],
+            policy: policy, calendar: .current, timeZone: .current
+        )
+        let expected = MediaRelativePath(rawValue: "20260714_153012.jpeg")
+        let request = NamespaceOccupancyRequest(rootPath: destination, relativePath: expected)
+        let outcome = MediaTransferPlanner.planImport(snapshot: snapshot, occupancy: [request: .absent])
+        guard case let .ready(plan) = outcome else {
+            Issue.record("expected ready plan")
+            return
+        }
+        #expect(plan.entries[0].finalDestination == expected)
+    }
+
     @Test func matchingImportProvenanceSkipsWithoutComparisonProbe() {
         let source = LibraryRootPath(rawValue: "/tmp/card")
         let destination = LibraryRootPath(rawValue: "/tmp/library")
         let relative = MediaRelativePath(rawValue: "IMG_1.JPG")
-        let destinationRelative = MediaRelativePath(rawValue: "IMG_1.jpg")
+        let destinationRelative = MediaRelativePath(rawValue: "IMG_1.JPG")
         let modified = Date(timeIntervalSince1970: 1_700_000_000)
         let facts = PlanningFileFacts(
             id: MediaAssetID(libraryRootPath: source, relativePath: relative),
@@ -18,7 +53,8 @@ struct MediaTransferPlannerTests {
             captureWallCompact: nil,
             mediaKind: .image,
             fileExtension: "JPG",
-            companions: []
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
         )
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
@@ -57,6 +93,51 @@ struct MediaTransferPlannerTests {
             return
         }
         #expect(plan.entries[0].disposition == .skipPreexisting(destination: destinationRelative))
+    }
+
+    @Test func staleCatalogProvenanceCannotSkipAnAbsentLiveDestination() {
+        let source = LibraryRootPath(rawValue: "/tmp/card")
+        let destination = LibraryRootPath(rawValue: "/tmp/library")
+        let relative = MediaRelativePath(rawValue: "IMG_1.JPG")
+        let modified = Date(timeIntervalSince1970: 1_700_000_000)
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: source, relativePath: relative),
+            sourceURL: source.url.appending(path: relative.rawValue),
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: modified,
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: []
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let occupant = DestinationOccupantFacts(
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: modified,
+            importSourceRootPath: source,
+            importSourceRelativePath: relative,
+            importSourceByteSize: 10,
+            importSourceModifiedAt: modified,
+            importDestinationByteSize: 10,
+            importDestinationModifiedAt: modified
+        )
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1, sourceRoot: source, destinationRoot: destination,
+            sourceOccupancyRevision: 1, destinationOccupancyRevision: 1,
+            sourceMedia: [facts], destinationOccupants: [relative: occupant],
+            knownForeignOccupants: [], policy: policy, calendar: .current, timeZone: .current
+        )
+        let request = NamespaceOccupancyRequest(rootPath: destination, relativePath: relative)
+        let outcome = MediaTransferPlanner.planImport(snapshot: snapshot, occupancy: [request: .absent])
+        guard case let .ready(plan) = outcome else {
+            Issue.record("expected ready copy plan")
+            return
+        }
+        #expect(plan.entries[0].disposition == .copy(destination: relative))
     }
 
     @Test func changedSourceMtimeFallsBackToComparison() {
@@ -167,7 +248,8 @@ struct MediaTransferPlannerTests {
             captureWallCompact: 20_260_101_120_000,
             mediaKind: .image,
             fileExtension: "JPG",
-            companions: []
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
         )
         let snapshot = try ImportPlanningSnapshot(
             generation: 1,
@@ -185,7 +267,7 @@ struct MediaTransferPlannerTests {
         let occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [
             NamespaceOccupancyRequest(
                 rootPath: destination,
-                relativePath: MediaRelativePath(rawValue: "2026/01/20260101_120000.jpg")
+                relativePath: MediaRelativePath(rawValue: "2026/01/20260101_120000.jpeg")
             ): .absent,
         ]
         let outcome = MediaTransferPlanner.planImport(snapshot: snapshot, occupancy: occupancy)
@@ -194,7 +276,7 @@ struct MediaTransferPlannerTests {
             return
         }
         #expect(plan.entries.count == 1)
-        #expect(plan.entries[0].finalDestination.rawValue == "2026/01/20260101_120000.jpg")
+        #expect(plan.entries[0].finalDestination.rawValue == "2026/01/20260101_120000.jpeg")
         #expect(plan.entries[0].disposition == .copy(destination: plan.entries[0].finalDestination))
         #expect(plan.totals.copyCount == 1)
     }

@@ -378,7 +378,16 @@ nonisolated enum ReorganizationPlanner {
                     .lastPathComponent
             }
         }
-        let ext = media.fileExtension.isEmpty ? "" : ".\(media.fileExtension.lowercased())"
+        let destinationExtension = switch policy.destinationNamePolicy {
+        case .original:
+            media.fileExtension
+        case .captureDateTime:
+            CanonicalMediaExtension.forDateTimeName(
+                contentTypeIdentifier: media.contentTypeIdentifier,
+                sourceExtension: media.fileExtension
+            )
+        }
+        let ext = destinationExtension.isEmpty ? "" : ".\(destinationExtension)"
         let name = stem + ext
         let relative = folder.isEmpty ? name : "\(folder)/\(name)"
         return MediaRelativePath(rawValue: relative)

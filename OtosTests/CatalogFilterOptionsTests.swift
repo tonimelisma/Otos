@@ -12,20 +12,21 @@ struct CatalogFilterOptionsTests {
         #expect(options.formats(for: .image).isEmpty)
     }
 
-    @Test func heicAndHeifRemainExactFactsButShareOneFileTypeChoice() {
+    @Test func heicHeifAndHifRemainExactFactsButShareOneFileTypeChoice() {
         let heic = MediaFormatToken(rawValue: "HEIC")
         let heif = MediaFormatToken(rawValue: "HEIF")
+        let hif = MediaFormatToken(rawValue: "HIF")
         let options = CatalogFilterOptions(formatsByKind: [
-            .image: [heic, heif, MediaFormatToken(rawValue: "JPEG")],
+            .image: [heic, heif, hif, MediaFormatToken(rawValue: "JPEG")],
         ])
 
-        #expect(options.formats(for: .image) == [heic, heif, MediaFormatToken(rawValue: "JPEG")])
+        #expect(options.formats(for: .image) == [heic, heif, hif, MediaFormatToken(rawValue: "JPEG")])
         #expect(options.fileTypes(for: .image) == [
             MediaFileTypeOption(format: heic),
             MediaFileTypeOption(format: MediaFormatToken(rawValue: "JPEG")),
         ])
-        #expect(options.fileTypes(for: .image).first?.label == "HEIF / HEIC")
-        #expect(Set(options.fileTypes(for: .image).first?.formats ?? []) == [heic, heif])
+        #expect(options.fileTypes(for: .image).first?.label == "HEIF")
+        #expect(Set(options.fileTypes(for: .image).first?.formats ?? []) == [heic, heif, hif])
     }
 
     @Test func selectingAWholeKindReplacesItsChildFileTypes() {
@@ -39,7 +40,11 @@ struct CatalogFilterOptionsTests {
         )
 
         #expect(formatOnly.kinds.isEmpty)
-        #expect(formatOnly.formats == [MediaFormatToken(rawValue: "JPEG")])
+        #expect(formatOnly.formats == [
+            MediaFormatToken(rawValue: "JPE"),
+            MediaFormatToken(rawValue: "JPEG"),
+            MediaFormatToken(rawValue: "JPG"),
+        ])
 
         let allImages = formatOnly.settingKind(.image, included: true, options: options)
         #expect(allImages.kinds == [.image])
@@ -62,6 +67,7 @@ struct CatalogFilterOptionsTests {
         #expect(withoutJPEG.formats == [
             MediaFormatToken(rawValue: "HEIC"),
             MediaFormatToken(rawValue: "HEIF"),
+            MediaFormatToken(rawValue: "HIF"),
         ])
     }
 

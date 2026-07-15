@@ -86,12 +86,30 @@ nonisolated struct MediaFileTypeOption: Hashable, Comparable {
     private static let heifFormats = [
         MediaFormatToken(rawValue: "HEIC"),
         MediaFormatToken(rawValue: "HEIF"),
+        MediaFormatToken(rawValue: "HIF"),
+    ]
+
+    private static let jpegFormats = [
+        MediaFormatToken(rawValue: "JPEG"),
+        MediaFormatToken(rawValue: "JPG"),
+        MediaFormatToken(rawValue: "JPE"),
+    ]
+
+    private static let tiffFormats = [
+        MediaFormatToken(rawValue: "TIFF"),
+        MediaFormatToken(rawValue: "TIF"),
     ]
 
     init(format: MediaFormatToken) {
         if Self.heifFormats.contains(format) {
-            label = "HEIF / HEIC"
+            label = "HEIF"
             formats = Self.heifFormats
+        } else if Self.jpegFormats.contains(format) {
+            label = "JPEG"
+            formats = Self.jpegFormats
+        } else if Self.tiffFormats.contains(format) {
+            label = "TIFF"
+            formats = Self.tiffFormats
         } else {
             label = format.rawValue
             formats = [format]

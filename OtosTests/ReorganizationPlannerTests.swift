@@ -38,7 +38,8 @@ struct ReorganizationPlannerTests {
     private func media(
         path: String,
         compact: Int64 = 20_260_710_120_000,
-        companions: [MediaCompanion] = []
+        companions: [MediaCompanion] = [],
+        contentTypeIdentifier: String? = nil
     ) -> PlanningFileFacts {
         PlanningFileFacts(
             id: MediaAssetID(
@@ -52,7 +53,8 @@ struct ReorganizationPlannerTests {
             captureWallCompact: compact,
             mediaKind: .image,
             fileExtension: URL(fileURLWithPath: path).pathExtension,
-            companions: companions
+            companions: companions,
+            contentTypeIdentifier: contentTypeIdentifier
         )
     }
 
@@ -94,6 +96,12 @@ struct ReorganizationPlannerTests {
             #expect(plan.mediaDispositions[item.id] == .noOp)
             #expect(plan.components.isEmpty)
         }
+    }
+
+    @Test func dateTimePolicyUsesCanonicalAppleExtension() {
+        let item = media(path: "IMG_1.HIF", contentTypeIdentifier: "public.heif")
+        guard let plan = planReady(snapshot: snapshot(media: [item])) else { return }
+        #expect(plan.members.first?.finalDestination.rawValue.hasSuffix(".heif") == true)
     }
 
     @Test func byteIdenticalSourcesRemainTwoRelocations() {

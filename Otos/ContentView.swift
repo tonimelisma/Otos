@@ -55,9 +55,13 @@ struct ContentView: View {
                     viewMode: viewModel.viewMode,
                     setViewMode: viewModel.setViewMode
                 )
-                CatalogFilterMenu(
+                CatalogFilterControl(
                     descriptor: viewModel.queryDescriptor,
                     options: viewModel.state.filterOptions,
+                    isPresented: Binding(
+                        get: { viewModel.isFilterPresented },
+                        set: { viewModel.setFilterPresented($0) }
+                    ),
                     setKind: viewModel.setMediaKind,
                     setFileType: viewModel.setMediaFileType,
                     clearFilters: viewModel.clearMediaFilter

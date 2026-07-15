@@ -56,14 +56,8 @@ struct OtosApp: App {
                     )
                 }
                 Divider()
-                Menu("Filter") {
-                    CatalogFilterMenuContent(
-                        descriptor: catalogViewModel.queryDescriptor,
-                        options: catalogViewModel.state.filterOptions,
-                        setKind: catalogViewModel.setMediaKind,
-                        setFileType: catalogViewModel.setMediaFileType,
-                        clearFilters: catalogViewModel.clearMediaFilter
-                    )
+                Button("Show Filter") {
+                    catalogViewModel.showFilter()
                 }
                 Divider()
                 Button("Zoom In") {

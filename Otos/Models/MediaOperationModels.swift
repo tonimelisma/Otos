@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 
 // Media operation planning models (plan 0055 Stage C).
 //
@@ -36,12 +37,58 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let contentModifiedAt: Date?
     let captureWallCompact: Int64?
     let mediaKind: MediaKind?
+    let contentTypeIdentifier: String?
     let fileExtension: String
     let companions: [MediaCompanion]
+
+    init(
+        id: MediaAssetID,
+        sourceURL: URL,
+        relativePath: MediaRelativePath,
+        byteSize: Int64?,
+        contentModifiedAt: Date?,
+        captureWallCompact: Int64?,
+        mediaKind: MediaKind?,
+        fileExtension: String,
+        companions: [MediaCompanion],
+        contentTypeIdentifier: String? = nil
+    ) {
+        self.id = id
+        self.sourceURL = sourceURL
+        self.relativePath = relativePath
+        self.byteSize = byteSize
+        self.contentModifiedAt = contentModifiedAt
+        self.captureWallCompact = captureWallCompact
+        self.mediaKind = mediaKind
+        self.contentTypeIdentifier = contentTypeIdentifier
+        self.fileExtension = fileExtension
+        self.companions = companions
+    }
 
     /// Best planning date: embedded capture wall when present, else source mtime.
     var hasUsableDate: Bool {
         captureWallCompact != nil || contentModifiedAt != nil
+    }
+}
+
+/// Chooses a destination extension only when Otos authors a new date/time leaf
+/// name. The scanner's filesystem content type is authoritative; parser output
+/// is deliberately absent from this boundary.
+nonisolated enum CanonicalMediaExtension {
+    static func forDateTimeName(
+        contentTypeIdentifier: String?,
+        sourceExtension: String
+    ) -> String {
+        guard let contentTypeIdentifier,
+              let contentType = UTType(contentTypeIdentifier),
+              !contentType.isDynamic,
+              MediaKind.classify(contentType) != nil,
+              let preferred = contentType.preferredFilenameExtension,
+              !preferred.isEmpty
+        else {
+            return sourceExtension
+        }
+        return preferred.lowercased()
     }
 }
 

@@ -49,6 +49,7 @@ final class CatalogWindowViewModel {
 
     private(set) var sidebarSelection: SidebarSelection = .allMedia
     private(set) var queryDescriptor: CatalogQueryDescriptor = .default
+    private(set) var isFilterPresented = false
     private(set) var ejectingSourceIdentities: Set<String> = []
     var ejectAlertMessage: String?
     var state: CatalogWindowState = .empty
@@ -559,6 +560,14 @@ extension CatalogWindowViewModel {
 
     func clearMediaFilter() {
         setMediaFilter(.all)
+    }
+
+    func showFilter() {
+        setFilterPresented(true)
+    }
+
+    func setFilterPresented(_ isPresented: Bool) {
+        isFilterPresented = isPresented
     }
 
     func setMediaKind(_ kind: MediaKind, included: Bool) {
