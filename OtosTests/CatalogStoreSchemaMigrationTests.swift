@@ -121,6 +121,12 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(columns.contains("import_batch_unix_ms"))
         #expect(columns.contains("capture_wall_compact"))
         #expect(columns.contains("capture_wall_precision"))
+        #expect(columns.contains("import_source_root_path"))
+        #expect(columns.contains("import_source_relative_path"))
+        #expect(columns.contains("import_source_byte_size"))
+        #expect(columns.contains("import_source_modified_at_epoch"))
+        #expect(columns.contains("import_destination_byte_size"))
+        #expect(columns.contains("import_destination_modified_at_epoch"))
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.count == 1)

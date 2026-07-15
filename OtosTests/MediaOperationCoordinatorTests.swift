@@ -3,6 +3,47 @@ import Foundation
 import Testing
 
 struct MediaOperationCoordinatorTests {
+    @Test func repeatedIntentAndOccupancyChangeStartOneBatch() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        for index in 0 ..< 12 {
+            try Data(repeating: UInt8(index), count: 512 * 1024).write(
+                to: sourceURL.appending(path: "image-\(index).jpg")
+            )
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationURL)
+        let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
+        try await store.attachRemovableVolume(
+            mountURL: sourceURL,
+            identity: "volume:one-execution",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
+        _ = try await waitForCatalogStoreState(store) { state in
+            !state.isScanning && state.removableSources.first?.activity == .idle
+        }
+        let coordinator = MediaOperationCoordinator(store: store)
+        await coordinator.start()
+        await coordinator.setDestination(destination, for: source)
+        _ = try await readyGeneration(coordinator, source: source)
+
+        async let first: Void = coordinator.queueImport(for: source)
+        try await Task.sleep(for: .milliseconds(20))
+        async let second: Void = coordinator.queueImport(for: source)
+        _ = await store.bumpOccupancyRevision(for: destination)
+        _ = await (first, second)
+
+        let batches = try await store.importBatches()
+        #expect(batches.count == 1)
+        #expect(batches.first?.assetCount == 12)
+    }
+
     @Test func queueImportSurfacesExecutionUnavailableOrQueuedState() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)

@@ -29,19 +29,30 @@ extension CatalogWindowViewModel {
     }
 
     func addLibrary(url: URL) {
+        logCatalogIntent("addLibrary", path: url.path)
         submitCatalogMutation(.addLibrary(url))
     }
 
     func ensureLibrary(url: URL) {
+        logCatalogIntent("ensureLibrary", path: url.path)
         submitCatalogMutation(.ensureLibrary(url))
     }
 
     func removeLibrary(_ library: LibraryRoot) {
+        logCatalogIntent("removeLibrary", path: library.path.rawValue)
         submitCatalogMutation(.removeLibrary(library.path))
     }
 
     func ejectRemovableSource(_ source: LibraryRoot) {
+        OtosLog.ui.noticeOperation("intent.eject", phase: "received", fields: [
+            "sourcePath": source.path.rawValue,
+        ])
         guard let identity = source.deviceIdentity else {
+            OtosLog.ui.noticeOperation("intent.eject", phase: "rejected", fields: [
+                "reason": "missingDeviceIdentity",
+                "sourcePath": source.path.rawValue,
+            ])
+            ejectAlertMessage = "The source can’t be ejected because its device identity is unavailable."
             return
         }
         beginEjectingSource(identity)
@@ -49,7 +60,12 @@ extension CatalogWindowViewModel {
     }
 
     func forgetRemovableSource(_ source: LibraryRoot) {
+        logCatalogIntent("forgetRemovableSource", path: source.path.rawValue)
         submitCatalogMutation(.forgetRemovableSource(source))
+    }
+
+    private func logCatalogIntent(_ name: String, path: String) {
+        OtosLog.ui.noticeOperation("intent.\(name)", phase: "received", fields: ["path": path])
     }
 
     nonisolated static func performCatalogMutation(

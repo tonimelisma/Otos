@@ -167,3 +167,22 @@ materialization exposure), and identical inputs always produce identical plans.
 7. User intents log at their owner entry point (starting with eject), the eject
    silent guard becomes a visible failure, and sidebar removable-source rows
    reconcile against actual OS mount state.
+
+## Implementation measurement record
+
+The production executor ships with a fixed width of 8 workers and emits batch and
+per-file signposts plus machine-greppable throughput fields. The required physical
+1/2/4/8 removable-source matrix could not be rerun during implementation because
+no removable source containing the field corpus was attached. Synthetic or
+internal-disk numbers are deliberately not substituted for SD-card evidence.
+
+| Workers | Physical SD-card files | Bytes | Elapsed | Aggregate MB/s |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | unavailable | unavailable | unavailable | unavailable |
+| 2 | unavailable | unavailable | unavailable | unavailable |
+| 4 | unavailable | unavailable | unavailable | unavailable |
+| 8 | unavailable | unavailable | unavailable | unavailable |
+
+This is an environment limitation, not a runtime observability gap: a future run
+can derive the table directly from `op=mediaOperation.batch phase=finish` and
+align it with the `MediaImportBatch` / `MediaImportFileCopy` signpost intervals.

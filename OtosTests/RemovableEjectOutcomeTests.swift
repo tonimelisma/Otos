@@ -4,6 +4,21 @@ import Foundation
 import Testing
 
 struct RemovableEjectOutcomeTests {
+    @MainActor
+    @Test func missingIdentitySurfacesEjectFailure() {
+        let model = CatalogWindowViewModel(
+            catalogStore: CatalogStore(location: .inMemory),
+            catalogProjection: CatalogProjection(),
+            startsStallMonitor: false,
+            startsEnrichment: false
+        )
+        model.ejectRemovableSource(LibraryRoot(
+            path: LibraryRootPath(rawValue: "/Volumes/Gone"),
+            kind: .removableVolume
+        ))
+        #expect(model.ejectAlertMessage?.contains("device identity") == true)
+    }
+
     @Test func busyErrorMapsFromPOSIXUnderlyingEBUSY() {
         let underlying = NSError(domain: NSPOSIXErrorDomain, code: Int(EBUSY), userInfo: nil)
         let error = NSError(

@@ -3422,6 +3422,7 @@ extension CatalogStore {
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.settleImportedAsset(
+                operation: operation,
                 destinationRootID: rootRowID,
                 destinationRootPath: operation.destinationRootPath,
                 relativePath: operation.destinationRelativePath,

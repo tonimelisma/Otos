@@ -286,6 +286,15 @@ Rejected. Purge requires proven deletion from a reachable, completed enumeration
 
 ## Consequences
 
+Import provenance is permitted only as filesystem facts about a copy Otos
+performed: source root path, source relative path, source byte size and
+modification time, plus the settled destination byte size and modification time.
+These facts let an unchanged source replan without reading destination bytes
+after cloud eviction while rejecting provenance if either endpoint's catalog
+facts have changed. They are subordinate settlement overlay, not a durable
+content fingerprint or a second asset identity; any signature mismatch falls
+back to live equality handling, and content hashes remain forbidden.
+
 - Future thumbnail, metadata, and editing work inherits one overlay lifecycle and
   one materialization policy instead of inventing their own.
 - The catalog never grows a second identity scheme; path identity stays the only

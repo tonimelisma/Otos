@@ -2,7 +2,49 @@ import Foundation
 @testable import Otos
 import Testing
 
+extension EnrichmentCoordinator {
+    func setEagerCapacityTestState(root: LibraryRootPath, pendingCount: Int) {
+        eagerMode = true
+        let inFlightID = MediaAssetID(
+            libraryRootPath: root,
+            relativePath: MediaRelativePath(rawValue: "in-flight.jpg")
+        )
+        inFlightDownload.insert(inFlightID)
+        inFlightDownloadBytes[inFlightID] = 1
+        for index in 0 ..< pendingCount {
+            let id = MediaAssetID(
+                libraryRootPath: root,
+                relativePath: MediaRelativePath(rawValue: "pending-\(index).jpg")
+            )
+            datalessPending[id] = DownloadWork(
+                id: id,
+                url: id.fileURL,
+                sourceSize: 1,
+                captureDate: nil,
+                isVideo: false
+            )
+        }
+    }
+}
+
 struct EnrichmentCoordinatorTests {
+    @Test func eagerCapacityRejectionStopsAfterOneCandidate() async {
+        let root = LibraryRootPath(rawValue: "/library")
+        var policy = EnrichmentAdmissionPolicy.production
+        policy.downloadConcurrency = 2
+        policy.eagerDownloadsPerRootSoftCap = 1
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            downloadConcurrency: 2,
+            admissionPolicy: policy
+        )
+        await coordinator.setEagerCapacityTestState(root: root, pendingCount: 100)
+        let work = await coordinator.dequeueDownloadWork()
+        #expect(work.isEmpty)
+        #expect(await coordinator.lastDownloadCandidateEvaluationCount == 1)
+    }
+
     @Test func downloadSchedulingReservesFinalSlotForViewportWork() {
         #expect(!EnrichmentDownloadSchedulingPolicy.canDispatchDownload(
             isViewportWork: false,

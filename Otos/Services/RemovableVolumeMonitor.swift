@@ -85,7 +85,7 @@ final class RemovableVolumeMonitor {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            let volumePath = notification.userInfo?["NSDevicePath"] as? String
+            let volumePath = Self.volumePath(from: notification)
             Task { @MainActor in
                 self?.quiesce(
                     matching: RemovableVolumeDetachedDisk(
@@ -100,7 +100,7 @@ final class RemovableVolumeMonitor {
             object: nil,
             queue: .main
         ) { [weak self] notification in
-            let volumePath = notification.userInfo?["NSDevicePath"] as? String
+            let volumePath = Self.volumePath(from: notification)
             Task { @MainActor in
                 self?.detach(
                     matching: RemovableVolumeDetachedDisk(
@@ -112,6 +112,13 @@ final class RemovableVolumeMonitor {
             }
         }
         observers = [didMount, willUnmount, didUnmount]
+    }
+
+    nonisolated static func volumePath(from notification: Notification) -> String? {
+        if let url = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL {
+            return url.path(percentEncoded: false)
+        }
+        return notification.userInfo?["NSDevicePath"] as? String
     }
 
     private func refresh(reason: String) {

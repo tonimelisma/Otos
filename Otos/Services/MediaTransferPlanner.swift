@@ -444,6 +444,18 @@ private nonisolated extension MediaTransferPlanner {
         comparisons: [ComparisonRequest: ComparisonResult],
         pendingComparisons: inout [ComparisonRequest]
     ) -> CandidateDecision {
+        if catalog.importSourceRootPath == snapshot.sourceRoot,
+           catalog.importSourceRelativePath == member.relativePath,
+           catalog.importSourceByteSize == member.byteSize,
+           datesMatchToFilesystemPrecision(catalog.importSourceModifiedAt, member.contentModifiedAt),
+           catalog.importDestinationByteSize == catalog.byteSize,
+           datesMatchToFilesystemPrecision(
+               catalog.importDestinationModifiedAt,
+               catalog.contentModifiedAt
+           )
+        {
+            return .skip(candidate)
+        }
         guard member.byteSize != nil, catalog.byteSize != nil, member.byteSize == catalog.byteSize else {
             return .advanceSuffix
         }
@@ -476,6 +488,11 @@ private nonisolated extension MediaTransferPlanner {
         case .requiresMaterialization:
             return .blocked(.comparisonRequiresMaterialization(destination: candidate))
         }
+    }
+
+    static func datesMatchToFilesystemPrecision(_ left: Date?, _ right: Date?) -> Bool {
+        guard let left, let right else { return false }
+        return Int(left.timeIntervalSince1970) == Int(right.timeIntervalSince1970)
     }
 
     static func namingTimestamp(

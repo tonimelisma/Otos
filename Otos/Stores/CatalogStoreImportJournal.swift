@@ -53,7 +53,9 @@ extension CatalogStore {
         }
     }
 
+    // swiftlint:disable:next function_parameter_count
     static func settleImportedAsset(
+        operation: ActiveFileOperation,
         destinationRootID: Int64,
         destinationRootPath: LibraryRootPath,
         relativePath: MediaRelativePath,
@@ -82,10 +84,26 @@ extension CatalogStore {
         try db.execute(
             sql: """
             UPDATE media_asset
-            SET import_batch_unix_ms = ?
+            SET import_batch_unix_ms = ?,
+                import_source_root_path = ?,
+                import_source_relative_path = ?,
+                import_source_byte_size = ?,
+                import_source_modified_at_epoch = ?,
+                import_destination_byte_size = ?,
+                import_destination_modified_at_epoch = ?
             WHERE library_root_id = ? AND relative_path = ?
             """,
-            arguments: [batch.unixMilliseconds, destinationRootID, relativePath.rawValue]
+            arguments: [
+                batch.unixMilliseconds,
+                operation.sourceRootPath.rawValue,
+                operation.sourceRelativePath.rawValue,
+                operation.sourceByteSize,
+                operation.sourceModifiedAt.timeIntervalSince1970,
+                byteSize,
+                contentModifiedAt.timeIntervalSince1970,
+                destinationRootID,
+                relativePath.rawValue,
+            ]
         )
         for companion in companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)

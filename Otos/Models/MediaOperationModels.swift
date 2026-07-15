@@ -49,6 +49,34 @@ nonisolated struct DestinationOccupantFacts: Equatable, Sendable {
     let relativePath: MediaRelativePath
     let byteSize: Int64?
     let contentModifiedAt: Date?
+    let importSourceRootPath: LibraryRootPath?
+    let importSourceRelativePath: MediaRelativePath?
+    let importSourceByteSize: Int64?
+    let importSourceModifiedAt: Date?
+    let importDestinationByteSize: Int64?
+    let importDestinationModifiedAt: Date?
+
+    init(
+        relativePath: MediaRelativePath,
+        byteSize: Int64?,
+        contentModifiedAt: Date?,
+        importSourceRootPath: LibraryRootPath? = nil,
+        importSourceRelativePath: MediaRelativePath? = nil,
+        importSourceByteSize: Int64? = nil,
+        importSourceModifiedAt: Date? = nil,
+        importDestinationByteSize: Int64? = nil,
+        importDestinationModifiedAt: Date? = nil
+    ) {
+        self.relativePath = relativePath
+        self.byteSize = byteSize
+        self.contentModifiedAt = contentModifiedAt
+        self.importSourceRootPath = importSourceRootPath
+        self.importSourceRelativePath = importSourceRelativePath
+        self.importSourceByteSize = importSourceByteSize
+        self.importSourceModifiedAt = importSourceModifiedAt
+        self.importDestinationByteSize = importDestinationByteSize
+        self.importDestinationModifiedAt = importDestinationModifiedAt
+    }
 }
 
 nonisolated enum MediaOperationDisposition: Equatable, Sendable {
@@ -71,6 +99,25 @@ nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
     let finalDestination: MediaRelativePath
     let companionDestinations: [MediaRelativePath: MediaRelativePath]
     let disposition: MediaOperationDisposition
+
+    var isSkipPreexisting: Bool {
+        if case .skipPreexisting = disposition {
+            return true
+        }
+        return false
+    }
+}
+
+nonisolated func throughputMBps(bytes: Int64, elapsedMs: Int) -> String {
+    let megabytes = Double(bytes) / 1_000_000
+    return String(format: "%.2f", megabytes / (Double(max(elapsedMs, 1)) / 1000))
+}
+
+nonisolated func elapsedMilliseconds(
+    from start: ContinuousClock.Instant,
+    to end: ContinuousClock.Instant
+) -> String {
+    "\(max(Int(start.duration(to: end).components.attoseconds / 1_000_000_000_000_000), 0))"
 }
 
 nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {

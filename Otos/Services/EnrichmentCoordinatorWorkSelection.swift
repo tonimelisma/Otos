@@ -47,7 +47,10 @@ extension EnrichmentCoordinator {
         }
         var items: [DownloadWork] = []
         var rejectedIDs: Set<MediaAssetID> = []
-        while true {
+        var firstRejection: EnrichmentAdmissionPolicy.Rejection?
+        var unexaminedCount = 0
+        lastDownloadCandidateEvaluationCount = 0
+        downloadLoop: while true {
             guard let work = nextDownloadWork(excluding: rejectedIDs) else {
                 break
             }
@@ -60,6 +63,7 @@ extension EnrichmentCoordinator {
                 isEagerBackground: !isViewportWork
             )
             let snapshot = downloadInFlightSnapshot()
+            lastDownloadCandidateEvaluationCount += 1
             switch admissionPolicy.canDispatchDownload(candidate: candidate, inFlight: snapshot) {
             case .success:
                 let estimated = admissionPolicy.estimatedBytes(work.sourceSize)
@@ -83,11 +87,24 @@ extension EnrichmentCoordinator {
                 )
             case let .failure(reason):
                 rejectedIDs.insert(work.id)
-                OtosLog.metadata.notice(
-                    // swiftlint:disable:next line_length
-                    "op=catalog.enrichment.admission phase=downloadReject reason=\(reason.description, privacy: .public) inFlight=\(snapshot.downloadCount, privacy: .public) bytes=\(snapshot.downloadBytes, privacy: .public) video=\(work.isVideo, privacy: .public) viewport=\(isViewportWork, privacy: .public)"
-                )
+                firstRejection = firstRejection ?? reason
+                if reason.stopsEagerDequeuePass, candidate.isEagerBackground {
+                    unexaminedCount = datalessPending.values.count(where: {
+                        readyDownloadWork($0, excluding: rejectedIDs) && !$0.isDeviceStaging
+                    })
+                    break downloadLoop
+                }
             }
+        }
+        if let firstRejection {
+            OtosLog.metadata.noticeOperation(
+                "catalog.enrichment.admission",
+                phase: "downloadReject",
+                fields: [
+                    "reason": firstRejection.description,
+                    "unexamined": "\(unexaminedCount)",
+                ]
+            )
         }
         return items
     }

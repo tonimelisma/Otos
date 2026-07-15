@@ -58,6 +58,19 @@ nonisolated struct EnrichmentAdmissionPolicy: Equatable {
             case .rootEagerFairness: "rootEagerFairness"
             }
         }
+
+        /// Capacity failures apply to every later eager candidate in this pass;
+        /// candidate failures may be bypassed to find independent work.
+        var stopsEagerDequeuePass: Bool {
+            switch self {
+            case .downloadCountCap, .viewportDownloadReserve:
+                true
+            case .downloadByteBudget, .largeVideoDownloadCap,
+                 .enrichCountCap, .enrichByteBudget, .videoEnrichCap,
+                 .rootEagerFairness:
+                false
+            }
+        }
     }
 
     var downloadConcurrency: Int

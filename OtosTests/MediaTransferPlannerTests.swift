@@ -3,6 +3,157 @@ import Foundation
 import Testing
 
 struct MediaTransferPlannerTests {
+    @Test func matchingImportProvenanceSkipsWithoutComparisonProbe() {
+        let source = LibraryRootPath(rawValue: "/tmp/card")
+        let destination = LibraryRootPath(rawValue: "/tmp/library")
+        let relative = MediaRelativePath(rawValue: "IMG_1.JPG")
+        let destinationRelative = MediaRelativePath(rawValue: "IMG_1.jpg")
+        let modified = Date(timeIntervalSince1970: 1_700_000_000)
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: source, relativePath: relative),
+            sourceURL: source.url.appending(path: relative.rawValue),
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: modified,
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: []
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let occupant = DestinationOccupantFacts(
+            relativePath: destinationRelative,
+            byteSize: 10,
+            contentModifiedAt: modified,
+            importSourceRootPath: source,
+            importSourceRelativePath: relative,
+            importSourceByteSize: 10,
+            importSourceModifiedAt: modified,
+            importDestinationByteSize: 10,
+            importDestinationModifiedAt: modified
+        )
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: source,
+            destinationRoot: destination,
+            sourceOccupancyRevision: 1,
+            destinationOccupancyRevision: 1,
+            sourceMedia: [facts],
+            destinationOccupants: [destinationRelative: occupant],
+            knownForeignOccupants: [],
+            policy: policy,
+            calendar: .current,
+            timeZone: .current
+        )
+        let request = NamespaceOccupancyRequest(rootPath: destination, relativePath: destinationRelative)
+        let outcome = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            occupancy: [request: .regularFile(byteSize: 10, contentModifiedAt: modified)]
+        )
+        guard case let .ready(plan) = outcome else {
+            Issue.record("matching provenance requested a byte comparison")
+            return
+        }
+        #expect(plan.entries[0].disposition == .skipPreexisting(destination: destinationRelative))
+    }
+
+    @Test func changedSourceMtimeFallsBackToComparison() {
+        let source = LibraryRootPath(rawValue: "/tmp/card")
+        let destination = LibraryRootPath(rawValue: "/tmp/library")
+        let relative = MediaRelativePath(rawValue: "a.jpg")
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: source, relativePath: relative),
+            sourceURL: source.url.appending(path: relative.rawValue),
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 200),
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "jpg",
+            companions: []
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let occupant = DestinationOccupantFacts(
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 100),
+            importSourceRootPath: source,
+            importSourceRelativePath: relative,
+            importSourceByteSize: 10,
+            importSourceModifiedAt: Date(timeIntervalSince1970: 100),
+            importDestinationByteSize: 10,
+            importDestinationModifiedAt: Date(timeIntervalSince1970: 100)
+        )
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1, sourceRoot: source, destinationRoot: destination,
+            sourceOccupancyRevision: 1, destinationOccupancyRevision: 1,
+            sourceMedia: [facts], destinationOccupants: [relative: occupant],
+            knownForeignOccupants: [], policy: policy, calendar: .current, timeZone: .current
+        )
+        let request = NamespaceOccupancyRequest(rootPath: destination, relativePath: relative)
+        let outcome = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            occupancy: [request: .regularFile(byteSize: 10, contentModifiedAt: nil)]
+        )
+        guard case let .needsProbes(_, comparisons) = outcome else {
+            Issue.record("changed provenance did not fall back to comparison")
+            return
+        }
+        #expect(comparisons.count == 1)
+    }
+
+    @Test func changedDestinationMtimeFallsBackToComparison() {
+        let source = LibraryRootPath(rawValue: "/tmp/card")
+        let destination = LibraryRootPath(rawValue: "/tmp/library")
+        let relative = MediaRelativePath(rawValue: "a.jpg")
+        let modified = Date(timeIntervalSince1970: 100)
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: source, relativePath: relative),
+            sourceURL: source.url.appending(path: relative.rawValue),
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: modified,
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "jpg",
+            companions: []
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let occupant = DestinationOccupantFacts(
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 200),
+            importSourceRootPath: source,
+            importSourceRelativePath: relative,
+            importSourceByteSize: 10,
+            importSourceModifiedAt: modified,
+            importDestinationByteSize: 10,
+            importDestinationModifiedAt: modified
+        )
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1, sourceRoot: source, destinationRoot: destination,
+            sourceOccupancyRevision: 1, destinationOccupancyRevision: 1,
+            sourceMedia: [facts], destinationOccupants: [relative: occupant],
+            knownForeignOccupants: [], policy: policy, calendar: .current, timeZone: .current
+        )
+        let request = NamespaceOccupancyRequest(rootPath: destination, relativePath: relative)
+        let outcome = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            occupancy: [request: .regularFile(byteSize: 10, contentModifiedAt: nil)]
+        )
+        guard case let .needsProbes(_, comparisons) = outcome else {
+            Issue.record("changed destination signature did not fall back to comparison")
+            return
+        }
+        #expect(comparisons.count == 1)
+    }
+
     @Test func copiesIntoYearMonthCaptureDateTimeName() throws {
         let source = LibraryRootPath(rawValue: "/tmp/source")
         let destination = LibraryRootPath(rawValue: "/tmp/destination")

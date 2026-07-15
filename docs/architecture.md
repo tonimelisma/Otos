@@ -44,8 +44,8 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | --- | --- | --- | --- |
 | `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; it does not execute or recover filesystem operations |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
-| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import | serializes per-source dirtiness; filesystem probes run off the actor |
-| `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, staging, exclusive publish, and optional source deletion | serializes one active import; Store performs requested durable transitions and atomic catalog settlement |
+| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import, and one-executor-per-source ownership | serializes per-source dirtiness/execution; filesystem probes run off the actor and self-caused replans defer until execution ends |
+| `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, 8 bounded entry workers, staging, exclusive publish, and optional source deletion | owns monotonic aggregate progress while independent workers suspend; Store serializes journal transitions and atomic settlement |
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
 | `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
 | `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
@@ -86,7 +86,8 @@ everything expensive happens on an actor off the main thread.
   changes). Import-plan staleness and the `RootPlanningChange` stream key on
   `occupancyRevision`, so enrichment/no-op-rescan churn on a cloud destination does
   not livelock planning. Store builds `ImportPlanningSnapshot`;
-  `MediaOperationCoordinator` greedily plans attached removable sources and
+  matching settle-time source provenance short-circuits equality without byte
+  reads. `MediaOperationCoordinator` greedily plans attached removable sources and
   publishes scalar footer presentation. Removable filesystem
   volumes and MTP cameras execute through `MediaImportExecutor` (recovery + orphan
   staging cleanup + copyfile/camera download + exclusive publish); Store accepts

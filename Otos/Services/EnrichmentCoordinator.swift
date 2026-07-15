@@ -115,6 +115,7 @@ actor EnrichmentCoordinator {
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
     var eagerMode = false
     var isShuttingDown = false
+    var lastDownloadCandidateEvaluationCount = 0
 
     let writeFailureBackoff: Duration
 

@@ -24,6 +24,9 @@ actor MediaOperationCoordinator {
     private var queuedStart: [LibraryRootPath: UInt64] = [:]
     private var dirty: Set<LibraryRootPath> = []
     private var building: Set<LibraryRootPath> = []
+    /// Sources with an executor in flight. This single ownership fact rejects
+    /// repeated clicks and plan completions while execution suspends.
+    private var executing: Set<LibraryRootPath> = []
     /// Last occupancy revision observed per root (source or destination) from the
     /// planning-change stream. A change whose occupancy revision differs from this
     /// is a real namespace change worth replanning; an unchanged one is
@@ -109,6 +112,12 @@ actor MediaOperationCoordinator {
     }
 
     func queueImport(for source: LibraryRootPath) async {
+        guard !executing.contains(source) else {
+            OtosLog.catalog.notice(
+                "op=import.queue phase=rejected reason=alreadyExecuting rootPath=\(source.rawValue, privacy: .public)"
+            )
+            return
+        }
         planGeneration &+= 1
         queuedStart[source] = planGeneration
         if let presentation = presentations[source] {
@@ -165,6 +174,12 @@ actor MediaOperationCoordinator {
         generation: UInt64,
         skippedPackageCount: Int
     ) async {
+        guard !executing.contains(source) else {
+            OtosLog.catalog.notice(
+                "op=import.execute phase=rejected reason=alreadyExecuting rootPath=\(source.rawValue, privacy: .public)"
+            )
+            return
+        }
         let libraries = await store.currentLibraries()
         guard let sourceState = libraries.first(where: { $0.path == source }) else {
             return
@@ -235,6 +250,8 @@ actor MediaOperationCoordinator {
         generation: UInt64,
         skippedPackageCount: Int
     ) async {
+        guard executing.insert(source).inserted else { return }
+        queuedStart.removeValue(forKey: source)
         let executor = MediaImportExecutor(store: store, cameraImport: cameraImport)
         let prefs = ImportPreferencesStore.load()
         presentations[source] = MediaOperationSourcePresentation(
@@ -263,7 +280,6 @@ actor MediaOperationCoordinator {
             }
         }
 
-        queuedStart.removeValue(forKey: source)
         await applyExecutionResult(
             result,
             source: source,
@@ -273,6 +289,7 @@ actor MediaOperationCoordinator {
             skippedPackageCount: skippedPackageCount,
             prefs: prefs
         )
+        executing.remove(source)
         dirty.insert(source)
         await scheduleBuildIfNeeded(source)
     }
@@ -376,11 +393,15 @@ actor MediaOperationCoordinator {
             let removable = libraries.filter { $0.root.kind != .library }
             if removable.contains(where: { $0.path == change.rootPath }) {
                 dirty.insert(change.rootPath)
-                await scheduleBuildIfNeeded(change.rootPath)
+                if !executing.contains(change.rootPath) {
+                    await scheduleBuildIfNeeded(change.rootPath)
+                }
             }
             for (source, destination) in destinationBySource where destination == change.rootPath {
                 dirty.insert(source)
-                await scheduleBuildIfNeeded(source)
+                if !executing.contains(source) {
+                    await scheduleBuildIfNeeded(source)
+                }
             }
         }
         await refreshSources(reason: "planningChange")
@@ -435,6 +456,7 @@ actor MediaOperationCoordinator {
             queuedStart.removeValue(forKey: path)
             dirty.remove(path)
             building.remove(path)
+            executing.remove(path)
             attachStartedAt.removeValue(forKey: path)
             attachToReadyMs.removeValue(forKey: path)
             lastSeenOccupancy.removeValue(forKey: path)

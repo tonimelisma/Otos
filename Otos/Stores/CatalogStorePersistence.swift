@@ -188,6 +188,9 @@ extension CatalogStore {
             try rebuildAssetMetadataWithUpdateCascade(db)
             try createActiveReorganizationTables(db)
         }
+        migrator.registerMigration("v10_import_provenance") { db in
+            try addImportProvenanceColumns(db)
+        }
         return migrator
     }
 
@@ -1058,6 +1061,31 @@ extension CatalogStore {
             sql: upsertAssetMetadataSQL(),
             arguments: arguments
         )
+    }
+}
+
+private nonisolated func addImportProvenanceColumns(_ db: Database) throws {
+    let columns = try Set(String.fetchAll(
+        db,
+        sql: "SELECT name FROM pragma_table_xinfo('media_asset')"
+    ))
+    if !columns.contains("import_source_root_path") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_source_root_path TEXT")
+    }
+    if !columns.contains("import_source_relative_path") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_source_relative_path TEXT")
+    }
+    if !columns.contains("import_source_byte_size") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_source_byte_size INTEGER")
+    }
+    if !columns.contains("import_source_modified_at_epoch") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_source_modified_at_epoch DOUBLE")
+    }
+    if !columns.contains("import_destination_byte_size") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_destination_byte_size INTEGER")
+    }
+    if !columns.contains("import_destination_modified_at_epoch") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_destination_modified_at_epoch DOUBLE")
     }
 }
 

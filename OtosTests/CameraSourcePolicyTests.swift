@@ -1,8 +1,17 @@
+import AppKit
 import Foundation
 @testable import Otos
 import Testing
 
 struct CameraSourcePolicyTests {
+    @Test func unmountNotificationUsesWorkspaceVolumeURL() {
+        let notification = Notification(
+            name: NSWorkspace.didUnmountNotification,
+            userInfo: [NSWorkspace.volumeURLUserInfoKey: URL(fileURLWithPath: "/Volumes/CARD")]
+        )
+        #expect(RemovableVolumeMonitor.volumePath(from: notification) == "/Volumes/CARD")
+    }
+
     @Test func rejectsMassStorageAndMountedCameraDevices() {
         #expect(ImageCaptureCameraSourcePolicy.rejectionReason(
             mountPoint: "/Volumes/CARD",

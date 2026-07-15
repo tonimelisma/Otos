@@ -9,6 +9,7 @@ import OSLog
 /// `destination_modified_at`. Cancellation aborts the in-flight transfer, removes
 /// staging, settles any already-published entries, and stops scheduling new ones.
 actor MediaImportExecutor {
+    static let workerCount = 8
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?
     private let cancelFlag = CancelFlag()
@@ -106,6 +107,14 @@ actor MediaImportExecutor {
             return false
         }
         let allowSourceDeletion = deleteSourceRequested && !hasBlockedEntries
+        let started = ContinuousClock().now
+        let batchSignpost = OtosSignpost.mediaIO.beginInterval("MediaImportBatch")
+        OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "start", fields: [
+            "batch": "\(batch.unixMilliseconds)",
+            "bytes": "\(totalBytes)",
+            "files": "\(copyEntries.count)",
+            "workers": "\(Self.workerCount)",
+        ])
         let entryTotals = await runPlanEntries(
             plan: plan,
             batch: batch,
@@ -116,6 +125,16 @@ actor MediaImportExecutor {
             totalBytes: totalBytes,
             onProgress: onProgress
         )
+        OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
+        let elapsedMs = max(Int(started.duration(to: .now).components.attoseconds / 1_000_000_000_000_000), 1)
+        OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
+            "batch": "\(batch.unixMilliseconds)",
+            "bytes": "\(totalBytes)",
+            "elapsedMs": "\(elapsedMs)",
+            "files": "\(copyEntries.count)",
+            "mbps": throughputMBps(bytes: totalBytes, elapsedMs: elapsedMs),
+            "workers": "\(Self.workerCount)",
+        ])
         if cancelFlag.isCancelled {
             return .cancelled(
                 publishedCount: entryTotals.publishedCount,
@@ -167,35 +186,44 @@ actor MediaImportExecutor {
         var completedBytes: Int64 = 0
         var publishedCount = 0
         var failedCount = 0
-        for entry in plan.entries {
-            if cancelFlag.isCancelled {
-                break
+        let copyEntries = plan.entries.filter {
+            if case .copy = $0.disposition {
+                true
+            } else {
+                false
             }
-            switch entry.disposition {
-            case .copy:
-                let completedSnapshot = completed
-                let completedBytesSnapshot = completedBytes
-                let outcome = await copyEntry(
-                    entry,
-                    plan: plan,
-                    batch: batch,
-                    sourceKind: sourceKind,
-                    sourceDeviceIdentity: sourceDeviceIdentity,
-                    deleteSourceRequested: allowSourceDeletion,
-                    onByteProgress: { bytes in
-                        onProgress(MediaOperationProgress(
-                            completedCount: completedSnapshot,
-                            totalCount: totalCount,
-                            completedBytes: completedBytesSnapshot + bytes,
-                            totalBytes: totalBytes
-                        ))
+        }
+        await withTaskGroup(of: EntryResult.self) { group in
+            var nextIndex = 0
+            func submit(_ index: Int) {
+                let entry = copyEntries[index]
+                group.addTask {
+                    guard !self.cancelFlag.isCancelled else {
+                        return EntryResult(outcome: .cancelled, byteSize: 0)
                     }
-                )
-                switch outcome {
+                    let outcome = await self.copyEntry(
+                        entry,
+                        plan: plan,
+                        batch: batch,
+                        sourceKind: sourceKind,
+                        sourceDeviceIdentity: sourceDeviceIdentity,
+                        deleteSourceRequested: allowSourceDeletion,
+                        workerID: index % Self.workerCount,
+                        onByteProgress: { _ in }
+                    )
+                    return EntryResult(outcome: outcome, byteSize: entry.source.byteSize ?? 0)
+                }
+            }
+            while nextIndex < min(Self.workerCount, copyEntries.count) {
+                submit(nextIndex)
+                nextIndex += 1
+            }
+            while let result = await group.next() {
+                switch result.outcome {
                 case .published:
                     publishedCount += 1
                     completed += 1
-                    completedBytes += entry.source.byteSize ?? 0
+                    completedBytes += result.byteSize
                 case .cancelled:
                     cancelFlag.cancel()
                 case .skippedForeign:
@@ -210,18 +238,21 @@ actor MediaImportExecutor {
                     completedBytes: completedBytes,
                     totalBytes: totalBytes
                 ))
-            case .skipPreexisting:
-                if allowSourceDeletion {
-                    await deleteSourceIfRequested(
-                        entry: entry,
-                        plan: plan,
-                        sourceKind: sourceKind,
-                        sourceDeviceIdentity: sourceDeviceIdentity,
-                        batch: nil
-                    )
+                if nextIndex < copyEntries.count, !cancelFlag.isCancelled {
+                    submit(nextIndex)
+                    nextIndex += 1
                 }
-            case .blocked, .noOp, .relocate:
-                continue
+            }
+        }
+        if allowSourceDeletion {
+            for entry in plan.entries where entry.isSkipPreexisting {
+                await deleteSourceIfRequested(
+                    entry: entry,
+                    plan: plan,
+                    sourceKind: sourceKind,
+                    sourceDeviceIdentity: sourceDeviceIdentity,
+                    batch: nil
+                )
             }
         }
         return (publishedCount, failedCount)
@@ -232,6 +263,11 @@ actor MediaImportExecutor {
         case skippedForeign
         case cancelled
         case failed
+    }
+
+    private struct EntryResult: Sendable {
+        let outcome: EntryOutcome
+        let byteSize: Int64
     }
 
     private func sourceStillMatches(
@@ -405,6 +441,9 @@ actor MediaImportExecutor {
         }
     }
 
+    // The cohesive entry transaction deliberately keeps revalidation, journal,
+    // transfer, and publish handoff visible in one crash-recovery boundary.
+    // swiftlint:disable:next function_body_length
     private func copyEntry(
         _ entry: MediaOperationPlanEntry,
         plan: MediaOperationPlan,
@@ -412,6 +451,7 @@ actor MediaImportExecutor {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
+        workerID: Int,
         onByteProgress: @escaping @Sendable (Int64) -> Void
     ) async -> EntryOutcome {
         guard case let .import(sourceRoot, destinationRoot, _) = plan.mode,
@@ -420,6 +460,22 @@ actor MediaImportExecutor {
             return .failed
         }
         let sourceURL = entry.source.sourceURL
+        let started = ContinuousClock().now
+        let signpost = OtosSignpost.mediaIO.beginInterval("MediaImportFileCopy")
+        defer {
+            OtosSignpost.mediaIO.endInterval("MediaImportFileCopy", signpost)
+            let elapsedMs = max(
+                Int(started.duration(to: .now).components.attoseconds / 1_000_000_000_000_000),
+                1
+            )
+            OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "finish", fields: [
+                "batch": "\(batch.unixMilliseconds)",
+                "bytes": "\(entry.source.byteSize ?? 0)",
+                "elapsedMs": "\(elapsedMs)",
+                "mbps": throughputMBps(bytes: entry.source.byteSize ?? 0, elapsedMs: elapsedMs),
+                "worker": "\(workerID)",
+            ])
+        }
         let finalURL = destinationRoot.url.appendingPathComponent(destinationRelative.rawValue)
         guard let sourceByteSize = entry.source.byteSize else {
             return .failed
@@ -499,7 +555,10 @@ actor MediaImportExecutor {
             sourceByteSize: sourceByteSize,
             destinationModified: destinationModified,
             batch: batch,
-            deleteSourceRequested: deleteSourceRequested
+            deleteSourceRequested: deleteSourceRequested,
+            workerID: workerID,
+            copyStarted: started,
+            copyFinished: ContinuousClock().now
         ))
     }
 
@@ -518,6 +577,9 @@ actor MediaImportExecutor {
         let destinationModified: Date
         let batch: ImportBatchID
         let deleteSourceRequested: Bool
+        let workerID: Int
+        let copyStarted: ContinuousClock.Instant
+        let copyFinished: ContinuousClock.Instant
     }
 
     private func publishAndSettle(_ request: PublishSettleRequest) async -> EntryOutcome {
@@ -546,6 +608,7 @@ actor MediaImportExecutor {
         case .published:
             break
         }
+        let publishFinished = ContinuousClock().now
 
         operation.phase = .publishedPendingSettlement
         operation.stagingPath = nil
@@ -570,6 +633,14 @@ actor MediaImportExecutor {
             )
             return .failed
         }
+        let settleFinished = ContinuousClock().now
+        OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "timings", fields: [
+            "batch": "\(request.batch.unixMilliseconds)",
+            "publishMs": elapsedMilliseconds(from: request.copyFinished, to: publishFinished),
+            "settleMs": elapsedMilliseconds(from: publishFinished, to: settleFinished),
+            "stagingMs": elapsedMilliseconds(from: request.copyStarted, to: request.copyFinished),
+            "worker": "\(request.workerID)",
+        ])
 
         if request.deleteSourceRequested {
             await deleteSource(
