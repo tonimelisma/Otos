@@ -21,9 +21,9 @@ schemas refuse to open instead of erasing.
         ▼
   CatalogStore (actor)  ── the only owner of SQLite catalog truth + query APIs
         │  cheap "something changed" signal + ordered-ID / detail queries
-        ├───────────────▶ EnrichmentCoordinator (actor)  ── local metadata/thumbnail write branch
-        │   writes back      asks Store for candidates; submits dataless demand to:
-        │                    MaterializationCoordinator (actor) ── priority/coalescing/suppression
+        ├───────────────▶ EnrichmentCoordinator (actor)  ── bounded claim/enrichment branch
+        │   writes back      asks Store for candidates; bounded handoff joins preview at:
+        │                    MaterializationCoordinator (actor) ── bounded priority/coalescing/suppression
         │                                      ▼
         │                            FileMaterialization (one-URL mechanism)
   CatalogProjection (actor)  ── truth → UI-ready CatalogWindowState (off MainActor)
@@ -51,8 +51,8 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
 | `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
 | `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
-| `EnrichmentCoordinator` | actor | eight-worker local enrichment admission, catalog claim leases, dataless submission, `freshly` handoff, batched writes | serializes enrichment state; decode/parse runs in worker tasks off the actor |
-| `MaterializationCoordinator` | actor | interactive/device/background queues, per-id coalescing, 16-transfer admission, one-background-per-root fairness, known-materialization suppression | gives every deliberate provider request one scheduling and lifecycle owner |
+| `EnrichmentCoordinator` | actor | bounded 32-item claim state machine, eight-worker local enrichment admission, bounded shared-materializer handoff, lease refresh, `freshly` handoff, batched writes | serializes one lifecycle state per claimed identity; decode/parse and materializer awaits run in owned workers off the actor |
+| `MaterializationCoordinator` | actor | bounded consumer-fed interactive/device/background queues, per-id waiter coalescing and effective priority, 16-transfer admission, one-background-per-root fairness, known-materialization suppression | gives every deliberate provider request one scheduling and lifecycle owner; its supervisor is the only dispatcher |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, live byte-read gate, per-id decode coalesce + small LRU | serializes decode/cache state and delegates interactive materialization |
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
 
@@ -78,7 +78,9 @@ everything expensive happens on an actor off the main thread.
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
 - **Materialization** has one path: preview submits interactive demand and enrichment
   submits device/background demand to `MaterializationCoordinator`, which calls the
-  one-URL `FileMaterialization` mechanism. Scanning never materializes (ADR 0008/0009).
+  one-URL `FileMaterialization` mechanism. The coordinator owns the bounded physical
+  scheduler; enrichment owns a separate bounded producer window (32 claims, at most
+  16 handed off globally and two per root). Scanning never materializes (ADR 0008/0009).
 - **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings
@@ -117,7 +119,7 @@ everything expensive happens on an actor off the main thread.
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
-| heavy work (enrichment, future decode/export) | a new actor/service off the main thread that checks `FileMaterialization` before reading bytes, following `EnrichmentCoordinator`'s pattern |
+| heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader` (ADR 0016); mode intents on `CatalogWindowViewModel` |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |

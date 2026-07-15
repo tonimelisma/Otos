@@ -353,13 +353,15 @@ extension CatalogWindowViewModel {
         // so a coordinator started too early could stay idle until some unrelated change.
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
-        enrichmentStartTask = Task { [coordinator, store = catalogStore] in
+        enrichmentStartTask = Task {
+            [coordinator, materializationCoordinator, store = catalogStore] in
             do {
                 try await store.start()
             } catch {
                 OtosLog.persistence.error("Enrichment startup skipped because catalog start failed")
                 return
             }
+            await materializationCoordinator?.start()
             await coordinator.start()
         }
     }

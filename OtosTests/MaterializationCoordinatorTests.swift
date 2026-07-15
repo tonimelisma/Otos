@@ -180,6 +180,82 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    @Test func interactiveJoinBlocksLowerPriorityUntilItsWaiterCancels() async throws {
+        var policy = MaterializationAdmissionPolicy.production
+        policy.globalConcurrency = 3
+        let executor = ControlledMaterializationExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0) },
+            policy: policy
+        )
+        let background = Task {
+            await coordinator.materialize(request("active.jpg", priority: .background))
+        }
+        try await executor.waitForStarts(1)
+        let interactive = Task {
+            await coordinator.materialize(request("active.jpg", priority: .interactive))
+        }
+        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+        while await coordinator.stateSnapshot().effectiveInteractive != 1,
+              ContinuousClock().now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let device = Task {
+            await coordinator.materialize(request("device.jpg", priority: .device))
+        }
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await executor.startedNames() == ["active.jpg"])
+
+        interactive.cancel()
+        #expect(await !(interactive.value).isMaterialized)
+        try await executor.waitForStarts(2)
+        #expect(await executor.startedNames() == ["active.jpg", "device.jpg"])
+
+        await executor.releaseNext()
+        await executor.releaseNext()
+        _ = await (background.value, device.value)
+        await coordinator.shutdown()
+    }
+
+    @Test func cancelledQueuedPromotionRestoresBackgroundAdmission() async throws {
+        var policy = MaterializationAdmissionPolicy.production
+        policy.globalConcurrency = 2
+        let executor = ControlledMaterializationExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0) },
+            policy: policy
+        )
+        let first = Task { await coordinator.materialize(request("first.jpg", priority: .device)) }
+        let second = Task { await coordinator.materialize(request("second.jpg", priority: .device)) }
+        try await executor.waitForStarts(2)
+        let background = Task {
+            await coordinator.materialize(request("restored.jpg", priority: .background))
+        }
+        let interactive = Task {
+            await coordinator.materialize(request("restored.jpg", priority: .interactive))
+        }
+        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+        while await coordinator.queuedRequestCount() < 1, ContinuousClock().now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        interactive.cancel()
+        #expect(await !(interactive.value).isMaterialized)
+
+        await executor.releaseNext()
+        try await Task.sleep(for: .milliseconds(30))
+        #expect(await executor.startedNames().count == 2)
+
+        await executor.releaseNext()
+        try await executor.waitForStarts(3)
+        #expect(await (executor.startedNames()).last == "restored.jpg")
+        await executor.releaseNext()
+        _ = await (first.value, second.value, background.value)
+        await coordinator.shutdown()
+    }
+
     private func request(
         _ name: String,
         root: String = "/library",

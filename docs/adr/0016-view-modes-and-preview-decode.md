@@ -69,8 +69,10 @@ placeholder).
   with enrichment. Both consumers recheck live `FileMaterialization` status before
   reading bytes.
 - Interactive preview demand prevents new device/background transfer dispatch until
-  interactive work drains. Same-ID lower-priority work is promoted while queued or
-  joined in flight without a duplicate provider request.
+  no effective interactive waiter remains. Same-ID lower-priority work is promoted
+  while queued or joined in flight without a duplicate provider request; an
+  interactive join raises the in-flight entry's effective priority immediately,
+  and cancellation lowers it only when that last interactive waiter leaves.
 - Viewing a dataless original accepts its download cost (consistent with
   ADR 0008's permission for deliberate materialization).
 - Pane content is identity-keyed: `PanePreview` binds a decode to its

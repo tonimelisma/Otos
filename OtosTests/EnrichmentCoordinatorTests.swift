@@ -80,7 +80,7 @@ struct EnrichmentCoordinatorTests {
         ]
 
         await coordinator.stageDevice(seeds)
-        let work = await coordinator.dequeueDownloadWork()
+        let work = await coordinator.dequeueMaterializationSubmissions()
 
         #expect(work.map(\.id.relativePath.rawValue) == ["still-b.jpg", "still-a.jpg", "video.mov"])
     }
@@ -111,9 +111,9 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
         try await blocker.waitForStarted()
 
+        await blocker.release()
         await coordinator.shutdown()
         let reclaimed = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
-        await blocker.release()
 
         #expect(Set(reclaimed.map(\.relativePath.rawValue)) == Set(relativeNames))
         try await store.releaseEnrichmentClaims(reclaimed.map(\.id))
@@ -352,6 +352,54 @@ struct EnrichmentCoordinatorTests {
         #expect(await enrichCalls.total == 1)
         #expect(await materializeCalls.total == 0)
     }
+
+    @Test func largeDatalessLibraryKeepsClaimAndMaterializationHandoffBounded() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let names = (0 ..< 25000).map { "asset-\($0).jpg" }
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(names))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) {
+            !$0.isScanning && $0.testAssets.count == names.count
+        }
+
+        let executor = HeldMaterializationExecutor()
+        let materializer = MaterializationCoordinator(
+            store: store,
+            executor: { await executor.run($0) }
+        )
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _ in .notMaterialized },
+            materializationRequester: materializer,
+            claimBatchSize: 32,
+            applyFlushInterval: .seconds(60)
+        )
+        await materializer.start()
+        await coordinator.start()
+        try await executor.waitForStarts(1)
+
+        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+        while await coordinator.workStateSnapshot().materializing < 2,
+              ContinuousClock().now < deadline
+        {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        let state = await coordinator.workStateSnapshot()
+        #expect(state.claimed <= 32)
+        #expect(state.materializing == 2)
+        #expect(await materializer.stateSnapshot().inFlight == 1)
+
+        let shutdownStart = ContinuousClock().now
+        await coordinator.shutdown()
+        let shutdownDuration = shutdownStart.duration(to: .now)
+        #expect(shutdownDuration < .seconds(2))
+        #expect(await materializer.stateSnapshot().waiters == 0)
+        await materializer.shutdown()
+    }
 }
 
 // MARK: - Helpers
@@ -406,6 +454,33 @@ private actor AttemptCounter {
     func next() -> Int {
         defer { total += 1 }
         return total
+    }
+}
+
+private actor HeldMaterializationExecutor {
+    private var starts = 0
+
+    func run(_ url: URL) async -> MaterializationResult {
+        _ = url
+        starts += 1
+        do {
+            try await Task.sleep(for: .seconds(60))
+            return .testMaterialized
+        } catch {
+            return .cancelled
+        }
+    }
+
+    func waitForStarts(_ expected: Int) async throws {
+        try await withTestTimeout("held materialization starts") {
+            while await self.startedCount() < expected {
+                await Task.yield()
+            }
+        }
+    }
+
+    private func startedCount() -> Int {
+        starts
     }
 }
 

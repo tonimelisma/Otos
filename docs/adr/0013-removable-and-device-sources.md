@@ -105,8 +105,8 @@ Adjacent decisions requiring separate ADRs or specs:
 6. **Connected sources are prioritized at claim time only.** Store's enrichment
    candidate fallback query claims available removable roots before fixed roots.
    The coordinator does not maintain a durable second queue. MTP eager staging is
-   seeded into the existing download pool, sorted stills before videos and then by
-   capture date and path, and marked as device staging so it can dispatch without
+   submitted through the shared materializer at device priority, sorted stills
+   before videos and then by capture date and path, so it can dispatch without
    flipping the cloud eager-download latch. Low-space device staging failures pause
    for retry rather than busy-looping as timeouts.
 

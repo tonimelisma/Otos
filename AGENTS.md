@@ -93,8 +93,9 @@ and let instrumentation prove a real bottleneck before optimizing it.
   immediately before any byte read. Deliberate non-blocking background
   materialization for enrichment is permitted (up to eagerly materializing the
   whole library); its unreclaimable local-disk cost is deliberately accepted. The
-  scanner reads only filesystem facts and materializes nothing; the
-  `EnrichmentCoordinator` is the byte-reading owner that materializes. See
+  scanner reads only filesystem facts and materializes nothing; byte-reading
+  consumers submit deliberate transfers to the shared `MaterializationCoordinator`.
+  `EnrichmentCoordinator` remains the background enrichment owner. See
   `docs/adr/0008-…` and `docs/adr/0009-enrichment-storage-and-staleness.md`.
 
 ## Architecture Standards

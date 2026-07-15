@@ -66,3 +66,20 @@ nonisolated struct EnrichmentAdmissionPolicy: Equatable, Sendable {
         max(sourceSize ?? (4 * 1024 * 1024), 0)
     }
 }
+
+/// Bounds enrichment-originated demand before it crosses into physical scheduling.
+/// The defaults are derived from materialization admission: one look-ahead beyond
+/// each root's active cap, and no more global waiters than global physical slots.
+nonisolated struct EnrichmentMaterializationHandoffPolicy: Equatable, Sendable {
+    let globalOutstandingLimit: Int
+    let backgroundOutstandingPerRoot: Int
+
+    static func production(
+        materialization: MaterializationAdmissionPolicy = .production
+    ) -> EnrichmentMaterializationHandoffPolicy {
+        EnrichmentMaterializationHandoffPolicy(
+            globalOutstandingLimit: materialization.globalConcurrency,
+            backgroundOutstandingPerRoot: materialization.backgroundPerRootCap + 1
+        )
+    }
+}

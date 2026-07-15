@@ -61,9 +61,10 @@ This ADR owns:
   dimensions and details remain cold.
 - Otos eagerly materializes the whole media library to enrich it (the enrichment
   application of ADR 0008's permission), accepting the unreclaimable disk growth.
-- The enrichment ownership split: a single `EnrichmentCoordinator` actor running
-  two fixed worker pools (4 enrich + 4 download) by cursorless scheduling, with
-  Store-owned claim ordering and process-local lease cleanup. Connected-source
+- The enrichment ownership split: `EnrichmentCoordinator` owns a bounded claim
+  state machine and eight local enrichment workers; `MaterializationCoordinator`
+  owns the one bounded physical-transfer scheduler shared by preview, device, and
+  background demand. Store owns claim ordering and leases. Connected-source
   priority is applied at candidate/staging selection time, not through a durable
   second queue.
 
@@ -179,14 +180,29 @@ Adjacent decisions requiring separate ADRs or specs:
    is never downloaded.
 
 8. **Separate enrichment and materialization owners.** `EnrichmentCoordinator`
-   owns cursorless catalog claims, eight local byte-reading workers, claim
-   lifecycles, the `freshly` handoff, and batched writes. It does not schedule
-   physical provider transfers. `MaterializationCoordinator` is the sole owner of
-   deliberate transfers requested by preview, device staging, or enrichment.
+   owns cursorless catalog claims, a bounded 32-identity working window, eight
+   local byte-reading workers, claim lifecycles, the `freshly` handoff, and batched
+   writes. Each claimed identity occupies exactly one state: queued enrichment,
+   enriching, awaiting materialization, materializing, or awaiting apply. Parallel
+   sets do not duplicate that truth. It does not schedule physical provider
+   transfers. `MaterializationCoordinator` is the sole owner of deliberate
+   transfers requested by preview, device staging, or enrichment.
 
-   Materialization priority is interactive, then device, then background. Pending
-   or active interactive work prevents new lower-priority dispatch. Same-identity
-   demand promotes queued work or joins an in-flight transfer. Global admission is
+   Producer flow control and physical admission are deliberately separate.
+   Enrichment hands off at most 16 requests globally, derived from the physical
+   scheduler's 16-slot capacity, and at most two per root, derived from the one
+   active background slot plus one look-ahead request. Those are not second
+   provider-admission rules: the materializer remains the only actor that decides
+   what physically starts. The bounded handoff prevents a 25,000-placeholder
+   library from becoming 25,000 suspended tasks, continuations, and claims.
+
+   Materialization priority is interactive, then device, then background. A single
+   owned supervisor is the only dispatcher; request registration only mutates
+   bounded per-identity state and wakes it. Pending or effectively active
+   interactive work prevents new lower-priority dispatch. Same-identity demand
+   promotes queued work or joins an in-flight transfer, and effective priority is
+   derived from current waiters so cancellation cannot leave a stale barrier.
+   Global admission is
    16 transfers and 2 GiB logical bytes with two large videos (at least 256 MiB),
    one slot reserved from background work, and one active background transfer per
    root. Unknown size counts as 4 MiB; an oversized request may run alone.
@@ -209,9 +225,14 @@ Adjacent decisions requiring separate ADRs or specs:
    The active window covers the 120-second timeout plus measured event lag and the
    existing post-success grace.
 
-   Dataless discovery refreshes the enrichment claim while the shared materializer
-   runs. Success releases the old claim and returns the identity through `freshly`;
-   failure follows the existing release/retry rules. `FileMaterialization` remains
+   Dataless discovery retains its claim and a periodic owner refreshes materializer-
+   waiting leases before expiry. Success releases the old claim and returns the
+   identity through `freshly`; ordinary background failure uses capped exponential
+   retry and remains eventually eligible rather than being abandoned after a fixed
+   retry count. Shutdown stops new work, cancels enrichment's materializer waiters
+   promptly, drains owned workers, and releases every remaining claim before the
+   materializer itself shuts down. Root drain also queries requests already handed
+   to the shared materializer. `FileMaterialization` remains
    the one-URL mechanism: it checks `SF_DATALESS`, requests asynchronously, polls
    without reading bytes, and re-requests once per second inside the same timeout.
 
