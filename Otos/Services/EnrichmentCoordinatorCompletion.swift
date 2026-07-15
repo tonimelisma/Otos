@@ -19,9 +19,6 @@ extension EnrichmentCoordinator {
         guard var record = claimedWork[id] else {
             return
         }
-        if work.isVideo {
-            inFlightEnrichVideoCount = max(0, inFlightEnrichVideoCount - 1)
-        }
         switch outcome {
         case let .complete(result):
             await recordCompletedEnrichment(result, id: id)
@@ -67,9 +64,6 @@ extension EnrichmentCoordinator {
         guard var record = claimedWork[id] else {
             return
         }
-        if work.isVideo {
-            inFlightEnrichVideoCount = max(0, inFlightEnrichVideoCount - 1)
-        }
         let result = EnrichmentResult(
             id: id,
             metadata: AssetMetadata(),
@@ -107,25 +101,39 @@ extension EnrichmentCoordinator {
         }
         let outcome = result.outcome
         let materialized = outcome.isMaterialized
-        let retry = retryWorkIfNeeded(work, outcome: outcome)
-        if let retry {
-            record.state = .awaitingMaterialization(retry)
-            claimedWork[id] = record
-            scheduleDownloadRetrySignal()
-            if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
-                await recordVisibleThumbnailLifecycle(
-                    phase: "materializationRetryScheduled",
-                    id: id,
-                    fields: [
-                        "leaseRefreshedUntil": Self.diagnosticTimestamp(leaseRefreshedUntil),
-                        "attemptCount": "\(retry.attemptCount)",
-                    ]
-                )
-            }
-        } else {
+        // Cancellation says nothing about the provider's ability to materialize the
+        // asset: release the claim without consuming a retry attempt or pacing slot.
+        if outcome == .cancelled {
             claimedWork[id] = nil
             if record.ownsStoreClaim {
                 await releaseClaims([id], visibleID: id)
+            }
+        } else {
+            let retry = retryWorkIfNeeded(work, outcome: outcome)
+            if let retry {
+                record.state = .awaitingMaterialization(retry)
+                claimedWork[id] = record
+                scheduleDownloadRetrySignal()
+                if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
+                    await recordVisibleThumbnailLifecycle(
+                        phase: "materializationRetryScheduled",
+                        id: id,
+                        fields: [
+                            "leaseRefreshedUntil": Self.diagnosticTimestamp(leaseRefreshedUntil),
+                            "attemptCount": "\(retry.attemptCount)",
+                        ]
+                    )
+                }
+            } else {
+                claimedWork[id] = nil
+                if record.ownsStoreClaim {
+                    await releaseClaims([id], visibleID: id)
+                }
+                if materialized {
+                    retryLedger[id] = nil
+                } else if !work.isDeviceStaging {
+                    recordRetryLedgerFailure(for: work)
+                }
             }
         }
         await recordVisibleThumbnailLifecycle(
@@ -145,6 +153,13 @@ extension EnrichmentCoordinator {
         signal()
     }
 
+    /// Background retries stay in-window through the full `[15, 60, 300, 900]`
+    /// schedule; the fifth failure signals bound-exceeded (`nil`) so the caller
+    /// releases the claim and hands pacing to `retryLedger` instead of holding a
+    /// claim-window slot forever. Device retries are unaffected: they cap at 3
+    /// in-window attempts (unbounded for `insufficientLocalSpace`, a waiting
+    /// condition rather than a failure) and never enter the ledger, since staged
+    /// device seeds hold no Store claim to begin with.
     private func retryWorkIfNeeded(_ work: DownloadWork, outcome: MaterializationOutcome) -> DownloadWork? {
         guard !outcome.isMaterialized else {
             return nil
@@ -163,7 +178,10 @@ extension EnrichmentCoordinator {
             }
         } else {
             let delays: [TimeInterval] = [15, 60, 300, 900]
-            delay = delays[min(attemptCount - 1, delays.count - 1)]
+            guard attemptCount <= delays.count else {
+                return nil
+            }
+            delay = delays[attemptCount - 1]
         }
         return DownloadWork(
             id: work.id,
@@ -174,6 +192,15 @@ extension EnrichmentCoordinator {
             isDeviceStaging: work.isDeviceStaging,
             attemptCount: attemptCount,
             retryNotBefore: Date().addingTimeInterval(delay)
+        )
+    }
+
+    private func recordRetryLedgerFailure(for work: DownloadWork) {
+        let previousAttempts = retryLedger[work.id]?.attemptCount ?? 0
+        retryLedger[work.id] = RetryLedgerEntry(
+            notBefore: Date().addingTimeInterval(900),
+            attemptCount: previousAttempts + 1,
+            sourceSize: work.sourceSize
         )
     }
 

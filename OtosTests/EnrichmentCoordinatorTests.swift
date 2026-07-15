@@ -400,6 +400,247 @@ struct EnrichmentCoordinatorTests {
         #expect(await materializer.stateSnapshot().waiters == 0)
         await materializer.shutdown()
     }
+
+    // MARK: - Plan 0059 review fixes
+
+    @Test func exhaustedBackgroundRetriesReleaseClaimWindowForFreshCandidate() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(["fresh.jpg"]))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let freshID = try #require(scanned.testAssets.first?.id)
+
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            claimBatchSize: 8,
+            claimWindowLimit: 32
+        )
+
+        // Fill the claim window with 32 synthetic permanently-failing background
+        // records already at the in-window retry bound. They hold no real Store row,
+        // isolating the window-capacity behavior from Store bookkeeping.
+        let badRoot = LibraryRootPath(rawValue: temp.appending(path: "Bad").path(percentEncoded: false))
+        var badIDs: [MediaAssetID] = []
+        for index in 0 ..< 32 {
+            let badID = MediaAssetID(
+                libraryRootPath: badRoot,
+                relativePath: MediaRelativePath(rawValue: "bad-\(index).jpg")
+            )
+            let work = EnrichmentCoordinator.DownloadWork(
+                id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
+                isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
+            )
+            await coordinator.testSeedClaimedWork(
+                id: badID,
+                record: EnrichmentCoordinator.ClaimedWorkRecord(
+                    state: .materializing(work), sequence: 0, ownsStoreClaim: false
+                )
+            )
+            badIDs.append(badID)
+        }
+        #expect(await coordinator.workStateSnapshot().claimed == 32)
+
+        // Before the window frees, the coordinator cannot even query for new work.
+        let blockedWork = await coordinator.dequeueEnrichmentWork()
+        #expect(blockedWork.isEmpty)
+
+        // Each of the 32 exceeds its retry bound on this failure: the fix releases
+        // the claim-window slot and hands pacing to the ledger instead of holding it.
+        for badID in badIDs {
+            let work = EnrichmentCoordinator.DownloadWork(
+                id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
+                isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
+            )
+            await coordinator.finishDownload(
+                work,
+                result: MaterializationResult(outcome: .requestFailed, rerequestCount: 0, elapsedMs: 1),
+                attemptMs: 1
+            )
+        }
+
+        #expect(await coordinator.workStateSnapshot().claimed == 0)
+        for badID in badIDs {
+            #expect(await coordinator.testRetryLedgerEntry(for: badID) != nil)
+        }
+
+        // The window is free again: an unrelated fresh candidate is claimable.
+        let claimed = await coordinator.dequeueEnrichmentWork()
+        #expect(claimed.map(\.id) == [freshID])
+    }
+
+    @Test func retryLedgerDefersMatchingSignatureAndResetsOnChange() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner([("a.jpg", 100)]))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let id = try #require(scanned.testAssets.first?.id)
+
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized }
+        )
+
+        // Matching source signature, notBefore in the future: must defer rather than
+        // re-claim and immediately re-fail.
+        await coordinator.testSeedRetryLedger(
+            id: id,
+            entry: EnrichmentCoordinator.RetryLedgerEntry(
+                notBefore: Date().addingTimeInterval(900), attemptCount: 1, sourceSize: 100
+            )
+        )
+        let deferred = await coordinator.dequeueEnrichmentWork()
+        #expect(deferred.isEmpty)
+        #expect(await coordinator.workStateSnapshot().claimed == 0)
+
+        // A changed source signature resets pacing immediately even though
+        // notBefore has not arrived.
+        await coordinator.testSeedRetryLedger(
+            id: id,
+            entry: EnrichmentCoordinator.RetryLedgerEntry(
+                notBefore: Date().addingTimeInterval(900), attemptCount: 1, sourceSize: 999
+            )
+        )
+        let claimed = await coordinator.dequeueEnrichmentWork()
+        #expect(claimed.map(\.id) == [id])
+        #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
+    }
+
+    @Test func materializationSuccessClearsRetryLedgerEntry() async {
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/library"),
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized }
+        )
+        await coordinator.testSeedRetryLedger(
+            id: id,
+            entry: EnrichmentCoordinator.RetryLedgerEntry(
+                notBefore: Date().addingTimeInterval(900), attemptCount: 3, sourceSize: 100
+            )
+        )
+        let work = EnrichmentCoordinator.DownloadWork(
+            id: id, url: id.fileURL, sourceSize: 100, captureDate: nil, isVideo: false, isDeviceStaging: false
+        )
+        await coordinator.testSeedClaimedWork(
+            id: id,
+            record: EnrichmentCoordinator.ClaimedWorkRecord(
+                state: .materializing(work), sequence: 0, ownsStoreClaim: false
+            )
+        )
+        await coordinator.finishDownload(work, result: .testMaterialized, attemptMs: 1)
+        #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
+    }
+
+    @Test func cancelledMaterializationReleasesClaimWithoutRetry() async {
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/library"),
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized }
+        )
+        let work = EnrichmentCoordinator.DownloadWork(
+            id: id, url: id.fileURL, sourceSize: 100, captureDate: nil, isVideo: false, isDeviceStaging: false
+        )
+        await coordinator.testSeedClaimedWork(
+            id: id,
+            record: EnrichmentCoordinator.ClaimedWorkRecord(
+                state: .materializing(work), sequence: 0, ownsStoreClaim: false
+            )
+        )
+        await coordinator.finishDownload(
+            work,
+            result: MaterializationResult(outcome: .cancelled, rerequestCount: 0, elapsedMs: 1),
+            attemptMs: 1
+        )
+        #expect(await coordinator.workStateSnapshot().claimed == 0)
+        #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
+    }
+
+    @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized }
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/Camera")
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "video.mov"))
+        let activeWork = EnrichmentCoordinator.DownloadWork(
+            id: id, url: id.fileURL, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50),
+            isVideo: true, isDeviceStaging: true
+        )
+        await coordinator.testSeedClaimedWork(
+            id: id,
+            record: EnrichmentCoordinator.ClaimedWorkRecord(
+                state: .materializing(activeWork), sequence: 7, ownsStoreClaim: false
+            )
+        )
+
+        let seeds = [
+            EnrichmentCoordinator.DeviceStagingSeed(
+                id: id, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50), isVideo: true
+            ),
+        ]
+        await coordinator.stageDevice(seeds)
+
+        let record = try #require(await coordinator.testClaimedWorkRecord(for: id))
+        #expect(record.sequence == 7)
+        guard case .materializing = record.state else {
+            Issue.record("stageDevice must not clobber an active .materializing record")
+            return
+        }
+    }
+
+    @Test func ejectDrainIgnoresPureInteractivePreviewTraffic() async throws {
+        let store = CatalogStore(location: .inMemory)
+        let executor = HeldMaterializationExecutor()
+        let materializer = MaterializationCoordinator(store: store, executor: { await executor.run($0) })
+        await materializer.start()
+
+        let rootPath = LibraryRootPath(rawValue: "/library")
+        let previewID = MediaAssetID(
+            libraryRootPath: rootPath,
+            relativePath: MediaRelativePath(rawValue: "preview.jpg")
+        )
+        let previewTask = Task {
+            await materializer.materialize(
+                MaterializationCoordinator.Request(
+                    id: previewID, sourceSize: 100, isVideo: false, priority: .interactive
+                )
+            )
+        }
+        try await executor.waitForStarts(1)
+
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: MediaEnricher { _, _, _, _ in .transient },
+            materializationRequester: materializer
+        )
+
+        let start = ContinuousClock().now
+        let drained = await coordinator.drainWork(under: rootPath, timeout: .milliseconds(300))
+        let elapsed = start.duration(to: .now)
+        #expect(drained)
+        #expect(elapsed < .milliseconds(150))
+
+        previewTask.cancel()
+        _ = await previewTask.value
+        await materializer.shutdown()
+    }
 }
 
 // MARK: - Helpers

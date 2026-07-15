@@ -9,6 +9,20 @@ nonisolated enum DiagnosticsTiming {
         milliseconds(from: start, to: now)
     }
 
+    static func milliseconds(_ duration: Duration) -> Int {
+        let components = duration.components
+        let seconds = Double(components.seconds)
+        let fractional = Double(components.attoseconds) / 1e18
+        return max(Int((seconds + fractional) * 1000), 0)
+    }
+
+    static func milliseconds(
+        from start: ContinuousClock.Instant,
+        to end: ContinuousClock.Instant
+    ) -> Int {
+        milliseconds(start.duration(to: end))
+    }
+
     /// Microsecond resolution for sub-millisecond pipeline steps (membership
     /// validation, scoped-map construction, equality) whose cost rounds to zero in
     /// milliseconds but still matters when comparing per-publication stage costs.

@@ -176,6 +176,11 @@ private final class PreviewMaterializationRecorder: MaterializationRequesting, @
         return await result()
     }
 
+    func activeRequestCount(under rootPath: LibraryRootPath) async -> Int {
+        _ = rootPath
+        return 0
+    }
+
     func lastRequest() -> MaterializationCoordinator.Request? {
         lock.withLock { request }
     }

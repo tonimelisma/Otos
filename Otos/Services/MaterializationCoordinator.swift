@@ -2,16 +2,13 @@ import Foundation
 import OSLog
 
 /// Shared materialization request boundary used by preview and enrichment consumers.
+/// `activeRequestCount(under:)` has no default: a conformer that answers 0 without
+/// tracking real demand would make `EnrichmentCoordinator.drainWork` silently
+/// under-report in-flight work at the eject boundary, so every conformer must
+/// answer explicitly (even test doubles with nothing to track).
 nonisolated protocol MaterializationRequesting: Sendable {
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult
     func activeRequestCount(under rootPath: LibraryRootPath) async -> Int
-}
-
-extension MaterializationRequesting {
-    func activeRequestCount(under rootPath: LibraryRootPath) async -> Int {
-        _ = rootPath
-        return 0
-    }
 }
 
 /// Process-lifetime owner of every deliberate provider or device materialization.
@@ -233,9 +230,25 @@ actor MaterializationCoordinator: MaterializationRequesting {
         pendingByID.count
     }
 
+    /// Answers "has the work `EnrichmentCoordinator` is responsible for under this
+    /// root exited?", not "is any consumer of the shared coordinator active under
+    /// this root": an interactive-only entry (a `PreviewImageLoader` request with no
+    /// device/background waiter) must not stall an eject drain. Each `Waiter` keeps
+    /// its own submission priority even after a join raises the entry's
+    /// `effectivePriority`, so this checks per-waiter priority rather than the
+    /// entry's (which pending-entry promotion overwrites to the max across waiters).
     func activeRequestCount(under rootPath: LibraryRootPath) -> Int {
-        pendingByID.values.count { $0.request.id.libraryRootPath == rootPath }
-            + inFlightByID.values.count { $0.request.id.libraryRootPath == rootPath }
+        let pendingMatches = pendingByID.values.count {
+            $0.request.id.libraryRootPath == rootPath && hasEnrichmentOriginWaiter($0.waiters)
+        }
+        let inFlightMatches = inFlightByID.values.count {
+            $0.request.id.libraryRootPath == rootPath && hasEnrichmentOriginWaiter($0.waiters)
+        }
+        return pendingMatches + inFlightMatches
+    }
+
+    private func hasEnrichmentOriginWaiter(_ waiters: [UInt64: Waiter]) -> Bool {
+        waiters.values.contains { $0.priority != .interactive }
     }
 
     private func register(_ request: Request, token: UInt64, waiter: Waiter) {
@@ -371,11 +384,6 @@ actor MaterializationCoordinator: MaterializationRequesting {
                     pendingByID[id] = nil
                     continue
                 }
-                if effectiveInteractiveCount > 0, selectedPriority != .interactive {
-                    rejections[.interactivePriority, default: 0] += 1
-                    index += 1
-                    continue
-                }
                 let snapshot = currentAdmissionSnapshot()
                 if let rejection = policy.rejection(for: entry.request, inFlight: snapshot) {
                     rejections[rejection, default: 0] += 1
@@ -386,6 +394,16 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 pendingByID[id] = nil
                 dispatch(entry)
                 admitted += 1
+            }
+        } else if effectiveInteractiveCount > 0 {
+            // No pending interactive waiter, but an in-flight transfer's effective
+            // priority is interactive (a waiter joined it): device/background stay
+            // deferred by design. Record that truthfully instead of falling through
+            // to publishUnblockedIfNeeded, which would clear the blocked diagnostic
+            // during exactly the starvation window it exists to expose.
+            let deferred = deviceQueue.count + backgroundQueue.count
+            if deferred > 0 {
+                rejections[.interactivePriority] = deferred
             }
         }
         recordAdmission(priority: selectedPriority, rejections: rejections, admitted: admitted)
@@ -450,7 +468,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         }
         inFlightByID[request.id]?.task = task
 
-        let queueWaitMs = milliseconds(from: entry.enqueuedAt, to: now)
+        let queueWaitMs = DiagnosticsTiming.milliseconds(from: entry.enqueuedAt, to: now)
         let currentInFlight = inFlightCount
         let currentBytes = inFlightBytes
         let sameRootBackground = backgroundByRoot[request.id.libraryRootPath, default: 0]
@@ -477,13 +495,13 @@ actor MaterializationCoordinator: MaterializationRequesting {
         }
         removeAccounting(for: entry)
         let deliveredAt = clock.now
-        let providerMs = milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
-        let completionDeliveryMs = milliseconds(from: providerFinishedAt, to: deliveredAt)
+        let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
+        let completionDeliveryMs = DiagnosticsTiming.milliseconds(from: providerFinishedAt, to: deliveredAt)
         for waiter in entry.waiters.values {
             waiter.continuation.resume(returning: result)
         }
         let totalMs = entry.waiters.values
-            .map { milliseconds(from: $0.requestedAt, to: deliveredAt) }
+            .map { DiagnosticsTiming.milliseconds(from: $0.requestedAt, to: deliveredAt) }
             .max() ?? providerMs
         let outcome = result.outcome.diagnosticDescription
         let phase = result.isMaterialized ? "completed" : "failed"
@@ -655,31 +673,24 @@ actor MaterializationCoordinator: MaterializationRequesting {
         waiters.values.map(\.priority).max() ?? fallback
     }
 
-    private func milliseconds(
-        from start: ContinuousClock.Instant,
-        to end: ContinuousClock.Instant
-    ) -> Int {
-        let components = start.duration(to: end).components
-        let seconds = Double(components.seconds)
-        let fractional = Double(components.attoseconds) / 1e18
-        return max(Int((seconds + fractional) * 1000), 0)
-    }
-
     private func logLifecycle(
         phase: String,
         request: Request,
         effectivePriority: Priority,
         isNotice: Bool
     ) {
-        let message = """
-        op=materialization.request phase=\(phase) priority=\(request.priority.description) \
-        effectivePriority=\(effectivePriority.description) rootPath=\(request.id.libraryRootPath.rawValue) \
-        relativePath=\(request.id.relativePath.rawValue)
-        """
+        let fields = [
+            "priority": request.priority.description,
+            "effectivePriority": effectivePriority.description,
+            "rootPath": request.id.libraryRootPath.rawValue,
+            "relativePath": request.id.relativePath.rawValue,
+        ]
         if isNotice {
-            OtosLog.mediaIO.notice("\(message, privacy: .public)")
+            OtosLog.mediaIO.noticeOperation("materialization.request", phase: phase, fields: fields)
         } else {
-            OtosLog.mediaIO.debug("\(message, privacy: .public)")
+            OtosLog.mediaIO.debug(
+                "op=materialization.request phase=\(phase, privacy: .public) \(otosLogFields(fields), privacy: .public)"
+            )
         }
     }
 }
@@ -701,10 +712,17 @@ extension MaterializationResult {
 }
 
 /// Closure adapter retained for focused tests; production composition injects the shared actor.
+/// It tracks no requests of its own, so it truthfully answers zero rather than inheriting a
+/// default that would mask a real conformer forgetting to implement this.
 nonisolated struct ClosureMaterializationRequester: MaterializationRequesting {
     let operation: @Sendable (URL) async -> MaterializationResult
 
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
         await operation(request.id.fileURL)
+    }
+
+    func activeRequestCount(under rootPath: LibraryRootPath) async -> Int {
+        _ = rootPath
+        return 0
     }
 }

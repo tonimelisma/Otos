@@ -35,14 +35,67 @@ extension EnrichmentCoordinator {
                 prioritizing: priorityIDs,
                 limit: claimLimit
             )
-            enqueueClaimedCandidates(candidates, submittedPriorityIDs: priorityIDs, currentItems: items)
+            let (readyCandidates, deferredIDs) = partitionByRetryLedger(candidates)
+            if !deferredIDs.isEmpty {
+                await releaseDeferredLedgerClaims(deferredIDs)
+            }
+            enqueueClaimedCandidates(readyCandidates, submittedPriorityIDs: priorityIDs, currentItems: items)
             items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
             await recordDispatchedWork(items)
-            logClaimBatch(claimedCount: candidates.count, dispatchedCount: items.count, limit: claimLimit)
+            logClaimBatch(
+                claimedCount: candidates.count,
+                dispatchedCount: items.count,
+                limit: claimLimit,
+                deferredCount: deferredIDs.count
+            )
             return items
         } catch {
             await recordCandidateQueryFailure(error)
             return []
+        }
+    }
+
+    /// Consults the pacing ledger a bound-exceeded background retry left behind
+    /// (finding 1): a candidate Store just claimed is deferred back if its earliest
+    /// reclaim time has not arrived, unless its `(sourceSize)` fragment of the
+    /// `(size, mtime)` source signature (ENR-007) changed since the ledger entry was
+    /// recorded, which resets pacing immediately.
+    private func partitionByRetryLedger(
+        _ candidates: [MediaAsset]
+    ) -> (ready: [MediaAsset], deferred: [MediaAssetID]) {
+        guard !retryLedger.isEmpty else {
+            return (candidates, [])
+        }
+        var ready: [MediaAsset] = []
+        var deferred: [MediaAssetID] = []
+        let now = Date()
+        for asset in candidates {
+            guard let entry = retryLedger[asset.id] else {
+                ready.append(asset)
+                continue
+            }
+            if entry.sourceSize != asset.byteSize {
+                retryLedger[asset.id] = nil
+                ready.append(asset)
+            } else if entry.notBefore <= now {
+                ready.append(asset)
+            } else {
+                deferred.append(asset.id)
+            }
+        }
+        return (ready, deferred)
+    }
+
+    private func releaseDeferredLedgerClaims(_ ids: [MediaAssetID]) async {
+        do {
+            try await store.releaseEnrichmentClaims(ids)
+        } catch {
+            OtosLog.metadata.error(
+                """
+                op=catalog.enrichment.coordinator phase=ledgerDeferredReleaseFailed \
+                count=\(ids.count, privacy: .public) error=\(String(describing: error), privacy: .public)
+                """
+            )
         }
     }
 
@@ -153,6 +206,16 @@ extension EnrichmentCoordinator {
                 total + estimatedBytes
             } else {
                 total
+            }
+        }
+    }
+
+    var inFlightEnrichVideoCount: Int {
+        claimedWork.values.count {
+            if case let .enriching(work, _) = $0.state {
+                work.isVideo
+            } else {
+                false
             }
         }
     }
@@ -272,9 +335,6 @@ extension EnrichmentCoordinator {
                 let estimated = admissionPolicy.estimatedBytes(work.sourceSize)
                 record.state = .enriching(work, estimatedBytes: estimated)
                 claimedWork[id] = record
-                if work.isVideo {
-                    inFlightEnrichVideoCount += 1
-                }
                 items.append(work)
             case let .failure(reason):
                 rejections[reason, default: 0] += 1
@@ -339,13 +399,14 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int) {
+    private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int, deferredCount: Int) {
         let queuedCount = queuedEnrichmentCount
         OtosLog.metadata.debug(
             """
             Enrichment claim batch claimed=\(claimedCount, privacy: .public) \
             queued=\(queuedCount, privacy: .public) \
-            dispatched=\(dispatchedCount, privacy: .public) limit=\(limit, privacy: .public)
+            dispatched=\(dispatchedCount, privacy: .public) limit=\(limit, privacy: .public) \
+            deferred=\(deferredCount, privacy: .public)
             """
         )
     }

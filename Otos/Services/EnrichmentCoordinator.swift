@@ -120,6 +120,15 @@ actor EnrichmentCoordinator {
         let isVideo: Bool
     }
 
+    /// Pacing-only fact for a background materialization that exhausted its
+    /// in-window retry attempts: no work payload, so it costs nothing beyond the
+    /// claim window's 32-item bound to keep around for the full backoff schedule.
+    struct RetryLedgerEntry: Equatable {
+        let notBefore: Date
+        let attemptCount: Int
+        let sourceSize: Int64?
+    }
+
     let store: CatalogStore
     let enricher: MediaEnricher
     let materializationRequester: any MaterializationRequesting
@@ -138,7 +147,7 @@ actor EnrichmentCoordinator {
     var claimedWork: [MediaAssetID: ClaimedWorkRecord] = [:]
     var deviceRootPaths: Set<LibraryRootPath> = []
     var nextClaimSequence: UInt64 = 0
-    var inFlightEnrichVideoCount = 0
+    var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
     var eagerMode = false
@@ -255,7 +264,7 @@ extension EnrichmentCoordinator {
         self.supervisor = nil
         await releaseOutstandingClaimsForShutdown()
         claimedWork.removeAll()
-        inFlightEnrichVideoCount = 0
+        retryLedger.removeAll()
         pendingApply.removeAll()
         diagnosedThumbnailLifecycleIDs.removeAll()
         freshly.removeAll()
@@ -278,6 +287,15 @@ extension EnrichmentCoordinator {
         let available = max(claimWindowLimit - claimedWork.count, 0)
         for seed in seeds.prefix(available) {
             guard !FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) else {
+                continue
+            }
+            // A `.tmp`-path staging write leaves `fileExists` false until completion, so a
+            // reconnect re-running the catalog flow must not clobber the active record: it
+            // already represents this seed's demand.
+            if case .materializing = claimedWork[seed.id]?.state {
+                continue
+            }
+            if case .awaitingMaterialization = claimedWork[seed.id]?.state {
                 continue
             }
             nextClaimSequence &+= 1

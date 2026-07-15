@@ -227,18 +227,40 @@ Adjacent decisions requiring separate ADRs or specs:
 
    Dataless discovery retains its claim and a periodic owner refreshes materializer-
    waiting leases before expiry. Success releases the old claim and returns the
-   identity through `freshly`; ordinary background failure uses capped exponential
-   retry and remains eventually eligible rather than being abandoned after a fixed
-   retry count. Shutdown stops new work, cancels enrichment's materializer waiters
-   promptly, drains owned workers, and releases every remaining claim before the
-   materializer itself shuts down. Root drain also queries requests already handed
-   to the shared materializer. `FileMaterialization` remains
+   identity through `freshly` and clears any pacing ledger entry for it. Cancellation
+   (an in-flight transfer torn down by something other than shutdown — a per-root
+   drain, for example) releases the claim without consuming a retry attempt: it is
+   not a signal about the provider's ability to materialize the asset. Ordinary
+   background failure retries in-window through a capped exponential schedule
+   (`[15, 60, 300, 900]` seconds); once that schedule is exhausted the claim releases
+   from the 32-item working window and pacing continues through a small process-local
+   ledger (identity → earliest reclaim time, attempt count, and the `sourceSize`
+   fragment of its `(size, mtime)` source signature) so a permanently-failing
+   population cannot hold claim-window capacity forever the way an unbounded in-window
+   retry would. The ledger is consulted when Store re-offers a claim: a candidate whose
+   earliest-reclaim time has not arrived is deferred (its claim released back) unless
+   its recorded source size no longer matches, which resets pacing immediately. The
+   ledger holds no work payload and resets on success, source-signature change, or
+   process restart (it is in-memory only). Device staging retries remain capped at
+   3 in-window attempts (unbounded for the `insufficientLocalSpace` waiting condition)
+   and never enter the ledger, since staged device seeds hold no Store claim.
+
+   Shutdown stops new work, cancels enrichment's materializer waiters promptly, drains
+   owned workers, and releases every remaining claim before the materializer itself
+   shuts down. Root drain also queries requests already handed to the shared
+   materializer, scoped to the ones this coordinator is actually responsible for
+   (entries with at least one device- or background-priority waiter): an unrelated
+   interactive preview request under the same root from another consumer of the
+   shared coordinator must not stall an eject. `FileMaterialization` remains
    the one-URL mechanism: it checks `SF_DATALESS`, requests asynchronously, polls
    without reading bytes, and re-requests once per second inside the same timeout.
 
    Admission diagnostics are aggregate scheduler states. Rejections are counted by
    reason after a full pass and logged only when that state changes, followed by one
-   unblocked transition. No candidate is logged again on every wake. Enrichment
+   unblocked transition. No candidate is logged again on every wake. Pending or
+   effectively active interactive demand that defers device/background work is a
+   truthful blocked state, not a silent no-op: it is recorded and reported, and the
+   diagnostic does not clear to unblocked while that demand still holds. Enrichment
    writes remain one timed transaction and one detail notification per batch.
 
 ## Alternatives Considered

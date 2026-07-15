@@ -539,7 +539,7 @@ final class DeviceCameraSession: NSObject {
                 return true
             }
             previous = sample
-            if DiagnosticsTiming.milliseconds(since: startedAt) >= timeout.milliseconds {
+            if DiagnosticsTiming.milliseconds(since: startedAt) >= DiagnosticsTiming.milliseconds(timeout) {
                 return false
             }
             do {
@@ -705,12 +705,5 @@ extension DeviceCameraSession: @preconcurrency ICCameraDeviceDelegate {
 
     func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
         markCatalogReady()
-    }
-}
-
-private extension Duration {
-    var milliseconds: Int {
-        let value = components
-        return Int(value.seconds * 1000 + value.attoseconds / 1_000_000_000_000_000)
     }
 }

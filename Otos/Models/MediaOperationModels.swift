@@ -164,7 +164,7 @@ nonisolated func elapsedMilliseconds(
     from start: ContinuousClock.Instant,
     to end: ContinuousClock.Instant
 ) -> String {
-    "\(max(Int(start.duration(to: end).components.attoseconds / 1_000_000_000_000_000), 0))"
+    "\(DiagnosticsTiming.milliseconds(from: start, to: end))"
 }
 
 nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
