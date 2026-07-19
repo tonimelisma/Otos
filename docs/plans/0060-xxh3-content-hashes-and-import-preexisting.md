@@ -37,8 +37,10 @@ The implementation must preserve all of these statements together:
 - Hashing runs inside existing enrichment/import work. There is no independent
   hashing owner, task stream, scheduling policy, worker count, retry queue, or UI
   progress state.
-- Existing enrichment admission, materialization, claim-window, batching, retry,
-  and cancellation ownership remains the only enrichment lifecycle.
+- Hashing adds no independent scheduler or worker pool. Plan 0061 may replace the
+  current coupled claim-window mechanics with separate ready-enrichment,
+  materialization, and pending-apply ownership; hashing remains part of the one
+  ready-enrichment operation after materialization.
 - Existing import worker width remains eight. Each worker hashes its own staging
   file before publish; no ninth pool or cross-entry hash coordinator is added.
 - A preexisting import decision depends only on the selected destination path
@@ -291,9 +293,11 @@ before `.readyToPublish`:
 5. Publish exclusively as today. `settleImportedAsset` writes the digest and the
    destination byte size/mtime signature in the same transaction as import batch,
    provenance, destination row, and companions.
-6. The import hash does not mark metadata/thumbnail enrichment complete. A newly
-   imported row can still need ordinary enrichment; when enrichment runs it may
-   recompute the same digest and atomically replace it with the same value/signature.
+6. The import hash alone does not mark metadata/thumbnail enrichment complete.
+   Plan 0061 may additionally clone current source metadata and the app-owned
+   thumbnail when the source enrichment signature is current and its stored digest
+   equals this staging digest. Without that separately validated overlay reuse, the
+   imported row still needs ordinary ready-only enrichment.
 
 For removable-volume imports this adds one local sequential read of staging after
 `copyfile(3)`. For MTP imports it adds one local staging read after ImageCapture
