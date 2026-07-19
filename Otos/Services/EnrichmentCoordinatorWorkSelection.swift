@@ -3,11 +3,12 @@ import OSLog
 
 /// Bounded cursorless work selection for `EnrichmentCoordinator`.
 ///
-/// Store remains durable backlog truth. `claimedWork` is the sole process-local owner
-/// of each claim's state and sequence; the views below are derived on demand from that
-/// bounded dictionary. Local enrichment and shared-materializer handoff have separate
-/// limits because they answer different resource questions.
+/// Store remains durable backlog truth. Ready/enriching claims, materialization demands,
+/// and pending apply results are separate process-local state sets because their
+/// capacities answer different resource questions.
 extension EnrichmentCoordinator {
+    private static let maxReadinessRoutingPasses = 4
+
     func dequeueEnrichmentWork() async -> [EnrichWork] {
         guard !isShuttingDown else {
             return []
@@ -22,32 +23,107 @@ extension EnrichmentCoordinator {
             return items
         }
 
-        let remainingClaimCapacity = max(claimWindowLimit - claimedWork.count, 0)
+        let remainingClaimCapacity = max(claimWindowLimit - readyClaims.count, 0)
         guard remainingClaimCapacity > 0 else {
             return items
         }
 
         do {
-            let desired = max(claimBatchSize, availableSlots - items.count)
-            let claimLimit = min(desired, remainingClaimCapacity)
-            let priorityIDs = prioritizedEnrichmentIDs()
-            let claimed = try await claimSkippingLedgerDeferrals(prioritizing: priorityIDs, limit: claimLimit)
-            if !claimed.deferredIDs.isEmpty {
-                await releaseDeferredLedgerClaims(claimed.deferredIDs)
+            var readinessCounts: [String: Int] = [:]
+            var totalExamined = 0
+            var totalDeferred = 0
+            var lastClaimLimit = 0
+            for _ in 0 ..< Self.maxReadinessRoutingPasses {
+                let currentReadyCapacity = max(availableSlots - items.count, 0)
+                let currentClaimCapacity = max(claimWindowLimit - readyClaims.count, 0)
+                guard currentClaimCapacity > 0 else { break }
+                let claimLimit = min(max(claimBatchSize, currentReadyCapacity), currentClaimCapacity)
+                lastClaimLimit = claimLimit
+                let priorityIDs = prioritizedEnrichmentIDs()
+                let claimed = try await claimSkippingLedgerDeferrals(
+                    prioritizing: priorityIDs,
+                    limit: claimLimit
+                )
+                totalExamined += claimed.totalExamined
+                totalDeferred += claimed.deferredIDs.count
+                if !claimed.deferredIDs.isEmpty {
+                    await releaseDeferredLedgerClaims(claimed.deferredIDs)
+                }
+                var releasedIDs: [MediaAssetID] = []
+                for asset in claimed.ready {
+                    if let retryAt = readinessRetryNotBefore[asset.id], retryAt > Date() {
+                        releasedIDs.append(asset.id)
+                        continue
+                    }
+                    readinessRetryNotBefore[asset.id] = nil
+                    switch readinessChecker.status(of: asset.id.fileURL) {
+                    case .materialized:
+                        enqueueReadyCandidate(asset)
+                        readinessCounts["ready", default: 0] += 1
+                    case .dataless:
+                        guard materializationDemands.count < handoffPolicy.globalOutstandingLimit else {
+                            releasedIDs.append(asset.id)
+                            readinessCounts["materializationBound", default: 0] += 1
+                            continue
+                        }
+                        materializationDemands[asset.id] = DownloadWork(
+                            id: asset.id,
+                            url: asset.id.fileURL,
+                            sourceSize: asset.byteSize,
+                            captureDate: asset.bestCaptureDate,
+                            isVideo: asset.bestKind == .video,
+                            isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
+                        )
+                        materializationClaimIDs.insert(asset.id)
+                        readinessCounts["needsMaterialization", default: 0] += 1
+                    case .unknown:
+                        readinessRetryNotBefore[asset.id] = Date().addingTimeInterval(1)
+                        releasedIDs.append(asset.id)
+                        readinessCounts["retryReadiness", default: 0] += 1
+                    }
+                }
+                if !releasedIDs.isEmpty {
+                    await releaseDeferredLedgerClaims(releasedIDs)
+                }
+                items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
+                if items.count >= availableSlots || claimed.ready.isEmpty || claimed.totalExamined == 0 {
+                    break
+                }
+                if materializationDemands.count >= handoffPolicy.globalOutstandingLimit {
+                    break
+                }
             }
-            enqueueClaimedCandidates(claimed.ready, submittedPriorityIDs: priorityIDs, currentItems: items)
-            items.append(contentsOf: drainQueuedEnrichment(limit: availableSlots - items.count))
             await recordDispatchedWork(items)
+            if !readinessCounts.isEmpty {
+                OtosLog.metadata.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.enrichment.readiness phase=route probes=\(totalExamined, privacy: .public) ready=\(readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(readinessCounts["needsMaterialization", default: 0], privacy: .public) retryReadiness=\(readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(readinessCounts["materializationBound", default: 0], privacy: .public)"
+                )
+            }
+            scheduleReadinessRetrySignal()
             logClaimBatch(
-                claimedCount: claimed.totalExamined,
+                claimedCount: totalExamined,
                 dispatchedCount: items.count,
-                limit: claimLimit,
-                deferredCount: claimed.deferredIDs.count
+                limit: lastClaimLimit,
+                deferredCount: totalDeferred
             )
             return items
         } catch {
             await recordCandidateQueryFailure(error)
             return []
+        }
+    }
+
+    private func scheduleReadinessRetrySignal() {
+        readinessRetryTask?.cancel()
+        guard let nextRetry = readinessRetryNotBefore.values.min() else {
+            readinessRetryTask = nil
+            return
+        }
+        let delay = max(nextRetry.timeIntervalSinceNow, 0)
+        readinessRetryTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
+            await self?.signal()
         }
     }
 
@@ -61,9 +137,9 @@ extension EnrichmentCoordinator {
 
     /// Repeatedly claims from Store until a pass yields a ready (non-deferred)
     /// candidate, Store runs out of unclaimed rows, or the pass bound is reached.
-    /// Each pass's claimed-but-deferred rows stay claimed (not yet released) so the
-    /// next pass's query naturally skips past them and surfaces different rows —
-    /// no explicit exclusion list is needed.
+    /// Each pass releases only ledger-deferred rows after the bounded probe; rows
+    /// routed to materialization remain independently claimed so the next pass's
+    /// query naturally skips past them and surfaces different rows.
     private func claimSkippingLedgerDeferrals(
         prioritizing priorityIDs: [MediaAssetID],
         limit: Int
@@ -152,11 +228,10 @@ extension EnrichmentCoordinator {
                     continue
                 }
             }
-            guard var record = claimedWork[work.id] else {
+            guard materializationDemands[work.id] != nil else {
                 continue
             }
-            record.state = .materializing(work)
-            claimedWork[work.id] = record
+            materializingIDs.insert(work.id)
             selected.append(work)
             available -= 1
             await recordVisibleThumbnailLifecycle(
@@ -175,7 +250,7 @@ extension EnrichmentCoordinator {
         var ids: [MediaAssetID] = []
         var seen: Set<MediaAssetID> = []
         ids.reserveCapacity(viewport.count + freshly.count)
-        for id in viewport.reversed() where seen.insert(id).inserted {
+        for id in viewport where seen.insert(id).inserted {
             ids.append(id)
         }
         for id in freshly.reversed() where seen.insert(id).inserted {
@@ -186,7 +261,7 @@ extension EnrichmentCoordinator {
 
     func nextMaterializationWork(excluding excluded: Set<MediaAssetID> = []) -> DownloadWork? {
         let pending = awaitingMaterializationWork
-        for id in viewport.reversed() where !excluded.contains(id) {
+        for id in viewport where !excluded.contains(id) {
             if let work = pending[id], work.isReadyForRetry {
                 return work
             }
@@ -197,23 +272,17 @@ extension EnrichmentCoordinator {
         if let device {
             return device
         }
-        // A full bounded claim window of dataless work cannot query far enough to
-        // observe Store exhaustion. Treat that backpressure boundary as the point
-        // where eager materialization must open slots, or the window deadlocks.
-        guard eagerMode || claimedWork.count >= claimWindowLimit else {
-            return nil
-        }
         return pending.values
             .filter { !excluded.contains($0.id) && !$0.isDeviceStaging && $0.isReadyForRetry }
             .min(by: downloadWorkPrecedes)
     }
 
     func hasEnrichmentWorkRemaining() -> Bool {
-        enrichingCount > 0
+        !readyClaims.isEmpty || !materializationDemands.isEmpty || !pendingApply.isEmpty
     }
 
     var enrichingCount: Int {
-        claimedWork.values.count {
+        readyClaims.values.count {
             if case .enriching = $0.state {
                 true
             } else {
@@ -223,17 +292,11 @@ extension EnrichmentCoordinator {
     }
 
     var materializingCount: Int {
-        claimedWork.values.count {
-            if case .materializing = $0.state {
-                true
-            } else {
-                false
-            }
-        }
+        materializingIDs.count
     }
 
     var enrichingBytes: Int64 {
-        claimedWork.values.reduce(0) { total, record in
+        readyClaims.values.reduce(0) { total, record in
             if case let .enriching(_, estimatedBytes) = record.state {
                 total + estimatedBytes
             } else {
@@ -243,7 +306,7 @@ extension EnrichmentCoordinator {
     }
 
     var inFlightEnrichVideoCount: Int {
-        claimedWork.values.count {
+        readyClaims.values.count {
             if case let .enriching(work, _) = $0.state {
                 work.isVideo
             } else {
@@ -253,20 +316,12 @@ extension EnrichmentCoordinator {
     }
 
     var awaitingMaterializationWork: [MediaAssetID: DownloadWork] {
-        claimedWork.reduce(into: [:]) { result, item in
-            if case let .awaitingMaterialization(work) = item.value.state {
-                result[item.key] = work
-            }
-        }
+        materializationDemands.filter { !materializingIDs.contains($0.key) }
     }
 
     private func materializingBackgroundCount(under root: LibraryRootPath) -> Int {
-        claimedWork.values.count { record in
-            if case let .materializing(work) = record.state {
-                !work.isDeviceStaging && work.id.libraryRootPath == root
-            } else {
-                false
-            }
+        materializingIDs.count { id in
+            materializationDemands[id]?.isDeviceStaging == false && id.libraryRootPath == root
         }
     }
 
@@ -308,19 +363,10 @@ extension EnrichmentCoordinator {
         )
     }
 
-    private func enqueueClaimedCandidates(
-        _ candidates: [MediaAsset],
-        submittedPriorityIDs: [MediaAssetID],
-        currentItems: [EnrichWork]
-    ) {
-        if candidates.isEmpty, queuedEnrichmentCount == 0, currentItems.isEmpty {
-            eagerMode = true
-        }
-        let submittedPriorityIDs = Set(submittedPriorityIDs)
-        freshly.removeAll { submittedPriorityIDs.contains($0) }
-        for asset in candidates where claimedWork[asset.id] == nil {
+    private func enqueueReadyCandidate(_ asset: MediaAsset) {
+        if readyClaims[asset.id] == nil {
             nextClaimSequence &+= 1
-            claimedWork[asset.id] = ClaimedWorkRecord(
+            readyClaims[asset.id] = ClaimedWorkRecord(
                 state: .queuedEnrichment(makeWork(asset)),
                 sequence: nextClaimSequence,
                 ownsStoreClaim: true
@@ -329,7 +375,7 @@ extension EnrichmentCoordinator {
     }
 
     private var queuedEnrichmentCount: Int {
-        claimedWork.values.count {
+        readyClaims.values.count {
             if case .queuedEnrichment = $0.state {
                 true
             } else {
@@ -342,12 +388,19 @@ extension EnrichmentCoordinator {
         guard limit > 0 else {
             return []
         }
-        let candidates = claimedWork
+        let candidates = readyClaims
             .compactMap { id, record -> (MediaAssetID, ClaimedWorkRecord, EnrichWork)? in
                 guard case let .queuedEnrichment(work) = record.state else { return nil }
                 return (id, record, work)
             }
-            .sorted { $0.1.sequence < $1.1.sequence }
+            .sorted { left, right in
+                let leftPriority = readyPriorityIndex(left.0)
+                let rightPriority = readyPriorityIndex(right.0)
+                if leftPriority != rightPriority {
+                    return leftPriority < rightPriority
+                }
+                return left.1.sequence < right.1.sequence
+            }
 
         var items: [EnrichWork] = []
         var rejections: [EnrichmentAdmissionPolicy.Rejection: Int] = [:]
@@ -366,7 +419,8 @@ extension EnrichmentCoordinator {
             case .success:
                 let estimated = admissionPolicy.estimatedBytes(work.sourceSize)
                 record.state = .enriching(work, estimatedBytes: estimated)
-                claimedWork[id] = record
+                readyClaims[id] = record
+                freshly.removeAll { $0 == id }
                 items.append(work)
             case let .failure(reason):
                 rejections[reason, default: 0] += 1
@@ -374,6 +428,16 @@ extension EnrichmentCoordinator {
         }
         recordEnrichmentAdmission(rejections: rejections, admitted: items.count)
         return items
+    }
+
+    private func readyPriorityIndex(_ id: MediaAssetID) -> Int {
+        if let index = viewport.firstIndex(of: id) {
+            return index
+        }
+        if let index = freshly.lastIndex(of: id) {
+            return viewport.count + (freshly.count - index)
+        }
+        return viewport.count + freshly.count + 1
     }
 
     func recordEnrichmentAdmission(
@@ -433,12 +497,18 @@ extension EnrichmentCoordinator {
 
     private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int, deferredCount: Int) {
         let queuedCount = queuedEnrichmentCount
+        let activeEnrichingCount = enrichingCount
+        let materializationInFlightCount = materializingIDs.count
+        let materializationPendingCount = materializationDemands.count - materializationInFlightCount
+        let pendingApplyCount = pendingApply.count
         OtosLog.metadata.debug(
             """
-            Enrichment claim batch claimed=\(claimedCount, privacy: .public) \
-            queued=\(queuedCount, privacy: .public) \
-            dispatched=\(dispatchedCount, privacy: .public) limit=\(limit, privacy: .public) \
-            deferred=\(deferredCount, privacy: .public)
+            op=catalog.enrichment.scheduler phase=route claimed=\(claimedCount, privacy: .public) \
+            readyQueued=\(queuedCount, privacy: .public) enriching=\(activeEnrichingCount, privacy: .public) \
+            materializationPending=\(max(materializationPendingCount, 0), privacy: .public) \
+            materializationInFlight=\(materializationInFlightCount, privacy: .public) \
+            pendingApply=\(pendingApplyCount, privacy: .public) dispatched=\(dispatchedCount, privacy: .public) \
+            limit=\(limit, privacy: .public) deferred=\(deferredCount, privacy: .public)
             """
         )
     }

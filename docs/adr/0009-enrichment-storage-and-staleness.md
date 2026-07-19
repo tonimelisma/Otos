@@ -29,7 +29,7 @@ Store-owned indexed enrichment-candidate queries keep scheduling out of UI
 publication; a consumer app cannot reclaim another provider's downloaded bytes
 (spec 0021).
 
-This decision supports requirements ENR-001 through ENR-011.
+This decision supports requirements ENR-001 through ENR-014.
 
 ## MECE Decision Scope
 
@@ -138,11 +138,11 @@ Adjacent decisions requiring separate ADRs or specs:
    avoids a per-viewport metadata join while still leaving pixel dimensions,
    frame-rate, codecs, camera fields, locations, and full metadata JSON cold.
 
-3. **There is no migration policy for pre-user metadata shape changes.** This app
-   has no active users; incompatible local catalog state is destructively reset by
-   the clean schema policy in ADR 0010. Originals are untouched. App-owned
-   thumbnails are purged with the reset because their SQLite references were
-   discarded, and metadata is rebuilt by re-enrichment.
+3. **Enrichment schema changes remain additive.** Catalog migrations are owned by
+   `CatalogStorePersistence`; a future or unrecognized schema refuses to open
+   without erasing the database or purging thumbnails. Originals are untouched,
+   and supported additive changes preserve existing overlay until ordinary
+   signature validation or re-enrichment rebuilds it.
 
 4. **Timestamp role facts and video duration are stored as hot query/display facts.**
    Enrichment writes timestamp role facts (original, QuickTime creation,
@@ -183,13 +183,18 @@ Adjacent decisions requiring separate ADRs or specs:
    is never downloaded.
 
 8. **Separate enrichment and materialization owners.** `EnrichmentCoordinator`
-   owns cursorless catalog claims, a bounded 32-identity working window, eight
-   local byte-reading workers, claim lifecycles, the `freshly` handoff, and batched
-   writes. Each claimed identity occupies exactly one state: queued enrichment,
-   enriching, awaiting materialization, materializing, or awaiting apply. Parallel
-   sets do not duplicate that truth. It does not schedule physical provider
-   transfers. `MaterializationCoordinator` is the sole owner of deliberate
-   transfers requested by preview, device staging, or enrichment.
+   owns cursorless catalog claims, a bounded 32-identity ready-enrichment window,
+   separate materialization demands and in-flight IDs, pending-apply claims,
+   readiness retry state, eight local byte-reading workers, the `freshly` handoff,
+   and batched writes. Ready capacity, physical-transfer capacity, and SQLite
+   lease ownership are independent: a dataless claim becomes a bounded
+   materialization demand without occupying a ready slot, and a completed result
+   releases ready capacity while retaining its Store claim until apply. It does
+   not schedule physical provider transfers. `MaterializationCoordinator` is the
+   sole owner of deliberate transfers requested by preview, device staging, or
+   enrichment. Readiness admission is routed through an injectable
+   `EnrichmentReadinessChecking` boundary; unknown provider status is retried by
+   an owned signal rather than treated as ready.
 
    Producer flow control and physical admission are deliberately separate.
    Enrichment hands off at most 16 requests globally, derived from the physical
@@ -265,6 +270,18 @@ Adjacent decisions requiring separate ADRs or specs:
    truthful blocked state, not a silent no-op: it is recorded and reported, and the
    diagnostic does not clear to unblocked while that demand still holds. Enrichment
    writes remain one timed transaction and one detail notification per batch.
+
+9. **Import settlement may reuse a validated source overlay.** After the published
+   destination facts and Plan-0060 XXH3-128 digest are available, `CatalogStore`
+   may read the source row's current `(size, mtime)` facts, enrichment stamps,
+   normalized metadata JSON, and app-owned thumbnail path. Only a source whose
+   facts and digest agree is eligible. Metadata and normalized facts are cloned
+   into the destination's independent filesystem-path identity; a source thumbnail
+   is copied into a separately staged destination thumbnail and promoted through
+   the same atomic thumbnail path used by ordinary enrichment. Missing, stale,
+   detached, or copy-failed source overlay never blocks import and leaves the
+   destination on the ordinary-enrichment path. Source and destination overlay
+   lifecycles are independent, and repeated journal recovery is idempotent.
 
 ## Alternatives Considered
 

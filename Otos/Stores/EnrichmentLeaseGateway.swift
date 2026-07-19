@@ -342,7 +342,7 @@ private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> Stored
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],
         enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
-        contentHash: XXH3Digest128(data: row["content_hash_xxh3_128"]),
+        contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
         contentHashSourceMTimeSeconds: row["content_hash_source_mtime"]
     )

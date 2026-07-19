@@ -44,14 +44,14 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 
 | Type | Isolation | Owns | Why an actor |
 | --- | --- | --- | --- |
-| `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; it does not execute or recover filesystem operations |
+| `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, per-root namespace mutation epochs, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; an older scan may upsert observed facts but its captured epoch cannot authorize missing-row or companion deletion |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
 | `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import, and one-executor-per-source ownership | serializes per-source dirtiness/execution; filesystem probes run off the actor and self-caused replans defer until execution ends |
 | `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, 8 bounded entry workers, staging, exclusive publish, and optional source deletion | owns monotonic aggregate progress while independent workers suspend; Store serializes journal transitions and atomic settlement |
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
 | `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
 | `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
-| `EnrichmentCoordinator` | actor | bounded 32-item claim state machine, eight-worker local enrichment admission, bounded shared-materializer handoff, lease refresh, `freshly` handoff, batched writes, a bounded pacing-only retry ledger (identity → earliest reclaim time, attempt count) for background materialization that exhausted its in-window retry schedule | serializes one lifecycle state per claimed identity; decode/parse and materializer awaits run in owned workers off the actor |
+| `EnrichmentCoordinator` | actor | separate ready-enrichment claims, materialization demands, materialization in-flight IDs, pending-apply claims, readiness retry signals, eight-worker local enrichment admission, bounded shared-materializer handoff, lease refresh, `freshly` handoff, batched writes, and a bounded pacing-only retry ledger | readiness admission probes through `EnrichmentReadinessChecking`; ready capacity, transfer capacity, and SQLite-lease ownership are independent; decode/parse and materializer awaits run in owned workers off the actor |
 | `MaterializationCoordinator` | actor | bounded consumer-fed interactive/device/background queues, per-id waiter coalescing and effective priority, 16-transfer admission, one-background-per-root fairness, known-materialization suppression, truthful blocked/unblocked admission diagnostics during effective interactive demand, per-waiter-priority scoping of `activeRequestCount(under:)` so eject drain sees only enrichment-originated demand | gives every deliberate provider request one scheduling and lifecycle owner; its supervisor is the only dispatcher |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, live byte-read gate, per-id decode coalesce + small LRU | serializes decode/cache state and delegates interactive materialization |
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus, owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
@@ -81,6 +81,14 @@ everything expensive happens on an actor off the main thread.
   one-URL `FileMaterialization` mechanism. The coordinator owns the bounded physical
   scheduler; enrichment owns a separate bounded producer window (32 claims, at most
   16 handed off globally and two per root). Scanning never materializes (ADR 0008/0009).
+- **Scan freshness and import settlement**: each active scan captures the root's
+  namespace-mutation epoch. Independent import, reorganization, and filesystem-event
+  mutations advance the epoch and retain typed dirty scopes; a stale scan can still
+  upsert facts but defers destructive missing-row reconciliation. Import settlement
+  validates current source `(size, mtime)` facts plus the Plan-0060 XXH3-128 digest,
+  and may clone the source's normalized enrichment overlay while copying an
+  independent destination thumbnail. A reuse miss falls back to ordinary enrichment;
+  source and destination overlay lifecycles remain independent.
 - **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings
@@ -119,7 +127,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
-| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; `CatalogStore` validates source signatures and owns atomic overlay/journal settlement |
+| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including import overlay reuse diagnostics |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |

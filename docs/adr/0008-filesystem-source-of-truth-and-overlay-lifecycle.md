@@ -153,7 +153,19 @@ subordinate, rebuildable overlay.
    out-of-app move therefore appears as a deletion plus an addition. Recovering
    overlay across such a move is an optional future convenience that may match
    newly appeared files to orphaned thumbnails; it is explicitly not part of the
-   identity model and must not drive schema design now.
+   identity model and must not drive schema design now. A scan also captures a
+   process-local namespace-mutation epoch for its root. Import, reorganization,
+   and filesystem-event settlement advance that epoch before their Store write
+   and retain typed dirty scopes. If the epoch changes while a scan is suspended,
+   the scan may upsert facts it observed but cannot use its stale absence
+   observation to purge media or companions; retained dirty scopes reconcile after
+   the current lease clears. Explicit import settlement may reuse a source's
+   current normalized enrichment overlay when the source `(size, mtime)` facts and
+   Plan-0060 XXH3-128 digest agree. Metadata and normalized facts are cloned to the
+   destination path identity, while a source thumbnail is copied into an independent
+   destination thumbnail through the app-owned staged-promotion path. A reuse miss
+   falls back to ordinary enrichment; source and destination overlay lifecycles
+   never become linked.
 6. Cloud materialization has two parts: an always-on detector gate and a permissive
    policy on top of it. The gate: byte-reading work must never *accidentally*
    materialize a dataless file by faulting on a read, so it checks the single
@@ -177,7 +189,6 @@ subordinate, rebuildable overlay.
    transient and is never persisted. The current catalog/scanner still reads only
    filesystem facts and materializes nothing; byte-reading materialization is the
    enrichment owner's job (ADR 0009). See
-   , and
    `docs/adr/0009-enrichment-storage-and-staleness.md`.
 7. Media metadata and filesystem facts are distinct. Filesystem facts are URL
    resource values (name, size, dates, type, and the dataless flag) readable without

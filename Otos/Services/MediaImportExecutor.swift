@@ -14,6 +14,35 @@ actor MediaImportExecutor {
     private let cameraImport: CameraImportAccess?
     private let cancelFlag = CancelFlag()
 
+    private struct OverlayReuseSummary: Sendable {
+        var metadataCloned = 0
+        var thumbnailCopied = 0
+        var misses: [String: Int] = [:]
+
+        mutating func record(_ result: ImportOverlayReuseResult) {
+            if result.metadataCloned {
+                metadataCloned += 1
+            }
+            if result.thumbnailCopied {
+                thumbnailCopied += 1
+            }
+            if let miss = result.miss {
+                misses[miss.rawValue, default: 0] += 1
+            }
+        }
+
+        var missDescription: String {
+            misses.keys.sorted().map { "\($0):\(misses[$0] ?? 0)" }.joined(separator: ",")
+        }
+    }
+
+    private struct EntryTotals: Sendable {
+        let publishedCount: Int
+        let failedCount: Int
+        let skippedForeignCount: Int
+        let overlayReuse: OverlayReuseSummary
+    }
+
     init(store: CatalogStore, cameraImport: CameraImportAccess? = nil) {
         self.store = store
         self.cameraImport = cameraImport
@@ -125,6 +154,22 @@ actor MediaImportExecutor {
             totalBytes: totalBytes,
             onProgress: onProgress
         )
+        let storedBatchCount = await (try? store.importBatchAssetCount(batch)) ?? -1
+        let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=mediaOperation.batch phase=verified batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
+        )
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=mediaOperation.batch phase=overlayReuse batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
+        )
+        if batchIntegrityMismatch {
+            OtosLog.catalog.fault(
+                // swiftlint:disable:next line_length
+                "op=mediaOperation.batch phase=integrityMismatch batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
+            )
+        }
         OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
         let elapsedMs = max(Int(started.duration(to: .now).components.attoseconds / 1_000_000_000_000_000), 1)
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
@@ -140,14 +185,14 @@ actor MediaImportExecutor {
                 publishedCount: entryTotals.publishedCount,
                 batch: entryTotals.publishedCount > 0 ? batch : nil,
                 hasBlockedEntries: hasBlockedEntries,
-                hasEntryFailures: entryTotals.failedCount > 0
+                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch
             )
         }
         return .completed(
             publishedCount: entryTotals.publishedCount,
             batch: entryTotals.publishedCount > 0 ? batch : nil,
             hasBlockedEntries: hasBlockedEntries,
-            hasEntryFailures: entryTotals.failedCount > 0
+            hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch
         )
     }
 
@@ -181,11 +226,13 @@ actor MediaImportExecutor {
         totalCount: Int,
         totalBytes: Int64,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
-    ) async -> (publishedCount: Int, failedCount: Int) {
+    ) async -> EntryTotals {
         var completed = 0
         var completedBytes: Int64 = 0
         var publishedCount = 0
         var failedCount = 0
+        var skippedForeignCount = 0
+        var overlayReuse = OverlayReuseSummary()
         let copyEntries = plan.entries.filter {
             if case .copy = $0.disposition {
                 true
@@ -220,13 +267,15 @@ actor MediaImportExecutor {
             }
             while let result = await group.next() {
                 switch result.outcome {
-                case .published:
+                case let .published(reuseResult):
                     publishedCount += 1
+                    overlayReuse.record(reuseResult)
                     completed += 1
                     completedBytes += result.byteSize
                 case .cancelled:
                     cancelFlag.cancel()
                 case .skippedForeign:
+                    skippedForeignCount += 1
                     completed += 1
                 case .failed:
                     failedCount += 1
@@ -255,11 +304,16 @@ actor MediaImportExecutor {
                 )
             }
         }
-        return (publishedCount, failedCount)
+        return EntryTotals(
+            publishedCount: publishedCount,
+            failedCount: failedCount,
+            skippedForeignCount: skippedForeignCount,
+            overlayReuse: overlayReuse
+        )
     }
 
-    private enum EntryOutcome {
-        case published
+    private enum EntryOutcome: Sendable {
+        case published(ImportOverlayReuseResult)
         case skippedForeign
         case cancelled
         case failed
@@ -691,8 +745,9 @@ actor MediaImportExecutor {
             entry: request.entry,
             destinationRoot: request.destinationRoot
         )
+        var reuseResult = ImportOverlayReuseResult.notReused
         do {
-            try await store.settleImportedAsset(
+            reuseResult = try await store.settleImportedAsset(
                 operation: operation,
                 byteSize: settledByteSize,
                 contentModifiedAt: settledModified,
@@ -724,7 +779,7 @@ actor MediaImportExecutor {
             )
             try? await store.completeImportOperation(key: operation.operationKey)
         }
-        return .published
+        return .published(reuseResult)
     }
 
     private func recover(_ operation: ActiveFileOperation) async {
@@ -906,7 +961,7 @@ actor MediaImportExecutor {
         }
     }
 
-    private func companionDestinations(
+    private nonisolated func companionDestinations(
         entry: MediaOperationPlanEntry,
         destinationRoot: LibraryRootPath
     ) -> [MediaCompanion] {

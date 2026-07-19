@@ -16,7 +16,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        guard var record = claimedWork[id] else {
+        guard let record = readyClaims[id] else {
             return
         }
         switch outcome {
@@ -31,8 +31,10 @@ extension EnrichmentCoordinator {
                 isVideo: work.isVideo,
                 isDeviceStaging: work.isDeviceStaging
             )
-            record.state = .awaitingMaterialization(pending)
-            claimedWork[id] = record
+            readyClaims[id] = nil
+            materializationDemands[id] = pending
+            materializingIDs.remove(id)
+            materializationClaimIDs.insert(id)
             var fields = ["sourceSize": "\(work.sourceSize ?? -1)"]
             if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
                 fields["leaseRefreshedUntil"] = Self.diagnosticTimestamp(leaseRefreshedUntil)
@@ -44,7 +46,7 @@ extension EnrichmentCoordinator {
             )
         case .transient:
             await recordVisibleThumbnailLifecycle(phase: "transient", id: id)
-            claimedWork[id] = nil
+            readyClaims[id] = nil
             await releaseClaimIfOwned(record, id: id)
         }
         signal()
@@ -59,7 +61,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        guard var record = claimedWork[id] else {
+        guard readyClaims[id] != nil else {
             return
         }
         let result = EnrichmentResult(
@@ -79,9 +81,9 @@ extension EnrichmentCoordinator {
                 "hasThumbnail": "false",
             ]
         )
+        readyClaims[id] = nil
         pendingApply.append(result)
-        record.state = .awaitingApply
-        claimedWork[id] = record
+        pendingApplyClaimIDs.insert(id)
         scheduleApplyFlushIfNeeded()
         signal()
     }
@@ -95,7 +97,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        guard var record = claimedWork[id] else {
+        guard materializationDemands[id] != nil else {
             return
         }
         let outcome = result.outcome
@@ -103,13 +105,14 @@ extension EnrichmentCoordinator {
         // Cancellation says nothing about the provider's ability to materialize the
         // asset: release the claim without consuming a retry attempt or pacing slot.
         if outcome == .cancelled {
-            claimedWork[id] = nil
-            await releaseClaimIfOwned(record, id: id)
+            materializationDemands[id] = nil
+            materializingIDs.remove(id)
+            await releaseMaterializationClaimIfOwned(id)
         } else {
             let retry = retryWorkIfNeeded(work, outcome: outcome)
             if let retry {
-                record.state = .awaitingMaterialization(retry)
-                claimedWork[id] = record
+                materializationDemands[id] = retry
+                materializingIDs.remove(id)
                 scheduleDownloadRetrySignal()
                 if let leaseRefreshedUntil = await refreshClaims([id], visibleID: id) {
                     await recordVisibleThumbnailLifecycle(
@@ -122,8 +125,9 @@ extension EnrichmentCoordinator {
                     )
                 }
             } else {
-                claimedWork[id] = nil
-                await releaseClaimIfOwned(record, id: id)
+                materializationDemands[id] = nil
+                materializingIDs.remove(id)
+                await releaseMaterializationClaimIfOwned(id)
                 if materialized {
                     retryLedger[id] = nil
                 } else if !work.isDeviceStaging {
@@ -230,9 +234,12 @@ extension EnrichmentCoordinator {
     }
 
     private func releaseClaimIfOwned(_ record: ClaimedWorkRecord, id: MediaAssetID) async {
-        guard record.ownsStoreClaim else {
-            return
-        }
+        guard record.ownsStoreClaim else { return }
+        await releaseClaims([id], visibleID: id)
+    }
+
+    private func releaseMaterializationClaimIfOwned(_ id: MediaAssetID) async {
+        guard materializationClaimIDs.remove(id) != nil else { return }
         await releaseClaims([id], visibleID: id)
     }
 
@@ -290,9 +297,9 @@ extension EnrichmentCoordinator {
             "op=catalog.enrichment.coordinator phase=flush count=\(batch.count, privacy: .public) outcome=\(String(describing: outcome), privacy: .public)"
         )
         await recordVisibleThumbnailBatchOutcome(outcome, batchCount: batch.count, ids: diagnosedBatchIDs)
-        let claimedIDs = batchIDs.filter { claimedWork[$0]?.ownsStoreClaim == true }
+        let claimedIDs = batchIDs.filter { pendingApplyClaimIDs.remove($0) != nil }
         for id in batchIDs {
-            claimedWork[id] = nil
+            readyClaims[id] = nil
         }
         if let visibleID = claimedIDs.first, !claimedIDs.isEmpty {
             await releaseClaims(claimedIDs, visibleID: visibleID)
@@ -302,9 +309,9 @@ extension EnrichmentCoordinator {
     }
 
     func releaseOutstandingClaimsForShutdown() async {
-        let ids = Set(claimedWork.compactMap { id, record in
+        let ids = Set(readyClaims.compactMap { id, record in
             record.ownsStoreClaim ? id : nil
-        })
+        }).union(materializationClaimIDs).union(pendingApplyClaimIDs)
         guard !ids.isEmpty else {
             return
         }
@@ -381,11 +388,9 @@ extension EnrichmentCoordinator {
                 "hasStagedThumbnail": "\(result.generatedThumbnail != nil)",
             ]
         )
+        readyClaims[id] = nil
         pendingApply.append(result)
-        if var record = claimedWork[id] {
-            record.state = .awaitingApply
-            claimedWork[id] = record
-        }
+        pendingApplyClaimIDs.insert(id)
         scheduleApplyFlushIfNeeded()
     }
 
@@ -393,15 +398,7 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        let ids = claimedWork.compactMap { id, record -> MediaAssetID? in
-            guard record.ownsStoreClaim else { return nil }
-            switch record.state {
-            case .awaitingMaterialization, .materializing:
-                return id
-            case .queuedEnrichment, .enriching, .awaitingApply:
-                return nil
-            }
-        }
+        let ids = Array(materializationClaimIDs)
         guard let visibleID = ids.first, !ids.isEmpty else {
             return
         }

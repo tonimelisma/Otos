@@ -28,6 +28,25 @@ nonisolated struct StoredAsset {
     var contentHashSourceMTimeSeconds: Int?
 }
 
+/// Store-owned, one-settlement snapshot of rebuildable enrichment. It is never
+/// persisted as a second record and contains no source history, claims, or identity.
+nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
+    let metadata: AssetMetadata
+    let originalTimestamp: Date?
+    let quickTimeCreationTimestamp: Date?
+    let digitizedTimestamp: Date?
+    let gpsTimestamp: Date?
+    let enrichedKind: MediaKind?
+    let enrichedFormat: MediaFormatToken?
+    let durationSeconds: Double?
+    let sourceByteSize: Int64?
+    let sourceMTimeSeconds: Int?
+    let contentHash: XXH3Digest128?
+    let contentHashSourceSize: Int64?
+    let contentHashSourceMTimeSeconds: Int?
+    let thumbnailPath: String?
+}
+
 nonisolated struct StoredTileDetail {
     let libraryRootID: Int64
     let relativePath: MediaRelativePath

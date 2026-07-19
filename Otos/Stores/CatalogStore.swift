@@ -85,6 +85,7 @@ actor CatalogStore {
         let rootPath: LibraryRootPath
         let rootRowID: Int64
         let leaseGeneration: UInt64
+        let startNamespaceMutationEpoch: UInt64
     }
 
     private struct RemovableRootAttachment {
@@ -298,6 +299,29 @@ extension CatalogStore {
             "op=catalog.occupancyRevision phase=bump rootPath=\(path.rawValue, privacy: .public) occupancyRevision=\(state.occupancyRevision, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
         )
         return state.occupancyRevision
+    }
+
+    /// Records a namespace mutation before its owner crosses a database await.
+    /// The epoch invalidates any older destructive scan observation while the typed
+    /// dirty scope gives the normal post-lease reconciler enough work to restore
+    /// filesystem truth without guessing about deletion.
+    private func recordIndependentNamespaceMutation(
+        root: LibraryRootPath,
+        scope: FilesystemDirtyScope,
+        fileAction: SingleFileReconcileOperation? = nil
+    ) {
+        guard var state = roots[root] else {
+            return
+        }
+        state.namespaceMutationEpoch &+= 1
+        upsert(state)
+        var dirty = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
+        dirty.insert(scope, fileAction: fileAction)
+        filesystemDirty[root] = dirty
+        OtosLog.catalog.debug(
+            // swiftlint:disable:next line_length
+            "op=catalog.namespaceMutation phase=record rootPath=\(root.rawValue, privacy: .public) epoch=\(state.namespaceMutationEpoch, privacy: .public) scope=\(String(describing: scope), privacy: .public)"
+        )
     }
 
     /// Planning media facts for reorganization of one fixed library root.
@@ -1714,7 +1738,11 @@ extension CatalogStore {
         else {
             throw CancellationError()
         }
-        let scan = scanLeases.makeActiveScan(rootPath: rootPath, rootRowID: rootRowID)
+        let scan = scanLeases.makeActiveScan(
+            rootPath: rootPath,
+            rootRowID: rootRowID,
+            startNamespaceMutationEpoch: roots[rootPath]?.namespaceMutationEpoch ?? 0
+        )
         scanLeases.beginDeviceScan(scan)
         if var state = roots[rootPath] {
             state.activity = .enumerating
@@ -2287,7 +2315,11 @@ private extension CatalogStore {
                 continue
             }
             setAvailability(.available, for: nextPath)
-            let scan = scanLeases.makeActiveScan(rootPath: nextPath, rootRowID: rootRowID)
+            let scan = scanLeases.makeActiveScan(
+                rootPath: nextPath,
+                rootRowID: rootRowID,
+                startNamespaceMutationEpoch: roots[nextPath]?.namespaceMutationEpoch ?? 0
+            )
             scanLeases.beginFilesystemScan(scan)
             filesystemWatchingArmed.insert(nextPath)
             filesystemWatcher.addRoot(nextPath)
@@ -2403,9 +2435,11 @@ private extension CatalogStore {
                 scan: scan,
                 observedPaths: observation.mediaPaths
             )
+            let canReconcileCompanionDeletions = scanCanDelete(scan)
             let companionChanged = try await applyAndReconcileCompanions(
                 scan: scan,
-                companions: observation.companions
+                companions: observation.companions,
+                reconcileMissing: canReconcileCompanionDeletions && scanCanDelete(scan)
             )
             if var state = roots[scan.rootPath] {
                 state.skippedPackageCount = observation.skippedPackageCount
@@ -2437,6 +2471,23 @@ private extension CatalogStore {
                 // swiftlint:disable:next line_length
                 "op=catalog.scan phase=finish rootPath=\(scan.rootPath.rawValue, privacy: .public) observed=\(observation.mediaPaths.count, privacy: .public) companionCount=\(observation.companions.count, privacy: .public) deleted=\(deletedCount, privacy: .public) skippedPackageCount=\(observation.skippedPackageCount, privacy: .public)"
             )
+            if !canReconcileCompanionDeletions || !scanCanDelete(scan) {
+                let dirty = filesystemDirty[scan.rootPath]
+                recordDiagnostic(
+                    operation: "catalog.scan.reconcile",
+                    phase: "deferredStaleObservation",
+                    fields: [
+                        "rootPath": scan.rootPath.rawValue,
+                        "rootRowID": "\(scan.rootRowID)",
+                        "leaseGeneration": "\(scan.leaseGeneration)",
+                        "startEpoch": "\(scan.startNamespaceMutationEpoch)",
+                        "currentEpoch": "\(roots[scan.rootPath]?.namespaceMutationEpoch ?? 0)",
+                        "fileScopeCount": "\(dirty?.fileCount ?? 0)",
+                        "subtreeScopeCount": "\(dirty?.subtreeCount ?? 0)",
+                        "rootScopeCount": dirty?.isRootDirty == true ? "1" : "0",
+                    ]
+                )
+            }
             lastSuccessfulFullRootScanAt[scan.rootPath] = Date()
         } catch is CancellationError {
             await recordIgnoredStaleCallback(scan, callback: "reconciliation")
@@ -2460,10 +2511,16 @@ private extension CatalogStore {
     private func applyAndReconcileCompanions(
         scan: ActiveScan,
         companions: [ScannedCompanionFile],
-        underSubtree: MediaRelativePath? = nil
+        underSubtree: MediaRelativePath? = nil,
+        reconcileMissing: Bool = true
     ) async throws -> Bool {
         guard owns(scan) else {
             throw CancellationError()
+        }
+        if reconcileMissing {
+            guard scanCanDelete(scan) else {
+                return false
+            }
         }
         let dbQueue = try database()
         let timed = try await timedWrite(dbQueue) { db in
@@ -2472,12 +2529,16 @@ private extension CatalogStore {
                 libraryRootID: scan.rootRowID,
                 db: db
             )
-            let deleted = try Self.reconcileMissingCompanions(
-                libraryRootID: scan.rootRowID,
-                observedPaths: Set(companions.map(\.relativePath)),
-                underSubtree: underSubtree,
-                db: db
-            )
+            let deleted = if reconcileMissing {
+                try Self.reconcileMissingCompanions(
+                    libraryRootID: scan.rootRowID,
+                    observedPaths: Set(companions.map(\.relativePath)),
+                    underSubtree: underSubtree,
+                    db: db
+                )
+            } else {
+                0
+            }
             return upserted + deleted
         }
         guard owns(scan) else {
@@ -2497,6 +2558,9 @@ private extension CatalogStore {
         guard owns(scan) else {
             throw CancellationError()
         }
+        guard scanCanDelete(scan) else {
+            return 0
+        }
         let dbQueue = try database()
         let existingRows = try await dbQueue.read { db in
             try Self.fetchExistingAssetRows(
@@ -2508,8 +2572,14 @@ private extension CatalogStore {
         guard owns(scan) else {
             throw CancellationError()
         }
+        guard scanCanDelete(scan) else {
+            return 0
+        }
         let missingRows = existingRows.filter { !observedPaths.contains($0.relativePath) }
         guard !missingRows.isEmpty else {
+            return 0
+        }
+        guard scanCanDelete(scan) else {
             return 0
         }
         // Capture the thumbnail files of soon-to-be-purged assets before their rows are
@@ -2902,21 +2972,23 @@ private extension CatalogStore {
             var fileCount = 0
             var subtreeCount = 0
             var rootCount = 0
-            var accumulator = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
             for dirt in scopes {
                 switch dirt.scope {
                 case .root:
-                    accumulator.insertRoot()
+                    recordIndependentNamespaceMutation(root: root, scope: .root)
                     rootCount += dirt.eventCount
                 case let .subtree(path):
-                    accumulator.insertSubtree(path)
+                    recordIndependentNamespaceMutation(root: root, scope: .subtree(path))
                     subtreeCount += dirt.eventCount
                 case let .file(path):
-                    accumulator.insertFile(path, action: dirt.fileAction ?? .upsert)
+                    recordIndependentNamespaceMutation(
+                        root: root,
+                        scope: .file(path),
+                        fileAction: dirt.fileAction ?? .upsert
+                    )
                     fileCount += dirt.eventCount
                 }
             }
-            filesystemDirty[root] = accumulator
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
                 "op=catalog.filesystemEvent phase=classify rootPath=\(root.rawValue, privacy: .public) eventCount=\(keptEvents.count, privacy: .public) file=\(fileCount, privacy: .public) subtree=\(subtreeCount, privacy: .public) root=\(rootCount, privacy: .public) suppressed=\(suppressedCount, privacy: .public)"
@@ -3014,7 +3086,11 @@ private extension CatalogStore {
         guard let rootRowID = roots[root]?.rowID else {
             return
         }
-        let scan = scanLeases.makeActiveScan(rootPath: root, rootRowID: rootRowID)
+        let scan = scanLeases.makeActiveScan(
+            rootPath: root,
+            rootRowID: rootRowID,
+            startNamespaceMutationEpoch: roots[root]?.namespaceMutationEpoch ?? 0
+        )
         scanLeases.beginFilesystemScan(scan)
         filesystemWatchingArmed.insert(root)
         filesystemWatcher.addRoot(root)
@@ -3358,6 +3434,13 @@ private extension CatalogStore {
         }
     }
 
+    private func scanCanDelete(_ scan: ActiveScan) -> Bool {
+        guard owns(scan) else {
+            return false
+        }
+        return roots[scan.rootPath]?.namespaceMutationEpoch == scan.startNamespaceMutationEpoch
+    }
+
     private func recordIgnoredStaleCallback(_ scan: ActiveScan, callback: String) async {
         OtosLog.catalog.debug(
             """
@@ -3376,6 +3459,17 @@ private extension CatalogStore {
 /// Filesystem execution and recovery sequencing belong to their operation owners.
 extension CatalogStore {
     // MARK: - Import journal / settlement
+
+    func importBatchAssetCount(_ batch: ImportBatchID) async throws -> Int {
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM media_asset WHERE import_batch_unix_ms = ?",
+                arguments: [batch.unixMilliseconds]
+            ) ?? 0
+        }
+    }
 
     func activeImportOperations() async throws -> [ActiveFileOperation] {
         let dbWriter = try database()
@@ -3412,18 +3506,127 @@ extension CatalogStore {
         }
     }
 
+    @discardableResult
+    // swiftlint:disable:next function_body_length
     func settleImportedAsset(
         operation: ActiveFileOperation,
         byteSize: Int64,
         contentModifiedAt: Date,
         batch: ImportBatchID,
         companions: [MediaCompanion]
-    ) async throws {
+    ) async throws -> ImportOverlayReuseResult {
         guard let rootRowID = roots[operation.destinationRootPath]?.rowID else {
             throw CatalogStoreError.catalogUnavailable
         }
+        recordIndependentNamespaceMutation(
+            root: operation.destinationRootPath,
+            scope: .file(operation.destinationRelativePath),
+            fileAction: .upsert
+        )
         let dbWriter = try database()
+        var reusableOverlay: ReusableEnrichmentOverlay?
+        var stagedThumbnail: GeneratedThumbnail?
+        var reuseResult = ImportOverlayReuseResult.notReused
+        if let sourceRootID = roots[operation.sourceRootPath]?.rowID {
+            let sourceOverlay = try await dbWriter.read { db in
+                try Self.fetchReusableEnrichmentOverlay(
+                    sourceRootID: sourceRootID,
+                    sourceRelativePath: operation.sourceRelativePath,
+                    db: db
+                )
+            }
+            if let sourceOverlay {
+                let sourceMTime = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
+                let sourceFactsCurrent = sourceOverlay.sourceByteSize != nil
+                    && sourceOverlay.sourceMTimeSeconds != nil
+                    && sourceOverlay.sourceByteSize == operation.sourceByteSize
+                    && sourceOverlay.sourceMTimeSeconds == sourceMTime
+                let hashMatches = operation.contentHash != nil
+                    && sourceOverlay.contentHash == operation.contentHash
+                    && sourceOverlay.contentHashSourceSize != nil
+                    && sourceOverlay.contentHashSourceMTimeSeconds != nil
+                    && sourceOverlay.contentHashSourceSize == sourceOverlay.sourceByteSize
+                    && sourceOverlay.contentHashSourceMTimeSeconds == sourceOverlay.sourceMTimeSeconds
+                if sourceFactsCurrent, hashMatches {
+                    if let sourceThumbnail = sourceOverlay.thumbnailPath {
+                        if let thumbnailDirectory {
+                            do {
+                                stagedThumbnail = try ThumbnailStore.stageCopy(
+                                    sourceRelativeName: sourceThumbnail,
+                                    destinationID: MediaAssetID(
+                                        libraryRootPath: operation.destinationRootPath,
+                                        relativePath: operation.destinationRelativePath
+                                    ),
+                                    in: thumbnailDirectory
+                                )
+                                reusableOverlay = sourceOverlay
+                            } catch {
+                                reuseResult = ImportOverlayReuseResult(
+                                    metadataCloned: false,
+                                    thumbnailCopied: false,
+                                    miss: .thumbnailCopyFailed
+                                )
+                            }
+                        } else {
+                            reuseResult = ImportOverlayReuseResult(
+                                metadataCloned: false,
+                                thumbnailCopied: false,
+                                miss: .missingThumbnail
+                            )
+                            reusableOverlay = nil
+                            stagedThumbnail = nil
+                            // In-memory catalogs intentionally have no reusable files.
+                        }
+                    } else {
+                        reusableOverlay = sourceOverlay
+                    }
+                } else if sourceFactsCurrent {
+                    reuseResult = ImportOverlayReuseResult(
+                        metadataCloned: false,
+                        thumbnailCopied: false,
+                        miss: .missingOrMismatchedHash
+                    )
+                } else {
+                    reuseResult = ImportOverlayReuseResult(
+                        metadataCloned: false,
+                        thumbnailCopied: false,
+                        miss: .staleSourceOverlay
+                    )
+                }
+            } else {
+                reuseResult = .notReused
+            }
+        } else {
+            reuseResult = ImportOverlayReuseResult(
+                metadataCloned: false,
+                thumbnailCopied: false,
+                miss: .detachedSource
+            )
+        }
+        var overlayToWrite = reusableOverlay
+        var thumbnailPathToWrite: String?
         try Self.writeWithJournalDurability(dbWriter) { db in
+            if let staged = stagedThumbnail, let thumbnailDirectory {
+                do {
+                    thumbnailPathToWrite = try ThumbnailStore.promote(staged, in: thumbnailDirectory)
+                    reuseResult = ImportOverlayReuseResult(
+                        metadataCloned: overlayToWrite != nil,
+                        thumbnailCopied: overlayToWrite?.thumbnailPath != nil,
+                        miss: nil
+                    )
+                } catch {
+                    ThumbnailStore.discard(staged, in: thumbnailDirectory)
+                    overlayToWrite = nil
+                    stagedThumbnail = nil
+                    reuseResult = ImportOverlayReuseResult(
+                        metadataCloned: false,
+                        thumbnailCopied: false,
+                        miss: .thumbnailCopyFailed
+                    )
+                }
+            } else if overlayToWrite != nil {
+                reuseResult = ImportOverlayReuseResult(metadataCloned: true, thumbnailCopied: false, miss: nil)
+            }
             try Self.settleImportedAsset(
                 operation: operation,
                 destinationRootID: rootRowID,
@@ -3433,6 +3636,8 @@ extension CatalogStore {
                 contentModifiedAt: contentModifiedAt,
                 batch: batch,
                 companions: companions,
+                reusableOverlay: overlayToWrite,
+                destinationThumbnailPath: thumbnailPathToWrite,
                 db: db
             )
             if operation.deleteSourceRequested {
@@ -3447,18 +3652,28 @@ extension CatalogStore {
         }
         _ = bumpOccupancyRevision(for: operation.destinationRootPath)
         notifyCatalogChanged()
+        Task { await self.drainDirtyReconcile(for: operation.destinationRootPath) }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
             "op=mediaOperation.settle phase=finish destination=\(operation.destinationRelativePath.rawValue, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public)"
         )
+        if reuseResult.metadataCloned {
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=mediaOperation.settle phase=overlayReuse destination=\(operation.destinationRelativePath.rawValue, privacy: .public) overlaySource=reusedImport thumbnailCopied=\(reuseResult.thumbnailCopied, privacy: .public)"
+            )
+        }
+        return reuseResult
     }
 
     func recordForeignOccupant(root: LibraryRootPath, relativePath: MediaRelativePath) async {
+        recordIndependentNamespaceMutation(root: root, scope: .file(relativePath), fileAction: .upsert)
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
             "op=mediaOperation.publish phase=foreignOccupant rootPath=\(root.rawValue, privacy: .public) relative=\(relativePath.rawValue, privacy: .public)"
         )
         _ = bumpOccupancyRevision(for: root)
+        Task { await self.drainDirtyReconcile(for: root) }
     }
 
     // MARK: - Reorganization lease and journal settlement
@@ -3589,20 +3804,27 @@ extension CatalogStore {
         remaps: [CatalogIdentityRemap]
     ) async throws -> CatalogIdentityRemapBatch {
         let dbWriter = try database()
+        let component = try await dbWriter.read { db in
+            try Self.fetchActiveReorganizationComponent(key: key, db: db)
+        }
+        guard let component else {
+            throw CatalogStoreError.catalogUnavailable
+        }
+        recordIndependentNamespaceMutation(root: component.libraryRootPath, scope: .root)
         let settled: CatalogIdentityRemapBatch = try Self.writeWithJournalDurability(dbWriter) { db in
-            guard let component = try Self.fetchActiveReorganizationComponent(key: key, db: db),
+            guard let currentComponent = try Self.fetchActiveReorganizationComponent(key: key, db: db),
                   let rootRowID = try Int64.fetchOne(
                       db,
                       sql: "SELECT id FROM library_root WHERE path = ?",
-                      arguments: [component.libraryRootPath.rawValue]
+                      arguments: [currentComponent.libraryRootPath.rawValue]
                   )
             else {
                 throw CatalogStoreError.catalogUnavailable
             }
             return try Self.settleRelocationComponent(
                 rootRowID: rootRowID,
-                libraryRootPath: component.libraryRootPath,
-                component: component,
+                libraryRootPath: currentComponent.libraryRootPath,
+                component: currentComponent,
                 remaps: remaps,
                 db: db
             )
@@ -3611,6 +3833,7 @@ extension CatalogStore {
         // against this root replans. Reorg's own `rootRevision` stays the general
         // planRevision, which the occupancy bump also advances.
         bumpOccupancyRevision(for: settled.libraryRootPath)
+        Task { await self.drainDirtyReconcile(for: settled.libraryRootPath) }
         let revision = planRevision(for: settled.libraryRootPath) ?? 0
         notifyCatalogChanged()
         OtosLog.catalog.notice(

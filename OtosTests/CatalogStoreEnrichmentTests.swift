@@ -450,7 +450,7 @@ private func makeAsset(
 ) -> MediaAsset {
     let resolvedHashSourceSize = contentHash == nil ? nil : (hashSourceSize ?? stampSize)
     let resolvedHashSourceMtime = contentHash == nil ? nil : (hashSourceMtime ?? stampMtime)
-    MediaAsset(
+    return MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Library"),
         relativePath: MediaRelativePath(rawValue: "a.jpg"),
         name: "a.jpg",

@@ -1,5 +1,6 @@
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 struct ContentHasherTests {
@@ -52,13 +53,16 @@ struct ContentHasherTests {
     @Test func cancellationStopsBeforeCompletingMultiChunkInput() throws {
         let url = try temporaryFile(generatedData(count: ContentHasher.chunkSize * 2))
         defer { try? FileManager.default.removeItem(at: url) }
-        var checks = 0
+        let checks = Mutex(0)
         let outcome = ContentHasher().hashMaterializedFile(at: url) {
-            checks += 1
-            return checks < 2
+            let value = checks.withLock {
+                $0 += 1
+                return $0
+            }
+            return value < 2
         }
         #expect(outcome == .cancelled)
-        #expect(checks == 2)
+        #expect(checks.withLock { $0 } == 2)
     }
 
     @Test func missingFileReturnsTypedOpenFailure() {

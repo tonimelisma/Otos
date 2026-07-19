@@ -29,6 +29,10 @@ nonisolated struct RootRuntimeState: Equatable {
     /// large cloud destination keeps enriching. Every `occupancyRevision` bump also
     /// advances `planRevision` (an occupancy change is a superset planning change).
     var occupancyRevision: UInt64
+    /// Process-local proof generation for destructive full-scan reconciliation. Any
+    /// independent namespace mutation advances this value and retains typed dirty
+    /// work, so an older observation may upsert facts but cannot delete rows.
+    var namespaceMutationEpoch: UInt64
 
     var path: LibraryRootPath {
         root.path
@@ -42,7 +46,8 @@ nonisolated struct RootRuntimeState: Equatable {
         isEjectable: Bool,
         skippedPackageCount: Int = 0,
         planRevision: UInt64 = 0,
-        occupancyRevision: UInt64 = 0
+        occupancyRevision: UInt64 = 0,
+        namespaceMutationEpoch: UInt64 = 0
     ) {
         self.root = root
         self.rowID = rowID
@@ -52,5 +57,6 @@ nonisolated struct RootRuntimeState: Equatable {
         self.skippedPackageCount = skippedPackageCount
         self.planRevision = planRevision
         self.occupancyRevision = occupancyRevision
+        self.namespaceMutationEpoch = namespaceMutationEpoch
     }
 }

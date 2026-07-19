@@ -20,14 +20,12 @@ import OSLog
 /// sources before fixed-library fallback work. MTP devices can also seed temporary
 /// staging downloads, ordered still/image items before video, without creating a second
 /// durable queue. The coordinator keeps only the runtime state it cannot derive: the
-/// viewport, one process-local state record per claimed identity, the just-downloaded
-/// `freshly` hand-off, the pending-apply buffer, and one `eagerMode` latch.
+/// viewport, ready/enriching claims, independent materialization demands, the
+/// `freshly` hand-off, and the pending-apply buffer.
 ///
-/// Materialization status is not checked on this actor. The enricher checks it off-actor
-/// immediately before any read (the ADR 0008 safety gate) and reports `.notMaterialized`
-/// for a dataless file. A bounded handoff submits that demand to the shared materializer,
-/// then returns successful identities through `freshly`; physical transfer admission
-/// and priority remain entirely outside this actor.
+/// A bounded readiness pass checks live materialization status before ready admission.
+/// The enricher repeats the final byte-read gate for provider races; physical transfer
+/// admission and priority remain entirely inside the shared materializer.
 ///
 /// Writes are batched (`CatalogStore.applyEnrichmentBatch`): a per-asset transaction
 /// across a whole library would crawl, and a notification per asset would re-sort the
@@ -42,19 +40,32 @@ import OSLog
 /// claims before dropping queued work (tests use it to stop cleanly).
 actor EnrichmentCoordinator {
     struct WorkStateSnapshot: Equatable, Sendable {
-        let claimed: Int
+        let readyQueued: Int
         let enriching: Int
-        let awaitingMaterialization: Int
-        let materializing: Int
-        let awaitingApply: Int
+        let pendingApply: Int
+        let materializationPending: Int
+        let materializationInFlight: Int
+
+        var claimed: Int {
+            readyQueued + enriching
+        }
+
+        var awaitingMaterialization: Int {
+            materializationPending
+        }
+
+        var materializing: Int {
+            materializationInFlight
+        }
+
+        var awaitingApply: Int {
+            pendingApply
+        }
     }
 
     enum ClaimedWorkState {
         case queuedEnrichment(EnrichWork)
         case enriching(EnrichWork, estimatedBytes: Int64)
-        case awaitingMaterialization(DownloadWork)
-        case materializing(DownloadWork)
-        case awaitingApply
     }
 
     struct ClaimedWorkRecord {
@@ -142,20 +153,25 @@ actor EnrichmentCoordinator {
     let claimWindowLimit: Int
     let claimRefreshInterval: Duration
     let claimRefreshSleep: @Sendable (Duration) async -> Void
+    let readinessChecker: any EnrichmentReadinessChecking
 
     var viewport: [MediaAssetID] = []
     var freshly: [MediaAssetID] = []
-    var claimedWork: [MediaAssetID: ClaimedWorkRecord] = [:]
+    var readyClaims: [MediaAssetID: ClaimedWorkRecord] = [:]
+    var materializationDemands: [MediaAssetID: DownloadWork] = [:]
+    var materializingIDs: Set<MediaAssetID> = []
+    var materializationClaimIDs: Set<MediaAssetID> = []
+    var pendingApplyClaimIDs: Set<MediaAssetID> = []
     var deviceRootPaths: Set<LibraryRootPath> = []
     var nextClaimSequence: UInt64 = 0
     var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []
     var diagnosedThumbnailLifecycleIDs: Set<MediaAssetID> = []
-    var eagerMode = false
     var isShuttingDown = false
     var lastDownloadCandidateEvaluationCount = 0
     var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
     var enrichmentAdmissionTransitionCount = 0
+    var readinessRetryNotBefore: [MediaAssetID: Date] = [:]
 
     let writeFailureBackoff: Duration
 
@@ -166,6 +182,7 @@ actor EnrichmentCoordinator {
     var downloadRetryTask: Task<Void, Never>?
     var claimRefreshTask: Task<Void, Never>?
     var ledgerRetryTask: Task<Void, Never>?
+    var readinessRetryTask: Task<Void, Never>?
     private let signalStream: AsyncStream<Void>
     private let signalContinuation: AsyncStream<Void>.Continuation
 
@@ -174,6 +191,7 @@ actor EnrichmentCoordinator {
         enricher: MediaEnricher,
         materializationRequester: (any MaterializationRequesting)? = nil,
         materialize: @escaping @Sendable (URL) async -> MaterializationResult = { _ in .cancelled },
+        readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
         claimBatchSize: Int = 32,
         applyFlushInterval: Duration = .seconds(1),
@@ -205,6 +223,7 @@ actor EnrichmentCoordinator {
         self.claimWindowLimit = max(claimWindowLimit, enrichConcurrency)
         self.claimRefreshInterval = claimRefreshInterval
         self.claimRefreshSleep = claimRefreshSleep
+        self.readinessChecker = readinessChecker
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         signalStream = stream
         signalContinuation = continuation
@@ -247,6 +266,7 @@ extension EnrichmentCoordinator {
         let capturedDownloadRetryTask = downloadRetryTask
         let capturedClaimRefreshTask = claimRefreshTask
         let capturedLedgerRetryTask = ledgerRetryTask
+        let capturedReadinessRetryTask = readinessRetryTask
         supervisor?.cancel()
         capturedChangeConsumer?.cancel()
         changeConsumer = nil
@@ -260,6 +280,8 @@ extension EnrichmentCoordinator {
         claimRefreshTask = nil
         capturedLedgerRetryTask?.cancel()
         ledgerRetryTask = nil
+        capturedReadinessRetryTask?.cancel()
+        readinessRetryTask = nil
         await supervisor?.value
         await capturedChangeConsumer?.value
         await capturedApplyFlushTask?.value
@@ -267,10 +289,16 @@ extension EnrichmentCoordinator {
         await capturedDownloadRetryTask?.value
         await capturedClaimRefreshTask?.value
         await capturedLedgerRetryTask?.value
+        await capturedReadinessRetryTask?.value
         self.supervisor = nil
         await releaseOutstandingClaimsForShutdown()
-        claimedWork.removeAll()
+        readyClaims.removeAll()
+        materializationDemands.removeAll()
+        materializingIDs.removeAll()
+        materializationClaimIDs.removeAll()
+        pendingApplyClaimIDs.removeAll()
         retryLedger.removeAll()
+        readinessRetryNotBefore.removeAll()
         pendingApply.removeAll()
         diagnosedThumbnailLifecycleIDs.removeAll()
         freshly.removeAll()
@@ -286,26 +314,15 @@ extension EnrichmentCoordinator {
         guard !isShuttingDown else {
             return
         }
-        // The catalog rows are the durable backlog. Seed only the open working
-        // window; later rows return through ordinary cursorless claiming while the
-        // root marker preserves device priority and staging semantics.
+        // Device staging has no Store enrichment claim. It is an independent
+        // materialization demand and therefore cannot consume ready capacity.
         deviceRootPaths.formUnion(seeds.map(\.id.libraryRootPath))
-        let available = max(claimWindowLimit - claimedWork.count, 0)
+        let available = max(handoffPolicy.globalOutstandingLimit - materializationDemands.count, 0)
         for seed in seeds.prefix(available) {
             guard !FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) else {
                 continue
             }
-            // A `.tmp`-path staging write leaves `fileExists` false until completion, so a
-            // reconnect re-running the catalog flow must not clobber the active record: it
-            // already represents this seed's demand. The switch is exhaustive over
-            // `ClaimedWorkState?` so a future case forces this decision to be revisited.
-            switch claimedWork[seed.id]?.state {
-            case .materializing, .awaitingMaterialization:
-                continue
-            case .queuedEnrichment, .enriching, .awaitingApply, nil:
-                break
-            }
-            nextClaimSequence &+= 1
+            guard materializationDemands[seed.id] == nil else { continue }
             let work = DownloadWork(
                 id: seed.id,
                 url: seed.id.fileURL,
@@ -314,11 +331,7 @@ extension EnrichmentCoordinator {
                 isVideo: seed.isVideo,
                 isDeviceStaging: true
             )
-            claimedWork[seed.id] = ClaimedWorkRecord(
-                state: .awaitingMaterialization(work),
-                sequence: nextClaimSequence,
-                ownsStoreClaim: false
-            )
+            materializationDemands[seed.id] = work
         }
         signal()
     }
@@ -340,42 +353,35 @@ extension EnrichmentCoordinator {
     }
 
     private func hasInFlightWork(under rootPath: LibraryRootPath) async -> Bool {
-        let local = claimedWork.contains { id, record in
+        let local = readyClaims.contains { id, record in
             guard id.libraryRootPath == rootPath else { return false }
-            switch record.state {
-            case .enriching, .materializing: return true
-            case .queuedEnrichment, .awaitingMaterialization, .awaitingApply: return false
+            if case .enriching = record.state {
+                return true
             }
+            return false
         }
         let sharedActive = await materializationRequester.activeRequestCount(under: rootPath)
-        return local || sharedActive > 0
+        let localMaterialization = materializingIDs.contains { id in id.libraryRootPath == rootPath }
+        return local || localMaterialization || sharedActive > 0
     }
 
     func workStateSnapshot() -> WorkStateSnapshot {
+        var queued = 0
         var enriching = 0
-        var awaitingMaterialization = 0
-        var materializing = 0
-        var awaitingApply = 0
-        for record in claimedWork.values {
+        for record in readyClaims.values {
             switch record.state {
             case .queuedEnrichment:
-                break
+                queued += 1
             case .enriching:
                 enriching += 1
-            case .awaitingMaterialization:
-                awaitingMaterialization += 1
-            case .materializing:
-                materializing += 1
-            case .awaitingApply:
-                awaitingApply += 1
             }
         }
         return WorkStateSnapshot(
-            claimed: claimedWork.count,
+            readyQueued: queued,
             enriching: enriching,
-            awaitingMaterialization: awaitingMaterialization,
-            materializing: materializing,
-            awaitingApply: awaitingApply
+            pendingApply: pendingApply.count,
+            materializationPending: max(materializationDemands.count - materializingIDs.count, 0),
+            materializationInFlight: materializingIDs.count
         )
     }
 }

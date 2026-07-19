@@ -45,6 +45,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: blocker.enricher(),
             materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 8,
             claimBatchSize: 8,
             applyFlushInterval: .seconds(60),
@@ -71,7 +72,8 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized }
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         let seeds = [
             deviceStagingSeed(rootPath: rootPath, relativePath: "video.mov", captureDate: 50, isVideo: true),
@@ -104,6 +106,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: blocker.enricher(),
             materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 1,
             claimBatchSize: 3,
             applyFlushInterval: .seconds(60)
@@ -191,6 +194,7 @@ struct EnrichmentCoordinatorTests {
                 await state.materialize(url.path(percentEncoded: false))
                 return .testMaterialized
             },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
         await coordinator.start()
@@ -250,6 +254,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
         await coordinator.start()
@@ -294,6 +299,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: enricher,
             materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
         await coordinator.start()
@@ -335,6 +341,7 @@ struct EnrichmentCoordinatorTests {
                 Issue.record("materialize must not run for zero-byte short-circuit")
                 return .testMaterialized
             },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
         await coordinator.start()
@@ -377,6 +384,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .notMaterialized },
             materializationRequester: materializer,
+            readinessChecker: TestEnrichmentReadinessChecker(result: .dataless),
             claimBatchSize: 32,
             applyFlushInterval: .seconds(60)
         )
@@ -420,6 +428,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             claimBatchSize: 8,
             claimWindowLimit: 32
         )
@@ -438,19 +447,15 @@ struct EnrichmentCoordinatorTests {
                 id: badID, url: badID.fileURL, sourceSize: 100, captureDate: nil,
                 isVideo: false, isDeviceStaging: false, attemptCount: 4, retryNotBefore: nil
             )
-            await coordinator.testSeedClaimedWork(
-                id: badID,
-                record: EnrichmentCoordinator.ClaimedWorkRecord(
-                    state: .materializing(work), sequence: 0, ownsStoreClaim: false
-                )
-            )
+            await coordinator.testSeedMaterialization(work)
             badIDs.append(badID)
         }
-        #expect(await coordinator.workStateSnapshot().claimed == 32)
+        #expect(await coordinator.workStateSnapshot().materializationPending == 32)
 
-        // Before the window frees, the coordinator cannot even query for new work.
-        let blockedWork = await coordinator.dequeueEnrichmentWork()
-        #expect(blockedWork.isEmpty)
+        // Materialization demands do not consume ready-enrichment capacity, so a
+        // fresh materialized candidate can still enter the enrichment pool.
+        let admittedWork = await coordinator.dequeueEnrichmentWork()
+        #expect(admittedWork.map(\.id) == [freshID])
 
         // Each of the 32 exceeds its retry bound on this failure: the fix releases
         // the claim-window slot and hands pacing to the ledger instead of holding it.
@@ -466,14 +471,15 @@ struct EnrichmentCoordinatorTests {
             )
         }
 
-        #expect(await coordinator.workStateSnapshot().claimed == 0)
+        #expect(await coordinator.workStateSnapshot().materializationPending == 0)
         for badID in badIDs {
             #expect(await coordinator.testRetryLedgerEntry(for: badID) != nil)
         }
 
-        // The window is free again: an unrelated fresh candidate is claimable.
-        let claimed = await coordinator.dequeueEnrichmentWork()
-        #expect(claimed.map(\.id) == [freshID])
+        // The ready candidate remains in the independent ready pool; the exhausted
+        // materialization demands no longer occupy a ready-enrichment slot.
+        #expect(await coordinator.workStateSnapshot().readyQueued == 0)
+        #expect(await coordinator.workStateSnapshot().enriching == 1)
     }
 
     @Test func retryLedgerDefersMatchingSignatureAndResetsOnChange() async throws {
@@ -489,7 +495,8 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized }
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
 
         // Matching source signature, notBefore in the future: must defer rather than
@@ -539,6 +546,7 @@ struct EnrichmentCoordinatorTests {
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 2,
             claimBatchSize: 2
         )
@@ -563,7 +571,8 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized }
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         await coordinator.testSeedRetryLedger(
             id: id,
@@ -574,12 +583,7 @@ struct EnrichmentCoordinatorTests {
         let work = EnrichmentCoordinator.DownloadWork(
             id: id, url: id.fileURL, sourceSize: 100, captureDate: nil, isVideo: false, isDeviceStaging: false
         )
-        await coordinator.testSeedClaimedWork(
-            id: id,
-            record: EnrichmentCoordinator.ClaimedWorkRecord(
-                state: .materializing(work), sequence: 0, ownsStoreClaim: false
-            )
-        )
+        await coordinator.testSeedMaterialization(work)
         await coordinator.finishDownload(work, result: .testMaterialized, attemptMs: 1)
         #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
     }
@@ -592,23 +596,19 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized }
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         let work = EnrichmentCoordinator.DownloadWork(
             id: id, url: id.fileURL, sourceSize: 100, captureDate: nil, isVideo: false, isDeviceStaging: false
         )
-        await coordinator.testSeedClaimedWork(
-            id: id,
-            record: EnrichmentCoordinator.ClaimedWorkRecord(
-                state: .materializing(work), sequence: 0, ownsStoreClaim: false
-            )
-        )
+        await coordinator.testSeedMaterialization(work)
         await coordinator.finishDownload(
             work,
             result: MaterializationResult(outcome: .cancelled, rerequestCount: 0, elapsedMs: 1),
             attemptMs: 1
         )
-        #expect(await coordinator.workStateSnapshot().claimed == 0)
+        #expect(await coordinator.workStateSnapshot().materializationPending == 0)
         #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
     }
 
@@ -616,7 +616,8 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materialize: { _ in .testMaterialized }
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
         let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/Camera")
         let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "video.mov"))
@@ -624,12 +625,7 @@ struct EnrichmentCoordinatorTests {
             id: id, url: id.fileURL, sourceSize: 100, captureDate: Date(timeIntervalSince1970: 50),
             isVideo: true, isDeviceStaging: true
         )
-        await coordinator.testSeedClaimedWork(
-            id: id,
-            record: EnrichmentCoordinator.ClaimedWorkRecord(
-                state: .materializing(activeWork), sequence: 7, ownsStoreClaim: false
-            )
-        )
+        await coordinator.testSeedMaterialization(activeWork, inFlight: true)
 
         let seeds = [
             EnrichmentCoordinator.DeviceStagingSeed(
@@ -638,12 +634,9 @@ struct EnrichmentCoordinatorTests {
         ]
         await coordinator.stageDevice(seeds)
 
-        let record = try #require(await coordinator.testClaimedWorkRecord(for: id))
-        #expect(record.sequence == 7)
-        guard case .materializing = record.state else {
-            Issue.record("stageDevice must not clobber an active .materializing record")
-            return
-        }
+        let record = try #require(await coordinator.testMaterializationWork(for: id))
+        #expect(record.id == id)
+        #expect(await coordinator.workStateSnapshot().materializationInFlight == 1)
     }
 
     @Test func ejectDrainIgnoresPureInteractivePreviewTraffic() async throws {
@@ -669,7 +662,8 @@ struct EnrichmentCoordinatorTests {
         let coordinator = EnrichmentCoordinator(
             store: store,
             enricher: MediaEnricher { _, _, _, _ in .transient },
-            materializationRequester: materializer
+            materializationRequester: materializer,
+            readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
         )
 
         let start = ContinuousClock().now
@@ -901,6 +895,7 @@ private func visibleLifecycleCoordinator(
         store: store,
         enricher: visibleLifecycleEnricher(),
         materialize: { _ in .testMaterialized },
+        readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
         enrichConcurrency: 2,
         claimBatchSize: 2,
         applyFlushInterval: .milliseconds(1)

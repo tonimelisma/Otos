@@ -287,7 +287,7 @@ nonisolated enum MaterializationOutcome: Equatable {
 
 /// Point-in-time materialization status of a file. Transient and never persisted: a
 /// cloud provider can change it at any time by evicting or downloading the file.
-nonisolated enum FileMaterializationStatus: Equatable {
+nonisolated enum FileMaterializationStatus: Equatable, Sendable {
     /// Bytes are present locally; reading them does not trigger a download.
     case materialized
     /// A dataless cloud placeholder; reading its bytes forces the provider to

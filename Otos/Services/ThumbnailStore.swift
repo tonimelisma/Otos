@@ -112,6 +112,42 @@ nonisolated enum ThumbnailStore {
         )
     }
 
+    /// Stages an existing app-owned JPEG under the destination identity's
+    /// deterministic name. This reads only Application Support overlay, never the
+    /// user's source media, and uses the same atomic promotion path as generation.
+    static func stageCopy(
+        sourceRelativeName: String,
+        destinationID: MediaAssetID,
+        in directory: URL
+    ) throws -> GeneratedThumbnail {
+        guard sourceRelativeName == URL(fileURLWithPath: sourceRelativeName).lastPathComponent,
+              !sourceRelativeName.isEmpty,
+              sourceRelativeName != ".",
+              sourceRelativeName != ".."
+        else {
+            throw ThumbnailStoreError.writeFailed
+        }
+        let sourceURL = url(for: sourceRelativeName, in: directory)
+        let values = try sourceURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+        guard values.isRegularFile == true, (values.fileSize ?? 0) > 0 else {
+            throw ThumbnailStoreError.writeFailed
+        }
+        let finalRelativeName = relativeName(for: destinationID)
+        let stagedRelativeName = "." + finalRelativeName + "." + UUID().uuidString + ".tmp"
+        let stagedURL = url(for: stagedRelativeName, in: directory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.copyItem(at: sourceURL, to: stagedURL)
+        } catch {
+            try? FileManager.default.removeItem(at: stagedURL)
+            throw ThumbnailStoreError.writeFailed
+        }
+        return GeneratedThumbnail(
+            finalRelativePath: finalRelativeName,
+            stagedRelativePath: stagedRelativeName
+        )
+    }
+
     /// Atomically promotes a staged thumbnail to its deterministic final name.
     @discardableResult
     static func promote(_ thumbnail: GeneratedThumbnail, in directory: URL) throws -> String {

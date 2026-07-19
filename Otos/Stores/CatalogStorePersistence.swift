@@ -669,6 +669,65 @@ extension CatalogStore {
         )
     }
 
+    static func writeReusableEnrichmentOverlay(
+        _ overlay: ReusableEnrichmentOverlay,
+        destinationRootID: Int64,
+        destinationRelativePath: MediaRelativePath,
+        destinationByteSize: Int64,
+        destinationMTimeSeconds: Int,
+        contentHash: XXH3Digest128,
+        thumbnailPath: String?,
+        db: Database
+    ) throws {
+        let captureWall = CaptureWallClock.select(from: overlay.metadata.timestamps)
+        try db.execute(
+            sql: """
+            UPDATE media_asset SET
+                thumbnail_path = ?,
+                ts_original_unix = ?,
+                ts_quicktime_creation_unix = ?,
+                ts_digitized_unix = ?,
+                ts_gps_unix = ?,
+                enriched_kind = ?,
+                enriched_format = ?,
+                duration_seconds = ?,
+                enriched_source_size = ?,
+                enriched_source_mtime = ?,
+                content_hash_xxh3_128 = ?,
+                content_hash_source_size = ?,
+                content_hash_source_mtime = ?,
+                capture_wall_compact = ?,
+                capture_wall_precision = ?
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [
+                thumbnailPath,
+                overlay.originalTimestamp?.timeIntervalSince1970,
+                overlay.quickTimeCreationTimestamp?.timeIntervalSince1970,
+                overlay.digitizedTimestamp?.timeIntervalSince1970,
+                overlay.gpsTimestamp?.timeIntervalSince1970,
+                overlay.enrichedKind?.rawValue,
+                overlay.enrichedFormat?.rawValue,
+                overlay.durationSeconds,
+                destinationByteSize,
+                destinationMTimeSeconds,
+                contentHash.data,
+                destinationByteSize,
+                destinationMTimeSeconds,
+                captureWall?.compact,
+                captureWall?.precision,
+                destinationRootID,
+                destinationRelativePath.rawValue,
+            ]
+        )
+        try upsertAssetMetadata(
+            overlay.metadata,
+            libraryRootID: destinationRootID,
+            relativePath: destinationRelativePath,
+            db: db
+        )
+    }
+
     static func updateThumbnailPath(
         _ thumbnailPath: String,
         libraryRootID: Int64,

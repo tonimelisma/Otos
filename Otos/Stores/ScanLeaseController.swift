@@ -44,12 +44,17 @@ nonisolated struct ScanLeaseController {
             && rootRowIDMatches(scan.rootPath, scan.rootRowID)
     }
 
-    mutating func makeActiveScan(rootPath: LibraryRootPath, rootRowID: Int64) -> CatalogStore.ActiveScan {
+    mutating func makeActiveScan(
+        rootPath: LibraryRootPath,
+        rootRowID: Int64,
+        startNamespaceMutationEpoch: UInt64 = 0
+    ) -> CatalogStore.ActiveScan {
         nextLeaseGeneration &+= 1
         return CatalogStore.ActiveScan(
             rootPath: rootPath,
             rootRowID: rootRowID,
-            leaseGeneration: nextLeaseGeneration
+            leaseGeneration: nextLeaseGeneration,
+            startNamespaceMutationEpoch: startNamespaceMutationEpoch
         )
     }
 

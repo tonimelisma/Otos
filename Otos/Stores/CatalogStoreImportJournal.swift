@@ -3,6 +3,27 @@ import GRDB
 import OSLog
 import UniformTypeIdentifiers
 
+nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
+    case absentSourceRow
+    case staleSourceOverlay
+    case missingOrMismatchedHash
+    case missingThumbnail
+    case thumbnailCopyFailed
+    case detachedSource
+}
+
+nonisolated struct ImportOverlayReuseResult: Equatable, Sendable {
+    let metadataCloned: Bool
+    let thumbnailCopied: Bool
+    let miss: ImportOverlayReuseMiss?
+
+    static let notReused = ImportOverlayReuseResult(
+        metadataCloned: false,
+        thumbnailCopied: false,
+        miss: .absentSourceRow
+    )
+}
+
 extension CatalogStore {
     static func insertActiveFileOperation(_ operation: ActiveFileOperation, db: Database) throws {
         try db.execute(
@@ -65,6 +86,8 @@ extension CatalogStore {
         contentModifiedAt: Date,
         batch: ImportBatchID,
         companions: [MediaCompanion],
+        reusableOverlay: ReusableEnrichmentOverlay? = nil,
+        destinationThumbnailPath: String? = nil,
         db: Database
     ) throws {
         let name = relativePath.rawValue.split(separator: "/").last.map(String.init) ?? relativePath.rawValue
@@ -113,9 +136,76 @@ extension CatalogStore {
                 relativePath.rawValue,
             ]
         )
+        if let reusableOverlay, let contentHash = operation.contentHash {
+            try writeReusableEnrichmentOverlay(
+                reusableOverlay,
+                destinationRootID: destinationRootID,
+                destinationRelativePath: relativePath,
+                destinationByteSize: byteSize,
+                destinationMTimeSeconds: Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
+                contentHash: contentHash,
+                thumbnailPath: destinationThumbnailPath,
+                db: db
+            )
+        }
         for companion in companions {
             try upsertCompanion(companion, libraryRootID: destinationRootID, db: db)
         }
+    }
+
+    static func fetchReusableEnrichmentOverlay(
+        sourceRootID: Int64,
+        sourceRelativePath: MediaRelativePath,
+        db: Database
+    ) throws -> ReusableEnrichmentOverlay? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT m.byte_size, m.content_modified_at_unix,
+                   m.ts_original_unix, m.ts_quicktime_creation_unix,
+                   m.ts_digitized_unix, m.ts_gps_unix,
+                   m.enriched_kind, m.enriched_format, m.duration_seconds,
+                   m.enriched_source_size, m.enriched_source_mtime,
+                   m.content_hash_xxh3_128, m.content_hash_source_size,
+                   m.content_hash_source_mtime, m.thumbnail_path,
+                   a.metadata_extra_json
+            FROM media_asset m
+            LEFT JOIN asset_metadata a
+              ON a.library_root_id = m.library_root_id
+             AND a.relative_path = m.relative_path
+            WHERE m.library_root_id = ? AND m.relative_path = ?
+            """,
+            arguments: [sourceRootID, sourceRelativePath.rawValue]
+        ),
+            let metadataJSON: String = row["metadata_extra_json"],
+            let metadata = CatalogStore.decodeMetadataExtraJSON(metadataJSON)
+        else {
+            return nil
+        }
+        let modified: Double? = row["content_modified_at_unix"]
+        let original: Double? = row["ts_original_unix"]
+        let quickTime: Double? = row["ts_quicktime_creation_unix"]
+        let digitized: Double? = row["ts_digitized_unix"]
+        let gps: Double? = row["ts_gps_unix"]
+        let enrichedKindRaw: String? = row["enriched_kind"]
+        let enrichedFormatRaw: String? = row["enriched_format"]
+        let contentHashData: Data? = row["content_hash_xxh3_128"]
+        return ReusableEnrichmentOverlay(
+            metadata: metadata,
+            originalTimestamp: original.map(Date.init(timeIntervalSince1970:)),
+            quickTimeCreationTimestamp: quickTime.map(Date.init(timeIntervalSince1970:)),
+            digitizedTimestamp: digitized.map(Date.init(timeIntervalSince1970:)),
+            gpsTimestamp: gps.map(Date.init(timeIntervalSince1970:)),
+            enrichedKind: enrichedKindRaw.flatMap(MediaKind.init(rawValue:)),
+            enrichedFormat: enrichedFormatRaw.map(MediaFormatToken.init(rawValue:)),
+            durationSeconds: row["duration_seconds"],
+            sourceByteSize: row["byte_size"],
+            sourceMTimeSeconds: modified.map { Int($0.rounded(.down)) } ?? -1,
+            contentHash: contentHashData.flatMap(XXH3Digest128.init(data:)),
+            contentHashSourceSize: row["content_hash_source_size"],
+            contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
+            thumbnailPath: row["thumbnail_path"]
+        )
     }
 
     private static func activeFileOperationArguments(_ operation: ActiveFileOperation) -> StatementArguments {
@@ -160,7 +250,7 @@ extension CatalogStore {
             destinationRootPath: LibraryRootPath(rawValue: row["destination_root_path"]),
             destinationRelativePath: MediaRelativePath(rawValue: row["destination_relative_path"]),
             stagingPath: row["staging_path"],
-            contentHash: XXH3Digest128(data: row["content_hash_xxh3_128"]),
+            contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
             importBatchUnixMs: row["import_batch_unix_ms"],
             sourceByteSize: row["source_byte_size"],
             sourceModifiedAt: Date(timeIntervalSince1970: sourceModified),

@@ -1,16 +1,27 @@
 import Foundation
 @testable import Otos
 
-/// Actor-internal seams for the plan 0059 scheduler-review-fix tests: they exercise
-/// `claimedWork`/`retryLedger` state transitions directly rather than driving a full
-/// retry schedule through real time.
+struct TestEnrichmentReadinessChecker: EnrichmentReadinessChecking, Sendable {
+    let result: FileMaterializationStatus
+
+    func status(of _: URL) -> FileMaterializationStatus {
+        result
+    }
+}
+
+/// Actor-internal seams for scheduler tests: they exercise process-local state
+/// transitions directly rather than driving a full retry schedule through real time.
 extension EnrichmentCoordinator {
-    func testSeedClaimedWork(id: MediaAssetID, record: ClaimedWorkRecord) {
-        claimedWork[id] = record
+    func testSeedMaterialization(_ work: DownloadWork, inFlight: Bool = false) {
+        materializationDemands[work.id] = work
+        materializationClaimIDs.insert(work.id)
+        if inFlight {
+            materializingIDs.insert(work.id)
+        }
     }
 
-    func testClaimedWorkRecord(for id: MediaAssetID) -> ClaimedWorkRecord? {
-        claimedWork[id]
+    func testMaterializationWork(for id: MediaAssetID) -> DownloadWork? {
+        materializationDemands[id]
     }
 
     func testSeedRetryLedger(id: MediaAssetID, entry: RetryLedgerEntry) {
