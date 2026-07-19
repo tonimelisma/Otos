@@ -179,7 +179,8 @@ struct EnrichmentCoordinatorTests {
                     timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
-                    sourceMTimeSeconds: mtime
+                    sourceMTimeSeconds: mtime,
+                    contentHash: .empty
                 )
             )
         }
@@ -240,7 +241,8 @@ struct EnrichmentCoordinatorTests {
                     metadata: AssetMetadata(),
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
-                    sourceMTimeSeconds: mtime
+                    sourceMTimeSeconds: mtime,
+                    contentHash: .empty
                 )
             )
         }
@@ -283,7 +285,8 @@ struct EnrichmentCoordinatorTests {
                     metadata: AssetMetadata(),
                     thumbnailPath: "t.jpg",
                     sourceSize: reportedSize,
-                    sourceMTimeSeconds: mtime
+                    sourceMTimeSeconds: mtime,
+                    contentHash: .empty
                 )
             )
         }
@@ -321,7 +324,7 @@ struct EnrichmentCoordinatorTests {
             #expect(id.relativePath.rawValue == "ok.jpg")
             return .complete(EnrichmentResult(
                 id: id, metadata: AssetMetadata(), thumbnailPath: "t.jpg",
-                sourceSize: size, sourceMTimeSeconds: mtime
+                sourceSize: size, sourceMTimeSeconds: mtime, contentHash: .empty
             ))
         }
         let coordinator = EnrichmentCoordinator(
@@ -912,7 +915,8 @@ private func visibleLifecycleEnricher() -> MediaEnricher {
                 metadata: AssetMetadata(),
                 thumbnailPath: "thumb-\(id.relativePath.rawValue)",
                 sourceSize: size,
-                sourceMTimeSeconds: mtime
+                sourceMTimeSeconds: mtime,
+                contentHash: .empty
             )
         )
     }

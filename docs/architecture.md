@@ -7,7 +7,7 @@ does lives in `docs/requirements.md`; file guides in the source explain each fil
 ## The one idea
 
 The user's filesystem is the source of truth. Everything Otos stores (catalog +
-thumbnail/metadata overlay) lives in Application Support and is a subordinate
+thumbnail/metadata/hash overlay) lives in Application Support and is a subordinate
 projection. When they disagree, the filesystem wins. Most overlay is rebuildable
 by re-observing the filesystem; import-batch stamps are the first non-rebuildable
 overlay fact, so schema changes migrate additively and future/unrecognized
@@ -86,14 +86,15 @@ everything expensive happens on an actor off the main thread.
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings
   Import tab).
 - **Import planning**: `MediaTransferPlanner` is pure; occupancy via
-  `FilesystemNamespaceSemantics`, equality via `ContentEqualityChecker`. Store
-  tracks two per-root revisions: `planRevision` (general, reorg-polled, bumps on
+  `FilesystemNamespaceSemantics`; a selected regular-file candidate is preexisting
+  only when live size and the shared expected destination mtime match. Store tracks
+  two per-root revisions: `planRevision` (general, reorg-polled, bumps on
   no-op rescans too) and `occupancyRevision` (advances only on real media-namespace
   changes). Import-plan staleness and the `RootPlanningChange` stream key on
   `occupancyRevision`, so enrichment/no-op-rescan churn on a cloud destination does
-  not livelock planning. Store builds `ImportPlanningSnapshot`;
-  matching settle-time source provenance short-circuits equality without byte
-  reads. `MediaOperationCoordinator` greedily plans attached removable sources and
+  not livelock planning. Store builds `ImportPlanningSnapshot` from filesystem
+  facts and live occupancy; planner decisions do not read hashes, provenance, or
+  catalog membership. `MediaOperationCoordinator` greedily plans attached removable sources and
   publishes scalar footer presentation. Removable filesystem
   volumes and MTP cameras execute through `MediaImportExecutor` (recovery + orphan
   staging cleanup + copyfile/camera download + exclusive publish); Store accepts
@@ -118,6 +119,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
+| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; `CatalogStore` validates source signatures and owns atomic overlay/journal settlement |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |

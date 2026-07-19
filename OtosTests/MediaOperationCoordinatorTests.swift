@@ -74,7 +74,7 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let coordinator = MediaOperationCoordinator(store: store, authorizeMaterialization: false)
+        let coordinator = MediaOperationCoordinator(store: store)
         await coordinator.start()
         defer {
             Task { await coordinator.shutdown() }
@@ -126,7 +126,7 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let coordinator = MediaOperationCoordinator(store: store, authorizeMaterialization: false)
+        let coordinator = MediaOperationCoordinator(store: store)
         await coordinator.start()
         defer {
             Task { await coordinator.shutdown() }

@@ -43,7 +43,8 @@ private func datalessLifecycleEnricher(state: FakeMaterialization) -> MediaEnric
                 metadata: AssetMetadata(cameraModel: "Cam"),
                 thumbnailPath: "t.jpg",
                 sourceSize: size,
-                sourceMTimeSeconds: mtime
+                sourceMTimeSeconds: mtime,
+                contentHash: .empty
             )
         )
     }

@@ -55,6 +55,13 @@ nonisolated enum EnrichmentLeaseGateway {
            OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
               <> COALESCE(enriched_source_mtime, -1)
+           OR content_hash_xxh3_128 IS NULL
+           OR length(content_hash_xxh3_128) <> 16
+           OR content_hash_source_size IS NULL
+           OR content_hash_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(content_hash_source_mtime, -1)
         """
     }
 
@@ -302,7 +309,9 @@ private nonisolated func fetchStoredAssetsForEnrichmentCandidates(
         sql: """
         SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                created_at_unix, content_modified_at_unix,
-               enriched_source_size, enriched_source_mtime, thumbnail_path,
+               enriched_source_size, enriched_source_mtime,
+               content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
+               thumbnail_path,
                duration_seconds,
                best_capture_unix, best_kind, best_format
         FROM media_asset
@@ -332,7 +341,10 @@ private nonisolated func enrichmentCandidateStoredAsset(from row: Row) -> Stored
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],
-        enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
+        enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
+        contentHash: XXH3Digest128(data: row["content_hash_xxh3_128"]),
+        contentHashSourceSize: row["content_hash_source_size"],
+        contentHashSourceMTimeSeconds: row["content_hash_source_mtime"]
     )
 }
 

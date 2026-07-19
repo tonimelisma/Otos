@@ -347,6 +347,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let durationSeconds: Double?
     let enrichedSourceSize: Int64?
     let enrichedSourceMTimeSeconds: Int?
+    let contentHash: XXH3Digest128?
+    let contentHashSourceSize: Int64?
+    let contentHashSourceMTimeSeconds: Int?
 
     init(
         libraryRootPath: LibraryRootPath,
@@ -362,7 +365,10 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         bestFormat: MediaFormatToken? = nil,
         durationSeconds: Double? = nil,
         enrichedSourceSize: Int64? = nil,
-        enrichedSourceMTimeSeconds: Int? = nil
+        enrichedSourceMTimeSeconds: Int? = nil,
+        contentHash: XXH3Digest128? = nil,
+        contentHashSourceSize: Int64? = nil,
+        contentHashSourceMTimeSeconds: Int? = nil
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
@@ -378,6 +384,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.durationSeconds = durationSeconds
         self.enrichedSourceSize = enrichedSourceSize
         self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
+        self.contentHash = contentHash
+        self.contentHashSourceSize = contentHashSourceSize
+        self.contentHashSourceMTimeSeconds = contentHashSourceMTimeSeconds
         sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)
     }
 
@@ -392,15 +401,19 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         date.map { Int($0.timeIntervalSince1970.rounded(.down)) } ?? -1
     }
 
-    /// True when the file's current bytes have not been definitively enriched. Depends
-    /// only on the `(size, mtime)` signature, never on whether products exist, so a file
-    /// whose metadata is genuinely empty (unsupported, no thumbnail) is not retried.
+    /// True when metadata or the content hash is not valid for the current filesystem
+    /// signature. A malformed persisted hash is unavailable and therefore stale.
     var needsEnrichment: Bool {
-        guard let enrichedSourceSize, let enrichedSourceMTimeSeconds else {
-            return true
-        }
-        return enrichedSourceSize != (byteSize ?? -1)
-            || enrichedSourceMTimeSeconds != Self.mtimeSeconds(contentModifiedAt)
+        let currentSize = byteSize ?? -1
+        let currentMTime = Self.mtimeSeconds(contentModifiedAt)
+        let metadataStale = enrichedSourceSize != currentSize
+            || enrichedSourceMTimeSeconds != currentMTime
+        let hashStale = contentHash == nil
+            || contentHashSourceSize == nil
+            || contentHashSourceMTimeSeconds == nil
+            || contentHashSourceSize != currentSize
+            || contentHashSourceMTimeSeconds != currentMTime
+        return metadataStale || hashStale
     }
 }
 

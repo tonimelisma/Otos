@@ -51,10 +51,7 @@ nonisolated enum MediaOperationGateway {
         let rows = try Row.fetchAll(
             db,
             sql: """
-            SELECT relative_path, byte_size, content_modified_at_unix,
-                   import_source_root_path, import_source_relative_path,
-                   import_source_byte_size, import_source_modified_at_epoch,
-                   import_destination_byte_size, import_destination_modified_at_epoch
+            SELECT relative_path, byte_size, content_modified_at_unix
             FROM media_asset
             WHERE library_root_id = ?
             """,
@@ -63,20 +60,10 @@ nonisolated enum MediaOperationGateway {
         for row in rows {
             let relative = MediaRelativePath(rawValue: row["relative_path"])
             let modified: Double? = row["content_modified_at_unix"]
-            let sourceRoot: String? = row["import_source_root_path"]
-            let sourceRelative: String? = row["import_source_relative_path"]
-            let sourceModified: Double? = row["import_source_modified_at_epoch"]
-            let destinationModified: Double? = row["import_destination_modified_at_epoch"]
             occupants[relative] = DestinationOccupantFacts(
                 relativePath: relative,
                 byteSize: row["byte_size"],
-                contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:)),
-                importSourceRootPath: sourceRoot.map { LibraryRootPath(rawValue: $0) },
-                importSourceRelativePath: sourceRelative.map { MediaRelativePath(rawValue: $0) },
-                importSourceByteSize: row["import_source_byte_size"],
-                importSourceModifiedAt: sourceModified.map(Date.init(timeIntervalSince1970:)),
-                importDestinationByteSize: row["import_destination_byte_size"],
-                importDestinationModifiedAt: destinationModified.map(Date.init(timeIntervalSince1970:))
+                contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:))
             )
         }
         return occupants

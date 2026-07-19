@@ -126,6 +126,7 @@ nonisolated struct EnrichmentResult: Equatable {
     let generatedThumbnail: GeneratedThumbnail?
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
+    let contentHash: XXH3Digest128
 
     init(
         id: MediaAssetID,
@@ -136,6 +137,7 @@ nonisolated struct EnrichmentResult: Equatable {
         thumbnailPath: String?,
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
+        contentHash: XXH3Digest128,
         generatedThumbnail: GeneratedThumbnail? = nil
     ) {
         self.id = id
@@ -147,6 +149,7 @@ nonisolated struct EnrichmentResult: Equatable {
         self.generatedThumbnail = generatedThumbnail
         self.sourceSize = sourceSize
         self.sourceMTimeSeconds = sourceMTimeSeconds
+        self.contentHash = contentHash
     }
 }
 

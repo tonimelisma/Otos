@@ -161,7 +161,8 @@ struct CatalogProjectionOrderingTests {
             timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
             thumbnailPath: "thumb.jpg",
             sourceSize: asset.byteSize,
-            sourceMTimeSeconds: sourceMTime
+            sourceMTimeSeconds: sourceMTime,
+            contentHash: .empty
         )
         _ = await store.applyEnrichmentBatch([enrichment])
         let detailState = try await recorder.waitForState(timeout: .detailStateTimedOut) { states in

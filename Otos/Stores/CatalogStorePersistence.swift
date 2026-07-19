@@ -97,7 +97,7 @@ extension CatalogStore {
                 columns: ["library_root_id", "sort_key", "relative_path"]
             )
             try createOrderIndexes(db)
-            try createEnrichmentClaimIndexes(db)
+            try createEnrichmentClaimIndexes(db, includeContentHash: false)
 
             try db.execute(
                 sql: """
@@ -142,7 +142,7 @@ extension CatalogStore {
         migrator.registerMigration("v4_newest_first_enrichment_claims") { db in
             try db.drop(index: "idx_media_asset_needs_enrichment_global")
             try db.drop(index: "idx_media_asset_needs_enrichment_root")
-            try createEnrichmentClaimIndexes(db)
+            try createEnrichmentClaimIndexes(db, includeContentHash: false)
         }
         migrator.registerMigration("v5_removable_source_roots") { db in
             let columns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_info('library_root')"))
@@ -195,6 +195,12 @@ extension CatalogStore {
         // an identifier that is already present in grdb_migrations.
         migrator.registerMigration("v11_import_destination_provenance") { db in
             try addImportProvenanceColumns(db)
+        }
+        migrator.registerMigration("v12_xxh3_content_hashes") { db in
+            try addContentHashColumns(db)
+            try db.drop(index: "idx_media_asset_needs_enrichment_global")
+            try db.drop(index: "idx_media_asset_needs_enrichment_root")
+            try createEnrichmentClaimIndexes(db, includeContentHash: true)
         }
         return migrator
     }
@@ -330,6 +336,7 @@ extension CatalogStore {
                 destination_root_path TEXT NOT NULL,
                 destination_relative_path TEXT NOT NULL,
                 staging_path TEXT,
+                content_hash_xxh3_128 BLOB,
                 import_batch_unix_ms INTEGER,
                 source_byte_size INTEGER NOT NULL,
                 source_modified_at DOUBLE NOT NULL,
@@ -626,6 +633,9 @@ extension CatalogStore {
                 duration_seconds = ?,
                 enriched_source_size = ?,
                 enriched_source_mtime = ?,
+                content_hash_xxh3_128 = ?,
+                content_hash_source_size = ?,
+                content_hash_source_mtime = ?,
                 capture_wall_compact = ?,
                 capture_wall_precision = ?
             WHERE library_root_id = ?
@@ -640,6 +650,9 @@ extension CatalogStore {
                 result.enrichedKind?.rawValue,
                 result.enrichedFormat?.rawValue,
                 result.metadata.durationSeconds,
+                result.sourceSize,
+                result.sourceMTimeSeconds,
+                result.contentHash.data,
                 result.sourceSize,
                 result.sourceMTimeSeconds,
                 captureWall?.compact,
@@ -1094,6 +1107,29 @@ private nonisolated func addImportProvenanceColumns(_ db: Database) throws {
     }
 }
 
+private nonisolated func addContentHashColumns(_ db: Database) throws {
+    let mediaColumns = try Set(String.fetchAll(
+        db,
+        sql: "SELECT name FROM pragma_table_xinfo('media_asset')"
+    ))
+    if !mediaColumns.contains("content_hash_xxh3_128") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN content_hash_xxh3_128 BLOB")
+    }
+    if !mediaColumns.contains("content_hash_source_size") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN content_hash_source_size INTEGER")
+    }
+    if !mediaColumns.contains("content_hash_source_mtime") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN content_hash_source_mtime INTEGER")
+    }
+    let operationColumns = try Set(String.fetchAll(
+        db,
+        sql: "SELECT name FROM pragma_table_xinfo('active_file_operation')"
+    ))
+    if !operationColumns.contains("content_hash_xxh3_128") {
+        try db.execute(sql: "ALTER TABLE active_file_operation ADD COLUMN content_hash_xxh3_128 BLOB")
+    }
+}
+
 private nonisolated func addImportHistoryAndCaptureWallColumns(_ db: Database) throws {
     let columns = try Set(String.fetchAll(
         db,
@@ -1187,6 +1223,9 @@ private nonisolated func mediaAssetTableSQL() -> String {
         best_format TEXT GENERATED ALWAYS AS (COALESCE(enriched_format, format)) STORED,
         enriched_source_size INTEGER,
         enriched_source_mtime INTEGER,
+        content_hash_xxh3_128 BLOB,
+        content_hash_source_size INTEGER,
+        content_hash_source_mtime INTEGER,
         thumbnail_path TEXT,
         duration_seconds DOUBLE,
         enrichment_claimed_until DOUBLE,
@@ -1236,19 +1275,31 @@ private nonisolated func createOrderIndexes(_ db: Database) throws {
     }
 }
 
-private nonisolated func createEnrichmentClaimIndexes(_ db: Database) throws {
+private nonisolated func createEnrichmentClaimIndexes(
+    _ db: Database,
+    includeContentHash: Bool
+) throws {
+    let predicate = includeContentHash
+        ? EnrichmentLeaseGateway.stalenessSQLPredicate()
+        : """
+        enriched_source_size IS NULL
+           OR enriched_source_mtime IS NULL
+           OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+              <> COALESCE(enriched_source_mtime, -1)
+        """
     try db.execute(
         sql: """
         CREATE INDEX idx_media_asset_needs_enrichment_global
         ON media_asset(best_capture_unix DESC, library_root_id, relative_path)
-        WHERE \(EnrichmentLeaseGateway.stalenessSQLPredicate())
+        WHERE \(predicate)
         """
     )
     try db.execute(
         sql: """
         CREATE INDEX idx_media_asset_needs_enrichment_root
         ON media_asset(library_root_id, best_capture_unix DESC, relative_path)
-        WHERE \(EnrichmentLeaseGateway.stalenessSQLPredicate())
+        WHERE \(predicate)
         """
     )
 }

@@ -235,7 +235,8 @@ struct CatalogProjectionTests {
                 timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: asset.byteSize,
-                sourceMTimeSeconds: sourceMTime
+                sourceMTimeSeconds: sourceMTime,
+                contentHash: .empty
             ),
         ])
         #expect(outcome == .applied(count: 1))

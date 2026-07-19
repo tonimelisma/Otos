@@ -2182,7 +2182,10 @@ private extension CatalogStore {
             bestFormat: storedAsset.bestFormat,
             durationSeconds: storedAsset.durationSeconds,
             enrichedSourceSize: storedAsset.enrichedSourceSize,
-            enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds
+            enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds,
+            contentHash: storedAsset.contentHash,
+            contentHashSourceSize: storedAsset.contentHashSourceSize,
+            contentHashSourceMTimeSeconds: storedAsset.contentHashSourceMTimeSeconds
         )
     }
 

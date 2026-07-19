@@ -270,7 +270,7 @@ actor MediaImportExecutor {
         let byteSize: Int64
     }
 
-    private func sourceStillMatches(
+    private nonisolated func sourceStillMatches(
         entry: MediaOperationPlanEntry,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
@@ -299,7 +299,7 @@ actor MediaImportExecutor {
         }
     }
 
-    private func transferBytesToStaging(
+    private nonisolated func transferBytesToStaging(
         entry: MediaOperationPlanEntry,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
@@ -331,7 +331,7 @@ actor MediaImportExecutor {
         }
     }
 
-    private func transferVolumeBytes(
+    private nonisolated func transferVolumeBytes(
         from sourceURL: URL,
         to stagingURL: URL,
         operationKey: ActiveFileOperationKey,
@@ -368,7 +368,7 @@ actor MediaImportExecutor {
         return nil
     }
 
-    private func transferCameraBytes(
+    private nonisolated func transferCameraBytes(
         entry: MediaOperationPlanEntry,
         identity: String?,
         enrichmentURL: URL,
@@ -444,7 +444,7 @@ actor MediaImportExecutor {
     // The cohesive entry transaction deliberately keeps revalidation, journal,
     // transfer, and publish handoff visible in one crash-recovery boundary.
     // swiftlint:disable:next function_body_length
-    private func copyEntry(
+    private nonisolated func copyEntry(
         _ entry: MediaOperationPlanEntry,
         plan: MediaOperationPlan,
         batch: ImportBatchID,
@@ -499,9 +499,13 @@ actor MediaImportExecutor {
             return .skippedForeign
         }
 
-        let stagingURL = stagingURL(adjacentTo: finalURL)
-        let destinationModified = destinationModifiedDate(for: entry)
-        let operation = ActiveFileOperation(
+        let stagingURL = Self.stagingURL(adjacentTo: finalURL)
+        guard let destinationModified = ImportDestinationDate.expected(for: entry.source)
+        else {
+            return .failed
+        }
+        let operationSourceModified = sourceModified ?? destinationModified
+        var operation = ActiveFileOperation(
             operationKey: .make(),
             mode: "import",
             sourceKind: sourceKind,
@@ -513,7 +517,7 @@ actor MediaImportExecutor {
             stagingPath: stagingURL.path,
             importBatchUnixMs: batch.unixMilliseconds,
             sourceByteSize: sourceByteSize,
-            sourceModifiedAt: sourceModified ?? destinationModified,
+            sourceModifiedAt: operationSourceModified,
             destinationModifiedAt: destinationModified,
             phase: .copying,
             deleteSourceRequested: deleteSourceRequested,
@@ -541,6 +545,66 @@ actor MediaImportExecutor {
             return early
         }
 
+        guard !cancelFlag.isCancelled else {
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.abandonImportOperation(key: operation.operationKey)
+            return .cancelled
+        }
+        let copyFinished = ContinuousClock().now
+        let hashStart = Date()
+        let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
+        let hashOutcome = ContentHasher().hashMaterializedFile(
+            at: stagingURL,
+            shouldContinue: { !cancelFlag.isCancelled }
+        )
+        OtosSignpost.mediaIO.endInterval("ContentHash", hashSignpost)
+        let hashMs = DiagnosticsTiming.milliseconds(since: hashStart)
+        var hashFinished: ContinuousClock.Instant?
+        switch hashOutcome {
+        case let .complete(contentHash):
+            operation.contentHash = contentHash
+            try? await store.recordImportOperationProgress(operation)
+            hashFinished = ContinuousClock().now
+            OtosLog.mediaIO.noticeOperation(
+                "contentHash",
+                phase: "finish",
+                fields: [
+                    "owner": "import",
+                    "batch": "\(batch.unixMilliseconds)",
+                    "worker": "\(workerID)",
+                    "bytes": "\(sourceByteSize)",
+                    "elapsedMs": "\(hashMs)",
+                    "mbps": throughputMBps(bytes: sourceByteSize, elapsedMs: hashMs),
+                ]
+            )
+        case .cancelled:
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.abandonImportOperation(key: operation.operationKey)
+            OtosLog.mediaIO.noticeOperation(
+                "contentHash",
+                phase: "cancelled",
+                fields: ["owner": "import", "batch": "\(batch.unixMilliseconds)", "worker": "\(workerID)"]
+            )
+            return .cancelled
+        case let .failed(category):
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.abandonImportOperation(key: operation.operationKey)
+            OtosLog.mediaIO.errorOperation(
+                "contentHash",
+                phase: "failed",
+                fields: [
+                    "owner": "import",
+                    "batch": "\(batch.unixMilliseconds)",
+                    "worker": "\(workerID)",
+                    "category": category.rawValue,
+                ]
+            )
+            return .failed
+        }
+
+        guard let hashFinished else {
+            return .failed
+        }
         return await publishAndSettle(PublishSettleRequest(
             operation: operation,
             entry: entry,
@@ -558,7 +622,8 @@ actor MediaImportExecutor {
             deleteSourceRequested: deleteSourceRequested,
             workerID: workerID,
             copyStarted: started,
-            copyFinished: ContinuousClock().now
+            copyFinished: copyFinished,
+            hashFinished: hashFinished
         ))
     }
 
@@ -580,9 +645,10 @@ actor MediaImportExecutor {
         let workerID: Int
         let copyStarted: ContinuousClock.Instant
         let copyFinished: ContinuousClock.Instant
+        let hashFinished: ContinuousClock.Instant
     }
 
-    private func publishAndSettle(_ request: PublishSettleRequest) async -> EntryOutcome {
+    private nonisolated func publishAndSettle(_ request: PublishSettleRequest) async -> EntryOutcome {
         var operation = request.operation
         stampModificationDate(request.destinationModified, at: request.stagingURL)
         operation.phase = .readyToPublish
@@ -609,9 +675,15 @@ actor MediaImportExecutor {
             break
         }
         let publishFinished = ContinuousClock().now
+        let finalValues = try? request.finalURL.resourceValues(
+            forKeys: [.fileSizeKey, .contentModificationDateKey]
+        )
+        let settledByteSize = Int64(finalValues?.fileSize ?? Int(request.sourceByteSize))
+        let settledModified = finalValues?.contentModificationDate ?? request.destinationModified
 
         operation.phase = .publishedPendingSettlement
         operation.stagingPath = nil
+        operation.destinationModifiedAt = settledModified
         operation.updatedAt = Date()
         try? await store.recordImportOperationProgress(operation)
 
@@ -622,8 +694,8 @@ actor MediaImportExecutor {
         do {
             try await store.settleImportedAsset(
                 operation: operation,
-                byteSize: request.sourceByteSize,
-                contentModifiedAt: request.destinationModified,
+                byteSize: settledByteSize,
+                contentModifiedAt: settledModified,
                 batch: request.batch,
                 companions: companionRows
             )
@@ -638,6 +710,7 @@ actor MediaImportExecutor {
             "batch": "\(request.batch.unixMilliseconds)",
             "publishMs": elapsedMilliseconds(from: request.copyFinished, to: publishFinished),
             "settleMs": elapsedMilliseconds(from: publishFinished, to: settleFinished),
+            "hashMs": "\(elapsedMilliseconds(from: request.copyFinished, to: request.hashFinished))",
             "stagingMs": elapsedMilliseconds(from: request.copyStarted, to: request.copyFinished),
             "worker": "\(request.workerID)",
         ])
@@ -662,21 +735,38 @@ actor MediaImportExecutor {
         let finalExists = FileManager.default.fileExists(atPath: final.path)
 
         switch operation.phase {
-        case .copying, .readyToPublish:
-            if stagingExists {
-                try? FileManager.default.removeItem(at: staging!)
+        case .copying:
+            if let staging, stagingExists {
+                try? FileManager.default.removeItem(at: staging)
             }
-            if finalExists, operation.phase == .readyToPublish {
-                // Do not auto-publish; settle if final somehow exists.
+            try? await store.abandonImportOperation(key: operation.operationKey)
+        case .readyToPublish:
+            if finalExists {
+                if let staging, stagingExists {
+                    try? FileManager.default.removeItem(at: staging)
+                }
                 await settleRecovered(operation)
+            } else if let staging, stagingExists {
+                switch ExclusivePublication.publish(staging: staging, final: final) {
+                case .published:
+                    await settleRecovered(operation)
+                case .destinationExists:
+                    await settleRecovered(operation)
+                case let .failed(message):
+                    try? FileManager.default.removeItem(at: staging)
+                    try? await store.abandonImportOperation(key: operation.operationKey)
+                    OtosLog.catalog.error(
+                        "op=mediaOperation.recover phase=publishFailed detail=\(message, privacy: .public)"
+                    )
+                }
             } else {
                 try? await store.abandonImportOperation(key: operation.operationKey)
             }
         case .publishedPendingSettlement:
             if finalExists {
                 await settleRecovered(operation)
-            } else if stagingExists {
-                try? FileManager.default.removeItem(at: staging!)
+            } else if let staging, stagingExists {
+                try? FileManager.default.removeItem(at: staging)
                 try? await store.abandonImportOperation(key: operation.operationKey)
             } else {
                 try? await store.abandonImportOperation(key: operation.operationKey)
@@ -699,16 +789,24 @@ actor MediaImportExecutor {
     }
 
     private func settleRecovered(_ operation: ActiveFileOperation) async {
-        guard let batchMs = operation.importBatchUnixMs,
-              let modified = operation.destinationModifiedAt
+        guard let batchMs = operation.importBatchUnixMs
         else {
+            try? await store.abandonImportOperation(key: operation.operationKey)
+            return
+        }
+        let final = operation.destinationRootPath.url
+            .appendingPathComponent(operation.destinationRelativePath.rawValue)
+        let values = try? final.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let byteSize = Int64(values?.fileSize ?? Int(operation.sourceByteSize))
+        let modified = values?.contentModificationDate ?? operation.destinationModifiedAt
+        guard let modified else {
             try? await store.abandonImportOperation(key: operation.operationKey)
             return
         }
         do {
             try await store.settleImportedAsset(
                 operation: operation,
-                byteSize: operation.sourceByteSize,
+                byteSize: byteSize,
                 contentModifiedAt: modified,
                 batch: ImportBatchID(unixMilliseconds: batchMs),
                 companions: []
@@ -861,28 +959,20 @@ actor MediaImportExecutor {
         }
     }
 
-    private func stagingURL(adjacentTo final: URL) -> URL {
+    private nonisolated static func stagingURL(adjacentTo final: URL) -> URL {
         let parent = final.deletingLastPathComponent()
         let name = ".\(UUID().uuidString).otos-import-staging"
         return parent.appendingPathComponent(name)
     }
 
-    private func destinationModifiedDate(for entry: MediaOperationPlanEntry) -> Date {
-        if let wall = entry.source.captureWallCompact {
-            // Compact local wall YYYYMMDDHHmmss → Date in current calendar.
-            return CaptureWallClock.date(fromCompact: wall) ?? entry.source.contentModifiedAt ?? Date()
-        }
-        return entry.source.contentModifiedAt ?? Date()
-    }
-
-    private func stampModificationDate(_ date: Date, at url: URL) {
+    private nonisolated func stampModificationDate(_ date: Date, at url: URL) {
         try? FileManager.default.setAttributes(
             [.modificationDate: date],
             ofItemAtPath: url.path
         )
     }
 
-    private func fileMatches(url: URL, byteSize: Int64, modifiedAt: Date) -> Bool {
+    private nonisolated func fileMatches(url: URL, byteSize: Int64, modifiedAt: Date) -> Bool {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
               let size = values.fileSize,
               let modified = values.contentModificationDate

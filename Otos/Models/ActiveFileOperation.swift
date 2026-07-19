@@ -26,6 +26,7 @@ nonisolated struct ActiveFileOperation: Equatable, Sendable {
     let destinationRootPath: LibraryRootPath
     let destinationRelativePath: MediaRelativePath
     var stagingPath: String?
+    var contentHash: XXH3Digest128?
     let importBatchUnixMs: Int64?
     let sourceByteSize: Int64
     let sourceModifiedAt: Date

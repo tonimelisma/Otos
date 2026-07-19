@@ -96,34 +96,6 @@ nonisolated struct DestinationOccupantFacts: Equatable, Sendable {
     let relativePath: MediaRelativePath
     let byteSize: Int64?
     let contentModifiedAt: Date?
-    let importSourceRootPath: LibraryRootPath?
-    let importSourceRelativePath: MediaRelativePath?
-    let importSourceByteSize: Int64?
-    let importSourceModifiedAt: Date?
-    let importDestinationByteSize: Int64?
-    let importDestinationModifiedAt: Date?
-
-    init(
-        relativePath: MediaRelativePath,
-        byteSize: Int64?,
-        contentModifiedAt: Date?,
-        importSourceRootPath: LibraryRootPath? = nil,
-        importSourceRelativePath: MediaRelativePath? = nil,
-        importSourceByteSize: Int64? = nil,
-        importSourceModifiedAt: Date? = nil,
-        importDestinationByteSize: Int64? = nil,
-        importDestinationModifiedAt: Date? = nil
-    ) {
-        self.relativePath = relativePath
-        self.byteSize = byteSize
-        self.contentModifiedAt = contentModifiedAt
-        self.importSourceRootPath = importSourceRootPath
-        self.importSourceRelativePath = importSourceRelativePath
-        self.importSourceByteSize = importSourceByteSize
-        self.importSourceModifiedAt = importSourceModifiedAt
-        self.importDestinationByteSize = importDestinationByteSize
-        self.importDestinationModifiedAt = importDestinationModifiedAt
-    }
 }
 
 nonisolated enum MediaOperationDisposition: Equatable, Sendable {
@@ -136,8 +108,7 @@ nonisolated enum MediaOperationDisposition: Equatable, Sendable {
 
 nonisolated enum MediaOperationBlockReason: Equatable, Sendable {
     case noUsableDate
-    case comparisonUnavailable(destination: MediaRelativePath, detail: String)
-    case comparisonRequiresMaterialization(destination: MediaRelativePath)
+    case filesystemObservationUnavailable(destination: MediaRelativePath, detail: String)
 }
 
 nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
@@ -247,48 +218,6 @@ nonisolated enum ForeignOccupantKind: String, Equatable, Sendable {
     case knownForeignFact
 }
 
-nonisolated struct ComparisonRequest: Hashable, Sendable {
-    let sourceRoot: LibraryRootPath
-    let sourceRelativePath: MediaRelativePath
-    let sourceByteSize: Int64?
-    let sourceModifiedAt: Date?
-    let destinationRoot: LibraryRootPath
-    let destinationRelativePath: MediaRelativePath
-    let destinationByteSize: Int64?
-    let destinationModifiedAt: Date?
-    let sourceURL: URL
-    let destinationURL: URL
-}
-
-nonisolated enum ComparisonResult: Equatable, Sendable {
-    case equal
-    case unequal
-    case unavailable(detail: String)
-    case requiresMaterialization
-}
-
-nonisolated struct ComparisonMemoKey: Hashable, Sendable {
-    let sourceRoot: LibraryRootPath
-    let sourceRelativePath: MediaRelativePath
-    let sourceByteSize: Int64?
-    let sourceModifiedSeconds: Int?
-    let destinationRoot: LibraryRootPath
-    let destinationRelativePath: MediaRelativePath
-    let destinationByteSize: Int64?
-    let destinationModifiedSeconds: Int?
-
-    init(_ request: ComparisonRequest) {
-        sourceRoot = request.sourceRoot
-        sourceRelativePath = request.sourceRelativePath
-        sourceByteSize = request.sourceByteSize
-        sourceModifiedSeconds = request.sourceModifiedAt.map { Int($0.timeIntervalSince1970) }
-        destinationRoot = request.destinationRoot
-        destinationRelativePath = request.destinationRelativePath
-        destinationByteSize = request.destinationByteSize
-        destinationModifiedSeconds = request.destinationModifiedAt.map { Int($0.timeIntervalSince1970) }
-    }
-}
-
 nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let generation: UInt64
     let sourceRoot: LibraryRootPath
@@ -305,8 +234,5 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
 
 nonisolated enum ImportPlanBuildOutcome: Equatable, Sendable {
     case ready(MediaOperationPlan)
-    case needsProbes(
-        occupancy: [NamespaceOccupancyRequest],
-        comparisons: [ComparisonRequest]
-    )
+    case needsProbes(occupancy: [NamespaceOccupancyRequest])
 }

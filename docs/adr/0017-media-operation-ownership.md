@@ -57,3 +57,10 @@ complexity.
 - Recovery decisions live beside normal execution decisions.
 - Store retains only the cross-subsystem lease that protects its own scan state.
 - Operation APIs describe state transitions rather than exposing journal-table CRUD.
+
+Import workers hash their completed primary staging file before publication. The
+optional canonical digest is a field on `ActiveFileOperation`, is persisted before
+the ready-to-publish phase, and is settled with the destination row by Store. This
+adds no operation owner or queue. The planner uses only live destination occupancy,
+size, and expected mtime; neither the digest nor import provenance affects a
+disposition.

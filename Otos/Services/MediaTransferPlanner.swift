@@ -8,20 +8,17 @@ import Foundation
 ///
 /// Nonisolated pure planning for import (and later reorganization). Accepts only
 /// immutable Sendable values; performs no I/O, database calls, logging, or actor
-/// hops. Occupancy and equality are expressed as typed requests; the caller
+/// hops. Occupancy is expressed as typed requests; the caller
 /// resolves them and resumes until `.ready`.
 ///
-/// Import collision policy (plan 0055 §7.2): absent → copy; catalog equal-size →
-/// compare; unequal/different size/foreign/reserved → next suffix; unprovable →
-/// blocked. Naming bundles share one timestamp, stem, and suffix.
+/// Import collision policy: absent → copy; regular file with matching live size and
+/// expected destination mtime → preexisting; every other occupant → next suffix.
 nonisolated enum MediaTransferPlanner {
     static func planImport(
         snapshot: ImportPlanningSnapshot,
-        occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:],
-        comparisons: [ComparisonRequest: ComparisonResult] = [:]
+        occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
     ) -> ImportPlanBuildOutcome {
         var occupancyRequests: [NamespaceOccupancyRequest] = []
-        var comparisonRequests: [ComparisonRequest] = []
         var reserved = Set(snapshot.destinationOccupants.keys)
         reserved.formUnion(snapshot.knownForeignOccupants)
 
@@ -34,26 +31,20 @@ nonisolated enum MediaTransferPlanner {
                 snapshot: snapshot,
                 reserved: &reserved,
                 occupancy: occupancy,
-                comparisons: comparisons,
-                pendingOccupancy: &occupancyRequests,
-                pendingComparisons: &comparisonRequests
+                pendingOccupancy: &occupancyRequests
             )
             switch outcome {
             case let .entries(planned):
                 entries.append(contentsOf: planned)
             case .needsProbes:
                 return .needsProbes(
-                    occupancy: uniqueOccupancy(occupancyRequests),
-                    comparisons: uniqueComparisons(comparisonRequests)
+                    occupancy: uniqueOccupancy(occupancyRequests)
                 )
             }
         }
 
-        if !occupancyRequests.isEmpty || !comparisonRequests.isEmpty {
-            return .needsProbes(
-                occupancy: uniqueOccupancy(occupancyRequests),
-                comparisons: uniqueComparisons(comparisonRequests)
-            )
+        if !occupancyRequests.isEmpty {
+            return .needsProbes(occupancy: uniqueOccupancy(occupancyRequests))
         }
 
         return .ready(
@@ -76,27 +67,21 @@ nonisolated enum MediaTransferPlanner {
     /// Synchronous driver for tests and Stage D coordinator: resolve probes until ready.
     static func buildImportPlan(
         snapshot: ImportPlanningSnapshot,
-        equality: ContentEqualityChecker,
         knownForeignOccupants: Set<MediaRelativePath> = []
     ) -> MediaOperationPlan {
         var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
-        var comparisons: [ComparisonRequest: ComparisonResult] = [:]
         let foreign = knownForeignOccupants.union(snapshot.knownForeignOccupants)
         for _ in 0 ..< 10000 {
-            switch planImport(snapshot: snapshot, occupancy: occupancy, comparisons: comparisons) {
+            switch planImport(snapshot: snapshot, occupancy: occupancy) {
             case let .ready(plan):
                 return plan
-            case let .needsProbes(occupancyRequests, comparisonRequests):
+            case let .needsProbes(occupancyRequests):
                 let resolvedOccupancy = FilesystemNamespaceSemantics.resolve(
                     occupancyRequests,
                     knownForeignOccupants: foreign
                 )
                 for (request, result) in resolvedOccupancy {
                     occupancy[request] = result
-                }
-                let resolvedComparisons = equality.resolve(comparisonRequests)
-                for (request, result) in resolvedComparisons {
-                    comparisons[request] = result
                 }
             }
         }
@@ -136,11 +121,6 @@ private nonisolated extension MediaTransferPlanner {
     enum BundlePlanOutcome {
         case entries([MediaOperationPlanEntry])
         case needsProbes
-    }
-
-    struct ProbeBuffers {
-        var occupancy: [NamespaceOccupancyRequest] = []
-        var comparisons: [ComparisonRequest] = []
     }
 
     struct SuffixAttempt {
@@ -210,9 +190,7 @@ private nonisolated extension MediaTransferPlanner {
         snapshot: ImportPlanningSnapshot,
         reserved: inout Set<MediaRelativePath>,
         occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult],
-        comparisons: [ComparisonRequest: ComparisonResult],
-        pendingOccupancy: inout [NamespaceOccupancyRequest],
-        pendingComparisons: inout [ComparisonRequest]
+        pendingOccupancy: inout [NamespaceOccupancyRequest]
     ) -> BundlePlanOutcome {
         if bundle.members.contains(where: { !$0.hasUsableDate }) {
             return .entries(bundle.members.map { member in
@@ -275,9 +253,7 @@ private nonisolated extension MediaTransferPlanner {
                     snapshot: snapshot,
                     reserved: reserved,
                     occupancy: occupancy,
-                    comparisons: comparisons,
-                    pendingOccupancy: &pendingOccupancy,
-                    pendingComparisons: &pendingComparisons
+                    pendingOccupancy: &pendingOccupancy
                 )
                 switch decision {
                 case .needsProbes:
@@ -370,7 +346,7 @@ private nonisolated extension MediaTransferPlanner {
                 idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
                 finalDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
                 companionDestinations: [:],
-                disposition: .blocked(.comparisonUnavailable(
+                disposition: .blocked(.filesystemObservationUnavailable(
                     destination: MediaRelativePath(rawValue: member.relativePath.rawValue),
                     detail: "suffixExhausted"
                 ))
@@ -392,13 +368,11 @@ private nonisolated extension MediaTransferPlanner {
         snapshot: ImportPlanningSnapshot,
         reserved: Set<MediaRelativePath>,
         occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult],
-        comparisons: [ComparisonRequest: ComparisonResult],
-        pendingOccupancy: inout [NamespaceOccupancyRequest],
-        pendingComparisons: inout [ComparisonRequest]
+        pendingOccupancy: inout [NamespaceOccupancyRequest]
     ) -> CandidateDecision {
         if reserved.contains(candidate), snapshot.destinationOccupants[candidate] == nil {
             // Reserved by an earlier planned copy in this plan — never collapse
-            // source-internal duplicates via equality.
+            // source-internal duplicates into one destination.
             return .advanceSuffix
         }
 
@@ -415,22 +389,12 @@ private nonisolated extension MediaTransferPlanner {
         case .absent:
             return .copy(candidate)
         case let .regularFile(byteSize, modifiedAt):
-            if let catalog = snapshot.destinationOccupants[candidate] {
-                return catalogDecision(
-                    member: member,
-                    candidate: candidate,
-                    catalog: catalog,
-                    liveByteSize: byteSize,
-                    liveModifiedAt: modifiedAt,
-                    snapshot: snapshot,
-                    comparisons: comparisons,
-                    pendingComparisons: &pendingComparisons
-                )
-            }
-            // Live regular file not in catalog → foreign for equality purposes.
-            _ = byteSize
-            _ = modifiedAt
-            return .advanceSuffix
+            return catalogDecision(
+                member: member,
+                candidate: candidate,
+                liveByteSize: byteSize,
+                liveModifiedAt: modifiedAt
+            )
         case .foreign:
             return .advanceSuffix
         }
@@ -439,62 +403,18 @@ private nonisolated extension MediaTransferPlanner {
     static func catalogDecision(
         member: PlanningFileFacts,
         candidate: MediaRelativePath,
-        catalog: DestinationOccupantFacts,
         liveByteSize: Int64?,
-        liveModifiedAt: Date?,
-        snapshot: ImportPlanningSnapshot,
-        comparisons: [ComparisonRequest: ComparisonResult],
-        pendingComparisons: inout [ComparisonRequest]
+        liveModifiedAt: Date?
     ) -> CandidateDecision {
-        if catalog.importSourceRootPath == snapshot.sourceRoot,
-           catalog.importSourceRelativePath == member.relativePath,
-           catalog.importSourceByteSize == member.byteSize,
-           datesMatchToFilesystemPrecision(catalog.importSourceModifiedAt, member.contentModifiedAt),
-           catalog.importDestinationByteSize == catalog.byteSize,
-           catalog.byteSize == liveByteSize,
-           datesMatchToFilesystemPrecision(
-               catalog.importDestinationModifiedAt,
-               catalog.contentModifiedAt
-           ),
-           datesMatchToFilesystemPrecision(
-               catalog.contentModifiedAt,
-               liveModifiedAt
-           )
-        {
-            return .skip(candidate)
-        }
-        guard member.byteSize != nil, liveByteSize != nil, member.byteSize == liveByteSize else {
+        guard let sourceByteSize = member.byteSize,
+              let liveByteSize,
+              sourceByteSize == liveByteSize,
+              let expectedModifiedAt = ImportDestinationDate.expected(for: member),
+              datesMatchToFilesystemPrecision(expectedModifiedAt, liveModifiedAt)
+        else {
             return .advanceSuffix
         }
-        let comparison = ComparisonRequest(
-            sourceRoot: snapshot.sourceRoot,
-            sourceRelativePath: member.relativePath,
-            sourceByteSize: member.byteSize,
-            sourceModifiedAt: member.contentModifiedAt,
-            destinationRoot: snapshot.destinationRoot,
-            destinationRelativePath: candidate,
-            destinationByteSize: liveByteSize,
-            destinationModifiedAt: liveModifiedAt,
-            sourceURL: member.sourceURL,
-            destinationURL: snapshot.destinationRoot.url.appending(
-                path: candidate.rawValue,
-                directoryHint: .notDirectory
-            )
-        )
-        guard let result = comparisons[comparison] else {
-            pendingComparisons.append(comparison)
-            return .needsProbes
-        }
-        switch result {
-        case .equal:
-            return .skip(candidate)
-        case .unequal:
-            return .advanceSuffix
-        case let .unavailable(detail):
-            return .blocked(.comparisonUnavailable(destination: candidate, detail: detail))
-        case .requiresMaterialization:
-            return .blocked(.comparisonRequiresMaterialization(destination: candidate))
-        }
+        return .skip(candidate)
     }
 
     static func datesMatchToFilesystemPrecision(_ left: Date?, _ right: Date?) -> Bool {
@@ -602,11 +522,6 @@ private nonisolated extension MediaTransferPlanner {
 
     static func uniqueOccupancy(_ requests: [NamespaceOccupancyRequest]) -> [NamespaceOccupancyRequest] {
         var seen = Set<NamespaceOccupancyRequest>()
-        return requests.filter { seen.insert($0).inserted }
-    }
-
-    static func uniqueComparisons(_ requests: [ComparisonRequest]) -> [ComparisonRequest] {
-        var seen = Set<ComparisonRequest>()
         return requests.filter { seen.insert($0).inserted }
     }
 }

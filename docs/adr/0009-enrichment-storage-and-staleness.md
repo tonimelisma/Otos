@@ -47,14 +47,17 @@ This ADR owns:
   in grid publication.
 - The only enrichment data fetched with visible `MediaTileDetail` rows: the
   thumbnail path, generated best kind, video duration seconds, and the
-  `(size, mtime)` source stamps. Generated best date and format remain hot
-  query/filter facts but are not tile display facts.
+  `(size, mtime)` source stamps. The canonical content hash remains outside
+  `MediaTileDetail` and grid publication. Generated best date and format remain
+  hot query/filter facts but are not tile display facts.
 - Disjoint column ownership: the scan writes only fact columns, enrichment writes
-  only enrichment columns, scan upserts preserve enrichment overlay, and a stale
+  only enrichment columns including the canonical hash and its source signature,
+  scan upserts preserve enrichment overlay, and a stale
   in-flight enrichment completion must revalidate the source signature in SQLite
   before it can stamp a row current.
-- Staleness is the `(size, mtime)` source signature; `needsEnrichment` derives
-  from it. mtime-only changes count.
+- Staleness is the `(size, mtime)` source signature for metadata products and the
+  canonical XXH3-128 hash; a missing, malformed, or signature-mismatched hash is
+  stale. mtime-only changes count.
 - Timestamp role facts are stored; SQLite's generated `best_capture_unix` value
   supplies Date sort and enrichment priority. Video duration is a hot scalar
   because the tile surface needs it for every visible video; other metadata
@@ -156,7 +159,7 @@ Adjacent decisions requiring separate ADRs or specs:
 5. **Disjoint column ownership; scan upserts preserve overlay.** The scan upsert
    writes only scan fact columns; enrichment writes only `asset_metadata`,
    timestamp role facts, enriched kind/format, `duration_seconds`,
-   `thumbnail_path`, and the `(size, mtime)` stamps. A re-scan never clobbers
+   `thumbnail_path`, the canonical hash, and the `(size, mtime)` stamps. A re-scan never clobbers
    metadata, duration, or the thumbnail within one record. An enrichment
    completion revalidates its source `(size, mtime)` in SQLite before writing and
    before promoting its staged thumbnail; stale overlay may remain visible as the
@@ -164,8 +167,8 @@ Adjacent decisions requiring separate ADRs or specs:
    the prior thumbnail file.
 
 6. **Staleness is the `(size, mtime)` source signature.** `needsEnrichment` is
-   true when the stamps are absent or differ from the asset's current
-   `(byteSize, contentModifiedAt-in-seconds)`; it depends only on the signature,
+   true when the metadata stamps or canonical hash/signature are absent or differ
+   from the asset's current `(byteSize, contentModifiedAt-in-seconds)`; it depends only on the signature,
    never on whether products exist, so a definitive-but-empty outcome (unsupported
    file, icon-only thumbnail) still stamps and is not retried. mtime-only changes
    count, because a real edit can leave the size constant. The always-firing scan-

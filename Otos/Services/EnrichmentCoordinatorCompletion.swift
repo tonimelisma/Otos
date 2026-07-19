@@ -67,7 +67,8 @@ extension EnrichmentCoordinator {
             metadata: AssetMetadata(),
             thumbnailPath: nil,
             sourceSize: work.sourceSize,
-            sourceMTimeSeconds: work.sourceMTimeSeconds
+            sourceMTimeSeconds: work.sourceMTimeSeconds,
+            contentHash: XXH3Digest128.empty
         )
         await recordVisibleThumbnailLifecycle(
             phase: "emptySource",

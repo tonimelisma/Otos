@@ -15,6 +15,39 @@ struct CatalogStoreEnrichmentTests {
         #expect(makeAsset(size: 100, modifiedAt: m2000, stampSize: 100, stampMtime: 1000).needsEnrichment)
     }
 
+    @Test func missingOrMismatchedHashSignatureMakesCurrentAssetStale() {
+        let modified = Date(timeIntervalSince1970: 1000)
+        #expect(
+            makeAsset(
+                size: 100,
+                modifiedAt: modified,
+                stampSize: 100,
+                stampMtime: 1000,
+                contentHash: nil
+            ).needsEnrichment
+        )
+        #expect(
+            makeAsset(
+                size: 100,
+                modifiedAt: modified,
+                stampSize: 100,
+                stampMtime: 1000,
+                hashSourceSize: 99,
+                hashSourceMtime: 1000
+            ).needsEnrichment
+        )
+        #expect(
+            !makeAsset(
+                size: 100,
+                modifiedAt: modified,
+                stampSize: 100,
+                stampMtime: 1000,
+                hashSourceSize: 100,
+                hashSourceMtime: 1000
+            ).needsEnrichment
+        )
+    }
+
     @Test func bestCaptureDatePrefersMetadataThenFilesystem() {
         let capture = Date(timeIntervalSince1970: 700)
         let created = Date(timeIntervalSince1970: 500)
@@ -86,7 +119,8 @@ struct CatalogStoreEnrichmentTests {
                 timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: 100,
-                sourceMTimeSeconds: 1000
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
             ),
         ])
 
@@ -144,7 +178,8 @@ struct CatalogStoreEnrichmentTests {
                 timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: scannedSize,
-                sourceMTimeSeconds: scannedMTime
+                sourceMTimeSeconds: scannedMTime,
+                contentHash: .empty
             ),
         ])
 
@@ -164,6 +199,46 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.enrichedSourceSize == scannedSize)
         #expect(asset.enrichedSourceMTimeSeconds == scannedMTime)
         #expect(asset.needsEnrichment == false)
+    }
+
+    @Test func malformedStoredHashIsUnavailableAndStale() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        let asset = try #require(scanned.testAssets.first)
+        let rootPath = asset.libraryRootPath
+        let mtime = MediaAsset.mtimeSeconds(asset.contentModifiedAt)
+        await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: asset.id,
+                metadata: AssetMetadata(),
+                thumbnailPath: nil,
+                sourceSize: asset.byteSize,
+                sourceMTimeSeconds: mtime,
+                contentHash: .empty
+            ),
+        ])
+
+        let db = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try await db.write { db in
+            try db.execute(
+                sql: "UPDATE media_asset SET content_hash_xxh3_128 = ? WHERE relative_path = ?",
+                arguments: [Data(repeating: 0, count: 15), asset.relativePath.rawValue]
+            )
+        }
+        let reloaded = CatalogStore(location: .databaseFile(databaseURL))
+        try await reloaded.start(scansSavedLibraries: false)
+        let persisted = try #require(try await catalogStoreTestState(reloaded).testAssets.first {
+            $0.libraryRootPath == rootPath
+        })
+        #expect(persisted.contentHash == nil)
+        #expect(persisted.needsEnrichment)
     }
 
     @Test func staleEnrichmentCompletionDoesNotStampChangedSourceCurrent() async throws {
@@ -201,7 +276,8 @@ struct CatalogStoreEnrichmentTests {
                 timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: "old.jpg",
                 sourceSize: 100,
-                sourceMTimeSeconds: 1000
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
             ),
         ])
 
@@ -260,7 +336,8 @@ struct CatalogStoreEnrichmentTests {
                 metadata: AssetMetadata(),
                 thumbnailPath: thumbnailName,
                 sourceSize: 100,
-                sourceMTimeSeconds: 1000
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
             ),
         ])
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
@@ -302,7 +379,8 @@ struct CatalogStoreEnrichmentTests {
                 metadata: AssetMetadata(),
                 thumbnailPath: thumbnailName,
                 sourceSize: 100,
-                sourceMTimeSeconds: 1000
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
             ),
         ])
         #expect(FileManager.default.fileExists(atPath: thumbnailURL.path(percentEncoded: false)))
@@ -338,6 +416,7 @@ struct CatalogStoreEnrichmentTests {
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
+                contentHash: .empty,
                 generatedThumbnail: nil
             ),
         ])
@@ -364,8 +443,13 @@ private func makeAsset(
     createdAt: Date? = nil,
     modifiedAt: Date? = nil,
     stampSize: Int64? = nil,
-    stampMtime: Int? = nil
+    stampMtime: Int? = nil,
+    contentHash: XXH3Digest128? = .empty,
+    hashSourceSize: Int64? = nil,
+    hashSourceMtime: Int? = nil
 ) -> MediaAsset {
+    let resolvedHashSourceSize = contentHash == nil ? nil : (hashSourceSize ?? stampSize)
+    let resolvedHashSourceMtime = contentHash == nil ? nil : (hashSourceMtime ?? stampMtime)
     MediaAsset(
         libraryRootPath: LibraryRootPath(rawValue: "/Library"),
         relativePath: MediaRelativePath(rawValue: "a.jpg"),
@@ -377,7 +461,10 @@ private func makeAsset(
         thumbnailPath: nil,
         bestCaptureDate: bestCaptureDate,
         enrichedSourceSize: stampSize,
-        enrichedSourceMTimeSeconds: stampMtime
+        enrichedSourceMTimeSeconds: stampMtime,
+        contentHash: contentHash,
+        contentHashSourceSize: resolvedHashSourceSize,
+        contentHashSourceMTimeSeconds: resolvedHashSourceMtime
     )
 }
 

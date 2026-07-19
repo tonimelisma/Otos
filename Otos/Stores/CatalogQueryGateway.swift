@@ -167,7 +167,9 @@ nonisolated enum CatalogQueryGateway {
                 sql: """
                 SELECT library_root_id, relative_path, name, content_type_identifier, byte_size,
                        created_at_unix, content_modified_at_unix,
-                       enriched_source_size, enriched_source_mtime, thumbnail_path,
+                       enriched_source_size, enriched_source_mtime,
+                       content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
+                       thumbnail_path,
                        duration_seconds,
                        best_capture_unix, best_kind, best_format
                 FROM media_asset
@@ -315,7 +317,10 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
         bestFormat: bestFormatRaw.map(MediaFormatToken.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],
-        enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
+        enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
+        contentHash: XXH3Digest128(data: row["content_hash_xxh3_128"]),
+        contentHashSourceSize: row["content_hash_source_size"],
+        contentHashSourceMTimeSeconds: row["content_hash_source_mtime"]
     )
 }
 

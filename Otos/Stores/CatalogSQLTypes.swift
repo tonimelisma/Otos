@@ -23,6 +23,9 @@ nonisolated struct StoredAsset {
     var durationSeconds: Double?
     var enrichedSourceSize: Int64?
     var enrichedSourceMTimeSeconds: Int?
+    var contentHash: XXH3Digest128?
+    var contentHashSourceSize: Int64?
+    var contentHashSourceMTimeSeconds: Int?
 }
 
 nonisolated struct StoredTileDetail {

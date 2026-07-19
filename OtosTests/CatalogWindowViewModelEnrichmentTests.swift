@@ -140,7 +140,8 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg"
                 timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: thumbnailPath,
                 sourceSize: size,
-                sourceMTimeSeconds: mtime
+                sourceMTimeSeconds: mtime,
+                contentHash: .empty
             )
         )
     }

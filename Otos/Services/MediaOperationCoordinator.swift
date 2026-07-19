@@ -5,7 +5,7 @@ import OSLog
 ///
 /// Owns greedy import-plan lifecycle for every attached removable source.
 /// Subscribes weakly to Store planning revisions, builds immutable plans through
-/// `MediaTransferPlanner` + occupancy/equality probes, and publishes per-source
+/// `MediaTransferPlanner` + occupancy probes, and publishes per-source
 /// presentation state for the footer. Filesystem-volume and MTP camera Import
 /// execute through `MediaImportExecutor` (Stage F). Auto-eject runs only after
 /// complete success with zero blocked entries.
@@ -15,7 +15,6 @@ import OSLog
 /// nonisolated helpers. Cancellation rejects stale completions by generation.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
-    private let equality: ContentEqualityChecker
     private let cameraImport: CameraImportAccess?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
     private var presentations: [LibraryRootPath: MediaOperationSourcePresentation] = [:]
@@ -43,12 +42,10 @@ actor MediaOperationCoordinator {
 
     init(
         store: CatalogStore,
-        authorizeMaterialization: Bool = false,
         cameraImport: CameraImportAccess? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
     ) {
         self.store = store
-        equality = ContentEqualityChecker(authorizeMaterialization: authorizeMaterialization)
         self.cameraImport = cameraImport
         self.autoEjectHandler = autoEjectHandler
     }
@@ -533,7 +530,6 @@ actor MediaOperationCoordinator {
 
         let plan = MediaTransferPlanner.buildImportPlan(
             snapshot: snapshot,
-            equality: equality,
             knownForeignOccupants: snapshot.knownForeignOccupants
         )
         // Key staleness on occupancy, not planRevision: a destination that keeps

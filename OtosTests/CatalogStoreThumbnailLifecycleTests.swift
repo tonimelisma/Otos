@@ -15,6 +15,7 @@ struct CatalogStoreThumbnailLifecycleTests {
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
+                contentHash: .empty,
                 generatedThumbnail: generated
             ),
         ])
@@ -65,7 +66,8 @@ struct CatalogStoreThumbnailLifecycleTests {
                 metadata: AssetMetadata(),
                 thumbnailPath: nil,
                 sourceSize: 100,
-                sourceMTimeSeconds: 1000
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
             ),
         ])
 
@@ -92,6 +94,7 @@ struct CatalogStoreThumbnailLifecycleTests {
                 thumbnailPath: nil,
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
+                contentHash: .empty,
                 generatedThumbnail: GeneratedThumbnail(
                     finalRelativePath: ThumbnailStore.relativeName(for: fixture.id),
                     stagedRelativePath: ".missing-thumbnail.tmp"
@@ -120,6 +123,7 @@ struct CatalogStoreThumbnailLifecycleTests {
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
+                contentHash: .empty,
                 generatedThumbnail: accepted
             ),
             EnrichmentResult(
@@ -129,6 +133,7 @@ struct CatalogStoreThumbnailLifecycleTests {
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
+                contentHash: .empty,
                 generatedThumbnail: missing
             ),
         ])
@@ -175,7 +180,8 @@ private struct ThumbnailLifecycleFixture {
             timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
             thumbnailPath: thumbnailPath,
             sourceSize: 100,
-            sourceMTimeSeconds: 1000
+            sourceMTimeSeconds: 1000,
+            contentHash: .empty
         )
     }
 
@@ -187,6 +193,7 @@ private struct ThumbnailLifecycleFixture {
             thumbnailPath: nil,
             sourceSize: 100,
             sourceMTimeSeconds: 1000,
+            contentHash: .empty,
             generatedThumbnail: generatedThumbnail
         )
     }

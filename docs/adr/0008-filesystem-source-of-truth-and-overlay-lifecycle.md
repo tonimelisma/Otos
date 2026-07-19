@@ -52,10 +52,12 @@ Captured owner guidance for verification:
 - A temporarily missing original is not a deletion. Do not nuke catalog state for
   an ejected drive, a disconnected network or cloud volume, an unreachable root, or
   a dataless cloud item.
-- Keep pure path identity. Do not build the data model around content fingerprints,
-  durable filesystem identifiers, or generated UUIDs. Out-of-app moves are an edge
-  case; a future convenience could detect them by matching thumbnails, but that is
-  not a foundation.
+- Keep pure path identity. A content hash may be retained as a subordinate fact
+  about the bytes currently observed at that path, but it never establishes identity
+  or preserves overlay across moves. Do not build the data model around durable
+  filesystem identifiers or generated UUIDs. Out-of-app moves are an edge case; a
+  future convenience could detect them by matching thumbnails, but that is not a
+  foundation.
 - No generated sidecars. Do not pollute the user's media folders with Otos-authored
   identity or overlay files. Existing user-owned useful companions (`.xmp` / `.srt`)
   may be inventoried and transferred during explicit import/reorganization. The
@@ -78,8 +80,8 @@ This ADR owns:
   tracked library root, purged in full only on proven deletion or explicit
   library-root removal, and never purged on temporary absence.
 - The definition of proven deletion versus temporary absence.
-- Pure filesystem-path asset identity and the rejection of durable identifiers,
-  content fingerprints, generated UUIDs, and sidecars as identity mechanisms.
+- Pure filesystem-path asset identity; hashes, durable identifiers, generated UUIDs,
+  and sidecars never act as identity mechanisms.
 - The cloud materialization policy: a detector gate prevents accidental blocking
   materialization, while deliberate, non-blocking background materialization is
   permitted for enrichment — up to eagerly materializing the whole media library —
@@ -144,8 +146,10 @@ subordinate, rebuildable overlay.
    absence: the user chose to stop tracking that root in Otos, so Otos drops the
    root's catalog rows and derived overlay without changing originals on disk.
 5. Asset identity is the filesystem path, the `(library_root_id, relative_path)`
-   pair from ADR 0002. Otos does not store durable filesystem identifiers, content
-   fingerprints, or generated UUIDs, and does not write sidecars to track files. An
+   pair from ADR 0002. Otos does not store durable filesystem identifiers or
+   generated UUIDs, and does not write sidecars to track files. A canonical content
+   hash is allowed only as subordinate overlay with an explicit current size/mtime
+   signature; it never changes identity or moves overlay. An
    out-of-app move therefore appears as a deletion plus an addition. Recovering
    overlay across such a move is an optional future convenience that may match
    newly appeared files to orphaned thumbnails; it is explicitly not part of the
@@ -219,10 +223,10 @@ Rejected for now in favor of one lifecycle. When irreplaceable authored overlay 
 designed, that spec revisits whether a user-excluded selective-sync subtree, which
 looks identical to a deletion locally, should be exempt from purge.
 
-### Durable identity via filesystem identifiers, content fingerprints, or UUIDs
+### Durable identity via filesystem identifiers, hashes, or UUIDs
 
 Track files across moves and renames with `fileResourceIdentifier`,
-`fileContentIdentifier`, a content hash, or a generated UUID.
+`fileContentIdentifier`, a content hash used as identity, or a generated UUID.
 
 Pros:
 
@@ -232,14 +236,14 @@ Cons:
 
 - Apple states `fileResourceIdentifier` and `volumeIdentifier` are not persistent
   across restarts; `fileContentIdentifier` is an APFS content stream, not path
-  identity; whole-file hashing reads every byte and would force-materialize cloud
-  placeholders, defeating the materialization policy.
+  identity; using a hash as identity would make a subordinate byte fact authoritative.
 - Makes the catalog look authoritative over the filesystem.
 
 Failure modes:
 
 - A filesystem identifier is treated as permanent identity that Apple does not
-  guarantee, or hashing triggers gigabytes of cloud downloads.
+  guarantee, or a hash is used to relink paths and hashing triggers gigabytes of
+  cloud downloads outside an existing deliberate materialization operation.
 
 Rejected. Pure path identity is simpler and correct for the real workload. This is
 consistent with ADR 0002's rejection of durable identifiers and UUIDs.
@@ -289,18 +293,18 @@ Rejected. Purge requires proven deletion from a reachable, completed enumeration
 Import provenance is permitted only as filesystem facts about a copy Otos
 performed: source root path, source relative path, source byte size and
 modification time, plus the settled destination byte size and modification time.
-These facts let an unchanged source replan without reading destination bytes
-after cloud eviction while rejecting provenance if either endpoint's catalog
-facts have changed. They are subordinate settlement overlay, not a durable
-content fingerprint or a second asset identity; any signature mismatch falls
-back to live equality handling, and content hashes remain forbidden.
+The planner does not read those facts. A canonical XXH3-128 hash is also permitted
+as subordinate overlay, produced only inside ordinary enrichment or an existing
+import worker after its deliberate byte-access gate. It is valid only with the
+size/mtime signature of the bytes hashed, never becomes a second asset identity,
+and never overrides live filesystem truth.
 
 - Future thumbnail, metadata, and editing work inherits one overlay lifecycle and
   one materialization policy instead of inventing their own.
 - The catalog never grows a second identity scheme; path identity stays the only
   one, keeping ADR 0002's model intact.
 - Out-of-app moves lose overlay by design. This is acceptable for the real
-  workload and is the price of refusing fingerprints and sidecars. A future
+  workload and is the price of refusing hashes as identity and refusing sidecars. A future
   thumbnail-match relink convenience can soften it without changing identity.
 - Reconciliation must distinguish proven deletion from temporary absence. The
   current whole-root availability model (ADR 0005) already prevents purging an

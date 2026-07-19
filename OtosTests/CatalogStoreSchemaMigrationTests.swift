@@ -120,9 +120,14 @@ struct CatalogStoreSchemaMigrationTests {
         let columns = try await Self.mediaAssetColumns(databaseURL)
         #expect(columns.contains("import_destination_byte_size"))
         #expect(columns.contains("import_destination_modified_at_epoch"))
+        #expect(columns.contains("content_hash_xxh3_128"))
+        #expect(columns.contains("content_hash_source_size"))
+        #expect(columns.contains("content_hash_source_mtime"))
+        #expect(try await Self.activeFileOperationColumns(databaseURL).contains("content_hash_xxh3_128"))
 
         let applied = try await Self.appliedMigrationIdentifiers(databaseURL)
         #expect(applied.contains("v11_import_destination_provenance"))
+        #expect(applied.contains("v12_xxh3_content_hashes"))
     }
 
     @Test func v5FixtureMigratesToImportHistoryAndCaptureWallWithoutErase() async throws {
@@ -140,6 +145,9 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(columns.contains("import_source_modified_at_epoch"))
         #expect(columns.contains("import_destination_byte_size"))
         #expect(columns.contains("import_destination_modified_at_epoch"))
+        #expect(columns.contains("content_hash_xxh3_128"))
+        #expect(columns.contains("content_hash_source_size"))
+        #expect(columns.contains("content_hash_source_mtime"))
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.count == 1)
@@ -292,7 +300,8 @@ struct CatalogStoreSchemaMigrationTests {
                 ),
                 thumbnailPath: nil,
                 sourceSize: 4,
-                sourceMTimeSeconds: Int(scanned.testAssets[0].contentModifiedAt?.timeIntervalSince1970 ?? 0)
+                sourceMTimeSeconds: Int(scanned.testAssets[0].contentModifiedAt?.timeIntervalSince1970 ?? 0),
+                contentHash: .empty
             ),
         ])
         #expect(outcome == .applied(count: 1))
@@ -304,6 +313,12 @@ struct CatalogStoreSchemaMigrationTests {
 }
 
 private extension CatalogStoreSchemaMigrationTests {
+    static func activeFileOperationColumns(_ databaseURL: URL) async throws -> Set<String> {
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try String.fetchSet(db, sql: "SELECT name FROM pragma_table_xinfo('active_file_operation')")
+        }
+    }
+
     static func makeV10FixtureWithoutDestinationProvenance() async throws -> URL {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")

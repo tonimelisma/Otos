@@ -40,34 +40,70 @@ nonisolated struct MediaEnricher {
             guard FileMaterialization.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            let result = MediaMetadataReader.read(url: url)
-            guard !result.outcome.shouldRetry else {
-                return .transient
-            }
-            // ADR 0008 safety gate, again: the metadata read may have spanned a provider
-            // eviction, so re-check before QuickLook's byte read. A regressed-to-dataless
-            // file routes back to download instead of faulting itself materialized.
             guard FileMaterialization.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            let generatedThumbnail = await Self.generateThumbnail(id: id, url: url, directory: thumbnailDirectory)
-            let metadata = Self.map(result)
-            return .complete(
-                EnrichmentResult(
-                    id: id,
-                    metadata: metadata,
-                    timestampFacts: Self.timestampFacts(result.timestamps),
-                    enrichedKind: Self.normalizedKind(result.format),
-                    enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
-                    thumbnailPath: nil,
-                    // Normalize unknown facts to the same -1 signature `needsEnrichment`
-                    // compares against, so a definitive result with no scanner-provided
-                    // size/mtime still stamps complete instead of looping forever.
-                    sourceSize: sourceSize ?? -1,
-                    sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
-                    generatedThumbnail: generatedThumbnail
+            let hashStart = Date()
+            let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
+            let hashOutcome = ContentHasher().hashMaterializedFile(at: url)
+            OtosSignpost.mediaIO.endInterval("ContentHash", hashSignpost)
+            switch hashOutcome {
+            case let .complete(contentHash):
+                let hashMs = DiagnosticsTiming.milliseconds(since: hashStart)
+                OtosLog.mediaIO.noticeOperation(
+                    "contentHash",
+                    phase: "finish",
+                    fields: [
+                        "owner": "enrichment",
+                        "bytes": "\(max(sourceSize ?? 0, 0))",
+                        "elapsedMs": "\(hashMs)",
+                        "mbps": throughputMBps(bytes: max(sourceSize ?? 0, 0), elapsedMs: hashMs),
+                    ]
                 )
-            )
+                // Hashing is deliberately first: a provider eviction is routed back
+                // through materialization before metadata/thumbnail work begins.
+                let result = MediaMetadataReader.read(url: url)
+                guard !result.outcome.shouldRetry else {
+                    return .transient
+                }
+                guard FileMaterialization.status(of: url) == .materialized else {
+                    return .notMaterialized
+                }
+                let generatedThumbnail = await Self.generateThumbnail(
+                    id: id,
+                    url: url,
+                    directory: thumbnailDirectory
+                )
+                let metadata = Self.map(result)
+                return .complete(
+                    EnrichmentResult(
+                        id: id,
+                        metadata: metadata,
+                        timestampFacts: Self.timestampFacts(result.timestamps),
+                        enrichedKind: Self.normalizedKind(result.format),
+                        enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
+                        thumbnailPath: nil,
+                        sourceSize: sourceSize ?? -1,
+                        sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
+                        contentHash: contentHash,
+                        generatedThumbnail: generatedThumbnail
+                    )
+                )
+            case .cancelled:
+                OtosLog.mediaIO.noticeOperation(
+                    "contentHash",
+                    phase: "cancelled",
+                    fields: ["owner": "enrichment"]
+                )
+                return .transient
+            case let .failed(category):
+                OtosLog.mediaIO.errorOperation(
+                    "contentHash",
+                    phase: "failed",
+                    fields: ["owner": "enrichment", "category": category.rawValue]
+                )
+                return .transient
+            }
         }
     }
 

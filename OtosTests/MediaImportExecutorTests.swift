@@ -93,6 +93,7 @@ struct ActiveFileOperationJournalTests {
             destinationRootPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
             destinationRelativePath: MediaRelativePath(rawValue: "2026/07/IMG_1.JPG"),
             stagingPath: "/Users/example/Pictures/.tmp.otos-import-staging",
+            contentHash: .empty,
             importBatchUnixMs: 1_704_067_200_000,
             sourceByteSize: 100,
             sourceModifiedAt: Date(timeIntervalSince1970: 1000),
@@ -106,6 +107,7 @@ struct ActiveFileOperationJournalTests {
         #expect(loaded.count == 1)
         #expect(loaded.first?.operationKey == operation.operationKey)
         #expect(loaded.first?.phase == .copying)
+        #expect(loaded.first?.contentHash == .empty)
 
         var updated = operation
         updated.phase = .readyToPublish
@@ -113,9 +115,61 @@ struct ActiveFileOperationJournalTests {
         try await store.recordImportOperationProgress(updated)
         let reloaded = try await store.activeImportOperations()
         #expect(reloaded.first?.phase == .readyToPublish)
+        #expect(reloaded.first?.contentHash == .empty)
 
         try await store.abandonImportOperation(key: operation.operationKey)
         #expect(try await store.activeImportOperations().isEmpty)
+    }
+}
+
+struct ImportRecoveryTests {
+    @Test func readyToPublishRecoveryPublishesAndSettlesJournaledDigest() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let final = destination.appending(path: "final.jpg", directoryHint: .notDirectory)
+        let staging = destination.appending(path: ".stage.otos-import-staging", directoryHint: .notDirectory)
+        try Data("imported".utf8).write(to: staging)
+        let digest: XXH3Digest128
+        guard case let .complete(value) = ContentHasher().hashMaterializedFile(at: staging) else {
+            Issue.record("expected staging digest")
+            return
+        }
+        digest = value
+
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destination)
+        let operation = ActiveFileOperation(
+            operationKey: .make(),
+            mode: "import",
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:test",
+            sourceRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
+            sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+            destinationRootPath: rootPath,
+            destinationRelativePath: MediaRelativePath(rawValue: "final.jpg"),
+            stagingPath: staging.path,
+            contentHash: digest,
+            importBatchUnixMs: 1_704_067_200_000,
+            sourceByteSize: 8,
+            sourceModifiedAt: Date(timeIntervalSince1970: 1000),
+            destinationModifiedAt: Date(timeIntervalSince1970: 1000),
+            phase: .readyToPublish,
+            deleteSourceRequested: false,
+            updatedAt: Date()
+        )
+        try await store.beginImportOperation(operation)
+
+        await MediaImportExecutor(store: store).recoverJournal()
+
+        #expect(FileManager.default.fileExists(atPath: final.path))
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        #expect(try await store.activeImportOperations().isEmpty)
+        let asset = try #require(try await catalogStoreTestState(store).testAssets.first)
+        #expect(asset.contentHash == digest)
+        #expect(asset.contentHashSourceSize == 8)
     }
 }
 

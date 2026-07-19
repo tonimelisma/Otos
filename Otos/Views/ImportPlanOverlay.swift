@@ -65,10 +65,8 @@ struct ImportPlanOverlay: View {
         switch reason {
         case .noUsableDate:
             "no usable date"
-        case let .comparisonUnavailable(_, detail):
-            "comparison unavailable: \(detail)"
-        case .comparisonRequiresMaterialization:
-            "needs materialization"
+        case let .filesystemObservationUnavailable(_, detail):
+            "filesystem observation unavailable: \(detail)"
         }
     }
 }
