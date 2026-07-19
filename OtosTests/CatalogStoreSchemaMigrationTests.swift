@@ -112,6 +112,19 @@ struct CaptureWallClockTests {
 }
 
 struct CatalogStoreSchemaMigrationTests {
+    @Test func v10FixtureWithoutDestinationProvenanceMigratesAdditively() async throws {
+        let databaseURL = try await Self.makeV10FixtureWithoutDestinationProvenance()
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+
+        let columns = try await Self.mediaAssetColumns(databaseURL)
+        #expect(columns.contains("import_destination_byte_size"))
+        #expect(columns.contains("import_destination_modified_at_epoch"))
+
+        let applied = try await Self.appliedMigrationIdentifiers(databaseURL)
+        #expect(applied.contains("v11_import_destination_provenance"))
+    }
+
     @Test func v5FixtureMigratesToImportHistoryAndCaptureWallWithoutErase() async throws {
         let fixture = try await Self.makeV5EnrichedFixture()
         let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
@@ -291,6 +304,26 @@ struct CatalogStoreSchemaMigrationTests {
 }
 
 private extension CatalogStoreSchemaMigrationTests {
+    static func makeV10FixtureWithoutDestinationProvenance() async throws -> URL {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        try await dbQueue.writeWithoutTransaction { db in
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN import_destination_byte_size")
+            try db.execute(sql: "ALTER TABLE media_asset DROP COLUMN import_destination_modified_at_epoch")
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: ["v11_import_destination_provenance"]
+            )
+        }
+        return databaseURL
+    }
+
     struct V5Fixture {
         let databaseURL: URL
         let original: URL
@@ -451,6 +484,12 @@ private extension CatalogStoreSchemaMigrationTests {
     static func mediaAssetColumns(_ databaseURL: URL) async throws -> Set<String> {
         try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
             try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')"))
+        }
+    }
+
+    static func appliedMigrationIdentifiers(_ databaseURL: URL) async throws -> Set<String> {
+        try await DatabaseQueue(path: databaseURL.path(percentEncoded: false)).read { db in
+            try Set(String.fetchAll(db, sql: "SELECT identifier FROM grdb_migrations"))
         }
     }
 

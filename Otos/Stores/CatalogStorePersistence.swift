@@ -191,6 +191,11 @@ extension CatalogStore {
         migrator.registerMigration("v10_import_provenance") { db in
             try addImportProvenanceColumns(db)
         }
+        // Destination provenance has its own migration because GRDB never re-runs
+        // an identifier that is already present in grdb_migrations.
+        migrator.registerMigration("v11_import_destination_provenance") { db in
+            try addImportProvenanceColumns(db)
+        }
         return migrator
     }
 
