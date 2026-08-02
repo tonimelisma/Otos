@@ -137,8 +137,11 @@ actor PreviewImageLoader: PreviewLoading {
 
         // Decode off the actor so two panes can decode concurrently and bookkeeping
         // stays responsive. Dataless/materialize gates above already ran in order.
+        // ImageIO thumbnail creation waits on Default-QoS internal workers; matching
+        // that QoS avoids the Thread Performance Checker priority-inversion hang risk
+        // that fires when this path runs at .userInitiated.
         let target = request.targetLongEdge
-        let decoded: (CGImage, String)? = await Task.detached(priority: .userInitiated) {
+        let decoded: (CGImage, String)? = await Task.detached(priority: .medium) {
             if isMovie {
                 await Self.decodeVideoPoster(url: url, targetLongEdge: target)
             } else {
