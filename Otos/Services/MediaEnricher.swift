@@ -35,12 +35,12 @@ nonisolated struct MediaEnricher {
 
     /// The production enricher. `thumbnailDirectory` is captured so the per-asset
     /// signature stays small; the coordinator supplies the catalog's thumbnail directory.
-    static func live(thumbnailDirectory: URL) -> MediaEnricher {
+    static func live(
+        thumbnailDirectory: URL,
+        readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker()
+    ) -> MediaEnricher {
         MediaEnricher { id, url, sourceSize, sourceMTimeSeconds in
-            guard FileMaterialization.status(of: url) == .materialized else {
-                return .notMaterialized
-            }
-            guard FileMaterialization.status(of: url) == .materialized else {
+            guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
             let hashStart = Date()
@@ -60,13 +60,14 @@ nonisolated struct MediaEnricher {
                         "mbps": throughputMBps(bytes: max(sourceSize ?? 0, 0), elapsedMs: hashMs),
                     ]
                 )
-                // Hashing is deliberately first: a provider eviction is routed back
-                // through materialization before metadata/thumbnail work begins.
+                guard readinessChecker.status(of: url) == .materialized else {
+                    return .notMaterialized
+                }
                 let result = MediaMetadataReader.read(url: url)
                 guard !result.outcome.shouldRetry else {
                     return .transient
                 }
-                guard FileMaterialization.status(of: url) == .materialized else {
+                guard readinessChecker.status(of: url) == .materialized else {
                     return .notMaterialized
                 }
                 let generatedThumbnail = await Self.generateThumbnail(

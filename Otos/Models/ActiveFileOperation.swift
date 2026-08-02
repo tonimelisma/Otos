@@ -8,6 +8,13 @@ nonisolated enum ActiveFileOperationPhase: String, Equatable, Sendable {
     case sourceDeletionPending
 }
 
+nonisolated enum ImportJournalTransition: Sendable {
+    case begin
+    case progress(ActiveFileOperationPhase)
+    case abandon
+    case complete
+}
+
 nonisolated struct ActiveFileOperationKey: Hashable, Sendable {
     let rawValue: String
 

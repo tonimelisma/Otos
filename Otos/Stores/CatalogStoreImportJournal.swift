@@ -61,6 +61,9 @@ extension CatalogStore {
                 operation.operationKey.rawValue,
             ]
         )
+        guard db.changesCount == 1 else {
+            throw CatalogStoreError.importOperationMissing(operation.operationKey)
+        }
     }
 
     static func deleteActiveFileOperation(key: ActiveFileOperationKey, db: Database) throws {
@@ -68,6 +71,9 @@ extension CatalogStore {
             sql: "DELETE FROM active_file_operation WHERE operation_key = ?",
             arguments: [key.rawValue]
         )
+        guard db.changesCount == 1 else {
+            throw CatalogStoreError.importOperationMissing(key)
+        }
     }
 
     static func fetchAllActiveFileOperations(db: Database) throws -> [ActiveFileOperation] {

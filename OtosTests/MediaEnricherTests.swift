@@ -1,8 +1,29 @@
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 struct MediaEnricherTests {
+    private final class SequencedReadinessChecker: EnrichmentReadinessChecking, @unchecked Sendable {
+        private let statuses: Mutex<[FileMaterializationStatus]>
+        private let calls = Mutex(0)
+
+        init(_ statuses: [FileMaterializationStatus]) {
+            self.statuses = Mutex(statuses)
+        }
+
+        func status(of _: URL) -> FileMaterializationStatus {
+            calls.withLock { $0 += 1 }
+            return statuses.withLock { values in
+                values.isEmpty ? .materialized : values.removeFirst()
+            }
+        }
+
+        var callCount: Int {
+            calls.withLock { $0 }
+        }
+    }
+
     private var fixtureDirectory: URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -100,5 +121,78 @@ struct MediaEnricherTests {
             Issue.record("expected .notMaterialized for a missing file, got \(outcome)")
             return
         }
+    }
+
+    @Test func evictionAfterHashGateSkipsMetadata() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
+        let checker = SequencedReadinessChecker([.materialized, .dataless])
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: temp.appending(path: "Thumbnails"),
+            readinessChecker: checker
+        )
+        let outcome = await enricher.enrich(
+            MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+                relativePath: MediaRelativePath(rawValue: "a.jpg")
+            ),
+            url,
+            100,
+            1000
+        )
+        guard case .notMaterialized = outcome else {
+            Issue.record("expected notMaterialized, got \(outcome)")
+            return
+        }
+        #expect(checker.callCount == 2)
+    }
+
+    @Test func evictionAfterMetadataGateSkipsThumbnail() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let thumbnailDirectory = temp.appending(path: "Thumbnails")
+        let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
+        let checker = SequencedReadinessChecker([.materialized, .materialized, .dataless])
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: thumbnailDirectory,
+            readinessChecker: checker
+        )
+        let outcome = await enricher.enrich(
+            MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+                relativePath: MediaRelativePath(rawValue: "a.jpg")
+            ),
+            url,
+            100,
+            1000
+        )
+        guard case .notMaterialized = outcome else {
+            Issue.record("expected notMaterialized, got \(outcome)")
+            return
+        }
+        #expect(checker.callCount == 3)
+        #expect(!FileManager.default.fileExists(atPath: thumbnailDirectory.path))
+    }
+
+    @Test func materializedEnrichmentUsesOneGatePerBytePhase() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let checker = SequencedReadinessChecker([.materialized, .materialized, .materialized])
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: temp.appending(path: "Thumbnails"),
+            readinessChecker: checker
+        )
+        let outcome = await enricher.enrich(
+            MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Lib"),
+                relativePath: MediaRelativePath(rawValue: "a.jpg")
+            ),
+            fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg"),
+            100,
+            1000
+        )
+        guard case .complete = outcome else {
+            Issue.record("expected complete enrichment, got \(outcome)")
+            return
+        }
+        #expect(checker.callCount == 3)
     }
 }

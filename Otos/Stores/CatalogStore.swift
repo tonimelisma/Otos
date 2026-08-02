@@ -155,6 +155,7 @@ actor CatalogStore {
     private let filesystemEventDebounce: Duration
     private let filesystemEventSleep: @Sendable (Duration) async -> Void
     private let initialLoadDidRead: (@Sendable () async -> Void)?
+    private let importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)?
     private var dbWriter: (any DatabaseWriter)?
     private var databaseFileURL: URL?
     private var started = false
@@ -204,7 +205,8 @@ actor CatalogStore {
         filesystemEventSleep: @escaping @Sendable (Duration) async -> Void = { duration in
             try? await Task.sleep(for: duration)
         },
-        initialLoadDidRead: (@Sendable () async -> Void)? = nil
+        initialLoadDidRead: (@Sendable () async -> Void)? = nil,
+        importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil
     ) {
         self.location = location
         self.scanner = scanner
@@ -213,6 +215,7 @@ actor CatalogStore {
         self.filesystemEventDebounce = filesystemEventDebounce
         self.filesystemEventSleep = filesystemEventSleep
         self.initialLoadDidRead = initialLoadDidRead
+        self.importJournalFailure = importJournalFailure
     }
 }
 
@@ -3479,6 +3482,7 @@ extension CatalogStore {
     }
 
     func beginImportOperation(_ operation: ActiveFileOperation) async throws {
+        try importJournalFailure?(.begin)
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.insertActiveFileOperation(operation, db: db)
@@ -3486,6 +3490,7 @@ extension CatalogStore {
     }
 
     func recordImportOperationProgress(_ operation: ActiveFileOperation) async throws {
+        try importJournalFailure?(.progress(operation.phase))
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.updateActiveFileOperation(operation, db: db)
@@ -3493,6 +3498,7 @@ extension CatalogStore {
     }
 
     func abandonImportOperation(key: ActiveFileOperationKey) async throws {
+        try importJournalFailure?(.abandon)
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.deleteActiveFileOperation(key: key, db: db)
@@ -3500,6 +3506,7 @@ extension CatalogStore {
     }
 
     func completeImportOperation(key: ActiveFileOperationKey) async throws {
+        try importJournalFailure?(.complete)
         let dbWriter = try database()
         try Self.writeWithJournalDurability(dbWriter) { db in
             try Self.deleteActiveFileOperation(key: key, db: db)

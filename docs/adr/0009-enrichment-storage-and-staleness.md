@@ -283,6 +283,19 @@ Adjacent decisions requiring separate ADRs or specs:
    destination on the ordinary-enrichment path. Source and destination overlay
    lifecycles are independent, and repeated journal recovery is idempotent.
 
+10. **Import publication and enrichment gates are durable safety boundaries.** The
+    executor persists a complete `.readyToPublish` record (including the staging
+    digest and destination mtime) before exclusive publication, then persists
+    `.publishedPendingSettlement` after the rename and before settlement or source
+    deletion. Journal update/delete operations fail when they affect zero rows.
+    Recovery never trusts a final pathname alone: final-plus-staging and exclusive
+    destination races are foreign, while a final-only occupant must match journaled
+    size, integer-second mtime, and XXH3 after a live materialization check immediately
+    before hashing. Dataless or unknown recovery files retain their journal and use
+    the shared `MaterializationCoordinator` for deliberate materialization. Ordinary
+    enrichment repeats the same live gate immediately before hash, metadata, and
+    thumbnail byte phases. Readiness is never persisted as catalog truth.
+
 ## Alternatives Considered
 
 ### Video duration left only in `asset_metadata`

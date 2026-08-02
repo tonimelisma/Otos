@@ -47,6 +47,7 @@ extension CatalogWindowViewModel {
         let coordinator = MediaOperationCoordinator(
             store: store,
             cameraImport: cameraImport,
+            materializationRequester: materializationCoordinator,
             autoEjectHandler: { root in
                 _ = await CatalogWindowViewModel.performCatalogMutation(
                     .ejectRemovableSource(root),

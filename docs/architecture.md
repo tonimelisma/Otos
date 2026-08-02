@@ -47,7 +47,7 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, per-root namespace mutation epochs, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; an older scan may upsert observed facts but its captured epoch cannot authorize missing-row or companion deletion |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation | keeps derivation off the main thread (that is what would hang the UI) |
 | `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import, and one-executor-per-source ownership | serializes per-source dirtiness/execution; filesystem probes run off the actor and self-caused replans defer until execution ends |
-| `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, 8 bounded entry workers, staging, exclusive publish, and optional source deletion | owns monotonic aggregate progress while independent workers suspend; Store serializes journal transitions and atomic settlement |
+| `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, 8 bounded entry workers, staging, exclusive publish, ownership-proving recovery, and optional source deletion | owns monotonic aggregate progress while independent workers suspend; Store serializes durable journal prerequisites, zero-row failures, and atomic settlement; ambiguous final-only recovery gates hashing through the shared materialization requester |
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
 | `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
 | `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
@@ -89,6 +89,16 @@ everything expensive happens on an actor off the main thread.
   and may clone the source's normalized enrichment overlay while copying an
   independent destination thumbnail. A reuse miss falls back to ordinary enrichment;
   source and destination overlay lifecycles remain independent.
+- **Import publication recovery**: a completed staging hash is durably recorded with
+  `.readyToPublish` before exclusive publication, and the published final is durably
+  recorded as `.publishedPendingSettlement` before settlement or source deletion.
+  Recovery treats final-plus-staging and exclusive destination races as foreign;
+  final-only occupants require journaled size, integer-second mtime, and XXH3 proof,
+  with a live materialization gate before hashing. The shared
+  `MaterializationCoordinator` owns deliberate recovery materialization requests.
+- **Enrichment byte gates**: `MediaEnricher` checks live materialization independently
+  immediately before hashing, metadata parsing, and thumbnail generation. Earlier
+  successful gates never authorize a later phase after provider eviction.
 - **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings

@@ -16,6 +16,7 @@ import OSLog
 actor MediaOperationCoordinator {
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?
+    private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
     private var presentations: [LibraryRootPath: MediaOperationSourcePresentation] = [:]
     private var readyPlans: [LibraryRootPath: MediaOperationPlan] = [:]
@@ -43,10 +44,12 @@ actor MediaOperationCoordinator {
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
+        materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
     ) {
         self.store = store
         self.cameraImport = cameraImport
+        self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
     }
 
@@ -69,7 +72,11 @@ actor MediaOperationCoordinator {
         }
         isStarted = true
         loadDestinationMappings()
-        let executor = MediaImportExecutor(store: store, cameraImport: cameraImport)
+        let executor = MediaImportExecutor(
+            store: store,
+            cameraImport: cameraImport,
+            materializationRequester: materializationRequester
+        )
         await executor.recoverJournal()
         await refreshSources(reason: "start")
         let changes = await store.planningChangeNotifications()
@@ -249,7 +256,11 @@ actor MediaOperationCoordinator {
     ) async {
         guard executing.insert(source).inserted else { return }
         queuedStart.removeValue(forKey: source)
-        let executor = MediaImportExecutor(store: store, cameraImport: cameraImport)
+        let executor = MediaImportExecutor(
+            store: store,
+            cameraImport: cameraImport,
+            materializationRequester: materializationRequester
+        )
         let prefs = ImportPreferencesStore.load()
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,

@@ -607,6 +607,7 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
     case overlappingRoot(existingPath: LibraryRootPath, relationship: LibraryRootRelationship)
     case catalogUnavailable
     case unsupportedCatalogSchema(CatalogSchemaCompatibility)
+    case importOperationMissing(ActiveFileOperationKey)
 
     var errorDescription: String? {
         switch self {
@@ -625,6 +626,8 @@ nonisolated enum CatalogStoreError: LocalizedError, Equatable {
             "The catalog is unavailable."
         case let .unsupportedCatalogSchema(problem):
             problem.errorDescription
+        case let .importOperationMissing(key):
+            "The import journal operation \(key.rawValue) is no longer present."
         }
     }
 }
