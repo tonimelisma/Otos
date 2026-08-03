@@ -106,6 +106,25 @@ struct RootRegistryTests {
         #expect(prioritized.fixed == [1])
     }
 
+    @Test func availableRootIDsByHashRequirementSplitsKinds() {
+        var registry = RootRegistry()
+        registry.upsert(libraryState(path: libraryPath, rowID: 1))
+        registry.upsert(volumeState(rowID: 2))
+        registry.upsert(libraryState(path: otherPath, rowID: 3, availability: .unavailable))
+
+        let partitioned = registry.availableRootIDsByHashRequirement()
+        #expect(partitioned.hashRequired == [1])
+        #expect(partitioned.hashNotRequired == [2])
+    }
+
+    @Test func contentHashRequiredIsKindDerived() {
+        let path = LibraryRootPath(rawValue: "/x")
+        #expect(LibraryRoot(path: path, kind: .library).isContentHashRequired)
+        #expect(LibraryRoot(path: path, kind: .deviceMTP).isContentHashRequired)
+        #expect(!LibraryRoot(path: path, kind: .removableVolume).isContentHashRequired)
+        #expect(LibraryRoot(path: path, kind: .removableVolume).isRemovableSource)
+    }
+
     @Test func rootForDeviceIdentityFindsMatchingRoot() {
         var registry = RootRegistry()
         registry.upsert(libraryState(path: libraryPath, rowID: 1, deviceIdentity: "camera:1"))

@@ -932,7 +932,7 @@ extension CatalogStore {
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
             isRootAvailable: { [roots] path in roots[path]?.availability == .available },
-            isHashRequired: { [roots] path in roots[path]?.root.kind != .removableVolume }
+            isHashRequired: { [roots] path in roots[path]?.root.isContentHashRequired == true }
         )
         guard !eligibleClaims.isEmpty else {
             return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)

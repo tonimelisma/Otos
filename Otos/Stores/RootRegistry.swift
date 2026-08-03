@@ -110,10 +110,10 @@ nonisolated struct RootRegistry {
         var removable: [Int64] = []
         var fixed: [Int64] = []
         for state in statesByPath.values where state.availability == .available {
-            if state.root.kind == .library {
-                fixed.append(state.rowID)
-            } else {
+            if state.root.isRemovableSource {
                 removable.append(state.rowID)
+            } else {
+                fixed.append(state.rowID)
             }
         }
         return (removable.sorted(), fixed.sorted())
@@ -129,10 +129,10 @@ nonisolated struct RootRegistry {
         var hashRequired: Set<Int64> = []
         var hashNotRequired: Set<Int64> = []
         for state in statesByPath.values where state.availability == .available {
-            if state.root.kind == .removableVolume {
-                hashNotRequired.insert(state.rowID)
-            } else {
+            if state.root.isContentHashRequired {
                 hashRequired.insert(state.rowID)
+            } else {
+                hashNotRequired.insert(state.rowID)
             }
         }
         return (hashRequired, hashNotRequired)
@@ -143,7 +143,7 @@ nonisolated struct RootRegistry {
     /// current availability, since a temporarily unavailable removable root's kind
     /// does not change.
     var removableVolumeRootPaths: Set<LibraryRootPath> {
-        Set(statesByPath.compactMap { path, state in state.root.kind == .removableVolume ? path : nil })
+        Set(statesByPath.compactMap { path, state in !state.root.isContentHashRequired ? path : nil })
     }
 
     func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {

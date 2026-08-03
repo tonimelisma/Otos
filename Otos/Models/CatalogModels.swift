@@ -210,6 +210,15 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
     var isRemovableSource: Bool {
         kind != .library
     }
+
+    /// Whether enrichment on this root produces a content hash (ADR 0018/plan 0062).
+    /// Everything except `.removableVolume` is read in place and hashed during
+    /// enrichment; a removable volume is never hashed in place, so its rows carry no
+    /// digest until import. Single home for the rule so a future root kind cannot
+    /// diverge one caller.
+    var isContentHashRequired: Bool {
+        kind != .removableVolume
+    }
 }
 
 /// The catalog stores every source as a root because the filesystem path remains
