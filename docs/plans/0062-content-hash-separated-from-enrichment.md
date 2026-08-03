@@ -20,6 +20,9 @@ is never read in full merely to compute a digest.
 
 ## Evidence
 
+Full field diagnosis, including the measurements below and the SQLite index
+experiments in the research section: `docs/research/2026-08-01-removable-import-and-grid-field-diagnosis.md`.
+
 Measured 2026-08-01, `/Volumes/CAMERA` — MS-DOS FAT32 over USB, 139 files, 521 MB:
 
 | bytes | elapsed | throughput | owner |
@@ -311,19 +314,15 @@ are correct. `EXPLAIN QUERY PLAN` output is the assertion surface.
   (`EnrichmentCoordinatorWorkSelection.swift:425`). No measurement justifies changing
   the caps.
 - **Import copy worker count.**
-- **`.otos-import-staging` FSEvent churn.** Otos's own staging temp files are not
-  suppressed by the event classifier; the 2026-08-01 session showed `occupancyRevision`
-  1→7 and `planRevision` 4→11 within 66 ms, each firing a reconcile and an import
-  replan. Separate defect.
-- **Unexplained import coordinator silence.** Zero `op=import.coordinator phase=refresh`
-  lines across 21:24:18–21:31:05 while plan revisions bumped throughout, then normal
-  refreshes from 21:32:49. `handlePlanningChange` always calls `refreshSources`, which
-  always logs, so the coordinator appears to have received no planning change for six
-  minutes. Cause unknown. Separate investigation.
-- **Instrumentation gaps.** No sidebar click→paint signpost exists, so selection
-  latency cannot be measured at all; `op=contentHash` records no `rootPath`, so slow
-  hashes cannot be attributed to a device without matching byte sizes against the
-  catalog. Both should be closed before the next diagnosis of this area.
+- **`.otos-import-staging` FSEvent churn**, the **unexplained import coordinator
+  silence**, the **enrichment-driven projection reorder storm**, and the
+  **instrumentation gaps** (no sidebar click→paint signpost; `op=contentHash` without
+  `rootPath`). All four are owned by Plan 0064, with evidence in the 2026-08-01 research
+  document.
+- **The red test baseline.** `script/verify.sh` exits 65 on `main` from five
+  pre-existing failures, one of which asserts the very contract this plan changes
+  (`OtosTests/EnrichmentLeaseGatewayTests.swift:47`). Plan 0063 owns it and records the
+  sequencing constraint between the two plans.
 
 ## Tests
 
