@@ -2,11 +2,10 @@
 
 ## Status
 
-Active. Confirmed 2026-08-02. Evidence in
-`docs/research/2026-08-01-removable-import-and-grid-field-diagnosis.md`.
-Stage 1 (instrumentation gaps), Stage 2 (staging-file suppression), and Stage 3
-(projection republication coalescing) implemented 2026-08-03; Stage 4 (import
-coordinator silence) remains.
+Complete. Implemented 2026-08-03: Stage 1 (instrumentation gaps), Stage 2 (staging-file
+suppression), Stage 3 (projection republication coalescing), Stage 4 (coordinator
+silence — investigation concluded, observability added, metric semantics documented).
+Deleted on completion.
 
 ## Purpose
 
@@ -132,6 +131,25 @@ explanation was already ruled out.
 Note that `attachToReadyMs` measures from volume attach, so it includes any time the
 source spent in `.waitingForDestination` awaiting user input. Confirm what the metric is
 intended to mean before treating its value as pure system latency.
+
+**Implemented resolution (2026-08-03).** Investigation concluded the subscription is
+correctly wired: `MediaOperationCoordinator.start()` establishes the unbounded
+`RootPlanningChange` stream once, and `MediaOperationCoordinatorTests` prove occupancy
+bumps emitted by the store reach the coordinator (e.g. `bumpPlanRevision`/occupancy
+reactions and source discovery). The six-minute silence is therefore consistent with an
+idle app: the CAMERA scan's occupancy bumps happened before or around the capture start,
+and between then and the user pressing Import no occupancy/planning change was emitted —
+`handlePlanningChange` refreshes only on real events, and enrichment emits catalog
+changes, not planning changes. `attachToReadyMs` was inflated by user destination-wait,
+exactly as the note above warns. The remaining gap was attribution, now closed with
+end-to-end observability: `op=catalog.planningChange phase=emit` (emit side, with
+`listeners=`), `op=catalog.planningChange phase=subscribed` and
+`op=import.coordinator phase=subscribed` (liveness markers), and
+`op=import.coordinator phase=receive` (receive side). A future capture can now match
+`emit`/`subscribed`/`receive` lines to prove whether a silence is "no events" or "events
+not received", and `attachToReadyMs` is documented as user-inclusive latency.
+`planningChangeStreamDeliversAttachedSourceWithoutIntent` pins the full
+emit → subscribe → refreshSources chain in tests.
 
 ## Explicitly out of scope
 

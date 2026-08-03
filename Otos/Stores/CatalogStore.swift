@@ -286,6 +286,11 @@ extension CatalogStore {
                 await self?.removePlanningChangeContinuation(id)
             }
         }
+        let listenerCount = planningChangeContinuations.count
+        OtosLog.catalog.notice(
+            // swiftlint:disable:next line_length
+            "op=catalog.planningChange phase=subscribed listeners=\(listenerCount, privacy: .public)"
+        )
         return stream
     }
 
@@ -2806,6 +2811,14 @@ private extension CatalogStore {
 
     private func emitPlanningChange(rootPath: LibraryRootPath, occupancyRevision: UInt64) {
         let change = RootPlanningChange(rootPath: rootPath, occupancyRevision: occupancyRevision)
+        // Emit-side observability (plan 0064 Stage 4): a silence on the coordinator
+        // side can now be attributed to "no events emitted" vs "events not received"
+        // by matching this line against the coordinator's receive/refresh lines.
+        let listenerCount = planningChangeContinuations.count
+        OtosLog.catalog.debug(
+            // swiftlint:disable:next line_length
+            "op=catalog.planningChange phase=emit rootPath=\(rootPath.rawValue, privacy: .public) occupancyRevision=\(occupancyRevision, privacy: .public) listeners=\(listenerCount, privacy: .public)"
+        )
         for continuation in planningChangeContinuations.values {
             continuation.yield(change)
         }

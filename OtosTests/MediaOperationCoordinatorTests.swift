@@ -44,6 +44,50 @@ struct MediaOperationCoordinatorTests {
         #expect(batches.first?.assetCount == 12)
     }
 
+    /// Plan 0064 Stage 4: the coordinator must discover an attached source purely via
+    /// the store's `RootPlanningChange` stream — no `setDestination`/`queueImport`
+    /// intent. This pins the emit → subscribe → refreshSources chain that a field
+    /// capture showed silent for six minutes; with the emit/receive diagnostics, a
+    /// future capture can distinguish "no events emitted" (idle app awaiting user
+    /// input) from "events not received" (broken subscription).
+    @Test func planningChangeStreamDeliversAttachedSourceWithoutIntent() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        let coordinator = MediaOperationCoordinator(store: store)
+        await coordinator.start()
+        defer { Task { await coordinator.shutdown() } }
+
+        // Attach AFTER start: the card's scan bumps occupancy and emits planning
+        // changes. The coordinator (auto-mapping to the sole destination) must reach
+        // `.ready` via the stream alone.
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:stream-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await readyGeneration(coordinator, source: cardPath)
+
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+        )
+        guard case .ready = presentation.state else {
+            Issue.record("Expected .ready via planning-change stream, got \(presentation.state)")
+            return
+        }
+    }
+
     @Test func queueImportSurfacesExecutionUnavailableOrQueuedState() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)

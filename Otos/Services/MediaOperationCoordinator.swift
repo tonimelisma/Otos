@@ -88,6 +88,13 @@ actor MediaOperationCoordinator {
                 await handlePlanningChange(change)
             }
         }
+        // Subscription liveness marker (plan 0064 Stage 4): a capture showing
+        // `phase=subscribed` plus zero later `phase=receive` lines proves the app was
+        // idle (nothing to emit), not that the coordinator stopped listening.
+        let subscribed = consumerTask != nil
+        OtosLog.catalog.notice(
+            "op=import.coordinator phase=subscribed planningStream=\(subscribed, privacy: .public)"
+        )
     }
 
     func shutdown() {
@@ -389,6 +396,10 @@ actor MediaOperationCoordinator {
     }
 
     private func handlePlanningChange(_ change: RootPlanningChange) async {
+        OtosLog.catalog.debug(
+            // swiftlint:disable:next line_length
+            "op=import.coordinator phase=receive rootPath=\(change.rootPath.rawValue, privacy: .public) occupancyRevision=\(change.occupancyRevision, privacy: .public)"
+        )
         // Only a real occupancy change (media/companion inventory, import/reorg
         // settlement, foreign occupant) invalidates an import plan. A wake carrying
         // the same occupancy revision is planRevision-only churn — refresh source
@@ -620,6 +631,11 @@ actor MediaOperationCoordinator {
         return true
     }
 
+    /// Records the attach → ready span once. The span runs from the first time this
+    /// process's coordinator observed the source through the first ready plan, so it
+    /// deliberately includes any time the user spent choosing/confirming the
+    /// destination and any metadata-wait state — it is NOT pure system latency, and
+    /// should not be read as one (plan 0064 Stage 4).
     private func recordAttachToReadyIfNeeded(source: LibraryRootPath, plan: MediaOperationPlan) {
         guard attachToReadyMs[source] == nil,
               let started = attachStartedAt[source]
