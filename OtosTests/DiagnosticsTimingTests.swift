@@ -24,3 +24,32 @@ struct DiagnosticsTimingTests {
         #expect(elapsedMilliseconds(from: start, to: end) == "3200")
     }
 }
+
+struct IntentToPaintMeasurementTests {
+    @MainActor
+    @Test func matchingScopeCompletesPendingMeasurement() {
+        let monitor = MainRunLoopStallMonitor()
+        monitor.beginIntentToPaint(scope: .allMedia)
+        #expect(monitor.completeIntentToPaint(appliedScope: .allMedia))
+        #expect(!monitor.completeIntentToPaint(appliedScope: .allMedia))
+    }
+
+    @MainActor
+    @Test func unrelatedScopeDoesNotCompletePendingMeasurement() {
+        let monitor = MainRunLoopStallMonitor()
+        let path = LibraryRootPath(rawValue: "/tmp/Lib")
+        monitor.beginIntentToPaint(scope: .library(path))
+        #expect(!monitor.completeIntentToPaint(appliedScope: .allMedia))
+        #expect(monitor.completeIntentToPaint(appliedScope: .library(path)))
+    }
+
+    @MainActor
+    @Test func newerIntentReplacesPendingMeasurement() {
+        let monitor = MainRunLoopStallMonitor()
+        let path = LibraryRootPath(rawValue: "/tmp/Lib")
+        monitor.beginIntentToPaint(scope: .allMedia)
+        monitor.beginIntentToPaint(scope: .library(path))
+        #expect(!monitor.completeIntentToPaint(appliedScope: .allMedia))
+        #expect(monitor.completeIntentToPaint(appliedScope: .library(path)))
+    }
+}

@@ -77,6 +77,8 @@ nonisolated struct MediaEnricher {
                     phase: "finish",
                     fields: [
                         "owner": "enrichment",
+                        "rootPath": id.libraryRootPath.rawValue,
+                        "relativePath": id.relativePath.rawValue,
                         "bytes": "\(max(sourceSize ?? 0, 0))",
                         "elapsedMs": "\(hashMs)",
                         "mbps": throughputMBps(bytes: max(sourceSize ?? 0, 0), elapsedMs: hashMs),
@@ -98,14 +100,23 @@ nonisolated struct MediaEnricher {
                 OtosLog.mediaIO.noticeOperation(
                     "contentHash",
                     phase: "cancelled",
-                    fields: ["owner": "enrichment"]
+                    fields: [
+                        "owner": "enrichment",
+                        "rootPath": id.libraryRootPath.rawValue,
+                        "relativePath": id.relativePath.rawValue,
+                    ]
                 )
                 return .transient
             case let .failed(category):
                 OtosLog.mediaIO.errorOperation(
                     "contentHash",
                     phase: "failed",
-                    fields: ["owner": "enrichment", "category": category.rawValue]
+                    fields: [
+                        "owner": "enrichment",
+                        "rootPath": id.libraryRootPath.rawValue,
+                        "relativePath": id.relativePath.rawValue,
+                        "category": category.rawValue,
+                    ]
                 )
                 return .transient
             }

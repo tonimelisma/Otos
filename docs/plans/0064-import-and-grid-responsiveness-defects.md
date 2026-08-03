@@ -4,6 +4,8 @@
 
 Active. Confirmed 2026-08-02. Evidence in
 `docs/research/2026-08-01-removable-import-and-grid-field-diagnosis.md`.
+Stage 1 (instrumentation gaps) and Stage 2 (staging-file suppression) implemented
+2026-08-03; Stages 3–4 remain.
 
 ## Purpose
 

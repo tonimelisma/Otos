@@ -2952,6 +2952,7 @@ private extension CatalogStore {
         var keptEvents: [FilesystemEvent] = []
         keptEvents.reserveCapacity(pendingEvents.count)
         var suppressedCount = 0
+        var stagingSuppressedCount = 0
         for event in pendingEvents {
             let flags = FilesystemEventFlags(event: event)
             let relativePath = CatalogPath.relativePath(
@@ -2969,12 +2970,26 @@ private extension CatalogStore {
                 suppressedCount += 1
                 continue
             }
+            // Otos's own import staging files (`.otos-import-staging`, written into the
+            // watched destination root while the import executor copies) are never
+            // catalogued and must not record namespace mutations, bump occupancy, or
+            // fire reconcile/replan churn (plan 0064 Stage 2).
+            if let relativePath, relativePath.rawValue.hasSuffix(MediaImportExecutor.importStagingSuffix) {
+                stagingSuppressedCount += 1
+                continue
+            }
             keptEvents.append(event)
         }
         if suppressedCount > 0 {
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
                 "op=catalog.materializationEvent phase=suppress rootPath=\(root.rawValue, privacy: .public) count=\(suppressedCount, privacy: .public)"
+            )
+        }
+        if stagingSuppressedCount > 0 {
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.stagingEvent phase=suppress rootPath=\(root.rawValue, privacy: .public) count=\(stagingSuppressedCount, privacy: .public)"
             )
         }
 

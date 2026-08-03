@@ -43,6 +43,45 @@ struct CatalogStoreFilesystemEventTests {
         #expect(!newInvocations.contains(pathB))
     }
 
+    /// Plan 0064 Stage 2: Otos's own `.otos-import-staging` files are written into the
+    /// watched destination root while importing and must not schedule reconciliation,
+    /// record namespace mutations, or bump occupancy — that self-inflicted churn fired
+    /// a reconcile + replan on every staging write. A real media event still reconciles.
+    @Test func importStagingEventsDoNotTriggerReconciliation() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+        let recorder = FilesystemEventScanInvocationRecorder()
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: recordingScanner(recorder),
+            filesystemWatcher: watcher,
+            filesystemEventDebounce: .milliseconds(20)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        let baseline = await recorder.invocations().count
+
+        let stagingURL = root.appending(path: ".08ADC04C-98C9.otos-import-staging")
+        try Data("staging".utf8).write(to: stagingURL)
+        emit(FilesystemEvent(path: stagingURL.path, flags: 0))
+        try await assertInvocationCountStays(recorder, baseline: baseline, duration: .milliseconds(300))
+
+        // Control: a real media-file event for the same root still reconciles.
+        let mediaURL = root.appending(path: "real.jpg")
+        try Data("jpg".utf8).write(to: mediaURL)
+        emit(FilesystemEvent(path: mediaURL.path, flags: 0))
+        try await waitForFilesystemRescan(
+            store: store,
+            recorder: recorder,
+            baseline: baseline,
+            expectedAdditional: 1
+        )
+    }
+
     @Test func debounceCoalescesBurst() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

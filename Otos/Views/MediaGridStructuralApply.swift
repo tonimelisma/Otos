@@ -158,6 +158,7 @@ extension MediaGridViewController {
         let applyCallMs = DiagnosticsTiming.milliseconds(since: context.applyCallStart)
         let completionStart = Date()
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
+        stallMonitor?.completeIntentToPaint(appliedScope: context.grid.scope)
 
         if context.resetScroll {
             scrollToTop()

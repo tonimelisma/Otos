@@ -320,10 +320,14 @@ extension CatalogWindowViewModel {
     /// user intent. Kept here beside those properties so their private setters stay valid.
     func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
         guard queryDescriptor != descriptor else { return }
+        let scopeChanged = descriptor.scope != queryDescriptor.scope
         queryGeneration &+= 1
         queryDescriptor = descriptor
         sidebarSelection = descriptor.scope
         OtosLog.ui.info("Catalog query changed descriptor=\(descriptor.diagnosticDescription, privacy: .public)")
+        if scopeChanged {
+            stallMonitor.beginIntentToPaint(scope: descriptor.scope)
+        }
         queryContinuation.yield(CatalogQueryRequest(
             descriptor: descriptor,
             generation: queryGeneration

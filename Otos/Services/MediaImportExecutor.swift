@@ -11,6 +11,11 @@ import UniformTypeIdentifiers
 /// staging, settles any already-published entries, and stops scheduling new ones.
 actor MediaImportExecutor {
     static let workerCount = 8
+    /// Suffix of the hidden adjacent staging file Otos writes into the destination
+    /// root while copying (`.\(UUID().uuidString).otos-import-staging`). Shared with
+    /// `CatalogStore`'s filesystem-event path so these Otos-owned transient files
+    /// never schedule reconciliation or occupancy bumps (plan 0064 Stage 2).
+    static let importStagingSuffix = ".otos-import-staging"
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
@@ -98,7 +103,7 @@ actor MediaImportExecutor {
                 ) else {
                     continue
                 }
-                for item in items where item.lastPathComponent.hasSuffix(".otos-import-staging") {
+                for item in items where item.lastPathComponent.hasSuffix(Self.importStagingSuffix) {
                     guard !journaledStaging.contains(item.path) else { continue }
                     try? fileManager.removeItem(at: item)
                     OtosLog.catalog.notice(
@@ -632,6 +637,8 @@ actor MediaImportExecutor {
                 phase: "finish",
                 fields: [
                     "owner": "import",
+                    "rootPath": operation.sourceRootPath.rawValue,
+                    "relativePath": operation.sourceRelativePath.rawValue,
                     "batch": "\(batch.unixMilliseconds)",
                     "worker": "\(workerID)",
                     "bytes": "\(sourceByteSize)",
@@ -645,7 +652,13 @@ actor MediaImportExecutor {
             OtosLog.mediaIO.noticeOperation(
                 "contentHash",
                 phase: "cancelled",
-                fields: ["owner": "import", "batch": "\(batch.unixMilliseconds)", "worker": "\(workerID)"]
+                fields: [
+                    "owner": "import",
+                    "rootPath": operation.sourceRootPath.rawValue,
+                    "relativePath": operation.sourceRelativePath.rawValue,
+                    "batch": "\(batch.unixMilliseconds)",
+                    "worker": "\(workerID)",
+                ]
             )
             return .cancelled
         case let .failed(category):
@@ -656,6 +669,8 @@ actor MediaImportExecutor {
                 phase: "failed",
                 fields: [
                     "owner": "import",
+                    "rootPath": operation.sourceRootPath.rawValue,
+                    "relativePath": operation.sourceRelativePath.rawValue,
                     "batch": "\(batch.unixMilliseconds)",
                     "worker": "\(workerID)",
                     "category": category.rawValue,
@@ -811,7 +826,7 @@ actor MediaImportExecutor {
             "publishMs": elapsedMilliseconds(from: request.copyFinished, to: publishFinished),
             "settleMs": elapsedMilliseconds(from: publishFinished, to: settleFinished),
             "hashMs": "\(elapsedMilliseconds(from: request.copyFinished, to: request.hashFinished))",
-            "stagingMs": elapsedMilliseconds(from: request.copyStarted, to: request.copyFinished),
+            "copyMs": elapsedMilliseconds(from: request.copyStarted, to: request.copyFinished),
             "worker": "\(request.workerID)",
         ])
 
@@ -1267,7 +1282,7 @@ actor MediaImportExecutor {
 
     private nonisolated static func stagingURL(adjacentTo final: URL) -> URL {
         let parent = final.deletingLastPathComponent()
-        let name = ".\(UUID().uuidString).otos-import-staging"
+        let name = ".\(UUID().uuidString)\(Self.importStagingSuffix)"
         return parent.appendingPathComponent(name)
     }
 

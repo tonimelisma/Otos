@@ -40,6 +40,18 @@ final class MainRunLoopStallMonitor {
         let finishedAt: Date
     }
 
+    /// One in-flight sidebar/filter/sort intent awaiting the structural apply that
+    /// renders it. Begins in `CatalogWindowViewModel.setQueryDescriptor` when the
+    /// scope changes and completes in the grid controller's `completeStructuralApply`
+    /// for the same scope, so click→paint latency is measurable end to end (plan 0064
+    /// Stage 1). A newer intent replaces a stale pending one; a pending that never
+    /// reaches an apply of its scope leaks at most one interval.
+    private struct PendingIntentToPaint {
+        let signpost: OSSignpostIntervalState
+        let scope: SidebarSelection
+        let startedAt: Date
+    }
+
     private var timer: Timer?
     private var expectedFireDate: Date?
     private var nextUpdateID = 0
@@ -47,6 +59,7 @@ final class MainRunLoopStallMonitor {
     private var latestHandoff: CatalogGridHandoff?
     private var operationStack: [OperationRecord] = []
     private var lastLongOperation: CompletedOperationRecord?
+    private var pendingIntentToPaint: PendingIntentToPaint?
     /// Optional MainActor-safe extra fields (e.g. mutation-gate exclusivity) sampled at stall time.
     var additionalStallFields: (() -> [String: String])?
     private let interval: TimeInterval = 0.1
@@ -64,6 +77,37 @@ final class MainRunLoopStallMonitor {
 
     func recordGridHandoff(_ handoff: CatalogGridHandoff) {
         latestHandoff = handoff
+    }
+
+    /// Starts the click→paint interval for a sidebar/scope intent. Called from the
+    /// single query-descriptor writer when the scope changes on a user intent.
+    func beginIntentToPaint(scope: SidebarSelection) {
+        pendingIntentToPaint = PendingIntentToPaint(
+            signpost: OtosSignpost.ui.beginInterval("SidebarSelectionToPaint"),
+            scope: scope,
+            startedAt: Date()
+        )
+        OtosLog.ui.debug(
+            "op=ui.sidebarSelectionToPaint phase=start scope=\(scope.diagnosticDescription, privacy: .public)"
+        )
+    }
+
+    /// Ends the click→paint interval when a structural apply renders the intent's
+    /// scope. Returns whether a pending measurement was completed; a non-matching
+    /// scope (an unrelated enrichment/scroll apply) leaves the pending interval
+    /// untouched.
+    @discardableResult
+    func completeIntentToPaint(appliedScope: SidebarSelection) -> Bool {
+        guard let pending = pendingIntentToPaint, pending.scope == appliedScope else {
+            return false
+        }
+        pendingIntentToPaint = nil
+        OtosSignpost.ui.endInterval("SidebarSelectionToPaint", pending.signpost)
+        let ms = DiagnosticsTiming.milliseconds(since: pending.startedAt)
+        OtosLog.ui.debug(
+            "op=ui.sidebarSelectionToPaint phase=finish scope=\(appliedScope.diagnosticDescription, privacy: .public) ms=\(ms, privacy: .public)"
+        )
+        return true
     }
 
     func beginOperation(_ name: String, now: Date = Date()) -> MainRunLoopOperationToken {
@@ -116,6 +160,7 @@ final class MainRunLoopStallMonitor {
         latestHandoff = nil
         operationStack.removeAll()
         lastLongOperation = nil
+        pendingIntentToPaint = nil
     }
 
     private func tick(now: Date = Date()) {
