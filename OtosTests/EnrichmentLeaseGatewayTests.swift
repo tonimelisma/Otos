@@ -57,7 +57,10 @@ struct EnrichmentLeaseGatewayTests {
             createdAt: nil,
             contentModifiedAt: Date(timeIntervalSince1970: 1),
             enrichedSourceSize: 1024,
-            enrichedSourceMTimeSeconds: 1
+            enrichedSourceMTimeSeconds: 1,
+            contentHash: XXH3Digest128.empty,
+            contentHashSourceSize: 1024,
+            contentHashSourceMTimeSeconds: 1
         )
         #expect(currentAsset.needsEnrichment == false)
         let assetsByID = [

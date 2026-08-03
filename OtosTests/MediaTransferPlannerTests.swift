@@ -21,7 +21,11 @@ struct MediaTransferPlannerTests {
             contentModifiedAt: modified,
             captureWallCompact: captureWallCompact,
             mediaKind: .image,
-            fileExtension: "JPG",
+            // Derived from `name`, not hardcoded: the planner builds destination
+            // candidates from this extension verbatim (see `destinationExtension`),
+            // so a fixture whose extension case disagrees with its own name produces
+            // a candidate the fixture's own expectations never match.
+            fileExtension: (name as NSString).pathExtension,
             companions: [],
             contentTypeIdentifier: "public.jpeg"
         )
@@ -29,18 +33,20 @@ struct MediaTransferPlannerTests {
 
     private static func snapshot(
         sourceMedia: [PlanningFileFacts],
+        destinationRoot: LibraryRootPath = destination,
         destinationOccupants: [MediaRelativePath: DestinationOccupantFacts] = [:],
+        knownForeignOccupants: Set<MediaRelativePath> = [],
         policy: ImportPolicy
     ) -> ImportPlanningSnapshot {
         ImportPlanningSnapshot(
             generation: 1,
             sourceRoot: source,
-            destinationRoot: destination,
+            destinationRoot: destinationRoot,
             sourceOccupancyRevision: 1,
             destinationOccupancyRevision: 1,
             sourceMedia: sourceMedia,
             destinationOccupants: destinationOccupants,
-            knownForeignOccupants: [],
+            knownForeignOccupants: knownForeignOccupants,
             policy: policy,
             calendar: Calendar(identifier: .gregorian),
             timeZone: TimeZone(secondsFromGMT: 0) ?? .current
@@ -78,58 +84,67 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .skipPreexisting(destination: relative))
     }
 
-    @Test func differentLiveSizeAdvancesTheWholeBundleSuffix() {
+    /// Exercises `buildImportPlan`, the entry point production actually calls
+    /// (`MediaOperationCoordinator.swift:542`), against a real destination directory
+    /// rather than a hand-fed occupancy map for `planImport`. `planImport` alone is an
+    /// internal probe-loop step; a live-mismatch scenario like this one is only an
+    /// observable behavior at the public boundary that resolves probes against the
+    /// filesystem.
+    @Test func differentLiveSizeAdvancesTheWholeBundleSuffix() throws {
+        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: destinationDir) }
+        let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
+
         let source = Self.facts(name: "a.jpg")
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
         policy.destinationNamePolicy = .original
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: policy)
-        let ideal = source.relativePath
+        let snapshot = Self.snapshot(sourceMedia: [source], destinationRoot: destinationRoot, policy: policy)
         let next = MediaRelativePath(rawValue: "a_001.jpg")
-        let idealRequest = NamespaceOccupancyRequest(rootPath: Self.destination, relativePath: ideal)
-        let nextRequest = NamespaceOccupancyRequest(rootPath: Self.destination, relativePath: next)
 
-        let outcome = MediaTransferPlanner.planImport(
-            snapshot: snapshot,
-            occupancy: [
-                idealRequest: .regularFile(byteSize: 11, contentModifiedAt: source.contentModifiedAt),
-                nextRequest: .absent,
-            ]
+        let idealFile = destinationDir.appending(path: source.relativePath.rawValue)
+        let modifiedAt = try #require(source.contentModifiedAt)
+        try Data(repeating: 0, count: 11).write(to: idealFile)
+        try FileManager.default.setAttributes(
+            [.modificationDate: modifiedAt],
+            ofItemAtPath: idealFile.path
         )
 
-        guard case let .ready(plan) = outcome else {
-            Issue.record("size mismatch did not produce a ready plan")
-            return
-        }
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries[0].disposition == .copy(destination: next))
     }
 
-    @Test func differentLiveMtimeAdvancesTheWholeBundleSuffix() {
+    @Test func differentLiveMtimeAdvancesTheWholeBundleSuffix() throws {
+        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: destinationDir) }
+        let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
+
         let source = Self.facts(name: "a.jpg", modified: Date(timeIntervalSince1970: 100))
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
         policy.destinationNamePolicy = .original
-        let snapshot = Self.snapshot(sourceMedia: [source], policy: policy)
-        let ideal = source.relativePath
+        let snapshot = Self.snapshot(sourceMedia: [source], destinationRoot: destinationRoot, policy: policy)
         let next = MediaRelativePath(rawValue: "a_001.jpg")
-        let idealRequest = NamespaceOccupancyRequest(rootPath: Self.destination, relativePath: ideal)
-        let nextRequest = NamespaceOccupancyRequest(rootPath: Self.destination, relativePath: next)
 
-        let outcome = MediaTransferPlanner.planImport(
-            snapshot: snapshot,
-            occupancy: [
-                idealRequest: .regularFile(byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 101)),
-                nextRequest: .absent,
-            ]
+        let idealFile = destinationDir.appending(path: source.relativePath.rawValue)
+        try Data(repeating: 0, count: 10).write(to: idealFile)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date(timeIntervalSince1970: 101)],
+            ofItemAtPath: idealFile.path
         )
 
-        guard case let .ready(plan) = outcome else {
-            Issue.record("mtime mismatch did not produce a ready plan")
-            return
-        }
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries[0].disposition == .copy(destination: next))
     }
 
+    /// Stays on `planImport` with a directly injected `NamespaceOccupancyResult`
+    /// rather than `buildImportPlan`: a real regular file's mtime is unreadable only
+    /// when `resourceValues` throws (for example a race where the file vanishes
+    /// between the `lstat` and the resource-values read), which a test cannot
+    /// deterministically reproduce on disk. `.regularFile(byteSize:contentModifiedAt:
+    /// nil)` is itself a documented, legitimate case of that public value type, so
+    /// injecting it directly into the pure planning function is the only reachable way
+    /// to exercise `catalogDecision`'s handling of it.
     @Test func missingLiveMtimeDoesNotClaimPreexisting() {
         let source = Self.facts(name: "a.jpg")
         var policy = ImportPolicy.from(.default)
@@ -245,31 +260,28 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .blocked(.noUsableDate))
     }
 
+    /// `buildImportPlan` is the real entry point that threads
+    /// `knownForeignOccupants` into probe resolution
+    /// (`MediaTransferPlanner.swift:81`); calling `planImport` directly here would
+    /// assert on that internal step rather than the boundary production depends on.
     @Test func foreignOccupantAdvancesSuffix() throws {
+        let destinationDir = try makeCatalogStoreTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: destinationDir) }
+        let destinationRoot = LibraryRootPath(rawValue: destinationDir.path)
+
         let source = Self.facts(name: "a.jpg")
         var policy = ImportPolicy.from(.default)
         policy.destinationFolderPolicy = .none
         policy.destinationNamePolicy = .original
-        let snapshot = try ImportPlanningSnapshot(
-            generation: 1,
-            sourceRoot: Self.source,
-            destinationRoot: Self.destination,
-            sourceOccupancyRevision: 1,
-            destinationOccupancyRevision: 1,
+        let snapshot = Self.snapshot(
             sourceMedia: [source],
-            destinationOccupants: [:],
+            destinationRoot: destinationRoot,
             knownForeignOccupants: [source.relativePath],
-            policy: policy,
-            calendar: Calendar(identifier: .gregorian),
-            timeZone: #require(TimeZone(secondsFromGMT: 0))
+            policy: policy
         )
         let next = MediaRelativePath(rawValue: "a_001.jpg")
-        let nextRequest = NamespaceOccupancyRequest(rootPath: Self.destination, relativePath: next)
-        let outcome = MediaTransferPlanner.planImport(snapshot: snapshot, occupancy: [nextRequest: .absent])
-        guard case let .ready(plan) = outcome else {
-            Issue.record("expected ready plan")
-            return
-        }
+
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
         #expect(plan.entries[0].finalDestination == next)
     }
 }

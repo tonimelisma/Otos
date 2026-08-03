@@ -1,6 +1,5 @@
 import Foundation
 @testable import Otos
-import Synchronization
 import Testing
 
 /// These tests cover the two states reproducible without a cloud provider: a local
@@ -46,52 +45,131 @@ struct FileMaterializationTests {
         #expect(FileMaterialization.status(of: missing) == .unknown)
     }
 
-    @Test func materializationRerequestsUntilProviderClearsDataless() async {
-        let probe = MaterializationRequestProbe(materializesOnRequest: 3)
-        let url = URL(fileURLWithPath: "/tmp/otos-dataless-probe-\(UUID().uuidString).jpg")
-
+    /// Returns before the poll loop ever runs, so nothing here awaits real time: no
+    /// `Task.sleep`, no deadline, nothing that can race scheduler load.
+    @Test func alreadyMaterializedSkipsPolling() async {
+        let url = URL(fileURLWithPath: "/tmp/otos-already-materialized-\(UUID().uuidString).jpg")
         let result = await FileMaterialization.materialize(
             url,
-            pollInterval: .milliseconds(1),
-            timeout: .seconds(1),
-            requestRetryInterval: .milliseconds(1),
             providers: FileMaterializationProviders(
-                status: probe.status(of:),
-                request: probe.requestMaterialization(of:)
+                status: { _ in .materialized },
+                request: { _ in Issue.record("should not request a download when already materialized") }
             )
         )
+        #expect(result.outcome == .alreadyMaterialized)
+        #expect(result.rerequestCount == 0)
+    }
 
-        #expect(result.outcome == .materialized)
-        #expect(result.rerequestCount == 2)
-        #expect(probe.requestCount == 3)
+    /// Also returns before the poll loop: the initial request fails synchronously.
+    @Test func initialRequestFailureSkipsPolling() async {
+        let url = URL(fileURLWithPath: "/tmp/otos-request-failure-\(UUID().uuidString).jpg")
+        struct ProbeError: Error {}
+        let result = await FileMaterialization.materialize(
+            url,
+            providers: FileMaterializationProviders(
+                status: { _ in .dataless },
+                request: { _ in throw ProbeError() }
+            )
+        )
+        #expect(result.outcome == .requestFailed)
+        #expect(result.rerequestCount == 0)
     }
 }
 
-private final class MaterializationRequestProbe: Sendable {
-    private struct State {
-        var requestCount = 0
+/// Covers the polling retry/timeout bookkeeping that
+/// `materializationRerequestsUntilProviderClearsDataless` used to exercise indirectly
+/// through three real `Task.sleep` calls inside a fixed wall-clock deadline — flaky
+/// under a loaded parallel `script/verify.sh` run because the cooperative pool can
+/// stall any one of those sleeps arbitrarily. `materializationPollDecision` is pure
+/// (no clock reads, no I/O), so every case here is driven by synthetic instants built
+/// with `Instant.advanced(by:)` off a single real sample — no waiting, ever.
+struct MaterializationPollDecisionTests {
+    @Test func materializedStatusStopsRegardlessOfRetryTiming() {
+        let now = ContinuousClock().now
+        #expect(
+            FileMaterialization.materializationPollDecision(
+                now: now,
+                nextRetry: now.advanced(by: .seconds(1)),
+                status: .materialized
+            ) == .materialized
+        )
     }
 
-    private let materializesOnRequest: Int
-    private let state = Mutex(State())
-
-    init(materializesOnRequest: Int) {
-        self.materializesOnRequest = materializesOnRequest
+    @Test func datalessBeforeNextRetryWaits() {
+        let now = ContinuousClock().now
+        #expect(
+            FileMaterialization.materializationPollDecision(
+                now: now,
+                nextRetry: now.advanced(by: .milliseconds(1)),
+                status: .dataless
+            ) == .waitMore
+        )
     }
 
-    var requestCount: Int {
-        state.withLock { $0.requestCount }
+    @Test func datalessAtOrPastNextRetryRetriesNow() {
+        let now = ContinuousClock().now
+        #expect(
+            FileMaterialization.materializationPollDecision(
+                now: now,
+                nextRetry: now,
+                status: .dataless
+            ) == .retryNow
+        )
+        #expect(
+            FileMaterialization.materializationPollDecision(
+                now: now.advanced(by: .milliseconds(1)),
+                nextRetry: now,
+                status: .dataless
+            ) == .retryNow
+        )
     }
 
-    func status(of _: URL) -> FileMaterializationStatus {
-        state.withLock { state in
-            state.requestCount >= materializesOnRequest ? .materialized : .dataless
+    @Test func unknownStatusStopsPolling() {
+        let now = ContinuousClock().now
+        #expect(
+            FileMaterialization.materializationPollDecision(
+                now: now,
+                nextRetry: now,
+                status: .unknown
+            ) == .statusUnavailable
+        )
+    }
+
+    /// Same scenario `materializationRerequestsUntilProviderClearsDataless` asserted
+    /// (materializes on the 3rd request, 2 retries counted), driven synchronously
+    /// against the pure decision function instead of a real polling loop.
+    @Test func retriesTwiceThenReportsMaterializedOnThirdRequest() {
+        let retryInterval = Duration.milliseconds(1)
+        let base = ContinuousClock().now
+        var nextRetry = base.advanced(by: retryInterval)
+        var rerequestCount = 0
+        var requestCount = 1 // the initial pre-loop request `materialize` always issues
+        let materializesOnRequest = 3
+
+        var tick = base
+        var finalDecision: MaterializationPollDecision?
+        while finalDecision != .materialized {
+            tick = tick.advanced(by: retryInterval)
+            let status: FileMaterializationStatus = requestCount >= materializesOnRequest ? .materialized : .dataless
+            let decision = FileMaterialization.materializationPollDecision(
+                now: tick,
+                nextRetry: nextRetry,
+                status: status
+            )
+            switch decision {
+            case .materialized:
+                finalDecision = .materialized
+            case .retryNow:
+                rerequestCount += 1
+                requestCount += 1
+                nextRetry = tick.advanced(by: retryInterval)
+            case .waitMore, .statusUnavailable:
+                Issue.record("expected only retryNow ticks before materialization in this fixture")
+                return
+            }
         }
-    }
 
-    func requestMaterialization(of _: URL) {
-        state.withLock { state in
-            state.requestCount += 1
-        }
+        #expect(rerequestCount == 2)
+        #expect(requestCount == 3)
     }
 }

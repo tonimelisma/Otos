@@ -153,23 +153,49 @@ extension FileMaterialization {
             } catch {
                 return (.cancelled, rerequestCount)
             }
-            switch providers.status(url) {
+            switch materializationPollDecision(now: clock.now, nextRetry: nextRetry, status: providers.status(url)) {
             case .materialized:
                 return (.materialized, rerequestCount)
-            case .dataless:
-                if clock.now >= nextRetry {
-                    rerequestCount += 1
-                    if let failed = requestDownload(url, retry: true, requestProvider: providers.request) {
-                        return (failed, rerequestCount)
-                    }
-                    nextRetry = clock.now.advanced(by: requestRetryInterval)
+            case .retryNow:
+                rerequestCount += 1
+                if let failed = requestDownload(url, retry: true, requestProvider: providers.request) {
+                    return (failed, rerequestCount)
                 }
+                nextRetry = clock.now.advanced(by: requestRetryInterval)
+            case .waitMore:
                 continue
-            case .unknown:
+            case .statusUnavailable:
                 return (.statusUnavailable, rerequestCount)
             }
         }
         return (.timedOut, rerequestCount)
+    }
+
+    /// Pure decision for one polling tick once the deadline guard has already passed:
+    /// given the current status, has the file materialized, should a retry fire now,
+    /// or is it too soon since the last request? No I/O, no clock reads — the answer
+    /// is a threshold comparison against already-sampled instants — so this is
+    /// isolated from `Task.sleep` and the wall clock the way `FilesystemReconciler
+    /// .decide` sits outside its FSEvents stream. That lets retry-counting behavior be
+    /// tested by constructing synthetic instants with `Instant.advanced(by:)` instead
+    /// of racing real scheduler timing, which is what made
+    /// `materializationRerequestsUntilProviderClearsDataless` flake under a loaded
+    /// parallel test run: three real `Task.sleep(for: .milliseconds(1))` calls need to
+    /// land inside a fixed wall-clock budget, and the cooperative pool can delay any
+    /// one of them arbitrarily under contention.
+    nonisolated static func materializationPollDecision(
+        now: ContinuousClock.Instant,
+        nextRetry: ContinuousClock.Instant,
+        status: FileMaterializationStatus
+    ) -> MaterializationPollDecision {
+        switch status {
+        case .materialized:
+            .materialized
+        case .dataless:
+            now >= nextRetry ? .retryNow : .waitMore
+        case .unknown:
+            .statusUnavailable
+        }
     }
 
     private nonisolated static func requestDownload(
@@ -225,6 +251,18 @@ extension FileMaterialization {
 nonisolated struct FileMaterializationProviders {
     let status: @Sendable (URL) -> FileMaterializationStatus
     let request: @Sendable (URL) throws -> Void
+}
+
+/// Outcome of `materializationPollDecision`, one polling tick's pure verdict.
+nonisolated enum MaterializationPollDecision: Equatable {
+    /// The provider reports the file materialized; stop polling.
+    case materialized
+    /// Still dataless, and `requestRetryInterval` has elapsed since the last request.
+    case retryNow
+    /// Still dataless, but too soon to re-request.
+    case waitMore
+    /// The provider's status could not be read; stop polling.
+    case statusUnavailable
 }
 
 /// Result of an awaited materialization request. The outcome remains the product
