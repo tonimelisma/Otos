@@ -39,6 +39,11 @@ Earlier vocabulary notes in this file include:
   Measured 2026-07-09: one visible RAW took ~50 s of OneDrive download through
   the fixed 4-worker pool; a screenful of unenriched RAWs drains at cloud
   speed. Needs an owner decision on bandwidth/disk tradeoffs.
+- Hash-based duplicate detection (ADR 0018) must account for the removable-volume
+  digest gap: a `.removableVolume` source is never hashed in place (ADR 0018/0013),
+  so its rows have no digest until imported, and import reuse short-circuits for it.
+  A future duplicate feature needs the destination digest after import or an
+  explicit digest-free rule for card sources.
 
 ## Non-Authoritative Idea Sequence
 
