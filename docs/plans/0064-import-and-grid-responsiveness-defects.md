@@ -4,8 +4,9 @@
 
 Active. Confirmed 2026-08-02. Evidence in
 `docs/research/2026-08-01-removable-import-and-grid-field-diagnosis.md`.
-Stage 1 (instrumentation gaps) and Stage 2 (staging-file suppression) implemented
-2026-08-03; Stages 3–4 remain.
+Stage 1 (instrumentation gaps), Stage 2 (staging-file suppression), and Stage 3
+(projection republication coalescing) implemented 2026-08-03; Stage 4 (import
+coordinator silence) remains.
 
 ## Purpose
 
@@ -64,6 +65,20 @@ is what churns.
 Enrichment applies and projection publications correlate 1:1. Across 21:28:40–21:29:58,
 `detailRefreshGeneration` advanced 71 → 102: **31 full 25,367-row order queries driven
 by ~35 enrichment batches averaging 2 assets each**, about 70 assets enriched.
+
+**Implemented resolution (2026-08-03).** `CatalogStore.applyEnrichmentBatch` now
+detects, per applied result, whether the write changes the *effective* generated
+ordering/scope columns (`best_capture_unix`, `best_kind`, `best_format` — recomputed
+with the same COALESCE the generated columns use). A batch that changes none emits the
+detail-only `.assetsDetailChanged`; the projection advances `detailRefreshGeneration`
+and reuses the last ordered-asset query result (guarded by the freshly-resolved
+descriptor matching the reused order's descriptor), so the grid refreshes visible
+detail through its existing cheap same-identity `.refreshVisible` path instead of a
+full re-sort. The grid's structural apply and the no-blank-grid invariant are
+untouched — only the wasted re-query is removed. Verified by
+`ProjectionEnrichmentCoalescingTests`: 35 detail-only batches run ~0 order queries and
+the reused identity comparison short-circuits on the shared array buffer, while a
+`best_capture`-changing batch still re-runs the query once and reorders.
 
 Cost degrades non-linearly under enrichment write pressure (WAL 49 KB → 4 MB):
 

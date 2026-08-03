@@ -13,11 +13,23 @@ actor CatalogProjection {
     // swiftlint:disable:next line_length
     typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async -> CatalogWindowState
 
+    /// Whether the next publication must rebuild the full ordered-asset query. A
+    /// detail-only change (enrichment that touched no ordering/scope column) reuses
+    /// the last published order — the grid's own same-identity `.refreshVisible` path
+    /// already updates visible details cheaply (plan 0064 Stage 3). `.none` means no
+    /// change is pending (the publish gate is `dirty`).
+    private enum DirtyKind {
+        case none
+        case structural
+        case detailOnly
+    }
+
     private let cadence: Duration
     let stateBuilder: WindowStateBuilder?
 
     private var queryRequest: CatalogQueryRequest = .initial
     private var dirty = false
+    private var dirtyKind: DirtyKind = .none
     private var publishing = false
     private var continuations: [UUID: AsyncStream<CatalogWindowState>.Continuation] = [:]
     private var changeTask: Task<Void, Never>?
@@ -25,6 +37,10 @@ actor CatalogProjection {
     private var immediatePublicationTask: Task<Void, Never>?
     private var publicationStore: CatalogStore?
     private var lastPublishedState: CatalogWindowState?
+    /// Count of full ordered-asset queries executed by publications. A detail-only
+    /// publication skips it; the count is the observable "full-catalog re-sort per
+    /// enrichment batch" metric (plan 0064 Stage 3) and drives the regression test.
+    private(set) var orderQueryCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
 
     init(
@@ -139,6 +155,22 @@ private extension CatalogProjection {
 
     func markDirty(wakeImmediately: Bool = false, store: CatalogStore? = nil) {
         dirty = true
+        dirtyKind = .structural
+        if wakeImmediately, let store {
+            immediatePublicationTask?.cancel()
+            immediatePublicationTask = Task { [weak self, store] in
+                await self?.publishIfDirty(store: store)
+            }
+        }
+    }
+
+    /// Marks dirt that may skip the full order re-query. A pending structural change
+    /// always wins over a detail-only one (max-severity semantics).
+    func markDetailDirty(wakeImmediately: Bool = false, store: CatalogStore? = nil) {
+        dirty = true
+        if dirtyKind != .structural {
+            dirtyKind = .detailOnly
+        }
         if wakeImmediately, let store {
             immediatePublicationTask?.cancel()
             immediatePublicationTask = Task { [weak self, store] in
@@ -165,7 +197,11 @@ private extension CatalogProjection {
             }
         }
         detailRefreshGeneration &+= 1
-        markDirty()
+        if case .assetsDetailChanged = change {
+            markDetailDirty()
+        } else {
+            markDirty()
+        }
     }
 
     func publishIfDirty(store: CatalogStore) async {
@@ -178,8 +214,27 @@ private extension CatalogProjection {
 
         // Clear before awaiting so changes during reads/build remain queued.
         dirty = false
+        let pendingDirtyKind = dirtyKind
+        dirtyKind = .none
         publishing = true
         let selectedRequest = queryRequest
+
+        // Detail-only dirt reuses the order we last published — but only when the
+        // freshly-resolved descriptor still matches the descriptor that order was
+        // built for (libraries/import batches are unchanged), so a concurrent scope
+        // resolution change still re-runs the query. The grid renders the same
+        // identities (a cheap `.refreshVisible`) and the identity comparison
+        // short-circuits on the shared array buffer. A structural change or a newer
+        // user intent re-runs the full query.
+        let reuseOrderedAssetIDs: [MediaAssetID]?
+        let reuseDescriptor: CatalogQueryDescriptor?
+        if pendingDirtyKind == .detailOnly, let previous = lastPublishedState {
+            reuseOrderedAssetIDs = previous.mediaGrid.orderedAssetIDs
+            reuseDescriptor = previous.queryDescriptor
+        } else {
+            reuseOrderedAssetIDs = nil
+            reuseDescriptor = nil
+        }
 
         let publicationStart = Date()
         let storeReadStart = Date()
@@ -191,7 +246,9 @@ private extension CatalogProjection {
         let (state, buildMetrics) = await buildWindowState(
             store: store,
             libraries: libraries,
-            request: selectedRequest
+            request: selectedRequest,
+            reuseOrderedAssetIDs: reuseOrderedAssetIDs,
+            reuseDescriptor: reuseDescriptor
         )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
 
@@ -246,7 +303,14 @@ private extension CatalogProjection {
         }
         publishing = false
         if dirty {
-            markDirty(wakeImmediately: true, store: store)
+            // Re-wake with the pending change's kind preserved: a detail-only change
+            // that arrived mid-publication must not be escalated to a structural
+            // rebuild by the re-wake.
+            if dirtyKind == .detailOnly {
+                markDetailDirty(wakeImmediately: true, store: store)
+            } else {
+                markDirty(wakeImmediately: true, store: store)
+            }
         }
     }
 
@@ -270,8 +334,10 @@ private extension CatalogProjection {
         immediatePublicationTask = nil
         publicationStore = nil
         dirty = false
+        dirtyKind = .none
         publishing = false
         lastPublishedState = nil
+        orderQueryCount = 0
     }
 
     private func retainResolvedSelection(
@@ -290,7 +356,9 @@ private extension CatalogProjection {
     private func buildWindowState(
         store: CatalogStore,
         libraries unsortedLibraries: [CatalogLibraryState],
-        request: CatalogQueryRequest
+        request: CatalogQueryRequest,
+        reuseOrderedAssetIDs: [MediaAssetID]? = nil,
+        reuseDescriptor: CatalogQueryDescriptor? = nil
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
         let sources = CatalogWindowPolicy.sourceRows(from: allRoots)
@@ -312,19 +380,25 @@ private extension CatalogProjection {
         )
         let orderedAssetIDs: [MediaAssetID]
         let orderQueryMs: Int
-        let orderStart = Date()
-        do {
-            orderedAssetIDs = try await store.orderedAssetIDs(
-                for: resolvedDescriptor,
-                availableLibraryPaths: availableLibraryPaths
-            )
-            orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
-        } catch {
-            OtosLog.catalog.error(
-                "Catalog ordered asset query failed error=\(String(describing: error), privacy: .public)"
-            )
-            orderedAssetIDs = []
-            orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
+        if let reuseOrderedAssetIDs, let reuseDescriptor, resolvedDescriptor == reuseDescriptor {
+            orderedAssetIDs = reuseOrderedAssetIDs
+            orderQueryMs = 0
+        } else {
+            orderQueryCount &+= 1
+            let orderStart = Date()
+            do {
+                orderedAssetIDs = try await store.orderedAssetIDs(
+                    for: resolvedDescriptor,
+                    availableLibraryPaths: availableLibraryPaths
+                )
+                orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
+            } catch {
+                OtosLog.catalog.error(
+                    "Catalog ordered asset query failed error=\(String(describing: error), privacy: .public)"
+                )
+                orderedAssetIDs = []
+                orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
+            }
         }
         return await buildWindowState(
             libraries: allRoots,

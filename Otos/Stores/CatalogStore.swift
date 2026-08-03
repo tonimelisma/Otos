@@ -110,6 +110,11 @@ actor CatalogStore {
 
     private struct EnrichmentBatchWriteOutcome {
         var appliedCount = 0
+        /// True when any applied result changed the *effective* generated
+        /// ordering/scope columns (`best_capture_unix`, `best_kind`, `best_format`).
+        /// A batch that changed none of these is detail-only: the projection can skip
+        /// the full order query and re-sort (plan 0064 Stage 3).
+        var structureChanged = false
         var promotionFailed = false
         var discardedThumbnails: [GeneratedThumbnail] = []
         var supersededThumbnailPaths: Set<String> = []
@@ -135,6 +140,34 @@ actor CatalogStore {
             if let oldPath, oldPath != newPath {
                 supersededThumbnailPaths.insert(oldPath)
             }
+        }
+    }
+
+    /// Ordering/scope-relevant columns as they were before an enrichment overwrite, so
+    /// the batch can tell a detail-only apply from one that actually changes the
+    /// effective `best_capture`/`best_kind`/`best_format` (plan 0064 Stage 3). The scan
+    /// facts (`created_at_unix`, `content_modified_at_unix`, `kind`, `format`) are held
+    /// so the post-write effective values can be computed with the same COALESCE the
+    /// generated columns use.
+    private struct EnrichmentOverlayBeforeWrite {
+        let bestCaptureUnix: Double?
+        let bestKind: String?
+        let bestFormat: String?
+        let createdAtUnix: Double?
+        let contentModifiedAtUnix: Double?
+        let kind: String?
+        let format: String?
+        let thumbnailPath: String?
+
+        init(row: Row) {
+            bestCaptureUnix = row["best_capture_unix"]
+            bestKind = row["best_kind"]
+            bestFormat = row["best_format"]
+            createdAtUnix = row["created_at_unix"]
+            contentModifiedAtUnix = row["content_modified_at_unix"]
+            kind = row["kind"]
+            format = row["format"]
+            thumbnailPath = row["thumbnail_path"]
         }
     }
 
@@ -1207,7 +1240,11 @@ extension CatalogStore {
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
         await recordWALDiagnostics(reason: "enrichmentBatch")
         if writeOutcome.appliedCount > 0 {
-            notifyCatalogChanged(.assetsDetailChanged)
+            // An enrichment batch that changed no effective ordering/scope column is a
+            // detail-only change: the projection refreshes visible detail but skips the
+            // full order re-query (plan 0064 Stage 3). Any `best_capture`/`best_kind`/
+            // `best_format` change is structural and keeps the full rebuild.
+            notifyCatalogChanged(writeOutcome.structureChanged ? .catalogChanged : .assetsDetailChanged)
         }
         await releaseEnrichmentClaimsAfterBatch(resultIDs)
         if writeOutcome.promotionFailed {
@@ -1291,17 +1328,38 @@ extension CatalogStore {
                 return
             }
         }
-        let oldThumbnailPath: String? = try String.fetchOne(
+        let oldRow: EnrichmentOverlayBeforeWrite? = try Row.fetchOne(
             db,
             sql: """
-            SELECT thumbnail_path
+            SELECT best_capture_unix, best_kind, best_format,
+                   created_at_unix, content_modified_at_unix, kind, format, thumbnail_path
             FROM media_asset
             WHERE library_root_id = ? AND relative_path = ?
             """,
             arguments: [rootID, result.id.relativePath.rawValue]
-        )
+        ).map(EnrichmentOverlayBeforeWrite.init(row:))
+        // Recompute the effective generated values the write will produce, then compare
+        // with what is stored: a batch that leaves `best_capture`/`best_kind`/
+        // `best_format` unchanged (e.g. a first enrichment whose capture date equals the
+        // filesystem date, or a no-op re-enrichment) is detail-only — the projection can
+        // skip the full re-sort. Only an effective order/scope change is structural.
+        let newBestCapture = result.timestampFacts.original?.timeIntervalSince1970
+            ?? result.timestampFacts.quickTimeCreation?.timeIntervalSince1970
+            ?? result.timestampFacts.digitized?.timeIntervalSince1970
+            ?? result.timestampFacts.gps?.timeIntervalSince1970
+            ?? oldRow?.createdAtUnix
+            ?? oldRow?.contentModifiedAtUnix
+        let newBestKind = result.enrichedKind?.rawValue ?? oldRow?.kind
+        let newBestFormat = result.enrichedFormat?.rawValue ?? oldRow?.format
+        if let old = oldRow,
+           old.bestCaptureUnix != newBestCapture
+           || old.bestKind != newBestKind
+           || old.bestFormat != newBestFormat
+        {
+            outcome.structureChanged = true
+        }
         try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
-        outcome.replaceThumbnail(oldPath: oldThumbnailPath, newPath: result.thumbnailPath)
+        outcome.replaceThumbnail(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
         outcome.appliedCount += 1
     }
 
