@@ -7,6 +7,7 @@ nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
     case absentSourceRow
     case staleSourceOverlay
     case missingOrMismatchedHash
+    case removableSourceNotHashed
     case missingThumbnail
     case thumbnailCopyFailed
     case detachedSource

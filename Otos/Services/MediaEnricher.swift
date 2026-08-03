@@ -30,22 +30,44 @@ nonisolated struct MediaEnricher {
         _ id: MediaAssetID,
         _ url: URL,
         _ sourceSize: Int64?,
-        _ sourceMTimeSeconds: Int?
+        _ sourceMTimeSeconds: Int?,
+        _ shouldHash: Bool
     ) async -> EnrichmentOutcome
 
     /// The production enricher. `thumbnailDirectory` is captured so the per-asset
-    /// signature stays small; the coordinator supplies the catalog's thumbnail directory.
+    /// signature stays small; the coordinator supplies the catalog's thumbnail
+    /// directory. `contentHasher` is injectable so tests can prove a
+    /// `.removableVolume` source performs no full-file read — the digest read is the
+    /// only byte source that reads a whole file.
     static func live(
         thumbnailDirectory: URL,
-        readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker()
+        readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
+        contentHasher: @escaping @Sendable (URL) -> ContentHasher.Outcome = { url in
+            ContentHasher().hashMaterializedFile(at: url)
+        }
     ) -> MediaEnricher {
-        MediaEnricher { id, url, sourceSize, sourceMTimeSeconds in
+        MediaEnricher { id, url, sourceSize, sourceMTimeSeconds, shouldHash in
             guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
+            // `shouldHash` is false only for `.removableVolume` sources (ADR 0018/plan
+            // 0062): hashing them in place would force a full read of the whole card
+            // merely to checksum it. Skip the read entirely rather than hash and
+            // discard — `contentHash` stays nil and the store leaves any existing
+            // digest untouched.
+            guard shouldHash else {
+                return await Self.enrichWithoutHash(
+                    id: id,
+                    url: url,
+                    sourceSize: sourceSize,
+                    sourceMTimeSeconds: sourceMTimeSeconds,
+                    thumbnailDirectory: thumbnailDirectory,
+                    readinessChecker: readinessChecker
+                )
+            }
             let hashStart = Date()
             let hashSignpost = OtosSignpost.mediaIO.beginInterval("ContentHash")
-            let hashOutcome = ContentHasher().hashMaterializedFile(at: url)
+            let hashOutcome = contentHasher(url)
             OtosSignpost.mediaIO.endInterval("ContentHash", hashSignpost)
             switch hashOutcome {
             case let .complete(contentHash):
@@ -63,32 +85,14 @@ nonisolated struct MediaEnricher {
                 guard readinessChecker.status(of: url) == .materialized else {
                     return .notMaterialized
                 }
-                let result = MediaMetadataReader.read(url: url)
-                guard !result.outcome.shouldRetry else {
-                    return .transient
-                }
-                guard readinessChecker.status(of: url) == .materialized else {
-                    return .notMaterialized
-                }
-                let generatedThumbnail = await Self.generateThumbnail(
+                return await Self.parseAndComplete(
                     id: id,
                     url: url,
-                    directory: thumbnailDirectory
-                )
-                let metadata = Self.map(result)
-                return .complete(
-                    EnrichmentResult(
-                        id: id,
-                        metadata: metadata,
-                        timestampFacts: Self.timestampFacts(result.timestamps),
-                        enrichedKind: Self.normalizedKind(result.format),
-                        enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
-                        thumbnailPath: nil,
-                        sourceSize: sourceSize ?? -1,
-                        sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
-                        contentHash: contentHash,
-                        generatedThumbnail: generatedThumbnail
-                    )
+                    sourceSize: sourceSize,
+                    sourceMTimeSeconds: sourceMTimeSeconds,
+                    contentHash: contentHash,
+                    thumbnailDirectory: thumbnailDirectory,
+                    readinessChecker: readinessChecker
                 )
             case .cancelled:
                 OtosLog.mediaIO.noticeOperation(
@@ -106,6 +110,68 @@ nonisolated struct MediaEnricher {
                 return .transient
             }
         }
+    }
+
+    /// The un-hashed path: identical to the post-hash continuation above except no
+    /// digest was produced, so `EnrichmentResult.contentHash` stays nil.
+    private static func enrichWithoutHash(
+        id: MediaAssetID,
+        url: URL,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?,
+        thumbnailDirectory: URL,
+        readinessChecker: any EnrichmentReadinessChecking
+    ) async -> EnrichmentOutcome {
+        await parseAndComplete(
+            id: id,
+            url: url,
+            sourceSize: sourceSize,
+            sourceMTimeSeconds: sourceMTimeSeconds,
+            contentHash: nil,
+            thumbnailDirectory: thumbnailDirectory,
+            readinessChecker: readinessChecker
+        )
+    }
+
+    /// Metadata parse, readiness re-check, and thumbnail generation — shared by the
+    /// hashed and un-hashed paths once each has (or has decided not to produce) a
+    /// digest.
+    private static func parseAndComplete(
+        id: MediaAssetID,
+        url: URL,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?,
+        contentHash: XXH3Digest128?,
+        thumbnailDirectory: URL,
+        readinessChecker: any EnrichmentReadinessChecking
+    ) async -> EnrichmentOutcome {
+        let result = MediaMetadataReader.read(url: url)
+        guard !result.outcome.shouldRetry else {
+            return .transient
+        }
+        guard readinessChecker.status(of: url) == .materialized else {
+            return .notMaterialized
+        }
+        let generatedThumbnail = await Self.generateThumbnail(
+            id: id,
+            url: url,
+            directory: thumbnailDirectory
+        )
+        let metadata = Self.map(result)
+        return .complete(
+            EnrichmentResult(
+                id: id,
+                metadata: metadata,
+                timestampFacts: Self.timestampFacts(result.timestamps),
+                enrichedKind: Self.normalizedKind(result.format),
+                enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
+                thumbnailPath: nil,
+                sourceSize: sourceSize ?? -1,
+                sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
+                contentHash: contentHash,
+                generatedThumbnail: generatedThumbnail
+            )
+        )
     }
 
     /// Generates a 256 px thumbnail and stages it, returning the staged/final names.

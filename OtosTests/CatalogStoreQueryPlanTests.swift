@@ -52,13 +52,15 @@ struct CatalogStoreQueryPlanTests {
             rootIDs: [rootID1],
             now: now,
             claimNotAfter: now + 300,
-            limit: 4
+            limit: 4,
+            hashRequired: true
         ))
         let globalEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1, rootID2],
             now: now,
             claimNotAfter: now + 300,
-            limit: 4
+            limit: 4,
+            hashRequired: true
         ))
 
         let plans = try await dbQueue.read { db in
@@ -96,7 +98,8 @@ struct CatalogStoreQueryPlanTests {
             rootIDs: [rootID],
             now: now,
             claimNotAfter: now + 300,
-            limit: 4
+            limit: 4,
+            hashRequired: true
         ))
 
         let legacyQuery = legacyNotInEnrichmentQuery(rootID: rootID, excludedCount: 50)
@@ -138,6 +141,7 @@ struct CatalogStoreQueryPlanTests {
                 rootIDs: [rootID],
                 claimNotAfter: claimedUntil,
                 limit: 2,
+                hashRequired: true,
                 db: db
             )
         }
@@ -155,6 +159,101 @@ struct CatalogStoreQueryPlanTests {
             ) ?? 0
         }
         #expect(stillClaimed == 2)
+    }
+
+    /// Plan 0062: `.removableVolume` roots claim with the metadata-only predicate and
+    /// index. Assert the index choice on EXPLAIN QUERY PLAN — a correctness-only
+    /// assertion would not catch a narrow query silently planning against the broad
+    /// index.
+    @Test func metadataOnlyClaimQueriesUseMetadataOnlyIndexes() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
+        let now = Date().timeIntervalSince1970
+        let rootMetadataOnlyQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+            rootIDs: [rootID1],
+            now: now,
+            claimNotAfter: now + 300,
+            limit: 4,
+            hashRequired: false
+        ))
+        let globalMetadataOnlyQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
+            rootIDs: [rootID1, rootID2],
+            now: now,
+            claimNotAfter: now + 300,
+            limit: 4,
+            hashRequired: false
+        ))
+
+        let plans = try await dbQueue.read { db in
+            let root = try explainPlan(db, query: rootMetadataOnlyQuery)
+            let global = try explainPlan(db, query: globalMetadataOnlyQuery)
+            return (root: root, global: global)
+        }
+        #expect(plans.root.contains(EnrichmentLeaseGateway.metadataOnlyRootIndexName))
+        #expect(plans.global.contains(EnrichmentLeaseGateway.metadataOnlyGlobalIndexName))
+    }
+
+    /// Plan 0062 regression guard: a metadata-current asset with no digest is claimed by
+    /// the metadata-only claim (a `.removableVolume` root) never, and by the broad claim
+    /// (a library root) still — the wiring that must hold or removable enrichment spins
+    /// forever.
+    @Test func metadataCurrentNoHashIsClaimedOnlyWhenHashRequired() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+        let rootID = try await dbQueue.write { db in
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-nohash"])
+            let rootID = db.lastInsertedRowID
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id, relative_path, sort_key, name_sort_key, name,
+                    content_type_identifier, byte_size, content_modified_at_unix,
+                    enriched_source_size, enriched_source_mtime
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [rootID, "a.jpg", "a.jpg", "a.jpg", "a.jpg", "public.jpeg", 1, 1000, 1, 1000]
+            )
+            return rootID
+        }
+        let now = Date().timeIntervalSince1970
+
+        let metadataOnlyClaimed = try await dbQueue.write { db in
+            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+                rootIDs: [rootID],
+                claimNotAfter: now + 300,
+                limit: 4,
+                hashRequired: false,
+                db: db
+            )
+        }
+        #expect(metadataOnlyClaimed.isEmpty)
+
+        let broadClaimed = try await dbQueue.write { db in
+            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+                rootIDs: [rootID],
+                claimNotAfter: now + 300,
+                limit: 4,
+                hashRequired: true,
+                db: db
+            )
+        }
+        #expect(broadClaimed.map(\.relativePath.rawValue) == ["a.jpg"])
     }
 }
 

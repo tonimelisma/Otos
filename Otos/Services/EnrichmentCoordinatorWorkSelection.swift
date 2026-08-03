@@ -17,6 +17,7 @@ extension EnrichmentCoordinator {
         guard availableSlots > 0 else {
             return []
         }
+        removableRootPaths = await store.removableVolumeRootPaths()
 
         var items = drainQueuedEnrichment(limit: availableSlots)
         guard items.count < availableSlots else {
@@ -485,7 +486,8 @@ extension EnrichmentCoordinator {
             sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
             isVideo: asset.bestKind == .video,
             captureDate: asset.bestCaptureDate,
-            isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath)
+            isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
+            shouldHash: !removableRootPaths.contains(asset.id.libraryRootPath)
         )
     }
 

@@ -76,7 +76,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         let firstScan = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.count == 1
         }
-        #expect(firstScan.testAssets.first?.needsEnrichment == true)
+        #expect(firstScan.testAssets.first?.needsEnrichment(hashRequired: true) == true)
         await firstStore.shutdown()
 
         // Relaunch: a fresh store reloads the persisted, un-enriched asset from SQLite; its
@@ -134,7 +134,7 @@ private func fixedOneFileScanner(_ name: String) -> CatalogScanner {
 }
 
 private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg") -> MediaEnricher {
-    MediaEnricher { id, _, size, mtime in
+    MediaEnricher { id, _, size, mtime, _ in
         .complete(
             EnrichmentResult(
                 id: id,
@@ -170,7 +170,7 @@ private func waitForFirstAsset(
             return asset
         }
     }
-    let need = String(describing: lastAsset?.needsEnrichment)
+    let need = String(describing: lastAsset?.needsEnrichment(hashRequired: true))
     let cap = String(describing: lastAsset?.bestCaptureDate)
     let size = String(describing: lastAsset?.byteSize)
     Issue.record("waitForFirstAsset timed out: needsEnrichment=\(need) bestCaptureDate=\(cap) byteSize=\(size)")

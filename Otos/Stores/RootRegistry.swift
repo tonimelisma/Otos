@@ -119,6 +119,33 @@ nonisolated struct RootRegistry {
         return (removable.sorted(), fixed.sorted())
     }
 
+    /// Partitions available roots by whether enrichment on them ever produces a
+    /// content hash (ADR 0018): every kind except `.removableVolume`, which is read
+    /// in place and would otherwise force a full read of the whole volume merely to
+    /// checksum it. Orthogonal to `availableRootIDsByRemovablePriority`, which
+    /// partitions by claim *priority* — `.deviceMTP` is removable-priority but still
+    /// hash-required, so the two partitions do not coincide.
+    func availableRootIDsByHashRequirement() -> (hashRequired: Set<Int64>, hashNotRequired: Set<Int64>) {
+        var hashRequired: Set<Int64> = []
+        var hashNotRequired: Set<Int64> = []
+        for state in statesByPath.values where state.availability == .available {
+            if state.root.kind == .removableVolume {
+                hashNotRequired.insert(state.rowID)
+            } else {
+                hashRequired.insert(state.rowID)
+            }
+        }
+        return (hashRequired, hashNotRequired)
+    }
+
+    /// Root paths whose enrichment never produces a content hash. Consumed by
+    /// `EnrichmentCoordinator` to decide `EnrichWork.shouldHash` — regardless of
+    /// current availability, since a temporarily unavailable removable root's kind
+    /// does not change.
+    var removableVolumeRootPaths: Set<LibraryRootPath> {
+        Set(statesByPath.compactMap { path, state in state.root.kind == .removableVolume ? path : nil })
+    }
+
     func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {
         for state in statesByPath.values {
             if let existingRootRowID, state.rowID == existingRootRowID {

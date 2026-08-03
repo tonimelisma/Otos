@@ -62,7 +62,7 @@ struct EnrichmentLeaseGatewayTests {
             contentHashSourceSize: 1024,
             contentHashSourceMTimeSeconds: 1
         )
-        #expect(currentAsset.needsEnrichment == false)
+        #expect(currentAsset.needsEnrichment(hashRequired: true) == false)
         let assetsByID = [
             id: staleAsset,
             currentAsset.id: currentAsset,
@@ -73,7 +73,8 @@ struct EnrichmentLeaseGatewayTests {
             ids: [id, currentAsset.id],
             assetsByID: assetsByID,
             rootIDsByPath: rootIDsByPath,
-            isRootAvailable: { $0 == rootPath }
+            isRootAvailable: { $0 == rootPath },
+            isHashRequired: { _ in true }
         )
 
         #expect(eligible.count == 1)
@@ -82,7 +83,23 @@ struct EnrichmentLeaseGatewayTests {
     }
 
     @Test func enrichmentClaimQueryReturnsNilForEmptyInputs() {
-        #expect(EnrichmentLeaseGateway.enrichmentClaimQuery(rootIDs: [], now: 0, claimNotAfter: 300, limit: 1) == nil)
-        #expect(EnrichmentLeaseGateway.enrichmentClaimQuery(rootIDs: [1], now: 0, claimNotAfter: 300, limit: 0) == nil)
+        #expect(
+            EnrichmentLeaseGateway.enrichmentClaimQuery(
+                rootIDs: [],
+                now: 0,
+                claimNotAfter: 300,
+                limit: 1,
+                hashRequired: true
+            ) == nil
+        )
+        #expect(
+            EnrichmentLeaseGateway.enrichmentClaimQuery(
+                rootIDs: [1],
+                now: 0,
+                claimNotAfter: 300,
+                limit: 0,
+                hashRequired: true
+            ) == nil
+        )
     }
 }

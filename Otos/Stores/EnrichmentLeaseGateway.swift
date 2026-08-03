@@ -10,6 +10,23 @@ import GRDB
 nonisolated enum EnrichmentLeaseGateway {
     static let claimLeaseDuration: TimeInterval = 300
 
+    /// Partial-index names for the claim queries' `INDEXED BY`. Two pairs (broad vs
+    /// metadata-only) so a root that never hashes (`.removableVolume`) leaves the
+    /// index as soon as its metadata is current, instead of staying pinned forever
+    /// because `content_hash_xxh3_128 IS NULL` never becomes false. See plan 0062.
+    static let broadGlobalIndexName = "idx_media_asset_needs_enrichment_global"
+    static let broadRootIndexName = "idx_media_asset_needs_enrichment_root"
+    static let metadataOnlyGlobalIndexName = "idx_media_asset_needs_enrichment_global_metadata_only"
+    static let metadataOnlyRootIndexName = "idx_media_asset_needs_enrichment_root_metadata_only"
+
+    static func globalIndexName(hashRequired: Bool) -> String {
+        hashRequired ? broadGlobalIndexName : metadataOnlyGlobalIndexName
+    }
+
+    static func rootIndexName(hashRequired: Bool) -> String {
+        hashRequired ? broadRootIndexName : metadataOnlyRootIndexName
+    }
+
     static func claimedUntil(from date: Date = Date()) -> TimeInterval {
         date.timeIntervalSince1970 + claimLeaseDuration
     }
@@ -31,31 +48,40 @@ nonisolated enum EnrichmentLeaseGateway {
         ids: [MediaAssetID],
         assetsByID: [MediaAssetID: MediaAsset],
         rootIDsByPath: [LibraryRootPath: Int64],
-        isRootAvailable: (LibraryRootPath) -> Bool
-    ) -> [(asset: MediaAsset, rootID: Int64)] {
-        var eligibleClaims: [(asset: MediaAsset, rootID: Int64)] = []
+        isRootAvailable: (LibraryRootPath) -> Bool,
+        isHashRequired: (LibraryRootPath) -> Bool
+    ) -> [(asset: MediaAsset, rootID: Int64, hashRequired: Bool)] {
+        var eligibleClaims: [(asset: MediaAsset, rootID: Int64, hashRequired: Bool)] = []
         eligibleClaims.reserveCapacity(ids.count)
         for id in ids {
             guard let asset = assetsByID[id],
-                  asset.needsEnrichment,
                   isRootAvailable(asset.libraryRootPath),
                   let rootID = rootIDsByPath[asset.libraryRootPath]
             else {
                 continue
             }
-            eligibleClaims.append((asset, rootID))
+            let hashRequired = isHashRequired(asset.libraryRootPath)
+            guard asset.needsEnrichment(hashRequired: hashRequired) else {
+                continue
+            }
+            eligibleClaims.append((asset, rootID, hashRequired))
         }
         return eligibleClaims
     }
 
-    static func stalenessSQLPredicate() -> String {
+    static func metadataStalenessSQLPredicate() -> String {
         """
         enriched_source_size IS NULL
            OR enriched_source_mtime IS NULL
            OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
            OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
               <> COALESCE(enriched_source_mtime, -1)
-           OR content_hash_xxh3_128 IS NULL
+        """
+    }
+
+    static func hashStalenessSQLPredicate() -> String {
+        """
+        content_hash_xxh3_128 IS NULL
            OR length(content_hash_xxh3_128) <> 16
            OR content_hash_source_size IS NULL
            OR content_hash_source_mtime IS NULL
@@ -65,10 +91,33 @@ nonisolated enum EnrichmentLeaseGateway {
         """
     }
 
+    /// The Swift-side twin of `MediaAsset.needsEnrichment(hashRequired:)`. `hashRequired
+    /// == false` yields the metadata-only predicate verbatim (not `OR FALSE`), so it
+    /// stays byte-identical to the metadata-only partial index's `WHERE` clause —
+    /// required for `INDEXED BY` to accept it (see `createEnrichmentClaimIndexes`).
+    ///
+    /// The `true` branch must also stay token-identical to the broad partial index's
+    /// `WHERE` clause as migration v12 created it. SQLite's `INDEXED BY` partial-index
+    /// implication check is syntactic: re-parenthesizing the same OR-clauses
+    /// (`(A) OR (B)` in place of `A OR B`) is rejected with `no query solution` at
+    /// prepare time even though it is logically equivalent, so a production catalog
+    /// whose broad index was built by the pre-plan v12 migration would fail every
+    /// hash-required claim query. Verified against SQLite 3.54.0.
+    static func stalenessSQLPredicate(hashRequired: Bool) -> String {
+        guard hashRequired else {
+            return metadataStalenessSQLPredicate()
+        }
+        return """
+        \(metadataStalenessSQLPredicate())
+           OR \(hashStalenessSQLPredicate())
+        """
+    }
+
     static func fetchStoredAssetsNeedingEnrichment(
         rootIDs: [Int64],
         claimNotAfter: TimeInterval,
         limit: Int,
+        hashRequired: Bool,
         db: Database
     ) throws -> [StoredAsset] {
         let now = Date().timeIntervalSince1970
@@ -76,7 +125,8 @@ nonisolated enum EnrichmentLeaseGateway {
             rootIDs: rootIDs,
             now: now,
             claimNotAfter: claimNotAfter,
-            limit: limit
+            limit: limit,
+            hashRequired: hashRequired
         ) else {
             return []
         }
@@ -88,6 +138,7 @@ nonisolated enum EnrichmentLeaseGateway {
             keys,
             now: now,
             claimedUntil: claimNotAfter,
+            hashRequired: hashRequired,
             db: db
         )
         let assets = try fetchStoredAssetsForEnrichmentCandidates(keys, db: db)
@@ -101,7 +152,8 @@ nonisolated enum EnrichmentLeaseGateway {
         rootIDs: [Int64],
         now: TimeInterval,
         claimNotAfter _: TimeInterval,
-        limit: Int
+        limit: Int,
+        hashRequired: Bool
     ) -> SQLQuery? {
         guard !rootIDs.isEmpty, limit > 0 else {
             return nil
@@ -110,14 +162,16 @@ nonisolated enum EnrichmentLeaseGateway {
             return rootEnrichmentClaimQuery(
                 rootID: rootID,
                 now: now,
-                limit: limit
+                limit: limit,
+                hashRequired: hashRequired
             )
         }
 
         return globalEnrichmentClaimQuery(
             rootIDs: rootIDs,
             now: now,
-            limit: limit
+            limit: limit,
+            hashRequired: hashRequired
         )
     }
 
@@ -125,6 +179,7 @@ nonisolated enum EnrichmentLeaseGateway {
         libraryRootID: Int64,
         relativePath: MediaRelativePath,
         claimedUntil: TimeInterval,
+        hashRequired: Bool,
         db: Database
     ) throws -> Bool {
         let now = Date().timeIntervalSince1970
@@ -134,7 +189,7 @@ nonisolated enum EnrichmentLeaseGateway {
             SET enrichment_claimed_until = ?
             WHERE library_root_id = ?
               AND relative_path = ?
-              AND (\(stalenessSQLPredicate()))
+              AND (\(stalenessSQLPredicate(hashRequired: hashRequired)))
               AND (
                 enrichment_claimed_until IS NULL
                 OR enrichment_claimed_until < ?
@@ -225,14 +280,16 @@ private nonisolated func enrichmentCandidateKey(from row: Row) -> EnrichmentCand
 private nonisolated func rootEnrichmentClaimQuery(
     rootID: Int64,
     now: TimeInterval,
-    limit: Int
+    limit: Int,
+    hashRequired: Bool
 ) -> SQLQuery {
-    SQLQuery(
+    let indexName = EnrichmentLeaseGateway.rootIndexName(hashRequired: hashRequired)
+    return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
-        FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_root
+        FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id = ?
-          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate()))
+          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND (
             enrichment_claimed_until IS NULL
             OR enrichment_claimed_until < ?
@@ -247,18 +304,20 @@ private nonisolated func rootEnrichmentClaimQuery(
 private nonisolated func globalEnrichmentClaimQuery(
     rootIDs: [Int64],
     now: TimeInterval,
-    limit: Int
+    limit: Int,
+    hashRequired: Bool
 ) -> SQLQuery {
     let placeholders = sqlPlaceholders(count: rootIDs.count)
     var arguments = rootIDs.map { $0 as any DatabaseValueConvertible }
     arguments.append(now)
     arguments.append(limit)
+    let indexName = EnrichmentLeaseGateway.globalIndexName(hashRequired: hashRequired)
     return SQLQuery(
         sql: """
         SELECT library_root_id, relative_path
-        FROM media_asset INDEXED BY idx_media_asset_needs_enrichment_global
+        FROM media_asset INDEXED BY \(indexName)
         WHERE library_root_id IN (\(placeholders))
-          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate()))
+          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND (
             enrichment_claimed_until IS NULL
             OR enrichment_claimed_until < ?
@@ -274,6 +333,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
     _ keys: [EnrichmentCandidateKey],
     now: TimeInterval,
     claimedUntil: TimeInterval,
+    hashRequired: Bool,
     db: Database
 ) throws {
     guard !keys.isEmpty else {
@@ -287,7 +347,7 @@ private nonisolated func claimStoredAssetsNeedingEnrichment(
         UPDATE media_asset
         SET enrichment_claimed_until = ?
         WHERE (library_root_id, relative_path) IN (\(sqlTuplePlaceholders(rowCount: keys.count, columnCount: 2)))
-          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate()))
+          AND (\(EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: hashRequired)))
           AND (
             enrichment_claimed_until IS NULL
             OR enrichment_claimed_until < ?

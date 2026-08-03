@@ -2,7 +2,13 @@
 
 ## Status
 
-Active. Product direction confirmed 2026-08-01. Not yet implemented.
+Implemented, awaiting review/merge (2026-08-03). Stages 1–4 landed as code; the
+global claim query resolves the plan's mixed-kind question by partitioning available
+root IDs by hash requirement within each priority tier. Stage 5 (ADR 0018/0013,
+requirements rows, architecture map) landed. One review finding beyond the plan: the
+broad claim predicate must stay token-identical to the v12 migration's flattened
+`WHERE` clause — SQLite's `INDEXED BY` implication check rejects re-parenthesized
+equivalents with `no query solution` at prepare time, verified against SQLite 3.54.0.
 
 ## Purpose
 

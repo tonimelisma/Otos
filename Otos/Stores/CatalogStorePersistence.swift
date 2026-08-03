@@ -202,6 +202,19 @@ extension CatalogStore {
             try db.drop(index: "idx_media_asset_needs_enrichment_root")
             try createEnrichmentClaimIndexes(db, includeContentHash: true)
         }
+        // Plan 0062: hash production is gated on root kind (ADR 0018) — a
+        // `.removableVolume` asset with current metadata is fully enriched even with
+        // no hash. The broad pair from v12 stays for library/deviceMTP roots; this
+        // adds a metadata-only pair so a removable-root row can leave the index
+        // instead of staying pinned forever on `content_hash_xxh3_128 IS NULL`.
+        migrator.registerMigration("v13_hash_gated_enrichment_claim_indexes") { db in
+            try createEnrichmentClaimIndexes(
+                db,
+                includeContentHash: false,
+                globalIndexName: EnrichmentLeaseGateway.metadataOnlyGlobalIndexName,
+                rootIndexName: EnrichmentLeaseGateway.metadataOnlyRootIndexName
+            )
+        }
         return migrator
     }
 
@@ -618,6 +631,10 @@ extension CatalogStore {
         ) != nil
     }
 
+    /// Hash columns use `COALESCE(?, column)` rather than a plain assignment: when
+    /// `result.contentHash` is absent (a `.removableVolume` source, ADR 0018/plan
+    /// 0062), the row's existing digest — if any was recorded before the source's
+    /// root kind or facts changed — must survive, not be clobbered to NULL.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
         let captureWall = CaptureWallClock.select(from: result.metadata.timestamps)
         try db.execute(
@@ -633,9 +650,9 @@ extension CatalogStore {
                 duration_seconds = ?,
                 enriched_source_size = ?,
                 enriched_source_mtime = ?,
-                content_hash_xxh3_128 = ?,
-                content_hash_source_size = ?,
-                content_hash_source_mtime = ?,
+                content_hash_xxh3_128 = COALESCE(?, content_hash_xxh3_128),
+                content_hash_source_size = COALESCE(?, content_hash_source_size),
+                content_hash_source_mtime = COALESCE(?, content_hash_source_mtime),
                 capture_wall_compact = ?,
                 capture_wall_precision = ?
             WHERE library_root_id = ?
@@ -652,9 +669,9 @@ extension CatalogStore {
                 result.metadata.durationSeconds,
                 result.sourceSize,
                 result.sourceMTimeSeconds,
-                result.contentHash.data,
-                result.sourceSize,
-                result.sourceMTimeSeconds,
+                result.contentHash?.data,
+                result.contentHash != nil ? result.sourceSize : nil,
+                result.contentHash != nil ? result.sourceMTimeSeconds : nil,
                 captureWall?.compact,
                 captureWall?.precision,
                 libraryRootID,
@@ -1336,27 +1353,21 @@ private nonisolated func createOrderIndexes(_ db: Database) throws {
 
 private nonisolated func createEnrichmentClaimIndexes(
     _ db: Database,
-    includeContentHash: Bool
+    includeContentHash: Bool,
+    globalIndexName: String = EnrichmentLeaseGateway.broadGlobalIndexName,
+    rootIndexName: String = EnrichmentLeaseGateway.broadRootIndexName
 ) throws {
-    let predicate = includeContentHash
-        ? EnrichmentLeaseGateway.stalenessSQLPredicate()
-        : """
-        enriched_source_size IS NULL
-           OR enriched_source_mtime IS NULL
-           OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
-           OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
-              <> COALESCE(enriched_source_mtime, -1)
-        """
+    let predicate = EnrichmentLeaseGateway.stalenessSQLPredicate(hashRequired: includeContentHash)
     try db.execute(
         sql: """
-        CREATE INDEX idx_media_asset_needs_enrichment_global
+        CREATE INDEX \(globalIndexName)
         ON media_asset(best_capture_unix DESC, library_root_id, relative_path)
         WHERE \(predicate)
         """
     )
     try db.execute(
         sql: """
-        CREATE INDEX idx_media_asset_needs_enrichment_root
+        CREATE INDEX \(rootIndexName)
         ON media_asset(library_root_id, best_capture_unix DESC, relative_path)
         WHERE \(predicate)
         """

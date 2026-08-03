@@ -9,10 +9,10 @@ struct CatalogStoreEnrichmentTests {
     @Test func needsEnrichmentTracksSizeAndMtimeSignature() {
         let m1000 = Date(timeIntervalSince1970: 1000)
         let m2000 = Date(timeIntervalSince1970: 2000)
-        #expect(makeAsset(size: 100, modifiedAt: m1000, stampSize: nil, stampMtime: nil).needsEnrichment)
-        #expect(!makeAsset(size: 100, modifiedAt: m1000, stampSize: 100, stampMtime: 1000).needsEnrichment)
-        #expect(makeAsset(size: 200, modifiedAt: m1000, stampSize: 100, stampMtime: 1000).needsEnrichment)
-        #expect(makeAsset(size: 100, modifiedAt: m2000, stampSize: 100, stampMtime: 1000).needsEnrichment)
+        #expect(makeAsset(size: 100, modifiedAt: m1000, stampSize: nil, stampMtime: nil).needsEnrichment(hashRequired: true))
+        #expect(!makeAsset(size: 100, modifiedAt: m1000, stampSize: 100, stampMtime: 1000).needsEnrichment(hashRequired: true))
+        #expect(makeAsset(size: 200, modifiedAt: m1000, stampSize: 100, stampMtime: 1000).needsEnrichment(hashRequired: true))
+        #expect(makeAsset(size: 100, modifiedAt: m2000, stampSize: 100, stampMtime: 1000).needsEnrichment(hashRequired: true))
     }
 
     @Test func missingOrMismatchedHashSignatureMakesCurrentAssetStale() {
@@ -24,7 +24,7 @@ struct CatalogStoreEnrichmentTests {
                 stampSize: 100,
                 stampMtime: 1000,
                 contentHash: nil
-            ).needsEnrichment
+            ).needsEnrichment(hashRequired: true)
         )
         #expect(
             makeAsset(
@@ -34,7 +34,7 @@ struct CatalogStoreEnrichmentTests {
                 stampMtime: 1000,
                 hashSourceSize: 99,
                 hashSourceMtime: 1000
-            ).needsEnrichment
+            ).needsEnrichment(hashRequired: true)
         )
         #expect(
             !makeAsset(
@@ -44,8 +44,27 @@ struct CatalogStoreEnrichmentTests {
                 stampMtime: 1000,
                 hashSourceSize: 100,
                 hashSourceMtime: 1000
-            ).needsEnrichment
+            ).needsEnrichment(hashRequired: true)
         )
+    }
+
+    /// Plan 0062: a `.removableVolume` source is never hashed in place (ADR 0018), so
+    /// hash staleness is gated behind `hashRequired` — a metadata-current removable
+    /// asset with no digest is fully enriched, while the same asset on a library root
+    /// still needs enrichment.
+    @Test func hashStalenessIsGatedOnHashRequired() {
+        let modified = Date(timeIntervalSince1970: 1000)
+        let noHash = makeAsset(
+            size: 100,
+            modifiedAt: modified,
+            stampSize: 100,
+            stampMtime: 1000,
+            contentHash: nil
+        )
+        #expect(noHash.needsEnrichment(hashRequired: false) == false)
+        #expect(noHash.needsEnrichment(hashRequired: true))
+        #expect(noHash.metadataStale == false)
+        #expect(noHash.hashStale)
     }
 
     @Test func bestCaptureDatePrefersMetadataThenFilesystem() {
@@ -128,7 +147,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(enriched.thumbnailPath == "thumb.jpg")
         #expect(enriched.bestCaptureDate == captureDate)
         #expect(enriched.durationSeconds == 42.5)
-        #expect(enriched.needsEnrichment == false)
+        #expect(enriched.needsEnrichment(hashRequired: true) == false)
 
         // Re-scan observing a changed mtime (same size): enrichment survives the merge,
         // and the changed (size, mtime) signature makes the asset stale again.
@@ -143,7 +162,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.bestCaptureDate == captureDate)
         #expect(asset.durationSeconds == 42.5)
         #expect(asset.enrichedSourceSize == 100)
-        #expect(asset.needsEnrichment == true)
+        #expect(asset.needsEnrichment(hashRequired: true) == true)
     }
 
     @Test func enrichmentPersistsAndReloads() async throws {
@@ -198,7 +217,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.durationSeconds == 187.25)
         #expect(asset.enrichedSourceSize == scannedSize)
         #expect(asset.enrichedSourceMTimeSeconds == scannedMTime)
-        #expect(asset.needsEnrichment == false)
+        #expect(asset.needsEnrichment(hashRequired: true) == false)
     }
 
     @Test func malformedStoredHashIsUnavailableAndStale() async throws {
@@ -238,7 +257,7 @@ struct CatalogStoreEnrichmentTests {
             $0.libraryRootPath == rootPath
         })
         #expect(persisted.contentHash == nil)
-        #expect(persisted.needsEnrichment)
+        #expect(persisted.needsEnrichment(hashRequired: true))
     }
 
     @Test func staleEnrichmentCompletionDoesNotStampChangedSourceCurrent() async throws {
@@ -286,7 +305,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(current.bestCaptureDate == Date(timeIntervalSince1970: 500))
         #expect(current.enrichedSourceSize == nil)
         #expect(current.enrichedSourceMTimeSeconds == nil)
-        #expect(current.needsEnrichment)
+        #expect(current.needsEnrichment(hashRequired: true))
 
         let reloaded = CatalogStore(location: .databaseFile(databaseURL))
         try await reloaded.start(scansSavedLibraries: false)
@@ -295,7 +314,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(persisted.bestCaptureDate == Date(timeIntervalSince1970: 500))
         #expect(persisted.enrichedSourceSize == nil)
         #expect(persisted.enrichedSourceMTimeSeconds == nil)
-        #expect(persisted.needsEnrichment)
+        #expect(persisted.needsEnrichment(hashRequired: true))
     }
 
     @Test func provenDeletionPurgesThumbnailFile() async throws {
@@ -425,13 +444,87 @@ struct CatalogStoreEnrichmentTests {
         #expect(asset.thumbnailPath == nil)
         #expect(asset.enrichedSourceSize == 100)
         #expect(asset.enrichedSourceMTimeSeconds == 1000)
-        #expect(!asset.needsEnrichment)
+        #expect(!asset.needsEnrichment(hashRequired: true))
 
         let details = try await store.mediaTileDetails(for: [id])
         let detail = try #require(details[id])
         #expect(detail.thumbnailUnavailable)
         #expect(detail.thumbnailPath == nil)
         #expect(detail.enrichedSourceMTimeSeconds == 1000)
+    }
+
+    /// Plan 0062 (Stage 4): a `.removableVolume` source is never hashed in place, so
+    /// import settlement must short-circuit overlay reuse to a typed miss instead of
+    /// comparing digests that cannot both exist. The destination still settles with the
+    /// digest computed from its local staged copy and needs enrichment until ordinary
+    /// enrichment stamps it.
+    @Test func removableSourceImportSettlementRecordsTypedReuseMiss() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let card = temp.appending(path: "CARD", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: card, withIntermediateDirectories: true)
+        try Data("camera".utf8).write(to: card.appending(path: "IMG_1.JPG"))
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: card)
+
+        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.attachRemovableVolume(
+            mountURL: card,
+            identity: "volume:test",
+            displayName: "CARD",
+            isEjectable: true
+        )
+        try await store.addLibrary(url: destination)
+
+        let staging = destination.appending(path: ".stage.otos-import-staging")
+        try Data("camera".utf8).write(to: staging)
+        guard case let .complete(digest) = ContentHasher().hashMaterializedFile(at: staging) else {
+            Issue.record("expected staging digest")
+            return
+        }
+        let batch = ImportBatchID()
+        let operation = ActiveFileOperation(
+            operationKey: .make(),
+            mode: "import",
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:test",
+            sourceRootPath: cardPath,
+            sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+            destinationRootPath: destinationPath,
+            destinationRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+            stagingPath: staging.path,
+            contentHash: digest,
+            importBatchUnixMs: batch.unixMilliseconds,
+            sourceByteSize: 6,
+            sourceModifiedAt: Date(timeIntervalSince1970: 1000),
+            destinationModifiedAt: Date(timeIntervalSince1970: 1000),
+            phase: .readyToPublish,
+            deleteSourceRequested: false,
+            updatedAt: Date()
+        )
+        try await store.beginImportOperation(operation)
+
+        let result = try await store.settleImportedAsset(
+            operation: operation,
+            byteSize: 6,
+            contentModifiedAt: Date(timeIntervalSince1970: 1000),
+            batch: batch,
+            companions: []
+        )
+
+        #expect(result.miss == .removableSourceNotHashed)
+        #expect(result.metadataCloned == false)
+        #expect(result.thumbnailCopied == false)
+
+        let state = try await catalogStoreTestState(store)
+        let destinationAsset = try #require(
+            state.testAssets.first { $0.id.libraryRootPath == destinationPath }
+        )
+        #expect(destinationAsset.contentHash == digest)
+        #expect(destinationAsset.needsEnrichment(hashRequired: true))
     }
 }
 

@@ -6,7 +6,7 @@ struct EnrichmentCoordinatorTests {
     @Test func unchangedAdmissionRejectionsEmitOneTransitionAcrossOneHundredWakes() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _ in .transient }
+            enricher: MediaEnricher { _, _, _, _, _ in .transient }
         )
         for _ in 0 ..< 100 {
             await coordinator.recordEnrichmentAdmission(
@@ -71,7 +71,7 @@ struct EnrichmentCoordinatorTests {
         let store = CatalogStore(location: .inMemory)
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -141,13 +141,13 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment }
+            snapshot.testAssets.count == 2 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
         }
         await coordinator.shutdown()
 
         let visible = try #require(enriched.testAssets.first { $0.relativePath.rawValue == "a.jpg" })
         #expect(visible.thumbnailPath?.hasPrefix("thumb-") == true)
-        #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment })
+        #expect(enriched.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) })
     }
 
     @Test func enrichesMaterializedAndDownloadsThenEnrichesDataless() async throws {
@@ -171,7 +171,7 @@ struct EnrichmentCoordinatorTests {
             .path(percentEncoded: false)
         let state = FakeMaterialization(dataless: [datalessPath])
         let captureDate = Date(timeIntervalSince1970: 700)
-        let enricher = MediaEnricher { id, url, size, mtime in
+        let enricher = MediaEnricher { id, url, size, mtime, _ in
             if await state.isDataless(url.path(percentEncoded: false)) {
                 return .notMaterialized
             }
@@ -200,7 +200,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment }
+            snapshot.testAssets.count == 3 && snapshot.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
         }
         await coordinator.shutdown()
 
@@ -214,13 +214,13 @@ struct EnrichmentCoordinatorTests {
         await context.coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(context.store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment == false
+            snapshot.testAssets.first?.needsEnrichment(hashRequired: true) == false
         }
         await context.coordinator.shutdown()
 
         let asset = try #require(enriched.testAssets.first)
         #expect(asset.thumbnailPath == "t.jpg")
-        #expect(asset.needsEnrichment == false)
+        #expect(asset.needsEnrichment(hashRequired: true) == false)
     }
 
     @Test func transientOutcomeIsRetriedUntilComplete() async throws {
@@ -235,7 +235,7 @@ struct EnrichmentCoordinatorTests {
 
         // Fail transiently the first two attempts, then succeed.
         let attempts = AttemptCounter()
-        let enricher = MediaEnricher { id, _, size, mtime in
+        let enricher = MediaEnricher { id, _, size, mtime, _ in
             if await attempts.next() < 2 {
                 return .transient
             }
@@ -260,7 +260,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment == false
+            snapshot.testAssets.first?.needsEnrichment(hashRequired: true) == false
         }
         await coordinator.shutdown()
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
@@ -281,7 +281,7 @@ struct EnrichmentCoordinatorTests {
         // bytes), so the store drops it. Without a re-wake the asset would stay
         // needsEnrichment forever; with it, the coordinator retries with a matching result.
         let attempts = AttemptCounter()
-        let enricher = MediaEnricher { id, _, size, mtime in
+        let enricher = MediaEnricher { id, _, size, mtime, _ in
             let attempt = await attempts.next()
             let reportedSize: Int64 = attempt == 0 ? (size ?? 0) + 1000 : (size ?? -1)
             return .complete(
@@ -305,7 +305,7 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
 
         let enriched = try await waitForCatalogStoreState(store) { snapshot in
-            snapshot.testAssets.first?.needsEnrichment == false
+            snapshot.testAssets.first?.needsEnrichment(hashRequired: true) == false
         }
         await coordinator.shutdown()
         #expect(enriched.testAssets.first?.thumbnailPath == "t.jpg")
@@ -325,7 +325,7 @@ struct EnrichmentCoordinatorTests {
 
         let enrichCalls = AttemptCounter()
         let materializeCalls = AttemptCounter()
-        let enricher = MediaEnricher { id, _, size, mtime in
+        let enricher = MediaEnricher { id, _, size, mtime, _ in
             _ = await enrichCalls.next()
             #expect(id.relativePath.rawValue == "ok.jpg")
             return .complete(EnrichmentResult(
@@ -346,7 +346,7 @@ struct EnrichmentCoordinatorTests {
         )
         await coordinator.start()
         let enriched = try await waitForCatalogStoreState(store) {
-            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment }
+            $0.testAssets.count == 2 && $0.testAssets.allSatisfy { !$0.needsEnrichment(hashRequired: true) }
         }
         await coordinator.shutdown()
 
@@ -356,9 +356,9 @@ struct EnrichmentCoordinatorTests {
         #expect(empty.thumbnailPath == nil)
         #expect(empty.enrichedSourceSize == 0)
         #expect(empty.enrichedSourceMTimeSeconds == 1000)
-        #expect(!empty.needsEnrichment)
+        #expect(!empty.needsEnrichment(hashRequired: true))
         #expect(ok.thumbnailPath == "t.jpg")
-        #expect(!ok.needsEnrichment)
+        #expect(!ok.needsEnrichment(hashRequired: true))
         #expect(await enrichCalls.total == 1)
         #expect(await materializeCalls.total == 0)
     }
@@ -382,7 +382,7 @@ struct EnrichmentCoordinatorTests {
         )
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _ in .notMaterialized },
+            enricher: MediaEnricher { _, _, _, _, _ in .notMaterialized },
             materializationRequester: materializer,
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless),
             claimBatchSize: 32,
@@ -426,7 +426,7 @@ struct EnrichmentCoordinatorTests {
 
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             claimBatchSize: 8,
@@ -494,7 +494,7 @@ struct EnrichmentCoordinatorTests {
 
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -544,7 +544,7 @@ struct EnrichmentCoordinatorTests {
         // claim/defer passes before "fresh" is ever reached.
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             enrichConcurrency: 2,
@@ -570,7 +570,7 @@ struct EnrichmentCoordinatorTests {
         )
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -595,7 +595,7 @@ struct EnrichmentCoordinatorTests {
         )
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -615,7 +615,7 @@ struct EnrichmentCoordinatorTests {
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materialize: { _ in .testMaterialized },
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
         )
@@ -661,7 +661,7 @@ struct EnrichmentCoordinatorTests {
 
         let coordinator = EnrichmentCoordinator(
             store: store,
-            enricher: MediaEnricher { _, _, _, _ in .transient },
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
             materializationRequester: materializer,
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
         )
@@ -767,7 +767,7 @@ private actor BlockingEnrichment {
     private var releaseWaiter: CheckedContinuation<Void, Never>?
 
     nonisolated func enricher() -> MediaEnricher {
-        MediaEnricher { _, _, _, _ in
+        MediaEnricher { _, _, _, _, _ in
             await self.waitUntilReleased()
             return .transient
         }
@@ -825,7 +825,7 @@ private actor CountingBlockingEnrichment {
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
 
     nonisolated func enricher() -> MediaEnricher {
-        MediaEnricher { id, _, _, _ in
+        MediaEnricher { id, _, _, _, _ in
             await self.markStarted(id.relativePath.rawValue)
             await self.waitUntilReleased()
             return .transient
@@ -903,7 +903,7 @@ private func visibleLifecycleCoordinator(
 }
 
 private func visibleLifecycleEnricher() -> MediaEnricher {
-    MediaEnricher { id, _, size, mtime in
+    MediaEnricher { id, _, size, mtime, _ in
         .complete(
             EnrichmentResult(
                 id: id,

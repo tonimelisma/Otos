@@ -91,6 +91,10 @@ actor EnrichmentCoordinator {
         let isVideo: Bool
         let captureDate: Date?
         let isDeviceStaging: Bool
+        /// False only for `.removableVolume` sources (ADR 0018/plan 0062): hashing
+        /// them in place would force a full read of the whole card merely to
+        /// checksum it. Populated in `makeWork` from `removableRootPaths`.
+        let shouldHash: Bool
     }
 
     struct DownloadWork {
@@ -163,6 +167,10 @@ actor EnrichmentCoordinator {
     var materializationClaimIDs: Set<MediaAssetID> = []
     var pendingApplyClaimIDs: Set<MediaAssetID> = []
     var deviceRootPaths: Set<LibraryRootPath> = []
+    /// Roots whose enrichment never produces a content hash (ADR 0018/plan 0062).
+    /// Refreshed from Store at the start of each claim cycle, the same lightweight
+    /// pattern as `deviceRootPaths`.
+    var removableRootPaths: Set<LibraryRootPath> = []
     var nextClaimSequence: UInt64 = 0
     var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []
@@ -427,7 +435,7 @@ extension EnrichmentCoordinator {
                     let enricher = enricher
                     group.addTask {
                         let outcome = await enricher.enrich(
-                            work.id, work.url, work.sourceSize, work.sourceMTimeSeconds
+                            work.id, work.url, work.sourceSize, work.sourceMTimeSeconds, work.shouldHash
                         )
                         await self.finishEnrich(work, outcome)
                     }

@@ -401,19 +401,35 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         date.map { Int($0.timeIntervalSince1970.rounded(.down)) } ?? -1
     }
 
-    /// True when metadata or the content hash is not valid for the current filesystem
-    /// signature. A malformed persisted hash is unavailable and therefore stale.
-    var needsEnrichment: Bool {
+    /// True when the enrichment stamp (thumbnail, parsed metadata, capture-wall
+    /// facts) is not valid for the current filesystem signature. Independent of
+    /// whether a hash is required at all.
+    var metadataStale: Bool {
         let currentSize = byteSize ?? -1
         let currentMTime = Self.mtimeSeconds(contentModifiedAt)
-        let metadataStale = enrichedSourceSize != currentSize
-            || enrichedSourceMTimeSeconds != currentMTime
-        let hashStale = contentHash == nil
+        return enrichedSourceSize != currentSize || enrichedSourceMTimeSeconds != currentMTime
+    }
+
+    /// True when the persisted content hash is missing, malformed, or does not match
+    /// the current filesystem signature. Meaningless on its own: a root that never
+    /// hashes (`.removableVolume`, see ADR 0018) must not be judged stale by this
+    /// alone. Callers gate it behind `hashRequired`.
+    var hashStale: Bool {
+        let currentSize = byteSize ?? -1
+        let currentMTime = Self.mtimeSeconds(contentModifiedAt)
+        return contentHash == nil
             || contentHashSourceSize == nil
             || contentHashSourceMTimeSeconds == nil
             || contentHashSourceSize != currentSize
             || contentHashSourceMTimeSeconds != currentMTime
-        return metadataStale || hashStale
+    }
+
+    /// True when metadata is stale, or — only when a hash is required for this
+    /// asset's root kind — the hash is stale. `hashRequired` is a Store-owned
+    /// root-kind fact (ADR 0018); this pure value type never derives it itself, so a
+    /// caller cannot forget to supply it and silently fall back to a wrong default.
+    func needsEnrichment(hashRequired: Bool) -> Bool {
+        metadataStale || (hashRequired && hashStale)
     }
 }
 

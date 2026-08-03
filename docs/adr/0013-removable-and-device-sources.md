@@ -110,7 +110,17 @@ Adjacent decisions requiring separate ADRs or specs:
    flipping the cloud eager-download latch. Low-space device staging failures pause
    for retry rather than busy-looping as timeouts.
 
-7. **Platform monitors are thin adapters.** `RemovableVolumeMonitor` and
+7. **Removable volumes are read in place and never hashed during enrichment.**
+   MTP stages because ImageCapture is not a filesystem. A `.removableVolume` is a
+   real filesystem, so enrichment reads it in place — metadata ranges and
+   thumbnail portions only — and deliberately never computes a content hash there
+   (ADR 0018). A full read of the card is deferred to import, where the
+   destination's still-local staged copy is hashed once at local-disk speed. This
+   was a previously unexamined default (bandwidth was never weighed); the choice
+   is now explicit: in-place reads plus import-time hashing, not wholesale staging
+   of removable volumes to local cache, which remains an open disk-cost tradeoff.
+
+8. **Platform monitors are thin adapters.** `RemovableVolumeMonitor` and
    `CameraSourceMonitor` translate OS events into typed attach/detach inputs.
    They do not write SQLite, decide overlay lifecycle, or perform scan
    reconciliation.

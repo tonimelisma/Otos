@@ -25,7 +25,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: fixture.finalURL(for: generated).path(percentEncoded: false)))
         let current = try #require(try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == generated.finalRelativePath)
-        #expect(!current.needsEnrichment)
+        #expect(!current.needsEnrichment(hashRequired: true))
     }
 
     @Test func staleStagedThumbnailIsDiscardedWithoutReplacingFinalThumbnail() async throws {
@@ -49,7 +49,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(!FileManager.default.fileExists(atPath: fixture.stagedURL(for: generated).path(percentEncoded: false)))
         let current = try #require(try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == finalName)
-        #expect(current.needsEnrichment)
+        #expect(current.needsEnrichment(hashRequired: true))
     }
 
     @Test func acceptedThumbnaillessResultDeletesSupersededAppOwnedThumbnail() async throws {
@@ -77,7 +77,7 @@ struct CatalogStoreThumbnailLifecycleTests {
             try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id }
         )
         #expect(current.thumbnailPath == nil)
-        #expect(!current.needsEnrichment)
+        #expect(!current.needsEnrichment(hashRequired: true))
     }
 
     @Test func failedThumbnailPromotionReleasesEnrichmentClaimForRetry() async throws {
@@ -142,7 +142,7 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(FileManager.default.fileExists(atPath: fixture.finalURL(for: accepted).path(percentEncoded: false)))
         let current = try #require(try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == accepted.finalRelativePath)
-        #expect(!current.needsEnrichment)
+        #expect(!current.needsEnrichment(hashRequired: true))
     }
 }
 

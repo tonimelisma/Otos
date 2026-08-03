@@ -34,7 +34,7 @@ func makeDownloadLifecycleContext() async throws -> DownloadLifecycleContext {
 }
 
 private func datalessLifecycleEnricher(state: FakeMaterialization) -> MediaEnricher {
-    MediaEnricher { id, url, size, mtime in
+    MediaEnricher { id, url, size, mtime, _ in
         if await state.isDataless(url.path(percentEncoded: false)) {
             return .notMaterialized
         }

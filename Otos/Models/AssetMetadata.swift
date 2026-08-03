@@ -126,7 +126,10 @@ nonisolated struct EnrichmentResult: Equatable {
     let generatedThumbnail: GeneratedThumbnail?
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
-    let contentHash: XXH3Digest128
+    /// Absent when the enricher skipped hashing (`EnrichWork.shouldHash == false`,
+    /// a `.removableVolume` source — ADR 0018/plan 0062). The store then leaves the
+    /// row's existing hash columns untouched rather than clearing them.
+    let contentHash: XXH3Digest128?
 
     init(
         id: MediaAssetID,
@@ -137,7 +140,7 @@ nonisolated struct EnrichmentResult: Equatable {
         thumbnailPath: String?,
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
-        contentHash: XXH3Digest128,
+        contentHash: XXH3Digest128?,
         generatedThumbnail: GeneratedThumbnail? = nil
     ) {
         self.id = id

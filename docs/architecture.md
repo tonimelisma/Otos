@@ -87,8 +87,10 @@ everything expensive happens on an actor off the main thread.
   upsert facts but defers destructive missing-row reconciliation. Import settlement
   validates current source `(size, mtime)` facts plus the Plan-0060 XXH3-128 digest,
   and may clone the source's normalized enrichment overlay while copying an
-  independent destination thumbnail. A reuse miss falls back to ordinary enrichment;
-  source and destination overlay lifecycles remain independent.
+  independent destination thumbnail. Reuse is available only for sources whose bytes
+  are local: a `.removableVolume` source is never hashed in place, so its settlement
+  records a typed `removableSourceNotHashed` miss. A reuse miss falls back to ordinary
+  enrichment; source and destination overlay lifecycles remain independent.
 - **Import publication recovery**: a completed staging hash is durably recorded with
   `.readyToPublish` before exclusive publication, and the published final is durably
   recorded as `.publishedPendingSettlement` before settlement or source deletion.
@@ -98,7 +100,10 @@ everything expensive happens on an actor off the main thread.
   `MaterializationCoordinator` owns deliberate recovery materialization requests.
 - **Enrichment byte gates**: `MediaEnricher` checks live materialization independently
   immediately before hashing, metadata parsing, and thumbnail generation. Earlier
-  successful gates never authorize a later phase after provider eviction.
+  successful gates never authorize a later phase after provider eviction. Hash
+  production is gated on byte locality (ADR 0018): `.removableVolume` sources skip
+  hashing entirely, so their enrichment runs the metadata-parse and thumbnail gates
+  only.
 - **Companions** (`.xmp` / `.srt`) live in `media_companion`, paired by directory
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings
@@ -137,7 +142,7 @@ everything expensive happens on an actor off the main thread.
 | what is stored | `CatalogStore` + a SQLite migration in `CatalogStorePersistence` + an ADR |
 | platform source handling | the ViewModel owns monitor/session lifetimes; the Store owns attach/detach/remap/persistence |
 | import plan lifecycle / footer | `MediaOperationCoordinator` + ViewModel media-ops intents; views stay passive |
-| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including import overlay reuse diagnostics |
+| content hash production/persistence | `ContentHasher` stays inside `MediaEnricher` and `MediaImportExecutor`; enrichment hashes only byte-local roots (`.removableVolume` is gated off, ADR 0018/0013); `CatalogStore` validates source signatures and owns atomic overlay/journal settlement, including import overlay reuse diagnostics |
 | library reorganization | `LibraryReorganizationRunner` + ViewModel confirmation/remap; planner/executor stay off MainActor |
 | heavy byte-reading work | keep decoding/parsing in its consumer, check live `FileMaterialization` status, and submit deliberate downloads to `MaterializationCoordinator` |
 | grid rendering/selection/zoom | the `MediaGrid*` boundary (ADR 0006); selection *model* intents live on `CatalogWindowViewModel` |

@@ -40,7 +40,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "a.jpg")
         )
 
-        let outcome = await enricher.enrich(id, url, 100, 1000)
+        let outcome = await enricher.enrich(id, url, 100, 1000, true)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete, got \(outcome)")
             return
@@ -75,7 +75,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "broken.jpg")
         )
 
-        let outcome = await enricher.enrich(id, stubURL, 0, 1000)
+        let outcome = await enricher.enrich(id, stubURL, 0, 1000, true)
         guard case let .complete(result) = outcome else {
             Issue.record("expected .complete for zero-byte stub, got \(outcome)")
             return
@@ -98,7 +98,7 @@ struct MediaEnricherTests {
         )
 
         // Unsupported is definitive (stamped, never retried), even with empty metadata.
-        let outcome = await enricher.enrich(id, textURL, 9, 1000)
+        let outcome = await enricher.enrich(id, textURL, 9, 1000, true)
         guard case .complete = outcome else {
             Issue.record("expected .complete for unsupported, got \(outcome)")
             return
@@ -116,7 +116,7 @@ struct MediaEnricherTests {
             relativePath: MediaRelativePath(rawValue: "gone.jpg")
         )
 
-        let outcome = await enricher.enrich(id, missing, 100, 1000)
+        let outcome = await enricher.enrich(id, missing, 100, 1000, true)
         guard case .notMaterialized = outcome else {
             Issue.record("expected .notMaterialized for a missing file, got \(outcome)")
             return
@@ -138,7 +138,8 @@ struct MediaEnricherTests {
             ),
             url,
             100,
-            1000
+            1000,
+            true
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -163,7 +164,8 @@ struct MediaEnricherTests {
             ),
             url,
             100,
-            1000
+            1000,
+            true
         )
         guard case .notMaterialized = outcome else {
             Issue.record("expected notMaterialized, got \(outcome)")
@@ -187,12 +189,43 @@ struct MediaEnricherTests {
             ),
             fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg"),
             100,
-            1000
+            1000,
+            true
         )
         guard case .complete = outcome else {
             Issue.record("expected complete enrichment, got \(outcome)")
             return
         }
         #expect(checker.callCount == 3)
+    }
+
+    /// Plan 0062: a `.removableVolume` source (ADR 0018) is never hashed in place, so
+    /// its enrichment performs no full-file read. Assert against a spy hasher rather
+    /// than elapsed time — a regression that hashes-and-discards would still return a
+    /// nil contentHash, so only observing the hash call itself catches it.
+    @Test func removableSourceEnrichmentNeverCallsContentHasher() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)
+        let url = fixtureDirectory.appending(path: "jpeg-exif-offset-date.jpg")
+        let hasherCalls = Mutex(0)
+        let enricher = MediaEnricher.live(
+            thumbnailDirectory: thumbnailDirectory,
+            contentHasher: { _ in
+                hasherCalls.withLock { $0 += 1 }
+                return .cancelled
+            }
+        )
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Volumes/CARD"),
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+
+        let outcome = await enricher.enrich(id, url, 100, 1000, false)
+        guard case let .complete(result) = outcome else {
+            Issue.record("expected .complete for removable source, got \(outcome)")
+            return
+        }
+        #expect(result.contentHash == nil)
+        #expect(hasherCalls.withLock { $0 } == 0)
     }
 }

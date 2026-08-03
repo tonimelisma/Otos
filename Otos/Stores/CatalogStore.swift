@@ -800,6 +800,14 @@ extension CatalogStore {
         return timedMetadata.value
     }
 
+    /// Roots whose enrichment never produces a content hash (ADR 0018/plan 0062).
+    /// `EnrichmentCoordinator` refreshes its local `removableRootPaths` cache from
+    /// this at the start of each claim cycle, the same pattern `deviceRootPaths`
+    /// uses — an in-memory `RootRegistry` read, not a database query.
+    func removableVolumeRootPaths() -> Set<LibraryRootPath> {
+        roots.removableVolumeRootPaths
+    }
+
     func enrichmentCandidates(
         prioritizing priorityIDs: [MediaAssetID],
         limit: Int
@@ -923,7 +931,8 @@ extension CatalogStore {
             ids: ids,
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
-            isRootAvailable: { [roots] path in roots[path]?.availability == .available }
+            isRootAvailable: { [roots] path in roots[path]?.availability == .available },
+            isHashRequired: { [roots] path in roots[path]?.root.kind != .removableVolume }
         )
         guard !eligibleClaims.isEmpty else {
             return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)
@@ -931,7 +940,7 @@ extension CatalogStore {
         let timedClaim = try await timedWrite(dbWriter) { db in
             var candidates: [MediaAsset] = []
             candidates.reserveCapacity(min(limit, eligibleClaims.count))
-            for (asset, rootID) in eligibleClaims {
+            for (asset, rootID, hashRequired) in eligibleClaims {
                 guard candidates.count < limit else {
                     break
                 }
@@ -939,6 +948,7 @@ extension CatalogStore {
                     libraryRootID: rootID,
                     relativePath: asset.relativePath,
                     claimedUntil: claimedUntil,
+                    hashRequired: hashRequired,
                     db: db
                 ) else {
                     continue
@@ -972,25 +982,35 @@ extension CatalogStore {
     private func claimedEnrichmentCandidates(limit: Int) async throws -> DatabaseTimedValue<[MediaAsset]> {
         let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let prioritizedRootIDs = availableRootIDsByRemovablePriority()
+        let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.availableRootIDsByHashRequirement()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [StoredAsset] = []
-            if !prioritizedRootIDs.removable.isEmpty {
-                storedAssets = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
-                    rootIDs: prioritizedRootIDs.removable,
+            // The fallback spans roots of mixed kinds (ADR 0018): `.removableVolume`
+            // is claimed with the metadata-only predicate and index, every other kind
+            // with the broad predicate. `INDEXED BY` forbids one statement across both,
+            // so partition by hash requirement within each priority tier. `.deviceMTP`
+            // is removable-priority but hash-required, `.removableVolume` is
+            // removable-priority and hash-not-required, `.library` is fixed and
+            // hash-required; the tiers therefore claim in that order.
+            let removableRoots = Set(prioritizedRootIDs.removable)
+            let fixedRoots = Set(prioritizedRootIDs.fixed)
+            let claimGroups: [(rootIDs: [Int64], hashRequired: Bool)] = [
+                (removableRoots.intersection(hashRequiredRootIDs).sorted(), true),
+                (removableRoots.intersection(hashNotRequiredRootIDs).sorted(), false),
+                (fixedRoots.intersection(hashRequiredRootIDs).sorted(), true),
+                (fixedRoots.intersection(hashNotRequiredRootIDs).sorted(), false),
+            ]
+            for group in claimGroups where storedAssets.count < limit && !group.rootIDs.isEmpty {
+                let remaining = limit - storedAssets.count
+                let claimed = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+                    rootIDs: group.rootIDs,
                     claimNotAfter: claimedUntil,
-                    limit: limit,
+                    limit: remaining,
+                    hashRequired: group.hashRequired,
                     db: db
                 )
-            }
-            if storedAssets.count < limit, !prioritizedRootIDs.fixed.isEmpty {
-                let fixedAssets = try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
-                    rootIDs: prioritizedRootIDs.fixed,
-                    claimNotAfter: claimedUntil,
-                    limit: limit - storedAssets.count,
-                    db: db
-                )
-                storedAssets.append(contentsOf: fixedAssets)
+                storedAssets.append(contentsOf: claimed)
             }
             return storedAssets
         }
@@ -3535,14 +3555,24 @@ extension CatalogStore {
         var stagedThumbnail: GeneratedThumbnail?
         var reuseResult = ImportOverlayReuseResult.notReused
         if let sourceRootID = roots[operation.sourceRootPath]?.rowID {
-            let sourceOverlay = try await dbWriter.read { db in
+            if operation.sourceKind == .removableVolume {
+                // ADR 0018/plan 0062: a `.removableVolume` source is never hashed in
+                // place, so it can have no source digest to validate a reuse against.
+                // Short-circuit to a typed miss without fetching the overlay or
+                // attempting the digest comparison; the destination is enriched
+                // normally after import.
+                reuseResult = ImportOverlayReuseResult(
+                    metadataCloned: false,
+                    thumbnailCopied: false,
+                    miss: .removableSourceNotHashed
+                )
+            } else if let sourceOverlay = try await dbWriter.read({ db in
                 try Self.fetchReusableEnrichmentOverlay(
                     sourceRootID: sourceRootID,
                     sourceRelativePath: operation.sourceRelativePath,
                     db: db
                 )
-            }
-            if let sourceOverlay {
+            }) {
                 let sourceMTime = MediaAsset.mtimeSeconds(operation.sourceModifiedAt)
                 let sourceFactsCurrent = sourceOverlay.sourceByteSize != nil
                     && sourceOverlay.sourceMTimeSeconds != nil

@@ -37,6 +37,23 @@ digest and never rereads a published cloud placeholder merely to fill a hash.
 Import planning remains fact-only: selected live path, live size, and the shared
 expected destination mtime. It reads neither this hash nor import provenance.
 
+Hash production is gated on **byte locality**, not on "every enriched asset."
+Enrichment computes a digest only for roots whose bytes it reads in place: fixed
+libraries and device-staging roots. A `.removableVolume` source is read in place,
+so hashing it during enrichment would force a full read of the whole volume merely
+to checksum it; enrichment there produces metadata and a thumbnail but never a
+digest. A removable-row asset with current metadata is therefore fully enriched
+with no hash: its claim predicate is metadata-only, so a missing digest never
+re-claims it, and it leaves the claim index as soon as its metadata is current.
+
+Removable content still receives a digest after import, from the destination's
+still-local staged bytes, through the existing import worker — never from the card.
+The source row keeps no digest, permanently. Overlay reuse requires the source
+digest as proof the cloned overlay was extracted from exactly the bytes published
+at the destination, so reuse is unavailable for removable sources (a typed
+`removableSourceNotHashed` miss) and unchanged for device-staging sources, where
+the digest is already computed from local bytes.
+
 ## Alternatives considered
 
 - **Vendor the upstream C implementation (selected):** the smallest audited
@@ -57,9 +74,12 @@ expected destination mtime. It reads neither this hash nor import provenance.
 Every pre-migration row is hash-stale and enters the ordinary enrichment lifecycle
 once; there is no migration-time filesystem walk. This accepts the one-time full
 byte read for the current library while preserving existing materialization and
-claim bounds. Hashes are rebuildable subordinate overlay, not IDs, and their
-signature makes stale bytes explicit. Import pays one sequential staging read after
-the existing system copy, while keeping the correct copyfile and publication path.
+claim bounds. The one-time read is scoped to hash-required roots: a
+`.removableVolume` row is never read in full merely to fill a hash, and a stale
+digest that predates a source's removable kind is left untouched rather than
+cleared. Hashes are rebuildable subordinate overlay, not IDs, and their signature
+makes stale bytes explicit. Import pays one sequential staging read after the
+existing system copy, while keeping the correct copyfile and publication path.
 
 The vendored implementation must be refreshed only by a later explicit dependency
 decision with new vectors and compatibility review.

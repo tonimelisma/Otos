@@ -227,6 +227,80 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(FileManager.default.fileExists(atPath: staleThumbnail.path(percentEncoded: false)))
     }
 
+    @Test func v13MigrationAddsMetadataOnlyEnrichmentClaimIndexesAndKeepsDigests() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+
+        // Simulate a catalog that stopped at v12: a removable-root row carrying a valid
+        // digest and current facts, no metadata-only pair, and no v13 marker.
+        let removableRootID = try await dbQueue.writeWithoutTransaction { db in
+            try db.execute(sql: "INSERT INTO library_root (path) VALUES (?)", arguments: ["/tmp/otos-removable"])
+            let rootID = db.lastInsertedRowID
+            try db.execute(
+                sql: """
+                INSERT INTO media_asset (
+                    library_root_id, relative_path, sort_key, name_sort_key, name,
+                    content_type_identifier, byte_size, content_modified_at_unix,
+                    enriched_source_size, enriched_source_mtime,
+                    content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                arguments: [
+                    rootID, "a.jpg", "a.jpg", "a.jpg", "a.jpg", "public.jpeg",
+                    1, 1000, 1, 1000,
+                    XXH3Digest128.empty.data, 1, 1000,
+                ]
+            )
+            try db.drop(index: EnrichmentLeaseGateway.metadataOnlyGlobalIndexName)
+            try db.drop(index: EnrichmentLeaseGateway.metadataOnlyRootIndexName)
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: ["v13_hash_gated_enrichment_claim_indexes"]
+            )
+            return rootID
+        }
+
+        try CatalogStore.migrator.migrate(dbQueue)
+
+        let applied = try await Self.appliedMigrationIdentifiers(databaseURL)
+        #expect(applied.contains("v13_hash_gated_enrichment_claim_indexes"))
+        let indexNames = try await dbQueue.read { db in
+            try String.fetchSet(db, sql: "SELECT name FROM sqlite_master WHERE type = 'index'")
+        }
+        #expect(indexNames.contains(EnrichmentLeaseGateway.broadGlobalIndexName))
+        #expect(indexNames.contains(EnrichmentLeaseGateway.broadRootIndexName))
+        #expect(indexNames.contains(EnrichmentLeaseGateway.metadataOnlyGlobalIndexName))
+        #expect(indexNames.contains(EnrichmentLeaseGateway.metadataOnlyRootIndexName))
+
+        // The pre-existing digest survives and its row is not re-claimable under the
+        // metadata-only predicate the removable root now claims with.
+        let persistedHash = try await dbQueue.read { db in
+            try Data.fetchOne(
+                db,
+                sql: "SELECT content_hash_xxh3_128 FROM media_asset WHERE library_root_id = ?",
+                arguments: [removableRootID]
+            )
+        }
+        #expect(persistedHash == XXH3Digest128.empty.data)
+        let now = Date().timeIntervalSince1970
+        let metadataOnlyClaimed = try await dbQueue.write { db in
+            try EnrichmentLeaseGateway.fetchStoredAssetsNeedingEnrichment(
+                rootIDs: [removableRootID],
+                claimNotAfter: now + 300,
+                limit: 4,
+                hashRequired: false,
+                db: db
+            )
+        }
+        #expect(metadataOnlyClaimed.isEmpty)
+    }
+
     @Test func importBatchQueriesReturnNewestFirst() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
