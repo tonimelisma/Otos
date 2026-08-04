@@ -6,19 +6,19 @@ SUBSYSTEM="net.melisma.Otos"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
 LOG_DIR="$(otos_logs_dir "$ROOT_DIR")"
-DEFAULT_ROOT="$HOME/Desktop/OneDrive/Pictures"
+CATALOG_DB="$HOME/Library/Application Support/$SUBSYSTEM/Catalog/catalog.sqlite"
 
 MODE="${1:---jank}"
 if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] [library-root]
+usage: script/smoke-run.sh [--jank|--verify] <library-root>
 
-Defaults:
-  mode: --jank
-  library-root: $HOME/Desktop/OneDrive/Pictures
+There is no default library root: a machine's already-registered roots are
+never guessable and a wrong guess produces a silent overlappingRoot failure
+that looks like a script bug. Pass the root explicitly, every time.
 
 Environment:
-  OTOS_SMOKE_LIBRARY_ROOT      overrides the default root when no argument is given
+  OTOS_SMOKE_LIBRARY_ROOT      library root, if not given as an argument
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
   OTOS_SMOKE_SCROLL_DELTA      pixel delta per scroll event (default: 900)
@@ -37,7 +37,7 @@ case "$MODE" in
     ;;
 esac
 
-SMOKE_ROOT="${ROOT_ARG:-${OTOS_SMOKE_LIBRARY_ROOT:-$DEFAULT_ROOT}}"
+SMOKE_ROOT="${ROOT_ARG:-${OTOS_SMOKE_LIBRARY_ROOT:-}}"
 SETTLE_SECONDS="${OTOS_SMOKE_SETTLE_SECONDS:-10}"
 SCROLL_CYCLES="${OTOS_SMOKE_SCROLL_CYCLES:-6}"
 SCROLL_DELTA="${OTOS_SMOKE_SCROLL_DELTA:-900}"
@@ -45,17 +45,21 @@ SCROLL_PAUSE="${OTOS_SMOKE_SCROLL_PAUSE:-0.25}"
 LOG_PID=""
 LOG_FILE=""
 QUIT_ON_EXIT=0
+# The PID this run's own launch produced — the only PID `quit_app`'s fallback
+# may kill. A second overlapping run's Otos process must never be affected by
+# this run's cleanup (plan 0065 Stage 5).
+APP_PID=""
 
 usage() {
   cat >&2 <<'USAGE'
-usage: script/smoke-run.sh [--jank|--verify] [library-root]
+usage: script/smoke-run.sh [--jank|--verify] <library-root>
 
-Defaults:
-  mode: --jank
-  library-root: $HOME/Desktop/OneDrive/Pictures
+There is no default library root: a machine's already-registered roots are
+never guessable and a wrong guess produces a silent overlappingRoot failure
+that looks like a script bug. Pass the root explicitly, every time.
 
 Environment:
-  OTOS_SMOKE_LIBRARY_ROOT      overrides the default root when no argument is given
+  OTOS_SMOKE_LIBRARY_ROOT      library root, if not given as an argument
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
   OTOS_SMOKE_SCROLL_DELTA      pixel delta per scroll event (default: 900)
@@ -63,15 +67,33 @@ Environment:
 USAGE
 }
 
+registered_roots_message() {
+  if [[ -f "$CATALOG_DB" ]] && command -v sqlite3 >/dev/null 2>&1; then
+    local roots
+    roots="$(sqlite3 -readonly "$CATALOG_DB" "SELECT path FROM library_root ORDER BY path;" 2>/dev/null || true)"
+    if [[ -n "$roots" ]]; then
+      printf 'Already-registered roots (pick one, or a path outside all of them):\n%s\n' "$roots"
+      return
+    fi
+  fi
+  echo "No registered roots found (catalog not yet created, or empty)."
+}
+
 quit_app() {
   /usr/bin/osascript -e "tell application \"$APP_NAME\" to quit" >/dev/null 2>&1 || true
   for _ in $(seq 1 30); do
-    if ! pgrep -x "$APP_NAME" >/dev/null 2>&1; then
+    if [[ -z "$APP_PID" ]] || ! kill -0 "$APP_PID" >/dev/null 2>&1; then
       return
     fi
     sleep 0.1
   done
-  pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+  # Fallback: kill only the PID this run launched. Never `pkill -x "$APP_NAME"`
+  # — that matches any process with this name, including a second overlapping
+  # run's still-capturing app instance (observed during plan 0065's review; it
+  # silently truncated a session to a log that looked complete).
+  if [[ -n "$APP_PID" ]]; then
+    kill "$APP_PID" >/dev/null 2>&1 || true
+  fi
 }
 
 cleanup() {
@@ -115,7 +137,8 @@ start_log_capture() {
 run_seeded_launch() {
   export OTOS_SMOKE_LIBRARY_ROOT="$SMOKE_ROOT"
   "$ROOT_DIR/script/build_and_run.sh" --verify >&2
-  wait_for_app_pid
+  APP_PID="$(wait_for_app_pid)"
+  echo "$APP_PID"
 }
 
 
@@ -173,9 +196,19 @@ if [[ "$MODE" != "--jank" && "$MODE" != "jank" && "$MODE" != "--verify" && "$MOD
   exit 2
 fi
 
+if [[ -z "$SMOKE_ROOT" ]]; then
+  echo "No library root given — there is no default (plan 0065 Stage 5)." >&2
+  echo "Pass a root path as an argument, or set OTOS_SMOKE_LIBRARY_ROOT." >&2
+  echo >&2
+  registered_roots_message >&2
+  exit 1
+fi
+
 if [[ ! -d "$SMOKE_ROOT" ]]; then
   echo "Smoke library root is not a directory: $SMOKE_ROOT" >&2
   echo "Pass a root path or set OTOS_SMOKE_LIBRARY_ROOT." >&2
+  echo >&2
+  registered_roots_message >&2
   exit 1
 fi
 SMOKE_ROOT="$(cd "$SMOKE_ROOT" && pwd -P)"

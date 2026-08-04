@@ -87,8 +87,10 @@ final class MainRunLoopStallMonitor {
             scope: scope,
             startedAt: Date()
         )
-        OtosLog.ui.debug(
-            "op=ui.sidebarSelectionToPaint phase=start scope=\(scope.diagnosticDescription, privacy: .public)"
+        OtosLog.ui.noticeOperation(
+            "ui.sidebarSelectionToPaint",
+            phase: "start",
+            fields: ["scope": scope.diagnosticDescription]
         )
     }
 
@@ -104,8 +106,10 @@ final class MainRunLoopStallMonitor {
         pendingIntentToPaint = nil
         OtosSignpost.ui.endInterval("SidebarSelectionToPaint", pending.signpost)
         let ms = DiagnosticsTiming.milliseconds(since: pending.startedAt)
-        OtosLog.ui.debug(
-            "op=ui.sidebarSelectionToPaint phase=finish scope=\(appliedScope.diagnosticDescription, privacy: .public) ms=\(ms, privacy: .public)"
+        OtosLog.ui.noticeOperation(
+            "ui.sidebarSelectionToPaint",
+            phase: "finish",
+            fields: ["scope": appliedScope.diagnosticDescription, "ms": "\(ms)"]
         )
         return true
     }

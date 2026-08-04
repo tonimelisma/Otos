@@ -83,7 +83,8 @@ struct CatalogStoreThumbnailLifecycleTests {
     @Test func failedThumbnailPromotionReleasesEnrichmentClaimForRetry() async throws {
         let fixture = try await makeThumbnailLifecycleFixture()
         let candidates = try await fixture.store.enrichmentCandidates(prioritizing: [], limit: 1)
-        let asset = try #require(candidates.first)
+        let candidate = try #require(candidates.first)
+        let asset = candidate.asset
         #expect(asset.id == fixture.id)
 
         let outcome = await fixture.store.applyEnrichmentBatch([
@@ -104,7 +105,7 @@ struct CatalogStoreThumbnailLifecycleTests {
 
         #expect(outcome == .writeFailed)
         let retryCandidates = try await fixture.store.enrichmentCandidates(prioritizing: [], limit: 1)
-        #expect(retryCandidates.map(\.id) == [fixture.id])
+        #expect(retryCandidates.map(\.asset.id) == [fixture.id])
     }
 
     @Test func promotionFailureDoesNotRollBackEarlierAcceptedRows() async throws {

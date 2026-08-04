@@ -564,12 +564,14 @@ extension MediaGridViewController {
         let presentationDescription = String(describing: presentation)
         guard let path = dataSource.indexPath(for: id) else {
             pendingFocusTargetID = id
-            OtosLog.ui.debug(
-                """
-                op=ui.mediaGrid.focusTarget phase=park \
-                id=\(id.relativePath.rawValue, privacy: .public) \
-                presentation=\(presentationDescription, privacy: .public) reason=missingItem
-                """
+            OtosLog.ui.debugOperation(
+                "ui.mediaGrid.focusTarget",
+                phase: "park",
+                fields: [
+                    "id": id.relativePath.rawValue,
+                    "presentation": presentationDescription,
+                    "reason": "missingItem",
+                ]
             )
             return
         }
@@ -577,34 +579,40 @@ extension MediaGridViewController {
         // silent no-op; park and let appear/layout/apply/redelivery retry.
         guard view.window != nil, collectionView.frame.width > 0 else {
             pendingFocusTargetID = id
-            OtosLog.ui.debug(
-                """
-                op=ui.mediaGrid.focusTarget phase=park \
-                id=\(id.relativePath.rawValue, privacy: .public) \
-                presentation=\(presentationDescription, privacy: .public) reason=window/layout
-                """
+            OtosLog.ui.debugOperation(
+                "ui.mediaGrid.focusTarget",
+                phase: "park",
+                fields: [
+                    "id": id.relativePath.rawValue,
+                    "presentation": presentationDescription,
+                    "reason": "window/layout",
+                ]
             )
             return
         }
         collectionView.layoutSubtreeIfNeeded()
         guard let attributes = collectionView.layoutAttributesForItem(at: path) else {
             pendingFocusTargetID = id
-            OtosLog.ui.debug(
-                """
-                op=ui.mediaGrid.focusTarget phase=park \
-                id=\(id.relativePath.rawValue, privacy: .public) \
-                presentation=\(presentationDescription, privacy: .public) reason=missingLayout
-                """
+            OtosLog.ui.debugOperation(
+                "ui.mediaGrid.focusTarget",
+                phase: "park",
+                fields: [
+                    "id": id.relativePath.rawValue,
+                    "presentation": presentationDescription,
+                    "reason": "missingLayout",
+                ]
             )
             return
         }
         pendingFocusTargetID = nil
-        OtosLog.ui.debug(
-            """
-            op=ui.mediaGrid.focusTarget phase=scroll \
-            id=\(id.relativePath.rawValue, privacy: .public) \
-            presentation=\(presentationDescription, privacy: .public) reason=ready
-            """
+        OtosLog.ui.debugOperation(
+            "ui.mediaGrid.focusTarget",
+            phase: "scroll",
+            fields: [
+                "id": id.relativePath.rawValue,
+                "presentation": presentationDescription,
+                "reason": "ready",
+            ]
         )
         // Explicit clip-view scroll: `scrollToItems` is a silent no-op when the
         // collection view was first laid out unhosted (mode-switch recreation).

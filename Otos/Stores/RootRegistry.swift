@@ -138,14 +138,6 @@ nonisolated struct RootRegistry {
         return (hashRequired, hashNotRequired)
     }
 
-    /// Root paths whose enrichment never produces a content hash. Consumed by
-    /// `EnrichmentCoordinator` to decide `EnrichWork.shouldHash` — regardless of
-    /// current availability, since a temporarily unavailable removable root's kind
-    /// does not change.
-    var removableVolumeRootPaths: Set<LibraryRootPath> {
-        Set(statesByPath.compactMap { path, state in !state.root.isContentHashRequired ? path : nil })
-    }
-
     func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {
         for state in statesByPath.values {
             if let existingRootRowID, state.rowID == existingRootRowID {

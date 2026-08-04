@@ -20,8 +20,22 @@ solely as Instruments annotations.**
 
 - Levels: `.error`/`.fault` for failures and stalls (always persisted);
   `.notice` for operation boundaries the agent greps after a run; `.info`/
-  `.debug` for detail available during `log stream` or shortly after via
-  `log show`. Anything the agent must find hours later is `.notice` or above.
+  `.debug` for detail available only live, during `log stream`. **macOS does not
+  persist `.debug` (or, in practice, `.info`) for a subsystem without an explicit
+  logging configuration profile** — confirmed 2026-08-03 by capturing a live
+  session and finding zero `.debug` messages retrievable via
+  `log show --info --debug`, even though `log show` requests both levels. A
+  signal named in `docs/requirements.md` as a diagnostic contract — anything the
+  agent must be able to find in a capture taken after the fact — is therefore
+  emitted at `.notice` or above; `.debug` is only for chatter the agent accepts
+  losing (per-frame/per-asset volume) and is willing to read solely via a live
+  `log stream` session.
+- Structured `op=`/`phase=` boundary lines go exclusively through
+  `Logger.noticeOperation`/`errorOperation`/`debugOperation`
+  (`Otos/Support/Instrumentation.swift`) — never a hand-rolled
+  `.debug("op=…")`/`.info("op=…")` string. A SwiftLint custom rule
+  (`structured_log_via_helper`) makes the accidental form a build error, so the
+  log level of a structured line is always a deliberate choice.
 - Everything is `privacy: .public` — the agent must read paths and scalars;
   this is an unsandboxed local tool on the user's machine.
 - Structured convention: messages start with a stable `op=` token, then
@@ -58,5 +72,6 @@ consumes them; use a log line instead.
 - Session correlation: `op=sessionStart session=… kind=…` once at launch.
 - Store query paths emit `waitMs` (pool acquisition) and `execMs` separately so
   GRDB reader-pool contention is measurable without Instruments; tile-detail
-  always logs those fields at `.debug`, and slow queries (`queryMs > 50`) also
-  at `.notice`. See `docs/research/2026-07-10-grdb-reader-pool-qos.md`.
+  logs those fields at `.debug` (live-stream only, not durable — see above), and
+  slow queries (`queryMs > 50`) also at `.notice` (durable). See
+  `docs/research/2026-07-10-grdb-reader-pool-qos.md`.

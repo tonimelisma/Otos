@@ -167,10 +167,6 @@ actor EnrichmentCoordinator {
     var materializationClaimIDs: Set<MediaAssetID> = []
     var pendingApplyClaimIDs: Set<MediaAssetID> = []
     var deviceRootPaths: Set<LibraryRootPath> = []
-    /// Roots whose enrichment never produces a content hash (ADR 0018/plan 0062).
-    /// Refreshed from Store at the start of each claim cycle, the same lightweight
-    /// pattern as `deviceRootPaths`.
-    var removableRootPaths: Set<LibraryRootPath> = []
     var nextClaimSequence: UInt64 = 0
     var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []

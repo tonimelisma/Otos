@@ -43,6 +43,12 @@ actor CatalogProjection {
     private(set) var orderQueryCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
 
+    /// True when no change is pending and no publication is in flight. Lets a test
+    /// poll for settlement instead of guessing a sleep duration (plan 0065 Stage 4).
+    var isQuiescent: Bool {
+        !dirty && !publishing
+    }
+
     init(
         cadence: Duration = .seconds(1),
         stateBuilder: WindowStateBuilder? = nil
@@ -295,7 +301,8 @@ private extension CatalogProjection {
             projectionMs: publication.timing.projectionMs,
             totalMs: publication.timing.totalMs,
             dirtyAfter: dirty,
-            stateChanged: stateChanged
+            stateChanged: stateChanged,
+            orderQueryCount: orderQueryCount
         ).emit()
 
         if stateChanged {

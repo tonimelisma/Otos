@@ -100,6 +100,11 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
     let totalMs: Int
     let dirtyAfter: Bool
     let stateChanged: Bool
+    /// Cumulative full ordered-asset queries this session (plan 0064 Stage 3's
+    /// regression metric, plan 0065 Stage 4 — the field-evidence gap this closes is
+    /// that answering "how many full re-sorts did N enrichment batches cause?"
+    /// previously required a test, not a capture).
+    let orderQueryCount: UInt64
 
     func emit() async {
         OtosLog.ui.noticeOperation(
@@ -130,6 +135,7 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
                 "totalMs": "\(totalMs)",
                 "dirtyAfterPublication": "\(dirtyAfter)",
                 "stateChanged": "\(stateChanged)",
+                "orderQueryCount": "\(orderQueryCount)",
             ]
         )
     }

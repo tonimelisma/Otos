@@ -20,7 +20,7 @@ struct CatalogStoreEnrichmentClaimTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
 
         let firstClaim = try await store.enrichmentCandidates(prioritizing: [], limit: 1)
-        #expect(firstClaim.map(\.relativePath) == [rel])
+        #expect(firstClaim.map(\.asset.relativePath) == [rel])
         let blockedByLease = try await store.enrichmentCandidates(prioritizing: [], limit: 1)
         #expect(blockedByLease.isEmpty)
         #expect(try await enrichmentClaimedRowCount(databaseURL: databaseURL) == 1)
@@ -53,14 +53,14 @@ struct CatalogStoreEnrichmentClaimTests {
         let visibleThirdID = try #require(idsByName["visible-third.jpg"])
 
         let firstClaim = try await store.enrichmentCandidates(prioritizing: [claimedID], limit: 1)
-        #expect(firstClaim.map(\.relativePath.rawValue) == ["claimed.jpg"])
+        #expect(firstClaim.map(\.asset.relativePath.rawValue) == ["claimed.jpg"])
 
         let visibleClaims = try await store.enrichmentCandidates(
             prioritizing: [claimedID, visibleSecondID, visibleThirdID],
             limit: 2
         )
 
-        #expect(visibleClaims.map(\.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
+        #expect(visibleClaims.map(\.asset.relativePath.rawValue) == ["visible-second.jpg", "visible-third.jpg"])
     }
 
     @Test func fallbackEnrichmentClaimsUseNewestBestDateOrder() async throws {
@@ -81,7 +81,7 @@ struct CatalogStoreEnrichmentClaimTests {
 
         let claims = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
 
-        #expect(claims.map(\.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
+        #expect(claims.map(\.asset.relativePath.rawValue) == ["newest.jpg", "middle.jpg", "old.jpg"])
     }
 
     @Test func fallbackEnrichmentClaimsRemovableSourcesBeforeFixedLibraries() async throws {
@@ -128,7 +128,7 @@ struct CatalogStoreEnrichmentClaimTests {
 
         let claims = try await store.enrichmentCandidates(prioritizing: [], limit: 2)
 
-        #expect(claims.map(\.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
+        #expect(claims.map(\.asset.relativePath.rawValue) == ["card-old.jpg", "fixed-new.jpg"])
     }
 }
 

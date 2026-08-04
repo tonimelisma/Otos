@@ -317,6 +317,86 @@ struct CatalogStoreEnrichmentTests {
         #expect(persisted.needsEnrichment(hashRequired: true))
     }
 
+    /// Plan 0065 Stage 2a: `structureChanged` must compare the STORED generated columns
+    /// before vs after the write, not a Swift-side prediction of what the write will
+    /// produce. Fixture: the asset scans with `created_at_unix = 500`; a first
+    /// enrichment sets `ts_original_unix = 700`, so `best_capture_unix` becomes 700. A
+    /// second enrichment result with every timestamp fact nil clears `ts_original_unix`
+    /// back to NULL (plain-assignment write, not COALESCE-preserved — see
+    /// `writeEnrichmentOverlay`), so SQLite's generated column falls back to
+    /// `created_at_unix = 500` — an effective order change that must be reported as
+    /// `.catalogChanged`, not coalesced away as `.assetsDetailChanged`.
+    ///
+    /// Verified against the pre-refactor Swift recompute (`git stash` of the Stage 2a
+    /// diff, then re-run): it also passes this exact scenario, because its own fallback
+    /// chain (`oldRow.createdAtUnix`) happens to term-for-term match the generated
+    /// column's COALESCE today — consistent with the plan's own finding that "the
+    /// chains agree today." This is therefore a characterization test locking in
+    /// correct stored-value comparison, not a caught live bug; the value of asking the
+    /// database instead of predicting is that a *future* migration adding a new
+    /// `best_capture_unix` source cannot silently desync a Swift twin that no longer
+    /// exists.
+    @Test func timestampClearingStructuralChangeIsCatalogChanged() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let rel = MediaRelativePath(rawValue: "a.jpg")
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: rel)
+
+        let mtime = MutableSeconds(1000)
+        let store = CatalogStore(location: .inMemory, scanner: singleFileScanner(rel, mtime: mtime))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        // First enrichment: ts_original = 700 (T1), moving best_capture off created_at (500, T0).
+        await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: id,
+                metadata: AssetMetadata(),
+                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
+                thumbnailPath: nil,
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
+            ),
+        ])
+        let afterFirst = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
+        #expect(afterFirst.bestCaptureDate == Date(timeIntervalSince1970: 700))
+
+        // Subscribe synchronously (the `await` only returns once the continuation is
+        // registered on the Store actor) before firing the write that must be
+        // observed, rather than racing a spawned Task's own subscription against it.
+        let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let changeStream = await store.changeNotifications()
+        let changeTask = Task {
+            for await change in changeStream {
+                await changes.append(change)
+            }
+        }
+        defer { changeTask.cancel() }
+
+        // Second enrichment: every timestamp fact nil. Clears ts_original_unix, so
+        // best_capture_unix moves T1 (700) -> T0 (500, created_at_unix) — structural.
+        await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: id,
+                metadata: AssetMetadata(),
+                thumbnailPath: nil,
+                sourceSize: 100,
+                sourceMTimeSeconds: 1000,
+                contentHash: .empty
+            ),
+        ])
+
+        try await withTestTimeout("structural change from cleared timestamp") {
+            _ = await changes.waitForValues { $0.last == .catalogChanged }
+        }
+        let afterSecond = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
+        #expect(afterSecond.bestCaptureDate == Date(timeIntervalSince1970: 500))
+    }
+
     @Test func provenDeletionPurgesThumbnailFile() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)

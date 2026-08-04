@@ -296,6 +296,24 @@ Adjacent decisions requiring separate ADRs or specs:
     enrichment repeats the same live gate immediately before hash, metadata, and
     thumbnail byte phases. Readiness is never persisted as catalog truth.
 
+11. **The enrichment claim queries pin their partial index with `INDEXED BY`, and
+    this is deliberate, measured policy, not an unexamined default.** Both claim
+    queries (`EnrichmentLeaseGateway.rootEnrichmentClaimQuery`/
+    `globalEnrichmentClaimQuery`) name their partial index explicitly rather than
+    letting the planner choose freely. Measured 2026-08-03 against a read-only copy
+    of the live catalog (28,392 assets, plan 0065 Stage 1): for the single-root
+    claim query, the planner already chooses the matching partial index
+    unprompted — `INDEXED BY` changes nothing there. For the **global** (multi-root)
+    claim query, removing the hint made the planner instead choose the primary-key
+    autoindex plus a temporary B-tree sort, measured at **0.337 s** versus **0.005 s**
+    with the hint for the same query against 3 roots (~27,000 combined assets) —
+    roughly 68× slower. `INDEXED BY` converts that planner *preference* into a hard
+    *build-time* dependency (a mismatched predicate fails to prepare rather than
+    silently degrading), which is exactly why plan 0065 Stage 1 froze the v12/v13
+    migration bodies that create these indexes: the hint's safety only holds if the
+    index text a shipped catalog actually has is provably implied by the predicate
+    the query builds today.
+
 ## Alternatives Considered
 
 ### Video duration left only in `asset_metadata`

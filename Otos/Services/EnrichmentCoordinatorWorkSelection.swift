@@ -17,7 +17,6 @@ extension EnrichmentCoordinator {
         guard availableSlots > 0 else {
             return []
         }
-        removableRootPaths = await store.removableVolumeRootPaths()
 
         var items = drainQueuedEnrichment(limit: availableSlots)
         guard items.count < availableSlots else {
@@ -51,7 +50,8 @@ extension EnrichmentCoordinator {
                     await releaseDeferredLedgerClaims(claimed.deferredIDs)
                 }
                 var releasedIDs: [MediaAssetID] = []
-                for asset in claimed.ready {
+                for candidate in claimed.ready {
+                    let asset = candidate.asset
                     if let retryAt = readinessRetryNotBefore[asset.id], retryAt > Date() {
                         releasedIDs.append(asset.id)
                         continue
@@ -59,7 +59,7 @@ extension EnrichmentCoordinator {
                     readinessRetryNotBefore[asset.id] = nil
                     switch readinessChecker.status(of: asset.id.fileURL) {
                     case .materialized:
-                        enqueueReadyCandidate(asset)
+                        enqueueReadyCandidate(candidate)
                         readinessCounts["ready", default: 0] += 1
                     case .dataless:
                         guard materializationDemands.count < handoffPolicy.globalOutstandingLimit else {
@@ -144,8 +144,8 @@ extension EnrichmentCoordinator {
     private func claimSkippingLedgerDeferrals(
         prioritizing priorityIDs: [MediaAssetID],
         limit: Int
-    ) async throws -> (ready: [MediaAsset], deferredIDs: [MediaAssetID], totalExamined: Int) {
-        var ready: [MediaAsset] = []
+    ) async throws -> (ready: [ClaimedEnrichmentCandidate], deferredIDs: [MediaAssetID], totalExamined: Int) {
+        var ready: [ClaimedEnrichmentCandidate] = []
         var deferredIDs: [MediaAssetID] = []
         var totalExamined = 0
         for _ in 0 ..< Self.maxLedgerSkipPasses {
@@ -170,24 +170,25 @@ extension EnrichmentCoordinator {
     /// source signature (ENR-007) changed since the ledger entry was recorded,
     /// which resets pacing immediately.
     private func partitionByRetryLedger(
-        _ candidates: [MediaAsset]
-    ) -> (ready: [MediaAsset], deferred: [MediaAssetID]) {
+        _ candidates: [ClaimedEnrichmentCandidate]
+    ) -> (ready: [ClaimedEnrichmentCandidate], deferred: [MediaAssetID]) {
         guard !retryLedger.isEmpty else {
             return (candidates, [])
         }
-        var ready: [MediaAsset] = []
+        var ready: [ClaimedEnrichmentCandidate] = []
         var deferred: [MediaAssetID] = []
         let now = Date()
-        for asset in candidates {
+        for candidate in candidates {
+            let asset = candidate.asset
             guard let entry = retryLedger[asset.id] else {
-                ready.append(asset)
+                ready.append(candidate)
                 continue
             }
             if entry.sourceSize != asset.byteSize {
                 retryLedger[asset.id] = nil
-                ready.append(asset)
+                ready.append(candidate)
             } else if entry.notBefore <= now {
-                ready.append(asset)
+                ready.append(candidate)
             } else {
                 deferred.append(asset.id)
             }
@@ -345,10 +346,10 @@ extension EnrichmentCoordinator {
     private func claimEnrichmentCandidates(
         prioritizing priorityIDs: [MediaAssetID],
         limit: Int
-    ) async throws -> [MediaAsset] {
+    ) async throws -> [ClaimedEnrichmentCandidate] {
         let candidates = try await store.enrichmentCandidates(prioritizing: priorityIDs, limit: limit)
-        for asset in candidates {
-            await recordClaimedCandidate(asset)
+        for candidate in candidates {
+            await recordClaimedCandidate(candidate.asset)
         }
         return candidates
     }
@@ -364,11 +365,11 @@ extension EnrichmentCoordinator {
         )
     }
 
-    private func enqueueReadyCandidate(_ asset: MediaAsset) {
-        if readyClaims[asset.id] == nil {
+    private func enqueueReadyCandidate(_ candidate: ClaimedEnrichmentCandidate) {
+        if readyClaims[candidate.asset.id] == nil {
             nextClaimSequence &+= 1
-            readyClaims[asset.id] = ClaimedWorkRecord(
-                state: .queuedEnrichment(makeWork(asset)),
+            readyClaims[candidate.asset.id] = ClaimedWorkRecord(
+                state: .queuedEnrichment(makeWork(candidate)),
                 sequence: nextClaimSequence,
                 ownsStoreClaim: true
             )
@@ -478,8 +479,9 @@ extension EnrichmentCoordinator {
         }
     }
 
-    private func makeWork(_ asset: MediaAsset) -> EnrichWork {
-        EnrichWork(
+    private func makeWork(_ candidate: ClaimedEnrichmentCandidate) -> EnrichWork {
+        let asset = candidate.asset
+        return EnrichWork(
             id: asset.id,
             url: asset.id.fileURL,
             sourceSize: asset.byteSize,
@@ -487,7 +489,7 @@ extension EnrichmentCoordinator {
             isVideo: asset.bestKind == .video,
             captureDate: asset.bestCaptureDate,
             isDeviceStaging: deviceRootPaths.contains(asset.id.libraryRootPath),
-            shouldHash: !removableRootPaths.contains(asset.id.libraryRootPath)
+            shouldHash: candidate.hashRequired
         )
     }
 
@@ -503,15 +505,20 @@ extension EnrichmentCoordinator {
         let materializationInFlightCount = materializingIDs.count
         let materializationPendingCount = materializationDemands.count - materializationInFlightCount
         let pendingApplyCount = pendingApply.count
-        OtosLog.metadata.debug(
-            """
-            op=catalog.enrichment.scheduler phase=route claimed=\(claimedCount, privacy: .public) \
-            readyQueued=\(queuedCount, privacy: .public) enriching=\(activeEnrichingCount, privacy: .public) \
-            materializationPending=\(max(materializationPendingCount, 0), privacy: .public) \
-            materializationInFlight=\(materializationInFlightCount, privacy: .public) \
-            pendingApply=\(pendingApplyCount, privacy: .public) dispatched=\(dispatchedCount, privacy: .public) \
-            limit=\(limit, privacy: .public) deferred=\(deferredCount, privacy: .public)
-            """
+        OtosLog.metadata.noticeOperation(
+            "catalog.enrichment.scheduler",
+            phase: "route",
+            fields: [
+                "claimed": "\(claimedCount)",
+                "readyQueued": "\(queuedCount)",
+                "enriching": "\(activeEnrichingCount)",
+                "materializationPending": "\(max(materializationPendingCount, 0))",
+                "materializationInFlight": "\(materializationInFlightCount)",
+                "pendingApply": "\(pendingApplyCount)",
+                "dispatched": "\(dispatchedCount)",
+                "limit": "\(limit)",
+                "deferred": "\(deferredCount)",
+            ]
         )
     }
 

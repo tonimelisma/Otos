@@ -44,4 +44,11 @@ opt_in_rules:
 disabled_rules:
   - trailing_comma
 
+custom_rules:
+  structured_log_via_helper:
+    name: "Structured op= log must use an Operation helper"
+    regex: '\.(debug|info)\(\s*(//[^\n]*\n\s*)?"{1,3}\s*op='
+    message: "Emit op=/phase= lines through noticeOperation/errorOperation/debugOperation, never a hand-rolled .debug(\"op=…\") string — level then becomes a deliberate choice instead of an accident."
+    severity: error
+
 reporter: xcode

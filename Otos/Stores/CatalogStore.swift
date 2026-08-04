@@ -12,6 +12,17 @@ nonisolated enum CatalogStoreChange: Equatable {
     case libraryRemoved(LibraryRootPath)
 }
 
+/// An asset the Store has claimed for enrichment, together with the claim-time
+/// `hashRequired` fact — decided once, by the owner of root kind, at the moment the row
+/// is claimed under a specific partial-index predicate (ADR 0018/plan 0062). Carried
+/// rather than re-derived downstream: a later re-derivation reads root kind from a
+/// possibly-staler cache and can disagree with the predicate the row was actually
+/// claimed under (plan 0065 Stage 2b).
+nonisolated struct ClaimedEnrichmentCandidate: Sendable {
+    let asset: MediaAsset
+    let hashRequired: Bool
+}
+
 /// Catalog Store guide
 ///
 /// This actor is the only runtime owner of catalog truth. SQLite provides durable
@@ -143,30 +154,22 @@ actor CatalogStore {
         }
     }
 
-    /// Ordering/scope-relevant columns as they were before an enrichment overwrite, so
-    /// the batch can tell a detail-only apply from one that actually changes the
-    /// effective `best_capture`/`best_kind`/`best_format` (plan 0064 Stage 3). The scan
-    /// facts (`created_at_unix`, `content_modified_at_unix`, `kind`, `format`) are held
-    /// so the post-write effective values can be computed with the same COALESCE the
-    /// generated columns use.
+    /// Ordering/scope-relevant STORED generated columns, read either before or after an
+    /// enrichment overwrite, so the batch can tell a detail-only apply from one that
+    /// actually changes the effective `best_capture`/`best_kind`/`best_format` (plan
+    /// 0064 Stage 3) by comparing what SQLite actually stored, not a Swift guess at what
+    /// it would store (plan 0065 Stage 2a — the guess had no fallback path matching the
+    /// generated column's own COALESCE chain and could silently disagree with it).
     private struct EnrichmentOverlayBeforeWrite {
         let bestCaptureUnix: Double?
         let bestKind: String?
         let bestFormat: String?
-        let createdAtUnix: Double?
-        let contentModifiedAtUnix: Double?
-        let kind: String?
-        let format: String?
         let thumbnailPath: String?
 
         init(row: Row) {
             bestCaptureUnix = row["best_capture_unix"]
             bestKind = row["best_kind"]
             bestFormat = row["best_format"]
-            createdAtUnix = row["created_at_unix"]
-            contentModifiedAtUnix = row["content_modified_at_unix"]
-            kind = row["kind"]
-            format = row["format"]
             thumbnailPath = row["thumbnail_path"]
         }
     }
@@ -359,9 +362,14 @@ extension CatalogStore {
         var dirty = filesystemDirty[root] ?? FilesystemDirtyAccumulator()
         dirty.insert(scope, fileAction: fileAction)
         filesystemDirty[root] = dirty
-        OtosLog.catalog.debug(
-            // swiftlint:disable:next line_length
-            "op=catalog.namespaceMutation phase=record rootPath=\(root.rawValue, privacy: .public) epoch=\(state.namespaceMutationEpoch, privacy: .public) scope=\(String(describing: scope), privacy: .public)"
+        OtosLog.catalog.debugOperation(
+            "catalog.namespaceMutation",
+            phase: "record",
+            fields: [
+                "rootPath": root.rawValue,
+                "epoch": "\(state.namespaceMutationEpoch)",
+                "scope": String(describing: scope),
+            ]
         )
     }
 
@@ -770,12 +778,16 @@ extension CatalogStore {
         }
 
         let queryMs = timedDetails.totalMs
-        OtosLog.catalog.debug(
-            """
-            op=catalog.store.query.tileDetail phase=finish requested=\(ids.count, privacy: .public) \
-            returned=\(detailsByID.count, privacy: .public) waitMs=\(timedDetails.waitMs, privacy: .public) \
-            execMs=\(timedDetails.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
-            """
+        OtosLog.catalog.debugOperation(
+            "catalog.store.query.tileDetail",
+            phase: "finish",
+            fields: [
+                "requested": "\(ids.count)",
+                "returned": "\(detailsByID.count)",
+                "waitMs": "\(timedDetails.waitMs)",
+                "execMs": "\(timedDetails.execMs)",
+                "queryMs": "\(queryMs)",
+            ]
         )
         if queryMs > Self.slowQueryDiagnosticThresholdMs {
             await recordSlowTileDetailQuery(
@@ -838,18 +850,10 @@ extension CatalogStore {
         return timedMetadata.value
     }
 
-    /// Roots whose enrichment never produces a content hash (ADR 0018/plan 0062).
-    /// `EnrichmentCoordinator` refreshes its local `removableRootPaths` cache from
-    /// this at the start of each claim cycle, the same pattern `deviceRootPaths`
-    /// uses — an in-memory `RootRegistry` read, not a database query.
-    func removableVolumeRootPaths() -> Set<LibraryRootPath> {
-        roots.removableVolumeRootPaths
-    }
-
     func enrichmentCandidates(
         prioritizing priorityIDs: [MediaAssetID],
         limit: Int
-    ) async throws -> [MediaAsset] {
+    ) async throws -> [ClaimedEnrichmentCandidate] {
         guard limit > 0 else {
             return []
         }
@@ -860,7 +864,7 @@ extension CatalogStore {
             OtosSignpost.persistence.endInterval("CatalogStoreEnrichmentCandidateQuery", signpost)
         }
 
-        var candidates: [MediaAsset] = []
+        var candidates: [ClaimedEnrichmentCandidate] = []
         candidates.reserveCapacity(limit)
         var claimedIDs = Set<MediaAssetID>()
         let uniquePriorityIDs = EnrichmentLeaseGateway.unclaimedPriorityIDs(priorityIDs, claimedIDs: &claimedIDs)
@@ -875,8 +879,8 @@ extension CatalogStore {
             candidates.append(contentsOf: priorityClaims.value)
             waitMs += priorityClaims.waitMs
             execMs += priorityClaims.execMs
-            for asset in candidates {
-                claimedIDs.insert(asset.id)
+            for candidate in candidates {
+                claimedIDs.insert(candidate.asset.id)
             }
         }
 
@@ -885,9 +889,11 @@ extension CatalogStore {
             let queriedClaims = try await claimedEnrichmentCandidates(limit: remaining)
             waitMs += queriedClaims.waitMs
             execMs += queriedClaims.execMs
-            for asset in queriedClaims.value where candidates.count < limit && !claimedIDs.contains(asset.id) {
-                claimedIDs.insert(asset.id)
-                candidates.append(asset)
+            for candidate in queriedClaims.value
+                where candidates.count < limit && !claimedIDs.contains(candidate.asset.id)
+            {
+                claimedIDs.insert(candidate.asset.id)
+                candidates.append(candidate)
             }
         }
 
@@ -960,7 +966,7 @@ extension CatalogStore {
     private func priorityEnrichmentCandidates(
         ids: [MediaAssetID],
         limit: Int
-    ) async throws -> DatabaseTimedValue<[MediaAsset]> {
+    ) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let priorityAssetsByID = try await mediaAssets(for: ids)
         let rootIDsByPathBeforeWrite = roots.rowIDSnapshot()
         let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
@@ -976,7 +982,7 @@ extension CatalogStore {
             return DatabaseTimedValue(value: [], waitMs: 0, execMs: 0)
         }
         let timedClaim = try await timedWrite(dbWriter) { db in
-            var candidates: [MediaAsset] = []
+            var candidates: [ClaimedEnrichmentCandidate] = []
             candidates.reserveCapacity(min(limit, eligibleClaims.count))
             for (asset, rootID, hashRequired) in eligibleClaims {
                 guard candidates.count < limit else {
@@ -991,7 +997,7 @@ extension CatalogStore {
                 ) else {
                     continue
                 }
-                candidates.append(asset)
+                candidates.append(ClaimedEnrichmentCandidate(asset: asset, hashRequired: hashRequired))
             }
             return candidates
         }
@@ -1009,7 +1015,7 @@ extension CatalogStore {
     private func recordSlowPriorityEnrichmentClaim(
         priorityCount: Int,
         eligibleCount: Int,
-        result: DatabaseTimedValue<[MediaAsset]>
+        result: DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     ) async {
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -1017,13 +1023,13 @@ extension CatalogStore {
         )
     }
 
-    private func claimedEnrichmentCandidates(limit: Int) async throws -> DatabaseTimedValue<[MediaAsset]> {
+    private func claimedEnrichmentCandidates(limit: Int) async throws -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]> {
         let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
         let prioritizedRootIDs = availableRootIDsByRemovablePriority()
         let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.availableRootIDsByHashRequirement()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
-            var storedAssets: [StoredAsset] = []
+            var storedAssets: [(asset: StoredAsset, hashRequired: Bool)] = []
             // The fallback spans roots of mixed kinds (ADR 0018): `.removableVolume`
             // is claimed with the metadata-only predicate and index, every other kind
             // with the broad predicate. `INDEXED BY` forbids one statement across both,
@@ -1048,18 +1054,26 @@ extension CatalogStore {
                     hashRequired: group.hashRequired,
                     db: db
                 )
-                storedAssets.append(contentsOf: claimed)
+                storedAssets.append(contentsOf: claimed.map { (asset: $0, hashRequired: group.hashRequired) })
             }
             return storedAssets
         }
-        let candidates: [MediaAsset] = timedStoredAssets.value.compactMap { storedAsset -> MediaAsset? in
-            guard let rootPath = roots.pathsByRowID[storedAsset.libraryRootID],
-                  roots[rootPath]?.rowID == storedAsset.libraryRootID,
+        // `hashRequired` here is the claim predicate the row was just claimed under
+        // (carried from the `claimGroups` entry above), not re-derived from current
+        // root kind — plan 0065 Stage 2b. A root's kind cannot change between the claim
+        // above and this mapping since both run inside the same actor-isolated call, but
+        // carrying the value keeps one owner rather than inviting a second opinion later.
+        let candidates: [ClaimedEnrichmentCandidate] = timedStoredAssets.value.compactMap { entry in
+            guard let rootPath = roots.pathsByRowID[entry.asset.libraryRootID],
+                  roots[rootPath]?.rowID == entry.asset.libraryRootID,
                   roots[rootPath]?.availability == .available
             else {
                 return nil
             }
-            return mediaAsset(from: storedAsset, rootPath: rootPath)
+            return ClaimedEnrichmentCandidate(
+                asset: mediaAsset(from: entry.asset, rootPath: rootPath),
+                hashRequired: entry.hashRequired
+            )
         }
         let result = DatabaseTimedValue(
             value: candidates,
@@ -1081,7 +1095,7 @@ extension CatalogStore {
         limit: Int,
         removableRootCount: Int,
         fixedRootCount: Int,
-        result: DatabaseTimedValue<[MediaAsset]>
+        result: DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     ) async {
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
@@ -1333,37 +1347,37 @@ extension CatalogStore {
                 return
             }
         }
+        let overlayColumnsSQL = """
+        SELECT best_capture_unix, best_kind, best_format, thumbnail_path
+        FROM media_asset
+        WHERE library_root_id = ? AND relative_path = ?
+        """
+        let overlayColumnsArguments: StatementArguments = [rootID, result.id.relativePath.rawValue]
         let oldRow: EnrichmentOverlayBeforeWrite? = try Row.fetchOne(
             db,
-            sql: """
-            SELECT best_capture_unix, best_kind, best_format,
-                   created_at_unix, content_modified_at_unix, kind, format, thumbnail_path
-            FROM media_asset
-            WHERE library_root_id = ? AND relative_path = ?
-            """,
-            arguments: [rootID, result.id.relativePath.rawValue]
+            sql: overlayColumnsSQL,
+            arguments: overlayColumnsArguments
         ).map(EnrichmentOverlayBeforeWrite.init(row:))
-        // Recompute the effective generated values the write will produce, then compare
-        // with what is stored: a batch that leaves `best_capture`/`best_kind`/
-        // `best_format` unchanged (e.g. a first enrichment whose capture date equals the
-        // filesystem date, or a no-op re-enrichment) is detail-only — the projection can
-        // skip the full re-sort. Only an effective order/scope change is structural.
-        let newBestCapture = result.timestampFacts.original?.timeIntervalSince1970
-            ?? result.timestampFacts.quickTimeCreation?.timeIntervalSince1970
-            ?? result.timestampFacts.digitized?.timeIntervalSince1970
-            ?? result.timestampFacts.gps?.timeIntervalSince1970
-            ?? oldRow?.createdAtUnix
-            ?? oldRow?.contentModifiedAtUnix
-        let newBestKind = result.enrichedKind?.rawValue ?? oldRow?.kind
-        let newBestFormat = result.enrichedFormat?.rawValue ?? oldRow?.format
-        if let old = oldRow,
-           old.bestCaptureUnix != newBestCapture
-           || old.bestKind != newBestKind
-           || old.bestFormat != newBestFormat
+        try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
+        // Ask SQLite what it actually stored for the STORED generated columns rather
+        // than predicting it: the COALESCE chain lives once, in the schema
+        // (CatalogStorePersistence.swift), and a batch that leaves `best_capture`/
+        // `best_kind`/`best_format` unchanged (e.g. a first enrichment whose capture
+        // date equals the filesystem date, or a no-op re-enrichment) is detail-only —
+        // the projection can skip the full re-sort. Only an effective order/scope
+        // change is structural.
+        let newRow: EnrichmentOverlayBeforeWrite? = try Row.fetchOne(
+            db,
+            sql: overlayColumnsSQL,
+            arguments: overlayColumnsArguments
+        ).map(EnrichmentOverlayBeforeWrite.init(row:))
+        if let old = oldRow, let newRow,
+           old.bestCaptureUnix != newRow.bestCaptureUnix
+           || old.bestKind != newRow.bestKind
+           || old.bestFormat != newRow.bestFormat
         {
             outcome.structureChanged = true
         }
-        try writeEnrichmentOverlay(result, libraryRootID: rootID, db: db)
         outcome.replaceThumbnail(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
         outcome.appliedCount += 1
     }
@@ -2815,9 +2829,14 @@ private extension CatalogStore {
         // side can now be attributed to "no events emitted" vs "events not received"
         // by matching this line against the coordinator's receive/refresh lines.
         let listenerCount = planningChangeContinuations.count
-        OtosLog.catalog.debug(
-            // swiftlint:disable:next line_length
-            "op=catalog.planningChange phase=emit rootPath=\(rootPath.rawValue, privacy: .public) occupancyRevision=\(occupancyRevision, privacy: .public) listeners=\(listenerCount, privacy: .public)"
+        OtosLog.catalog.noticeOperation(
+            "catalog.planningChange",
+            phase: "emit",
+            fields: [
+                "rootPath": rootPath.rawValue,
+                "occupancyRevision": "\(occupancyRevision)",
+                "listeners": "\(listenerCount)",
+            ]
         )
         for continuation in planningChangeContinuations.values {
             continuation.yield(change)

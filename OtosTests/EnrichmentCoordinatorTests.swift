@@ -118,8 +118,8 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
         let reclaimed = try await store.enrichmentCandidates(prioritizing: [], limit: 3)
 
-        #expect(Set(reclaimed.map(\.relativePath.rawValue)) == Set(relativeNames))
-        try await store.releaseEnrichmentClaims(reclaimed.map(\.id))
+        #expect(Set(reclaimed.map(\.asset.relativePath.rawValue)) == Set(relativeNames))
+        try await store.releaseEnrichmentClaims(reclaimed.map(\.asset.id))
     }
 
     @Test func visibleThumbnailLifecycleEnrichesViewportPriorityAssets() async throws {
@@ -675,6 +675,104 @@ struct EnrichmentCoordinatorTests {
         previewTask.cancel()
         _ = await previewTask.value
         await materializer.shutdown()
+    }
+
+    /// Plan 0065 Stage 2b: `EnrichWork.shouldHash` must be the value Store's claim
+    /// predicate decided (`ClaimedEnrichmentCandidate.hashRequired`), not a value the
+    /// coordinator re-derives from its own notion of root kind. Before this fix, the
+    /// coordinator refreshed a `removableRootPaths` cache once per dequeue cycle and
+    /// re-derived `shouldHash` from it at dispatch time — two independent owners of the
+    /// same fact that could disagree if a root's kind changed between them. That cache
+    /// no longer exists: this test claims one asset from a `.library` root (hash
+    /// required) and one from a `.removableVolume` root (hash not required) in the same
+    /// coordinator, and confirms each dispatched `EnrichWork.shouldHash` matches its own
+    /// claim rather than a single shared coordinator-wide value.
+    @Test func dispatchedWorkCarriesClaimTimeHashRequiredPerRoot() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let removableRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: removableRoot, withIntermediateDirectories: true)
+        let removableRawPath = try CatalogPath.normalizedDirectoryPath(for: removableRoot).rawValue
+        let scanner = CatalogScanner { rootPath, _, batchHandler in
+            let name = rootPath.rawValue == removableRawPath ? "card.jpg" : "fixed.jpg"
+            let file = ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: name),
+                name: name,
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 100,
+                createdAt: Date(timeIntervalSince1970: 1000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            )
+            try await batchHandler([file])
+            return .mediaOnly([file.relativePath])
+        }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+        try await store.attachRemovableVolume(
+            mountURL: removableRoot,
+            identity: "volume:hash-required-claim",
+            displayName: "Card",
+            isEjectable: false
+        )
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning
+                && snapshot.removableSources.first?.path.rawValue == removableRawPath
+                && snapshot.removableSources.first?.availability == .available
+        }
+
+        let recorder = ShouldHashRecorder()
+        let enricher = MediaEnricher { id, url, size, mtime, shouldHash in
+            await recorder.record(name: url.lastPathComponent, shouldHash: shouldHash)
+            return .complete(
+                EnrichmentResult(
+                    id: id,
+                    metadata: AssetMetadata(),
+                    thumbnailPath: "t.jpg",
+                    sourceSize: size,
+                    sourceMTimeSeconds: mtime,
+                    contentHash: shouldHash ? .empty : nil
+                )
+            )
+        }
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: enricher,
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            applyFlushInterval: .milliseconds(1)
+        )
+        await coordinator.start()
+
+        // Not `needsEnrichment(hashRequired: true)`: the removable asset never gets a
+        // hash by design (ADR 0018), so that check would never clear for it. Wait on
+        // the enricher-recorded outcome instead.
+        try await withTestTimeout("both roots dispatched to the enricher") {
+            _ = await recorder.waitForBoth()
+        }
+        await coordinator.shutdown()
+
+        #expect(await recorder.shouldHash(name: "fixed.jpg") == true)
+        #expect(await recorder.shouldHash(name: "card.jpg") == false)
+    }
+}
+
+private actor ShouldHashRecorder {
+    private var valuesByName: [String: Bool] = [:]
+
+    func record(name: String, shouldHash: Bool) {
+        valuesByName[name] = shouldHash
+    }
+
+    func shouldHash(name: String) -> Bool? {
+        valuesByName[name]
+    }
+
+    func waitForBoth() async {
+        while valuesByName["fixed.jpg"] == nil || valuesByName["card.jpg"] == nil {
+            try? await Task.sleep(for: .milliseconds(20))
+        }
     }
 }
 

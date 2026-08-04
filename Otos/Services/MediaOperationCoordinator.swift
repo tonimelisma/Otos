@@ -396,9 +396,13 @@ actor MediaOperationCoordinator {
     }
 
     private func handlePlanningChange(_ change: RootPlanningChange) async {
-        OtosLog.catalog.debug(
-            // swiftlint:disable:next line_length
-            "op=import.coordinator phase=receive rootPath=\(change.rootPath.rawValue, privacy: .public) occupancyRevision=\(change.occupancyRevision, privacy: .public)"
+        OtosLog.catalog.noticeOperation(
+            "import.coordinator",
+            phase: "receive",
+            fields: [
+                "rootPath": change.rootPath.rawValue,
+                "occupancyRevision": "\(change.occupancyRevision)",
+            ]
         )
         // Only a real occupancy change (media/companion inventory, import/reorg
         // settlement, foreign occupant) invalidates an import plan. A wake carrying
@@ -482,8 +486,10 @@ actor MediaOperationCoordinator {
         }
         persistDestinationMappings()
         publish()
-        OtosLog.catalog.debug(
-            "op=import.coordinator phase=refresh reason=\(reason, privacy: .public) sourceCount=\(removable.count, privacy: .public)"
+        OtosLog.catalog.noticeOperation(
+            "import.coordinator",
+            phase: "refresh",
+            fields: ["reason": reason, "sourceCount": "\(removable.count)"]
         )
     }
 

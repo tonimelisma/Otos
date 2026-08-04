@@ -688,9 +688,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         if isNotice {
             OtosLog.mediaIO.noticeOperation("materialization.request", phase: phase, fields: fields)
         } else {
-            OtosLog.mediaIO.debug(
-                "op=materialization.request phase=\(phase, privacy: .public) \(otosLogFields(fields), privacy: .public)"
-            )
+            OtosLog.mediaIO.debugOperation("materialization.request", phase: phase, fields: fields)
         }
     }
 }

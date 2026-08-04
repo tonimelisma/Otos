@@ -107,7 +107,7 @@ struct ProjectionEnrichmentCoalescingTests {
         _ = try await recorder.waitForValues {
             $0.last?.resolvedSidebarSelection == .library(rootPath)
         }
-        try await Task.sleep(for: .milliseconds(150))
+        try await waitForProjectionQuiescence(projection)
         let baselineOrderQueries = await projection.orderQueryCount
         let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
         let assetsByID = try await store.mediaAssets(for: ids)
@@ -121,7 +121,7 @@ struct ProjectionEnrichmentCoalescingTests {
             let end = min(batchStart + 2, detailResults.count)
             _ = try await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
         }
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitForProjectionQuiescence(projection)
 
         let afterDetailOrderQueries = await projection.orderQueryCount
         #expect(

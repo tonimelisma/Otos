@@ -248,6 +248,11 @@ for confirmation before relying on them.
   belong to the completed increment and already merged or patch-equivalent to main.
 - Use PRs for review; direct commits to `main` are not the normal path. Apply the
   same review bar to your own self-review before opening a PR.
+- A red `main` blocks merge of anything except the fix that greens it. A PR that
+  observes a red baseline opens that fix first — merging alongside a known-red
+  `main` is exactly when a real regression hides (plan 0065: two PRs landed against
+  a `main` red from five pre-existing failures; the next PR restored green a day
+  later, and nothing had verified the intervening PRs against a working baseline).
 - Before opening a PR, scan the last five PRs (merged or open, human or bot) for
   unresolved review comments. Claim each on the thread, land in-scope fixes through
   the normal path, and reply with how/where it was fixed (or why it is not

@@ -196,24 +196,79 @@ extension CatalogStore {
         migrator.registerMigration("v11_import_destination_provenance") { db in
             try addImportProvenanceColumns(db)
         }
+        // FROZEN 2026-08. This is the SQL that shipped; it is a historical record of
+        // what existing catalogs contain, not a description of current behaviour.
+        // Never regenerate it from EnrichmentLeaseGateway, and never "fix" it to match
+        // a newer predicate — doing so rewrites history for fresh installs only and
+        // silently diverges them from every catalog already migrated through v12 in
+        // the field. A new predicate needs a NEW migration. Text extracted verbatim
+        // from `SELECT sql FROM sqlite_master` on a live migrated catalog (plan 0065
+        // Stage 1) — do not hand-edit whitespace or clause order.
         migrator.registerMigration("v12_xxh3_content_hashes") { db in
             try addContentHashColumns(db)
             try db.drop(index: "idx_media_asset_needs_enrichment_global")
             try db.drop(index: "idx_media_asset_needs_enrichment_root")
-            try createEnrichmentClaimIndexes(db, includeContentHash: true)
+            try db.execute(sql: """
+            CREATE INDEX idx_media_asset_needs_enrichment_global
+            ON media_asset(best_capture_unix DESC, library_root_id, relative_path)
+            WHERE enriched_source_size IS NULL
+               OR enriched_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+               OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                  <> COALESCE(enriched_source_mtime, -1)
+               OR content_hash_xxh3_128 IS NULL
+               OR length(content_hash_xxh3_128) <> 16
+               OR content_hash_source_size IS NULL
+               OR content_hash_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+               OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                  <> COALESCE(content_hash_source_mtime, -1)
+            """)
+            try db.execute(sql: """
+            CREATE INDEX idx_media_asset_needs_enrichment_root
+            ON media_asset(library_root_id, best_capture_unix DESC, relative_path)
+            WHERE enriched_source_size IS NULL
+               OR enriched_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+               OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                  <> COALESCE(enriched_source_mtime, -1)
+               OR content_hash_xxh3_128 IS NULL
+               OR length(content_hash_xxh3_128) <> 16
+               OR content_hash_source_size IS NULL
+               OR content_hash_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(content_hash_source_size, -1)
+               OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                  <> COALESCE(content_hash_source_mtime, -1)
+            """)
         }
         // Plan 0062: hash production is gated on root kind (ADR 0018) — a
         // `.removableVolume` asset with current metadata is fully enriched even with
         // no hash. The broad pair from v12 stays for library/deviceMTP roots; this
         // adds a metadata-only pair so a removable-root row can leave the index
         // instead of staying pinned forever on `content_hash_xxh3_128 IS NULL`.
+        //
+        // FROZEN 2026-08, same rule as v12 above: this is a historical record, never
+        // regenerated from EnrichmentLeaseGateway. Text extracted verbatim from a live
+        // migrated catalog (plan 0065 Stage 1).
         migrator.registerMigration("v13_hash_gated_enrichment_claim_indexes") { db in
-            try createEnrichmentClaimIndexes(
-                db,
-                includeContentHash: false,
-                globalIndexName: EnrichmentLeaseGateway.metadataOnlyGlobalIndexName,
-                rootIndexName: EnrichmentLeaseGateway.metadataOnlyRootIndexName
-            )
+            try db.execute(sql: """
+            CREATE INDEX idx_media_asset_needs_enrichment_global_metadata_only
+            ON media_asset(best_capture_unix DESC, library_root_id, relative_path)
+            WHERE enriched_source_size IS NULL
+               OR enriched_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+               OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                  <> COALESCE(enriched_source_mtime, -1)
+            """)
+            try db.execute(sql: """
+            CREATE INDEX idx_media_asset_needs_enrichment_root_metadata_only
+            ON media_asset(library_root_id, best_capture_unix DESC, relative_path)
+            WHERE enriched_source_size IS NULL
+               OR enriched_source_mtime IS NULL
+               OR COALESCE(byte_size, -1) <> COALESCE(enriched_source_size, -1)
+               OR CAST(COALESCE(content_modified_at_unix, -1) AS INTEGER)
+                  <> COALESCE(enriched_source_mtime, -1)
+            """)
         }
         return migrator
     }

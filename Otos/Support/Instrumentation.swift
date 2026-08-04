@@ -76,4 +76,18 @@ extension Logger {
             "op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)"
         )
     }
+
+    /// Debug-level twin of `noticeOperation` for signals we accept losing (per-frame or
+    /// per-asset chatter). Never use for a signal named in docs/requirements.md as a
+    /// diagnostic contract — macOS does not persist `.debug` for a subsystem without an
+    /// explicit logging configuration profile, so such a signal would be unreadable. See
+    /// ADR 0015.
+    nonisolated func debugOperation(_ operation: String, phase: String, fields: [String: String] = [:]) {
+        if fields.isEmpty {
+            debug("op=\(operation, privacy: .public) phase=\(phase, privacy: .public)")
+            return
+        }
+        let pairs = otosLogFields(fields)
+        debug("op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)")
+    }
 }
