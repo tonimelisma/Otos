@@ -46,7 +46,7 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | --- | --- | --- | --- |
 | `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, per-root namespace mutation epochs, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; an older scan may upsert observed facts but its captured epoch cannot authorize missing-row or companion deletion |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation; detail-only enrichment changes (no `best_capture`/`best_kind`/`best_format` change) reuse the last order query instead of re-sorting (plan 0064 Stage 3) | keeps derivation off the main thread (that is what would hang the UI) |
-| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import, and one-executor-per-source ownership | serializes per-source dirtiness/execution; filesystem probes run off the actor and self-caused replans defer until execution ends |
+| `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, destination mapping, scalar presentation stream, queued Import, and one-executor-per-source ownership | serializes per-source dirtiness/execution; plan building is an owned per-source child task never awaited from the planning-change consumer, so a long build cannot make the coordinator deaf to an attaching card; namespace enumeration and the planning pass run off the actor and self-caused replans defer until execution ends |
 | `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, 8 bounded entry workers, staging, exclusive publish, ownership-proving recovery, and optional source deletion | owns monotonic aggregate progress while independent workers suspend; Store serializes durable journal prerequisites, zero-row failures, and atomic settlement; ambiguous final-only recovery gates hashing through the shared materialization requester |
 | `ReorganizationPlanner` | pure enum | physical-member reservation graph + chain/cycle recipes (no FS writes) | called from tests/coordinator; probes via occupancy map |
 | `ReorganizationExecutor` | pure enum + Store journal | directory prerequisites, same-volume no-overwrite moves, recovery observations, filesystemComplete handoff | owns filesystem mechanics; Store owns durable transitions and never catalogs temps |
@@ -108,8 +108,14 @@ everything expensive happens on an actor off the main thread.
   stem during scan/FSEvents/camera inventory. They never enter media queries or
   enrichment. `ImportPreferences` owns persisted import policy keys (Settings
   Import tab).
-- **Import planning**: `MediaTransferPlanner` is pure; occupancy via
-  `FilesystemNamespaceSemantics`; a selected regular-file candidate is preexisting
+- **Import planning**: `MediaTransferPlanner` is pure and single-pass.
+  `destinationFolders(for:)` derives the bounded folder set a plan can touch from
+  source facts plus policy alone (a suffix retry changes the file name, never the
+  folder); `FilesystemNamespaceSemantics.enumerateNamespace` reads exactly those
+  folders once into a `DestinationNamespace`; `planImport` then decides every
+  candidate from memory. Absence is proven, not assumed — a folder that could not be
+  read answers `nil`, and its candidates block rather than reading as free space.
+  A selected regular-file candidate is preexisting
   only when live size and the shared expected destination mtime match. Store tracks
   two per-root revisions: `planRevision` (general, reorg-polled, bumps on
   no-op rescans too) and `occupancyRevision` (advances only on real media-namespace

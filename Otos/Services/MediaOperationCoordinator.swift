@@ -1,18 +1,32 @@
 import Foundation
 import OSLog
 
+/// One plan build's product plus the cost split that makes it diagnosable:
+/// namespace read time versus pure planning time.
+private nonisolated struct ImportPlanBuildResult {
+    let plan: MediaOperationPlan
+    let namespace: DestinationNamespace
+    let enumerateMs: Int
+    let planMs: Int
+}
+
 /// Media operation coordinator guide
 ///
 /// Owns greedy import-plan lifecycle for every attached removable source.
 /// Subscribes weakly to Store planning revisions, builds immutable plans through
-/// `MediaTransferPlanner` + occupancy probes, and publishes per-source
-/// presentation state for the footer. Filesystem-volume and MTP camera Import
-/// execute through `MediaImportExecutor` (Stage F). Auto-eject runs only after
+/// `MediaTransferPlanner` over an enumerated destination namespace, and publishes
+/// per-source presentation state for the footer. Filesystem-volume and MTP camera
+/// Import execute through `MediaImportExecutor`. Auto-eject runs only after
 /// complete success with zero blocked entries.
 ///
 /// Isolation: this actor serializes per-source dirtiness (at most one build in
-/// flight and one dirty bit). Heavy filesystem probes run off the actor via
-/// nonisolated helpers. Cancellation rejects stale completions by generation.
+/// flight and one dirty bit). Plan building is an **owned per-source child task**,
+/// never awaited from the planning-change consumer: a build that takes seconds must
+/// not make the coordinator deaf to an attaching card, and the consumer loop only
+/// ever does cheap bookkeeping. Namespace enumeration and the planning pass run off
+/// this actor in a nonisolated async helper. Because that helper is a suspension
+/// point, every completion revalidates its typed occupancy revisions on the actor
+/// before publishing, and a build that lost the race re-dirties instead of applying.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?
@@ -37,6 +51,9 @@ actor MediaOperationCoordinator {
     private var planGeneration: UInt64 = 0
     private var attachStartedAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var attachToReadyMs: [LibraryRootPath: Int] = [:]
+    /// One in-flight plan build per source. Held so a detaching source cancels its
+    /// build instead of publishing into a presentation that no longer exists.
+    private var buildTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var consumerTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
@@ -100,6 +117,10 @@ actor MediaOperationCoordinator {
     func shutdown() {
         consumerTask?.cancel()
         consumerTask = nil
+        for task in buildTasks.values {
+            task.cancel()
+        }
+        buildTasks.removeAll()
         for continuation in continuations.values {
             continuation.finish()
         }
@@ -111,14 +132,14 @@ actor MediaOperationCoordinator {
         destinationBySource[source] = destination
         persistDestinationMappings()
         dirty.insert(source)
-        await scheduleBuildIfNeeded(source)
+        scheduleBuildIfNeeded(source)
     }
 
     /// Preferences changed; rebuild every attached source plan.
     func preferencesDidChange() async {
         for source in presentations.keys {
             dirty.insert(source)
-            await scheduleBuildIfNeeded(source)
+            scheduleBuildIfNeeded(source)
         }
     }
 
@@ -171,7 +192,7 @@ actor MediaOperationCoordinator {
                 )
                 publish()
                 dirty.insert(source)
-                await scheduleBuildIfNeeded(source)
+                scheduleBuildIfNeeded(source)
             }
         }
         OtosLog.catalog.notice(
@@ -201,7 +222,7 @@ actor MediaOperationCoordinator {
         }
         guard let plan = readyPlans[source], plan.generation == generation else {
             dirty.insert(source)
-            await scheduleBuildIfNeeded(source)
+            scheduleBuildIfNeeded(source)
             return
         }
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
@@ -306,7 +327,7 @@ actor MediaOperationCoordinator {
         )
         executing.remove(source)
         dirty.insert(source)
-        await scheduleBuildIfNeeded(source)
+        scheduleBuildIfNeeded(source)
     }
 
     private func applyExecutionResult(
@@ -417,13 +438,13 @@ actor MediaOperationCoordinator {
             if removable.contains(where: { $0.path == change.rootPath }) {
                 dirty.insert(change.rootPath)
                 if !executing.contains(change.rootPath) {
-                    await scheduleBuildIfNeeded(change.rootPath)
+                    scheduleBuildIfNeeded(change.rootPath)
                 }
             }
             for (source, destination) in destinationBySource where destination == change.rootPath {
                 dirty.insert(source)
                 if !executing.contains(source) {
-                    await scheduleBuildIfNeeded(source)
+                    scheduleBuildIfNeeded(source)
                 }
             }
         }
@@ -470,10 +491,13 @@ actor MediaOperationCoordinator {
             // occupancy-driven rebuilds arrive through handlePlanningChange instead.
             if isNewSource || destinationBySource[source.path] != previousMapping {
                 dirty.insert(source.path)
-                await scheduleBuildIfNeeded(source.path)
+                scheduleBuildIfNeeded(source.path)
             }
         }
         for path in presentations.keys where !seen.contains(path) {
+            // A detached source cancels its build; the task's own completion path
+            // publishes nothing once its presentation is gone.
+            buildTasks.removeValue(forKey: path)?.cancel()
             presentations.removeValue(forKey: path)
             readyPlans.removeValue(forKey: path)
             queuedStart.removeValue(forKey: path)
@@ -493,7 +517,14 @@ actor MediaOperationCoordinator {
         )
     }
 
-    private func scheduleBuildIfNeeded(_ source: LibraryRootPath) async {
+    /// Starts a plan build without awaiting it.
+    ///
+    /// Synchronous by design: every caller reaches this from a notification or a UI
+    /// intent, and awaiting the build there is what previously made the coordinator
+    /// unable to notice an attaching card for minutes. The `dirty`/`building` pair
+    /// is flipped here, before the task starts, so a second call during a build
+    /// coalesces into one queued rebuild instead of racing.
+    private func scheduleBuildIfNeeded(_ source: LibraryRootPath) {
         guard dirty.contains(source), !building.contains(source) else {
             return
         }
@@ -515,6 +546,20 @@ actor MediaOperationCoordinator {
             return
         }
 
+        buildTasks[source] = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            await runBuild(source: source, destination: destination, generation: generation)
+        }
+    }
+
+    private func runBuild(
+        source: LibraryRootPath,
+        destination: LibraryRootPath,
+        generation: UInt64
+    ) async {
+        defer { buildTasks.removeValue(forKey: source) }
         do {
             try await buildPlan(source: source, destination: destination, generation: generation)
         } catch {
@@ -527,6 +572,61 @@ actor MediaOperationCoordinator {
             )
             publish()
         }
+    }
+
+    /// Enumerates the destination folders this snapshot can touch, then plans.
+    ///
+    /// `nonisolated` and `async` so the enumeration and the planning pass run on the
+    /// cooperative pool rather than on the coordinator, which stays free to service
+    /// planning changes and Import intents while a build is in flight.
+    private nonisolated static func buildPlanOffActor(
+        snapshot: ImportPlanningSnapshot
+    ) async -> ImportPlanBuildResult {
+        let clock = ContinuousClock()
+        let enumerateStart = clock.now
+        let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
+            root: snapshot.destinationRoot,
+            folders: MediaTransferPlanner.destinationFolders(for: snapshot)
+        )
+        let planStart = clock.now
+        let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: namespace)
+        let planEnd = clock.now
+        return ImportPlanBuildResult(
+            plan: plan,
+            namespace: namespace,
+            enumerateMs: milliseconds(enumerateStart.duration(to: planStart)),
+            planMs: milliseconds(planStart.duration(to: planEnd))
+        )
+    }
+
+    private nonisolated static func milliseconds(_ duration: Duration) -> Int {
+        Int(duration.components.seconds * 1000)
+            + Int(duration.components.attoseconds / 1_000_000_000_000_000)
+    }
+
+    /// One `phase=finish` line carrying the split that tells I/O cost from CPU cost.
+    /// `folders`/`namespaceEntries` size the read; `enumerateMs`/`planMs` attribute
+    /// the time without needing a side experiment to tell them apart.
+    private nonisolated static func logPlanFinished(
+        source: LibraryRootPath,
+        sourceCount: Int,
+        result: ImportPlanBuildResult
+    ) {
+        OtosLog.catalog.noticeOperation(
+            "import.plan",
+            phase: "finish",
+            fields: [
+                "rootPath": source.rawValue,
+                "sourceCount": "\(sourceCount)",
+                "folders": "\(result.namespace.folderCount)",
+                "namespaceEntries": "\(result.namespace.entryCount)",
+                "enumerateMs": "\(result.enumerateMs)",
+                "planMs": "\(result.planMs)",
+                "copyCount": "\(result.plan.totals.copyCount)",
+                "skipCount": "\(result.plan.totals.skipCount)",
+                "blockedCount": "\(result.plan.totals.blockedCount)",
+            ]
+        )
     }
 
     private func buildPlan(
@@ -556,22 +656,50 @@ actor MediaOperationCoordinator {
             return
         }
 
-        let plan = MediaTransferPlanner.buildImportPlan(
-            snapshot: snapshot,
-            knownForeignOccupants: snapshot.knownForeignOccupants
+        OtosLog.catalog.noticeOperation(
+            "import.plan",
+            phase: "start",
+            fields: [
+                "rootPath": source.rawValue,
+                "destinationPath": destination.rawValue,
+                "sourceCount": "\(snapshot.sourceMedia.count)",
+                "destinationOccupants": "\(snapshot.destinationOccupants.count)",
+            ]
         )
+        let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
+        let build = await Self.buildPlanOffActor(snapshot: snapshot)
+        OtosSignpost.performance.endInterval("ImportPlanBuild", signpost)
+        let plan = build.plan
+        Self.logPlanFinished(
+            source: source,
+            sourceCount: snapshot.sourceMedia.count,
+            result: build
+        )
+
         // Key staleness on occupancy, not planRevision: a destination that keeps
         // enriching bumps planRevision every few seconds without changing which
-        // paths are occupied, and guarding on that livelocks planning.
+        // paths are occupied, and guarding on that livelocks planning. The build
+        // suspended off-actor, so these revisions are re-read after the await.
         let sourceOccupancy = await store.occupancyRevision(for: source)
         let destinationOccupancy = await store.occupancyRevision(for: destination)
         guard sourceOccupancy == snapshot.sourceOccupancyRevision,
               destinationOccupancy == snapshot.destinationOccupancyRevision,
               generation == planGeneration || dirty.contains(source) == false
         else {
+            OtosLog.catalog.noticeOperation(
+                "import.plan",
+                phase: "stale",
+                fields: [
+                    "rootPath": source.rawValue,
+                    "sourceOccupancy": "\(sourceOccupancy.map(String.init) ?? "none")",
+                    "snapshotSourceOccupancy": "\(snapshot.sourceOccupancyRevision)",
+                    "destinationOccupancy": "\(destinationOccupancy.map(String.init) ?? "none")",
+                    "snapshotDestinationOccupancy": "\(snapshot.destinationOccupancyRevision)",
+                ]
+            )
             building.remove(source)
             dirty.insert(source)
-            await scheduleBuildIfNeeded(source)
+            scheduleBuildIfNeeded(source)
             return
         }
 
@@ -603,7 +731,7 @@ actor MediaOperationCoordinator {
                 skippedPackageCount: skipped
             )
         } else if dirty.contains(source) {
-            await scheduleBuildIfNeeded(source)
+            scheduleBuildIfNeeded(source)
         }
     }
 

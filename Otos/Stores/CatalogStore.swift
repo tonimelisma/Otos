@@ -218,9 +218,6 @@ actor CatalogStore {
     private var lastSuccessfulFullRootScanAt: [LibraryRootPath: Date] = [:]
     private var integrityScanTask: Task<Void, Never>?
     private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
-    /// Destination-relative paths known to be foreign occupants after EEXIST
-    /// publication failures (plan 0055 §6.4). Ephemeral; Stage E records them.
-    private var knownForeignOccupantsByRoot: [LibraryRootPath: Set<MediaRelativePath>] = [:]
     /// Typed reorganization lease per fixed root (plan 0055 §9.7). Spans one
     /// execution run; deferred dirty-only reconciliation runs at release.
     private var reorganizationLeases: [LibraryRootPath: ReorganizationLease] = [:]
@@ -447,7 +444,6 @@ extension CatalogStore {
             destinationOccupancyRevision: destinationState.occupancyRevision,
             sourceMedia: sourceMedia,
             destinationOccupants: destinationOccupants,
-            knownForeignOccupants: knownForeignOccupantsByRoot[destination] ?? [],
             policy: policy,
             calendar: calendar,
             timeZone: timeZone

@@ -124,6 +124,13 @@ nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
         }
         return false
     }
+
+    var isBlocked: Bool {
+        if case .blocked = disposition {
+            return true
+        }
+        return false
+    }
 }
 
 nonisolated func throughputMBps(bytes: Int64, elapsedMs: Int) -> String {
@@ -215,7 +222,6 @@ nonisolated enum ForeignOccupantKind: String, Equatable, Sendable {
     case directory
     case package
     case other
-    case knownForeignFact
 }
 
 nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
@@ -226,13 +232,62 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let destinationOccupancyRevision: UInt64
     let sourceMedia: [PlanningFileFacts]
     let destinationOccupants: [MediaRelativePath: DestinationOccupantFacts]
-    let knownForeignOccupants: Set<MediaRelativePath>
     let policy: ImportPolicy
     let calendar: Calendar
     let timeZone: TimeZone
 }
 
-nonisolated enum ImportPlanBuildOutcome: Equatable, Sendable {
-    case ready(MediaOperationPlan)
-    case needsProbes(occupancy: [NamespaceOccupancyRequest])
+/// Complete live occupancy for the destination folders an import plan can touch.
+///
+/// Import planning needs to know which candidate names are free. Candidate folders
+/// are derivable from source facts plus policy alone (a suffix changes the file
+/// name, never the folder), so every question a plan can ask is answered by
+/// enumerating that bounded folder set once. The planner then runs as one pure
+/// pass instead of a probe-per-candidate fixed point.
+///
+/// Absence is a claim about a folder that was actually read: `occupancy(of:)`
+/// returns `nil` for a path whose folder was never enumerated, so a caller can
+/// never silently mistake ignorance for a free name.
+nonisolated struct DestinationNamespace: Equatable, Sendable {
+    private let entries: [MediaRelativePath: NamespaceOccupancyResult]
+    private let enumeratedFolders: Set<String>
+
+    init(
+        entries: [MediaRelativePath: NamespaceOccupancyResult],
+        enumeratedFolders: Set<String>
+    ) {
+        self.entries = entries
+        self.enumeratedFolders = enumeratedFolders
+    }
+
+    static let empty = DestinationNamespace(entries: [:], enumeratedFolders: [])
+
+    var entryCount: Int {
+        entries.count
+    }
+
+    var folderCount: Int {
+        enumeratedFolders.count
+    }
+
+    /// Live occupancy of one candidate, or `nil` when its folder was not enumerated.
+    func occupancy(of relativePath: MediaRelativePath) -> NamespaceOccupancyResult? {
+        if let entry = entries[relativePath] {
+            return entry
+        }
+        guard enumeratedFolders.contains(Self.folder(of: relativePath)) else {
+            return nil
+        }
+        return .absent
+    }
+
+    /// Folder component under the destination root; `""` addresses the root itself,
+    /// matching `MediaTransferPlanner.folderPath` under `DestinationFolderPolicy.none`.
+    static func folder(of relativePath: MediaRelativePath) -> String {
+        let raw = relativePath.rawValue
+        guard let separator = raw.lastIndex(of: "/") else {
+            return ""
+        }
+        return String(raw[raw.startIndex ..< separator])
+    }
 }

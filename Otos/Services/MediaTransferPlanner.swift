@@ -14,78 +14,71 @@ import Foundation
 /// Import collision policy: absent → copy; regular file with matching live size and
 /// expected destination mtime → preexisting; every other occupant → next suffix.
 nonisolated enum MediaTransferPlanner {
+    /// Destination folders any candidate of this snapshot could land in.
+    ///
+    /// A suffix retry changes the file name, never the folder, so this set is
+    /// complete before any occupancy is known. The caller enumerates exactly these
+    /// folders and hands the result back to `planImport`, which then needs no
+    /// further observation — the reason planning is one pass and not a fixed point.
+    static func destinationFolders(for snapshot: ImportPlanningSnapshot) -> Set<String> {
+        var folders: Set<String> = []
+        for bundle in namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy) {
+            guard !bundle.members.contains(where: { !$0.hasUsableDate }) else {
+                // Undatable bundles are blocked without a destination name.
+                continue
+            }
+            let timestamp = namingTimestamp(for: bundle, snapshot: snapshot)
+            folders.insert(folderPath(timestamp: timestamp, policy: snapshot.policy))
+        }
+        return folders
+    }
+
+    /// Single pure pass over the source bundles against an already-read destination
+    /// namespace. Every candidate — base name and each suffix retry — is answered
+    /// from `namespace`, so the pass never suspends, never restarts, and never
+    /// re-derives its bundles.
     static func planImport(
         snapshot: ImportPlanningSnapshot,
-        occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
-    ) -> ImportPlanBuildOutcome {
-        var occupancyRequests: [NamespaceOccupancyRequest] = []
+        namespace: DestinationNamespace
+    ) -> MediaOperationPlan {
         var reserved = Set(snapshot.destinationOccupants.keys)
-        reserved.formUnion(snapshot.knownForeignOccupants)
-
         let bundles = namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy)
         var entries: [MediaOperationPlanEntry] = []
 
         for bundle in bundles {
-            let outcome = planBundle(
-                bundle,
-                snapshot: snapshot,
-                reserved: &reserved,
-                occupancy: occupancy,
-                pendingOccupancy: &occupancyRequests
-            )
-            switch outcome {
-            case let .entries(planned):
-                entries.append(contentsOf: planned)
-            case .needsProbes:
-                return .needsProbes(
-                    occupancy: uniqueOccupancy(occupancyRequests)
+            entries.append(
+                contentsOf: planBundle(
+                    bundle,
+                    snapshot: snapshot,
+                    reserved: &reserved,
+                    namespace: namespace
                 )
-            }
-        }
-
-        if !occupancyRequests.isEmpty {
-            return .needsProbes(occupancy: uniqueOccupancy(occupancyRequests))
-        }
-
-        return .ready(
-            MediaOperationPlan(
-                generation: snapshot.generation,
-                mode: .import(
-                    source: snapshot.sourceRoot,
-                    destination: snapshot.destinationRoot,
-                    batch: ImportBatchID()
-                ),
-                sourceOccupancyRevision: snapshot.sourceOccupancyRevision,
-                destinationOccupancyRevision: snapshot.destinationOccupancyRevision,
-                policy: snapshot.policy,
-                entries: entries,
-                totals: totals(from: entries)
             )
+        }
+
+        return MediaOperationPlan(
+            generation: snapshot.generation,
+            mode: .import(
+                source: snapshot.sourceRoot,
+                destination: snapshot.destinationRoot,
+                batch: ImportBatchID()
+            ),
+            sourceOccupancyRevision: snapshot.sourceOccupancyRevision,
+            destinationOccupancyRevision: snapshot.destinationOccupancyRevision,
+            policy: snapshot.policy,
+            entries: entries,
+            totals: totals(from: entries)
         )
     }
 
-    /// Synchronous driver for tests and Stage D coordinator: resolve probes until ready.
-    static func buildImportPlan(
-        snapshot: ImportPlanningSnapshot,
-        knownForeignOccupants: Set<MediaRelativePath> = []
-    ) -> MediaOperationPlan {
-        var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
-        let foreign = knownForeignOccupants.union(snapshot.knownForeignOccupants)
-        for _ in 0 ..< 10000 {
-            switch planImport(snapshot: snapshot, occupancy: occupancy) {
-            case let .ready(plan):
-                return plan
-            case let .needsProbes(occupancyRequests):
-                let resolvedOccupancy = FilesystemNamespaceSemantics.resolve(
-                    occupancyRequests,
-                    knownForeignOccupants: foreign
-                )
-                for (request, result) in resolvedOccupancy {
-                    occupancy[request] = result
-                }
-            }
-        }
-        preconditionFailure("import planner failed to converge")
+    /// Reads the destination folders this snapshot needs, then plans. The only
+    /// entry point that performs I/O; `planImport` stays pure for tests.
+    static func buildImportPlan(snapshot: ImportPlanningSnapshot) -> MediaOperationPlan {
+        let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
+            root: snapshot.destinationRoot,
+            folders: destinationFolders(for: snapshot)
+        )
+        return planImport(snapshot: snapshot, namespace: namespace)
     }
 }
 
@@ -118,18 +111,12 @@ private nonisolated extension MediaTransferPlanner {
         }
     }
 
-    enum BundlePlanOutcome {
-        case entries([MediaOperationPlanEntry])
-        case needsProbes
-    }
-
     struct SuffixAttempt {
         var memberDestinations: [(PlanningFileFacts, MediaRelativePath)] = []
         var companionDestinations: [MediaRelativePath: MediaRelativePath] = [:]
         var dispositions: [MediaAssetID: MediaOperationDisposition] = [:]
         var blocked: MediaOperationBlockReason?
         var advanceSuffix = false
-        var needsProbes = false
     }
 
     static func namingBundles(
@@ -189,11 +176,10 @@ private nonisolated extension MediaTransferPlanner {
         _ bundle: NamingBundle,
         snapshot: ImportPlanningSnapshot,
         reserved: inout Set<MediaRelativePath>,
-        occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult],
-        pendingOccupancy: inout [NamespaceOccupancyRequest]
-    ) -> BundlePlanOutcome {
+        namespace: DestinationNamespace
+    ) -> [MediaOperationPlanEntry] {
         if bundle.members.contains(where: { !$0.hasUsableDate }) {
-            return .entries(bundle.members.map { member in
+            return bundle.members.map { member in
                 MediaOperationPlanEntry(
                     source: member,
                     idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
@@ -201,7 +187,7 @@ private nonisolated extension MediaTransferPlanner {
                     companionDestinations: [:],
                     disposition: .blocked(.noUsableDate)
                 )
-            })
+            }
         }
 
         let timestamp = namingTimestamp(for: bundle, snapshot: snapshot)
@@ -252,12 +238,9 @@ private nonisolated extension MediaTransferPlanner {
                     candidate: relative,
                     snapshot: snapshot,
                     reserved: reserved,
-                    occupancy: occupancy,
-                    pendingOccupancy: &pendingOccupancy
+                    namespace: namespace
                 )
                 switch decision {
-                case .needsProbes:
-                    return .needsProbes
                 case let .blocked(reason):
                     blocked = reason
                 case let .skip(path):
@@ -274,7 +257,7 @@ private nonisolated extension MediaTransferPlanner {
                 continue
             }
             if let blocked {
-                return .entries(bundle.members.map { member in
+                return bundle.members.map { member in
                     let ideal = memberDestinations.first(where: { $0.0.id == member.id })?.1
                         ?? MediaRelativePath(rawValue: member.relativePath.rawValue)
                     return MediaOperationPlanEntry(
@@ -284,24 +267,29 @@ private nonisolated extension MediaTransferPlanner {
                         companionDestinations: [:],
                         disposition: .blocked(blocked)
                     )
-                })
+                }
             }
 
             for companionPath in companionDestinations.values {
-                if reserved.contains(companionPath)
-                    || snapshot.destinationOccupants[companionPath] != nil
-                    || snapshot.knownForeignOccupants.contains(companionPath)
-                {
+                if reserved.contains(companionPath) || snapshot.destinationOccupants[companionPath] != nil {
                     advanceSuffix = true
                     break
                 }
-                let request = NamespaceOccupancyRequest(
-                    rootPath: snapshot.destinationRoot,
-                    relativePath: companionPath
-                )
-                guard let result = occupancy[request] else {
-                    pendingOccupancy.append(request)
-                    return .needsProbes
+                guard let result = namespace.occupancy(of: companionPath) else {
+                    // Companion folder unobservable: block rather than risk a
+                    // sidecar overwrite on an unread namespace.
+                    return bundle.members.map { member in
+                        MediaOperationPlanEntry(
+                            source: member,
+                            idealDestination: companionPath,
+                            finalDestination: companionPath,
+                            companionDestinations: [:],
+                            disposition: .blocked(.filesystemObservationUnavailable(
+                                destination: companionPath,
+                                detail: "namespaceUnreadable"
+                            ))
+                        )
+                    }
                 }
                 if case .absent = result {
                     continue
@@ -337,10 +325,10 @@ private nonisolated extension MediaTransferPlanner {
             for path in companionDestinations.values {
                 reserved.insert(path)
             }
-            return .entries(planned)
+            return planned
         }
 
-        return .entries(bundle.members.map { member in
+        return bundle.members.map { member in
             MediaOperationPlanEntry(
                 source: member,
                 idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
@@ -351,7 +339,7 @@ private nonisolated extension MediaTransferPlanner {
                     detail: "suffixExhausted"
                 ))
             )
-        })
+        }
     }
 
     enum CandidateDecision {
@@ -359,7 +347,6 @@ private nonisolated extension MediaTransferPlanner {
         case skip(MediaRelativePath)
         case blocked(MediaOperationBlockReason)
         case advanceSuffix
-        case needsProbes
     }
 
     static func decideCandidate(
@@ -367,8 +354,7 @@ private nonisolated extension MediaTransferPlanner {
         candidate: MediaRelativePath,
         snapshot: ImportPlanningSnapshot,
         reserved: Set<MediaRelativePath>,
-        occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult],
-        pendingOccupancy: inout [NamespaceOccupancyRequest]
+        namespace: DestinationNamespace
     ) -> CandidateDecision {
         if reserved.contains(candidate), snapshot.destinationOccupants[candidate] == nil {
             // Reserved by an earlier planned copy in this plan — never collapse
@@ -376,13 +362,13 @@ private nonisolated extension MediaTransferPlanner {
             return .advanceSuffix
         }
 
-        let request = NamespaceOccupancyRequest(
-            rootPath: snapshot.destinationRoot,
-            relativePath: candidate
-        )
-        guard let probe = occupancy[request] else {
-            pendingOccupancy.append(request)
-            return .needsProbes
+        guard let probe = namespace.occupancy(of: candidate) else {
+            // The candidate's folder was not readable, so freeness is unproven.
+            // Blocking keeps an unreadable namespace from planning an overwrite.
+            return .blocked(.filesystemObservationUnavailable(
+                destination: candidate,
+                detail: "namespaceUnreadable"
+            ))
         }
 
         switch probe {
@@ -518,10 +504,5 @@ private nonisolated extension MediaTransferPlanner {
             }
         }
         return totals
-    }
-
-    static func uniqueOccupancy(_ requests: [NamespaceOccupancyRequest]) -> [NamespaceOccupancyRequest] {
-        var seen = Set<NamespaceOccupancyRequest>()
-        return requests.filter { seen.insert($0).inserted }
     }
 }
