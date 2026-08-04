@@ -25,6 +25,46 @@ signal that proves it can be read.**
 Stage 0 is a hard prerequisite for Stages 3–4. Stages 1–2 are correctness guards that
 are independent of it and can land in parallel.
 
+## Readiness — read this first
+
+Six stages are ready to implement from this document alone. Two are blocked on evidence
+that does not exist yet and **must not be implemented on intuition**.
+
+| Stage | Ready? | Nature of the change |
+|---|---|---|
+| 0 — instrumentation readable | ✅ ready | 4 log-level changes + a level-floor test + ADR policy |
+| 1 — freeze index contract | ✅ ready | Test-only; no production change |
+| 2a — delete the Swift twin | ✅ ready | Replace a recompute with `RETURNING`; deletes code |
+| 2b — one `hashRequired` | ✅ ready | Return an already-computed value; deletes a cache |
+| 4 — lock the regression | ✅ ready | One log field + de-flake existing tests |
+| 5 — tooling and process | ✅ ready | Script default + a CLAUDE.md rule |
+| 3 — field verification | ⛔ **blocked** | Needs a working cloud provider — see below |
+| 3b — provider-failure policy | ⛔ **blocked** | Needs Stage 3's healthy baseline to decide |
+
+### The blocker on Stages 3 and 3b is not a code problem
+
+As of 2026-08-03 the OneDrive provider on the development machine refuses every read with
+an immediate `ETIMEDOUT`, verified outside Otos on both library roots, with the OneDrive
+processes running. Enrichment therefore emitted **zero** batches across three capture
+sessions.
+
+Until that is resolved — most likely a re-auth or sign-in on the OneDrive client, which is
+a **user action, not an engineering task** — the enrichment storm that Plan 0064 Stage 3
+optimises cannot be produced, so its perf claim cannot be verified and Stage 3b's design
+question has no baseline to be decided against.
+
+Do not substitute a synthetic reproduction for this. The whole point of Stage 3 is that a
+mechanism test at n=2,000 in memory already passes; what is missing is behaviour at 25k
+under real WAL pressure, where the field data shows the same query ranging 62 ms →
+7,034 ms.
+
+### Note on scope
+
+An implementer should treat the six ready stages as the increment. "Get rid of every smell"
+is explicitly **not** the goal — see *Explicitly out of scope* at the end, which records two
+real Lens-B observations that should be left alone for now, with the trigger conditions
+that would change that.
+
 ---
 
 ## Stage 0 — Make the instrumentation readable (blocking prerequisite)
