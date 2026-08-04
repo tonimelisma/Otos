@@ -281,6 +281,7 @@ private func makeViewModeModel(loader: FakePreviewLoader) -> CatalogWindowViewMo
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,
+        startsSourceMonitoring: false,
         gridColumnCountDefaults: UserDefaults(suiteName: "Otos.ViewModeTests.\(UUID().uuidString)")!,
         previewLoader: loader
     )

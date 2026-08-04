@@ -10,7 +10,8 @@ struct RemovableEjectOutcomeTests {
             catalogStore: CatalogStore(location: .inMemory),
             catalogProjection: CatalogProjection(),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
         model.ejectRemovableSource(LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/Gone"),

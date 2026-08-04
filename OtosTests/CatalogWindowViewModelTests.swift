@@ -31,7 +31,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: projection,
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
         weak let weakModel = model
 
@@ -62,7 +63,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
 
         model.start()
@@ -100,7 +102,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
 
         model.start()
@@ -134,7 +137,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
 
         model.start()
@@ -166,7 +170,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
 
         model.start()
@@ -201,7 +206,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -232,7 +238,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -270,7 +277,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
         weak let weakModel = model
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -304,7 +312,8 @@ struct CatalogWindowViewModelTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
 
         model.start()

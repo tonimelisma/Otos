@@ -60,7 +60,8 @@ struct IdentityRemapUITests {
         let oldID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "old.jpg"))
         let newID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "new.jpg"))
         let viewModel = CatalogWindowViewModel(
-            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+            catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
+            startsSourceMonitoring: false
         )
         viewModel.gridSelection = GridSelection(selection: [oldID], anchor: oldID, base: [oldID])
         viewModel.focusedAssetID = oldID

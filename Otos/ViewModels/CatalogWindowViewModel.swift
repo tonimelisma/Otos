@@ -112,6 +112,11 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let stallMonitor: MainRunLoopStallMonitor
     @ObservationIgnored private let startsStallMonitor: Bool
     @ObservationIgnored private let startsEnrichment: Bool
+    /// Removable-volume and camera monitoring observe hardware attached to the host
+    /// machine, so a `true` default would make behavior depend on whatever card or
+    /// camera happens to be plugged in. Production starts them; tests that assert on
+    /// catalog content opt out so their result is a property of the fixture alone.
+    @ObservationIgnored private let startsSourceMonitoring: Bool
     @ObservationIgnored private let gridColumnCountDefaults: UserDefaults
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
@@ -165,6 +170,7 @@ final class CatalogWindowViewModel {
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
+        startsSourceMonitoring: Bool = true,
         gridColumnCountDefaults: UserDefaults = .standard,
         previewLoader: (any PreviewLoading)? = nil
     ) {
@@ -214,6 +220,7 @@ final class CatalogWindowViewModel {
         self.stallMonitor = stallMonitor
         self.startsStallMonitor = startsStallMonitor
         self.startsEnrichment = startsEnrichment
+        self.startsSourceMonitoring = startsSourceMonitoring
         if let previewLoader {
             self.previewLoader = previewLoader
         } else {
@@ -306,8 +313,10 @@ extension CatalogWindowViewModel {
             initialRequest: initialRequest
         )
         startCatalog(store: store)
-        startRemovableVolumeMonitoring()
-        startDeviceStagingSweepThenCameraMonitoring()
+        if startsSourceMonitoring {
+            startRemovableVolumeMonitoring()
+            startDeviceStagingSweepThenCameraMonitoring()
+        }
         startMediaOperationsIfNeeded()
         if startsEnrichment {
             startEnrichment()

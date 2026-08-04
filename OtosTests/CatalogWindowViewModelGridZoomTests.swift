@@ -115,6 +115,7 @@ private func makeViewModel(defaults: UserDefaults) -> CatalogWindowViewModel {
         catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
+        startsSourceMonitoring: false,
         gridColumnCountDefaults: defaults
     )
 }

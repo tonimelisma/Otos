@@ -27,7 +27,8 @@ struct CatalogWindowViewModelEnrichmentTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsSourceMonitoring: false
             // startsEnrichment defaults true: start() must start the injected coordinator.
         )
 
@@ -99,7 +100,8 @@ struct CatalogWindowViewModelEnrichmentTests {
             catalogStore: secondStore,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
-            startsStallMonitor: false
+            startsStallMonitor: false,
+            startsSourceMonitoring: false
         )
 
         model.start()

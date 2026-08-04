@@ -134,7 +134,8 @@ private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: Win
         catalogProjection: projection,
         startsStallMonitor: false,
 
-        startsEnrichment: false
+        startsEnrichment: false,
+        startsSourceMonitoring: false
     )
     return (model, gate)
 }

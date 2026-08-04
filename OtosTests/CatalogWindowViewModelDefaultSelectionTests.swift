@@ -17,7 +17,8 @@ struct ViewModelDefaultSelectionTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
 
         model.start()
@@ -97,7 +98,8 @@ struct ViewModelDefaultSelectionTests {
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
-            startsEnrichment: false
+            startsEnrichment: false,
+            startsSourceMonitoring: false
         )
     }
 
