@@ -2,7 +2,19 @@
 
 ## Status
 
-Not started. Created 2026-08-03 from a full review of the 2026-08-02/03 increments
+Stages 0, 1, 2a, 2b, 4, and 5 — the six stages this document's own readiness table
+marked ready — landed 2026-08-04 in [PR #148](https://github.com/tonimelisma/Otos/pull/148).
+`script/verify.sh` is green (564 tests) and remote CI passed.
+
+**Stages 3 and 3b remain blocked**, not done. Re-verified 2026-08-04 immediately before
+implementation: OneDrive's processes are running, but a direct `open()`+`read()` on a
+dataless file in both OneDrive-backed roots still fails (`Operation timed out`) —
+process presence is still not provider readiness, exactly as this plan's research
+documented. Re-attempt Stage 3/3b once OneDrive actually serves a read; do not
+substitute a synthetic reproduction (see Stage 3's own text on why). Delete this plan
+only once 3/3b land or are explicitly abandoned.
+
+Created 2026-08-03 from a full review of the 2026-08-02/03 increments
 (PRs #135, #136, #138, #139, #140, #141, #142, #143, #144).
 
 All measurements cited here are recorded in
