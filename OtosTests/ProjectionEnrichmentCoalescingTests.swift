@@ -46,9 +46,16 @@ struct ProjectionEnrichmentCoalescingTests {
         let (store, state) = try await seededStore()
         let id = try #require(state.testAssets.first?.id)
         let asset = try #require(state.testAssets.first)
+        // Subscribe synchronously (the `await` only returns once the continuation is
+        // registered on the Store actor) before firing the writes below, rather than
+        // racing a spawned Task's own subscription against them — a spawned Task only
+        // schedules its body, it does not block until the `for await` actually
+        // registers, so a write completing first would fire its notification with no
+        // listener yet and hang the test until timeout.
         let changes = AsyncValueRecorder<CatalogStoreChange>()
+        let changeStream = await store.changeNotifications()
         let changeTask = Task {
-            for await change in await store.changeNotifications() {
+            for await change in changeStream {
                 await changes.append(change)
             }
         }
