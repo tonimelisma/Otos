@@ -278,6 +278,7 @@ struct CatalogWindowViewModelViewModeTests {
 @MainActor
 private func makeViewModeModel(loader: FakePreviewLoader) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
+        catalogStore: CatalogStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,

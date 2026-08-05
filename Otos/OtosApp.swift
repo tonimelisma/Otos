@@ -20,6 +20,14 @@ struct OtosApp: App {
                     let state = OtosSignpost.app.beginInterval("MainWindowContentAttached")
                     OtosLog.app.info("Main window content attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
+                    // The hosted test bundle launches this app to get a process to attach
+                    // to; it must come up inert rather than touch the user's production
+                    // catalog and preferences (plan 0066 Stage 1). This check only ever
+                    // declines to start the product stack — never branches product
+                    // behavior for a real launch.
+                    guard !RunContext.isTestRun else {
+                        return
+                    }
                     catalogViewModel.start()
                     OtosLog.app.notice(
                         "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"

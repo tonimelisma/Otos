@@ -249,6 +249,7 @@ struct CatalogWindowViewModelSelectionTests {
 @MainActor
 private func makeSelectionViewModel() -> CatalogWindowViewModel {
     CatalogWindowViewModel(
+        catalogStore: CatalogStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,
