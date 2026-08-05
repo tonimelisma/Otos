@@ -27,12 +27,13 @@ struct CatalogWindowViewModelTests {
                 )
             }
         )
-        var model: CatalogWindowViewModel? = CatalogWindowViewModel(
+        var model: CatalogWindowViewModel? = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: projection,
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
         weak let weakModel = model
 
@@ -59,12 +60,13 @@ struct CatalogWindowViewModelTests {
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
 
         model.start()
@@ -98,12 +100,13 @@ struct CatalogWindowViewModelTests {
             scanner: scanner,
             scanCadence: .milliseconds(10)
         )
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
 
         model.start()
@@ -133,12 +136,13 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
 
         model.start()
@@ -166,12 +170,13 @@ struct CatalogWindowViewModelTests {
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
 
         model.start()
@@ -202,12 +207,13 @@ struct CatalogWindowViewModelTests {
 
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -234,12 +240,13 @@ struct CatalogWindowViewModelTests {
 
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -273,12 +280,13 @@ struct CatalogWindowViewModelTests {
                 await loadGate.pause()
             }
         )
-        var model: CatalogWindowViewModel? = CatalogWindowViewModel(
+        var model: CatalogWindowViewModel? = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
         weak let weakModel = model
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -308,12 +316,13 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelTests.\(UUID().uuidString)"))
         )
 
         model.start()

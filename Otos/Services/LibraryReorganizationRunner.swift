@@ -7,9 +7,11 @@ import OSLog
 /// catalog identities, and returns remap batches for ViewModel/TileContentStore.
 actor LibraryReorganizationRunner {
     private let store: CatalogStore
+    private let preferences: UserDefaults
 
-    init(store: CatalogStore) {
+    init(store: CatalogStore, preferences: UserDefaults) {
         self.store = store
+        self.preferences = preferences
     }
 
     enum Outcome: Equatable, Sendable {
@@ -251,7 +253,7 @@ actor LibraryReorganizationRunner {
         else {
             return .failed("snapshotUnavailable")
         }
-        let policy = ImportPolicy.from(ImportPreferencesStore.load())
+        let policy = ImportPolicy.from(ImportPreferencesStore.load(defaults: preferences))
         let capabilities = FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: libraryRoot.url)
         var occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
         let snapshot = ReorganizationPlanningSnapshot(

@@ -28,7 +28,10 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
-        let coordinator = MediaOperationCoordinator(store: store)
+        let coordinator = try MediaOperationCoordinator(
+            store: store,
+            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+        )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         _ = try await readyGeneration(coordinator, source: source)
@@ -63,7 +66,10 @@ struct MediaOperationCoordinatorTests {
         try await store.addLibrary(url: fixedRoot)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
-        let coordinator = MediaOperationCoordinator(store: store)
+        let coordinator = try MediaOperationCoordinator(
+            store: store,
+            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+        )
         await coordinator.start()
         defer { Task { await coordinator.shutdown() } }
 
@@ -118,7 +124,10 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let coordinator = MediaOperationCoordinator(store: store)
+        let coordinator = try MediaOperationCoordinator(
+            store: store,
+            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+        )
         await coordinator.start()
         defer {
             Task { await coordinator.shutdown() }
@@ -170,7 +179,10 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let coordinator = MediaOperationCoordinator(store: store)
+        let coordinator = try MediaOperationCoordinator(
+            store: store,
+            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+        )
         await coordinator.start()
         defer {
             Task { await coordinator.shutdown() }

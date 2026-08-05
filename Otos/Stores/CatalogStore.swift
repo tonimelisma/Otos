@@ -230,7 +230,7 @@ actor CatalogStore {
     static let integrityScanPollInterval: Duration = .seconds(60 * 15)
 
     init(
-        location: Location = .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos"),
+        location: Location,
         scanner: CatalogScanner = .live,
         filesystemWatcher: CatalogFilesystemWatcher = .live,
         scanCadence: Duration = .seconds(1),

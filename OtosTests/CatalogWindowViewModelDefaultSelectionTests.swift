@@ -13,12 +13,13 @@ struct ViewModelDefaultSelectionTests {
         try Data("jpeg".utf8).write(to: root.appending(path: "one.jpg"))
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let model = CatalogWindowViewModel(
+        let model = try CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelDefaultSelectionTests.\(UUID().uuidString)"))
         )
 
         model.start()
@@ -99,7 +100,8 @@ struct ViewModelDefaultSelectionTests {
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: UserDefaults(suiteName: "Otos.CatalogWindowViewModelDefaultSelectionTests.\(UUID().uuidString)")!
         )
     }
 

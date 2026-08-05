@@ -29,6 +29,7 @@ private nonisolated struct ImportPlanBuildResult {
 /// before publishing, and a build that lost the race re-dirties instead of applying.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
+    private let preferences: UserDefaults
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
@@ -60,11 +61,13 @@ actor MediaOperationCoordinator {
 
     init(
         store: CatalogStore,
+        preferences: UserDefaults,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
     ) {
         self.store = store
+        self.preferences = preferences
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
@@ -289,7 +292,7 @@ actor MediaOperationCoordinator {
             cameraImport: cameraImport,
             materializationRequester: materializationRequester
         )
-        let prefs = ImportPreferencesStore.load()
+        let prefs = ImportPreferencesStore.load(defaults: preferences)
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,
             destinationPath: destinationBySource[source],
@@ -629,7 +632,7 @@ actor MediaOperationCoordinator {
         destination: LibraryRootPath,
         generation: UInt64
     ) async throws {
-        let policy = ImportPolicy.from(ImportPreferencesStore.load())
+        let policy = ImportPolicy.from(ImportPreferencesStore.load(defaults: preferences))
         guard let snapshot = try await store.importPlanningSnapshot(
             source: source,
             destination: destination,
@@ -800,8 +803,7 @@ actor MediaOperationCoordinator {
     private static let destinationMappingKey = "import.destinationBySource"
 
     private func loadDestinationMappings() {
-        let defaults = UserDefaults.standard
-        guard let raw = defaults.dictionary(forKey: Self.destinationMappingKey) as? [String: String] else {
+        guard let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] else {
             return
         }
         for (source, destination) in raw {
@@ -814,6 +816,6 @@ actor MediaOperationCoordinator {
         for (source, destination) in destinationBySource {
             raw[source.rawValue] = destination.rawValue
         }
-        UserDefaults.standard.set(raw, forKey: Self.destinationMappingKey)
+        preferences.set(raw, forKey: Self.destinationMappingKey)
     }
 }

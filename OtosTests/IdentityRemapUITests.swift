@@ -55,13 +55,14 @@ struct IdentityRemapUITests {
     }
 
     @MainActor
-    @Test func viewModelAppliesRemapToSelectionAndFocus() {
+    @Test func viewModelAppliesRemapToSelectionAndFocus() throws {
         let root = LibraryRootPath(rawValue: "/Library")
         let oldID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "old.jpg"))
         let newID = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "new.jpg"))
-        let viewModel = CatalogWindowViewModel(
+        let viewModel = try CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
-            startsSourceMonitoring: false
+            startsSourceMonitoring: false,
+            preferences: #require(UserDefaults(suiteName: "Otos.IdentityRemapUITests.\(UUID().uuidString)"))
         )
         viewModel.gridSelection = GridSelection(selection: [oldID], anchor: oldID, base: [oldID])
         viewModel.focusedAssetID = oldID

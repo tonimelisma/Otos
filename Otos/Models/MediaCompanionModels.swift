@@ -150,10 +150,17 @@ nonisolated enum DestinationNamePolicy: String, Equatable, Sendable, CaseIterabl
     case captureDateTime
 }
 
+/// `UserDefaults` is documented thread-safe but the SDK does not mark it `Sendable`,
+/// so passing one across an actor boundary (e.g. into `MediaOperationCoordinator.init`
+/// or `LibraryReorganizationRunner.init`, both required as of plan 0066 Stage 2) is
+/// otherwise flagged as a potential data race. Safe because every use here is a
+/// plain get/set through Foundation's own internal synchronization.
+extension UserDefaults: @retroactive @unchecked Sendable {}
+
 /// Typed read/write owner for import preferences. Keys are stable for the
 /// Settings Import tab.
 nonisolated enum ImportPreferencesStore {
-    static func load(defaults: UserDefaults = .standard) -> ImportPreferences {
+    static func load(defaults: UserDefaults) -> ImportPreferences {
         ImportPreferences(
             importSidecarFiles: defaults.object(forKey: ImportPreferences.sidecarImportKey) as? Bool
                 ?? ImportPreferences.default.importSidecarFiles,
@@ -172,7 +179,7 @@ nonisolated enum ImportPreferencesStore {
         )
     }
 
-    static func save(_ preferences: ImportPreferences, defaults: UserDefaults = .standard) {
+    static func save(_ preferences: ImportPreferences, defaults: UserDefaults) {
         defaults.set(preferences.importSidecarFiles, forKey: ImportPreferences.sidecarImportKey)
         defaults.set(preferences.deleteSourceAfterImport, forKey: ImportPreferences.deleteSourceAfterImportKey)
         defaults.set(preferences.autoEjectAfterImport, forKey: ImportPreferences.autoEjectAfterImportKey)

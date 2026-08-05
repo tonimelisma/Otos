@@ -57,7 +57,7 @@ final class CatalogWindowViewModel {
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish
     /// path every zoom surface shares (compiler-enforced single owner). Set in `init`, not a
     /// property default, because its initial value depends on the injected
-    /// `gridColumnCountDefaults`.
+    /// `preferences`.
     private(set) var gridColumnCount: Int
     /// Filmstrip square tile edge in points (48–192). Same persistence pattern as
     /// `gridColumnCount`; loupe/compare strips read this for frame height and layout.
@@ -117,7 +117,12 @@ final class CatalogWindowViewModel {
     /// camera happens to be plugged in. Production starts them; tests that assert on
     /// catalog content opt out so their result is a property of the fixture alone.
     @ObservationIgnored private let startsSourceMonitoring: Bool
-    @ObservationIgnored private let gridColumnCountDefaults: UserDefaults
+    /// Backs grid/strip zoom persistence (`gridColumnCountDefaultsKey` /
+    /// `stripTileEdgeDefaultsKey`) and, since it's the ViewModel's only injected
+    /// `UserDefaults` seam, also import preferences (`importPreferences`,
+    /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
+    /// production `UserDefaults.standard` domain by omitting it (plan 0066 Stage 2).
+    @ObservationIgnored let preferences: UserDefaults
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
@@ -137,8 +142,10 @@ final class CatalogWindowViewModel {
     var importPresentations: [MediaOperationSourcePresentation] = []
     /// When true, the plan detail overlay sheet is presented for the selected source.
     var showsImportPlanOverlay = false
-    /// Settings Import tab bindings; persisted through `ImportPreferencesStore`.
-    var importPreferences: ImportPreferences = ImportPreferencesStore.load()
+    /// Settings Import tab bindings; persisted through `ImportPreferencesStore`. Set in
+    /// `init`, not a property default, because its initial value depends on the
+    /// injected `preferences`.
+    var importPreferences: ImportPreferences
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
@@ -164,14 +171,14 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let previewLoader: any PreviewLoading
 
     init(
-        catalogStore: CatalogStore = CatalogStore(),
+        catalogStore: CatalogStore,
         catalogProjection: CatalogProjection = CatalogProjection(),
         enrichmentCoordinator: EnrichmentCoordinator? = nil,
         stallMonitor: MainRunLoopStallMonitor = MainRunLoopStallMonitor(),
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
-        gridColumnCountDefaults: UserDefaults = .standard,
+        preferences: UserDefaults,
         previewLoader: (any PreviewLoading)? = nil
     ) {
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
@@ -185,11 +192,12 @@ final class CatalogWindowViewModel {
         let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
-        self.gridColumnCountDefaults = gridColumnCountDefaults
-        let storedColumns = gridColumnCountDefaults.integer(forKey: Self.gridColumnCountDefaultsKey)
+        self.preferences = preferences
+        let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
         gridColumnCount = GridColumnCount.validated(storedColumns)
-        let storedStrip = gridColumnCountDefaults.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
+        let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
         stripTileEdge = Self.clampedStripTileEdge(storedStrip.map { CGFloat($0) })
+        importPreferences = ImportPreferencesStore.load(defaults: preferences)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
         mediaTileDetailReader = MediaTileDetailReader(store: catalogStore)
@@ -735,7 +743,7 @@ extension CatalogWindowViewModel {
             return
         }
         gridColumnCount = clamped
-        gridColumnCountDefaults.set(clamped, forKey: Self.gridColumnCountDefaultsKey)
+        preferences.set(clamped, forKey: Self.gridColumnCountDefaultsKey)
     }
 
     func zoomInGrid() {
@@ -753,7 +761,7 @@ extension CatalogWindowViewModel {
             return
         }
         stripTileEdge = clamped
-        gridColumnCountDefaults.set(Double(clamped), forKey: Self.stripTileEdgeDefaultsKey)
+        preferences.set(Double(clamped), forKey: Self.stripTileEdgeDefaultsKey)
     }
 
     static func clampedStripTileEdge(_ requested: CGFloat?) -> CGFloat {

@@ -8,6 +8,7 @@ import SwiftUI
 struct ImportPlanFooter: View {
     let presentation: MediaOperationSourcePresentation
     let fixedLibraries: [CatalogLibraryState]
+    let importPreferences: ImportPreferences
     let setDestination: (LibraryRootPath) -> Void
     let queueImport: () -> Void
     let showPlanDetails: () -> Void
@@ -68,8 +69,7 @@ struct ImportPlanFooter: View {
     }
 
     private var policySummary: some View {
-        let prefs = ImportPreferencesStore.load()
-        return Text(policyText(prefs))
+        Text(policyText(importPreferences))
             .font(.caption2)
             .foregroundStyle(.tertiary)
     }

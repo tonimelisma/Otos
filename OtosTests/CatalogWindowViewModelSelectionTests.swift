@@ -254,7 +254,7 @@ private func makeSelectionViewModel() -> CatalogWindowViewModel {
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        gridColumnCountDefaults: UserDefaults(suiteName: "Otos.SelectionTests.\(UUID().uuidString)")!
+        preferences: UserDefaults(suiteName: "Otos.SelectionTests.\(UUID().uuidString)")!
     )
 }
 

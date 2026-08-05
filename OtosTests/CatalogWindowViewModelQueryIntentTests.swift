@@ -1,3 +1,4 @@
+import Foundation
 @testable import Otos
 import Testing
 
@@ -133,9 +134,9 @@ private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: Win
         catalogStore: store,
         catalogProjection: projection,
         startsStallMonitor: false,
-
         startsEnrichment: false,
-        startsSourceMonitoring: false
+        startsSourceMonitoring: false,
+        preferences: UserDefaults(suiteName: "Otos.CatalogWindowViewModelQueryIntentTests.\(UUID().uuidString)")!
     )
     return (model, gate)
 }

@@ -11,7 +11,16 @@ import SwiftUI
 
 @main
 struct OtosApp: App {
-    @State private var catalogViewModel = CatalogWindowViewModel()
+    /// The one place in the app that names the production catalog location and
+    /// UserDefaults.standard — every other type takes both as required
+    /// (no-default) parameters, so a caller cannot reach production data by
+    /// omitting an argument (plan 0066 Stage 2).
+    @State private var catalogViewModel = CatalogWindowViewModel(
+        catalogStore: CatalogStore(
+            location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
+        ),
+        preferences: UserDefaults.standard
+    )
 
     var body: some Scene {
         Window("Otos", id: "main") {

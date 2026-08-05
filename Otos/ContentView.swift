@@ -36,6 +36,7 @@ struct ContentView: View {
                     ImportPlanFooter(
                         presentation: presentation,
                         fixedLibraries: viewModel.state.libraries.filter { $0.availability == .available },
+                        importPreferences: viewModel.importPreferences,
                         setDestination: { destination in
                             viewModel.setImportDestination(destination, for: presentation.sourcePath)
                         },
@@ -236,5 +237,10 @@ struct ContentView: View {
 }
 
 #Preview {
-    ContentView(viewModel: CatalogWindowViewModel())
+    ContentView(
+        viewModel: CatalogWindowViewModel(
+            catalogStore: CatalogStore(location: .inMemory),
+            preferences: UserDefaults(suiteName: "Otos.Preview.\(UUID().uuidString)")!
+        )
+    )
 }
