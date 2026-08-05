@@ -2,10 +2,15 @@
 
 ## Status
 
-Not started. All evidence below was captured on 2026-08-04 against `main` at
-`bdd31e4`. Reproduce it before changing anything: the measurements are the
-acceptance criteria, and a junior implementer who has not seen them will not
-know when a stage is done.
+Not started. Evidence in Stages 1–5 was captured on 2026-08-04 against `main` at
+`bdd31e4`; Stage 6's additional evidence on 2026-08-05 against `3e94549`.
+Reproduce it before changing anything: the measurements are the acceptance
+criteria, and a junior implementer who has not seen them will not know when a
+stage is done.
+
+Sibling plan: `0067-measurements-that-mean-what-they-say.md` covers three defects
+found in the same investigation that are about numbers and guards being wrong, not
+about data isolation. Keep them separate; they share no code.
 
 ## Purpose
 
@@ -16,12 +21,14 @@ Two rules, currently both broken:
    production catalog, and leaves preference files behind on every run.
 2. **A smoke run may use the production library, but only in the ways the app
    already behaves on its own** — scanning, enrichment, materialization, import
-   planning. It must never change what the user has configured. Today it
-   permanently registers whatever path it is pointed at as a library root.
+   planning. It must never change what the user has configured, and it must never
+   destroy work the user has in progress. Today it permanently registers whatever
+   path it is pointed at as a library root, and it force-quits the app on exit
+   regardless of what the app is doing.
 
 These are not tidiness issues. The measurements below show a `swift test`
 equivalent walking a 16,159-file cloud library and mutating an 80 MB production
-database.
+database, and a smoke script that killed a real 9.1 GB import mid-flight.
 
 ## Evidence
 
@@ -109,12 +116,34 @@ id=11 | library | /tmp/claude-501/…/scratchpad/smoke-library | 2 assets
 The directory no longer exists. The row is visible in the product sidebar as a
 library named `smoke-library`.
 
+### 6. A smoke run killed a real import mid-flight
+
+`script/smoke-run.sh` sets `QUIT_ON_EXIT=1` and its `cleanup` trap calls
+`quit_app` unconditionally — `osascript … quit`, then `kill` on the PID it
+launched. It has no notion of the app being busy.
+
+On 2026-08-05 this terminated a user-initiated import of 344 files / 9.1 GB after
+62 had settled, leaving 7 `active_file_operation` rows in `copying` and 7
+`.otos-import-staging` files in the destination.
+
+The durable journal did its job. On relaunch, recovery logged all seven as
+`phase=copying stagingExists=true finalExists=false`, deleted the staging files,
+and cleared the rows; the replan then saw the 62 as preexisting
+(`copyCount=282 skipCount=1436`) and the rerun completed
+`expectedPublished=282 storedBatchCount=282 failed=0 blocked=0`. 62 + 282 = 344,
+with nothing lost, duplicated, or half-published.
+
+**That recovery is not a reason to leave the script as it is.** It is the reason
+the incident cost nothing this time. The script reached for `kill` on an
+application that was actively writing the user's files; correctness came from
+ARC-048's journal, not from the tool behaving reasonably.
+
 ### Not this repo's leak — do not "fix" these
 
 `~/Library/Preferences` also holds 621 `OtosStudioPreferencesInfrastructureTests-*`
 (dated 2026-04-30 → 05-21) and 163 `TestDefaults-*` (newest 2026-04-02, oldest
 2025-07-21). Neither string appears anywhere in this repository's sources. They
-are stale artifacts of other projects on the same machine. Stage 6 lists them for
+are stale artifacts of other projects on the same machine. Stage 7 lists them for
 one-time cleanup; no code change here prevents or causes them.
 
 ## Root cause
@@ -136,6 +165,12 @@ plus one hardcoded reach: `MediaOperationCoordinator.swift:809,823` uses
 `Bundle.main` is the app for a hosted test bundle, so none of these defaults can
 tell "app" from "test". Deleting leftover files after the fact would leave the
 mechanism intact; the fix is to remove the defaults.
+
+Evidence 5 and 6 share a second, smaller root cause: **the smoke tooling assumes
+it owns the app.** It adds roots as if it were the user, and it kills the process
+as if nothing else could be happening. Both assumptions are false the moment the
+smoke target is the production library — which is exactly the case the tooling
+exists to serve.
 
 ## Design
 
@@ -346,6 +381,54 @@ exist.
   unchanged.
 - `grep -rn "ensureLibrary" Otos/Support/` returns nothing.
 
+## Stage 6b — Smoke runs stop destroying in-progress work
+
+A smoke run that may not change the user's configuration must equally not
+terminate work the user started. See Evidence 6: the cleanup trap killed a live
+9.1 GB import.
+
+**Files:** `Otos/Services/MediaOperationCoordinator.swift` (read-only query),
+`Otos/ViewModels/CatalogWindowViewModelMediaOperations.swift`,
+`Otos/OtosApp.swift`, `script/smoke-run.sh`.
+
+**Design.** The script cannot answer "is the app busy?" by inspecting a process.
+The app already owns that fact — `MediaOperationCoordinator.executing` is exactly
+the set of sources with an executor in flight — so the app must publish it and the
+script must read it. Do not approximate this in bash by grepping logs or counting
+journal rows: the journal is a durability record, not a liveness signal, and a
+script that guesses will eventually guess wrong while 9 GB is in flight.
+
+**Work:**
+
+1. Emit a heartbeat the script can read without any IPC machinery: extend the
+   existing session logging so the coordinator logs
+   `op=import.activity phase=started|finished rootPath=…` around the window in
+   which `executing` is non-empty. One line each way; do not add a per-file
+   heartbeat.
+2. In `script/smoke-run.sh`, replace the unconditional `quit_app` in `cleanup`
+   with: ask the app to quit; if an import is in flight, do not, and instead print
+   the source path and leave the app running with a non-zero exit and a message
+   saying the smoke run is incomplete because an import was active. Never `kill`
+   a process that reported an active import — the fallback `kill` is what turned a
+   graceful-quit request into a mid-copy termination.
+3. Refuse to *start* a `--jank` smoke run when an import is already active, for
+   the same reason. Fail with the same message.
+
+**Done when:**
+
+- Starting an import and then running `script/smoke-run.sh --jank <root>` exits
+  non-zero without launching, and names the active source.
+- Starting an import *during* a smoke run leaves the app alive at script exit, and
+  the import completes normally. Verify against the real card, and check
+  `SELECT COUNT(*) FROM active_file_operation` is 0 afterwards with no
+  `.otos-import-staging` files left in the destination.
+- With no import running, cleanup still quits the app exactly as it does today.
+
+**What this stage does not do.** It does not make the app resilient to being
+killed — it already is, and Evidence 6 documents the recovery ladder working end
+to end on 344 real files. This stage stops our own tooling from exercising that
+ladder on the user's data by accident.
+
 ## Stage 7 — One-time cleanup of what already leaked
 
 Code changes do not remove what is already on disk. These are the user's files;
@@ -379,7 +462,8 @@ description for the user to run when they choose.
   locations are named once at the entry point and never defaulted" — including
   the rejected alternatives (teardown hooks, runtime XCTest detection as the
   mechanism, a dependency-container type). The smoke seam's read-only,
-  DEBUG-only contract belongs in the same ADR.
+  DEBUG-only, never-interrupt contract belongs in the same ADR: it is one
+  decision about what developer tooling may do to a production install.
 - `docs/architecture.md`: update the ownership table if Stage 2 changes who
   constructs `CatalogStore`.
 - Delete this plan file when all stages have landed.
@@ -387,11 +471,16 @@ description for the user to run when they choose.
 ## Sequencing
 
 Stages 1 → 2 → 3 → 4 in order; 4 depends on 1 and 3 to be provable. Stage 5 after
-2. Stage 6 is independent and may land first if that is more convenient. Stage 7
-is the user's, after everything else has merged.
+2. Stages 6 and 6b are independent of the rest and of each other, and may land
+first if that is more convenient. Stage 7 is the user's, after everything else has
+merged.
 
 Land them as separate PRs. Stage 2 will touch many call sites and should not be
 reviewed in the same diff as Stage 1's one-line guard.
+
+**Do Stage 6b early if any smoke run is planned against a production library
+before this plan finishes.** It is the only stage that protects data the user
+cannot get back by re-running something.
 
 ## What "done" means for the whole plan
 
