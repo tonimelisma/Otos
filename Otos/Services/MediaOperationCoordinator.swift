@@ -594,14 +594,9 @@ actor MediaOperationCoordinator {
         return ImportPlanBuildResult(
             plan: plan,
             namespace: namespace,
-            enumerateMs: milliseconds(enumerateStart.duration(to: planStart)),
-            planMs: milliseconds(planStart.duration(to: planEnd))
+            enumerateMs: DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)),
+            planMs: DiagnosticsTiming.milliseconds(planStart.duration(to: planEnd))
         )
-    }
-
-    private nonisolated static func milliseconds(_ duration: Duration) -> Int {
-        Int(duration.components.seconds * 1000)
-            + Int(duration.components.attoseconds / 1_000_000_000_000_000)
     }
 
     /// One `phase=finish` line carrying the split that tells I/O cost from CPU cost.
@@ -777,8 +772,7 @@ actor MediaOperationCoordinator {
             return
         }
         let elapsed = started.duration(to: ContinuousClock().now)
-        attachToReadyMs[source] = Int(elapsed.components.seconds * 1000)
-            + Int(elapsed.components.attoseconds / 1_000_000_000_000_000)
+        attachToReadyMs[source] = DiagnosticsTiming.milliseconds(elapsed)
         let elapsedMs = attachToReadyMs[source] ?? 0
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length

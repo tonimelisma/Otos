@@ -183,7 +183,7 @@ actor MediaImportExecutor {
             )
         }
         OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
-        let elapsedMs = max(Int(started.duration(to: .now).components.attoseconds / 1_000_000_000_000_000), 1)
+        let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
             "batch": "\(batch.unixMilliseconds)",
             "bytes": "\(totalBytes)",
@@ -532,10 +532,7 @@ actor MediaImportExecutor {
         let signpost = OtosSignpost.mediaIO.beginInterval("MediaImportFileCopy")
         defer {
             OtosSignpost.mediaIO.endInterval("MediaImportFileCopy", signpost)
-            let elapsedMs = max(
-                Int(started.duration(to: .now).components.attoseconds / 1_000_000_000_000_000),
-                1
-            )
+            let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
             OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "finish", fields: [
                 "batch": "\(batch.unixMilliseconds)",
                 "bytes": "\(entry.source.byteSize ?? 0)",

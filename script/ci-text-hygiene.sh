@@ -110,12 +110,27 @@ check_no_source_text_tests() {
   fi
 }
 
+# Duration.components.attoseconds is the sub-second remainder, not "the whole
+# duration in tiny units" — reading it alone silently discards every whole
+# second. DiagnosticsTiming.milliseconds(_:) converts it correctly and is the
+# only place allowed to touch the raw field. See plan 0067 Stage 1.
+check_no_stray_attoseconds() {
+  local head_sha="$1"
+
+  if git grep -n -F 'components.attoseconds' "$head_sha" -- Otos \
+      | grep -v ':Otos/Support/DiagnosticsTiming\.swift:'; then
+    echo "Forbidden raw Duration.components.attoseconds outside Otos/Support/DiagnosticsTiming.swift: it discards whole seconds. Use DiagnosticsTiming.milliseconds(_:) instead (plan 0067 Stage 1)." >&2
+    exit 1
+  fi
+}
+
 check() {
   local event_name="${EVENT_NAME:-${GITHUB_EVENT_NAME:-workflow_dispatch}}"
   local base_sha="${BASE_SHA:-}"
   local head_sha="${HEAD_SHA:-${GITHUB_SHA:-HEAD}}"
 
   check_no_source_text_tests "$head_sha"
+  check_no_stray_attoseconds "$head_sha"
 
   case "$event_name" in
     pull_request)

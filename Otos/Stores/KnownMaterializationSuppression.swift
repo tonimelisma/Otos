@@ -41,7 +41,8 @@ nonisolated struct KnownMaterializationSuppressionState {
 
     mutating func begin(id: MediaAssetID, now: Date = Date()) {
         pruneExpired(now: now)
-        let candidate = now.addingTimeInterval(Self.seconds(KnownMaterializationSuppressionPolicy.activeCeiling))
+        let ceiling = DiagnosticsTiming.seconds(KnownMaterializationSuppressionPolicy.activeCeiling)
+        let candidate = now.addingTimeInterval(ceiling)
         // A newer begin must not shorten an overlapping newer ceiling.
         if let existing = expiryByID[id] {
             expiryByID[id] = max(existing, candidate)
@@ -54,7 +55,8 @@ nonisolated struct KnownMaterializationSuppressionState {
         pruneExpired(now: now)
         // Replace the active ceiling with the measured post-completion grace so
         // late duplicate provider events still suppress briefly.
-        expiryByID[id] = now.addingTimeInterval(Self.seconds(KnownMaterializationSuppressionPolicy.endGrace))
+        let grace = DiagnosticsTiming.seconds(KnownMaterializationSuppressionPolicy.endGrace)
+        expiryByID[id] = now.addingTimeInterval(grace)
     }
 
     mutating func endFailure(id: MediaAssetID, now: Date = Date()) {
@@ -76,10 +78,5 @@ nonisolated struct KnownMaterializationSuppressionState {
 
     func activeExpiries(now: Date = Date()) -> [MediaAssetID: Date] {
         expiryByID.filter { $0.value > now }
-    }
-
-    private static func seconds(_ duration: Duration) -> TimeInterval {
-        let components = duration.components
-        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 }

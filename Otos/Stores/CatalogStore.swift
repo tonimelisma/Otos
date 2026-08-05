@@ -3330,7 +3330,7 @@ private extension CatalogStore {
 
     private func scheduleOverdueIntegrityScans() {
         let now = Date()
-        let interval = Self.seconds(Self.integrityScanInterval)
+        let interval = DiagnosticsTiming.seconds(Self.integrityScanInterval)
         for path in roots.keys {
             guard roots[path]?.root.kind == .library else {
                 continue
@@ -3361,11 +3361,6 @@ private extension CatalogStore {
             )
             Task { await self.drainDirtyReconcile(for: path) }
         }
-    }
-
-    private static func seconds(_ duration: Duration) -> TimeInterval {
-        let components = duration.components
-        return TimeInterval(components.seconds) + TimeInterval(components.attoseconds) / 1e18
     }
 
     @discardableResult
