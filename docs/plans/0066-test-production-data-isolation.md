@@ -2,11 +2,15 @@
 
 ## Status
 
-Not started. Evidence in Stages 1–5 was captured on 2026-08-04 against `main` at
-`bdd31e4`; Stage 6's additional evidence on 2026-08-05 against `3e94549`.
-Reproduce it before changing anything: the measurements are the acceptance
-criteria, and a junior implementer who has not seen them will not know when a
-stage is done.
+Stages 1, 2, 3, and 6 have landed (PRs #156, #157, #158, #160). Stages 4, 5, 6b,
+and 7 remain; the decision the landed stages encode is recorded in
+`docs/adr/0020-production-data-locations-and-the-developer-smoke-seam.md`.
+
+Evidence in Stages 1–5 was captured on 2026-08-04 against `main` at `bdd31e4`;
+Stage 6's additional evidence on 2026-08-05 against `3e94549`; Evidence 7 on
+2026-08-05 against `3d05312`. Reproduce it before changing anything: the
+measurements are the acceptance criteria, and a junior implementer who has not
+seen them will not know when a stage is done.
 
 Sibling plan: `0067-measurements-that-mean-what-they-say.md` covers three defects
 found in the same investigation that are about numbers and guards being wrong, not
@@ -137,6 +141,41 @@ with nothing lost, duplicated, or half-published.
 the incident cost nothing this time. The script reached for `kill` on an
 application that was actively writing the user's files; correctness came from
 ARC-048's journal, not from the tool behaving reasonably.
+
+### 7. A test run terminates a running production Otos
+
+`OtosTests` is a hosted test bundle, so `xcodebuild test` launches `Otos.app`.
+macOS replaces the already-running instance of the same bundle identifier, so
+running the test suite kills whatever Otos session the user has open. Stage 1
+stopped the test host from *starting* the product stack; it does not stop the
+launch from *ending* an existing one.
+
+Observed on 2026-08-05 against `main` at `3d05312`, with Stages 1 and 2 already
+merged. The user's Otos (pid 21189, running since 2026-08-04 22:41) was idling
+after an import when `script/verify.sh` reached `script/test.sh`:
+
+```
+08:23:24.880 Otos[21189] op=catalog.enrichment.scheduler phase=route claimed=0 …
+08:23:25.015 Otos[21189] BUG IN CLIENT OF LIBDISPATCH: Assertion failed:
+                         Block was expected to execute on queue [com.apple.main-thread]
+```
+
+That is the last line the process ever logged. Nothing was in flight — no
+`active_file_operation` rows, no attached card — so nothing was lost this time,
+for the same reason Evidence 6 cost nothing: luck about timing, not a property of
+the tooling. Had the suite been run twenty minutes earlier, it would have landed
+on a 12 GB import.
+
+Two separate facts are worth keeping apart. That the app *exits* is inherent to a
+hosted test bundle. That it exits by tripping a main-thread dispatch assertion
+during teardown is a defect in the app's own shutdown path and is worth finding
+independently — a clean termination would have logged nothing of the sort.
+
+This needs its own stage. The likely shapes are: make the test host launch not
+displace a running instance, run tests against a distinct bundle identifier, or —
+weakest — have `script/test.sh` refuse to run while an Otos with in-flight work is
+open, which is the same liveness question Stage 6b already has to answer. Do not
+pick one from this paragraph; measure first.
 
 ### Not this repo's leak — do not "fix" these
 
@@ -349,7 +388,13 @@ not `precondition` — a release build must not carry it.
 **Done when:** deliberately calling the production factory from a scratch test
 trips the assertion. Delete the scratch test afterwards.
 
-## Stage 6 — Smoke runs stop mutating configuration
+## Stage 6 — Smoke runs stop mutating configuration — LANDED (PR #160)
+
+Landed as `SmokeLibrarySelection`: `#if DEBUG`, reads `OTOS_SMOKE_SELECT_ROOT`,
+resolves against roots the Store already holds, applies the ordinary
+`selectSidebar` intent, and logs the registered roots when the requested path is
+not one of them. `script/smoke-run.sh --verify` now proves
+`op=smoke.select phase=finish outcome=selected`.
 
 **Files:** `Otos/Support/SmokeLibrarySeed.swift` (renamed),
 `Otos/OtosApp.swift`, `script/smoke-run.sh`, `script/build_and_run.sh`.
@@ -458,7 +503,9 @@ description for the user to run when they choose.
   implemented behavior of a shipped seam — if `SmokeLibrarySelection` survives as
   product-visible behavior at all, it belongs in an ADR, not a requirement row;
   see below.
-- `docs/adr/`: add one ADR for the ownership decision — "production data
+- `docs/adr/`: `0020-production-data-locations-and-the-developer-smoke-seam.md`
+  records this (landed with Stage 6). It was specified as one ADR for the ownership
+  decision — "production data
   locations are named once at the entry point and never defaulted" — including
   the rejected alternatives (teardown hooks, runtime XCTest detection as the
   mechanism, a dependency-container type). The smoke seam's read-only,

@@ -41,7 +41,9 @@ struct OtosApp: App {
                     OtosLog.app.notice(
                         "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"
                     )
-                    SmokeLibrarySeed.applyIfPresent(to: catalogViewModel)
+                    #if DEBUG
+                        SmokeLibrarySelection.applyIfPresent(to: catalogViewModel)
+                    #endif
                 }
         }
         .commands {

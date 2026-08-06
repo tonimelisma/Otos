@@ -13,12 +13,13 @@ if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
   cat >&2 <<'USAGE'
 usage: script/smoke-run.sh [--jank|--verify] <library-root>
 
-There is no default library root: a machine's already-registered roots are
-never guessable and a wrong guess produces a silent overlappingRoot failure
-that looks like a script bug. Pass the root explicitly, every time.
+The root must already be registered in the catalog. A smoke run selects an
+existing root; it never adds, removes, or otherwise changes what libraries
+exist (plan 0066 Stage 6). There is no default: a machine's registered roots
+are never guessable, so pass the root explicitly, every time.
 
 Environment:
-  OTOS_SMOKE_LIBRARY_ROOT      library root, if not given as an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, if not an argument
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
   OTOS_SMOKE_SCROLL_DELTA      pixel delta per scroll event (default: 900)
@@ -37,7 +38,7 @@ case "$MODE" in
     ;;
 esac
 
-SMOKE_ROOT="${ROOT_ARG:-${OTOS_SMOKE_LIBRARY_ROOT:-}}"
+SMOKE_ROOT="${ROOT_ARG:-${OTOS_SMOKE_SELECT_ROOT:-}}"
 SETTLE_SECONDS="${OTOS_SMOKE_SETTLE_SECONDS:-10}"
 SCROLL_CYCLES="${OTOS_SMOKE_SCROLL_CYCLES:-6}"
 SCROLL_DELTA="${OTOS_SMOKE_SCROLL_DELTA:-900}"
@@ -54,12 +55,13 @@ usage() {
   cat >&2 <<'USAGE'
 usage: script/smoke-run.sh [--jank|--verify] <library-root>
 
-There is no default library root: a machine's already-registered roots are
-never guessable and a wrong guess produces a silent overlappingRoot failure
-that looks like a script bug. Pass the root explicitly, every time.
+The root must already be registered in the catalog. A smoke run selects an
+existing root; it never adds, removes, or otherwise changes what libraries
+exist (plan 0066 Stage 6). There is no default: a machine's registered roots
+are never guessable, so pass the root explicitly, every time.
 
 Environment:
-  OTOS_SMOKE_LIBRARY_ROOT      library root, if not given as an argument
+  OTOS_SMOKE_SELECT_ROOT       an already-registered root, if not an argument
   OTOS_SMOKE_SETTLE_SECONDS    seconds to wait before jank scrolling (default: 10)
   OTOS_SMOKE_SCROLL_CYCLES     down/up scroll cycles (default: 6)
   OTOS_SMOKE_SCROLL_DELTA      pixel delta per scroll event (default: 900)
@@ -134,27 +136,38 @@ start_log_capture() {
   echo "$LOG_FILE"
 }
 
-run_seeded_launch() {
-  export OTOS_SMOKE_LIBRARY_ROOT="$SMOKE_ROOT"
+run_selected_launch() {
+  export OTOS_SMOKE_SELECT_ROOT="$SMOKE_ROOT"
   "$ROOT_DIR/script/build_and_run.sh" --verify >&2
   APP_PID="$(wait_for_app_pid)"
   echo "$APP_PID"
 }
 
 
-verify_seed_consumed() {
+# A smoke run proves it scoped the window to the requested root, not that it
+# registered one — registering is exactly what Stage 6 removed. `outcome=selected`
+# is logged only after the root appeared among the Store's own published roots.
+verify_selection_applied() {
   local app_pid="$1"
-  local predicate="processID == $app_pid AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=catalog.library.ensure\""
+  local predicate="processID == $app_pid AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=smoke.select\""
   for _ in $(seq 1 50); do
     if /usr/bin/log show --last 2m --style ndjson --info --predicate "$predicate" 2>/dev/null \
-      | grep -E 'op=catalog\.library\.ensure.*phase=(exists|finish)' >/dev/null; then
-      echo "Seeded library verified via unified log pid=$app_pid"
+      | grep -E 'op=smoke\.select.*phase=finish.*outcome=selected' >/dev/null; then
+      echo "Smoke selection verified via unified log pid=$app_pid"
       return
+    fi
+    if /usr/bin/log show --last 2m --style ndjson --info --predicate "$predicate" 2>/dev/null \
+      | grep -E 'op=smoke\.select.*outcome=notRegistered' >/dev/null; then
+      echo "Root is not registered in the catalog: $SMOKE_ROOT" >&2
+      echo "A smoke run never adds a root — pass one that already exists." >&2
+      echo >&2
+      registered_roots_message >&2
+      exit 1
     fi
     sleep 0.1
   done
 
-  echo "Seeded smoke launch did not log op=catalog.library.ensure phase=exists|finish for root=$SMOKE_ROOT pid=$app_pid" >&2
+  echo "Smoke launch did not log op=smoke.select phase=finish for root=$SMOKE_ROOT pid=$app_pid" >&2
   /usr/bin/log show --last 2m --style ndjson --info --predicate "processID == $app_pid AND subsystem == \"$SUBSYSTEM\"" 2>/dev/null | tail -n 40 >&2 || true
   exit 1
 }
@@ -163,10 +176,10 @@ verify_seed_consumed() {
 run_verify() {
   QUIT_ON_EXIT=1
   local app_pid
-  app_pid="$(run_seeded_launch)"
+  app_pid="$(run_selected_launch)"
   sleep "${OTOS_SMOKE_VERIFY_SECONDS:-3}"
-  verify_seed_consumed "$app_pid"
-  echo "Seeded smoke launch succeeded root=$SMOKE_ROOT"
+  verify_selection_applied "$app_pid"
+  echo "Smoke launch succeeded, window scoped to root=$SMOKE_ROOT"
 }
 
 run_jank() {
@@ -175,8 +188,8 @@ run_jank() {
   echo "Capturing smoke logs to $LOG_FILE"
 
   local app_pid
-  app_pid="$(run_seeded_launch)"
-  echo "Seeded app launched pid=$app_pid root=$SMOKE_ROOT"
+  app_pid="$(run_selected_launch)"
+  echo "App launched pid=$app_pid selecting root=$SMOKE_ROOT"
   echo "Waiting ${SETTLE_SECONDS}s before scrolling"
 
   /usr/bin/xcrun swift "$ROOT_DIR/script/smoke-scroll.swift" \
@@ -198,7 +211,7 @@ fi
 
 if [[ -z "$SMOKE_ROOT" ]]; then
   echo "No library root given — there is no default (plan 0065 Stage 5)." >&2
-  echo "Pass a root path as an argument, or set OTOS_SMOKE_LIBRARY_ROOT." >&2
+  echo "Pass a root path as an argument, or set OTOS_SMOKE_SELECT_ROOT." >&2
   echo >&2
   registered_roots_message >&2
   exit 1
@@ -206,7 +219,7 @@ fi
 
 if [[ ! -d "$SMOKE_ROOT" ]]; then
   echo "Smoke library root is not a directory: $SMOKE_ROOT" >&2
-  echo "Pass a root path or set OTOS_SMOKE_LIBRARY_ROOT." >&2
+  echo "Pass a root path or set OTOS_SMOKE_SELECT_ROOT." >&2
   echo >&2
   registered_roots_message >&2
   exit 1

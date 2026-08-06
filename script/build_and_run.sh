@@ -29,7 +29,7 @@ if [[ ! -d "$APP_BUNDLE" ]]; then
 fi
 
 open_app() {
-  if [[ -n "${OTOS_SMOKE_LIBRARY_ROOT:-}" ]]; then
+  if [[ -n "${OTOS_SMOKE_SELECT_ROOT:-}" ]]; then
     "$APP_BUNDLE/Contents/MacOS/$APP_NAME" >/dev/null 2>&1 &
   else
     /usr/bin/open -n "$APP_BUNDLE"
