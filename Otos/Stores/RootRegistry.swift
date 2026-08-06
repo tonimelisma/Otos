@@ -81,29 +81,44 @@ nonisolated struct RootRegistry {
         Dictionary(uniqueKeysWithValues: statesByPath.map { ($0.key, $0.value.rowID) })
     }
 
-    func rootIDsForQuery(
+    /// Resolves a sidebar selection into the one predicate every scoped catalog read
+    /// consumes. This is the sole translation from product scope to SQL scope, so
+    /// ordered IDs, counts, and filter options cannot disagree about what a
+    /// selection means.
+    func scopePredicate(
         selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
-    ) -> [Int64] {
+    ) -> CatalogScopePredicate {
         switch selection {
         case .allMedia:
-            return availableLibraryPaths.compactMap { path in
-                guard statesByPath[path]?.root.kind == .library else {
-                    return nil
-                }
-                return statesByPath[path]?.rowID
-            }.sorted()
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths)
+            )
         case let .library(path):
             guard availableLibraryPaths.contains(path),
                   let rootID = statesByPath[path]?.rowID
             else {
-                return []
+                return .nothing
             }
-            return [rootID]
-        case .importBatch:
-            // Batch scope is resolved by Store via import_batch_unix_ms, not root IDs.
-            return []
+            return CatalogScopePredicate(rootIDs: [rootID])
+        case let .importBatch(batchID):
+            // A batch spans the fixed libraries exactly like All Media; membership is
+            // the extra `import_batch_unix_ms` dimension, not a narrower root set. A
+            // batch names imported copies, so removable sources never belong to one.
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
+                importBatchUnixMs: batchID.unixMilliseconds
+            )
         }
+    }
+
+    private func fixedLibraryRootIDs(in availableLibraryPaths: Set<LibraryRootPath>) -> [Int64] {
+        availableLibraryPaths.compactMap { path in
+            guard let state = statesByPath[path], state.root.kind == .library else {
+                return nil
+            }
+            return state.rowID
+        }.sorted()
     }
 
     func availableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {

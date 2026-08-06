@@ -65,6 +65,12 @@ everything expensive happens on an actor off the main thread.
   invented durable IDs; the filesystem path is the identity (ADR 0003/0008). Each
   identity value carries a derived FNV-1a `fingerprint` for cheap Hashable /
   diffable hashing only — never persisted, never a second identity.
+- **Query scope** is resolved once. `RootRegistry.scopePredicate` turns a
+  `SidebarSelection` into one `CatalogScopePredicate` (root IDs plus an optional
+  import-batch stamp), and every scoped read — ordered IDs, cataloged count, visible
+  count, filter options — consumes that value rather than bare root IDs. An Imports
+  row narrows by root *and* by batch; holding both dimensions in one value is what
+  stops a read from honoring one and forgetting the other.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
   is the single arbiter of structural applies and zoom swaps. Mouse selection is

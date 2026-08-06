@@ -70,29 +70,46 @@ struct RootRegistryTests {
         #expect(registry[libraryPath]?.availability == .unavailable)
     }
 
-    @Test func rootIDsForQueryHonorsAllMediaAndLibraryScope() {
+    @Test func scopePredicateHonorsAllMediaAndLibraryScope() {
         var registry = RootRegistry()
         registry.upsert(libraryState(path: libraryPath, rowID: 1))
         registry.upsert(libraryState(path: otherPath, rowID: 2))
         registry.upsert(volumeState(rowID: 3))
 
-        let allMedia = registry.rootIDsForQuery(
+        let allMedia = registry.scopePredicate(
             selection: .allMedia,
             availableLibraryPaths: [libraryPath, otherPath, volumePath]
         )
-        #expect(allMedia == [1, 2])
+        #expect(allMedia == CatalogScopePredicate(rootIDs: [1, 2]))
 
-        let libraryOnly = registry.rootIDsForQuery(
+        let libraryOnly = registry.scopePredicate(
             selection: .library(libraryPath),
             availableLibraryPaths: [libraryPath, otherPath]
         )
-        #expect(libraryOnly == [1])
+        #expect(libraryOnly == CatalogScopePredicate(rootIDs: [1]))
 
-        let unavailableLibrary = registry.rootIDsForQuery(
+        let unavailableLibrary = registry.scopePredicate(
             selection: .library(libraryPath),
             availableLibraryPaths: [otherPath]
         )
-        #expect(unavailableLibrary.isEmpty)
+        #expect(unavailableLibrary.selectsNothing)
+    }
+
+    /// A batch selects the fixed libraries *and* the batch stamp. Resolving it to no
+    /// roots is what made batch-scoped counts and filter options silently answer zero.
+    @Test func scopePredicateCarriesBatchStampAcrossFixedLibraries() {
+        var registry = RootRegistry()
+        registry.upsert(libraryState(path: libraryPath, rowID: 1))
+        registry.upsert(libraryState(path: otherPath, rowID: 2))
+        registry.upsert(volumeState(rowID: 3))
+
+        let batch = registry.scopePredicate(
+            selection: .importBatch(ImportBatchID(unixMilliseconds: 1_785_908_514_176)),
+            availableLibraryPaths: [libraryPath, otherPath, volumePath]
+        )
+
+        #expect(batch == CatalogScopePredicate(rootIDs: [1, 2], importBatchUnixMs: 1_785_908_514_176))
+        #expect(batch.selectsNothing == false)
     }
 
     @Test func availableRootIDsByRemovablePrioritySplitsKinds() {

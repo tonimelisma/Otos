@@ -61,3 +61,35 @@ nonisolated struct SQLQuery {
     let sql: String
     let arguments: StatementArguments
 }
+
+/// Every row dimension a `SidebarSelection` constrains, resolved once into one
+/// value that all scoped reads consume.
+///
+/// A scope is not "a set of roots": an Imports row narrows by root *and* by batch
+/// stamp. Splitting those dimensions across call sites is what let ordered IDs
+/// honor batch membership while the count and filter-option queries silently did
+/// not — an import batch whose rows were all excluded by an active filter then
+/// reported zero unfiltered rows and rendered as an empty library instead of an
+/// empty filter match. `RootRegistry.scopePredicate` is the only producer and no
+/// read takes bare root IDs, so a new query cannot honor one dimension and forget
+/// the other.
+nonisolated struct CatalogScopePredicate: Equatable {
+    /// Catalog roots the scope admits, ascending. Already narrowed to the kinds and
+    /// availability the selection allows.
+    let rootIDs: [Int64]
+    /// Import-batch stamp the scope requires, when the selection is an Imports row.
+    let importBatchUnixMs: Int64?
+
+    init(rootIDs: [Int64], importBatchUnixMs: Int64? = nil) {
+        self.rootIDs = rootIDs
+        self.importBatchUnixMs = importBatchUnixMs
+    }
+
+    /// No root can satisfy the scope, so every read over it is empty without
+    /// touching SQLite.
+    var selectsNothing: Bool {
+        rootIDs.isEmpty
+    }
+
+    static let nothing = CatalogScopePredicate(rootIDs: [])
+}

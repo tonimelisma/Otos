@@ -583,22 +583,8 @@ extension CatalogStore {
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> [MediaAssetID] {
-        let importBatchUnixMs: Int64?
-        let rootIDs: [Int64]
-        if case let .importBatch(batchID) = descriptor.scope {
-            importBatchUnixMs = batchID.unixMilliseconds
-            // Batch scope is fixed-library assets only (plan §10.2).
-            rootIDs = availableLibraryPaths.compactMap { path in
-                guard roots[path]?.root.kind == .library else {
-                    return nil
-                }
-                return roots[path]?.rowID
-            }.sorted()
-        } else {
-            importBatchUnixMs = nil
-            rootIDs = rootIDsForQuery(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
-        }
-        guard !rootIDs.isEmpty else {
+        let scope = scopePredicate(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
+        guard !scope.selectsNothing else {
             return []
         }
 
@@ -607,15 +593,14 @@ extension CatalogStore {
         let timedRows = try await timedRead(dbWriter) { db in
             try CatalogQueryGateway.fetchOrderedAssetIDRows(
                 descriptor: descriptor,
-                rootIDs: rootIDs,
-                db: db,
-                importBatchUnixMs: importBatchUnixMs
+                scope: scope,
+                db: db
             )
         }
         OtosSignpost.persistence.endInterval("CatalogStoreOrderedAssetIDQuery", signpost)
 
         let validRootPathsByRowID = roots.pathsByRowID.filter { rowID, path in
-            rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
+            scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
         let ids = timedRows.value.compactMap { rootRowID, relativePath -> MediaAssetID? in
             guard let rootPath = validRootPathsByRowID[rootRowID] else {
@@ -627,14 +612,14 @@ extension CatalogStore {
         OtosLog.catalog.debug(
             """
             Catalog ordered asset IDs queried descriptor=\(descriptor.diagnosticDescription, privacy: .public) \
-            roots=\(rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
+            roots=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) \
             waitMs=\(timedRows.waitMs, privacy: .public) \
             execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)
             """
         )
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
+            "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
         return ids
     }
@@ -649,65 +634,65 @@ extension CatalogStore {
         )
     }
 
+    /// Rows this scope holds regardless of whether their roots are reachable right
+    /// now. Projection compares it against the visible count to tell "nothing was
+    /// ever here" from "its libraries are offline", so it deliberately resolves
+    /// against every known root.
     func catalogedAssetCount(for selection: SidebarSelection) async throws -> Int {
-        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: Set(roots.keys))
-        guard !rootIDs.isEmpty else {
+        let scope = scopePredicate(selection: selection, availableLibraryPaths: Set(roots.keys))
+        guard !scope.selectsNothing else {
             return 0
         }
         let dbWriter = try database()
         let timedCount = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.countAssets(rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.countAssets(scope: scope, db: db)
         }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.catalogedCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
 
+    /// Rows this scope holds in currently reachable roots, ignoring the user filter.
+    /// Projection uses it to tell an empty scope from a scope the filter emptied.
     func visibleAssetCount(
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> Int {
-        let rootIDs = rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
-        guard !rootIDs.isEmpty else {
+        let scope = scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        guard !scope.selectsNothing else {
             return 0
         }
         let dbWriter = try database()
         let timedCount = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.countAssets(rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.countAssets(scope: scope, db: db)
         }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
+            "op=catalog.store.query.visibleCount phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(timedCount.value, privacy: .public) waitMs=\(timedCount.waitMs, privacy: .public) execMs=\(timedCount.execMs, privacy: .public) queryMs=\(timedCount.totalMs, privacy: .public)"
         )
         return timedCount.value
     }
 
+    /// Kinds and formats the filter menu may offer, drawn from the rows this scope
+    /// actually holds — so a scope can never offer a filter value that matches
+    /// nothing in it.
     func filterOptions(
         for selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
     ) async throws -> CatalogFilterOptions {
-        let rootIDs: [Int64] = if case .importBatch = selection {
-            availableLibraryPaths.compactMap { path in
-                guard roots[path]?.root.kind == .library else {
-                    return nil
-                }
-                return roots[path]?.rowID
-            }.sorted()
-        } else {
-            rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
-        }
-        guard !rootIDs.isEmpty else {
+        let scope = scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
+        guard !scope.selectsNothing else {
             return .empty
         }
         let dbWriter = try database()
         let timedOptions = try await timedRead(dbWriter) { db in
-            try CatalogQueryGateway.filterOptions(rootIDs: rootIDs, db: db)
+            try CatalogQueryGateway.filterOptions(scope: scope, db: db)
         }
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.store.query.filterOptions phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.availableKinds.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
+            "op=catalog.store.query.filterOptions phase=finish selection=\(selection.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) kindCount=\(timedOptions.value.availableKinds.count, privacy: .public) formatCount=\(timedOptions.value.formatsByKind.values.reduce(0) { $0 + $1.count }, privacy: .public) waitMs=\(timedOptions.waitMs, privacy: .public) execMs=\(timedOptions.execMs, privacy: .public) queryMs=\(timedOptions.totalMs, privacy: .public)"
         )
         return timedOptions.value
     }
@@ -2365,11 +2350,11 @@ private extension CatalogStore {
         )
     }
 
-    private func rootIDsForQuery(
+    private func scopePredicate(
         selection: SidebarSelection,
         availableLibraryPaths: Set<LibraryRootPath>
-    ) -> [Int64] {
-        roots.rootIDsForQuery(selection: selection, availableLibraryPaths: availableLibraryPaths)
+    ) -> CatalogScopePredicate {
+        roots.scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
     }
 
     private func availableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {

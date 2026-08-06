@@ -4,11 +4,14 @@ import GRDB
 /// Catalog query gateway guide
 ///
 /// Pure SQL/mapping helpers for the catalog read surface. `CatalogStore` owns
-/// orchestration (root-id resolution, `timedRead`, slow-query diagnostics); this
-/// type groups ordered-ID / count / filter / detail / metadata / enrichment-candidate
-/// SQL and `Row`→model mapping synchronously inside Store isolation — not a second
-/// actor. Depends on free `StoredAsset` / `StoredTileDetail` / `SQLQuery` types, not
-/// on `CatalogStore` itself.
+/// orchestration (`timedRead`, slow-query diagnostics) and asks `RootRegistry` to
+/// resolve a `SidebarSelection` into one `CatalogScopePredicate`; this type groups
+/// ordered-ID / count / filter / detail / metadata / enrichment-candidate SQL and
+/// `Row`→model mapping synchronously inside Store isolation — not a second actor.
+/// Every scoped read takes the resolved scope rather than bare root IDs, so no
+/// query can honor one scope dimension and forget another. Depends on free
+/// `StoredAsset` / `StoredTileDetail` / `SQLQuery` / `CatalogScopePredicate` types,
+/// not on `CatalogStore` itself.
 nonisolated enum CatalogQueryGateway {
     /// Reads one asset's full preserved metadata JSON on demand. The scalar
     /// columns stay queryable; this JSON preserves the long-tail extraction payload
@@ -28,15 +31,10 @@ nonisolated enum CatalogQueryGateway {
 
     static func fetchOrderedAssetIDRows(
         descriptor: CatalogQueryDescriptor,
-        rootIDs: [Int64],
-        db: Database,
-        importBatchUnixMs: Int64? = nil
+        scope: CatalogScopePredicate,
+        db: Database
     ) throws -> [(Int64, MediaRelativePath)] {
-        guard let query = orderedAssetIDQuery(
-            descriptor: descriptor,
-            rootIDs: rootIDs,
-            importBatchUnixMs: importBatchUnixMs
-        ) else {
+        guard let query = orderedAssetIDQuery(descriptor: descriptor, scope: scope) else {
             return []
         }
         return try Row.fetchAll(
@@ -50,28 +48,13 @@ nonisolated enum CatalogQueryGateway {
 
     static func orderedAssetIDQuery(
         descriptor: CatalogQueryDescriptor,
-        rootIDs: [Int64],
-        importBatchUnixMs: Int64? = nil
+        scope: CatalogScopePredicate
     ) -> SQLQuery? {
-        guard !rootIDs.isEmpty else {
+        guard let scopeClause = scopeClause(scope) else {
             return nil
         }
-        let order = orderPlan(for: descriptor.sort, rootLocal: rootIDs.count == 1)
-        var arguments: [any DatabaseValueConvertible] = []
-        let rootPredicate: String
-        if rootIDs.count == 1, let rootID = rootIDs.first {
-            rootPredicate = "library_root_id = ?"
-            arguments.append(rootID)
-        } else {
-            let placeholders = sqlPlaceholders(count: rootIDs.count)
-            rootPredicate = "library_root_id IN (\(placeholders))"
-            arguments.append(contentsOf: rootIDs)
-        }
-        var batchSQL = ""
-        if let importBatchUnixMs {
-            batchSQL = "\n  AND import_batch_unix_ms = ?"
-            arguments.append(importBatchUnixMs)
-        }
+        let order = orderPlan(for: descriptor.sort, rootLocal: scope.rootIDs.count == 1)
+        var arguments = scopeClause.arguments
         let filter = filterPredicate(for: descriptor.filter)
         arguments.append(contentsOf: filter.arguments)
         let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
@@ -79,15 +62,15 @@ nonisolated enum CatalogQueryGateway {
             sql: """
             SELECT library_root_id, relative_path
             FROM media_asset INDEXED BY \(order.indexName)
-            WHERE \(rootPredicate)\(batchSQL)\(filterSQL)
+            WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)
             """,
             arguments: StatementArguments(arguments)
         )
     }
 
-    static func filterOptions(rootIDs: [Int64], db: Database) throws -> CatalogFilterOptions {
-        guard let query = distinctFilterableTypesQuery(rootIDs: rootIDs) else {
+    static func filterOptions(scope: CatalogScopePredicate, db: Database) throws -> CatalogFilterOptions {
+        guard let query = distinctFilterableTypesQuery(scope: scope) else {
             return .empty
         }
         let rows = try Row.fetchAll(db, sql: query.sql, arguments: query.arguments)
@@ -109,36 +92,34 @@ nonisolated enum CatalogQueryGateway {
         )
     }
 
-    static func distinctFilterableTypesQuery(rootIDs: [Int64]) -> SQLQuery? {
-        guard !rootIDs.isEmpty else {
+    static func distinctFilterableTypesQuery(scope: CatalogScopePredicate) -> SQLQuery? {
+        guard let scopeClause = scopeClause(scope) else {
             return nil
         }
-        let placeholders = sqlPlaceholders(count: rootIDs.count)
         return SQLQuery(
             sql: """
             SELECT DISTINCT best_kind, best_format
             FROM media_asset
-            WHERE library_root_id IN (\(placeholders))
+            WHERE \(scopeClause.sql)
               AND best_kind IS NOT NULL
             ORDER BY best_kind, best_format
             """,
-            arguments: StatementArguments(rootIDs)
+            arguments: StatementArguments(scopeClause.arguments)
         )
     }
 
-    static func countAssets(rootIDs: [Int64], db: Database) throws -> Int {
-        guard !rootIDs.isEmpty else {
+    static func countAssets(scope: CatalogScopePredicate, db: Database) throws -> Int {
+        guard let scopeClause = scopeClause(scope) else {
             return 0
         }
-        let placeholders = sqlPlaceholders(count: rootIDs.count)
         return try Int.fetchOne(
             db,
             sql: """
             SELECT COUNT(*)
             FROM media_asset
-            WHERE library_root_id IN (\(placeholders))
+            WHERE \(scopeClause.sql)
             """,
-            arguments: StatementArguments(rootIDs)
+            arguments: StatementArguments(scopeClause.arguments)
         ) ?? 0
     }
 
@@ -257,6 +238,34 @@ private nonisolated func orderPlan(
             "(byte_size IS NULL), byte_size \(direction), library_root_id, relative_path"
         )
     }
+}
+
+/// Builds the `WHERE` fragment for a resolved scope, or `nil` when the scope
+/// selects nothing and the caller should skip SQLite entirely.
+///
+/// Every scoped read goes through here, which is what keeps root membership and
+/// batch membership from drifting apart between queries. A single-root scope uses
+/// `=` so the root-local ordering indexes stay usable.
+private nonisolated func scopeClause(
+    _ scope: CatalogScopePredicate
+) -> (sql: String, arguments: [any DatabaseValueConvertible])? {
+    guard !scope.selectsNothing else {
+        return nil
+    }
+    var arguments: [any DatabaseValueConvertible] = []
+    let rootPredicate: String
+    if scope.rootIDs.count == 1, let rootID = scope.rootIDs.first {
+        rootPredicate = "library_root_id = ?"
+        arguments.append(rootID)
+    } else {
+        rootPredicate = "library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))"
+        arguments.append(contentsOf: scope.rootIDs)
+    }
+    guard let importBatchUnixMs = scope.importBatchUnixMs else {
+        return (rootPredicate, arguments)
+    }
+    arguments.append(importBatchUnixMs)
+    return ("\(rootPredicate)\n  AND import_batch_unix_ms = ?", arguments)
 }
 
 private nonisolated func filterPredicate(

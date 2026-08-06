@@ -25,7 +25,11 @@ struct CatalogStoreQueryPlanTests {
         )
 
         let ids = try await dbQueue.read { db in
-            try CatalogQueryGateway.fetchOrderedAssetIDRows(descriptor: descriptor, rootIDs: [rootID], db: db)
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(
+                descriptor: descriptor,
+                scope: CatalogScopePredicate(rootIDs: [rootID]),
+                db: db
+            )
         }
 
         #expect(ids.map(\.1.rawValue) == ["alpha.jpg", "raw-original.nef", "retagged.mov"])
@@ -43,10 +47,13 @@ struct CatalogStoreQueryPlanTests {
         try CatalogStore.migrator.migrate(dbQueue)
         let (rootID1, rootID2) = try await insertPlanFixture(dbQueue)
         let now = Date().timeIntervalSince1970
-        let rootOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(descriptor: .default, rootIDs: [rootID1]))
+        let rootOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+            descriptor: .default,
+            scope: CatalogScopePredicate(rootIDs: [rootID1])
+        ))
         let globalOrderQuery = try #require(CatalogQueryGateway.orderedAssetIDQuery(
             descriptor: .default,
-            rootIDs: [rootID1, rootID2]
+            scope: CatalogScopePredicate(rootIDs: [rootID1, rootID2])
         ))
         let rootEnrichmentQuery = try #require(EnrichmentLeaseGateway.enrichmentClaimQuery(
             rootIDs: [rootID1],

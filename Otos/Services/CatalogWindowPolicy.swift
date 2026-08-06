@@ -101,13 +101,13 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia:
+            case .allMedia, .importBatch:
+                // Both scopes span the fixed libraries. Batch *membership* is applied by
+                // Store.orderedAssetIDs; this pass only re-applies the root-kind rule,
+                // which also holds for IDs carried over from a reused order (ADR 0007).
                 return rootsByPath[id.libraryRootPath]?.kind == .library
             case let .library(path):
                 return id.libraryRootPath == path
-            case .importBatch:
-                // Batch membership is applied by Store.orderedAssetIDs before projection.
-                return true
             }
         }
     }
@@ -136,7 +136,10 @@ nonisolated enum CatalogWindowPolicy {
         }
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
-        case .allMedia:
+        case .allMedia, .importBatch:
+            // Both span the fixed libraries, so both answer emptiness the same way: a
+            // batch whose rows exist but whose libraries are offline is unreachable,
+            // not absent.
             let fixedLibraries = libraries.filter { $0.kind == .library }
             if fixedLibraries.contains(where: { $0.availability == .unknown }) {
                 return .checkingLibraries
@@ -155,8 +158,6 @@ nonisolated enum CatalogWindowPolicy {
             case .available, .none:
                 return .noMedia
             }
-        case .importBatch:
-            return .noMedia
         }
     }
 

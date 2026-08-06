@@ -78,9 +78,19 @@ detail-refresh generation. It calls Store query APIs for ordered IDs when a
 structural change or scope change can affect membership/order, then publishes chrome
 plus `CatalogMediaGridState`: ordered visible identities and the generation only,
 never per-asset values. If that visible scope is empty, Projection may ask Store for
-a separate cataloged-asset count across the selected roots so All Media can
-distinguish "nothing exists" from "cataloged media is hidden because roots are
-unavailable." Detail-only Store changes reuse the last ordered-ID result and advance
+separate counts over the same scope, so it can distinguish "nothing exists" from
+"cataloged media is hidden because roots are unavailable" and from "an active filter
+excluded everything."
+
+A scope is not merely a set of roots — an Imports row also narrows by
+`import_batch_unix_ms`. `RootRegistry` therefore resolves each `SidebarSelection`
+into exactly one `CatalogScopePredicate`, and every scoped read (ordered IDs, both
+counts, filter options) consumes that value. Passing bare root IDs per query is
+rejected: it let ordering apply batch membership while the counts and filter options
+silently did not, so a batch whose rows an active filter excluded reported itself as
+an empty library and withheld the Clear Filters affordance.
+
+Detail-only Store changes reuse the last ordered-ID result and advance
 only the detail-refresh generation. Projection registers Store change notifications
 before relying on the coalesced publication loop so detail-only Store writes cannot
 be missed between startup and the first visible publication.
