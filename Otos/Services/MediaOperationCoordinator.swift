@@ -36,7 +36,7 @@ actor MediaOperationCoordinator {
     private var presentations: [LibraryRootPath: MediaOperationSourcePresentation] = [:]
     private var readyPlans: [LibraryRootPath: MediaOperationPlan] = [:]
     private var destinationBySource: [LibraryRootPath: LibraryRootPath] = [:]
-    private var queuedStart: [LibraryRootPath: UInt64] = [:]
+    private var queuedStart: Set<LibraryRootPath> = []
     private var dirty: Set<LibraryRootPath> = []
     private var building: Set<LibraryRootPath> = []
     /// Sources with an executor in flight. This single ownership fact rejects
@@ -49,6 +49,7 @@ actor MediaOperationCoordinator {
     /// ignored. Using inequality — not `>` — keeps a removed-then-re-added root,
     /// whose revision resets, from being suppressed by a stale high value.
     private var lastSeenOccupancy: [LibraryRootPath: UInt64] = [:]
+    // Incremented only in scheduleBuildIfNeeded to give a published plan an identity for ImportPlanDetailReader; not bumped on queueImport.
     private var planGeneration: UInt64 = 0
     private var attachStartedAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var attachToReadyMs: [LibraryRootPath: Int] = [:]
@@ -153,8 +154,7 @@ actor MediaOperationCoordinator {
             )
             return
         }
-        planGeneration &+= 1
-        queuedStart[source] = planGeneration
+        queuedStart.insert(source)
         if let presentation = presentations[source] {
             switch presentation.state {
             case let .ready(summary, generation, skipped):
@@ -289,7 +289,7 @@ actor MediaOperationCoordinator {
         // Plan 0066 Stage 6b: publish liveness so smoke tooling can avoid
         // killing an active import. One line on entry, one on exit per source.
         OtosLog.catalog.noticeOperation("import.activity", phase: "started", fields: ["rootPath": source.rawValue])
-        queuedStart.removeValue(forKey: source)
+        queuedStart.remove(source)
         let executor = MediaImportExecutor(
             store: store,
             cameraImport: cameraImport,
@@ -507,7 +507,7 @@ actor MediaOperationCoordinator {
             buildTasks.removeValue(forKey: path)?.cancel()
             presentations.removeValue(forKey: path)
             readyPlans.removeValue(forKey: path)
-            queuedStart.removeValue(forKey: path)
+            queuedStart.remove(path)
             dirty.remove(path)
             building.remove(path)
             executing.remove(path)
@@ -686,7 +686,7 @@ actor MediaOperationCoordinator {
         let destinationOccupancy = await store.occupancyRevision(for: destination)
         guard sourceOccupancy == snapshot.sourceOccupancyRevision,
               destinationOccupancy == snapshot.destinationOccupancyRevision,
-              generation == planGeneration || dirty.contains(source) == false
+              destinationBySource[source] == destination
         else {
             OtosLog.catalog.noticeOperation(
                 "import.plan",
@@ -697,6 +697,8 @@ actor MediaOperationCoordinator {
                     "snapshotSourceOccupancy": "\(snapshot.sourceOccupancyRevision)",
                     "destinationOccupancy": "\(destinationOccupancy.map(String.init) ?? "none")",
                     "snapshotDestinationOccupancy": "\(snapshot.destinationOccupancyRevision)",
+                    "mappedDestination": "\(destinationBySource[source]?.rawValue ?? "none")",
+                    "expectedDestination": destination.rawValue,
                 ]
             )
             building.remove(source)
@@ -708,7 +710,7 @@ actor MediaOperationCoordinator {
         readyPlans[source] = plan
         let skipped = await store.skippedPackageCount(for: source)
         recordAttachToReadyIfNeeded(source: source, plan: plan)
-        let state: MediaOperationSourceState = if queuedStart[source] != nil {
+        let state: MediaOperationSourceState = if queuedStart.contains(source) {
             .queuedForReadiness
         } else {
             .ready(
@@ -725,7 +727,7 @@ actor MediaOperationCoordinator {
         )
         building.remove(source)
         publish()
-        if queuedStart[source] != nil {
+        if queuedStart.contains(source) {
             await beginExecutionIfPossible(
                 source: source,
                 summary: plan.totals,
