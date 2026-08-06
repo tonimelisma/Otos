@@ -286,6 +286,9 @@ actor MediaOperationCoordinator {
         skippedPackageCount: Int
     ) async {
         guard executing.insert(source).inserted else { return }
+        // Plan 0066 Stage 6b: publish liveness so smoke tooling can avoid
+        // killing an active import. One line on entry, one on exit per source.
+        OtosLog.catalog.noticeOperation("import.activity", phase: "started", fields: ["rootPath": source.rawValue])
         queuedStart.removeValue(forKey: source)
         let executor = MediaImportExecutor(
             store: store,
@@ -328,6 +331,7 @@ actor MediaOperationCoordinator {
             skippedPackageCount: skippedPackageCount,
             prefs: prefs
         )
+        OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue])
         executing.remove(source)
         dirty.insert(source)
         scheduleBuildIfNeeded(source)

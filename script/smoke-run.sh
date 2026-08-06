@@ -98,12 +98,56 @@ quit_app() {
   fi
 }
 
+# Plan 0066 Stage 6b: check if an import is currently executing by reading the
+# app's own liveness signal. The coordinator logs op=import.activity
+# phase=started|finished per source; we consider an import active if a
+# started line exists without a later finished for the same rootPath.
+is_import_active() {
+  local predicate="subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=import.activity\""
+  local logs
+  logs="$(/usr/bin/log show --last 5m --style ndjson --info --predicate "$predicate" 2>/dev/null || true)"
+  if [[ -z "$logs" ]]; then
+    return 1
+  fi
+  # Collect started and finished rootPaths, then see if any started is not finished
+  # Simple: if there is a started without a subsequent finished for that root, active.
+  # For the script's purpose, any started in last 5m without a finished after it counts.
+  local started_roots finished_roots
+  started_roots="$(echo "$logs" | grep 'phase=started' | sed -n 's/.*rootPath=\([^ ]*\).*/\1/p' | sort -u || true)"
+  finished_roots="$(echo "$logs" | grep 'phase=finished' | sed -n 's/.*rootPath=\([^ ]*\).*/\1/p' | sort -u || true)"
+  if [[ -z "$started_roots" ]]; then
+    return 1
+  fi
+  # If any started root not in finished, or started timestamp after last finished, active.
+  # Simpler: compare counts — if started lines exist and the last activity line is started, active.
+  local last_phase
+  last_phase="$(echo "$logs" | grep -E 'phase=(started|finished)' | tail -n 1 | sed -n 's/.*phase=\([^ ]*\).*/\1/p' || true)"
+  if [[ "$last_phase" == "started" ]]; then
+    # Report the rootPath of that last started
+    local last_root
+    last_root="$(echo "$logs" | grep 'phase=started' | tail -n 1 | sed -n 's/.*rootPath=\([^ ]*\).*/\1/p' || true)"
+    if [[ -n "$last_root" ]]; then
+      echo "$last_root"
+    else
+      echo "unknown"
+    fi
+    return 0
+  fi
+  return 1
+}
+
 cleanup() {
   if [[ -n "$LOG_PID" ]]; then
     kill "$LOG_PID" >/dev/null 2>&1 || true
     wait "$LOG_PID" >/dev/null 2>&1 || true
   fi
   if [[ "$QUIT_ON_EXIT" == 1 ]]; then
+    local active_root
+    if active_root="$(is_import_active)"; then
+      echo "Smoke run leaving app running: import still active for root=$active_root" >&2
+      echo "An import was in flight; not quitting the app to avoid mid-copy termination (plan 0066 Stage 6b)." >&2
+      return
+    fi
     quit_app
   fi
 }
@@ -183,6 +227,13 @@ run_verify() {
 }
 
 run_jank() {
+  # Plan 0066 Stage 6b: refuse to start when an import is already active
+  local active_root
+  if active_root="$(is_import_active)"; then
+    echo "Cannot start smoke run: import already active for root=$active_root" >&2
+    echo "Finish or cancel the import before running --jank (plan 0066 Stage 6b)." >&2
+    exit 1
+  fi
   QUIT_ON_EXIT=1
   start_log_capture
   echo "Capturing smoke logs to $LOG_FILE"
@@ -200,6 +251,15 @@ run_jank() {
     --pause "$SCROLL_PAUSE"
 
   sleep 1
+  # If an import became active during the smoke run, leave the app alive
+  if active_root="$(is_import_active)"; then
+    echo "Smoke run completed but import is now active for root=$active_root — leaving app running." >&2
+    echo "Import was started during the smoke run; not quitting to avoid termination (plan 0066 Stage 6b)." >&2
+    QUIT_ON_EXIT=0
+    echo "smoke log: $LOG_FILE"
+    echo "Post-hoc logs: script/logs.sh show --last 10m"
+    exit 1
+  fi
   echo "smoke log: $LOG_FILE"
   echo "Post-hoc logs: script/logs.sh show --last 10m"
 }
