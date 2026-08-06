@@ -28,9 +28,11 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
-        let coordinator = try MediaOperationCoordinator(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
         )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
@@ -66,9 +68,11 @@ struct MediaOperationCoordinatorTests {
         try await store.addLibrary(url: fixedRoot)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
-        let coordinator = try MediaOperationCoordinator(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
         )
         await coordinator.start()
         defer { Task { await coordinator.shutdown() } }
@@ -124,9 +128,11 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let coordinator = try MediaOperationCoordinator(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
         )
         await coordinator.start()
         defer {
@@ -179,9 +185,11 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let coordinator = try MediaOperationCoordinator(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: #require(UserDefaults(suiteName: "Otos.MediaOperationCoordinatorTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
         )
         await coordinator.start()
         defer {

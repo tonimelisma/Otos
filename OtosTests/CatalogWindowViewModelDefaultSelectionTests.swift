@@ -13,13 +13,15 @@ struct ViewModelDefaultSelectionTests {
         try Data("jpeg".utf8).write(to: root.appending(path: "one.jpg"))
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let model = try CatalogWindowViewModel(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelDefaultSelectionTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
         )
 
         model.start()
@@ -95,13 +97,15 @@ struct ViewModelDefaultSelectionTests {
     @MainActor
     private func makePolicyTestViewModel() -> CatalogWindowViewModel {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        let temp = TemporaryDefaults()
+        defer { temp.cleanUp() }
         return CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: UserDefaults(suiteName: "Otos.CatalogWindowViewModelDefaultSelectionTests.\(UUID().uuidString)")!
+            preferences: temp.defaults
         )
     }
 

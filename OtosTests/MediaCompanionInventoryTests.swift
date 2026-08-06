@@ -62,10 +62,9 @@ struct MediaCompanionPairingTests {
 }
 
 struct ImportPreferencesStoreTests {
-    @Test func roundTripsThroughUserDefaults() throws {
-        let suite = "otos.import-preferences.test.\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
+    @Test func roundTripsThroughUserDefaults() {
+        let temp = TemporaryDefaults()
+        defer { temp.cleanUp() }
 
         var prefs = ImportPreferences.default
         prefs.importSidecarFiles = false
@@ -73,9 +72,9 @@ struct ImportPreferencesStoreTests {
         prefs.autoEjectAfterImport = true
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults)
+        ImportPreferencesStore.save(prefs, defaults: temp.defaults)
 
-        let loaded = ImportPreferencesStore.load(defaults: defaults)
+        let loaded = ImportPreferencesStore.load(defaults: temp.defaults)
         #expect(loaded == prefs)
     }
 }

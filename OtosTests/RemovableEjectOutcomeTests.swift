@@ -5,14 +5,16 @@ import Testing
 
 struct RemovableEjectOutcomeTests {
     @MainActor
-    @Test func missingIdentitySurfacesEjectFailure() throws {
-        let model = try CatalogWindowViewModel(
+    @Test func missingIdentitySurfacesEjectFailure() {
+        let temp = TemporaryDefaults()
+        defer { temp.cleanUp() }
+        let model = CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory),
             catalogProjection: CatalogProjection(),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: #require(UserDefaults(suiteName: "Otos.RemovableEjectOutcomeTests.\(UUID().uuidString)"))
+            preferences: temp.defaults
         )
         model.ejectRemovableSource(LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/Gone"),

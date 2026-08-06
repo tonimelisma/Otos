@@ -130,13 +130,15 @@ private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: Win
             return testWindowState(buildNumber: buildNumber, libraries: libraries, request: request)
         }
     )
+    let temp = TemporaryDefaults()
+    defer { temp.cleanUp() }
     let model = CatalogWindowViewModel(
         catalogStore: store,
         catalogProjection: projection,
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferences: UserDefaults(suiteName: "Otos.CatalogWindowViewModelQueryIntentTests.\(UUID().uuidString)")!
+        preferences: temp.defaults
     )
     return (model, gate)
 }

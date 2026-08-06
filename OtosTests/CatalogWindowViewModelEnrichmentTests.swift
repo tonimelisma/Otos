@@ -23,13 +23,15 @@ struct CatalogWindowViewModelEnrichmentTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
-        let model = try CatalogWindowViewModel(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,
-            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelEnrichmentTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
             // startsEnrichment defaults true: start() must start the injected coordinator.
         )
 
@@ -97,13 +99,15 @@ struct CatalogWindowViewModelEnrichmentTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
-        let model = try CatalogWindowViewModel(
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let model = CatalogWindowViewModel(
             catalogStore: secondStore,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,
-            preferences: #require(UserDefaults(suiteName: "Otos.CatalogWindowViewModelEnrichmentTests.\(UUID().uuidString)"))
+            preferences: tempDefaults.defaults
         )
 
         model.start()

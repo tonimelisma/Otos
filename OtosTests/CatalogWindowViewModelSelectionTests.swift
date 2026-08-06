@@ -248,13 +248,15 @@ struct CatalogWindowViewModelSelectionTests {
 
 @MainActor
 private func makeSelectionViewModel() -> CatalogWindowViewModel {
-    CatalogWindowViewModel(
+    let temp = TemporaryDefaults()
+    defer { temp.cleanUp() }
+    return CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferences: UserDefaults(suiteName: "Otos.SelectionTests.\(UUID().uuidString)")!
+        preferences: temp.defaults
     )
 }
 

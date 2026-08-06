@@ -277,13 +277,15 @@ struct CatalogWindowViewModelViewModeTests {
 
 @MainActor
 private func makeViewModeModel(loader: FakePreviewLoader) -> CatalogWindowViewModel {
-    CatalogWindowViewModel(
+    let temp = TemporaryDefaults()
+    defer { temp.cleanUp() }
+    return CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         enrichmentCoordinator: nil,
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferences: UserDefaults(suiteName: "Otos.ViewModeTests.\(UUID().uuidString)")!,
+        preferences: temp.defaults,
         previewLoader: loader
     )
 }
