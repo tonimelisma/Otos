@@ -2,8 +2,7 @@
 
 ## Status
 
-Stages 1, 2, 3, and 6 have landed (PRs #156, #157, #158, #160). Stages 4, 5, 6b,
-and 7 remain; the decision the landed stages encode is recorded in
+Stages 1, 2, 3, 4, 5, 6, and 6b have landed (PRs #156, #157, #158, #160, #161, #162, #163). Stage 7 remains as a one-time user cleanup (see Stage 7 section); the decision the landed stages encode is recorded in
 `docs/adr/0020-production-data-locations-and-the-developer-smoke-seam.md`.
 
 Evidence in Stages 1–5 was captured on 2026-08-04 against `main` at `bdd31e4`;
@@ -12,7 +11,7 @@ Stage 6's additional evidence on 2026-08-05 against `3e94549`; Evidence 7 on
 measurements are the acceptance criteria, and a junior implementer who has not
 seen them will not know when a stage is done.
 
-Sibling plan: `0067-measurements-that-mean-what-they-say.md` covers three defects
+Sibling plan: `0067-measurements-that-mean-what-they-say.md` (now landed as PRs #155, #164, #165 and removed) covered three defects
 found in the same investigation that are about numbers and guards being wrong, not
 about data isolation. Keep them separate; they share no code.
 
