@@ -10,6 +10,13 @@ import OSLog
 /// its asset dictionary. Frequent state and collection activity uses OSLog
 /// (`op=`/`key=value`) for the agent and interval signposts for Instruments; a
 /// main-thread stall emits one structured `.fault op=mainThreadStall` line.
+///
+/// Attribution: this monitor *flags* a stall with the state around it
+/// (bracketedOp, currentOperation, lastLongOperation). Naming the code that
+/// stalled is `script/profile.sh` with Time Profiler — the repo's documented
+/// division of labour. A bracketedOp field states a fact (no bracketed
+/// operation was in flight or recently completed) rather than implying a cause,
+/// and a stall without a bracket is not a finding of "nothing was running."
 nonisolated struct CatalogGridHandoff: Equatable {
     let updateID: Int
     let itemCount: Int
@@ -127,9 +134,6 @@ final class MainRunLoopStallMonitor {
         }
         let record = operationStack.remove(at: index)
         let durationMs = DiagnosticsTiming.milliseconds(from: record.startedAt, to: now)
-        guard durationMs >= longOperationThresholdMs else {
-            return
-        }
         lastLongOperation = CompletedOperationRecord(
             name: record.name,
             durationMs: durationMs,
@@ -258,9 +262,9 @@ final class MainRunLoopStallMonitor {
     }
 
     private func recordStallDiagnostic(_ fields: [String: String]) {
-        let lastOp = fields["currentOperation"] ?? fields["lastLongOperation"] ?? "none"
+        let bracketedOp = fields["currentOperation"] ?? fields["lastLongOperation"] ?? "unattributed"
         OtosLog.performance.fault(
-            "op=mainThreadStall lastOp=\(lastOp, privacy: .public) \(otosLogFields(fields), privacy: .public)"
+            "op=mainThreadStall bracketedOp=\(bracketedOp, privacy: .public) \(otosLogFields(fields), privacy: .public)"
         )
     }
 }

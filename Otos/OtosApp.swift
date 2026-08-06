@@ -35,6 +35,11 @@ struct OtosApp: App {
         Window("Otos", id: "main") {
             ContentView(viewModel: catalogViewModel)
                 .task {
+                    // Plan 0067 Stage 3: bracket the window-attach/start entry point so a
+                    // startup stall can be attributed to it. The monitor flags the stall;
+                    // Instruments names the code.
+                    let attachOp = catalogViewModel.uiStallMonitor.beginOperation("OtosApp.windowAttach")
+                    defer { catalogViewModel.uiStallMonitor.endOperation(attachOp) }
                     let state = OtosSignpost.app.beginInterval("MainWindowContentAttached")
                     OtosLog.app.info("Main window content attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
