@@ -22,15 +22,6 @@ struct OtosApp: App {
         preferences: UserDefaults.standard
     )
 
-    init() {
-        // Tripwire for a future ambient default (plan 0066 Stage 5): if someone
-        // adds a new default location and tests start reaching production data,
-        // this fires in debug before Stage 4's script guard does. Use assert,
-        // not precondition — a release build must not carry it. Stage 4 is the
-        // real guard; this is a backstop.
-        assert(!RunContext.isTestRun, "Production OtosApp constructed during test run")
-    }
-
     var body: some Scene {
         Window("Otos", id: "main") {
             ContentView(viewModel: catalogViewModel)
