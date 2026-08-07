@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import OSLog
 
@@ -84,6 +85,7 @@ extension CatalogWindowViewModel {
         comparePair = .empty
         lastReplacedComparePane = nil
         cancelAllPaneRequestTasks()
+        clearLoupeVideo()
         OtosLog.ui.notice("op=viewMode.set mode=grid")
     }
 
@@ -220,6 +222,19 @@ extension CatalogWindowViewModel {
                 requestPanePreview(expected, slot: slot)
             }
         }
+        // Loupe video follows loupe focus; clear stale video when focus changed
+        // or mode left loupe. Compare never shows video.
+        Task { [weak self] in
+            await self?.videoLoader.clearOnFocusChange(expectedID: self?.focusedAssetID)
+            await MainActor.run { [weak self] in
+                guard let self else {
+                    return
+                }
+                if loupeVideoState?.id != focusedAssetID || viewMode != .loupe {
+                    loupeVideoState = nil
+                }
+            }
+        }
     }
 
     private func focusNeighbor(delta: Int) {
@@ -299,5 +314,69 @@ extension CatalogWindowViewModel {
             task.cancel()
         }
         paneRequestTasks.removeAll()
+    }
+
+    // MARK: - Loupe video (click-to-play, loupe only)
+
+    func playLoupeVideo(id: MediaAssetID) {
+        guard viewMode == .loupe else {
+            return
+        }
+        guard focusedAssetID == id else {
+            return
+        }
+        let detailReader = tileDetailReader
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            let details = await detailReader.details(for: [id])
+            let detail = details[id]
+            // Gate on video kind — still image must not start a player.
+            let isVideo = detail?.bestKind == .video
+            guard isVideo else {
+                return
+            }
+            guard let state = await videoLoader.play(id: id, detail: detail) else {
+                await MainActor.run {
+                    self.downloadingSlots.remove(.loupe)
+                }
+                return
+            }
+            await MainActor.run { [weak self] in
+                guard let self, focusedAssetID == id, viewMode == .loupe else {
+                    Task { await self?.videoLoader.pause() }
+                    return
+                }
+                loupeVideoState = state
+                state.player.play()
+                var playing = state
+                playing.isPlaying = true
+                loupeVideoState = playing
+                downloadingSlots.remove(.loupe)
+                OtosLog.ui.notice(
+                    "op=loupe.video phase=play id=\(id.relativePath.rawValue, privacy: .public)"
+                )
+            }
+        }
+        downloadingSlots.insert(.loupe)
+    }
+
+    func pauseLoupeVideo() {
+        Task { [weak self] in
+            await self?.videoLoader.pause()
+            await MainActor.run { [weak self] in
+                self?.loupeVideoState = nil
+            }
+        }
+    }
+
+    private func clearLoupeVideo() {
+        Task { [weak self] in
+            await self?.videoLoader.pause()
+            await MainActor.run { [weak self] in
+                self?.loupeVideoState = nil
+            }
+        }
     }
 }

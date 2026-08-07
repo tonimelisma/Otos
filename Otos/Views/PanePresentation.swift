@@ -6,6 +6,7 @@ nonisolated enum PanePresentation {
     enum Display: Equatable {
         case full(CGImage)
         case thumbnail(MediaAssetID)
+        case video(LoupeVideoState)
         case empty
 
         static func == (lhs: Self, rhs: Self) -> Bool {
@@ -14,6 +15,8 @@ nonisolated enum PanePresentation {
                 l === r
             case let (.thumbnail(l), .thumbnail(r)):
                 l == r
+            case let (.video(l), .video(r)):
+                l.id == r.id
             case (.empty, .empty):
                 true
             default:
@@ -22,9 +25,12 @@ nonisolated enum PanePresentation {
         }
     }
 
-    static func display(paneID: MediaAssetID?, preview: PanePreview?) -> Display {
+    static func display(paneID: MediaAssetID?, preview: PanePreview?, videoState: LoupeVideoState? = nil) -> Display {
         guard let paneID else {
             return .empty
+        }
+        if let videoState, videoState.id == paneID {
+            return .video(videoState)
         }
         if let preview, preview.id == paneID {
             return .full(preview.image)

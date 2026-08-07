@@ -1,0 +1,116 @@
+import AVFoundation
+import Foundation
+@testable import Otos
+import Testing
+
+@MainActor
+struct VideoPreviewLoaderTests {
+    private func id(_ name: String) -> MediaAssetID {
+        MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
+            relativePath: MediaRelativePath(rawValue: name)
+        )
+    }
+
+    private func detail(kind: MediaKind) -> MediaTileDetail {
+        MediaTileDetail(
+            libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
+            relativePath: MediaRelativePath(rawValue: "v.mp4"),
+            thumbnailPath: nil,
+            bestKind: kind,
+            durationSeconds: 12,
+            enrichedSourceSize: 1024,
+            enrichedSourceMTimeSeconds: nil
+        )
+    }
+
+    @Test func playGatesOnVideoKind() async {
+        let loader = VideoPreviewLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
+        )
+        let imageDetail = detail(kind: .image)
+        let result = await loader.play(id: id("v.mp4"), detail: imageDetail)
+        #expect(result == nil)
+    }
+
+    @Test func playCreatesPlayerWhenMaterialized() async {
+        let loader = VideoPreviewLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
+        )
+        let videoDetail = detail(kind: .video)
+        let state = await loader.play(id: id("a.mp4"), detail: videoDetail)
+        #expect(state != nil)
+        #expect(state?.id.relativePath.rawValue == "a.mp4")
+    }
+
+    @Test func playMaterializesWhenDataless() async {
+        final class Counter: @unchecked Sendable {
+            private let lock = NSLock()
+            private var value = 0
+            func increment() {
+                lock.lock()
+                defer { lock.unlock() }
+                value += 1
+            }
+
+            var count: Int {
+                lock.lock()
+                defer { lock.unlock() }
+                return value
+            }
+        }
+        let counter = Counter()
+        let requester = ClosureMaterializationRequester { _ in
+            counter.increment()
+            return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 10)
+        }
+        final class CheckSeq: @unchecked Sendable {
+            private let lock = NSLock()
+            private var n = 0
+            func next() -> FileMaterializationStatus {
+                lock.lock()
+                defer { lock.unlock() }
+                n += 1
+                return n == 1 ? .dataless : .materialized
+            }
+        }
+        let seq = CheckSeq()
+        let loader = VideoPreviewLoader(
+            status: { _ in seq.next() },
+            materializationRequester: requester
+        )
+        let videoDetail = detail(kind: .video)
+        let state = await loader.play(id: id("b.mp4"), detail: videoDetail)
+        #expect(state != nil)
+        #expect(counter.count == 1)
+    }
+
+    @Test func playReturnsNilOnProviderUnavailable() async {
+        let requester = ClosureMaterializationRequester { _ in
+            MaterializationResult(outcome: .providerUnavailable, rerequestCount: 2, elapsedMs: 2000)
+        }
+        let loader = VideoPreviewLoader(
+            status: { _ in .dataless },
+            materializationRequester: requester
+        )
+        let videoDetail = detail(kind: .video)
+        let state = await loader.play(id: id("c.mp4"), detail: videoDetail)
+        #expect(state == nil)
+    }
+
+    @Test func clearOnFocusChangeTearsDown() async {
+        let loader = VideoPreviewLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
+        )
+        let videoDetail = detail(kind: .video)
+        let first = await loader.play(id: id("a.mp4"), detail: videoDetail)
+        #expect(first != nil)
+        await loader.clearOnFocusChange(expectedID: id("b.mp4"))
+        // Second play after clear should succeed with new id
+        let second = await loader.play(id: id("b.mp4"), detail: videoDetail)
+        #expect(second?.id.relativePath.rawValue == "b.mp4")
+    }
+}

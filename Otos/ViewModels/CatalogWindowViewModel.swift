@@ -169,6 +169,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
     @ObservationIgnored let previewLoader: any PreviewLoading
+    @ObservationIgnored let videoLoader: VideoPreviewLoader
+    var loupeVideoState: LoupeVideoState?
 
     init(
         catalogStore: CatalogStore,
@@ -179,7 +181,8 @@ final class CatalogWindowViewModel {
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
         preferences: UserDefaults,
-        previewLoader: (any PreviewLoading)? = nil
+        previewLoader: (any PreviewLoading)? = nil,
+        videoLoader: VideoPreviewLoader? = nil
     ) {
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
@@ -233,6 +236,11 @@ final class CatalogWindowViewModel {
             self.previewLoader = previewLoader
         } else {
             self.previewLoader = PreviewImageLoader(materializationRequester: materializationCoordinator)
+        }
+        if let videoLoader {
+            self.videoLoader = videoLoader
+        } else {
+            self.videoLoader = VideoPreviewLoader(materializationRequester: materializationCoordinator)
         }
         self.queryStream = queryStream
         self.queryContinuation = queryContinuation

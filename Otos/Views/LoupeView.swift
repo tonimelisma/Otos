@@ -11,6 +11,7 @@ struct LoupeView: View {
     let grid: CatalogMediaGridState
     let focusedAssetID: MediaAssetID?
     let panePreview: PanePreview?
+    let loupeVideoState: LoupeVideoState?
     let isDownloading: Bool
     let stripTileEdge: CGFloat
     let setStripTileEdge: (CGFloat) -> Void
@@ -22,6 +23,7 @@ struct LoupeView: View {
     var onStripArrow: (Int) -> Void = { _ in }
     var onEscape: () -> Void = {}
     var onDoubleClickPreview: () -> Void = {}
+    var onPlayVideo: (MediaAssetID) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -39,18 +41,43 @@ struct LoupeView: View {
     private var previewPane: some View {
         ZStack {
             Color.black.opacity(0.92)
-            switch PanePresentation.display(paneID: focusedAssetID, preview: panePreview) {
+            switch PanePresentation.display(
+                paneID: focusedAssetID,
+                preview: panePreview,
+                videoState: loupeVideoState
+            ) {
+            case let .video(state):
+                LoupeVideoPlayerView(state: state)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             case let .full(image):
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             case let .thumbnail(id):
-                PaneThumbnailView(
-                    id: id,
-                    thumbnailDirectory: thumbnailDirectory,
-                    detailReader: detailReader
-                )
+                ZStack {
+                    PaneThumbnailView(
+                        id: id,
+                        thumbnailDirectory: thumbnailDirectory,
+                        detailReader: detailReader
+                    )
+                    // Click-to-play affordance for video: centered play glyph.
+                    // Poster-first — keep thumbnail until isReadyForDisplay.
+                    if shouldShowPlayAffordance(for: id) {
+                        Image(systemName: "play.circle.fill")
+                            .font(.system(size: 60))
+                            .foregroundStyle(.white.opacity(0.92))
+                            .shadow(radius: 8)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard let focusedAssetID else {
+                        return
+                    }
+                    onPlayVideo(focusedAssetID)
+                }
             case .empty:
                 ContentUnavailableView("No Selection", systemImage: "photo")
             }
@@ -65,6 +92,18 @@ struct LoupeView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2, perform: onDoubleClickPreview)
+    }
+
+    private func shouldShowPlayAffordance(for id: MediaAssetID) -> Bool {
+        // Only for video assets; loupeVideoState presence means video is active.
+        if loupeVideoState != nil {
+            return false
+        }
+        // Check bestKind via grid is not available here — caller ensures loupe
+        // focus is the tapped asset; ViewModel gates actual playback on
+        // bestKind == .video via detailReader, so affordance is optimistic.
+        // A non-video click will simply not start playback (nil return).
+        return id == focusedAssetID
     }
 
     private var filmstrip: some View {

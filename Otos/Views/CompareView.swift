@@ -57,6 +57,20 @@ struct CompareView: View {
                     thumbnailDirectory: thumbnailDirectory,
                     detailReader: detailReader
                 )
+            case .video:
+                // Compare stays poster-only by design; stale video never shows here.
+                Group {
+                    if let fallbackID = id ?? preview?.id {
+                        PaneThumbnailView(
+                            id: fallbackID,
+                            thumbnailDirectory: thumbnailDirectory,
+                            detailReader: detailReader
+                        )
+                    } else {
+                        ContentUnavailableView("No Photo", systemImage: "photo")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             case .empty:
                 ContentUnavailableView("No Photo", systemImage: "photo")
                     .foregroundStyle(.secondary)

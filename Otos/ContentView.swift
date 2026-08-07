@@ -190,6 +190,7 @@ struct ContentView: View {
                 grid: viewModel.state.mediaGrid,
                 focusedAssetID: viewModel.focusedAssetID,
                 panePreview: viewModel.panePreviews[.loupe],
+                loupeVideoState: viewModel.loupeVideoState,
                 isDownloading: viewModel.downloadingSlots.contains(.loupe),
                 stripTileEdge: viewModel.stripTileEdge,
                 setStripTileEdge: viewModel.setStripTileEdge,
@@ -206,7 +207,8 @@ struct ContentView: View {
                     }
                 },
                 onEscape: viewModel.exitToGrid,
-                onDoubleClickPreview: viewModel.exitToGrid
+                onDoubleClickPreview: viewModel.exitToGrid,
+                onPlayVideo: { id in viewModel.playLoupeVideo(id: id) }
             )
             .navigationTitle(viewModel.state.title)
         case .compare:
