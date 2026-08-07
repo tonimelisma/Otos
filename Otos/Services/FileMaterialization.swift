@@ -94,6 +94,33 @@ extension FileMaterialization {
     /// Never reads bytes itself, so a worker awaiting this is never blocked on a
     /// transfer the way a faulting read would block a thread. Honors cancellation
     /// between polls.
+    /// Production probe: a bounded `open()+read(1)` via `FileHandle`. Returns `served`
+    /// if any byte is read, `providerUnavailable` only for `ETIMEDOUT`, and
+    /// `inconclusive` otherwise. Never blocks longer than ~2s (kernel caps
+    /// `ETIMEDOUT` at 1s). This is the only place in the app that deliberately
+    /// reads bytes to test liveness — everywhere else uses `SF_DATALESS`.
+    nonisolated static func probeProviderLiveness(of url: URL) -> FileMaterializationProbeResult {
+        do {
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            _ = try handle.read(upToCount: 1)
+            return .served
+        } catch let error as NSError {
+            let code = error.code
+            let msg = (error.localizedDescription + " " + "\(error)").lowercased()
+            if code == 60 || code == 110 || msg.contains("timed out") || msg.contains("etimedout") {
+                return .providerUnavailable
+            }
+            return .inconclusive
+        } catch {
+            let msg = "\(error)".lowercased()
+            if msg.contains("timed out") || msg.contains("etimedout") {
+                return .providerUnavailable
+            }
+            return .inconclusive
+        }
+    }
+
     nonisolated static func materialize(
         _ url: URL,
         pollInterval: Duration = .milliseconds(250),
@@ -107,7 +134,8 @@ extension FileMaterialization {
             requestRetryInterval: requestRetryInterval,
             providers: FileMaterializationProviders(
                 status: status(of:),
-                request: requestMaterialization(of:)
+                request: requestMaterialization(of:),
+                probe: probeProviderLiveness(of:)
             )
         )
     }
@@ -147,6 +175,7 @@ extension FileMaterialization {
         let deadline = clock.now.advanced(by: timeout)
         var nextRetry = clock.now.advanced(by: requestRetryInterval)
         var rerequestCount = 0
+        var consecutiveProviderUnavailable = 0
         while clock.now < deadline {
             do {
                 try await Task.sleep(for: pollInterval)
@@ -160,6 +189,23 @@ extension FileMaterialization {
                 rerequestCount += 1
                 if let failed = requestDownload(url, retry: true, requestProvider: providers.request) {
                     return (failed, rerequestCount)
+                }
+                // Probe for a definite provider refusal after each re-request.
+                // Two consecutive `providerUnavailable` probes mean the provider
+                // is not serving (e.g. OneDrive signed out, `ETIMEDOUT` in 1s)
+                // and continued polling would waste the full 120s holding
+                // `rootBackgroundCap=1`. Fail fast to free the slot; the
+                // retry ledger (15/60/300/900) will pace the next attempt.
+                // A single transient ETIMEDOUT that heals on the next tick
+                // yields only one probe failure and does not short-circuit.
+                switch providers.probe(url) {
+                case .providerUnavailable:
+                    consecutiveProviderUnavailable += 1
+                    if consecutiveProviderUnavailable >= 2 {
+                        return (.providerUnavailable, rerequestCount)
+                    }
+                case .served, .inconclusive:
+                    consecutiveProviderUnavailable = 0
                 }
                 nextRetry = clock.now.advanced(by: requestRetryInterval)
             case .waitMore:
@@ -248,9 +294,24 @@ extension FileMaterialization {
     }
 }
 
+nonisolated enum FileMaterializationProbeResult: Equatable {
+    /// A tiny byte read succeeded — provider is serving.
+    case served
+    /// The read failed with `ETIMEDOUT` (errno 60/110 or "timed out" text) — provider definitively refused.
+    case providerUnavailable
+    /// The read failed for another reason or the file is missing — inconclusive.
+    case inconclusive
+}
+
 nonisolated struct FileMaterializationProviders {
     let status: @Sendable (URL) -> FileMaterializationStatus
     let request: @Sendable (URL) throws -> Void
+    /// Best-effort probe for a definite provider refusal via a tiny byte read.
+    /// Injected for testability; production uses `FileHandle` with a 2s deadline
+    /// (kernel `ETIMEDOUT` itself is 1s). Returns `served` if the read succeeds,
+    /// `providerUnavailable` only for `errno 60/110` or "timed out" text, and
+    /// `inconclusive` for any other error. Never throws.
+    let probe: @Sendable (URL) -> FileMaterializationProbeResult
 }
 
 /// Outcome of `materializationPollDecision`, one polling tick's pure verdict.
@@ -287,6 +348,12 @@ nonisolated enum MaterializationOutcome: Equatable {
     case requestFailed
     /// The file did not become local before the timeout elapsed.
     case timedOut
+    /// The provider definitively refused a byte read with `ETIMEDOUT` (errno 60/110)
+    /// twice consecutively, so continued polling would waste the 120s timeout
+    /// holding `rootBackgroundCap=1` while the provider is not serving. Treated
+    /// identically to `timedOut` by retry pacing, but attributed separately so a
+    /// future short-circuit can be measured (plan 0067 Stage 3b / 040347 9.1G).
+    case providerUnavailable
     /// A device staging download was deferred because local free space is below the safety floor.
     case insufficientLocalSpace
     /// The awaiting task was cancelled before completion.
@@ -298,7 +365,7 @@ nonisolated enum MaterializationOutcome: Equatable {
         switch self {
         case .alreadyMaterialized, .materialized:
             true
-        case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable:
+        case .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace, .cancelled, .statusUnavailable:
             false
         }
     }
@@ -313,6 +380,8 @@ nonisolated enum MaterializationOutcome: Equatable {
             "requestFailed"
         case .timedOut:
             "timedOut"
+        case .providerUnavailable:
+            "providerUnavailable"
         case .insufficientLocalSpace:
             "insufficientLocalSpace"
         case .cancelled:

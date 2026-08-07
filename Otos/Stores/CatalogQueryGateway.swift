@@ -198,6 +198,102 @@ nonisolated enum CatalogQueryGateway {
         }
         return details
     }
+
+    static func fetchImportBatches(db: Database) throws -> [ImportBatchSummary] {
+        try Row.fetchAll(
+            db,
+            sql: """
+            SELECT import_batch_unix_ms AS batch_ms, COUNT(*) AS asset_count
+            FROM media_asset
+            WHERE import_batch_unix_ms IS NOT NULL
+            GROUP BY import_batch_unix_ms
+            ORDER BY import_batch_unix_ms DESC
+            """
+        ).map { row in
+            let batchMs: Int64 = row["batch_ms"]
+            let count: Int = row["asset_count"]
+            return ImportBatchSummary(
+                batchID: ImportBatchID(unixMilliseconds: batchMs),
+                assetCount: count
+            )
+        }
+    }
+
+    static func fetchAssetIDs(
+        inImportBatch batchID: ImportBatchID,
+        pathsByRowID: [Int64: LibraryRootPath],
+        db: Database
+    ) throws -> [MediaAssetID] {
+        try Row.fetchAll(
+            db,
+            sql: """
+            SELECT library_root_id, relative_path
+            FROM media_asset
+            WHERE import_batch_unix_ms = ?
+            ORDER BY library_root_id, relative_path
+            """,
+            arguments: [batchID.unixMilliseconds]
+        ).compactMap { row in
+            let rootRowID: Int64 = row["library_root_id"]
+            let relativePath: String = row["relative_path"]
+            guard let rootPath = pathsByRowID[rootRowID] else {
+                return nil
+            }
+            return MediaAssetID(
+                libraryRootPath: rootPath,
+                relativePath: MediaRelativePath(rawValue: relativePath)
+            )
+        }
+    }
+
+    static func fetchAssetIDsMissingBestDate(
+        pathsByRowID: [Int64: LibraryRootPath],
+        db: Database
+    ) throws -> [MediaAssetID] {
+        try Row.fetchAll(
+            db,
+            sql: """
+            SELECT library_root_id, relative_path
+            FROM media_asset
+            WHERE best_capture_unix IS NULL
+            ORDER BY library_root_id, relative_path
+            """
+        ).compactMap { row in
+            let rootRowID: Int64 = row["library_root_id"]
+            let relativePath: String = row["relative_path"]
+            guard let rootPath = pathsByRowID[rootRowID] else {
+                return nil
+            }
+            return MediaAssetID(
+                libraryRootPath: rootPath,
+                relativePath: MediaRelativePath(rawValue: relativePath)
+            )
+        }
+    }
+
+    static func fetchCaptureWall(
+        id: MediaAssetID,
+        rootRowID: Int64,
+        db: Database
+    ) throws -> CaptureWallClock.Selection? {
+        guard let row = try Row.fetchOne(
+            db,
+            sql: """
+            SELECT capture_wall_compact, capture_wall_precision
+            FROM media_asset
+            WHERE library_root_id = ? AND relative_path = ?
+            """,
+            arguments: [rootRowID, id.relativePath.rawValue]
+        ) else {
+            return nil
+        }
+        let compact: Int64? = row["capture_wall_compact"]
+        let precision: String? = row["capture_wall_precision"]
+        guard let compact, let precision else {
+            return nil
+        }
+        return CaptureWallClock.Selection(compact: compact, precision: precision)
+    }
 }
 
 private nonisolated func orderPlan(

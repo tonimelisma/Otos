@@ -53,7 +53,8 @@ struct FileMaterializationTests {
             url,
             providers: FileMaterializationProviders(
                 status: { _ in .materialized },
-                request: { _ in Issue.record("should not request a download when already materialized") }
+                request: { _ in Issue.record("should not request a download when already materialized") },
+                probe: { _ in .inconclusive }
             )
         )
         #expect(result.outcome == .alreadyMaterialized)
@@ -68,11 +69,66 @@ struct FileMaterializationTests {
             url,
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
-                request: { _ in throw ProbeError() }
+                request: { _ in throw ProbeError() },
+                probe: { _ in .inconclusive }
             )
         )
         #expect(result.outcome == .requestFailed)
         #expect(result.rerequestCount == 0)
+    }
+
+    @Test func providerUnavailableShortCircuitsAfterTwoConsecutiveProbes() async {
+        let url = URL(fileURLWithPath: "/tmp/otos-provider-unavailable-\(UUID().uuidString).jpg")
+        // Simulate dataless that never materializes and provider probe returns
+        // providerUnavailable twice consecutively — poll should exit early with
+        // .providerUnavailable, not wait for the 120s timeout.
+        let result = await FileMaterialization.materialize(
+            url,
+            pollInterval: .milliseconds(10),
+            timeout: .seconds(10),
+            requestRetryInterval: .milliseconds(20),
+            providers: FileMaterializationProviders(
+                status: { _ in .dataless },
+                request: { _ in },
+                probe: { _ in .providerUnavailable }
+            )
+        )
+        #expect(result.outcome == .providerUnavailable)
+        // Two retryNow ticks → two re-requests + two probes → short-circuit
+        #expect(result.rerequestCount == 2)
+    }
+
+    @Test func singleTransientProviderUnavailableDoesNotShortCircuit() async {
+        let url = URL(fileURLWithPath: "/tmp/otos-transient-\(UUID().uuidString).jpg")
+        let probeCalls = AtomicCounter()
+        let result = await FileMaterialization.materialize(
+            url,
+            pollInterval: .milliseconds(10),
+            timeout: .milliseconds(80),
+            requestRetryInterval: .milliseconds(20),
+            providers: FileMaterializationProviders(
+                status: { _ in .dataless },
+                request: { _ in },
+                probe: { _ in
+                    let c = probeCalls.next()
+                    // First probe unavailable, second inconclusive (healed), then unavailable again
+                    // Never two in a row → should time out, not providerUnavailable
+                    return c == 1 ? .providerUnavailable : .inconclusive
+                }
+            )
+        )
+        #expect(result.outcome == .timedOut)
+    }
+
+    private final class AtomicCounter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = 0
+        func next() -> Int {
+            lock.lock()
+            defer { lock.unlock() }
+            value += 1
+            return value
+        }
     }
 }
 

@@ -91,11 +91,24 @@ so an exported value left over in a shell cannot silently keep the old
 
 ## Defers
 
-- **Not interrupting in-progress work.** A smoke run must also not terminate an
-  import or reorganization the user started; that contract needs the app to publish
-  its own busy state and is not built yet (plan 0066 Stage 6b).
 - **Enforcement in `verify.sh`** that the production catalog and preference domains
-  are untouched across a run (plan 0066 Stages 4 and 5).
+  are untouched across a run (plan 0066 Stages 4 and 5) — landed.
 - **Where overlay lives and when it is purged** — ADR 0008.
 - **Test-suite process isolation mechanics** beyond data locations — the hosted-bundle
   arrangement itself is unchanged.
+
+## Addendum 2026-08-06 — Operational journal is the busy truth (plan 0068)
+
+The busy-state defers above is fulfilled. The app publishes busy state via the
+durable journals `active_file_operation` and `active_reorganization_component`
+(`CatalogStore.hasActiveOperationalWork()` / `activeOperationalRootPaths()`).
+`script/smoke-run.sh` reads the same predicate through `sqlite3 -readonly`
+under WAL (`has_active_operational_work()`), pessimistically treating any
+`SQLITE_BUSY`/`SQLITE_CORRUPT`/missing-table error as busy, and covering both
+import and reorganization journals. The safety invariant is global: the single
+`Otos` process is never `kill`ed while any journal row exists, even for a
+different root — per-root output is diagnostic only. `is_import_active` is kept
+as a compatibility alias. The old `log show --last 5m | grep` path had
+global-last-line-wins, 5m truncation, and daemon-drop false-idle that would
+`kill` mid-`copyfile(3)` or mid-move; the journal survives window, drop, and
+reboot and already drives import/reorganization recovery.

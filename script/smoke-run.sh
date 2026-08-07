@@ -98,42 +98,38 @@ quit_app() {
   fi
 }
 
-# Plan 0066 Stage 6b: check if an import is currently executing by reading the
-# app's own liveness signal. The coordinator logs op=import.activity
-# phase=started|finished per source; we consider an import active if a
-# started line exists without a later finished for the same rootPath.
-is_import_active() {
-  local predicate="subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=import.activity\""
-  local logs
-  logs="$(/usr/bin/log show --last 5m --style ndjson --info --predicate "$predicate" 2>/dev/null || true)"
-  if [[ -z "$logs" ]]; then
+# Durable operational truth: any row in `active_file_operation` (import) or
+# `active_reorganization_component` (reorganization) proves work is in flight.
+# The Store's `hasActiveOperationalWork()` is the authoritative reader; this
+# shell copy is the same predicate via `sqlite3 -readonly` under WAL so it
+# never blocks the writer. Pessimistic: any sqlite error (SQLITE_BUSY,
+# SQLITE_CORRUPT, missing table) is treated as busy — the only safe direction.
+# `is_import_active` is kept as a compatibility alias; new code calls
+# `has_active_operational_work`.
+has_active_operational_work() {
+  if [[ ! -f "$CATALOG_DB" ]]; then
     return 1
   fi
-  # Collect started and finished rootPaths, then see if any started is not finished
-  # Simple: if there is a started without a subsequent finished for that root, active.
-  # For the script's purpose, any started in last 5m without a finished after it counts.
-  local started_roots finished_roots
-  started_roots="$(echo "$logs" | grep 'phase=started' | sed -n 's/.*rootPath=\([^ ]*\).*/\1/p' | sort -u || true)"
-  finished_roots="$(echo "$logs" | grep 'phase=finished' | sed -n 's/.*rootPath=\([^ ]*\).*/\1/p' | sort -u || true)"
-  if [[ -z "$started_roots" ]]; then
+  if ! command -v sqlite3 >/dev/null 2>&1; then
     return 1
   fi
-  # If any started root not in finished, or started timestamp after last finished, active.
-  # Simpler: compare counts — if started lines exist and the last activity line is started, active.
-  local last_phase
-  last_phase="$(echo "$logs" | grep -E 'phase=(started|finished)' | tail -n 1 | sed -n 's/.*phase=\([^ ]*\).*/\1/p' || true)"
-  if [[ "$last_phase" == "started" ]]; then
-    # Report the rootPath of that last started
-    local last_root
-    last_root="$(echo "$logs" | grep 'phase=started' | tail -n 1 | sed -n 's/.*rootPath=\([^ ]*\).*/\1/p' || true)"
-    if [[ -n "$last_root" ]]; then
-      echo "$last_root"
-    else
-      echo "unknown"
-    fi
+  local out rc
+  out="$(sqlite3 -readonly "$CATALOG_DB" \
+    "SELECT source_root_path FROM active_file_operation UNION ALL SELECT library_root_path FROM active_reorganization_component LIMIT 1;" \
+    2>&1)"; rc=$?
+  if [[ $rc -ne 0 ]]; then
+    printf '%s\n' "$out" >&2
     return 0
   fi
-  return 1
+  if [[ -z "$out" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$out"
+  return 0
+}
+
+is_import_active() {
+  has_active_operational_work "$@"
 }
 
 cleanup() {
@@ -143,9 +139,9 @@ cleanup() {
   fi
   if [[ "$QUIT_ON_EXIT" == 1 ]]; then
     local active_root
-    if active_root="$(is_import_active)"; then
-      echo "Smoke run leaving app running: import still active for root=$active_root" >&2
-      echo "An import was in flight; not quitting the app to avoid mid-copy termination (plan 0066 Stage 6b)." >&2
+    if active_root="$(has_active_operational_work)"; then
+      echo "Smoke run leaving app running: operational work still active (import or reorganization) for root=$active_root" >&2
+      echo "An import or reorganization was in flight; not quitting the app to avoid mid-operation termination (plan 0068)." >&2
       return
     fi
     quit_app
@@ -263,11 +259,11 @@ except OSError as e:
 }
 
 run_jank() {
-  # Plan 0066 Stage 6b: refuse to start when an import is already active
+  # Plan 0068: refuse to start when any operational journal is active
   local active_root
-  if active_root="$(is_import_active)"; then
-    echo "Cannot start smoke run: import already active for root=$active_root" >&2
-    echo "Finish or cancel the import before running --jank (plan 0066 Stage 6b)." >&2
+  if active_root="$(has_active_operational_work)"; then
+    echo "Cannot start smoke run: operational work already active for root=$active_root" >&2
+    echo "Finish or cancel the import/reorganization before running --jank (plan 0068)." >&2
     exit 1
   fi
   check_provider_readiness
@@ -288,10 +284,10 @@ run_jank() {
     --pause "$SCROLL_PAUSE"
 
   sleep 1
-  # If an import became active during the smoke run, leave the app alive
-  if active_root="$(is_import_active)"; then
-    echo "Smoke run completed but import is now active for root=$active_root — leaving app running." >&2
-    echo "Import was started during the smoke run; not quitting to avoid termination (plan 0066 Stage 6b)." >&2
+  # If operational work became active during the smoke run, leave the app alive
+  if active_root="$(has_active_operational_work)"; then
+    echo "Smoke run completed but operational work is now active for root=$active_root — leaving app running." >&2
+    echo "Work was started during the smoke run; not quitting to avoid termination (plan 0068)." >&2
     QUIT_ON_EXIT=0
     echo "smoke log: $LOG_FILE"
     echo "Post-hoc logs: script/logs.sh show --last 10m"

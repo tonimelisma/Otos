@@ -455,27 +455,12 @@ extension CatalogStore {
     }
 
     /// Nonempty import batches newest-first. Projection publishes these for the
-    /// Imports sidebar section.
+    /// Imports sidebar section. SQL lives in the gateway; Store owns `timedRead`
+    /// and `roots` capture.
     func importBatches() async throws -> [ImportBatchSummary] {
         let dbWriter = try database()
         return try await dbWriter.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT import_batch_unix_ms AS batch_ms, COUNT(*) AS asset_count
-                FROM media_asset
-                WHERE import_batch_unix_ms IS NOT NULL
-                GROUP BY import_batch_unix_ms
-                ORDER BY import_batch_unix_ms DESC
-                """
-            ).map { row in
-                let batchMs: Int64 = row["batch_ms"]
-                let count: Int = row["asset_count"]
-                return ImportBatchSummary(
-                    batchID: ImportBatchID(unixMilliseconds: batchMs),
-                    assetCount: count
-                )
-            }
+            try CatalogQueryGateway.fetchImportBatches(db: db)
         }
     }
 
@@ -484,26 +469,7 @@ extension CatalogStore {
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
         return try await dbWriter.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT library_root_id, relative_path
-                FROM media_asset
-                WHERE import_batch_unix_ms = ?
-                ORDER BY library_root_id, relative_path
-                """,
-                arguments: [batchID.unixMilliseconds]
-            ).compactMap { row in
-                let rootRowID: Int64 = row["library_root_id"]
-                let relativePath: String = row["relative_path"]
-                guard let rootPath = pathsByRowID[rootRowID] else {
-                    return nil
-                }
-                return MediaAssetID(
-                    libraryRootPath: rootPath,
-                    relativePath: MediaRelativePath(rawValue: relativePath)
-                )
-            }
+            try CatalogQueryGateway.fetchAssetIDs(inImportBatch: batchID, pathsByRowID: pathsByRowID, db: db)
         }
     }
 
@@ -515,25 +481,7 @@ extension CatalogStore {
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
         return try await dbWriter.read { db in
-            try Row.fetchAll(
-                db,
-                sql: """
-                SELECT library_root_id, relative_path
-                FROM media_asset
-                WHERE best_capture_unix IS NULL
-                ORDER BY library_root_id, relative_path
-                """
-            ).compactMap { row in
-                let rootRowID: Int64 = row["library_root_id"]
-                let relativePath: String = row["relative_path"]
-                guard let rootPath = pathsByRowID[rootRowID] else {
-                    return nil
-                }
-                return MediaAssetID(
-                    libraryRootPath: rootPath,
-                    relativePath: MediaRelativePath(rawValue: relativePath)
-                )
-            }
+            try CatalogQueryGateway.fetchAssetIDsMissingBestDate(pathsByRowID: pathsByRowID, db: db)
         }
     }
 
@@ -544,23 +492,7 @@ extension CatalogStore {
         }
         let dbWriter = try database()
         return try await dbWriter.read { db in
-            guard let row = try Row.fetchOne(
-                db,
-                sql: """
-                SELECT capture_wall_compact, capture_wall_precision
-                FROM media_asset
-                WHERE library_root_id = ? AND relative_path = ?
-                """,
-                arguments: [rootRowID, id.relativePath.rawValue]
-            ) else {
-                return nil
-            }
-            let compact: Int64? = row["capture_wall_compact"]
-            let precision: String? = row["capture_wall_precision"]
-            guard let compact, let precision else {
-                return nil
-            }
-            return CaptureWallClock.Selection(compact: compact, precision: precision)
+            try CatalogQueryGateway.fetchCaptureWall(id: id, rootRowID: rootRowID, db: db)
         }
     }
 
@@ -3572,6 +3504,46 @@ extension CatalogStore {
                 sql: "SELECT COUNT(*) FROM media_asset WHERE import_batch_unix_ms = ?",
                 arguments: [batch.unixMilliseconds]
             ) ?? 0
+        }
+    }
+
+    /// Whether any operational journal still claims work: import or reorganization.
+    /// This is the durable truth the app and `script/smoke-run.sh` must never
+    /// kill through — `log show` windows, daemon drops, and reboots can hide
+    /// the in-memory intent, but the journal row survives and drives recovery.
+    func hasActiveOperationalWork() async throws -> Bool {
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            if try Int.fetchOne(db, sql: "SELECT 1 FROM active_file_operation LIMIT 1") != nil {
+                return true
+            }
+            return try Int.fetchOne(
+                db,
+                sql: "SELECT 1 FROM active_reorganization_component LIMIT 1"
+            ) != nil
+        }
+    }
+
+    func activeOperationalRootPaths() async throws -> Set<LibraryRootPath> {
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT source_root_path AS root_path FROM active_file_operation
+                UNION
+                SELECT destination_root_path AS root_path FROM active_file_operation
+                UNION
+                SELECT library_root_path AS root_path FROM active_reorganization_component
+                """
+            )
+            var result: Set<LibraryRootPath> = []
+            for row in rows {
+                if let path: String = row["root_path"] {
+                    result.insert(LibraryRootPath(rawValue: path))
+                }
+            }
+            return result
         }
     }
 

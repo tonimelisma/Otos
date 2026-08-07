@@ -110,6 +110,19 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private var isShuttingDown = false
     private var nextWaiter: UInt64 = 0
 
+    // Per-root breaker for definite provider refusal (ETIMEDOUT). A burst of
+    // `providerUnavailable` on one root opens a 60s window where further
+    // background admissions on that root report `providerBreakerOpen` instead of
+    // dispatching and blocking `backgroundPerRootCap=1` for 2s each (32×2s storm).
+    // `FileMaterialization` already short-circuits the single file at k=2 probes;
+    // the breaker suppresses the *next* files on the same root until the provider
+    // proves serving again or the cooldown fires. No second queue or actor.
+    private var providerUnavailableStreakByRoot: [LibraryRootPath: Int] = [:]
+    private var breakerOpenUntilByRoot: [LibraryRootPath: Date] = [:]
+    private var breakerWakeTask: Task<Void, Never>?
+    private let breakerThreshold = 2
+    private let breakerCooldown: Duration = .seconds(60)
+
     init(
         store: CatalogStore,
         executor: @escaping Executor,
@@ -171,6 +184,8 @@ actor MaterializationCoordinator: MaterializationRequesting {
             return
         }
         isShuttingDown = true
+        breakerWakeTask?.cancel()
+        breakerWakeTask = nil
         wakeContinuation.finish()
 
         let cancelled = MaterializationResult.cancelled
@@ -384,6 +399,11 @@ actor MaterializationCoordinator: MaterializationRequesting {
                     pendingByID[id] = nil
                     continue
                 }
+                if isBreakerOpen(for: entry.request.id.libraryRootPath) {
+                    rejections[.providerBreakerOpen, default: 0] += 1
+                    index += 1
+                    continue
+                }
                 let snapshot = currentAdmissionSnapshot()
                 if let rejection = policy.rejection(for: entry.request, inFlight: snapshot) {
                     rejections[rejection, default: 0] += 1
@@ -493,6 +513,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard let entry = inFlightByID.removeValue(forKey: id) else {
             return
         }
+        recordProviderBreakerOutcome(result.outcome, rootPath: id.libraryRootPath)
         removeAccounting(for: entry)
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
@@ -549,6 +570,91 @@ actor MaterializationCoordinator: MaterializationRequesting {
         } else if old == .interactive, new != .interactive {
             effectiveInteractiveCount -= 1
         }
+    }
+
+    // MARK: - Provider breaker (per-root, process-local)
+
+    private func isBreakerOpen(for rootPath: LibraryRootPath) -> Bool {
+        guard let until = breakerOpenUntilByRoot[rootPath] else {
+            return false
+        }
+        if until > Date() {
+            return true
+        }
+        breakerOpenUntilByRoot[rootPath] = nil
+        return false
+    }
+
+    private func recordProviderBreakerOutcome(_ outcome: MaterializationOutcome, rootPath: LibraryRootPath) {
+        switch outcome {
+        case .providerUnavailable:
+            let next = (providerUnavailableStreakByRoot[rootPath] ?? 0) + 1
+            providerUnavailableStreakByRoot[rootPath] = next
+            guard next >= breakerThreshold else {
+                return
+            }
+            providerUnavailableStreakByRoot[rootPath] = 0
+            let cooldown = breakerCooldown
+            let until = Date().addingTimeInterval(DiagnosticsTiming.seconds(cooldown))
+            breakerOpenUntilByRoot[rootPath] = until
+            OtosLog.mediaIO.notice(
+                """
+                op=materialization.providerBreaker phase=opened rootPath=\(rootPath.rawValue, privacy: .public) \
+                streak=\(next, privacy: .public) cooldownMs=\(DiagnosticsTiming.milliseconds(cooldown), privacy: .public)
+                """
+            )
+            scheduleBreakerWake()
+        case .materialized, .alreadyMaterialized:
+            let hadBreaker = breakerOpenUntilByRoot[rootPath] != nil
+            let hadStreak = (providerUnavailableStreakByRoot[rootPath] ?? 0) > 0
+            if hadBreaker || hadStreak {
+                providerUnavailableStreakByRoot[rootPath] = nil
+                breakerOpenUntilByRoot[rootPath] = nil
+                OtosLog.mediaIO.notice(
+                    "op=materialization.providerBreaker phase=closed rootPath=\(rootPath.rawValue, privacy: .public)"
+                )
+                wake()
+            }
+        case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable:
+            // Inconclusive / slow / cancelled: neither opens nor closes the breaker.
+            break
+        }
+    }
+
+    private func scheduleBreakerWake() {
+        guard !isShuttingDown else {
+            return
+        }
+        guard let nextUntil = breakerOpenUntilByRoot.values.min() else {
+            breakerWakeTask?.cancel()
+            breakerWakeTask = nil
+            return
+        }
+        breakerWakeTask?.cancel()
+        let delay = max(nextUntil.timeIntervalSinceNow, 0)
+        breakerWakeTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } catch {
+                return
+            }
+            await self?.handleBreakerCooldownFired()
+        }
+    }
+
+    private func handleBreakerCooldownFired() {
+        breakerWakeTask = nil
+        // Expire any breaker whose window elapsed; keep future ones armed.
+        let now = Date()
+        let expiredRoots = breakerOpenUntilByRoot.filter { $0.value <= now }.map(\.key)
+        for root in expiredRoots {
+            breakerOpenUntilByRoot[root] = nil
+            OtosLog.mediaIO.notice(
+                "op=materialization.providerBreaker phase=cooldownExpired rootPath=\(root.rawValue, privacy: .public)"
+            )
+        }
+        scheduleBreakerWake()
+        wake()
     }
 
     private func currentAdmissionSnapshot() -> MaterializationAdmissionPolicy.Snapshot {

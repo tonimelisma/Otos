@@ -11,6 +11,7 @@ nonisolated struct MaterializationAdmissionPolicy: Equatable, Sendable {
         case byteBudget
         case largeVideoCap
         case rootBackgroundCap
+        case providerBreakerOpen
         case interactivePriority
     }
 

@@ -185,10 +185,17 @@ subordinate, rebuildable overlay.
    cost. Eagerly materializing the whole media library to enrich it is nonetheless a
    permitted, deliberate product choice that accepts that growth as the price of complete
    coverage; that enrichment choice, how it prioritizes the viewport, and where the
-   derived products are stored are owned by ADR 0009. Materialization status stays
-   transient and is never persisted. The current catalog/scanner still reads only
-   filesystem facts and materializes nothing; byte-reading materialization is the
-   enrichment owner's job (ADR 0009). See
+   derived products are stored are owned by ADR 0009. A provider that definitively
+   refuses a byte read with `ETIMEDOUT` (errno 60/110 or "timed out" text) twice
+   consecutively on one file is a distinct transient fact `providerUnavailable`:
+   `FileMaterialization` short-circuits the 120s poll at `k=2` probes (`~2s` vs 120s)
+   with two `FileHandle.read(1)` probes (each kernel-capped at 1s), and
+   `MaterializationCoordinator` records a per-root 60s `providerBreakerOpen`
+   suppression after two consecutive `providerUnavailable` on that root so the next
+   31 background candidates do not each pay 2s on `backgroundPerRootCap=1`.
+   Materialization status stays transient and is never persisted. The current
+   catalog/scanner still reads only filesystem facts and materializes nothing;
+   byte-reading materialization is the enrichment owner's job (ADR 0009). See
    `docs/adr/0009-enrichment-storage-and-staleness.md`.
 7. Media metadata and filesystem facts are distinct. Filesystem facts are URL
    resource values (name, size, dates, type, and the dataless flag) readable without
