@@ -6,7 +6,9 @@ import Testing
 struct CatalogWindowViewModelQueryIntentTests {
     @MainActor
     @Test func normalizedNoOpQueryIntentDoesNotBumpOrRollbackGeneration() async throws {
-        let (model, gate) = makeQueryIntentModel()
+        let temp = TemporaryDefaults()
+        defer { temp.cleanUp() }
+        let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
         try await gate.waitForBuildCount(1)
@@ -27,7 +29,9 @@ struct CatalogWindowViewModelQueryIntentTests {
 
     @MainActor
     @Test func staleProjectedStateDoesNotRollbackNewerQueryIntent() async throws {
-        let (model, gate) = makeQueryIntentModel()
+        let temp = TemporaryDefaults()
+        defer { temp.cleanUp() }
+        let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
         try await gate.waitForBuildCount(1)
@@ -60,7 +64,9 @@ struct CatalogWindowViewModelQueryIntentTests {
 
     @MainActor
     @Test func staleProjectedStateDoesNotRollbackToggledBackQueryIntent() async throws {
-        let (model, gate) = makeQueryIntentModel()
+        let temp = TemporaryDefaults()
+        defer { temp.cleanUp() }
+        let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
         try await gate.waitForBuildCount(1)
@@ -120,7 +126,7 @@ private func waitForRequestsReleasingBuilds(
 }
 
 @MainActor
-private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
+private func makeQueryIntentModel(temp: TemporaryDefaults) -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
     let store = CatalogStore(location: .inMemory)
     let gate = WindowStateBuildGate()
     let projection = CatalogProjection(
@@ -130,8 +136,6 @@ private func makeQueryIntentModel() -> (model: CatalogWindowViewModel, gate: Win
             return testWindowState(buildNumber: buildNumber, libraries: libraries, request: request)
         }
     )
-    let temp = TemporaryDefaults()
-    defer { temp.cleanUp() }
     let model = CatalogWindowViewModel(
         catalogStore: store,
         catalogProjection: projection,
