@@ -68,12 +68,12 @@ struct VideoPreviewLoaderTests {
         }
         final class CheckSeq: @unchecked Sendable {
             private let lock = NSLock()
-            private var n = 0
+            private var sequenceCount = 0
             func next() -> FileMaterializationStatus {
                 lock.lock()
                 defer { lock.unlock() }
-                n += 1
-                return n == 1 ? .dataless : .materialized
+                sequenceCount += 1
+                return sequenceCount == 1 ? .dataless : .materialized
             }
         }
         let seq = CheckSeq()
@@ -100,7 +100,7 @@ struct VideoPreviewLoaderTests {
         #expect(state == nil)
     }
 
-    @Test func clearOnFocusChangeTearsDown() async {
+    @Test func loupeVideoStateCleanupReplacesPlayer() async {
         let loader = VideoPreviewLoader(
             status: { _ in .materialized },
             materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
@@ -108,8 +108,10 @@ struct VideoPreviewLoaderTests {
         let videoDetail = detail(kind: .video)
         let first = await loader.play(id: id("a.mp4"), detail: videoDetail)
         #expect(first != nil)
-        await loader.clearOnFocusChange(expectedID: id("b.mp4"))
-        // Second play after clear should succeed with new id
+        if let first {
+            loader.cleanup(first)
+        }
+        // Second play after cleanup should succeed with new id
         let second = await loader.play(id: id("b.mp4"), detail: videoDetail)
         #expect(second?.id.relativePath.rawValue == "b.mp4")
     }

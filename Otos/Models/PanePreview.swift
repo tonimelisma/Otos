@@ -3,7 +3,7 @@ import Foundation
 
 /// Which full-size preview slot a decode belongs to. Loupe and compare-left are
 /// distinct slots even when they happen to show the same asset across mode switches.
-enum PaneSlot: CaseIterable, Hashable {
+nonisolated enum PaneSlot: CaseIterable, Hashable {
     case loupe
     case compareLeft
     case compareRight
@@ -13,7 +13,7 @@ enum PaneSlot: CaseIterable, Hashable {
 /// when `id` matches the pane's expected asset; otherwise they fall back to the
 /// id-keyed enrichment thumbnail. That identity check is what makes stale decodes
 /// harmless — no generation counters required.
-struct PanePreview: Equatable {
+nonisolated struct PanePreview: Equatable {
     let id: MediaAssetID
     let image: CGImage
 

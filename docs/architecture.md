@@ -30,11 +30,12 @@ schemas refuse to open instead of erasing.
         │  coalesced ~1s for background changes, immediate for user query intents
         ▼
   CatalogWindowViewModel (@MainActor)  ── the SwiftUI bridge; assigns @Observable state
-        │
+        │  owns loupeVideoState (single owner); VideoPreviewLoader (@MainActor factory) checks SF_DATALESS + interactive demand and creates AVPlayer
         ▼
   SwiftUI views  →  grid / loupe(+filmstrip) detail (mode-switched)
                      MediaGridBridgeView (AppKit NSCollectionView; .grid or .strip)
-                     PreviewImageLoader (actor) — full-size decode; submits interactive demand
+                     PreviewImageLoader (actor) — full-size decode off MainActor; submits interactive demand
+                     LoupeVideoPlayerView (NSViewRepresentable AVPlayerView) — inline controls; player owned by ViewModel
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a
@@ -53,9 +54,9 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `LibraryReorganizationRunner` | actor | plan → journal → execute → settle for one fixed library plus startup journal recovery decisions; returns remap batches | owns the use-case sequence while Store owns lease arbitration and transactions |
 | `EnrichmentCoordinator` | actor | separate ready-enrichment claims, materialization demands, materialization in-flight IDs, pending-apply claims, readiness retry signals, eight-worker local enrichment admission, bounded shared-materializer handoff, lease refresh, `freshly` handoff, batched writes, and a bounded pacing-only retry ledger | readiness admission probes through `EnrichmentReadinessChecking`; ready capacity, transfer capacity, and SQLite-lease ownership are independent; decode/parse and materializer awaits run in owned workers off the actor |
 | `MaterializationCoordinator` | actor | bounded consumer-fed interactive/device/background queues, per-id waiter coalescing and effective priority, 16-transfer admission, one-background-per-root fairness, known-materialization suppression, per-root `providerUnavailable` circuit breaker (2 consecutive ETIMEDOUT → 60s `providerBreakerOpen` suppression), truthful blocked/unblocked admission diagnostics during effective interactive demand, per-waiter-priority scoping of `activeRequestCount(under:)` so eject drain sees only enrichment-originated demand | gives every deliberate provider request one scheduling and lifecycle owner; its supervisor is the only dispatcher |
-| `PreviewImageLoader` | actor | loupe/compare full-size decode, live byte-read gate, per-id decode coalesce + small LRU | serializes decode/cache state and delegates interactive materialization |
-| `VideoPreviewLoader` | actor | loupe video `AVPlayer` lifecycle, live `SF_DATALESS` gate, interactive materialization, per-focus teardown | serializes player state and delegates interactive materialization; one player at a time, gated like image decode |
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState`), owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer |
+| `PreviewImageLoader` | actor | loupe/compare full-size decode, live byte-read gate, per-id decode coalesce + small LRU | serializes decode/cache state off MainActor and delegates interactive materialization |
+| `VideoPreviewLoader` | `@MainActor` final class | loupe video stateless factory: live `SF_DATALESS` gate, interactive materialization, AVPlayer creation, synchronous cleanup | player is `@MainActor` UI object (AVFoundation 27); single owner is ViewModel's `loupeVideoState`, loader holds no `currentState` — no duplication, no unsafe |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.
