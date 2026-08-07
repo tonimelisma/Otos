@@ -218,12 +218,48 @@ verify_selection_applied() {
 
 
 run_verify() {
+  check_provider_readiness
   QUIT_ON_EXIT=1
   local app_pid
   app_pid="$(run_selected_launch)"
   sleep "${OTOS_SMOKE_VERIFY_SECONDS:-3}"
   verify_selection_applied "$app_pid"
   echo "Smoke launch succeeded, window scoped to root=$SMOKE_ROOT"
+}
+
+check_provider_readiness() {
+  # Plan 0065 Stage 3b: a capture that silently measures a dead provider is worse than no capture.
+  # Do a real open()+read(4096) on one file under SMOKE_ROOT; if it times out with ETIMEDOUT,
+  # refuse to start or loudly annotate. Process presence (pgrep OneDrive) is not readiness.
+  local sample
+  sample="$(find "$SMOKE_ROOT" -type f \( -name "*.jpg" -o -name "*.heic" -o -name "*.png" -o -name "*.mp4" -o -name "*.mov" \) -print -quit 2>/dev/null || true)"
+  if [[ -z "$sample" ]]; then
+    echo "Warning: no sample file found under $SMOKE_ROOT to probe provider readiness; proceeding." >&2
+    return 0
+  fi
+  if ! python3 -c "
+import os, sys
+p = sys.argv[1]
+try:
+    with open(p, 'rb') as f:
+        f.read(4096)
+    sys.exit(0)
+except OSError as e:
+    # ETIMEDOUT is 60 on macOS, 110 on Linux; check both
+    if e.errno in (60, 110) or 'timed out' in str(e).lower() or 'ETIMEDOUT' in str(e):
+        print(f'Provider not serving: open+read failed for {p}: {e} (errno {e.errno})', file=sys.stderr)
+        sys.exit(2)
+    print(f'Probe read failed for {p}: {e} (errno {getattr(e, "errno", "?")})', file=sys.stderr)
+    sys.exit(1)
+" "$sample"; then
+    local rc=$?
+    if [[ $rc -eq 2 ]]; then
+      echo "Provider readiness check failed: $SMOKE_ROOT's File Provider is not serving reads (ETIMEDOUT)." >&2
+      echo "Re-auth OneDrive / wait for the provider to finish initialising, then re-run. A dead-provider capture would look like data." >&2
+      exit 2
+    fi
+    echo "Provider probe failed for $sample (exit $rc); proceeding but capture may be invalid." >&2
+  fi
 }
 
 run_jank() {
@@ -234,6 +270,7 @@ run_jank() {
     echo "Finish or cancel the import before running --jank (plan 0066 Stage 6b)." >&2
     exit 1
   fi
+  check_provider_readiness
   QUIT_ON_EXIT=1
   start_log_capture
   echo "Capturing smoke logs to $LOG_FILE"
