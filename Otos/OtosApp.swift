@@ -15,12 +15,25 @@ struct OtosApp: App {
     /// UserDefaults.standard — every other type takes both as required
     /// (no-default) parameters, so a caller cannot reach production data by
     /// omitting an argument (plan 0066 Stage 2).
-    @State private var catalogViewModel = CatalogWindowViewModel(
-        catalogStore: CatalogStore(
-            location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
-        ),
-        preferences: UserDefaults.standard
-    )
+    ///
+    /// Blank-slate: the hosted test bundle must not even *allocate* the
+    /// production store. The ViewModel is constructed with an in-memory store
+    /// and an ephemeral defaults suite when isTestRun, so no production
+    /// mtime/size or .plist is touched even before the .task bails.
+    @State private var catalogViewModel: CatalogWindowViewModel = {
+        if RunContext.isTestRun {
+            return CatalogWindowViewModel(
+                catalogStore: CatalogStore(location: .inMemory),
+                preferences: UserDefaults(suiteName: "net.melisma.blank-slate-\(UUID().uuidString)")!
+            )
+        }
+        return CatalogWindowViewModel(
+            catalogStore: CatalogStore(
+                location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
+            ),
+            preferences: UserDefaults.standard
+        )
+    }()
 
     var body: some Scene {
         Window("Otos", id: "main") {
