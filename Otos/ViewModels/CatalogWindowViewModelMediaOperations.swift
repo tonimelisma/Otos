@@ -17,26 +17,8 @@ extension CatalogWindowViewModel {
         return importPresentations.first { $0.sourcePath == path }
     }
 
-    var importPlanDetailReader: ImportPlanDetailReader? {
-        guard let coordinator = mediaOperationCoordinator,
-              let presentation = selectedImportPresentation
-        else {
-            return nil
-        }
-        let generation: UInt64
-        switch presentation.state {
-        case let .ready(_, generationValue, _),
-             let .executionUnavailable(_, generationValue):
-            generation = generationValue
-        default:
-            return nil
-        }
-        return ImportPlanDetailReader(
-            coordinator: coordinator,
-            sourcePath: presentation.sourcePath,
-            generation: generation
-        )
-    }
+    // Stage 8: ImportPlanDetailReader and the Details sheet are deleted; the
+    // grid is the plan view and the footer shows the status per §9.
 
     func startMediaOperationsIfNeeded() {
         guard mediaOperationCoordinator == nil else {
@@ -124,14 +106,6 @@ extension CatalogWindowViewModel {
 
     func readyImportPlan(for source: LibraryRootPath) async -> MediaOperationPlan? {
         await mediaOperationCoordinator?.readyPlan(for: source)
-    }
-
-    func toggleImportPlanOverlay() {
-        showsImportPlanOverlay.toggle()
-    }
-
-    func dismissImportPlanOverlay() {
-        showsImportPlanOverlay = false
     }
 
     // MARK: - Library reorganization (Stage G3)

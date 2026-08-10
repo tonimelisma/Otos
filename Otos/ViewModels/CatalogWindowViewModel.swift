@@ -145,8 +145,6 @@ final class CatalogWindowViewModel {
     /// coordinator's `allDestinations()` after presentation changes and after
     /// explicit destination intents.
     var removableDestinations: [LibraryRootPath: LibraryRootPath] = [:]
-    /// When true, the plan detail overlay sheet is presented for the selected source.
-    var showsImportPlanOverlay = false
     /// Settings Import tab bindings; persisted through `ImportPreferencesStore`. Set in
     /// `init`, not a property default, because its initial value depends on the
     /// injected `preferences`.
@@ -669,24 +667,9 @@ extension CatalogWindowViewModel {
     }
 
     func applySidebarSelectionPolicy(previous: CatalogWindowState, next: CatalogWindowState) {
-        // Compare against previously *available* identities so a remembered card that
-        // flips unavailable → available (the common re-insert case) still counts as
-        // newly attached and auto-selects.
-        let previousAvailableIdentities = Set(
-            previous.removableSources.filter(\.isAvailable).compactMap(\.deviceIdentity)
-        )
-        let newlyAttached = next.removableSources.filter { source in
-            guard source.isAvailable, let identity = source.deviceIdentity else {
-                return false
-            }
-            return !previousAvailableIdentities.contains(identity)
-        }
-        if let attached = newlyAttached.max(by: { left, right in
-            (left.lastSeenAt ?? .distantPast) < (right.lastSeenAt ?? .distantPast)
-        }), let selection = SidebarSelectionPolicy.selectionOnAttach(attached: attached) {
-            applyAutomaticSidebarSelection(selection)
-            return
-        }
+        // Attach-time selection hijack is removed (0071 §13, decision 7+13):
+        // attaching a card never moves the user. Launch-time selection of a
+        // connected card is still handled via the initial default below.
 
         // Do not latch the initial default on a pre-load empty world (zero roots of
         // both kinds). That state can publish before `store.start()` finishes; latching

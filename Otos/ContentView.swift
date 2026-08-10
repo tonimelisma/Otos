@@ -15,7 +15,6 @@ import SwiftUI
 /// the model. The model decides; the view renders.
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
-    @State private var overlayPlan: MediaOperationPlan?
 
     var body: some View {
         NavigationSplitView {
@@ -42,9 +41,6 @@ struct ContentView: View {
                         },
                         queueImport: {
                             viewModel.queueImport(for: presentation.sourcePath)
-                        },
-                        showPlanDetails: {
-                            viewModel.toggleImportPlanOverlay()
                         }
                     )
                 }
@@ -135,29 +131,6 @@ struct ContentView: View {
         } message: {
             if let message = viewModel.reorganizationAlertMessage {
                 Text(message)
-            }
-        }
-        .sheet(isPresented: Binding(
-            get: { viewModel.showsImportPlanOverlay },
-            set: { presented in
-                if !presented {
-                    viewModel.dismissImportPlanOverlay()
-                    overlayPlan = nil
-                }
-            }
-        )) {
-            if let presentation = viewModel.selectedImportPresentation {
-                ImportPlanOverlay(
-                    presentation: presentation,
-                    plan: overlayPlan,
-                    dismiss: {
-                        viewModel.dismissImportPlanOverlay()
-                        overlayPlan = nil
-                    }
-                )
-                .task(id: presentation.sourcePath) {
-                    overlayPlan = await viewModel.readyImportPlan(for: presentation.sourcePath)
-                }
             }
         }
     }

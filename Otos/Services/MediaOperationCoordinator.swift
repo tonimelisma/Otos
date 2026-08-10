@@ -52,7 +52,7 @@ actor MediaOperationCoordinator {
     /// ignored. Using inequality — not `>` — keeps a removed-then-re-added root,
     /// whose revision resets, from being suppressed by a stale high value.
     private var lastSeenOccupancy: [LibraryRootPath: UInt64] = [:]
-    // Incremented only in scheduleBuildIfNeeded to give a published plan an identity for ImportPlanDetailReader; not bumped on queueImport.
+    // Incremented only in scheduleBuildIfNeeded to give a published plan an identity; not bumped on queueImport.
     private var planGeneration: UInt64 = 0
     private var attachStartedAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var attachToReadyMs: [LibraryRootPath: Int] = [:]
