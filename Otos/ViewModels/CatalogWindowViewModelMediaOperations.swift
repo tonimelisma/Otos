@@ -17,26 +17,8 @@ extension CatalogWindowViewModel {
         return importPresentations.first { $0.sourcePath == path }
     }
 
-    var importPlanDetailReader: ImportPlanDetailReader? {
-        guard let coordinator = mediaOperationCoordinator,
-              let presentation = selectedImportPresentation
-        else {
-            return nil
-        }
-        let generation: UInt64
-        switch presentation.state {
-        case let .ready(_, generationValue, _),
-             let .executionUnavailable(_, generationValue):
-            generation = generationValue
-        default:
-            return nil
-        }
-        return ImportPlanDetailReader(
-            coordinator: coordinator,
-            sourcePath: presentation.sourcePath,
-            generation: generation
-        )
-    }
+    // Stage 8: ImportPlanDetailReader and the Details sheet are deleted; the
+    // grid is the plan view and the footer shows the status per §9.
 
     func startMediaOperationsIfNeeded() {
         guard mediaOperationCoordinator == nil else {
@@ -77,14 +59,57 @@ extension CatalogWindowViewModel {
 
     func applyImportPresentations(_ presentations: [MediaOperationSourcePresentation]) {
         importPresentations = presentations
+        Task {
+            await refreshRemovableDestinations()
+            await refreshSessionPreferences()
+        }
+    }
+
+    func refreshSessionPreferences() async {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        var cache: [LibraryRootPath: ImportPreferences] = [:]
+        for presentation in importPresentations {
+            let prefs = await coordinator.sessionPreferences(for: presentation.sourcePath)
+            cache[presentation.sourcePath] = prefs
+        }
+        await MainActor.run {
+            sessionPreferencesBySource = cache
+        }
+    }
+
+    func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
+        sessionPreferencesBySource[source] ?? importPreferences
+    }
+
+    func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) {
+        sessionPreferencesBySource[source] = prefs
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        Task {
+            await coordinator.setSessionPreferences(prefs, for: source)
+        }
+    }
+
+    func refreshRemovableDestinations() async {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        let all = await coordinator.allDestinations()
+        await MainActor.run {
+            removableDestinations = all
+        }
     }
 
     func setImportDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) {
         guard let coordinator = mediaOperationCoordinator else {
             return
         }
-        Task {
+        Task { [weak self] in
             await coordinator.setDestination(destination, for: source)
+            await self?.refreshRemovableDestinations()
         }
     }
 
@@ -94,6 +119,24 @@ extension CatalogWindowViewModel {
         }
         Task {
             await coordinator.queueImport(for: source)
+        }
+    }
+
+    func cancelImport(for source: LibraryRootPath) {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        Task {
+            await coordinator.cancelImport(for: source)
+        }
+    }
+
+    func retryImportPlanning(for source: LibraryRootPath) {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        Task {
+            await coordinator.retryPlanning(for: source)
         }
     }
 
@@ -110,14 +153,6 @@ extension CatalogWindowViewModel {
 
     func readyImportPlan(for source: LibraryRootPath) async -> MediaOperationPlan? {
         await mediaOperationCoordinator?.readyPlan(for: source)
-    }
-
-    func toggleImportPlanOverlay() {
-        showsImportPlanOverlay.toggle()
-    }
-
-    func dismissImportPlanOverlay() {
-        showsImportPlanOverlay = false
     }
 
     // MARK: - Library reorganization (Stage G3)
@@ -193,7 +228,10 @@ extension CatalogWindowViewModel {
         let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
         gridSelection = gridSelection.remapped(by: batch)
         if let focus = focusedAssetID {
-            focusedAssetID = map[focus] ?? focus
+            let mapped = map[focus] ?? focus
+            if mapped != focus {
+                setFocus(mapped)
+            }
         }
         comparePair = comparePair.remapped(by: batch)
         identityRemapBatch = batch

@@ -444,7 +444,6 @@ struct ImportExecutionProgressTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(store: store, preferences: tempDefaults.defaults)
         await coordinator.start()
-        defer { Task { await coordinator.shutdown() } }
         await coordinator.setDestination(destination, for: source)
         let plan = try await waitForReadyPlan(coordinator, source: source)
 
@@ -460,6 +459,7 @@ struct ImportExecutionProgressTests {
 
         guard case .completed = result else {
             Issue.record("Expected completed execution, got \(result)")
+            await coordinator.shutdown()
             return
         }
         let snapshots = collector.snapshots
@@ -473,6 +473,7 @@ struct ImportExecutionProgressTests {
         }
         #expect(snapshots.last?.completedCount == 12)
         #expect(snapshots.last?.completedBytes == expectedBytes)
+        await coordinator.shutdown()
     }
 
     private func waitForReadyPlan(

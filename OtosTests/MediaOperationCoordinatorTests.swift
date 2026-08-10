@@ -75,7 +75,6 @@ struct MediaOperationCoordinatorTests {
             preferences: tempDefaults.defaults
         )
         await coordinator.start()
-        defer { Task { await coordinator.shutdown() } }
 
         // Attach AFTER start: the card's scan bumps occupancy and emits planning
         // changes. The coordinator (auto-mapping to the sole destination) must reach
@@ -94,8 +93,10 @@ struct MediaOperationCoordinatorTests {
         )
         guard case .ready = presentation.state else {
             Issue.record("Expected .ready via planning-change stream, got \(presentation.state)")
+            await coordinator.shutdown()
             return
         }
+        await coordinator.shutdown()
     }
 
     @Test func queueImportSurfacesExecutionUnavailableOrQueuedState() async throws {
@@ -135,9 +136,6 @@ struct MediaOperationCoordinatorTests {
             preferences: tempDefaults.defaults
         )
         await coordinator.start()
-        defer {
-            Task { await coordinator.shutdown() }
-        }
 
         await coordinator.setDestination(fixedPath, for: cardPath)
         try await Task.sleep(for: .milliseconds(250))
@@ -152,6 +150,7 @@ struct MediaOperationCoordinatorTests {
         default:
             Issue.record("Unexpected import presentation state \(card.state)")
         }
+        await coordinator.shutdown()
     }
 
     /// Regression: an enriching cloud destination bumps `planRevision` every few

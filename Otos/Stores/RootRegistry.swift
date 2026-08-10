@@ -109,6 +109,11 @@ nonisolated struct RootRegistry {
                 rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths),
                 importBatchUnixMs: batchID.unixMilliseconds
             )
+        case .allImports:
+            // All Imports is a browsing affordance, not a filter — show all media.
+            return CatalogScopePredicate(
+                rootIDs: fixedLibraryRootIDs(in: availableLibraryPaths)
+            )
         }
     }
 

@@ -27,18 +27,12 @@ import Foundation
 /// directly (scoped to this exact UUID-suffixed suite name, never a glob), after
 /// `removePersistentDomain` + `synchronize()`.
 ///
-/// **Known residual limitation, measured, not a defect in this type:** run alone
-/// or in a small suite, this leaves zero stray files — confirmed for
-/// `CatalogWindowViewModelGridZoomTests` (10 `@Test`s) run in isolation. Run as
-/// part of the full `script/test.sh` suite, where Swift Testing runs many
-/// `@Test`s concurrently across many suites at once, a minority of suites still
-/// leave an empty `{}` stub behind — cfprefsd appears to independently re-flush
-/// its own cached copy of a domain sometime after this type's explicit unlink,
-/// under heavy concurrent domain churn, which no public API exposes a way to
-/// prevent. The leaked files carry no data (confirmed empty `{}` in every case
-/// checked) — the risk plan 0066 Stage 3 exists to close (a real value leaking
-/// into `~/Library/Preferences`) is closed; a residual empty-file count under
-/// concurrent load is not.
+/// **Known residual, measured:** under the full concurrent suite a minority of suites leave
+/// an empty `{}` stub behind — cfprefsd re-flushes its cached copy after this type's unlink,
+/// which no public API prevents. An empty stub is accepted. A domain with *keys* in it is
+/// never cfprefsd: it means a writer ran after `cleanUp()`. As of plan 0072 the only way
+/// that happened was unawaited async teardown (`defer { Task { … } }`); that shape is now
+/// banned and `script/check-production-data-untouched.sh` fails on any data-carrying domain.
 final class TemporaryDefaults {
     let defaults: UserDefaults
     private let suiteName: String

@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import QuartzCore
 
@@ -59,5 +60,13 @@ nonisolated enum MediaGridAnimation {
     static let zoomDuration: TimeInterval = 0.30
     static var zoomTimingFunction: CAMediaTimingFunction {
         CAMediaTimingFunction(name: .easeInEaseOut)
+    }
+
+    /// Reduce Motion is an accessibility display setting, not a preference: a user who
+    /// enables it is telling the system that motion causes them discomfort. Every
+    /// animated path — structural applies, insert/remove, thumbnail fade, selection
+    /// ring, zoom reflow — resolves through this one value so no site can forget it.
+    nonisolated static var prefersReducedMotion: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 }

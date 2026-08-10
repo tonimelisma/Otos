@@ -136,8 +136,7 @@ everything expensive happens on an actor off the main thread.
   staging cleanup + copyfile/camera download + exclusive publish); Store accepts
   semantic journal transitions and settles the catalog atomically. Blocked entries
   withhold cleanup and auto-eject. Imports
-  sidebar scopes via `import_batch_unix_ms`. Plan details use
-  `ImportPlanDetailReader` (no full plan map on `CatalogWindowState`).
+  sidebar scopes via `import_batch_unix_ms`. The grid is the plan view.
 - **Library reorganization**: `ReorganizationPlanner` builds physical-member
   recipes; `ReorganizationExecutor` owns directory/move mechanics;
   `LibraryReorganizationRunner` owns execution and recovery sequencing. Store owns

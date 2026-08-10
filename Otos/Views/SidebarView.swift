@@ -8,10 +8,33 @@ struct SidebarView: View {
     let libraries: [CatalogLibraryState]
     let importBatches: [ImportBatchSummary]
     let removableSources: [CatalogLibraryState]
+    let importPresentations: [MediaOperationSourcePresentation]
     let sidebarSelection: SidebarSelection
     let ejectingSourceIdentities: Set<String>
     let selectSidebar: @MainActor @Sendable (SidebarSelection) -> Void
     let ejectSource: @MainActor @Sendable (LibraryRoot) -> Void
+
+    init(
+        showsAllMedia: Bool,
+        libraries: [CatalogLibraryState],
+        importBatches: [ImportBatchSummary],
+        removableSources: [CatalogLibraryState],
+        importPresentations: [MediaOperationSourcePresentation] = [],
+        sidebarSelection: SidebarSelection,
+        ejectingSourceIdentities: Set<String>,
+        selectSidebar: @MainActor @Sendable @escaping (SidebarSelection) -> Void,
+        ejectSource: @MainActor @Sendable @escaping (LibraryRoot) -> Void
+    ) {
+        self.showsAllMedia = showsAllMedia
+        self.libraries = libraries
+        self.importBatches = importBatches
+        self.removableSources = removableSources
+        self.importPresentations = importPresentations
+        self.sidebarSelection = sidebarSelection
+        self.ejectingSourceIdentities = ejectingSourceIdentities
+        self.selectSidebar = selectSidebar
+        self.ejectSource = ejectSource
+    }
 
     var body: some View {
         List(selection: selectionBinding) {
@@ -33,7 +56,7 @@ struct SidebarView: View {
 
             if !importBatches.isEmpty {
                 Section("Imports") {
-                    ForEach(importBatches, id: \.batchID) { batch in
+                    ForEach(visibleImportBatches, id: \.batchID) { batch in
                         SidebarRow(
                             systemImage: "square.and.arrow.down.on.square",
                             title: ImportBatchFormatting.sidebarTitle(
@@ -46,6 +69,14 @@ struct SidebarView: View {
                                 .monospacedDigit()
                         }
                         .tag(SidebarSelection.importBatch(batch.batchID))
+                    }
+                    if importBatches.count > 5 {
+                        SidebarRow(systemImage: "list.bullet", title: "All Imports…") {
+                            Text("\(importBatches.count)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        .tag(SidebarSelection.allImports)
                     }
                 }
             }
@@ -71,7 +102,32 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func removableTrailingAccessory(for source: CatalogLibraryState) -> some View {
-        if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
+        if let presentation = importPresentations.first(where: { $0.sourcePath == source.path }) {
+            switch presentation.state {
+            case .inventory, .waitingForMetadata, .planning, .queuedForReadiness, .needsReplan:
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("\(source.displayName), preparing")
+            case let .executing(progress):
+                ProgressView(value: Double(progress.completedCount), total: Double(max(progress.totalCount, 1)))
+                    .controlSize(.small)
+                    .frame(width: 32)
+                    .accessibilityLabel("\(source.displayName), importing, \(progress.completedCount) of \(progress.totalCount)")
+            case .ready, .completed, .failed, .executionUnavailable:
+                if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if source.isEjectable {
+                    Button {
+                        ejectSource(source.root)
+                    } label: {
+                        Image(systemName: "eject.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Eject")
+                }
+            }
+        } else if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
             ProgressView()
                 .controlSize(.small)
         } else if source.isEjectable {
@@ -83,6 +139,20 @@ struct SidebarView: View {
             .buttonStyle(.borderless)
             .help("Eject")
         }
+    }
+
+    private var visibleImportBatches: [ImportBatchSummary] {
+        if importBatches.count <= 5 {
+            return importBatches
+        }
+        let lastFive = Array(importBatches.prefix(5))
+        if case let .importBatch(selectedID) = sidebarSelection,
+           !lastFive.contains(where: { $0.batchID == selectedID }),
+           let selected = importBatches.first(where: { $0.batchID == selectedID })
+        {
+            return lastFive + [selected]
+        }
+        return lastFive
     }
 
     private var selectionBinding: Binding<SidebarSelection> {

@@ -29,7 +29,10 @@ private nonisolated struct ImportPlanBuildResult {
 /// before publishing, and a build that lost the race re-dirties instead of applying.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
-    private let preferences: UserDefaults
+    // UserDefaults is documented thread-safe; this actor is the only writer for
+    // its suite, so a scoped nonisolated(unsafe) is more reviewable than a
+    // module-wide retroactive conformance (ARC-042).
+    private nonisolated(unsafe) let preferences: UserDefaults
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
@@ -42,6 +45,8 @@ actor MediaOperationCoordinator {
     /// Sources with an executor in flight. This single ownership fact rejects
     /// repeated clicks and plan completions while execution suspends.
     private var executing: Set<LibraryRootPath> = []
+    /// One executor per executing source so the bar's Cancel reaches it (decision 20, Stage 6).
+    private var executors: [LibraryRootPath: MediaImportExecutor] = [:]
     /// Last occupancy revision observed per root (source or destination) from the
     /// planning-change stream. A change whose occupancy revision differs from this
     /// is a real namespace change worth replanning; an unchanged one is
@@ -49,7 +54,7 @@ actor MediaOperationCoordinator {
     /// ignored. Using inequality — not `>` — keeps a removed-then-re-added root,
     /// whose revision resets, from being suppressed by a stale high value.
     private var lastSeenOccupancy: [LibraryRootPath: UInt64] = [:]
-    // Incremented only in scheduleBuildIfNeeded to give a published plan an identity for ImportPlanDetailReader; not bumped on queueImport.
+    // Incremented only in scheduleBuildIfNeeded to give a published plan an identity; not bumped on queueImport.
     private var planGeneration: UInt64 = 0
     private var attachStartedAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var attachToReadyMs: [LibraryRootPath: Int] = [:]
@@ -57,6 +62,23 @@ actor MediaOperationCoordinator {
     /// build instead of publishing into a presentation that no longer exists.
     private var buildTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var consumerTask: Task<Void, Never>?
+    private var catalogChangeTask: Task<Void, Never>?
+    /// Reservation ledger per §5: every `.copy` final destination plus every
+    /// companion destination of a live (ready or executing) plan, keyed by
+    /// source. Unioned on demand per destination; never persisted, never
+    /// consulted by the executor, never a second truth about D — the filesystem
+    /// still wins. Invariants I1–I5 hold in one synchronous on-actor region at
+    /// publish time (§5, decision 18).
+    private var claimsBySource: [LibraryRootPath: Set<MediaRelativePath>] = [:]
+    /// Device-identity-keyed destination persistence (Stage 5): the three-step
+    /// default — saved mapping for this device identity → last-used destination
+    /// → sole/first available fixed library — ensures a destination is always
+    /// defaulted and `.waitingForDestination` is never presented.
+    private var destinationByDeviceIdentity: [String: LibraryRootPath] = [:]
+    private var lastUsedDestination: LibraryRootPath?
+    /// Per-source session overrides seeded from ImportPreferences, discarded on detach (Stage 7).
+    private var sessionPreferences: [LibraryRootPath: ImportPreferences] = [:]
+
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
 
@@ -109,6 +131,15 @@ actor MediaOperationCoordinator {
                 await handlePlanningChange(change)
             }
         }
+        let catalogChanges = await store.changeNotifications()
+        catalogChangeTask = Task { [weak self] in
+            for await _ in catalogChanges {
+                guard let self else {
+                    return
+                }
+                await handleCatalogChangeForMetadataGate()
+            }
+        }
         // Subscription liveness marker (plan 0064 Stage 4): a capture showing
         // `phase=subscribed` plus zero later `phase=receive` lines proves the app was
         // idle (nothing to emit), not that the coordinator stopped listening.
@@ -121,6 +152,8 @@ actor MediaOperationCoordinator {
     func shutdown() {
         consumerTask?.cancel()
         consumerTask = nil
+        catalogChangeTask?.cancel()
+        catalogChangeTask = nil
         for task in buildTasks.values {
             task.cancel()
         }
@@ -133,6 +166,13 @@ actor MediaOperationCoordinator {
     }
 
     func setDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) async {
+        let libraries = await store.currentLibraries()
+        if let sourceState = libraries.first(where: { $0.path == source }),
+           let device = sourceState.root.deviceIdentity
+        {
+            destinationByDeviceIdentity[device] = destination
+        }
+        lastUsedDestination = destination
         destinationBySource[source] = destination
         persistDestinationMappings()
         dirty.insert(source)
@@ -145,6 +185,16 @@ actor MediaOperationCoordinator {
             dirty.insert(source)
             scheduleBuildIfNeeded(source)
         }
+    }
+
+    func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
+        sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
+    }
+
+    func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) async {
+        sessionPreferences[source] = prefs
+        dirty.insert(source)
+        scheduleBuildIfNeeded(source)
     }
 
     func queueImport(for source: LibraryRootPath) async {
@@ -229,18 +279,21 @@ actor MediaOperationCoordinator {
             return
         }
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
-            presentations[source] = MediaOperationSourcePresentation(
-                sourcePath: source,
-                destinationPath: destinationBySource[source],
-                state: .ready(
-                    summary: summary,
-                    generation: generation,
-                    skippedPackageCount: skippedPackageCount
-                ),
-                attachToReadyMs: attachToReadyMs[source]
-            )
-            publish()
-            return
+            let prefs = sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
+            guard prefs.deleteSourceAfterImport else {
+                presentations[source] = MediaOperationSourcePresentation(
+                    sourcePath: source,
+                    destinationPath: destinationBySource[source],
+                    state: .ready(
+                        summary: summary,
+                        generation: generation,
+                        skippedPackageCount: skippedPackageCount
+                    ),
+                    attachToReadyMs: attachToReadyMs[source]
+                )
+                publish()
+                return
+            }
         }
         await runExecution(
             source: source,
@@ -295,7 +348,8 @@ actor MediaOperationCoordinator {
             cameraImport: cameraImport,
             materializationRequester: materializationRequester
         )
-        let prefs = ImportPreferencesStore.load(defaults: preferences)
+        executors[source] = executor
+        let prefs = sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,
             destinationPath: destinationBySource[source],
@@ -332,9 +386,39 @@ actor MediaOperationCoordinator {
             prefs: prefs
         )
         OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue])
+        let finishedDestination = destinationBySource[source]
+        executors.removeValue(forKey: source)
         executing.remove(source)
+        // I2: conversion by death — every published name is already observable
+        // on disk, every unpublished name never will be. One release point per
+        // plan death keeps the ledger trivially auditable, and the next rebuild
+        // seeds from disk truth.
+        claimsBySource.removeValue(forKey: source)
         dirty.insert(source)
         scheduleBuildIfNeeded(source)
+        // Flush coalesced destination-driven rebuilds (Stage 2 / C4).
+        // While this destination was under execution, handlePlanningChange
+        // suppressed rebuilds for every other source mapped to it, leaving
+        // them dirty but unscheduled. After the last execution for this
+        // destination finishes, schedule one rebuild per dirty source.
+        if let finishedDestination {
+            let stillExecutingForDestination = executing.contains {
+                destinationBySource[$0] == finishedDestination
+            }
+            if !stillExecutingForDestination {
+                for (otherSource, dest) in destinationBySource
+                    where dest == finishedDestination && otherSource != source && dirty.contains(otherSource)
+                {
+                    if !building.contains(otherSource), !executing.contains(otherSource) {
+                        scheduleBuildIfNeeded(otherSource)
+                        // swiftlint:disable:next line_length
+                        OtosLog.catalog.notice(
+                            "op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)"
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private func applyExecutionResult(
@@ -347,11 +431,15 @@ actor MediaOperationCoordinator {
         prefs: ImportPreferences
     ) async {
         switch result {
-        case let .completed(_, _, hasBlockedEntries, hasEntryFailures):
+        case let .completed(_, _, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount):
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
-                state: .completed(summary: summary),
+                state: .completed(
+                    summary: summary,
+                    skippedForeignCount: skippedForeignCount,
+                    failedCount: failedCount
+                ),
                 attachToReadyMs: attachToReadyMs[source]
             )
             publish()
@@ -362,7 +450,11 @@ actor MediaOperationCoordinator {
             {
                 await autoEjectIfRequested(sourceRoot)
             }
-        case .cancelled:
+        case let .cancelled(_, _, _, _, skippedForeignCount, failedCount):
+            // Cancelled still surfaces the counts for diagnostics, but the
+            // presentation returns to ready so the user can retry. The ledger
+            // was already cleared in runExecution before the rebuild.
+            _ = (skippedForeignCount, failedCount)
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
@@ -423,6 +515,23 @@ actor MediaOperationCoordinator {
         readyPlans[source]
     }
 
+    func cancelImport(for source: LibraryRootPath) async {
+        if let executor = executors[source] {
+            await executor.cancel()
+        }
+        OtosLog.catalog.notice(
+            "op=import.cancel phase=requested rootPath=\(source.rawValue, privacy: .public)"
+        )
+    }
+
+    func retryPlanning(for source: LibraryRootPath) async {
+        dirty.insert(source)
+        scheduleBuildIfNeeded(source)
+        OtosLog.catalog.notice(
+            "op=import.retry phase=requested rootPath=\(source.rawValue, privacy: .public)"
+        )
+    }
+
     private func handlePlanningChange(_ change: RootPlanningChange) async {
         OtosLog.catalog.noticeOperation(
             "import.coordinator",
@@ -448,8 +557,23 @@ actor MediaOperationCoordinator {
                     scheduleBuildIfNeeded(change.rootPath)
                 }
             }
+            // C4 fix: while any execution targets this destination, suppress
+            // destination-driven rebuilds for all sources mapped to it. Each
+            // per-entry settlement bumps occupancy and would otherwise cause
+            // every other card planning into the same library to re-enumerate
+            // continuously. Dirty is retained and coalesced into one rebuild
+            // after the last execution for this destination ends.
+            let executingDestinations = Set(executing.compactMap { destinationBySource[$0] })
+            let isDestinationUnderExecution = executingDestinations.contains(change.rootPath)
             for (source, destination) in destinationBySource where destination == change.rootPath {
                 dirty.insert(source)
+                if isDestinationUnderExecution {
+                    // swiftlint:disable:next line_length
+                    OtosLog.catalog.notice(
+                        "op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)"
+                    )
+                    continue
+                }
                 if !executing.contains(source) {
                     scheduleBuildIfNeeded(source)
                 }
@@ -458,13 +582,38 @@ actor MediaOperationCoordinator {
         await refreshSources(reason: "planningChange")
     }
 
+    /// Resume path for `waitingForMetadata` (Stage 1 / F3). Enrichment updates
+    /// capture dates without bumping occupancy, so the occupancy-driven
+    /// `handlePlanningChange` never wakes a waiting source. Any catalog change
+    /// that may have supplied dates re-dirties waiting sources so they rebuild
+    /// and either progress to `.planning` or remain waiting with updated counts.
+    private func handleCatalogChangeForMetadataGate() async {
+        var waitingSources: [LibraryRootPath] = []
+        for (source, presentation) in presentations {
+            if case .waitingForMetadata = presentation.state {
+                waitingSources.append(source)
+            }
+        }
+        guard !waitingSources.isEmpty else {
+            return
+        }
+        for source in waitingSources {
+            dirty.insert(source)
+            if !building.contains(source), !executing.contains(source) {
+                scheduleBuildIfNeeded(source)
+            }
+        }
+        OtosLog.catalog.notice(
+            "op=import.coordinator phase=catalogChangeWake waitingCount=\(waitingSources.count, privacy: .public)"
+        )
+    }
+
     private func refreshSources(reason: String) async {
         let libraries = await store.currentLibraries()
         let fixedAvailable = libraries.filter { $0.root.kind == .library && $0.availability == .available }
         let removable = libraries.filter {
             $0.root.kind != .library && $0.availability == .available
         }
-        let soleDestination: LibraryRootPath? = fixedAvailable.count == 1 ? fixedAvailable.first?.path : nil
 
         var seen = Set<LibraryRootPath>()
         for source in removable {
@@ -473,15 +622,44 @@ actor MediaOperationCoordinator {
                 attachStartedAt[source.path] = ContinuousClock().now
             }
             let previousMapping = destinationBySource[source.path]
-            // Auto-map only when exactly one fixed library exists and nothing is saved.
-            if destinationBySource[source.path] == nil, let soleDestination {
-                destinationBySource[source.path] = soleDestination
-            }
-            // Drop mappings whose destination is no longer an available fixed library.
-            if let mapped = destinationBySource[source.path],
-               !fixedAvailable.contains(where: { $0.path == mapped })
-            {
-                destinationBySource.removeValue(forKey: source.path)
+            // Three-step default (Stage 5): saved mapping for this device
+            // identity → last-used destination → sole/first available fixed
+            // library. A destination is always defaulted when one exists, so
+            // `.waitingForDestination` is never presented.
+            let currentMapped = destinationBySource[source.path]
+            let isCurrentValid = currentMapped.map { dest in
+                fixedAvailable.contains(where: { $0.path == dest })
+            } ?? false
+            if !isCurrentValid {
+                let deviceDest: LibraryRootPath? = {
+                    guard let device = source.root.deviceIdentity,
+                          let saved = destinationByDeviceIdentity[device],
+                          fixedAvailable.contains(where: { $0.path == saved })
+                    else { return nil }
+                    return saved
+                }()
+                let lastUsedValid = lastUsedDestination.flatMap { dest in
+                    fixedAvailable.contains(where: { $0.path == dest }) ? dest : nil
+                }
+                let soleOrFirst: LibraryRootPath? = {
+                    if fixedAvailable.count == 1 {
+                        return fixedAvailable.first?.path
+                    }
+                    return fixedAvailable.sorted { $0.path.rawValue < $1.path.rawValue }.first?.path
+                }()
+                let newDestination = deviceDest ?? lastUsedValid ?? soleOrFirst
+                if let newDestination {
+                    destinationBySource[source.path] = newDestination
+                    if let device = source.root.deviceIdentity {
+                        destinationByDeviceIdentity[device] = newDestination
+                    }
+                    lastUsedDestination = newDestination
+                } else {
+                    destinationBySource.removeValue(forKey: source.path)
+                }
+                if destinationBySource[source.path] != previousMapping {
+                    persistDestinationMappings()
+                }
             }
             let isNewSource = presentations[source.path] == nil
             if isNewSource {
@@ -491,6 +669,10 @@ actor MediaOperationCoordinator {
                     state: .inventory,
                     attachToReadyMs: nil
                 )
+                // Seed session overrides from global defaults; discarded on detach.
+                if sessionPreferences[source.path] == nil {
+                    sessionPreferences[source.path] = ImportPreferencesStore.load(defaults: preferences)
+                }
             }
             // Plan a source only when it first appears or its destination mapping
             // changed. Re-dirtying stable sources on every wake is exactly the churn
@@ -511,9 +693,12 @@ actor MediaOperationCoordinator {
             dirty.remove(path)
             building.remove(path)
             executing.remove(path)
+            executors.removeValue(forKey: path)
             attachStartedAt.removeValue(forKey: path)
             attachToReadyMs.removeValue(forKey: path)
             lastSeenOccupancy.removeValue(forKey: path)
+            claimsBySource.removeValue(forKey: path)
+            sessionPreferences.removeValue(forKey: path)
         }
         persistDestinationMappings()
         publish()
@@ -540,18 +725,33 @@ actor MediaOperationCoordinator {
         planGeneration &+= 1
         let generation = planGeneration
         let destination = destinationBySource[source]
-        presentations[source] = MediaOperationSourcePresentation(
-            sourcePath: source,
-            destinationPath: destination,
-            state: destination == nil ? .waitingForDestination : .planning,
-            attachToReadyMs: attachToReadyMs[source]
+        OtosLog.catalog.noticeOperation(
+            "plan.rebuild",
+            phase: "schedule",
+            fields: [
+                "source": source.rawValue,
+                "destination": destination?.rawValue ?? "none",
+                "generation": "\(generation)",
+            ]
         )
-        publish()
-
         guard let destination else {
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: nil,
+                state: .failed(problem: "noDestinationLibrary"),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+            publish()
             building.remove(source)
             return
         }
+        presentations[source] = MediaOperationSourcePresentation(
+            sourcePath: source,
+            destinationPath: destination,
+            state: .planning,
+            attachToReadyMs: attachToReadyMs[source]
+        )
+        publish()
 
         buildTasks[source] = Task { [weak self] in
             guard let self else {
@@ -587,7 +787,8 @@ actor MediaOperationCoordinator {
     /// cooperative pool rather than on the coordinator, which stays free to service
     /// planning changes and Import intents while a build is in flight.
     private nonisolated static func buildPlanOffActor(
-        snapshot: ImportPlanningSnapshot
+        snapshot: ImportPlanningSnapshot,
+        additionalReserved: Set<MediaRelativePath>
     ) async -> ImportPlanBuildResult {
         let clock = ContinuousClock()
         let enumerateStart = clock.now
@@ -596,7 +797,21 @@ actor MediaOperationCoordinator {
             folders: MediaTransferPlanner.destinationFolders(for: snapshot)
         )
         let planStart = clock.now
-        let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: namespace)
+        OtosLog.catalog.noticeOperation(
+            "plan.namespace.enumerate",
+            phase: "finish",
+            fields: [
+                "destination": snapshot.destinationRoot.rawValue,
+                "folders": "\(namespace.folderCount)",
+                "entries": "\(namespace.entryCount)",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)))",
+            ]
+        )
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: namespace,
+            additionalReserved: additionalReserved
+        )
         let planEnd = clock.now
         return ImportPlanBuildResult(
             plan: plan,
@@ -636,7 +851,8 @@ actor MediaOperationCoordinator {
         destination: LibraryRootPath,
         generation: UInt64
     ) async throws {
-        let policy = ImportPolicy.from(ImportPreferencesStore.load(defaults: preferences))
+        let prefs = sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
+        let policy = ImportPolicy.from(prefs)
         guard let snapshot = try await store.importPlanningSnapshot(
             source: source,
             destination: destination,
@@ -668,8 +884,11 @@ actor MediaOperationCoordinator {
                 "destinationOccupants": "\(snapshot.destinationOccupants.count)",
             ]
         )
+        // Seed from ledger §5: concurrent builds for the same destination stay
+        // fully parallel; each seeds from the ledger at build-start time.
+        let seededClaims = ledgerClaims(for: destination, excluding: source)
         let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
-        let build = await Self.buildPlanOffActor(snapshot: snapshot)
+        let build = await Self.buildPlanOffActor(snapshot: snapshot, additionalReserved: seededClaims)
         OtosSignpost.performance.endInterval("ImportPlanBuild", signpost)
         let plan = build.plan
         Self.logPlanFinished(
@@ -705,6 +924,35 @@ actor MediaOperationCoordinator {
             dirty.insert(source)
             scheduleBuildIfNeeded(source)
             return
+        }
+
+        // Publish-time ledger conflict check (I4): conflict check plus
+        // registration happen in one synchronous on-actor region against the
+        // *current* ledger, never the build-start snapshot. A conflicting build
+        // re-dirties and rebuilds; it never evicts a registered claim.
+        let newClaims = planClaims(from: plan)
+        let currentLedger = ledgerClaims(for: destination, excluding: source)
+        if !newClaims.isDisjoint(with: currentLedger) {
+            OtosLog.catalog.noticeOperation(
+                "import.plan",
+                phase: "conflict",
+                fields: [
+                    "rootPath": source.rawValue,
+                    "destination": destination.rawValue,
+                    "newClaims": "\(newClaims.count)",
+                    "conflictingClaims": "\(newClaims.intersection(currentLedger).count)",
+                ]
+            )
+            building.remove(source)
+            dirty.insert(source)
+            scheduleBuildIfNeeded(source)
+            return
+        }
+        // No conflict: atomically release old claims and register new (I2, I3).
+        if newClaims.isEmpty {
+            claimsBySource.removeValue(forKey: source)
+        } else {
+            claimsBySource[source] = newClaims
         }
 
         readyPlans[source] = plan
@@ -748,10 +996,12 @@ actor MediaOperationCoordinator {
         let enriched = total - missingDates
         // Filesystem sources wait for enrichment wall facts when any media
         // still lacks both wall and mtime (mtime usually present). Cameras
-        // already carry capture dates from enumeration.
+        // already carry capture dates from enumeration. Policy-aware: if the
+        // selected policy never consults a date, there is nothing to wait for.
         let libraries = await store.currentLibraries()
         let sourceKind = libraries.first(where: { $0.path == source })?.root.kind
         guard sourceKind != .deviceMTP,
+              MediaTransferPlanner.needsDate(policy: snapshot.policy),
               snapshot.sourceMedia.contains(where: {
                   $0.captureWallCompact == nil && $0.contentModifiedAt == nil
               })
@@ -789,6 +1039,27 @@ actor MediaOperationCoordinator {
         )
     }
 
+    private func ledgerClaims(for destination: LibraryRootPath, excluding excludedSource: LibraryRootPath? = nil) -> Set<MediaRelativePath> {
+        var result: Set<MediaRelativePath> = []
+        for (source, claims) in claimsBySource where destinationBySource[source] == destination && source != excludedSource {
+            result.formUnion(claims)
+        }
+        return result
+    }
+
+    private func planClaims(from plan: MediaOperationPlan) -> Set<MediaRelativePath> {
+        var claims: Set<MediaRelativePath> = []
+        for entry in plan.entries {
+            if case .copy = entry.disposition {
+                claims.insert(entry.finalDestination)
+                for dest in entry.companionDestinations.values {
+                    claims.insert(dest)
+                }
+            }
+        }
+        return claims
+    }
+
     private func sortedPresentations() -> [MediaOperationSourcePresentation] {
         presentations.values.sorted {
             $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending
@@ -807,21 +1078,60 @@ actor MediaOperationCoordinator {
     }
 
     private static let destinationMappingKey = "import.destinationBySource"
+    private static let destinationByDeviceIdentityKey = "import.destinationByDeviceIdentity"
+    private static let lastUsedDestinationKey = "import.lastUsedDestination"
 
     private func loadDestinationMappings() {
-        guard let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] else {
-            return
+        if let raw = preferences.dictionary(forKey: Self.destinationByDeviceIdentityKey) as? [String: String] {
+            for (device, dest) in raw {
+                destinationByDeviceIdentity[device] = LibraryRootPath(rawValue: dest)
+            }
         }
-        for (source, destination) in raw {
-            destinationBySource[LibraryRootPath(rawValue: source)] = LibraryRootPath(rawValue: destination)
+        if let last = preferences.string(forKey: Self.lastUsedDestinationKey) {
+            lastUsedDestination = LibraryRootPath(rawValue: last)
+        }
+        // Legacy path-keyed mapping (pre-Stage 5): migrate into runtime
+        // destinationBySource so existing installs keep their choice until the
+        // next per-device persist. The device-identity store is authoritative
+        // going forward.
+        if let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] {
+            for (source, destination) in raw {
+                let key = LibraryRootPath(rawValue: source)
+                if destinationBySource[key] == nil {
+                    destinationBySource[key] = LibraryRootPath(rawValue: destination)
+                }
+            }
         }
     }
 
     private func persistDestinationMappings() {
-        var raw: [String: String] = [:]
-        for (source, destination) in destinationBySource {
-            raw[source.rawValue] = destination.rawValue
+        var deviceRaw: [String: String] = [:]
+        for (device, dest) in destinationByDeviceIdentity {
+            deviceRaw[device] = dest.rawValue
         }
-        preferences.set(raw, forKey: Self.destinationMappingKey)
+        preferences.set(deviceRaw, forKey: Self.destinationByDeviceIdentityKey)
+        if let last = lastUsedDestination {
+            preferences.set(last.rawValue, forKey: Self.lastUsedDestinationKey)
+        } else {
+            preferences.removeObject(forKey: Self.lastUsedDestinationKey)
+        }
+        // Keep legacy key in sync for diagnostics and for any external tool
+        // that still reads it; the device-identity key is the source of truth.
+        var legacyRaw: [String: String] = [:]
+        for (source, dest) in destinationBySource {
+            legacyRaw[source.rawValue] = dest.rawValue
+        }
+        preferences.set(legacyRaw, forKey: Self.destinationMappingKey)
+    }
+
+    /// Snapshot of all known destinations, including unavailable sources whose
+    /// runtime mapping is retained for Settings display. Used by the ViewModel
+    /// to render the Destination column.
+    func allDestinations() -> [LibraryRootPath: LibraryRootPath] {
+        destinationBySource
+    }
+
+    func allDeviceDestinations() -> [String: LibraryRootPath] {
+        destinationByDeviceIdentity
     }
 }

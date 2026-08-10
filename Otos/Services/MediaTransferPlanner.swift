@@ -23,8 +23,11 @@ nonisolated enum MediaTransferPlanner {
     static func destinationFolders(for snapshot: ImportPlanningSnapshot) -> Set<String> {
         var folders: Set<String> = []
         for bundle in namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy) {
-            guard !bundle.members.contains(where: { !$0.hasUsableDate }) else {
-                // Undatable bundles are blocked without a destination name.
+            guard !needsDate(policy: snapshot.policy)
+                || !bundle.members.contains(where: { !$0.hasUsableDate })
+            else {
+                // Undatable bundles are blocked without a destination name,
+                // but only when the selected policy actually needs a date.
                 continue
             }
             let timestamp = namingTimestamp(for: bundle, snapshot: snapshot)
@@ -33,15 +36,25 @@ nonisolated enum MediaTransferPlanner {
         return folders
     }
 
+    /// Whether the current import policy requires a usable date to name a
+    /// destination. Under `.none`/`.original` the timestamp is never consulted,
+    /// so an undatable bundle must not be blocked.
+    static func needsDate(policy: ImportPolicy) -> Bool {
+        policy.destinationFolderPolicy == .yearMonth
+            || policy.destinationNamePolicy == .captureDateTime
+    }
+
     /// Single pure pass over the source bundles against an already-read destination
     /// namespace. Every candidate — base name and each suffix retry — is answered
     /// from `namespace`, so the pass never suspends, never restarts, and never
     /// re-derives its bundles.
     static func planImport(
         snapshot: ImportPlanningSnapshot,
-        namespace: DestinationNamespace
+        namespace: DestinationNamespace,
+        additionalReserved: Set<MediaRelativePath> = []
     ) -> MediaOperationPlan {
         var reserved = Set(snapshot.destinationOccupants.keys)
+        reserved.formUnion(additionalReserved)
         let bundles = namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy)
         var entries: [MediaOperationPlanEntry] = []
 
@@ -73,12 +86,15 @@ nonisolated enum MediaTransferPlanner {
 
     /// Reads the destination folders this snapshot needs, then plans. The only
     /// entry point that performs I/O; `planImport` stays pure for tests.
-    static func buildImportPlan(snapshot: ImportPlanningSnapshot) -> MediaOperationPlan {
+    static func buildImportPlan(
+        snapshot: ImportPlanningSnapshot,
+        additionalReserved: Set<MediaRelativePath> = []
+    ) -> MediaOperationPlan {
         let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
             root: snapshot.destinationRoot,
             folders: destinationFolders(for: snapshot)
         )
-        return planImport(snapshot: snapshot, namespace: namespace)
+        return planImport(snapshot: snapshot, namespace: namespace, additionalReserved: additionalReserved)
     }
 }
 
@@ -178,7 +194,9 @@ private nonisolated extension MediaTransferPlanner {
         reserved: inout Set<MediaRelativePath>,
         namespace: DestinationNamespace
     ) -> [MediaOperationPlanEntry] {
-        if bundle.members.contains(where: { !$0.hasUsableDate }) {
+        if needsDate(policy: snapshot.policy),
+           bundle.members.contains(where: { !$0.hasUsableDate })
+        {
             return bundle.members.map { member in
                 MediaOperationPlanEntry(
                     source: member,

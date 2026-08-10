@@ -23,6 +23,9 @@ type_body_length:
 file_length:
   warning: 600
 
+function_body_length:
+  warning: 50
+
 identifier_name:
   min_length:
     warning: 2

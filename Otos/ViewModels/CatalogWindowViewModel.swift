@@ -75,6 +75,11 @@ final class CatalogWindowViewModel {
     /// Loupe focus identity within the current display order. Compare does not retarget
     /// this; exit-to-grid keeps it so Stage C can center the grid on return.
     var focusedAssetID: MediaAssetID?
+    /// Media kind of `focusedAssetID`, read once per focus change through the same
+    /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
+    /// drew a play button on still photographs (plan 0073 D1). `nil` means "not yet
+    /// known" and renders no affordance — MED-002, unknown stays unknown.
+    var focusedAssetKind: MediaKind?
     /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
     var comparePair = ComparePair.empty
     /// Which compare pane was most recently replaced (click/slide/entry). Drives strip
@@ -122,7 +127,9 @@ final class CatalogWindowViewModel {
     /// `UserDefaults` seam, also import preferences (`importPreferences`,
     /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
     /// production `UserDefaults.standard` domain by omitting it (plan 0066 Stage 2).
-    @ObservationIgnored let preferences: UserDefaults
+    // UserDefaults is documented thread-safe; shared across ViewModel (MainActor) and
+    // MediaOperationCoordinator/LibraryReorganizationRunner (actor) without isolation hop.
+    @ObservationIgnored nonisolated(unsafe) let preferences: UserDefaults
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
@@ -140,12 +147,19 @@ final class CatalogWindowViewModel {
 
     /// Per-source import plan summaries for the footer (scalar only; no full plan map).
     var importPresentations: [MediaOperationSourcePresentation] = []
-    /// When true, the plan detail overlay sheet is presented for the selected source.
-    var showsImportPlanOverlay = false
+    /// Cached destination mappings for Settings display, including unavailable
+    /// sources whose runtime mapping is retained (Stage 5). Updated from the
+    /// coordinator's `allDestinations()` after presentation changes and after
+    /// explicit destination intents.
+    var removableDestinations: [LibraryRootPath: LibraryRootPath] = [:]
     /// Settings Import tab bindings; persisted through `ImportPreferencesStore`. Set in
     /// `init`, not a property default, because its initial value depends on the
     /// injected `preferences`.
     var importPreferences: ImportPreferences
+    /// Per-source session ImportPreferences cache (Stage 7), seeded from
+    /// ImportPreferences and discarded on detach. Authoritative store is the
+    /// coordinator's `sessionPreferences`; this mirrors it for SwiftUI.
+    var sessionPreferencesBySource: [LibraryRootPath: ImportPreferences] = [:]
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
@@ -664,24 +678,9 @@ extension CatalogWindowViewModel {
     }
 
     func applySidebarSelectionPolicy(previous: CatalogWindowState, next: CatalogWindowState) {
-        // Compare against previously *available* identities so a remembered card that
-        // flips unavailable → available (the common re-insert case) still counts as
-        // newly attached and auto-selects.
-        let previousAvailableIdentities = Set(
-            previous.removableSources.filter(\.isAvailable).compactMap(\.deviceIdentity)
-        )
-        let newlyAttached = next.removableSources.filter { source in
-            guard source.isAvailable, let identity = source.deviceIdentity else {
-                return false
-            }
-            return !previousAvailableIdentities.contains(identity)
-        }
-        if let attached = newlyAttached.max(by: { left, right in
-            (left.lastSeenAt ?? .distantPast) < (right.lastSeenAt ?? .distantPast)
-        }), let selection = SidebarSelectionPolicy.selectionOnAttach(attached: attached) {
-            applyAutomaticSidebarSelection(selection)
-            return
-        }
+        // Attach-time selection hijack is removed (0071 §13, decision 7+13):
+        // attaching a card never moves the user. Launch-time selection of a
+        // connected card is still handled via the initial default below.
 
         // Do not latch the initial default on a pre-load empty world (zero roots of
         // both kinds). That state can publish before `store.start()` finishes; latching
@@ -725,7 +724,7 @@ extension CatalogWindowViewModel {
                 && !nextState.removableSources.contains { $0.path == path }
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
-        case .allMedia:
+        case .allMedia, .allImports:
             false
         }
     }

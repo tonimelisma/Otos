@@ -574,6 +574,7 @@ nonisolated enum SidebarSelection: Hashable {
     case allMedia
     case library(LibraryRootPath)
     case importBatch(ImportBatchID)
+    case allImports
 
     var diagnosticDescription: String {
         switch self {
@@ -583,6 +584,8 @@ nonisolated enum SidebarSelection: Hashable {
             "library:\(path.rawValue)"
         case let .importBatch(batchID):
             "importBatch:\(batchID.unixMilliseconds)"
+        case .allImports:
+            "allImports"
         }
     }
 }

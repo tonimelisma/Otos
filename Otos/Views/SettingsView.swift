@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     let libraries: [CatalogLibraryState]
     let removableSources: [CatalogLibraryState]
+    let removableDestinations: [LibraryRootPath: LibraryRootPath]
     let addLibrary: (URL) -> Void
     let removeLibrary: (LibraryRoot) -> Void
     let forgetRemovableSource: (LibraryRoot) -> Void
@@ -25,6 +26,7 @@ struct SettingsView: View {
 
             RemovableMediaSettingsView(
                 sources: removableSources,
+                destinations: removableDestinations,
                 forgetSource: forgetRemovableSource
             )
             .tabItem {
@@ -95,10 +97,17 @@ private struct ImportSettingsView: View {
 
 private struct RemovableMediaSettingsView: View {
     let sources: [CatalogLibraryState]
+    let destinations: [LibraryRootPath: LibraryRootPath]
     let forgetSource: (LibraryRoot) -> Void
 
     @State private var selectedPath: LibraryRootPath?
     @State private var forgetCandidate: LibraryRoot?
+
+    private var sortedSources: [CatalogLibraryState] {
+        sources.sorted { left, right in
+            (left.lastSeenAt ?? .distantPast) > (right.lastSeenAt ?? .distantPast)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -114,7 +123,7 @@ private struct RemovableMediaSettingsView: View {
                 .disabled(selectedRoot == nil)
             }
 
-            Table(sources, selection: $selectedPath) {
+            Table(sortedSources, selection: $selectedPath) {
                 TableColumn("Name") { source in
                     Label(source.displayName, systemImage: source.kind.sidebarSystemImage)
                         .lineLimit(1)
@@ -126,6 +135,18 @@ private struct RemovableMediaSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 .width(min: 100, ideal: 120)
+
+                TableColumn("Destination") { source in
+                    if let dest = destinations[source.path] {
+                        Text(dest.displayName)
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("—")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .width(min: 140, ideal: 180)
 
                 TableColumn("Last Seen") { source in
                     if let lastSeenAt = source.lastSeenAt {
@@ -278,6 +299,7 @@ private struct LibrariesSettingsView: View {
             ),
         ],
         removableSources: [],
+        removableDestinations: [:],
         addLibrary: { _ in },
         removeLibrary: { _ in },
         forgetRemovableSource: { _ in },

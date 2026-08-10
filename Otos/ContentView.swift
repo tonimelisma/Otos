@@ -15,7 +15,6 @@ import SwiftUI
 /// the model. The model decides; the view renders.
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
-    @State private var overlayPlan: MediaOperationPlan?
 
     var body: some View {
         NavigationSplitView {
@@ -24,6 +23,7 @@ struct ContentView: View {
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
+                importPresentations: viewModel.importPresentations,
                 sidebarSelection: viewModel.sidebarSelection,
                 ejectingSourceIdentities: viewModel.ejectingSourceIdentities,
                 selectSidebar: viewModel.selectSidebar,
@@ -31,7 +31,16 @@ struct ContentView: View {
             )
         } detail: {
             VStack(spacing: 0) {
-                detailContent
+                if viewModel.sidebarSelection == .allImports {
+                    AllImportsListView(
+                        batches: viewModel.state.importBatches,
+                        selectBatch: { batchID in
+                            viewModel.selectSidebar(.importBatch(batchID))
+                        }
+                    )
+                } else {
+                    detailContent
+                }
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(
                         presentation: presentation,
@@ -43,14 +52,32 @@ struct ContentView: View {
                         queueImport: {
                             viewModel.queueImport(for: presentation.sourcePath)
                         },
-                        showPlanDetails: {
-                            viewModel.toggleImportPlanOverlay()
+                        cancelImport: {
+                            viewModel.cancelImport(for: presentation.sourcePath)
+                        },
+                        retryPlanning: {
+                            viewModel.retryImportPlanning(for: presentation.sourcePath)
+                        },
+                        sessionPreferences: viewModel.sessionPreferences(for: presentation.sourcePath),
+                        setSessionPreferences: { prefs in
+                            viewModel.setSessionPreferences(prefs, for: presentation.sourcePath)
                         }
                     )
                 }
             }
         }
         .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    NSApp.keyWindow?.firstResponder?.tryToPerform(
+                        #selector(NSSplitViewController.toggleSidebar(_:)),
+                        with: nil
+                    )
+                } label: {
+                    Label("Toggle Sidebar", systemImage: "sidebar.leading")
+                }
+                .help("Toggle Sidebar")
+            }
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
                     viewMode: viewModel.viewMode,
@@ -137,33 +164,10 @@ struct ContentView: View {
                 Text(message)
             }
         }
-        .sheet(isPresented: Binding(
-            get: { viewModel.showsImportPlanOverlay },
-            set: { presented in
-                if !presented {
-                    viewModel.dismissImportPlanOverlay()
-                    overlayPlan = nil
-                }
-            }
-        )) {
-            if let presentation = viewModel.selectedImportPresentation {
-                ImportPlanOverlay(
-                    presentation: presentation,
-                    plan: overlayPlan,
-                    dismiss: {
-                        viewModel.dismissImportPlanOverlay()
-                        overlayPlan = nil
-                    }
-                )
-                .task(id: presentation.sourcePath) {
-                    overlayPlan = await viewModel.readyImportPlan(for: presentation.sourcePath)
-                }
-            }
-        }
     }
 
     @ViewBuilder
-    private var detailContent: some View {
+    var detailContent: some View {
         switch viewModel.viewMode {
         case .grid:
             MediaGridView(
@@ -235,6 +239,30 @@ struct ContentView: View {
             )
             .navigationTitle(viewModel.state.title)
         }
+    }
+}
+
+private struct AllImportsListView: View {
+    let batches: [ImportBatchSummary]
+    let selectBatch: (ImportBatchID) -> Void
+
+    var body: some View {
+        List {
+            ForEach(batches, id: \.batchID) { batch in
+                Button {
+                    selectBatch(batch.batchID)
+                } label: {
+                    HStack {
+                        Text(ImportBatchFormatting.sidebarTitle(for: batch.batchID, among: batches))
+                        Spacer()
+                        Text("\(batch.assetCount) items")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .navigationTitle("All Imports")
     }
 }
 

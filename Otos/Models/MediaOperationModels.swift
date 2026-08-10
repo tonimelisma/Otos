@@ -175,14 +175,17 @@ nonisolated struct RootPlanningChange: Equatable, Sendable {
 /// Per-source import lifecycle published to the footer/overlay (plan 0055 §6.3).
 nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case inventory
-    case waitingForDestination
     case waitingForMetadata(done: Int, total: Int)
     case planning
     case ready(summary: MediaOperationPlanTotals, generation: UInt64, skippedPackageCount: Int)
     case queuedForReadiness
     case executing(progress: MediaOperationProgress)
     case needsReplan
-    case completed(summary: MediaOperationPlanTotals)
+    case completed(
+        summary: MediaOperationPlanTotals,
+        skippedForeignCount: Int = 0,
+        failedCount: Int = 0
+    )
     case failed(problem: String)
     /// Source kind cannot execute import (for example a fixed library selected as source).
     case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64)

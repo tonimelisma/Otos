@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import Synchronization
 
 /// `copyfile(3)` transfer with byte progress and mid-file cancellation.
 nonisolated enum CopyfileTransfer {
@@ -87,10 +88,14 @@ nonisolated enum CopyfileTransfer {
         _ = copyfile_state_set(state, UInt32(COPYFILE_STATE_STATUS_CTX), contextPtr)
     }
 
-    private final class CallbackContext: @unchecked Sendable {
+    private final class CallbackContext {
         let onProgress: @Sendable (Progress) -> Void
         let shouldContinue: @Sendable () -> Bool
-        var cancelled = false
+        private let cancelledFlag = Mutex(false)
+        var cancelled: Bool {
+            get { cancelledFlag.withLock { $0 } }
+            set { cancelledFlag.withLock { $0 = newValue } }
+        }
 
         init(
             onProgress: @escaping @Sendable (Progress) -> Void,

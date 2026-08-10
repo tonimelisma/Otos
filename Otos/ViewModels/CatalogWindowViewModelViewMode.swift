@@ -139,8 +139,9 @@ extension CatalogWindowViewModel {
             return
         case .loupe:
             if descriptorChanged {
-                focusedAssetID = ordered.first
-                if let focus = focusedAssetID {
+                let first = ordered.first
+                setFocus(first)
+                if let focus = first {
                     gridSelection = gridSelection.plainClick(focus)
                 }
                 refreshPanePreviews()
@@ -154,7 +155,7 @@ extension CatalogWindowViewModel {
             guard next != focusedAssetID else {
                 return
             }
-            focusedAssetID = next
+            setFocus(next)
             if let next {
                 gridSelection = gridSelection.plainClick(next)
             }
@@ -246,7 +247,7 @@ extension CatalogWindowViewModel {
         guard let next, next != focusedAssetID else {
             return
         }
-        focusedAssetID = next
+        setFocus(next)
         gridSelection = gridSelection.plainClick(next)
         refreshPanePreviews()
     }
@@ -315,44 +316,35 @@ extension CatalogWindowViewModel {
     // MARK: - Loupe video (click-to-play, loupe only)
 
     func playLoupeVideo(id: MediaAssetID) {
-        guard viewMode == .loupe else {
-            return
-        }
-        guard focusedAssetID == id else {
-            return
-        }
+        guard viewMode == .loupe, focusedAssetID == id else { return }
         let detailReader = tileDetailReader
         let loader = videoLoader
+        downloadingSlots.insert(.loupe)
         Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-            let details = await detailReader.details(for: [id])
-            let detail = details[id]
-            // Gate on video kind — still image must not start a player.
-            let isVideo = detail?.bestKind == .video
-            guard isVideo else {
-                return
-            }
+            // One exit point for the slot: every `return` below unwinds through it.
+            // The previous shape removed the slot on two of four paths, leaving a
+            // permanent spinner after clicking a still image (plan 0073 D2).
+            defer { self?.downloadingSlots.remove(.loupe) }
+            guard let self else { return }
+            let detail = await detailReader.details(for: [id])[id]
+            guard detail?.bestKind == .video else { return }
             guard let state = await loader.play(id: id, detail: detail) else {
-                downloadingSlots.remove(.loupe)
+                OtosLog.ui.notice(
+                    "op=loupe.video phase=unavailable id=\(id.relativePath.rawValue, privacy: .public)"
+                )
                 return
             }
-            guard focusedAssetID == id, viewMode == .loupe else {
+            guard self.focusedAssetID == id, self.viewMode == .loupe else {
                 loader.cleanup(state)
                 return
             }
-            loupeVideoState = state
+            self.loupeVideoState = state
             state.player.play()
             var playing = state
             playing.isPlaying = true
-            loupeVideoState = playing
-            downloadingSlots.remove(.loupe)
-            OtosLog.ui.notice(
-                "op=loupe.video phase=play id=\(id.relativePath.rawValue, privacy: .public)"
-            )
+            self.loupeVideoState = playing
+            OtosLog.ui.notice("op=loupe.video phase=play id=\(id.relativePath.rawValue, privacy: .public)")
         }
-        downloadingSlots.insert(.loupe)
     }
 
     func pauseLoupeVideo() {
