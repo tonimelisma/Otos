@@ -54,10 +54,13 @@ arrive — with no surface saying so.
 - Removable/device source identity and detach semantics — ADR 0013.
 - Filesystem-as-truth and overlay lifecycle — ADR 0008.
 
-**Requires separate decisions (not owned here):**
+**Related, not owned here:**
 
-- How a destination is *chosen* for a source (device-identity defaulting). Currently
-  implemented but undocumented; see plan 0078 §6, open decision D1.
+- How a destination is *chosen* for a source — the three-step default of saved
+  device-identity mapping → last-used → **first-added** available fixed library. That is
+  a product rule owned by ARC-047, not an architectural decision. Correcting the third
+  step from alphabetical order to add order is Stage 4 of
+  `docs/plans/0078-consolidation-and-verification-integrity.md`.
 
 ## Decision
 

@@ -24,7 +24,7 @@ Verified, not assumed. Each claim below was reproduced in the repo.
 | F6 | ARC-042's gate greps the string `@unchecked Sendable`. `nonisolated(unsafe)` is the same unsoundness and is unguarded — 7 uses, several added in the same increment that removed the 14 `@unchecked` ones | `script/check-no-unchecked-sendable.sh`; `grep -rn 'nonisolated(unsafe)' Otos OtosTests` | Medium |
 | F7 | The requirements gate validates that a cited path **exists**, not that it verifies anything. A row may claim coverage for untested behavior and pass | `script/requirements-authority-check.sh`; F4 is a live instance | Medium |
 | F8 | 75 of 96 requirement rows are allowlisted out of that gate. "The allowlist only ever shrinks" is a comment, not an enforcement | `ALLOWLIST` in the same script | Medium |
-| F9 | Destination is now auto-selected as the alphabetically-first library when several exist, and `.waitingForDestination` was removed. Combined with delete-after-import this is the app's largest blast radius, and it is untested | `MediaOperationCoordinator.swift:648`, `:283` | Medium — needs an owner decision (§6 D1) |
+| F9 | Destination auto-defaults to the **alphabetically**-first library when several exist. The required behavior is the **first-added** library. Add order exists in the Store (`RootRuntimeState.rowID`) but is dropped at the model boundary, so no consumer can see it. Also untested | `MediaOperationCoordinator.swift:648`, `CatalogStore.swift:2254`, `:453` | High — Stage 4 |
 | F10 | `_ = (skippedForeignCount, failedCount)` under a comment claiming the counts are surfaced. They are surfaced nowhere on the cancelled path, not even a log | `MediaOperationCoordinator.swift:460` | Low |
 | F11 | `docs/architecture.md`'s coordinator row omits the ledger, session preferences, and rebuild suppression. `docs/index.md`'s ADR table stops at 0015 while 0016–0020 exist | Both files | Low |
 | F12 | 48 commits landed direct to `main`. No PR, therefore no review, on any of it | `gh pr list` — last PR is #180 | Process |
@@ -89,8 +89,8 @@ Every finding is downstream of that:
   `persistDestinationMappings` chattier, 0072 made the leak detector absolute — and no
   one diffed them together.
 
-So a remediation that only fixes the artifacts is itself a band-aid. Stage 5 is not
-optional garnish; it is the half of this plan that stops the recurrence.
+So a remediation that only fixes the artifacts is itself a band-aid. Stages 6 and 8 are
+not optional garnish; they are the half of this plan that stops the recurrence.
 
 ---
 
@@ -196,68 +196,159 @@ written down.
 
 **Done when:** no comment in `Otos/` or `script/` cites a document absent from the tree.
 
-### Stage 4 — Test the import invariants (F4, the real debt)
+### Stage 4 — Destination default is the first-added library (F9)
 
-This is the largest stage and the one that makes ARC-047's `Tested by` column true.
+**Requirement (owner-stated, 2026-08-10):** when no saved mapping and no last-used
+destination apply, the destination defaults to the **first configured media library, in
+the order the libraries were added.**
+
+As built, `MediaOperationCoordinator.swift:648` sorts by `path.rawValue` and takes the
+first — alphabetical by path, not add order. That is wrong and must change.
+
+**The reason it was built wrong is a real gap, and fixing that gap is this stage's
+actual work.** Add order already exists and is already durable:
+`RootRuntimeState.rowID` (`RootRuntimeState.swift:9`) holds `library_root.id`, declared
+`table.autoIncrementedPrimaryKey("id")` in migration `v3_sort_key_separator`
+(`CatalogStorePersistence.swift:79`). GRDB emits `INTEGER PRIMARY KEY AUTOINCREMENT`,
+and SQLite **never reuses** an AUTOINCREMENT id — so the column is strictly monotonic in
+insertion order for the life of the catalog, including across remove-and-re-add. A root
+removed and added again is genuinely newest, which is the correct reading of "the order
+they were added."
+
+That fact is **dropped at the model boundary**: `catalogLibraryState(from:)`
+(`CatalogStore.swift:2254`) does not copy `rowID` onto `CatalogLibraryState`, so no
+consumer can see add order. An implementer who does not fix that will reach for whatever
+the model does expose — which is exactly how `path.rawValue` got chosen the first time.
+
+Steps:
+
+1. Carry add order onto `CatalogLibraryState`. Source it from the existing
+   `RootRuntimeState.rowID`; do **not** invent an ID, a timestamp, or a sequence counter
+   — CLAUDE.md requires preferring existing persistence identity.
+2. `CatalogStore.currentLibraries()` (`:453`) currently maps `roots.values`, which is
+   dictionary order and therefore **nondeterministic across launches**. Return it sorted
+   by add order so the one owner answers "what order were these added" once, rather than
+   every consumer re-deriving it.
+3. `MediaOperationCoordinator` takes the first available fixed library in that order.
+   Delete the `sorted { $0.path.rawValue < $1.path.rawValue }` fallback and the
+   `fixedAvailable.count == 1` special case — with a defined order, "sole" and "first"
+   are the same expression.
+
+Two clarifications an implementer will need, both settled here so nobody guesses:
+
+- **Availability.** The default is the first *available* fixed library in add order. A
+  library that is not currently available cannot receive an import, so skipping it is
+  the only behavior that can succeed. It is not a new rule; it is the existing
+  `fixedAvailable` filter, kept.
+- **Display order is not touched.** `CatalogWindowPolicy.sortLibraries` orders the
+  sidebar by display name. That is a *presentation* order and stays exactly as it is.
+  This stage changes only which library is *defaulted as a destination*. Do not unify
+  the two.
+
+Tests:
+
+- `destinationDefaultsToFirstAddedLibrary` — three libraries added in a non-alphabetical
+  order; a source with no saved mapping defaults to the first *added*, not the first
+  alphabetically.
+- `destinationDefaultSkipsUnavailableFirstLibrary` — first-added library unavailable →
+  defaults to the next available in add order.
+- `savedDeviceMappingBeatsAddOrder` and `lastUsedBeatsAddOrder` — the three-step order
+  holds.
+- `invalidSavedMappingIsDroppedNotUsed` — a saved destination that is no longer an
+  available fixed library is discarded, and the default recomputes.
+
+Requirements: update ARC-047 to say "first-added library" instead of "sole/first
+library" **in this PR**, because this is the PR where the behavior becomes true. Not
+before.
+
+**Done when:** the default is add-ordered, `currentLibraries()` has a defined order, and
+the four tests above fail if the ordering regresses.
+
+### Stage 5 — Test the remaining import invariants (F4, the real debt)
+
+The largest stage, and the one that makes the rest of ARC-047's `Tested by` column true.
+Each bullet is one test; the name is the deliverable.
 
 Ledger (ADR 0021 R1–R5), against the pure planner plus the coordinator:
 
-- Two sources planning into one destination produce **disjoint** claims.
-- A conflicting publish re-dirties and converges instead of evicting the registered
-  claim (R4).
-- A claim is released on detach, on cancel, and on failure (R1).
-- A settled entry's name is observed as real occupancy by the next build (R2).
-- A build that suspends and resumes checks against the **current** ledger, not its
-  build-start snapshot (R3).
+- `concurrentPlansIntoOneDestinationClaimDisjointNames` — two sources, one destination,
+  both reach `.ready`; their claimed name sets do not intersect (R1, C1).
+- `conflictingPublishReplansAndNeverEvicts` — force two builds to publish against the
+  same free name; the loser re-dirties, rebuilds seeded from the winner's registered
+  claims, and converges. The winner's claim is unchanged throughout (R4).
+- `claimIsReleasedOnDetach`, `claimIsReleasedOnCancel`, `claimIsReleasedOnFailure` —
+  three tests, one per death path (R1).
+- `settledNameIsObservedAsOccupancyByNextBuild` — after settlement the next build sees
+  the name through the namespace read, not through the ledger (R2).
+- `conflictCheckUsesCurrentLedgerNotBuildStartSnapshot` — register a claim *while* a
+  build is suspended; the resuming build must check against the newer ledger (R3). This
+  is the one that would catch a regression to snapshot-time checking, so it must
+  actually interleave, not just assert the final state.
 
-Destination policy (F9): device-identity mapping wins; then last-used; then sole/first;
-an invalid saved mapping is dropped rather than used.
+Delete path — the highest-blast-radius path in the app:
 
-Delete path: zero-copy **plus** delete-requested executes the deletion; zero-copy
-**without** delete stays `.ready`. Given this is the highest-blast-radius path in the
-app, it gets an explicit test before anything else changes near it.
+- `zeroCopyPlanWithDeleteRequestedExecutesDeletion`
+- `zeroCopyPlanWithoutDeleteStaysReady`
 
-Metadata gate: a catalog change that supplies dates wakes a `.waitingForMetadata`
-source; a policy that never consults a date does not wait at all.
+Metadata gate:
 
-Also in this stage: fix F10 — either surface `skippedForeignCount` / `failedCount` on the
-cancelled path or delete the dead tuple and its false comment. Do not keep a comment that
-describes behavior the code does not have.
+- `catalogChangeWakesWaitingForMetadataSource`
+- `policyThatNeverConsultsDateDoesNotWait`
 
-**Done when:** each ARC-047 acceptance clause maps to a named test that fails if the
-behavior regresses.
+Also in this stage: fix F10 at `MediaOperationCoordinator.swift:460`. Either surface
+`skippedForeignCount` / `failedCount` on the cancelled path or delete the dead tuple
+**and its comment**. A comment describing behavior the code does not have is worse than
+no comment.
 
-### Stage 5 — Make the gates check invariants (P1)
+**Done when:** every ARC-047 acceptance clause maps to a named test that fails if the
+behavior regresses, and `ARC-047`'s `Tested by` column is true.
 
-- **ARC-042.** First establish whether `nonisolated(unsafe)` is still needed on the
-  `UserDefaults` properties now that the actor initializers take `sending UserDefaults`
-  — the combination is suspicious and may simply compile without it. Remove what is
-  removable; extend the gate to the remainder with an enumerated, justified allowlist.
-  A gate that bans one spelling of an unsoundness while its sibling spelling grows
-  unchecked is the same failure ARC-042 was written to stop.
-- **Allowlist shrink-only (F8).** Enforce mechanically — commit the count and fail when
-  it grows. A rule stated in a comment, inside a script whose purpose is replacing
-  comment-rules with gates, is self-undermining.
-- **`Tested by` must name a test symbol, not just a file (F7).** This is the heavier fix
-  and the one that actually closes the false-assurance hole. Cheaper interim: require
-  the cited file to contain a test whose name is declared in the row.
-- **New gate: citations resolve (P3).** Grep comments in `Otos/` and `script/` for
-  `docs/…` paths and `plan NNNN`, and fail when the referenced document is absent at
-  that commit. Cheap, and it would have caught all 92 instances of F5 on the first
-  commit.
+### Stage 6 — Make the gates check invariants (P1)
 
-**Done when:** each new gate has a self-test proving it fails on a seeded violation —
-the gates get the same oracle discipline as the code.
+Four independent sub-stages; each may land as its own PR.
 
-### Stage 6 — Documentation current-state repair (F11)
+**6a — ARC-042 covers the invariant, not one spelling.** First establish empirically
+whether `nonisolated(unsafe)` is still needed on the `UserDefaults` properties now that
+the actor initializers take `sending UserDefaults`: delete the annotation from
+`MediaOperationCoordinator.swift:35`, `LibraryReorganizationRunner.swift:12`, and
+`CatalogWindowViewModel.swift:138` and build. Keep whatever the compiler proves
+necessary; delete the rest. Then extend `script/check-no-unchecked-sendable.sh` to also
+fail on `nonisolated(unsafe)`, with an enumerated allowlist carrying a one-line
+justification per entry. A gate that bans one spelling of an unsoundness while its
+sibling spelling grows unchecked is the same failure ARC-042 was written to stop.
+
+**6b — Allowlist shrink-only (F8).** `script/requirements-authority-check.sh` states
+"the allowlist only ever shrinks" in a comment. Enforce it: commit the expected entry
+count next to the list and fail when the actual count exceeds it. A rule stated in a
+comment, inside a script whose purpose is replacing comment-rules with gates, is
+self-undermining.
+
+**6c — `Tested by` must name a test, not a file (F7).** Today the gate checks that a
+cited path exists on disk, so a row can claim coverage for untested behavior and pass —
+F4 is a live instance. Change the `Tested by` cell format to
+`` `path/to/File.swift#testName` `` and have the gate assert that the named test exists
+in that file. Migrate rows as their behavior gets tested rather than all at once; the
+allowlist from 6b is the migration ledger.
+
+**6d — Citations resolve (P3).** New gate: scan comments in `Otos/` and `script/` for
+`docs/…` paths and `plan NNNN` references, and fail when the referenced document is
+absent at that commit. Cheap, and it would have caught all 92 instances of F5 on the
+first commit that introduced them.
+
+**Done when:** each new or changed gate has a self-test proving it **fails on a seeded
+violation** — `script/ci-text-hygiene.sh` already has a `self_test` to copy. The gates
+get the same oracle discipline as the code, which is the whole point of P1.
+
+### Stage 7 — Documentation current-state repair (F11)
 
 - `docs/architecture.md`: the `MediaOperationCoordinator` row names the reservation
   ledger, per-source session preferences, device-identity destination policy, and
-  execution-scoped rebuild suppression.
-- `docs/index.md`: ADR table extended through 0021 (currently stops at 0015).
-- ARC-047's `Tested by` becomes true as Stage 4 lands, not before.
+  execution-scoped rebuild suppression. **Landed 2026-08-10 (PR #181).**
+- `docs/index.md`: ADR table extended through 0021. **Landed 2026-08-10 (PR #181).**
+- ARC-047's `Requirement` cell says "first-added library" — lands with Stage 4.
+- ARC-047's `Tested by` becomes true as Stage 5 lands, not before.
 
-### Stage 7 — Process restoration (F12)
+### Stage 8 — Process restoration (F12)
 
 - Return to the PR path. One increment per PR, reviewed against the two lenses.
 - Adopt P3's corollary: **a plan is committed before its implementation merges.**
@@ -266,37 +357,71 @@ the gates get the same oracle discipline as the code.
 
 ---
 
-## 6. Open owner decisions
+## 6. Implementing this plan
 
-**D1 — Destination auto-defaulting when several libraries exist (F9).**
+**There are no open decisions. Nothing in this plan requires an owner ruling before
+work starts.** Every question that arose while writing it has been settled in the stage
+that owns it.
 
-Plan 0071 decision 11 removed "choose a destination library" so that a destination is
-always defaulted. As built, when no saved mapping and no last-used destination exist and
-several libraries are available, the coordinator picks the **alphabetically first** one.
-Combined with delete-after-import, a user who never chose a destination can copy into an
-arbitrary library and then delete from the card.
+### Order and gating
 
-Options:
+Stage 1 blocks everything: `main` is red, and CLAUDE.md forbids merging anything except
+the fix that greens it. After that, Stages 2, 3, 4 and 6 are independent of each other.
+Stage 5 depends on Stage 4 (its destination tests must be written against the corrected
+add-order behavior, not written twice). Stage 7 is bookkeeping that follows whatever
+lands. Stage 8 is continuous.
 
-- **(a) Keep as built.** Fastest path, matches decision 11 literally. Requires that the
-  bar always show the chosen destination prominently enough that "arbitrary" is
-  immediately visible and correctable.
-- **(b) Keep the default, gate the delete.** Delete-after-import stays off and cannot be
-  enabled until the destination has been explicitly confirmed once for that device.
-  Preserves "never a blocking destination picker" while removing the irreversible half.
-- **(c) Restore an explicit choice** when more than one library exists and nothing is
-  saved — reintroduces the state decision 11 deleted.
+```
+1 ─┬─> 2
+   ├─> 3
+   ├─> 4 ──> 5
+   └─> 6
+```
 
-**Recommendation: (b).** It honors decision 11 — no blocking picker, the import path is
-never stalled — while requiring one explicit confirmation before the only irreversible
-action in the flow. The reversible default stays automatic; the irreversible one does
-not.
+One stage per PR. Stage 6's four sub-stages may each be their own PR.
 
-This decision does not block Stages 1–5. Stage 4 tests the behavior as built; if (b) is
-chosen, the test changes with it.
+### Rules that apply to every stage
 
-**D2 — Whether `nonisolated(unsafe)` on `UserDefaults` is needed at all.** Empirical, not
-a preference: Stage 5 establishes it by removing the annotation and compiling.
+- **Do not invent requirements.** If this plan does not state a behavior and the code
+  does not implement it, it is not in scope. Ask; do not choose. A plausible-sounding
+  product improvement invented mid-implementation is a defect, not a bonus — that is how
+  F9 arrived.
+- **Requirements rows move with the behavior**, in the same PR — not before it is true,
+  not after.
+- **Behavior-preserving work keeps existing tests green unmodified.** Stages 2, 3, 6 and
+  7 change no product behavior; if a test needs editing there, stop and work out why.
+- **Verify un-piped.** `script/verify.sh | tail` reports the exit status of `tail`, not
+  of the script. Run it bare, or capture `${PIPESTATUS[0]}`. A false green from this
+  exact mistake is how F1 stayed invisible.
+- **Cite only what exists.** No comment may reference a document not in the tree at that
+  commit (P3). ADR 0021 and this plan are the only valid targets for import-ledger
+  citations.
+
+### Per-stage verification
+
+| Stage | Verify with |
+|---|---|
+| 1 | `script/verify.sh` exits 0, status observed un-piped, on a clean tree |
+| 2 | `script/verify.sh`; plus `grep -rn 'CatalogDatabase\|CatalogReader' Otos/ OtosTests/` returns nothing |
+| 3 | `grep -rn 'plan 007[2-7]\|docs/plans/' Otos/ script/ --include='*.swift' --include='*.sh'` returns nothing unresolvable |
+| 4 | The four named tests; `script/verify.sh` |
+| 5 | The eleven named tests; `script/verify.sh` |
+| 6 | Each gate's self-test fails on a seeded violation, then passes when it is removed |
+| 7 | `script/requirements-authority-check.sh`, `script/ci-text-hygiene.sh check` |
+
+### WIP hygiene, every increment
+
+The repo is clean as of 2026-08-10: no stashes, no untracked files, no stale branches,
+no stale worktrees, `main` == `origin/main`. Keep it that way — six increments skipped
+this and left three dead branches plus a broken worktree behind (§2).
+
+- Start each stage in its own worktree on a conventional branch (`fix/`, `feat/`,
+  `refactor/`, `docs/`).
+- At DoD: merge, remove the worktree, delete the branch locally and on the remote,
+  confirm `git status`, `git stash list`, `git worktree list` and `git branch -a` are
+  clean, and confirm `git rev-list --left-right --count origin/main...HEAD` is `0 0`.
+- Never delete a branch, worktree, or stash without proving it merged or
+  patch-equivalent — `git cherry -v main <branch>` showing only `-` is the proof.
 
 ---
 
@@ -309,15 +434,22 @@ a preference: Stage 5 establishes it by removing the annotation and compiling.
   scheduling, execution lifecycle, persistence, rebuild suppression. That is worth
   watching, and destination policy in particular looks separable, but splitting a
   cohesive type before its invariants have tests would remove the safety net exactly
-  when it is needed. Revisit after Stage 4.
+  when it is needed. Revisit after Stage 5.
 - Performance work of any kind. Nothing here is measured as slow.
+- Changing sidebar or Settings library ordering. `CatalogWindowPolicy.sortLibraries`
+  orders those by display name and stays as it is; Stage 4 changes only which library is
+  defaulted as an import destination.
+- Any new user-facing affordance, prompt, confirmation, or state. This plan fixes what
+  exists and tests it. It adds no product surface.
 
 ## 8. Done means
 
 - `script/verify.sh` green on `main`, status observed un-piped.
 - No unreferenced persistence type in the tree.
 - No comment citing a document that does not exist.
+- The import destination defaults to the first-added available library.
 - Every ARC-047 acceptance clause backed by a named test.
-- Every new gate self-tested against a seeded violation.
-- `docs/architecture.md` and `docs/index.md` describe the current tree.
+- Every new or changed gate self-tested against a seeded violation.
+- `docs/architecture.md`, `docs/index.md` and `docs/requirements.md` describe the
+  current tree.
 - Stale branches and worktrees gone; this plan deleted when its stages are done.
