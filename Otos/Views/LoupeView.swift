@@ -55,6 +55,9 @@ struct LoupeView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityElement()
+                    .accessibilityLabel(paneAccessibilityLabel)
+                    .accessibilityAddTraits(.isImage)
             case let .thumbnail(id):
                 ZStack {
                     PaneThumbnailView(
@@ -102,6 +105,15 @@ struct LoupeView: View {
             paneID: id,
             focusedID: focusedAssetID
         )
+    }
+
+    private var paneAccessibilityLabel: String {
+        switch focusedAssetKind {
+        case .video: return "Video"
+        case .raw: return "RAW image"
+        case .image: return "Image"
+        case .none: return "Photo"
+        }
     }
 
     private var filmstrip: some View {

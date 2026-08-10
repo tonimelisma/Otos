@@ -51,6 +51,9 @@ struct CompareView: View {
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
+                    .accessibilityElement()
+                    .accessibilityLabel(paneAccessibilityLabel(for: id))
+                    .accessibilityAddTraits(.isImage)
             case let .thumbnail(paneID):
                 PaneThumbnailView(
                     id: paneID,
@@ -85,6 +88,10 @@ struct CompareView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func paneAccessibilityLabel(for id: MediaAssetID?) -> String {
+        return "Photo"
     }
 
     private var filmstrip: some View {

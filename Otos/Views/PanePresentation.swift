@@ -69,6 +69,9 @@ struct PaneThumbnailView: View {
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
+                    .accessibilityElement()
+                    .accessibilityLabel("Photo")
+                    .accessibilityAddTraits(.isImage)
             } else {
                 ProgressView()
             }
