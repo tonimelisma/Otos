@@ -61,6 +61,35 @@ extension CatalogWindowViewModel {
         importPresentations = presentations
         Task {
             await refreshRemovableDestinations()
+            await refreshSessionPreferences()
+        }
+    }
+
+    func refreshSessionPreferences() async {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        var cache: [LibraryRootPath: ImportPreferences] = [:]
+        for presentation in importPresentations {
+            let prefs = await coordinator.sessionPreferences(for: presentation.sourcePath)
+            cache[presentation.sourcePath] = prefs
+        }
+        await MainActor.run {
+            sessionPreferencesBySource = cache
+        }
+    }
+
+    func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
+        sessionPreferencesBySource[source] ?? importPreferences
+    }
+
+    func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) {
+        sessionPreferencesBySource[source] = prefs
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        Task {
+            await coordinator.setSessionPreferences(prefs, for: source)
         }
     }
 

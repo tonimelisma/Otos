@@ -151,6 +151,10 @@ final class CatalogWindowViewModel {
     /// `init`, not a property default, because its initial value depends on the
     /// injected `preferences`.
     var importPreferences: ImportPreferences
+    /// Per-source session ImportPreferences cache (Stage 7), seeded from
+    /// ImportPreferences and discarded on detach. Authoritative store is the
+    /// coordinator's `sessionPreferences`; this mirrors it for SwiftUI.
+    var sessionPreferencesBySource: [LibraryRootPath: ImportPreferences] = [:]
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?

@@ -76,6 +76,8 @@ actor MediaOperationCoordinator {
     /// defaulted and `.waitingForDestination` is never presented.
     private var destinationByDeviceIdentity: [String: LibraryRootPath] = [:]
     private var lastUsedDestination: LibraryRootPath?
+    /// Per-source session overrides seeded from ImportPreferences, discarded on detach (Stage 7).
+    private var sessionPreferences: [LibraryRootPath: ImportPreferences] = [:]
 
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
@@ -185,6 +187,16 @@ actor MediaOperationCoordinator {
         }
     }
 
+    func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
+        sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
+    }
+
+    func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) async {
+        sessionPreferences[source] = prefs
+        dirty.insert(source)
+        scheduleBuildIfNeeded(source)
+    }
+
     func queueImport(for source: LibraryRootPath) async {
         guard !executing.contains(source) else {
             OtosLog.catalog.notice(
@@ -267,7 +279,7 @@ actor MediaOperationCoordinator {
             return
         }
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
-            let prefs = ImportPreferencesStore.load(defaults: preferences)
+            let prefs = sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
             guard prefs.deleteSourceAfterImport else {
                 presentations[source] = MediaOperationSourcePresentation(
                     sourcePath: source,
@@ -337,7 +349,7 @@ actor MediaOperationCoordinator {
             materializationRequester: materializationRequester
         )
         executors[source] = executor
-        let prefs = ImportPreferencesStore.load(defaults: preferences)
+        let prefs = sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,
             destinationPath: destinationBySource[source],
@@ -653,6 +665,10 @@ actor MediaOperationCoordinator {
                     state: .inventory,
                     attachToReadyMs: nil
                 )
+                // Seed session overrides from global defaults; discarded on detach.
+                if sessionPreferences[source.path] == nil {
+                    sessionPreferences[source.path] = ImportPreferencesStore.load(defaults: preferences)
+                }
             }
             // Plan a source only when it first appears or its destination mapping
             // changed. Re-dirtying stable sources on every wake is exactly the churn
@@ -673,10 +689,12 @@ actor MediaOperationCoordinator {
             dirty.remove(path)
             building.remove(path)
             executing.remove(path)
+            executors.removeValue(forKey: path)
             attachStartedAt.removeValue(forKey: path)
             attachToReadyMs.removeValue(forKey: path)
             lastSeenOccupancy.removeValue(forKey: path)
             claimsBySource.removeValue(forKey: path)
+            sessionPreferences.removeValue(forKey: path)
         }
         persistDestinationMappings()
         publish()
@@ -829,7 +847,8 @@ actor MediaOperationCoordinator {
         destination: LibraryRootPath,
         generation: UInt64
     ) async throws {
-        let policy = ImportPolicy.from(ImportPreferencesStore.load(defaults: preferences))
+        let prefs = sessionPreferences[source] ?? ImportPreferencesStore.load(defaults: preferences)
+        let policy = ImportPolicy.from(prefs)
         guard let snapshot = try await store.importPlanningSnapshot(
             source: source,
             destination: destination,

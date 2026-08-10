@@ -13,6 +13,8 @@ struct ImportPlanFooter: View {
     let queueImport: () -> Void
     let cancelImport: () -> Void
     let retryPlanning: (() -> Void)?
+    let sessionPreferences: ImportPreferences?
+    let setSessionPreferences: ((ImportPreferences) -> Void)?
 
     init(
         presentation: MediaOperationSourcePresentation,
@@ -21,7 +23,9 @@ struct ImportPlanFooter: View {
         setDestination: @escaping (LibraryRootPath) -> Void,
         queueImport: @escaping () -> Void,
         cancelImport: @escaping () -> Void = {},
-        retryPlanning: (() -> Void)? = nil
+        retryPlanning: (() -> Void)? = nil,
+        sessionPreferences: ImportPreferences? = nil,
+        setSessionPreferences: ((ImportPreferences) -> Void)? = nil
     ) {
         self.presentation = presentation
         self.fixedLibraries = fixedLibraries
@@ -30,6 +34,12 @@ struct ImportPlanFooter: View {
         self.queueImport = queueImport
         self.cancelImport = cancelImport
         self.retryPlanning = retryPlanning
+        self.sessionPreferences = sessionPreferences
+        self.setSessionPreferences = setSessionPreferences
+    }
+
+    private var effectivePreferences: ImportPreferences {
+        sessionPreferences ?? importPreferences
     }
 
     var body: some View {
@@ -52,11 +62,44 @@ struct ImportPlanFooter: View {
                     }
                 }
             }
-            policySummary
+            sessionControls
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .background(.bar)
+    }
+
+    @ViewBuilder
+    private var sessionControls: some View {
+        if let sessionPrefs = sessionPreferences, let setter = setSessionPreferences {
+            HStack(spacing: 16) {
+                Toggle(isOn: Binding(
+                    get: { sessionPrefs.deleteSourceAfterImport },
+                    set: { newValue in
+                        var updated = sessionPrefs
+                        updated.deleteSourceAfterImport = newValue
+                        setter(updated)
+                    }
+                )) {
+                    Text(deleteCheckboxLabel)
+                }
+                .toggleStyle(.checkbox)
+                Toggle(isOn: Binding(
+                    get: { sessionPrefs.autoEjectAfterImport },
+                    set: { newValue in
+                        var updated = sessionPrefs
+                        updated.autoEjectAfterImport = newValue
+                        setter(updated)
+                    }
+                )) {
+                    Text("Eject the card after importing")
+                }
+                .toggleStyle(.checkbox)
+            }
+            .font(.caption)
+        } else {
+            policySummary
+        }
     }
 
     private var destinationPicker: some View {
@@ -117,7 +160,7 @@ struct ImportPlanFooter: View {
     }
 
     private var isDeleteOnly: Bool {
-        guard importPreferences.deleteSourceAfterImport else {
+        guard effectivePreferences.deleteSourceAfterImport else {
             return false
         }
         switch presentation.state {
@@ -127,6 +170,31 @@ struct ImportPlanFooter: View {
             return summary.copyCount == 0 && summary.companionCopyCount == 0
         default:
             return false
+        }
+    }
+
+    private var deleteCheckboxLabel: String {
+        switch presentation.state {
+        case let .ready(summary, _, _):
+            if summary.blockedCount > 0 {
+                return "Delete items from the card after importing"
+            }
+            let total = summary.copyCount + summary.skipCount + summary.blockedCount + summary.companionCopyCount
+            if total > 0 {
+                return "Delete all \(total) items from the card after importing"
+            }
+            return "Delete items from the card after importing"
+        case let .executionUnavailable(summary, _):
+            if summary.blockedCount > 0 {
+                return "Delete items from the card after importing"
+            }
+            let total = summary.copyCount + summary.skipCount + summary.blockedCount + summary.companionCopyCount
+            if total > 0 {
+                return "Delete all \(total) items from the card after importing"
+            }
+            return "Delete items from the card after importing"
+        default:
+            return "Delete items from the card after importing"
         }
     }
 
@@ -141,12 +209,12 @@ struct ImportPlanFooter: View {
             if summary.copyCount > 0 || summary.companionCopyCount > 0 {
                 return true
             }
-            return importPreferences.deleteSourceAfterImport
+            return effectivePreferences.deleteSourceAfterImport
         case let .executionUnavailable(summary, _):
             if summary.copyCount > 0 || summary.companionCopyCount > 0 {
                 return true
             }
-            return importPreferences.deleteSourceAfterImport
+            return effectivePreferences.deleteSourceAfterImport
         case .executing:
             return false
         default:

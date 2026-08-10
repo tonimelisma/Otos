@@ -48,6 +48,10 @@ struct ContentView: View {
                         },
                         retryPlanning: {
                             viewModel.retryImportPlanning(for: presentation.sourcePath)
+                        },
+                        sessionPreferences: viewModel.sessionPreferences(for: presentation.sourcePath),
+                        setSessionPreferences: { prefs in
+                            viewModel.setSessionPreferences(prefs, for: presentation.sourcePath)
                         }
                     )
                 }
