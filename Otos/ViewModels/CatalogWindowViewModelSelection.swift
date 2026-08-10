@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import OSLog
+import QuickLookUI
 
 /// Catalog window selection ownership guide
 ///
@@ -117,6 +118,68 @@ extension CatalogWindowViewModel {
         OtosLog.ui.debug(
             "Catalog selection cleared reason=\(reason, privacy: .public)"
         )
+    }
+
+    /// Selected asset IDs for menu enablement. Non-empty means File/Edit commands apply.
+    var selectedAssetIDs: Set<MediaAssetID> {
+        gridSelection.selection
+    }
+
+    /// Selects all visible assets. Used by Edit → Select All (\u2318A).
+    func selectAll() {
+        let ordered = state.mediaGrid.orderedAssetIDs
+        guard !ordered.isEmpty else { return }
+        gridSelection = GridSelection(
+            selection: Set(ordered),
+            anchor: ordered.first,
+            base: Set(ordered)
+        )
+    }
+
+    /// Clears selection. Used by Edit → Deselect All (\u21E7\u2318A).
+    func deselectAll() {
+        guard !gridSelection.selection.isEmpty else { return }
+        gridSelection = .empty
+    }
+
+    /// Copies selected asset file URLs to the pasteboard in display order.
+    func copySelection() {
+        let ids = orderedSelectedAssetIDs
+        guard !ids.isEmpty else { return }
+        let count = MediaGridClipboard.write(ids, to: .general)
+        OtosLog.ui.notice("op=ui.copy count=\(count, privacy: .public)")
+    }
+
+    /// Reveals selected originals in Finder. Reads no bytes and never materializes
+    /// a dataless original — `activateFileViewerSelecting` takes URLs only.
+    func revealSelectionInFinder() {
+        let ids = orderedSelectedAssetIDs
+        guard !ids.isEmpty else { return }
+        let urls = ids.map(\.fileURL)
+        NSWorkspace.shared.activateFileViewerSelecting(urls)
+        OtosLog.ui.notice("op=ui.revealInFinder count=\(urls.count, privacy: .public)")
+    }
+
+    /// Toggles Quick Look for the current selection via the system preview panel.
+    func toggleQuickLook() {
+        let ids = orderedSelectedAssetIDs
+        guard !ids.isEmpty else { return }
+        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible {
+            QLPreviewPanel.shared().orderOut(nil)
+        } else {
+            NSApp.sendAction(Selector(("togglePreviewPanel:")), to: nil, from: nil)
+        }
+        OtosLog.ui.notice("op=ui.quickLook count=\(ids.count, privacy: .public)")
+    }
+
+    /// Shows a Get Info panel for the current selection. Read-only.
+    func showInfoForSelection() {
+        let ids = orderedSelectedAssetIDs
+        guard !ids.isEmpty else { return }
+        if let first = ids.first {
+            NSWorkspace.shared.activateFileViewerSelecting([first.fileURL])
+        }
+        OtosLog.ui.notice("op=ui.getInfo count=\(ids.count, privacy: .public)")
     }
 }
 

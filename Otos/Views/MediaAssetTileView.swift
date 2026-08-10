@@ -86,6 +86,16 @@ final class MediaAssetTileView: NSView {
         contentView.addSubview(placeholderIconView)
 
         contentView.layer?.borderColor = NSColor.controlAccentColor.cgColor
+
+        // Accessibility: the tile is the unit VoiceOver navigates. A bare NSView
+        // subclass is not an element by default — setting only a label leaves
+        // VoiceOver nothing to land on.
+        setAccessibilityElement(true)
+        setAccessibilityRole(.image)
+        imageView.setAccessibilityElement(false)
+        badgeLabel.setAccessibilityElement(false)
+        filmIconView.setAccessibilityElement(false)
+        placeholderIconView.setAccessibilityElement(false)
     }
 
     @available(*, unavailable)
@@ -166,7 +176,8 @@ extension MediaAssetTileView {
     }
 
     private func applyImage(_ image: CGImage, fade: Bool) {
-        if fade, let layer = imageView.layer {
+        let effectiveFade = fade && !MediaGridAnimation.prefersReducedMotion
+        if effectiveFade, let layer = imageView.layer {
             let transition = CATransition()
             transition.type = .fade
             transition.duration = MediaGridAnimation.thumbnailFadeDuration
@@ -225,7 +236,8 @@ extension MediaAssetTileView {
             return
         }
         let newWidth: CGFloat = selected ? 3 : 0
-        if animated, layer.borderWidth != newWidth {
+        let shouldAnimate = animated && !MediaGridAnimation.prefersReducedMotion
+        if shouldAnimate, layer.borderWidth != newWidth {
             let animation = CABasicAnimation(keyPath: "borderWidth")
             animation.fromValue = layer.borderWidth
             animation.toValue = newWidth
@@ -238,6 +250,7 @@ extension MediaAssetTileView {
             layer.removeAnimation(forKey: "selectionRing")
         }
         layer.borderWidth = newWidth
+        setAccessibilitySelected(selected)
     }
 
     private func layoutKindBadge() {

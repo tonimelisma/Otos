@@ -51,9 +51,10 @@ extension MediaGridViewController {
         let stallMonitor = stallMonitor
         let applyCallStart = Date()
         let animationSuppressed = summary.animatingDifferences
-            && MediaGridAnimation.suppressesApplyAnimation(
-                lastScrollTickAge: Date().timeIntervalSince(lastScrollTickAt)
-            )
+            && (MediaGridAnimation.prefersReducedMotion
+                || MediaGridAnimation.suppressesApplyAnimation(
+                    lastScrollTickAge: Date().timeIntervalSince(lastScrollTickAt)
+                ))
         let context = StructuralApplyCompletionContext(
             grid: grid,
             resetScroll: resetScroll,

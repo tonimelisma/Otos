@@ -65,14 +65,47 @@ struct OtosApp: App {
                 }
         }
         .commands {
-            CommandGroup(replacing: .newItem) {}
-            CommandMenu("Library") {
-                Button("Reorganize Library…") {
-                    catalogViewModel.requestReorganizationConfirmation()
+            CommandGroup(replacing: .newItem) {
+                Button("Reveal in Finder") {
+                    catalogViewModel.revealSelectionInFinder()
                 }
-                .disabled(!catalogViewModel.canRequestReorganization)
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
+                Button("Quick Look") {
+                    catalogViewModel.toggleQuickLook()
+                }
+                .keyboardShortcut(.space, modifiers: [])
+                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
+                Divider()
+                Button("Get Info") {
+                    catalogViewModel.showInfoForSelection()
+                }
+                .keyboardShortcut("i", modifiers: .command)
+                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
             }
-            CommandMenu("View") {
+            CommandGroup(replacing: .undoRedo) {}
+            CommandGroup(replacing: .pasteboard) {
+                Button("Copy") {
+                    catalogViewModel.copySelection()
+                }
+                .keyboardShortcut("c", modifiers: .command)
+                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
+                Divider()
+                Button("Select All") {
+                    catalogViewModel.selectAll()
+                }
+                .keyboardShortcut("a", modifiers: .command)
+                Button("Deselect All") {
+                    catalogViewModel.deselectAll()
+                }
+                .keyboardShortcut("a", modifiers: [.command, .shift])
+            }
+            CommandGroup(replacing: .textEditing) {}
+            // View commands belong in the *standard* View menu. `CommandMenu("View")`
+            // creates a second top-level menu with the same title — measured 2026-08-09:
+            // the menu bar read `Apple, Otos, Edit, View, Library, View, Window, Help`
+            // (plan 0075 §1.1). `CommandGroup(after:)` places into the existing one.
+            CommandGroup(after: .sidebar) {
                 Button("Grid") {
                     catalogViewModel.setViewMode(.grid)
                 }
@@ -118,6 +151,7 @@ struct OtosApp: App {
                         || catalogViewModel.gridColumnCount >= GridColumnCount.maximum
                 )
             }
+            CommandGroup(replacing: .help) {}
         }
 
         Settings {

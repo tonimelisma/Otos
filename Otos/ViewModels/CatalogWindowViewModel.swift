@@ -75,6 +75,11 @@ final class CatalogWindowViewModel {
     /// Loupe focus identity within the current display order. Compare does not retarget
     /// this; exit-to-grid keeps it so Stage C can center the grid on return.
     var focusedAssetID: MediaAssetID?
+    /// Media kind of `focusedAssetID`, read once per focus change through the same
+    /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
+    /// drew a play button on still photographs (plan 0073 D1). `nil` means "not yet
+    /// known" and renders no affordance — MED-002, unknown stays unknown.
+    var focusedAssetKind: MediaKind?
     /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
     var comparePair = ComparePair.empty
     /// Which compare pane was most recently replaced (click/slide/entry). Drives strip

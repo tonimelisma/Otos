@@ -146,35 +146,31 @@ enum MediaAssetTilePresentation {
         }
     }
 
-    /// Accessibility for the whole tile: broken state, then painted badge
-    /// content, then loading-kind labels so VoiceOver keeps kind info while the
-    /// centered placeholder glyph is showing (lower-right badges stay hidden).
+    /// Accessibility for the whole tile: filename first — it is the only thing that
+    /// distinguishes one tile from another, and a grid where every element announces
+    /// "Image" is not navigable — then kind and state. The filename is derived from
+    /// `MediaTileDetail.relativePath`, which the tile already holds, so this adds no
+    /// query and does not widen `MediaTileDetail` (ENR-005).
     nonisolated static func accessibilityLabel(
         detail: MediaTileDetail,
         badgeContent: TileBadgeContent
-    ) -> String? {
+    ) -> String {
+        let name = (detail.relativePath.rawValue as NSString).lastPathComponent
         if detail.thumbnailUnavailable {
-            return detail.bestKind == .video ? "Video unavailable" : "Image unavailable"
+            return detail.bestKind == .video
+                ? "\(name), video, preview unavailable"
+                : "\(name), image, preview unavailable"
         }
         switch badgeContent {
-        case let .durationText(text):
-            return "Video, \(text)"
-        case .filmIcon:
-            return "Video"
-        case .rawLabel:
-            return "RAW image"
-        case .none:
-            break
+        case let .durationText(text): return "\(name), video, \(text)"
+        case .filmIcon: return "\(name), video"
+        case .rawLabel: return "\(name), RAW image"
+        case .none: break
         }
         switch detail.bestKind {
-        case .video:
-            return "Video"
-        case .raw:
-            return "RAW image"
-        case .image:
-            return "Image"
-        case .none:
-            return nil
+        case .video: return "\(name), video"
+        case .raw: return "\(name), RAW image"
+        case .image, .none: return name
         }
     }
 
