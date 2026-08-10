@@ -33,8 +33,8 @@ import Foundation
 /// never cfprefsd: it means a writer ran after `cleanUp()`. As of plan 0072 the only way
 /// that happened was unawaited async teardown (`defer { Task { … } }`); that shape is now
 /// banned and `script/check-production-data-untouched.sh` fails on any data-carrying domain.
-final class TemporaryDefaults {
-    let defaults: UserDefaults
+final class TemporaryDefaults: Sendable {
+    nonisolated(unsafe) let defaults: UserDefaults
     private let suiteName: String
 
     /// `function` defaults to the caller's own function name so leaked-domain

@@ -126,34 +126,34 @@ struct MediaAssetTilePresentationTests {
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: brokenImage,
             badgeContent: .none
-        ) == "Image unavailable")
+        ) == "x.jpg, image, preview unavailable")
         let brokenVideo = makeDetail(path: "x.mp4", kind: .video, enrichedMTime: 1)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: brokenVideo,
             badgeContent: .none
-        ) == "Video unavailable")
+        ) == "x.mp4, video, preview unavailable")
         let brokenRaw = makeDetail(path: "x.CR3", kind: .raw, enrichedMTime: 1)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: brokenRaw,
             badgeContent: .none
-        ) == "Image unavailable")
+        ) == "x.CR3, image, preview unavailable")
 
         let loadingVideo = makeDetail(path: "v.mp4", kind: .video)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: loadingVideo,
             badgeContent: .none
-        ) == "Video")
+        ) == "v.mp4, video")
         let loadingRaw = makeDetail(path: "r.CR3", kind: .raw)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: loadingRaw,
             badgeContent: .none
-        ) == "RAW image")
+        ) == "r.CR3, RAW image")
 
         let painted = makeDetail(path: "v.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 42)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: painted,
             badgeContent: .durationText("0:42")
-        ) == "Video, 0:42")
+        ) == "v.mp4, video, 0:42")
     }
 
     @Test func thumbnailUnavailableIsDerivedFromStampWithoutPath() {
