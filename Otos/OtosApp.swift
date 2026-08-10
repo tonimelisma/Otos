@@ -124,6 +124,7 @@ struct OtosApp: App {
             SettingsView(
                 libraries: catalogViewModel.state.libraries,
                 removableSources: catalogViewModel.state.removableSources,
+                removableDestinations: catalogViewModel.removableDestinations,
                 addLibrary: { catalogViewModel.addLibrary(url: $0) },
                 removeLibrary: { catalogViewModel.removeLibrary($0) },
                 forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) },

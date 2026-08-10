@@ -77,14 +77,28 @@ extension CatalogWindowViewModel {
 
     func applyImportPresentations(_ presentations: [MediaOperationSourcePresentation]) {
         importPresentations = presentations
+        Task {
+            await refreshRemovableDestinations()
+        }
+    }
+
+    func refreshRemovableDestinations() async {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        let all = await coordinator.allDestinations()
+        await MainActor.run {
+            removableDestinations = all
+        }
     }
 
     func setImportDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) {
         guard let coordinator = mediaOperationCoordinator else {
             return
         }
-        Task {
+        Task { [weak self] in
             await coordinator.setDestination(destination, for: source)
+            await self?.refreshRemovableDestinations()
         }
     }
 

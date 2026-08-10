@@ -65,6 +65,12 @@ actor MediaOperationCoordinator {
     /// still wins. Invariants I1–I5 hold in one synchronous on-actor region at
     /// publish time (§5, decision 18).
     private var claimsBySource: [LibraryRootPath: Set<MediaRelativePath>] = [:]
+    /// Device-identity-keyed destination persistence (Stage 5): the three-step
+    /// default — saved mapping for this device identity → last-used destination
+    /// → sole/first available fixed library — ensures a destination is always
+    /// defaulted and `.waitingForDestination` is never presented.
+    private var destinationByDeviceIdentity: [String: LibraryRootPath] = [:]
+    private var lastUsedDestination: LibraryRootPath?
 
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
@@ -153,6 +159,13 @@ actor MediaOperationCoordinator {
     }
 
     func setDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) async {
+        let libraries = await store.currentLibraries()
+        if let sourceState = libraries.first(where: { $0.path == source }),
+           let device = sourceState.root.deviceIdentity
+        {
+            destinationByDeviceIdentity[device] = destination
+        }
+        lastUsedDestination = destination
         destinationBySource[source] = destination
         persistDestinationMappings()
         dirty.insert(source)
@@ -572,7 +585,6 @@ actor MediaOperationCoordinator {
         let removable = libraries.filter {
             $0.root.kind != .library && $0.availability == .available
         }
-        let soleDestination: LibraryRootPath? = fixedAvailable.count == 1 ? fixedAvailable.first?.path : nil
 
         var seen = Set<LibraryRootPath>()
         for source in removable {
@@ -581,15 +593,42 @@ actor MediaOperationCoordinator {
                 attachStartedAt[source.path] = ContinuousClock().now
             }
             let previousMapping = destinationBySource[source.path]
-            // Auto-map only when exactly one fixed library exists and nothing is saved.
-            if destinationBySource[source.path] == nil, let soleDestination {
-                destinationBySource[source.path] = soleDestination
-            }
-            // Drop mappings whose destination is no longer an available fixed library.
-            if let mapped = destinationBySource[source.path],
-               !fixedAvailable.contains(where: { $0.path == mapped })
-            {
-                destinationBySource.removeValue(forKey: source.path)
+            // Three-step default (Stage 5): saved mapping for this device
+            // identity → last-used destination → sole/first available fixed
+            // library. A destination is always defaulted when one exists, so
+            // `.waitingForDestination` is never presented.
+            let currentMapped = destinationBySource[source.path]
+            let isCurrentValid = currentMapped.map { dest in
+                fixedAvailable.contains(where: { $0.path == dest })
+            } ?? false
+            if !isCurrentValid {
+                let deviceDest: LibraryRootPath? = {
+                    guard let device = source.root.deviceIdentity,
+                          let saved = destinationByDeviceIdentity[device],
+                          fixedAvailable.contains(where: { $0.path == saved })
+                    else { return nil }
+                    return saved
+                }()
+                let lastUsedValid = lastUsedDestination.flatMap { dest in
+                    fixedAvailable.contains(where: { $0.path == dest }) ? dest : nil
+                }
+                let soleOrFirst: LibraryRootPath? = {
+                    if fixedAvailable.count == 1 { return fixedAvailable.first?.path }
+                    return fixedAvailable.sorted { $0.path.rawValue < $1.path.rawValue }.first?.path
+                }()
+                let newDestination = deviceDest ?? lastUsedValid ?? soleOrFirst
+                if let newDestination {
+                    destinationBySource[source.path] = newDestination
+                    if let device = source.root.deviceIdentity {
+                        destinationByDeviceIdentity[device] = newDestination
+                    }
+                    lastUsedDestination = newDestination
+                } else {
+                    destinationBySource.removeValue(forKey: source.path)
+                }
+                if destinationBySource[source.path] != previousMapping {
+                    persistDestinationMappings()
+                }
             }
             let isNewSource = presentations[source.path] == nil
             if isNewSource {
@@ -658,18 +697,24 @@ actor MediaOperationCoordinator {
                 "generation": "\(generation)",
             ]
         )
-        presentations[source] = MediaOperationSourcePresentation(
-            sourcePath: source,
-            destinationPath: destination,
-            state: destination == nil ? .waitingForDestination : .planning,
-            attachToReadyMs: attachToReadyMs[source]
-        )
-        publish()
-
-        guard let destination else {
+        if destination == nil {
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: nil,
+                state: .failed(problem: "noDestinationLibrary"),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+            publish()
             building.remove(source)
             return
         }
+        presentations[source] = MediaOperationSourcePresentation(
+            sourcePath: source,
+            destinationPath: destination,
+            state: .planning,
+            attachToReadyMs: attachToReadyMs[source]
+        )
+        publish()
 
         buildTasks[source] = Task { [weak self] in
             guard let self else {
@@ -995,21 +1040,60 @@ actor MediaOperationCoordinator {
     }
 
     private static let destinationMappingKey = "import.destinationBySource"
+    private static let destinationByDeviceIdentityKey = "import.destinationByDeviceIdentity"
+    private static let lastUsedDestinationKey = "import.lastUsedDestination"
 
     private func loadDestinationMappings() {
-        guard let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] else {
-            return
+        if let raw = preferences.dictionary(forKey: Self.destinationByDeviceIdentityKey) as? [String: String] {
+            for (device, dest) in raw {
+                destinationByDeviceIdentity[device] = LibraryRootPath(rawValue: dest)
+            }
         }
-        for (source, destination) in raw {
-            destinationBySource[LibraryRootPath(rawValue: source)] = LibraryRootPath(rawValue: destination)
+        if let last = preferences.string(forKey: Self.lastUsedDestinationKey) {
+            lastUsedDestination = LibraryRootPath(rawValue: last)
+        }
+        // Legacy path-keyed mapping (pre-Stage 5): migrate into runtime
+        // destinationBySource so existing installs keep their choice until the
+        // next per-device persist. The device-identity store is authoritative
+        // going forward.
+        if let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] {
+            for (source, destination) in raw {
+                let key = LibraryRootPath(rawValue: source)
+                if destinationBySource[key] == nil {
+                    destinationBySource[key] = LibraryRootPath(rawValue: destination)
+                }
+            }
         }
     }
 
     private func persistDestinationMappings() {
-        var raw: [String: String] = [:]
-        for (source, destination) in destinationBySource {
-            raw[source.rawValue] = destination.rawValue
+        var deviceRaw: [String: String] = [:]
+        for (device, dest) in destinationByDeviceIdentity {
+            deviceRaw[device] = dest.rawValue
         }
-        preferences.set(raw, forKey: Self.destinationMappingKey)
+        preferences.set(deviceRaw, forKey: Self.destinationByDeviceIdentityKey)
+        if let last = lastUsedDestination {
+            preferences.set(last.rawValue, forKey: Self.lastUsedDestinationKey)
+        } else {
+            preferences.removeObject(forKey: Self.lastUsedDestinationKey)
+        }
+        // Keep legacy key in sync for diagnostics and for any external tool
+        // that still reads it; the device-identity key is the source of truth.
+        var legacyRaw: [String: String] = [:]
+        for (source, dest) in destinationBySource {
+            legacyRaw[source.rawValue] = dest.rawValue
+        }
+        preferences.set(legacyRaw, forKey: Self.destinationMappingKey)
+    }
+
+    /// Snapshot of all known destinations, including unavailable sources whose
+    /// runtime mapping is retained for Settings display. Used by the ViewModel
+    /// to render the Destination column.
+    func allDestinations() -> [LibraryRootPath: LibraryRootPath] {
+        destinationBySource
+    }
+
+    func allDeviceDestinations() -> [String: LibraryRootPath] {
+        destinationByDeviceIdentity
     }
 }

@@ -175,7 +175,6 @@ nonisolated struct RootPlanningChange: Equatable, Sendable {
 /// Per-source import lifecycle published to the footer/overlay (plan 0055 §6.3).
 nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case inventory
-    case waitingForDestination
     case waitingForMetadata(done: Int, total: Int)
     case planning
     case ready(summary: MediaOperationPlanTotals, generation: UInt64, skippedPackageCount: Int)

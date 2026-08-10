@@ -129,8 +129,6 @@ struct ImportPlanFooter: View {
         switch presentation.state {
         case .inventory:
             "Inventory…"
-        case .waitingForDestination:
-            "Choose a destination library"
         case let .waitingForMetadata(done, total):
             "Waiting for metadata (\(done)/\(total))"
         case .planning:

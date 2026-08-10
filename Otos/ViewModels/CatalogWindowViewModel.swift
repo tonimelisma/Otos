@@ -140,6 +140,11 @@ final class CatalogWindowViewModel {
 
     /// Per-source import plan summaries for the footer (scalar only; no full plan map).
     var importPresentations: [MediaOperationSourcePresentation] = []
+    /// Cached destination mappings for Settings display, including unavailable
+    /// sources whose runtime mapping is retained (Stage 5). Updated from the
+    /// coordinator's `allDestinations()` after presentation changes and after
+    /// explicit destination intents.
+    var removableDestinations: [LibraryRootPath: LibraryRootPath] = [:]
     /// When true, the plan detail overlay sheet is presented for the selected source.
     var showsImportPlanOverlay = false
     /// Settings Import tab bindings; persisted through `ImportPreferencesStore`. Set in
