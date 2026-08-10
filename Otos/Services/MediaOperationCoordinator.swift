@@ -344,9 +344,32 @@ actor MediaOperationCoordinator {
             prefs: prefs
         )
         OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue])
+        let finishedDestination = destinationBySource[source]
         executing.remove(source)
         dirty.insert(source)
         scheduleBuildIfNeeded(source)
+        // Flush coalesced destination-driven rebuilds (Stage 2 / C4).
+        // While this destination was under execution, handlePlanningChange
+        // suppressed rebuilds for every other source mapped to it, leaving
+        // them dirty but unscheduled. After the last execution for this
+        // destination finishes, schedule one rebuild per dirty source.
+        if let finishedDestination {
+            let stillExecutingForDestination = executing.contains {
+                destinationBySource[$0] == finishedDestination
+            }
+            if !stillExecutingForDestination {
+                for (otherSource, dest) in destinationBySource
+                    where dest == finishedDestination && otherSource != source && dirty.contains(otherSource)
+                {
+                    if !building.contains(otherSource), !executing.contains(otherSource) {
+                        scheduleBuildIfNeeded(otherSource)
+                        OtosLog.catalog.notice(
+                            "op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)"
+                        )
+                    }
+                }
+            }
+        }
     }
 
     private func applyExecutionResult(
@@ -460,8 +483,22 @@ actor MediaOperationCoordinator {
                     scheduleBuildIfNeeded(change.rootPath)
                 }
             }
+            // C4 fix: while any execution targets this destination, suppress
+            // destination-driven rebuilds for all sources mapped to it. Each
+            // per-entry settlement bumps occupancy and would otherwise cause
+            // every other card planning into the same library to re-enumerate
+            // continuously. Dirty is retained and coalesced into one rebuild
+            // after the last execution for this destination ends.
+            let executingDestinations = Set(executing.compactMap { destinationBySource[$0] })
+            let isDestinationUnderExecution = executingDestinations.contains(change.rootPath)
             for (source, destination) in destinationBySource where destination == change.rootPath {
                 dirty.insert(source)
+                if isDestinationUnderExecution {
+                    OtosLog.catalog.notice(
+                        "op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)"
+                    )
+                    continue
+                }
                 if !executing.contains(source) {
                     scheduleBuildIfNeeded(source)
                 }
