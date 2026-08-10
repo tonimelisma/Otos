@@ -124,6 +124,17 @@ check_no_stray_attoseconds() {
   fi
 }
 
+# ARC-042: zero @unchecked Sendable in app and test sources (plan 0072 Stage 5).
+check_no_unchecked_sendable() {
+  local head_sha="$1"
+
+  if git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests -- '*.swift'; then
+    echo "FAIL: ARC-042 forbids @unchecked Sendable. Found above." >&2
+    echo "Use Mutex (Synchronization) or an actor. See docs/plans/0072-*.md." >&2
+    exit 1
+  fi
+}
+
 check() {
   local event_name="${EVENT_NAME:-${GITHUB_EVENT_NAME:-workflow_dispatch}}"
   local base_sha="${BASE_SHA:-}"
@@ -131,6 +142,7 @@ check() {
 
   check_no_source_text_tests "$head_sha"
   check_no_stray_attoseconds "$head_sha"
+  check_no_unchecked_sendable "$head_sha"
 
   case "$event_name" in
     pull_request)
