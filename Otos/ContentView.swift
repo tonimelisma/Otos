@@ -173,6 +173,7 @@ struct ContentView: View {
             MediaGridView(
                 title: viewModel.state.title,
                 grid: viewModel.state.mediaGrid,
+                tileContentStore: viewModel.tileContentStore,
                 emptyState: viewModel.state.mediaEmptyState,
                 deviceConnectionBanner: viewModel.state.deviceConnectionBanner,
                 thumbnailDirectory: viewModel.thumbnailDirectory,
@@ -192,6 +193,7 @@ struct ContentView: View {
         case .loupe:
             LoupeView(
                 grid: viewModel.state.mediaGrid,
+                tileContentStore: viewModel.tileContentStore,
                 focusedAssetID: viewModel.focusedAssetID,
                 focusedAssetKind: viewModel.focusedAssetKind,
                 panePreview: viewModel.panePreviews[.loupe],
@@ -219,6 +221,7 @@ struct ContentView: View {
         case .compare:
             CompareView(
                 grid: viewModel.state.mediaGrid,
+                tileContentStore: viewModel.tileContentStore,
                 leftID: viewModel.comparePair.left,
                 rightID: viewModel.comparePair.right,
                 leftPreview: viewModel.panePreviews[.compareLeft],

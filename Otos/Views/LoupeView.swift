@@ -9,6 +9,7 @@ import SwiftUI
 /// does not own selection or decode.
 struct LoupeView: View {
     let grid: CatalogMediaGridState
+    var tileContentStore: TileContentStore?
     let focusedAssetID: MediaAssetID?
     let focusedAssetKind: MediaKind?
     let panePreview: PanePreview?
@@ -62,6 +63,7 @@ struct LoupeView: View {
                 ZStack {
                     PaneThumbnailView(
                         id: id,
+                        tileContentStore: tileContentStore,
                         thumbnailDirectory: thumbnailDirectory,
                         detailReader: detailReader
                     )
@@ -109,10 +111,10 @@ struct LoupeView: View {
 
     private var paneAccessibilityLabel: String {
         switch focusedAssetKind {
-        case .video: return "Video"
-        case .raw: return "RAW image"
-        case .image: return "Image"
-        case .none: return "Photo"
+        case .video: "Video"
+        case .raw: "RAW image"
+        case .image: "Image"
+        case .none: "Photo"
         }
     }
 
@@ -177,7 +179,10 @@ struct FilmstripResizeHandle: View {
 /// loupe with ⌘1 while over the handle), which left the process-wide cursor stack
 /// unbalanced (plan 0073 D6).
 private struct ResizeCursorArea: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { CursorView() }
+    func makeNSView(context: Context) -> NSView {
+        CursorView()
+    }
+
     func updateNSView(_ nsView: NSView, context: Context) {}
 
     private final class CursorView: NSView {

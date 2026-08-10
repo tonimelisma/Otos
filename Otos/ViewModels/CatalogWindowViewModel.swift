@@ -100,6 +100,12 @@ final class CatalogWindowViewModel {
         catalogStore.thumbnailDirectory
     }
 
+    /// Decoded-image owner shared by grid, strip, and loupe/compare panes.
+    /// Single owner per docs/architecture:83 — previously the grid controller
+    /// owned it, now the ViewModel does so the pane can hit the same cache
+    /// without re-decoding (plan 0073 D4).
+    @ObservationIgnored let tileContentStore = TileContentStore()
+
     var tileDetailReader: MediaTileDetailReader {
         mediaTileDetailReader
     }
@@ -194,7 +200,7 @@ final class CatalogWindowViewModel {
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
-        preferences: UserDefaults,
+        preferences: sending UserDefaults,
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil
     ) {

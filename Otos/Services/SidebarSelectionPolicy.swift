@@ -29,6 +29,14 @@ nonisolated enum SidebarSelectionPolicy {
         return .allMedia
     }
 
+    /// When a source attaches, the selection to switch to, or nil for fixed-library attach.
+    static func selectionOnAttach(attached: CatalogLibraryState) -> SidebarSelection? {
+        guard attached.kind != .library else {
+            return nil
+        }
+        return .library(attached.path)
+    }
+
     /// When the currently selected source disappears, fall back to `defaultSelection`.
     static func selectionOnSelectedSourceRemoved(
         libraries: [CatalogLibraryState],

@@ -243,6 +243,22 @@ final class TileContentStore {
         return accessClock
     }
 
+    /// Hit test for pane thumbnail: returns the decoded image if the store already
+    /// holds one for this asset, without triggering a decode. Used by PaneThumbnailView
+    /// to avoid re-decoding an image the filmstrip is already showing (plan 0073 D4).
+    func image(for id: MediaAssetID) -> CGImage? {
+        content(for: id)?.image
+    }
+
+    /// Warm the store with a newly decoded image for the pane. The detail's imageKey
+    /// must be current; callers should have merged the detail first if needed.
+    func warm(id: MediaAssetID, image: CGImage, detail: MediaTileDetail) {
+        let key = MediaAssetTilePresentation.imageContentKey(detail)
+        // Ensure an entry exists for this detail; mergeDetail is idempotent.
+        _ = mergeDetail(detail)
+        _ = applyDecoded(image, key: key, for: id)
+    }
+
     static func byteCost(of image: CGImage) -> Int {
         let rowCost = image.bytesPerRow * image.height
         if rowCost > 0 {

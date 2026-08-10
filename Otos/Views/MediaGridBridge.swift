@@ -53,6 +53,7 @@ import UniformTypeIdentifiers
 /// waiting on decode or a later enrichment apply.
 struct MediaGridBridgeView: NSViewControllerRepresentable {
     let grid: CatalogMediaGridState
+    var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
     var stallMonitor: MainRunLoopStallMonitor?
@@ -87,6 +88,9 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         _ controller: MediaGridViewController,
         context _: Context
     ) {
+        if let store = tileContentStore, controller.tileContents !== store {
+            controller.tileContents = store
+        }
         controller.selectionHandlers = selectionHandlers
         controller.thumbnailDirectory = thumbnailDirectory
         controller.detailReader = detailReader
@@ -131,7 +135,8 @@ final class MediaGridViewController: NSViewController {
     /// Sticky, monotonic tile content (detail + best decoded image). Identity order lives
     /// in the diffable data source; this store is the single paint truth so a tile never
     /// blanks a painted same-asset thumbnail (APP-015 by construction).
-    let tileContents = TileContentStore()
+    /// Hoisted to ViewModel ownership (plan 0073 Stage 2) so grid, strip, and panes share one decoded-image owner.
+    var tileContents: TileContentStore = .init()
     /// Last applied reorganization remap epoch from SwiftUI (Stage G3).
     var appliedIdentityRemapEpoch: UInt64 = 0
     private var detailQueryTask: Task<Void, Never>?

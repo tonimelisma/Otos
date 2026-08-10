@@ -9,6 +9,7 @@ import SwiftUI
 /// matches the pane asset; otherwise the enrichment thumbnail.
 struct CompareView: View {
     let grid: CatalogMediaGridState
+    var tileContentStore: TileContentStore?
     let leftID: MediaAssetID?
     let rightID: MediaAssetID?
     let leftPreview: PanePreview?
@@ -66,6 +67,7 @@ struct CompareView: View {
                     if let fallbackID = id ?? preview?.id {
                         PaneThumbnailView(
                             id: fallbackID,
+                            tileContentStore: tileContentStore,
                             thumbnailDirectory: thumbnailDirectory,
                             detailReader: detailReader
                         )
@@ -91,7 +93,7 @@ struct CompareView: View {
     }
 
     private func paneAccessibilityLabel(for id: MediaAssetID?) -> String {
-        return "Photo"
+        "Photo"
     }
 
     private var filmstrip: some View {

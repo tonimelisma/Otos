@@ -6,6 +6,7 @@ import SwiftUI
 struct MediaGridView: View {
     let title: String
     let grid: CatalogMediaGridState
+    var tileContentStore: TileContentStore?
     let emptyState: CatalogMediaEmptyState
     let deviceConnectionBanner: CatalogDeviceConnectionBanner?
     var thumbnailDirectory: URL?
@@ -53,6 +54,7 @@ struct MediaGridView: View {
                 } else {
                     MediaGridBridgeView(
                         grid: grid,
+                        tileContentStore: tileContentStore,
                         thumbnailDirectory: thumbnailDirectory,
                         detailReader: detailReader,
                         stallMonitor: stallMonitor,

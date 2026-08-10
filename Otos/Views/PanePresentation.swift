@@ -59,6 +59,7 @@ nonisolated enum PanePresentation {
 /// Shared enrichment-thumbnail fallback for loupe and compare panes.
 struct PaneThumbnailView: View {
     let id: MediaAssetID
+    var tileContentStore: TileContentStore?
     var thumbnailDirectory: URL?
     var detailReader: MediaTileDetailReader?
     @State private var image: CGImage?
@@ -77,17 +78,26 @@ struct PaneThumbnailView: View {
             }
         }
         .task(id: id) {
-            guard let detailReader else {
+            // Store hit: the filmstrip is already showing this asset, so the decoded
+            // image is almost always present. Synchronous assignment, no I/O.
+            if let hit = tileContentStore?.image(for: id) {
+                image = hit
                 return
             }
+            // Miss: decode off-main, exactly as MediaGridBridge.swift:938 does.
+            // The previous shape called the synchronous `loadImage` directly inside
+            // this MainActor `.task`, decoding a full JPEG on the main thread on every
+            // loupe entry and every arrow key (plan 0073 D3).
+            guard let detailReader, let thumbnailDirectory else { return }
             let details = await detailReader.details(for: [id])
-            guard let detail = details[id] else {
-                return
-            }
-            image = MediaAssetTilePresentation.loadImage(
-                detail: detail,
-                thumbnailDirectory: thumbnailDirectory
-            ).image
+            guard let detail = details[id] else { return }
+            let directory = thumbnailDirectory
+            let decoded = await Task.detached(priority: .userInitiated) {
+                MediaAssetTilePresentation.loadImage(detail: detail, thumbnailDirectory: directory)
+            }.value
+            guard !Task.isCancelled, let decodedImage = decoded.image else { return }
+            tileContentStore?.warm(id: id, image: decodedImage, detail: detail)
+            image = decodedImage
         }
     }
 }
