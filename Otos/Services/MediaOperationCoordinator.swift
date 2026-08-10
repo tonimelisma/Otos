@@ -615,6 +615,15 @@ actor MediaOperationCoordinator {
         planGeneration &+= 1
         let generation = planGeneration
         let destination = destinationBySource[source]
+        OtosLog.catalog.noticeOperation(
+            "plan.rebuild",
+            phase: "schedule",
+            fields: [
+                "source": source.rawValue,
+                "destination": destination?.rawValue ?? "none",
+                "generation": "\(generation)",
+            ]
+        )
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,
             destinationPath: destination,
@@ -671,6 +680,16 @@ actor MediaOperationCoordinator {
             folders: MediaTransferPlanner.destinationFolders(for: snapshot)
         )
         let planStart = clock.now
+        OtosLog.catalog.noticeOperation(
+            "plan.namespace.enumerate",
+            phase: "finish",
+            fields: [
+                "destination": snapshot.destinationRoot.rawValue,
+                "folders": "\(namespace.folderCount)",
+                "entries": "\(namespace.entryCount)",
+                "elapsedMs": "\(DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)))",
+            ]
+        )
         let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: namespace)
         let planEnd = clock.now
         return ImportPlanBuildResult(
