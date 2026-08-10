@@ -55,7 +55,7 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .materialized },
                 request: { _ in Issue.record("should not request a download when already materialized") },
-                probe: { _ in .inconclusive }
+                probe: { _ async in .inconclusive }
             )
         )
         #expect(result.outcome == .alreadyMaterialized)
@@ -71,7 +71,7 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in throw ProbeError() },
-                probe: { _ in .inconclusive }
+                probe: { _ async in .inconclusive }
             )
         )
         #expect(result.outcome == .requestFailed)
@@ -91,7 +91,7 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in },
-                probe: { _ in .providerUnavailable }
+                probe: { _ async in .providerUnavailable }
             )
         )
         #expect(result.outcome == .providerUnavailable)
@@ -110,7 +110,7 @@ struct FileMaterializationTests {
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in },
-                probe: { _ in
+                probe: { _ async in
                     let c = probeCalls.next()
                     // First probe unavailable, second inconclusive (healed), then unavailable again
                     // Never two in a row → should time out, not providerUnavailable

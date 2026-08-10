@@ -99,26 +99,72 @@ extension FileMaterialization {
     /// `inconclusive` otherwise. Never blocks longer than ~2s (kernel caps
     /// `ETIMEDOUT` at 1s). This is the only place in the app that deliberately
     /// reads bytes to test liveness — everywhere else uses `SF_DATALESS`.
-    nonisolated static func probeProviderLiveness(of url: URL) -> FileMaterializationProbeResult {
+    /// Serial queue for the liveness probe. The probe performs a deliberately faulting
+    /// one-byte read on a dataless file: it blocks until the provider serves or the
+    /// kernel returns ETIMEDOUT (~1s). Running that on the Swift cooperative pool —
+    /// whose width is the core count, against `globalConcurrency = 16` — can occupy
+    /// every cooperative thread and starve unrelated async work, including MainActor
+    /// continuations (plan 0074 B3). `.utility` because no user action waits on a probe.
+    nonisolated private static let probeQueue = DispatchQueue(
+        label: "net.melisma.Otos.materialization.probe",
+        qos: .utility,
+        attributes: .concurrent
+    )
+
+    /// The kernel caps ETIMEDOUT at ~1s, but that is the provider's contract, not ours.
+    /// A probe that outlives the poll interval is inconclusive by definition — the
+    /// polling loop will ask again.
+    nonisolated private static let probeTimeout: Duration = .seconds(3)
+
+    nonisolated static func probeProviderLiveness(of url: URL) async -> FileMaterializationProbeResult {
+        // Race the blocking probe against a timeout so a hung provider does not pin
+        // a queue thread forever. The orphaned queue work completes and is discarded;
+        // it holds one `.utility` thread, not a cooperative one.
+        await withTaskGroup(of: FileMaterializationProbeResult.self) { group in
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    probeQueue.async {
+                        continuation.resume(returning: blockingProbe(of: url))
+                    }
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: probeTimeout)
+                return FileMaterializationProbeResult.inconclusive
+            }
+            guard let first = await group.next() else { return .inconclusive }
+            group.cancelAll()
+            return first
+        }
+    }
+
+    private nonisolated static func blockingProbe(of url: URL) -> FileMaterializationProbeResult {
         do {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
             _ = try handle.read(upToCount: 1)
             return .served
-        } catch let error as NSError {
-            let code = error.code
-            let msg = (error.localizedDescription + " " + "\(error)").lowercased()
-            if code == 60 || code == 110 || msg.contains("timed out") || msg.contains("etimedout") {
-                return .providerUnavailable
-            }
-            return .inconclusive
         } catch {
-            let msg = "\(error)".lowercased()
-            if msg.contains("timed out") || msg.contains("etimedout") {
-                return .providerUnavailable
-            }
-            return .inconclusive
+            return probeResult(for: error)
         }
+    }
+
+    /// Pure error classification for the probe. Domain-qualified errno only.
+    /// `localizedDescription` is localized by the *system* locale, so substring
+    /// matching on "timed out" silently stops working on a non-English Mac — it was
+    /// never load-bearing, and keeping it only disguises a regression in this check.
+    nonisolated static func probeResult(for error: any Error) -> FileMaterializationProbeResult {
+        let ns = error as NSError
+        // Direct POSIX domain
+        if ns.domain == NSPOSIXErrorDomain, ns.code == Int(ETIMEDOUT) {
+            return .providerUnavailable
+        }
+        // Foundation often wraps POSIX in NSCocoaErrorDomain with underlying
+        if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
+           underlying.domain == NSPOSIXErrorDomain, underlying.code == Int(ETIMEDOUT) {
+            return .providerUnavailable
+        }
+        return .inconclusive
     }
 
     nonisolated static func materialize(
@@ -198,7 +244,7 @@ extension FileMaterialization {
                 // retry ledger (15/60/300/900) will pace the next attempt.
                 // A single transient ETIMEDOUT that heals on the next tick
                 // yields only one probe failure and does not short-circuit.
-                switch providers.probe(url) {
+                switch await providers.probe(url) {
                 case .providerUnavailable:
                     consecutiveProviderUnavailable += 1
                     if consecutiveProviderUnavailable >= 2 {
@@ -307,11 +353,11 @@ nonisolated struct FileMaterializationProviders {
     let status: @Sendable (URL) -> FileMaterializationStatus
     let request: @Sendable (URL) throws -> Void
     /// Best-effort probe for a definite provider refusal via a tiny byte read.
-    /// Injected for testability; production uses `FileHandle` with a 2s deadline
-    /// (kernel `ETIMEDOUT` itself is 1s). Returns `served` if the read succeeds,
-    /// `providerUnavailable` only for `errno 60/110` or "timed out" text, and
+    /// Injected for testability; production uses `FileHandle` on a dedicated
+    /// `.utility` queue with a 3s timeout. Returns `served` if the read succeeds,
+    /// `providerUnavailable` only for domain-qualified `ETIMEDOUT`, and
     /// `inconclusive` for any other error. Never throws.
-    let probe: @Sendable (URL) -> FileMaterializationProbeResult
+    let probe: @Sendable (URL) async -> FileMaterializationProbeResult
 }
 
 /// Outcome of `materializationPollDecision`, one polling tick's pure verdict.
