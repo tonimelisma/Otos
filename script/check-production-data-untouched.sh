@@ -65,6 +65,24 @@ other_domain_names() {
     | LC_ALL=C sort
 }
 
+# Absolute: no OtosTests domain may carry real values, whether or not this run
+# created it. The --before/--after diff catches regressions introduced by this
+# run; this catches the 111 data-carrying domains that accumulated before the
+# diff check existed (plan 0072 §1.2).
+assert_no_data_carrying_test_domains() {
+  local offenders=()
+  for f in "$PREFS_DIR"/net.melisma.OtosTests.*.plist; do
+    [[ -e "$f" ]] || continue
+    if domain_has_data "$f"; then offenders+=("$f"); fi
+  done
+  if (( ${#offenders[@]} > 0 )); then
+    echo "FAIL: ${#offenders[@]} test preference domain(s) carry real values." >&2
+    printf '  %s\n' "${offenders[@]}" >&2
+    echo "Run script/purge-test-preference-domains.sh, then re-run." >&2
+    return 1
+  fi
+}
+
 record_before() {
   mkdir -p "$STATE_DIR"
   {
@@ -73,6 +91,9 @@ record_before() {
     echo "---other-domains---"
     other_domain_names
   } > "$STATE_FILE"
+  # Absolute check also runs at --before so a pre-existing leak fails fast
+  # before blaming the current change.
+  assert_no_data_carrying_test_domains || exit 1
 }
 
 check_after() {
@@ -130,6 +151,11 @@ check_after() {
       done
       failed=1
     fi
+  fi
+
+  # Absolute check: catches any data-carrying domain even if it predates --before.
+  if ! assert_no_data_carrying_test_domains; then
+    failed=1
   fi
 
   if (( failed != 0 )); then
