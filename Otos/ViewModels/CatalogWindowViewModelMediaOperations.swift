@@ -228,7 +228,10 @@ extension CatalogWindowViewModel {
         let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
         gridSelection = gridSelection.remapped(by: batch)
         if let focus = focusedAssetID {
-            focusedAssetID = map[focus] ?? focus
+            let mapped = map[focus] ?? focus
+            if mapped != focus {
+                setFocus(mapped)
+            }
         }
         comparePair = comparePair.remapped(by: batch)
         identityRemapBatch = batch

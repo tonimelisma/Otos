@@ -69,7 +69,7 @@ extension CatalogWindowViewModel {
         }
 
         if viewMode == .loupe, let hit, !shift, !command {
-            focusedAssetID = hit
+            setFocus(hit)
             gridSelection = gridSelection.plainClick(hit)
             refreshPanePreviews()
             return gridSelection
