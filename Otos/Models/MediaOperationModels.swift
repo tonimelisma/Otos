@@ -182,7 +182,11 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case queuedForReadiness
     case executing(progress: MediaOperationProgress)
     case needsReplan
-    case completed(summary: MediaOperationPlanTotals)
+    case completed(
+        summary: MediaOperationPlanTotals,
+        skippedForeignCount: Int = 0,
+        failedCount: Int = 0
+    )
     case failed(problem: String)
     /// Source kind cannot execute import (for example a fixed library selected as source).
     case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64)

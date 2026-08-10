@@ -13,8 +13,6 @@ nonisolated enum VolumeRenameCapability {
     case checkThenAct
 
     static func probe(url: URL) -> VolumeRenameCapability {
-        // Prefer rename-excl on the boot volume / APFS temp dirs used in tests.
-        // getattrlist probing is best-effort; unknown volumes fall back safely.
         var attrs = attrlist()
         attrs.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
         attrs.volattr = attrgroup_t(UInt32(ATTR_VOL_INFO) | UInt32(ATTR_VOL_CAPABILITIES))
@@ -32,9 +30,29 @@ nonisolated enum VolumeRenameCapability {
         guard result == 0 else {
             return .checkThenAct
         }
-        // Capability parsing is volume-layout sensitive; when unsure, hard-link then
-        // check-then-act still refuse overwrites via EEXIST / existence checks.
-        return .renameExcl
+        // getattrlist succeeded: buffer[0..<4] is the returned length, followed
+        // by the vol_capabilities_attr_t. Parse the capability bit rather than
+        // assuming APFS.
+        let returnedLength: UInt32 = buffer.withUnsafeBytes { raw in
+            raw.load(as: UInt32.self)
+        }
+        let minimumLength = UInt32(MemoryLayout<UInt32>.size + MemoryLayout<vol_capabilities_attr_t>.size)
+        guard returnedLength >= minimumLength else {
+            return .hardLink
+        }
+        let caps: vol_capabilities_attr_t = buffer.withUnsafeBytes { raw in
+            raw.load(fromByteOffset: MemoryLayout<UInt32>.size, as: vol_capabilities_attr_t.self)
+        }
+        let valid = caps.valid[Int(VOL_CAPABILITIES_INTERFACES)]
+        let capabilities = caps.capabilities[Int(VOL_CAPABILITIES_INTERFACES)]
+        let renameExclBit = UInt32(VOL_CAP_INT_RENAME_EXCL)
+        if (valid & renameExclBit) != 0, (capabilities & renameExclBit) != 0 {
+            return .renameExcl
+        }
+        // Volume does not advertise atomic rename-excl; hard-link+unlink is the
+        // next exclusive ladder rung, falling through to check-then-act only if
+        // the link itself fails with a non-EEXIST error.
+        return .hardLink
     }
 }
 

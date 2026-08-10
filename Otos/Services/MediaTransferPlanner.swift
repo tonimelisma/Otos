@@ -50,9 +50,11 @@ nonisolated enum MediaTransferPlanner {
     /// re-derives its bundles.
     static func planImport(
         snapshot: ImportPlanningSnapshot,
-        namespace: DestinationNamespace
+        namespace: DestinationNamespace,
+        additionalReserved: Set<MediaRelativePath> = []
     ) -> MediaOperationPlan {
         var reserved = Set(snapshot.destinationOccupants.keys)
+        reserved.formUnion(additionalReserved)
         let bundles = namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy)
         var entries: [MediaOperationPlanEntry] = []
 
@@ -84,12 +86,15 @@ nonisolated enum MediaTransferPlanner {
 
     /// Reads the destination folders this snapshot needs, then plans. The only
     /// entry point that performs I/O; `planImport` stays pure for tests.
-    static func buildImportPlan(snapshot: ImportPlanningSnapshot) -> MediaOperationPlan {
+    static func buildImportPlan(
+        snapshot: ImportPlanningSnapshot,
+        additionalReserved: Set<MediaRelativePath> = []
+    ) -> MediaOperationPlan {
         let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
             root: snapshot.destinationRoot,
             folders: destinationFolders(for: snapshot)
         )
-        return planImport(snapshot: snapshot, namespace: namespace)
+        return planImport(snapshot: snapshot, namespace: namespace, additionalReserved: additionalReserved)
     }
 }
 

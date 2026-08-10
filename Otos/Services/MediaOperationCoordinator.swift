@@ -58,6 +58,14 @@ actor MediaOperationCoordinator {
     private var buildTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var consumerTask: Task<Void, Never>?
     private var catalogChangeTask: Task<Void, Never>?
+    /// Reservation ledger per §5: every `.copy` final destination plus every
+    /// companion destination of a live (ready or executing) plan, keyed by
+    /// source. Unioned on demand per destination; never persisted, never
+    /// consulted by the executor, never a second truth about D — the filesystem
+    /// still wins. Invariants I1–I5 hold in one synchronous on-actor region at
+    /// publish time (§5, decision 18).
+    private var claimsBySource: [LibraryRootPath: Set<MediaRelativePath>] = [:]
+
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
 
@@ -346,6 +354,11 @@ actor MediaOperationCoordinator {
         OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue])
         let finishedDestination = destinationBySource[source]
         executing.remove(source)
+        // I2: conversion by death — every published name is already observable
+        // on disk, every unpublished name never will be. One release point per
+        // plan death keeps the ledger trivially auditable, and the next rebuild
+        // seeds from disk truth.
+        claimsBySource.removeValue(forKey: source)
         dirty.insert(source)
         scheduleBuildIfNeeded(source)
         // Flush coalesced destination-driven rebuilds (Stage 2 / C4).
@@ -382,11 +395,15 @@ actor MediaOperationCoordinator {
         prefs: ImportPreferences
     ) async {
         switch result {
-        case let .completed(_, _, hasBlockedEntries, hasEntryFailures):
+        case let .completed(_, _, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount):
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
-                state: .completed(summary: summary),
+                state: .completed(
+                    summary: summary,
+                    skippedForeignCount: skippedForeignCount,
+                    failedCount: failedCount
+                ),
                 attachToReadyMs: attachToReadyMs[source]
             )
             publish()
@@ -397,7 +414,23 @@ actor MediaOperationCoordinator {
             {
                 await autoEjectIfRequested(sourceRoot)
             }
-        case .cancelled:
+        case let .cancelled(_, _, _, _, skippedForeignCount, failedCount):
+            // Cancelled still surfaces the counts for diagnostics, but the
+            // presentation returns to ready so the user can retry. The ledger
+            // was already cleared in runExecution before the rebuild.
+            _ = (skippedForeignCount, failedCount)
+            presentations[source] = MediaOperationSourcePresentation(
+                sourcePath: source,
+                destinationPath: destinationBySource[source],
+                state: .ready(
+                    summary: summary,
+                    generation: generation,
+                    skippedPackageCount: skippedPackageCount
+                ),
+                attachToReadyMs: attachToReadyMs[source]
+            )
+            publish()
+        case let .failed(problem):
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
@@ -589,6 +622,7 @@ actor MediaOperationCoordinator {
             attachStartedAt.removeValue(forKey: path)
             attachToReadyMs.removeValue(forKey: path)
             lastSeenOccupancy.removeValue(forKey: path)
+            claimsBySource.removeValue(forKey: path)
         }
         persistDestinationMappings()
         publish()
@@ -671,7 +705,8 @@ actor MediaOperationCoordinator {
     /// cooperative pool rather than on the coordinator, which stays free to service
     /// planning changes and Import intents while a build is in flight.
     private nonisolated static func buildPlanOffActor(
-        snapshot: ImportPlanningSnapshot
+        snapshot: ImportPlanningSnapshot,
+        additionalReserved: Set<MediaRelativePath>
     ) async -> ImportPlanBuildResult {
         let clock = ContinuousClock()
         let enumerateStart = clock.now
@@ -690,7 +725,11 @@ actor MediaOperationCoordinator {
                 "elapsedMs": "\(DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)))",
             ]
         )
-        let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: namespace)
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: namespace,
+            additionalReserved: additionalReserved
+        )
         let planEnd = clock.now
         return ImportPlanBuildResult(
             plan: plan,
@@ -762,8 +801,11 @@ actor MediaOperationCoordinator {
                 "destinationOccupants": "\(snapshot.destinationOccupants.count)",
             ]
         )
+        // Seed from ledger §5: concurrent builds for the same destination stay
+        // fully parallel; each seeds from the ledger at build-start time.
+        let seededClaims = ledgerClaims(for: destination, excluding: source)
         let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
-        let build = await Self.buildPlanOffActor(snapshot: snapshot)
+        let build = await Self.buildPlanOffActor(snapshot: snapshot, additionalReserved: seededClaims)
         OtosSignpost.performance.endInterval("ImportPlanBuild", signpost)
         let plan = build.plan
         Self.logPlanFinished(
@@ -799,6 +841,35 @@ actor MediaOperationCoordinator {
             dirty.insert(source)
             scheduleBuildIfNeeded(source)
             return
+        }
+
+        // Publish-time ledger conflict check (I4): conflict check plus
+        // registration happen in one synchronous on-actor region against the
+        // *current* ledger, never the build-start snapshot. A conflicting build
+        // re-dirties and rebuilds; it never evicts a registered claim.
+        let newClaims = planClaims(from: plan)
+        let currentLedger = ledgerClaims(for: destination, excluding: source)
+        if !newClaims.isDisjoint(with: currentLedger) {
+            OtosLog.catalog.noticeOperation(
+                "import.plan",
+                phase: "conflict",
+                fields: [
+                    "rootPath": source.rawValue,
+                    "destination": destination.rawValue,
+                    "newClaims": "\(newClaims.count)",
+                    "conflictingClaims": "\(newClaims.intersection(currentLedger).count)",
+                ]
+            )
+            building.remove(source)
+            dirty.insert(source)
+            scheduleBuildIfNeeded(source)
+            return
+        }
+        // No conflict: atomically release old claims and register new (I2, I3).
+        if newClaims.isEmpty {
+            claimsBySource.removeValue(forKey: source)
+        } else {
+            claimsBySource[source] = newClaims
         }
 
         readyPlans[source] = plan
@@ -883,6 +954,27 @@ actor MediaOperationCoordinator {
             // swiftlint:disable:next line_length
             "op=import.attachToReady phase=ready rootPath=\(source.rawValue, privacy: .public) elapsedMs=\(elapsedMs, privacy: .public) copyCount=\(plan.totals.copyCount, privacy: .public)"
         )
+    }
+
+    private func ledgerClaims(for destination: LibraryRootPath, excluding excludedSource: LibraryRootPath? = nil) -> Set<MediaRelativePath> {
+        var result: Set<MediaRelativePath> = []
+        for (source, claims) in claimsBySource where destinationBySource[source] == destination && source != excludedSource {
+            result.formUnion(claims)
+        }
+        return result
+    }
+
+    private func planClaims(from plan: MediaOperationPlan) -> Set<MediaRelativePath> {
+        var claims: Set<MediaRelativePath> = []
+        for entry in plan.entries {
+            if case .copy = entry.disposition {
+                claims.insert(entry.finalDestination)
+                for dest in entry.companionDestinations.values {
+                    claims.insert(dest)
+                }
+            }
+        }
+        return claims
     }
 
     private func sortedPresentations() -> [MediaOperationSourcePresentation] {

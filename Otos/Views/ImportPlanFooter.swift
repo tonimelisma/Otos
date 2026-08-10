@@ -111,8 +111,15 @@ struct ImportPlanFooter: View {
             totalsText(summary: summary, skippedPackages: skipped)
         case let .executionUnavailable(summary, _):
             totalsText(summary: summary, skippedPackages: 0)
-        case let .completed(summary):
-            totalsText(summary: summary, skippedPackages: 0)
+        case let .completed(summary, skippedForeign, failed):
+            var text = totalsText(summary: summary, skippedPackages: 0)
+            if skippedForeign > 0 {
+                text += " · \(skippedForeign) skipped (destination exists)"
+            }
+            if failed > 0 {
+                text += " · \(failed) failed"
+            }
+            return text
         default:
             nil
         }

@@ -197,14 +197,18 @@ actor MediaImportExecutor {
                 publishedCount: entryTotals.publishedCount,
                 batch: entryTotals.publishedCount > 0 ? batch : nil,
                 hasBlockedEntries: hasBlockedEntries,
-                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch
+                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
+                skippedForeignCount: entryTotals.skippedForeignCount,
+                failedCount: entryTotals.failedCount
             )
         }
         return .completed(
             publishedCount: entryTotals.publishedCount,
             batch: entryTotals.publishedCount > 0 ? batch : nil,
             hasBlockedEntries: hasBlockedEntries,
-            hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch
+            hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
+            skippedForeignCount: entryTotals.skippedForeignCount,
+            failedCount: entryTotals.failedCount
         )
     }
 
@@ -1326,13 +1330,17 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
         publishedCount: Int,
         batch: ImportBatchID?,
         hasBlockedEntries: Bool,
-        hasEntryFailures: Bool
+        hasEntryFailures: Bool,
+        skippedForeignCount: Int,
+        failedCount: Int
     )
     case cancelled(
         publishedCount: Int,
         batch: ImportBatchID?,
         hasBlockedEntries: Bool,
-        hasEntryFailures: Bool
+        hasEntryFailures: Bool,
+        skippedForeignCount: Int,
+        failedCount: Int
     )
     case failed(problem: String)
 }
