@@ -254,11 +254,11 @@ struct ImportPlanFooter: View {
     private var showsRetry: Bool {
         switch presentation.state {
         case let .ready(summary, _, _):
-            return summary.blockedCount > 0
+            summary.blockedCount > 0
         case let .executionUnavailable(summary, _):
-            return summary.blockedCount > 0
+            summary.blockedCount > 0
         default:
-            return false
+            false
         }
     }
 

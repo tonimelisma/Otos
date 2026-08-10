@@ -150,11 +150,11 @@ nonisolated enum DestinationNamePolicy: String, Equatable, Sendable, CaseIterabl
     case captureDateTime
 }
 
-/// `UserDefaults` is documented thread-safe. Callers that need it across an
-/// isolation boundary must not rely on a retroactive `Sendable` conformance
-/// (ARC-042); instead they either read a `Sendable` value before the hop or
-/// hold the `UserDefaults` as `nonisolated(unsafe)` on the single owning actor
-/// with a scoped comment.
+// `UserDefaults` is documented thread-safe. Callers that need it across an
+// isolation boundary must not rely on a retroactive `Sendable` conformance
+// (ARC-042); instead they either read a `Sendable` value before the hop or
+// hold the `UserDefaults` as `nonisolated(unsafe)` on the single owning actor
+// with a scoped comment.
 
 /// Typed read/write owner for import preferences. Keys are stable for the
 /// Settings Import tab.

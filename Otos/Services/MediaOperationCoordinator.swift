@@ -411,6 +411,7 @@ actor MediaOperationCoordinator {
                 {
                     if !building.contains(otherSource), !executing.contains(otherSource) {
                         scheduleBuildIfNeeded(otherSource)
+                        // swiftlint:disable:next line_length
                         OtosLog.catalog.notice(
                             "op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)"
                         )
@@ -567,6 +568,7 @@ actor MediaOperationCoordinator {
             for (source, destination) in destinationBySource where destination == change.rootPath {
                 dirty.insert(source)
                 if isDestinationUnderExecution {
+                    // swiftlint:disable:next line_length
                     OtosLog.catalog.notice(
                         "op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)"
                     )
@@ -640,7 +642,9 @@ actor MediaOperationCoordinator {
                     fixedAvailable.contains(where: { $0.path == dest }) ? dest : nil
                 }
                 let soleOrFirst: LibraryRootPath? = {
-                    if fixedAvailable.count == 1 { return fixedAvailable.first?.path }
+                    if fixedAvailable.count == 1 {
+                        return fixedAvailable.first?.path
+                    }
                     return fixedAvailable.sorted { $0.path.rawValue < $1.path.rawValue }.first?.path
                 }()
                 let newDestination = deviceDest ?? lastUsedValid ?? soleOrFirst

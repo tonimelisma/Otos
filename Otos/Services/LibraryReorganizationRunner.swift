@@ -7,8 +7,8 @@ import OSLog
 /// catalog identities, and returns remap batches for ViewModel/TileContentStore.
 actor LibraryReorganizationRunner {
     private let store: CatalogStore
-    // UserDefaults is documented thread-safe; this actor is the only writer for
-    // its suite (ARC-042).
+    /// UserDefaults is documented thread-safe; this actor is the only writer for
+    /// its suite (ARC-042).
     private nonisolated(unsafe) let preferences: UserDefaults
 
     init(store: CatalogStore, preferences: UserDefaults) {
