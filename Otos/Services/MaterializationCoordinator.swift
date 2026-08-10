@@ -119,7 +119,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     // dropped and is the cheapest probe that the provider recovered — an interactive
     // success closes the breaker, an interactive failure neither opens nor extends it.
     private var providerUnavailableStreakByRoot: [LibraryRootPath: Int] = [:]
-    private var breakerOpenUntilByRoot: [LibraryRootPath: Date] = [:]
+    private var breakerOpenUntilByRoot: [LibraryRootPath: ContinuousClock.Instant] = [:]
     private var breakerWakeTask: Task<Void, Never>?
     private let breakerThreshold = 2
     private let breakerCooldown: Duration = .seconds(60)
@@ -586,7 +586,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard let until = breakerOpenUntilByRoot[rootPath] else {
             return false
         }
-        if until > Date() {
+        if until > clock.now {
             return true
         }
         breakerOpenUntilByRoot[rootPath] = nil
@@ -610,7 +610,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             }
             providerUnavailableStreakByRoot[rootPath] = 0
             let cooldown = breakerCooldown
-            let until = Date().addingTimeInterval(DiagnosticsTiming.seconds(cooldown))
+            let until = clock.now.advanced(by: breakerCooldown)
             breakerOpenUntilByRoot[rootPath] = until
             OtosLog.mediaIO.notice(
                 """
@@ -648,10 +648,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
             return
         }
         breakerWakeTask?.cancel()
-        let delay = max(nextUntil.timeIntervalSinceNow, 0)
-        breakerWakeTask = Task { [weak self] in
+        breakerWakeTask = Task { [weak self, clock, nextUntil] in
             do {
-                try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                try await clock.sleep(until: nextUntil, tolerance: .milliseconds(250))
             } catch {
                 return
             }
@@ -662,7 +661,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private func handleBreakerCooldownFired() {
         breakerWakeTask = nil
         // Expire any breaker whose window elapsed; keep future ones armed.
-        let now = Date()
+        let now = clock.now
         let expiredRoots = breakerOpenUntilByRoot.filter { $0.value <= now }.map(\.key)
         for root in expiredRoots {
             breakerOpenUntilByRoot[root] = nil
