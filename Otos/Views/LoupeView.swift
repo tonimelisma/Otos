@@ -143,13 +143,7 @@ struct FilmstripResizeHandle: View {
             .fill(.clear)
             .frame(height: 8)
             .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering {
-                    NSCursor.resizeUpDown.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
+            .overlay(ResizeCursorArea())
             .gesture(
                 DragGesture(minimumDistance: 1)
                     .onChanged { value in
@@ -165,6 +159,30 @@ struct FilmstripResizeHandle: View {
                         dragStartEdge = nil
                     }
             )
-            .accessibilityLabel("Resize Filmstrip")
+            .accessibilityElement()
+            .accessibilityLabel("Filmstrip Size")
+            .accessibilityValue("\(Int(stripTileEdge)) points")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: setStripTileEdge(stripTileEdge + 8)
+                case .decrement: setStripTileEdge(stripTileEdge - 8)
+                @unknown default: break
+                }
+            }
+    }
+}
+
+/// A cursor rect rather than `NSCursor.push()/pop()` in `onHover`: SwiftUI does not
+/// guarantee a trailing `onHover(false)` when the view is removed mid-hover (exit
+/// loupe with ⌘1 while over the handle), which left the process-wide cursor stack
+/// unbalanced (plan 0073 D6).
+private struct ResizeCursorArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { CursorView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class CursorView: NSView {
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeUpDown)
+        }
     }
 }
