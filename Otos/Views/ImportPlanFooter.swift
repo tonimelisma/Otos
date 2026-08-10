@@ -127,10 +127,13 @@ struct ImportPlanFooter: View {
         }
     }
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     private var readinessLabel: some View {
         Text(readinessText)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            .accessibilityAddTraits(.isHeader)
     }
 
     private var policySummary: some View {
@@ -145,10 +148,14 @@ struct ImportPlanFooter: View {
         case .executing:
             Button("Cancel", action: cancelImport)
                 .keyboardShortcut(.cancelAction)
+                .accessibilityLabel("Cancel import")
+                .accessibilityHint("Stops the current import")
         default:
             Button(importButtonTitle, action: queueImport)
                 .disabled(!importEnabled)
                 .keyboardShortcut(isDeleteOnly ? nil : .defaultAction)
+                .accessibilityLabel(importButtonTitle)
+                .accessibilityHint(isDeleteOnly ? "Deletes all items from the card without importing" : "Imports new items from the card")
         }
     }
 
