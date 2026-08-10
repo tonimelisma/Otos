@@ -110,13 +110,14 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private var isShuttingDown = false
     private var nextWaiter: UInt64 = 0
 
-    // Per-root breaker for definite provider refusal (ETIMEDOUT). A burst of
-    // `providerUnavailable` on one root opens a 60s window where further
-    // background admissions on that root report `providerBreakerOpen` instead of
-    // dispatching and blocking `backgroundPerRootCap=1` for 2s each (32×2s storm).
-    // `FileMaterialization` already short-circuits the single file at k=2 probes;
-    // the breaker suppresses the *next* files on the same root until the provider
-    // proves serving again or the cooldown fires. No second queue or actor.
+    // Per-root breaker for definite provider refusal (ETIMEDOUT). Two consecutive
+    // `providerUnavailable` on one root at device/background priority open a 60s window
+    // where further device/background admissions on that root report `providerBreakerOpen`
+    // instead of dispatching and blocking `backgroundPerRootCap=1` for 2s each.
+    //
+    // Invariant: interactive demand is never suppressed. A user click both must not be
+    // dropped and is the cheapest probe that the provider recovered — an interactive
+    // success closes the breaker, an interactive failure neither opens nor extends it.
     private var providerUnavailableStreakByRoot: [LibraryRootPath: Int] = [:]
     private var breakerOpenUntilByRoot: [LibraryRootPath: Date] = [:]
     private var breakerWakeTask: Task<Void, Never>?
@@ -399,7 +400,14 @@ actor MaterializationCoordinator: MaterializationRequesting {
                     pendingByID[id] = nil
                     continue
                 }
-                if isBreakerOpen(for: entry.request.id.libraryRootPath) {
+                // The breaker exists to stop a background storm on a dead provider — it must never
+                // swallow a direct user action. An interactive request is both the thing the user
+                // is waiting on and the cheapest probe of whether the provider recovered; suppressing
+                // it left loupe and click-to-play silently dead for up to 60s with no way to retry
+                // (plan 0074 B1). ENR-008 and APP-023 both say background only.
+                if entry.effectivePriority != .interactive,
+                   isBreakerOpen(for: entry.request.id.libraryRootPath)
+                {
                     rejections[.providerBreakerOpen, default: 0] += 1
                     index += 1
                     continue
@@ -513,7 +521,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard let entry = inFlightByID.removeValue(forKey: id) else {
             return
         }
-        recordProviderBreakerOutcome(result.outcome, rootPath: id.libraryRootPath)
+        recordProviderBreakerOutcome(result.outcome, rootPath: id.libraryRootPath, effectivePriority: entry.effectivePriority)
         removeAccounting(for: entry)
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)
@@ -585,9 +593,16 @@ actor MaterializationCoordinator: MaterializationRequesting {
         return false
     }
 
-    private func recordProviderBreakerOutcome(_ outcome: MaterializationOutcome, rootPath: LibraryRootPath) {
+    private func recordProviderBreakerOutcome(
+        _ outcome: MaterializationOutcome,
+        rootPath: LibraryRootPath,
+        effectivePriority: Priority
+    ) {
         switch outcome {
         case .providerUnavailable:
+            // Only background/device failures open the breaker. A user's own click
+            // failing must never lengthen a suppression window (decision 3).
+            guard effectivePriority != .interactive else { return }
             let next = (providerUnavailableStreakByRoot[rootPath] ?? 0) + 1
             providerUnavailableStreakByRoot[rootPath] = next
             guard next >= breakerThreshold else {
@@ -605,6 +620,8 @@ actor MaterializationCoordinator: MaterializationRequesting {
             )
             scheduleBreakerWake()
         case .materialized, .alreadyMaterialized:
+            // Any success closes it, including an interactive one — that is the
+            // implicit retry path (decision 2).
             let hadBreaker = breakerOpenUntilByRoot[rootPath] != nil
             let hadStreak = (providerUnavailableStreakByRoot[rootPath] ?? 0) > 0
             if hadBreaker || hadStreak {
