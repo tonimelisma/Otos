@@ -105,7 +105,7 @@ extension FileMaterialization {
     /// whose width is the core count, against `globalConcurrency = 16` — can occupy
     /// every cooperative thread and starve unrelated async work, including MainActor
     /// continuations (plan 0074 B3). `.utility` because no user action waits on a probe.
-    nonisolated private static let probeQueue = DispatchQueue(
+    private nonisolated static let probeQueue = DispatchQueue(
         label: "net.melisma.Otos.materialization.probe",
         qos: .utility,
         attributes: .concurrent
@@ -114,7 +114,7 @@ extension FileMaterialization {
     /// The kernel caps ETIMEDOUT at ~1s, but that is the provider's contract, not ours.
     /// A probe that outlives the poll interval is inconclusive by definition — the
     /// polling loop will ask again.
-    nonisolated private static let probeTimeout: Duration = .seconds(3)
+    private nonisolated static let probeTimeout: Duration = .seconds(3)
 
     nonisolated static func probeProviderLiveness(of url: URL) async -> FileMaterializationProbeResult {
         // Race the blocking probe against a timeout so a hung provider does not pin
@@ -161,7 +161,8 @@ extension FileMaterialization {
         }
         // Foundation often wraps POSIX in NSCocoaErrorDomain with underlying
         if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
-           underlying.domain == NSPOSIXErrorDomain, underlying.code == Int(ETIMEDOUT) {
+           underlying.domain == NSPOSIXErrorDomain, underlying.code == Int(ETIMEDOUT)
+        {
             return .providerUnavailable
         }
         return .inconclusive
