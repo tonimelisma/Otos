@@ -185,6 +185,7 @@ actor CatalogStore {
     }
 
     private let location: Location
+    private let catalogDatabase: CatalogDatabase
     private let scanner: CatalogScanner
     private let filesystemWatcher: CatalogFilesystemWatcher
     private let scanCadence: Duration
@@ -242,6 +243,7 @@ actor CatalogStore {
         importJournalFailure: (@Sendable (ImportJournalTransition) throws -> Void)? = nil
     ) {
         self.location = location
+        catalogDatabase = CatalogDatabase(location: location)
         self.scanner = scanner
         self.filesystemWatcher = filesystemWatcher
         self.scanCadence = scanCadence
