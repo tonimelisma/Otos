@@ -1,7 +1,10 @@
 # Plan 0071 — Import UX and concurrent import architecture
 
 Follows `docs/research/2026-08-09-import-ux-benchmark.md`. Records the owner's decisions
-and the architecture that concurrent multi-source import requires.
+and the architecture that concurrent multi-source import requires. The 2026-08-09 design
+review verified every code claim in this plan against source, adopted its findings (§17),
+and revised §5, §8, §9, §12, §13, and the stages accordingly. Accessibility is part of the
+plan, not a follow-up (§18).
 
 ## 1. Owner decisions captured
 
@@ -31,6 +34,23 @@ and the architecture that concurrent multi-source import requires.
     byte reads, and duplicating it across a few attached cards does not justify the machinery.
 17. **No per-tile import badges, in either grid.** The progress bar is the progress
     indicator; tiles show media, not plan state (§10).
+18. **The reservation ledger acquires claims atomically at publish time, not at ready
+    time.** Concurrent builds stay fully parallel; each build seeds from the ledger, and the
+    conflict check plus registration happen in one synchronous on-actor region against the
+    *current* ledger. A conflicting build re-dirties and rebuilds; it never evicts a
+    registered claim (§5).
+19. **Card deletion and eject stay withheld while any blocked entry remains — and the Done
+    state says so when the rule fires.** Decision 3 removed the leaked invariant *sentence*;
+    it did not remove the invariant. The checkbox label never carries a count the rule will
+    withhold (§9).
+20. **Cancel is an owned intent.** The coordinator holds the executing source's executor so
+    the bar's Cancel reaches it (§12).
+21. **Byte-level import progress.** The executor aggregates in-flight copyfile offsets plus
+    settled bytes into `MediaOperationProgress`, gated to bounded emission frequency, so one
+    large file keeps the bar moving (HIG "keep progress indicators moving"). Implemented in
+    this increment (§8, §17 F9).
+22. **Accessibility is a requirement of every control this plan introduces** — VoiceOver,
+    keyboard, no color-only state, Reduce Motion (§18).
 
 ## 2. What "blocked" means
 
@@ -44,6 +64,12 @@ is safe.** A refusal to guess, not an error.
   `.none` folder policy and `.original` name policy, `folderPath` returns `""` (`:450`) and
   `baseFileName` returns the source stem (`:465`) — the timestamp is never used, yet the
   bundle is still blocked. Block only when the selected policy needs a date. Stage 1.
+  The metadata gate has the same blind spot, plus a second one: `shouldWaitForMetadata`
+  (`MediaOperationCoordinator.swift:742-770`) waits on dates the selected policy may never
+  use, and nothing re-wakes planning when enrichment supplies them — enrichment bumps
+  neither occupancy nor plan revision (`CatalogStore.swift:1139`), so the state exits only
+  via Import-press, an unrelated occupancy bump, or a preference change. Stage 1 makes the
+  gate policy-aware and gives it a resume path (§17 F3).
 - **`.filesystemObservationUnavailable("namespaceUnreadable")`** — `:365`, `:278`. The
   destination folder could not be read, so the candidate's freeness is unproven. The one
   users will actually meet, and on a cloud-synced destination it is **transient**.
@@ -80,7 +106,9 @@ Two facts from step 8 matter more than anything else in this plan:
 **`ExclusivePublication` never overwrites.** It probes `VOL_CAP_INT_RENAME_EXCL` and uses
 `renamex_np(RENAME_EXCL)`, else hard-link + unlink, else check-then-act — all three return
 `.destinationExists` rather than clobbering (`ExclusivePublication.swift:49-111`). There is
-already a hard safety floor under every race described below.
+already a hard safety floor under every race described below. Review caveat: the probe does
+not actually parse the capability bit, and a non-`EEXIST` rename failure surfaces as
+`.failed`, not `.destinationExists` — §17 F6.
 
 **On `.destinationExists` the entry is dropped silently.** The staging file is removed, the
 journal operation is abandoned, a foreign occupant is recorded, and the entry returns
@@ -116,16 +144,78 @@ name already says — reserved across the app, not within one plan. The planner 
 nonisolated; only the coordinator changes, and the ledger is the coordinator's because the
 coordinator is already the single owner of ready plans.
 
-Rules the ledger must satisfy, each testable without UI:
+### The race the first revision missed (2026-08-09 review)
 
-1. A claim is created when a plan reaches `.ready` and released when that plan is superseded,
-   cancelled, or its source detaches.
-2. A claim is *converted*, not released, when its entry settles — the name becomes real
-   occupancy and the next namespace read sees it.
-3. Claims are revalidated after every await, against the destination's occupancy revision —
-   the existing typed ownership fact, not a generated token (CLAUDE.md).
-4. A crash loses the ledger; that is safe, because `ExclusivePublication` remains the floor
-   and the next plan re-reads the namespace.
+The first revision created claims when a plan *reached* `.ready`, after the off-actor build.
+But §6 runs builds in parallel, and two builds for the same destination seed from the same
+ledger snapshot and the same namespace read, compute overlapping claims, and both publish —
+the publish-time revalidation checked occupancy revisions only, and the destination's
+occupancy did not change. Registering claims at ready time is too late; the acquisition
+itself must be atomic (decision 18).
+
+### Shape
+
+`claimsBySource: [LibraryRootPath: Set<MediaRelativePath>]` on the coordinator — every
+`.copy` final destination plus every companion destination of a live plan, keyed by source,
+unioned over `destinationBySource[S] == D` on demand. N is the number of attached cards; a
+second destination-keyed index is more bookkeeping than it saves. The ledger is in-memory
+process state: never persisted, never consulted by the executor, never visible to UI, never
+a second truth about D — the filesystem still wins any disagreement.
+
+### Invariants
+
+- **I1 Exclusivity.** No two live (ready or executing) plans for one destination hold
+  overlapping claims. This is what makes C1 unrepresentable.
+- **I2 Correspondence.** Every claim belongs to exactly one live plan and dies with it —
+  supersede, detach, cancel, failure, execution end. Bounded size, no leaks.
+- **I3 Conversion by death, not per-entry release.** Publication precedes settlement and
+  settlement is durable, so when an execution ends — any outcome — every published name is
+  already observable on disk and every unpublished name never will be. One release point per
+  plan death keeps I2 trivially auditable.
+- **I4 Atomic acquisition.** Conflict check plus registration happen in one synchronous
+  on-actor region — at publish time, against the *current* ledger, never against the
+  build-start snapshot.
+- **I5 The ledger never weakens the floor.** Claims cover only names proven free at build
+  time. If the disk changes underneath a claim, `ExclusivePublication` still refuses and the
+  O1 backstop surfaces it. A crash loses the ledger; the next plan re-reads the namespace.
+
+### Mechanics
+
+1. **Seed.** Build start hands the task `ledgerClaims(D)`; `planImport` gains
+   `additionalReserved: Set<MediaRelativePath>`, unioned into `reserved` at
+   `MediaTransferPlanner.swift:44`. `decideCandidate`'s first check (`:359-363`) already does
+   the right thing with a ledger claim: advance the suffix, never collapse.
+2. **Publish-time conflict check.** The existing synchronous revalidation region
+   (`MediaOperationCoordinator.swift:685-708`) gains one condition:
+   `planClaims ∩ ledgerClaims(D, excluding self) == ∅`. Empty → release the source's old
+   claims, register the new ones, publish `.ready`. Nonempty → the existing stale path
+   (`:704-707`): discard, `dirty.insert`, rebuild — the retry seeds from the updated ledger
+   and suffixes past the winner. Convergence: the actor serializes publish regions, every
+   retry sees strictly more seeded claims, a retry never evicts a registered claim, and
+   suffix space (10,000) bounds it.
+3. **Release points.** Supersede: in the same region that registers the new plan. Detach:
+   beside `readyPlans.removeValue` in `refreshSources` cleanup (`:504-517`). Execution end:
+   after `applyExecutionResult`, all outcomes, and *before* the post-execution rebuild is
+   scheduled (`:336-337`) so that rebuild seeds from disk truth.
+4. **C4 interaction.** The coalesced post-settlement rebuilds (Stage 2) seed against claims
+   that include the executing plan's not-yet-published names — strictly better than disk
+   alone.
+
+### Rejected variant: build-slot lock per destination
+
+Serialize builds per D and register claims at ready: correct, and no retry path — but it
+serializes the independent namespace reads decision 16 accepted (card B waits behind card
+A's slow cloud enumeration) and needs per-destination queue machinery. The conflict check is
+one set intersection and the retry reuses an existing code path.
+
+### Tests (all UI-free)
+
+- Pure planner: a second snapshot seeded with the first's claims yields disjoint
+  destinations with advanced suffixes.
+- Coordinator: two sources, one destination, colliding file names → both `.ready` with
+  disjoint final paths (drives the publish-time conflict).
+- Lifecycle: claims empty after supersede / detach / execution end; a replan after release
+  collides with nothing.
 
 ## 6. Planning several sources at once
 
@@ -192,9 +282,8 @@ Inside the bar, honest denominators only:
 |---|---|---|
 | `inventory` | No — the file count is unknown until enumeration ends | `Finding items… 412 found` (rising count, no bar) |
 | `waitingForMetadata` | Yes, but nearly always already satisfied | `Reading dates… 412 of 1,204` |
-| `planning` 5b | Yes — the folder set is computed before any read | Determinate bar over folders read |
-| `planning` 5c | Yes — bundle count is known | Folded into the same bar |
-| `executing` | Yes — items and bytes | `412 of 1,204 · 1.1 GB of 3.2 GB` + Cancel |
+| `planning` 5b/5c | Yes, but the phase is one bounded enumeration plus one linear pass — worst case ~461 ms measured (ADR 0019) | One indeterminate `Preparing…`. A determinate bar over a sub-second phase flashes, and `enumerateNamespace` has no progress callback to drive it. Revisit only if `op=plan.namespace.enumerate` proves it slow (§17 F10) |
+| `executing` | Yes — items and bytes | `412 of 1,204 · 1.1 GB of 3.2 GB` + Cancel. Bytes advance continuously during a single large copy (decision 21, §17 F9) |
 
 HIG: prefer determinate, never fake a ratio, keep it moving, avoid vague labels, consistent
 location.
@@ -233,6 +322,33 @@ it. The button then stays short.
 so there is no second implementation path. No destructive styling: per HIG, a deliberately
 chosen destructive action does not get the red treatment, and the checkbox above it is the
 deliberate choice.
+
+**Wiring the delete-only path (2026-08-09 review).** The intent is currently dead:
+`beginExecutionIfPossible` returns early when `copyCount == 0 && companionCopyCount == 0`
+(`MediaOperationCoordinator.swift:231-244`), so execution never starts and the executor's
+skip-preexisting source-deletion loop (`MediaImportExecutor.swift:308-319`) never runs.
+Stage 9 lifts that guard for delete-requested runs, including the Done state of an execution
+that publishes nothing and creates no batch (§17 F1).
+
+**The blocked-withhold rule keeps its voice (decision 19).** Card deletion and auto-eject
+stay withheld while any blocked entry remains (`MediaImportExecutor.swift:150`,
+`MediaOperationCoordinator.swift:358-362`, ARC-049) — erasing a card whose import did not
+fully complete is how photos die. Decision 3 removed the *sentence* that stated the rule,
+not the rule, so the Done state states the outcome when it fires: "12 imported · 3 left on
+the card — deletion and eject skipped until everything imports." The checkbox label never
+carries a count the rule will withhold: with blocked entries it reads "Delete items from the
+card after importing"; only when nothing is blocked does it carry "all N" (§17 F2).
+
+**No destructive default action.** The Import button keeps
+`.keyboardShortcut(.defaultAction)` (`ImportPlanFooter.swift:80`) only while it is the
+additive `Import`. The delete-only `Delete from Card` variant drops the shortcut: in the
+re-inserted-card scenario — all 212 preexisting, delete seeded on from Settings — Return
+must not become card-wipe by muscle memory (§17 F7).
+
+**Blocked is never a dead end.** When everything is blocked and `Import` is disabled, the
+transient `namespaceUnreadable` cause has no natural re-wake — no occupancy change will
+come, and the user cannot press Import. `N need attention` gets an explicit retry (rebuild
+this source now), and selecting a blocked source re-validates its plan (§17 F5).
 
 Because tiles carry no badges (§10), `N need attention` is not a link to anywhere — it is
 self-explaining. Choosing it reveals the cause in plain language, and the fix where one
@@ -328,37 +444,74 @@ keyed by source. `executing` stays a `Set`. What must change:
 - The pre-import bar belongs to the **selected source**; the progress bar belongs to the
   **selected batch**. Selecting card A during card B's import shows A's pre-import bar and no
   progress bar — B's progress is on B's batch row and in B's batch view.
+- **Cancel has an owner (decision 20).** The executor exposes `cancel()`
+  (`MediaImportExecutor.swift:63`) but `runExecution` constructs it inline and keeps no
+  reference (`MediaOperationCoordinator.swift:293`), so no UI intent can reach it today.
+  Stage 6 holds one executor per executing source so the bar's Cancel reaches it, and a
+  `.cancelled` result flows through the post-execution rebuild instead of republishing the
+  stale pre-execution summary (`:366-376`) (§17 F4).
+- **Batch rows appear at first settlement** — ARC-044 publishes nonempty batches only — so a
+  batch row cannot show progress for the first item, possibly one huge video. Until the
+  batch exists, the source row's determinate ring is that import's progress surface
+  (§17 F8).
 
 ## 13. What this deletes
 
 `ImportPlanOverlay.swift` and the `Details…` button · `ImportPlanFooter.totalsText` ·
 `ImportPlanFooter.policyText` · the 11 prose cases of `readinessText` · the
 `.waitingForDestination` user-facing state · `ImportPlanDetailReader` if nothing else consumes
-it (confirm, do not assume). Every deletion removes *display*, not capability.
+it (confirm, do not assume — `CatalogWindowViewModelMediaOperations.swift:20-34` does). Every
+deletion removes *display*, not capability.
+
+Decisions 7 and 13 together also remove the attach-time selection switch
+(`SidebarSelectionPolicy.selectionOnAttach`, `SidebarSelectionPolicy.swift:33-38`):
+launch-time selection of a connected card is kept, the attach-time hijack goes. APP-002's
+requirement row currently says attach selects and changes with this work (§17 F12, §19).
 
 ## 14. Stages
 
 - **Stage 1 — planner correctness.** Block on `.noUsableDate` only when the selected policy
-  needs a date (§2).
+  needs a date (§2); make `shouldWaitForMetadata` policy-aware and give it a resume path
+  (§17 F3).
 - **Stage 2 — churn (C4).** During any execution targeting D, suppress destination-driven
   rebuilds for all sources mapped to D and coalesce one rebuild per source after settlement.
 - **Stage 3 — instrumentation.** `op=plan.namespace.enumerate` (folders, entries, elapsed) and
   `op=plan.rebuild` (trigger), as ordinary observability and as the evidence that Stage 2
   actually stopped the rebuilds.
-- **Stage 4 — reservation ledger (C1)**, with `.skippedForeign` surfaced in the Done summary as
-  the backstop.
-- **Stage 5 — destination identity.** Device-identity-keyed persistence, the three-step default,
-  removal of `.waitingForDestination`, Destination column + Last Seen sort in Settings.
+- **Stage 4 — reservation ledger (C1)** per §5: shape, invariants I1–I5, seed, publish-time
+  conflict check, release points. The Done summary surfaces `.skippedForeign` **and** entry
+  failures as the O1 backstop — on a volume whose rename is not exclusive, a collision can
+  surface as `.failed`, not `.skippedForeign` (§17 F6). Same stage: fix
+  `VolumeRenameCapability.probe` or correct the safety-floor claim — it returns `.renameExcl`
+  whenever `getattrlist` succeeds without parsing the capability bits
+  (`ExclusivePublication.swift:32-37`).
+- **Stage 5 — destination identity.** Device-identity-keyed persistence; the three-step
+  default, defined: saved mapping for this device identity → last-used destination →
+  sole/first available fixed library; removal of `.waitingForDestination`; Destination
+  column + Last Seen sort in Settings.
 - **Stage 6 — four-state presentation.** Coordinator-owned presentation type; sidebar ring;
-  honest denominators per §8; Cancel.
-- **Stage 7 — per-source session overrides.** `sessionOptions` seeded from `ImportPreferences`,
-  discarded on detach; the two checkboxes inline with live counts in labels.
-- **Stage 8 — delete the sheet.** Remove `ImportPlanOverlay`, the `Details…` button, and the
-  totals/policy lines. No tile work: §10 adds nothing to the grid.
-- **Stage 9 — status/button matrix** (§9).
-- **Stage 10 — batch sidebar** (§11) and per-batch progress (§12).
-- **Stage 11 — enrichment/planning separation.** Planning needs no hashes (ARC-046A matches
-  size and mtime); hold removable-source content hashing until that source's plan is ready.
+  honest denominators per §8 (planning stays indeterminate until measured slow); owned Cancel
+  (§12); byte-level progress — decision 21, **implemented in this increment**:
+  `ByteProgressTracker` in `MediaImportExecutor.swift`, `ImportExecutionProgressTests`, full
+  suite green (§17 F9).
+- **Stage 7 — per-source session overrides.** `sessionOptions` seeded from
+  `ImportPreferences`, discarded on detach; the two checkboxes inline with live counts; the
+  blocked-withhold voice and the honest label per decision 19 (§9, §17 F2).
+- **Stage 8 — delete the sheet.** Remove `ImportPlanOverlay`, the `Details…` button, the
+  totals/policy lines, and the `ImportPlanDetailReader` consumption in
+  `CatalogWindowViewModelMediaOperations`. No tile work: §10 adds nothing to the grid.
+- **Stage 9 — status/button matrix** (§9), including the delete-only execution path (lift
+  the zero-copy guard in `beginExecutionIfPossible`, §17 F1), the non-destructive Return
+  rule (§17 F7), and the blocked retry affordance (§17 F5).
+- **Stage 10 — batch sidebar** (§11) and per-batch progress (§12), including the batch-row
+  timing note (§17 F8).
+- **Stage 11 — rescoped.** `.removableVolume` sources perform no full-file reads in
+  enrichment (`MediaEnricher.swift:40,53`, ENR-013); the hashing-storm evidence that
+  motivated this stage (2026-08-01) predates that exemption. Retarget to MTP device-staging
+  hashing or delete the stage once the camera path is verified (§17 F11).
+- **Stage 12 — accessibility** (§18). Each control ships with its VoiceOver, keyboard, and
+  Reduce Motion support in the stage that introduces it; this stage is the sweep that proves
+  none was forgotten.
 
 ## 15. Non-goals
 
@@ -372,4 +525,83 @@ settlement is the *source* content hash reused as overlay
 
 ## 16. Open decisions
 
-1. **Button count** — bare `Import` (recommended) or `Import 12 New Items`?
+1. **Button count** — bare `Import` (recommended) or `Import 12 New Items`? Either answer
+   keeps the §9 rule: the delete-only variant carries no default action and no count the
+   blocked-withhold rule could void.
+
+## 17. Design review findings, adopted 2026-08-09
+
+Every code claim in this plan was re-verified against source during the review; these are
+the defects the review found, each with its disposition.
+
+- **F1 — `Delete from Card` was unwired.** `beginExecutionIfPossible` returns early on a
+  zero-copy plan (`MediaOperationCoordinator.swift:231-244`), so the delete-only intent never
+  reached the executor's skip-preexisting deletion loop (`MediaImportExecutor.swift:308-319`).
+  → Stage 9.
+- **F2 — the blocked-withhold rule broke the checkbox promise silently.** Card deletion and
+  auto-eject are withheld while blocked entries remain (`MediaImportExecutor.swift:150`,
+  `MediaOperationCoordinator.swift:358-362`, ARC-049); decision 3 removed the only sentence
+  that said so while the §9 label still promised "all N". → Decision 19, Stage 7.
+- **F3 — `.waitingForMetadata` never self-resumes.** Enrichment bumps neither occupancy nor
+  plan revision (`CatalogStore.swift:1139`, `applyEnrichmentBatch` only notifies the
+  catalog), so the state exits only via Import-press, an unrelated occupancy bump, or a
+  preference change; the gate also waits on dates the selected policy may never use. Rare —
+  mtime is nearly always present — but a four-state machine whose "not ready" can hang
+  silently is a defect. → Stage 1.
+- **F4 — Cancel had no path.** `MediaImportExecutor.cancel()` exists (`:63`) but
+  `runExecution` constructs the executor inline and keeps no reference
+  (`MediaOperationCoordinator.swift:293`); `.cancelled` also republished the stale
+  pre-execution summary (`:366-376`). → Decision 20, Stage 6.
+- **F5 — blocked was a dead end.** All-blocked disables `Import`, and transient
+  `namespaceUnreadable` has no natural re-wake. → Stage 9.
+- **F6 — the safety floor mis-probes.** `VolumeRenameCapability.probe` never parses
+  `VOL_CAP_INT_RENAME_EXCL` (`ExclusivePublication.swift:32-37`); where `renamex_np` then
+  fails with an errno other than `EEXIST`, a collision surfaces as `.failed`, not
+  `.skippedForeign`. Still safe — no overwrite, source retained — but the Done summary must
+  surface failures too, and §3's "probes the bit" claim is corrected here. → Stage 4.
+- **F7 — Return flips to a destructive action.** `.keyboardShortcut(.defaultAction)`
+  (`ImportPlanFooter.swift:80`) would follow the button's relabel to `Delete from Card` in
+  the re-inserted-card scenario. → §9 rule, Stage 9.
+- **F8 — batch rows appear at first settlement.** ARC-044 publishes nonempty batches only,
+  so the first item's progress — possibly one huge video — has no batch row; the source
+  row's ring is the surface until then. → §12 note, Stage 10.
+- **F9 — byte progress was discarded.** `runPlanEntries` passed `{ _ in }` to
+  `onByteProgress` (`MediaImportExecutor.swift:271`), so the §8 byte line could freeze for
+  the duration of one large copy, against HIG's "keep progress indicators moving".
+  → Decision 21, **implemented in this increment**: `ByteProgressTracker` (lock-protected,
+  ≤10 emissions/s) in `MediaImportExecutor.swift`, verified by
+  `ImportExecutionProgressTests` and a green full suite.
+- **F10 — the determinate planning bar was superfluous.** One bounded enumeration with no
+  progress callback; worst case ~461 ms measured (ADR 0019). → §8: indeterminate until
+  measured slow.
+- **F11 — Stage 11 chased a solved problem.** `.removableVolume` enrichment performs no
+  full-file reads (ENR-013, `MediaEnricher.swift:40,53`); the 2026-08-01 hashing-storm
+  evidence predates that exemption. → Stage 11 rescoped.
+- **F12 — attach-time selection hijack goes.** Decisions 7 and 13 remove
+  `SidebarSelectionPolicy.selectionOnAttach`; APP-002's row changes with it. → §13, §19.
+- **F13 — accessibility was absent from the plan and the benchmark.** Neither read HIG
+  accessibility before this review. → Decision 22, §18.
+
+## 18. Accessibility requirements
+
+Every control this plan introduces ships with:
+
+- **VoiceOver.** Sidebar rings carry a full label — "CARD, importing, 412 of 1,204" — never
+  a bare `ProgressView`; phase changes and status-line changes announce (a state change only
+  a sighted user can see is not a state change); checkboxes announce their live labels.
+- **Keyboard.** Checkboxes, Cancel, and the retry affordance are reachable with Tab and Full
+  Keyboard Access; Import/Cancel keep Return/Esc semantics; the destructive variant carries
+  no default action (§9).
+- **Vision.** No state is encoded by ring color alone; status text meets contrast minimums;
+  composed count strings (`12 new · 3.2 GB`) are built as localizable formatted values, not
+  string interpolation, so pluralization survives translation.
+- **Motion.** Ring and bar animation respects Reduce Motion.
+
+## 19. Requirement and ADR impact
+
+Behavior changes land with same-PR updates to: ARC-017 and ARC-047 (attention counts,
+footer/presentation surface), ARC-044 (batch display cap and `All Imports…`), ARC-046/046A
+(ledger claims and exclusivity), ARC-048/049 (withhold messaging), APP-002 (selection on
+attach removed), APP-003 (Settings keeps defaults only). The ledger and concurrent-import
+decision gets its own ADR superseding the relevant part of ADR 0019: context C1 plus the
+publish-time race, decision ledger plus conflict check, rejected build-slot lock / O3 / O4.
