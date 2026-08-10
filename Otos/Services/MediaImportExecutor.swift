@@ -239,8 +239,6 @@ actor MediaImportExecutor {
         totalBytes: Int64,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> EntryTotals {
-        var completed = 0
-        var completedBytes: Int64 = 0
         var publishedCount = 0
         var failedCount = 0
         var skippedForeignCount = 0
@@ -252,13 +250,14 @@ actor MediaImportExecutor {
                 false
             }
         }
+        let byteProgress = ByteProgressTracker(totalCount: totalCount, totalBytes: totalBytes)
         await withTaskGroup(of: EntryResult.self) { group in
             var nextIndex = 0
             func submit(_ index: Int) {
                 let entry = copyEntries[index]
                 group.addTask {
                     guard !self.cancelFlag.isCancelled else {
-                        return EntryResult(outcome: .cancelled, byteSize: 0)
+                        return EntryResult(index: index, outcome: .cancelled, byteSize: 0)
                     }
                     let outcome = await self.copyEntry(
                         entry,
@@ -268,9 +267,15 @@ actor MediaImportExecutor {
                         sourceDeviceIdentity: sourceDeviceIdentity,
                         deleteSourceRequested: allowSourceDeletion,
                         workerID: index % Self.workerCount,
-                        onByteProgress: { _ in }
+                        onByteProgress: { offset in
+                            // Worker-thread callback: the tracker gates emissions so
+                            // a fast copy cannot flood the coordinator stream.
+                            if let snapshot = byteProgress.inFlightUpdate(index: index, offset: offset) {
+                                onProgress(snapshot)
+                            }
+                        }
                     )
-                    return EntryResult(outcome: outcome, byteSize: entry.source.byteSize ?? 0)
+                    return EntryResult(index: index, outcome: outcome, byteSize: entry.source.byteSize ?? 0)
                 }
             }
             while nextIndex < min(Self.workerCount, copyEntries.count) {
@@ -282,23 +287,18 @@ actor MediaImportExecutor {
                 case let .published(reuseResult):
                     publishedCount += 1
                     overlayReuse.record(reuseResult)
-                    completed += 1
-                    completedBytes += result.byteSize
+                    byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: result.byteSize)
                 case .cancelled:
                     cancelFlag.cancel()
+                    byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
                 case .skippedForeign:
                     skippedForeignCount += 1
-                    completed += 1
+                    byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 case .failed:
                     failedCount += 1
-                    completed += 1
+                    byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 }
-                onProgress(MediaOperationProgress(
-                    completedCount: completed,
-                    totalCount: totalCount,
-                    completedBytes: completedBytes,
-                    totalBytes: totalBytes
-                ))
+                onProgress(byteProgress.current())
                 if nextIndex < copyEntries.count, !cancelFlag.isCancelled {
                     submit(nextIndex)
                     nextIndex += 1
@@ -334,6 +334,7 @@ actor MediaImportExecutor {
     }
 
     private struct EntryResult: Sendable {
+        let index: Int
         let outcome: EntryOutcome
         let byteSize: Int64
     }
@@ -1334,6 +1335,70 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
         hasEntryFailures: Bool
     )
     case failed(problem: String)
+}
+
+/// Thread-safe byte-progress accumulator for copy callbacks off the executor
+/// actor. Worker threads report in-flight offsets per entry index; settled
+/// totals advance only on the actor's group loop. A time gate bounds emission
+/// frequency so a fast copy cannot flood the coordinator stream, while a single
+/// large file still keeps the visible bar moving.
+private final class ByteProgressTracker: @unchecked Sendable {
+    private nonisolated static let emitInterval: Duration = .milliseconds(100)
+
+    private let totalCount: Int
+    private let totalBytes: Int64
+    private let lock = NSLock()
+    private nonisolated(unsafe) var settledCount = 0
+    private nonisolated(unsafe) var settledBytes: Int64 = 0
+    private nonisolated(unsafe) var inFlightOffsets: [Int: Int64] = [:]
+    private nonisolated(unsafe) var lastEmit: ContinuousClock.Instant?
+
+    nonisolated init(totalCount: Int, totalBytes: Int64) {
+        self.totalCount = totalCount
+        self.totalBytes = totalBytes
+    }
+
+    /// Records an in-flight offset; returns a progress snapshot when the emit
+    /// gate is open, nil otherwise.
+    nonisolated func inFlightUpdate(index: Int, offset: Int64) -> MediaOperationProgress? {
+        lock.lock()
+        inFlightOffsets[index] = offset
+        let now = ContinuousClock().now
+        let due = lastEmit.map { now - $0 >= Self.emitInterval } ?? true
+        if due {
+            lastEmit = now
+        }
+        let snapshot = due ? currentLocked() : nil
+        lock.unlock()
+        return snapshot
+    }
+
+    /// Removes an entry's in-flight offset once its outcome is known. Resolved
+    /// items advance the completed count; only published bytes count as copied.
+    nonisolated func finish(index: Int, resolvedItem: Bool, publishedBytes: Int64) {
+        lock.lock()
+        inFlightOffsets.removeValue(forKey: index)
+        if resolvedItem {
+            settledCount += 1
+        }
+        settledBytes += publishedBytes
+        lock.unlock()
+    }
+
+    nonisolated func current() -> MediaOperationProgress {
+        lock.lock()
+        defer { lock.unlock() }
+        return currentLocked()
+    }
+
+    private nonisolated func currentLocked() -> MediaOperationProgress {
+        MediaOperationProgress(
+            completedCount: settledCount,
+            totalCount: totalCount,
+            completedBytes: settledBytes + inFlightOffsets.values.reduce(0, +),
+            totalBytes: totalBytes
+        )
+    }
 }
 
 /// Thread-safe cancel flag for copyfile callbacks off the executor actor.

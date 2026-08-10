@@ -412,3 +412,100 @@ struct VolumeRenameCapabilityTests {
         )
     }
 }
+
+struct ImportExecutionProgressTests {
+    @Test func byteProgressIsMonotonicAndReachesPlanTotals() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        var expectedBytes: Int64 = 0
+        for index in 0 ..< 12 {
+            let payload = Data(repeating: UInt8(index), count: 1024 * 1024)
+            try payload.write(to: sourceURL.appending(path: "image-\(index).jpg"))
+            expectedBytes += Int64(payload.count)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationURL)
+        let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
+        try await store.attachRemovableVolume(
+            mountURL: sourceURL,
+            identity: "volume:byte-progress",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
+        _ = try await waitForCatalogStoreState(store) { state in
+            !state.isScanning && state.removableSources.first?.activity == .idle
+        }
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: store, preferences: tempDefaults.defaults)
+        await coordinator.start()
+        defer { Task { await coordinator.shutdown() } }
+        await coordinator.setDestination(destination, for: source)
+        let plan = try await waitForReadyPlan(coordinator, source: source)
+
+        let collector = ProgressCollector()
+        let result = await MediaImportExecutor(store: store).execute(
+            plan: plan,
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:byte-progress",
+            deleteSourceRequested: false
+        ) { progress in
+            collector.record(progress)
+        }
+
+        guard case .completed = result else {
+            Issue.record("Expected completed execution, got \(result)")
+            return
+        }
+        let snapshots = collector.snapshots
+        #expect(!snapshots.isEmpty)
+        #expect(snapshots.allSatisfy { $0.totalCount == 12 && $0.totalBytes == expectedBytes })
+        var previousBytes: Int64 = 0
+        for snapshot in snapshots {
+            #expect(snapshot.completedBytes >= previousBytes)
+            #expect(snapshot.completedBytes <= expectedBytes)
+            previousBytes = snapshot.completedBytes
+        }
+        #expect(snapshots.last?.completedCount == 12)
+        #expect(snapshots.last?.completedBytes == expectedBytes)
+    }
+
+    private func waitForReadyPlan(
+        _ coordinator: MediaOperationCoordinator,
+        source: LibraryRootPath,
+        timeout: Duration = .seconds(5)
+    ) async throws -> MediaOperationPlan {
+        let deadline = ContinuousClock().now + timeout
+        while ContinuousClock().now < deadline {
+            if let plan = await coordinator.readyPlan(for: source) {
+                return plan
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        throw ReadyPlanUnavailable()
+    }
+}
+
+private struct ReadyPlanUnavailable: Error {}
+
+private final class ProgressCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [MediaOperationProgress] = []
+
+    nonisolated func record(_ progress: MediaOperationProgress) {
+        lock.lock()
+        recorded.append(progress)
+        lock.unlock()
+    }
+
+    nonisolated var snapshots: [MediaOperationProgress] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recorded
+    }
+}
