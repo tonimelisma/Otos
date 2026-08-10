@@ -334,15 +334,15 @@ extension CatalogWindowViewModel {
                 )
                 return
             }
-            guard self.focusedAssetID == id, self.viewMode == .loupe else {
+            guard focusedAssetID == id, viewMode == .loupe else {
                 loader.cleanup(state)
                 return
             }
-            self.loupeVideoState = state
+            loupeVideoState = state
             state.player.play()
             var playing = state
             playing.isPlaying = true
-            self.loupeVideoState = playing
+            loupeVideoState = playing
             OtosLog.ui.notice("op=loupe.video phase=play id=\(id.relativePath.rawValue, privacy: .public)")
         }
     }
