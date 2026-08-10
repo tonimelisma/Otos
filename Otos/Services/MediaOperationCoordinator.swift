@@ -45,6 +45,8 @@ actor MediaOperationCoordinator {
     /// Sources with an executor in flight. This single ownership fact rejects
     /// repeated clicks and plan completions while execution suspends.
     private var executing: Set<LibraryRootPath> = []
+    /// One executor per executing source so the bar's Cancel reaches it (decision 20, Stage 6).
+    private var executors: [LibraryRootPath: MediaImportExecutor] = [:]
     /// Last occupancy revision observed per root (source or destination) from the
     /// planning-change stream. A change whose occupancy revision differs from this
     /// is a real namespace change worth replanning; an unchanged one is
@@ -265,18 +267,21 @@ actor MediaOperationCoordinator {
             return
         }
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
-            presentations[source] = MediaOperationSourcePresentation(
-                sourcePath: source,
-                destinationPath: destinationBySource[source],
-                state: .ready(
-                    summary: summary,
-                    generation: generation,
-                    skippedPackageCount: skippedPackageCount
-                ),
-                attachToReadyMs: attachToReadyMs[source]
-            )
-            publish()
-            return
+            let prefs = ImportPreferencesStore.load(defaults: preferences)
+            guard prefs.deleteSourceAfterImport else {
+                presentations[source] = MediaOperationSourcePresentation(
+                    sourcePath: source,
+                    destinationPath: destinationBySource[source],
+                    state: .ready(
+                        summary: summary,
+                        generation: generation,
+                        skippedPackageCount: skippedPackageCount
+                    ),
+                    attachToReadyMs: attachToReadyMs[source]
+                )
+                publish()
+                return
+            }
         }
         await runExecution(
             source: source,
@@ -331,6 +336,7 @@ actor MediaOperationCoordinator {
             cameraImport: cameraImport,
             materializationRequester: materializationRequester
         )
+        executors[source] = executor
         let prefs = ImportPreferencesStore.load(defaults: preferences)
         presentations[source] = MediaOperationSourcePresentation(
             sourcePath: source,
@@ -369,6 +375,7 @@ actor MediaOperationCoordinator {
         )
         OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue])
         let finishedDestination = destinationBySource[source]
+        executors.removeValue(forKey: source)
         executing.remove(source)
         // I2: conversion by death — every published name is already observable
         // on disk, every unpublished name never will be. One release point per
@@ -450,18 +457,6 @@ actor MediaOperationCoordinator {
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],
-                state: .ready(
-                    summary: summary,
-                    generation: generation,
-                    skippedPackageCount: skippedPackageCount
-                ),
-                attachToReadyMs: attachToReadyMs[source]
-            )
-            publish()
-        case let .failed(problem):
-            presentations[source] = MediaOperationSourcePresentation(
-                sourcePath: source,
-                destinationPath: destinationBySource[source],
                 state: .failed(problem: problem),
                 attachToReadyMs: attachToReadyMs[source]
             )
@@ -505,6 +500,23 @@ actor MediaOperationCoordinator {
 
     func readyPlan(for source: LibraryRootPath) -> MediaOperationPlan? {
         readyPlans[source]
+    }
+
+    func cancelImport(for source: LibraryRootPath) async {
+        if let executor = executors[source] {
+            await executor.cancel()
+        }
+        OtosLog.catalog.notice(
+            "op=import.cancel phase=requested rootPath=\(source.rawValue, privacy: .public)"
+        )
+    }
+
+    func retryPlanning(for source: LibraryRootPath) async {
+        dirty.insert(source)
+        scheduleBuildIfNeeded(source)
+        OtosLog.catalog.notice(
+            "op=import.retry phase=requested rootPath=\(source.rawValue, privacy: .public)"
+        )
     }
 
     private func handlePlanningChange(_ change: RootPlanningChange) async {

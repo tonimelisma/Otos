@@ -23,6 +23,7 @@ struct ContentView: View {
                 libraries: viewModel.state.libraries,
                 importBatches: viewModel.state.importBatches,
                 removableSources: viewModel.state.removableSources,
+                importPresentations: viewModel.importPresentations,
                 sidebarSelection: viewModel.sidebarSelection,
                 ejectingSourceIdentities: viewModel.ejectingSourceIdentities,
                 selectSidebar: viewModel.selectSidebar,
@@ -41,6 +42,12 @@ struct ContentView: View {
                         },
                         queueImport: {
                             viewModel.queueImport(for: presentation.sourcePath)
+                        },
+                        cancelImport: {
+                            viewModel.cancelImport(for: presentation.sourcePath)
+                        },
+                        retryPlanning: {
+                            viewModel.retryImportPlanning(for: presentation.sourcePath)
                         }
                     )
                 }

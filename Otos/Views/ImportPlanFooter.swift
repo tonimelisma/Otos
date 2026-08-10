@@ -2,15 +2,35 @@ import SwiftUI
 
 /// Bottom import plan footer for the selected removable source.
 ///
-/// Renders coordinator presentation only: destination picker, readiness, totals
-/// (including blocked/skipped-package counts), and Import queue. Filters and
-/// grid selection never alter these totals.
+/// Renders coordinator presentation only: destination picker, status line
+/// (§9), and Import/Cancel queue. The grid is the plan view; the footer
+/// is the fixed status surface. Honest denominators only (§8).
 struct ImportPlanFooter: View {
     let presentation: MediaOperationSourcePresentation
     let fixedLibraries: [CatalogLibraryState]
     let importPreferences: ImportPreferences
     let setDestination: (LibraryRootPath) -> Void
     let queueImport: () -> Void
+    let cancelImport: () -> Void
+    let retryPlanning: (() -> Void)?
+
+    init(
+        presentation: MediaOperationSourcePresentation,
+        fixedLibraries: [CatalogLibraryState],
+        importPreferences: ImportPreferences,
+        setDestination: @escaping (LibraryRootPath) -> Void,
+        queueImport: @escaping () -> Void,
+        cancelImport: @escaping () -> Void = {},
+        retryPlanning: (() -> Void)? = nil
+    ) {
+        self.presentation = presentation
+        self.fixedLibraries = fixedLibraries
+        self.importPreferences = importPreferences
+        self.setDestination = setDestination
+        self.queueImport = queueImport
+        self.cancelImport = cancelImport
+        self.retryPlanning = retryPlanning
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -18,12 +38,19 @@ struct ImportPlanFooter: View {
                 destinationPicker
                 Spacer(minLength: 8)
                 readinessLabel
-                importButton
+                actionButtons
             }
-            if let totalsLine {
-                Text(totalsLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            if let line = statusLine {
+                HStack(spacing: 8) {
+                    Text(line)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if showsRetry {
+                        Button("Retry", action: { retryPlanning?() })
+                            .buttonStyle(.borderless)
+                            .font(.caption)
+                    }
+                }
             }
             policySummary
         }
@@ -69,10 +96,38 @@ struct ImportPlanFooter: View {
             .foregroundStyle(.tertiary)
     }
 
-    private var importButton: some View {
-        Button("Import", action: queueImport)
-            .disabled(!importEnabled)
-            .keyboardShortcut(.defaultAction)
+    @ViewBuilder
+    private var actionButtons: some View {
+        switch presentation.state {
+        case .executing:
+            Button("Cancel", action: cancelImport)
+                .keyboardShortcut(.cancelAction)
+        default:
+            Button(importButtonTitle, action: queueImport)
+                .disabled(!importEnabled)
+                .keyboardShortcut(isDeleteOnly ? nil : .defaultAction)
+        }
+    }
+
+    private var importButtonTitle: String {
+        if isDeleteOnly {
+            return "Delete from Card"
+        }
+        return "Import"
+    }
+
+    private var isDeleteOnly: Bool {
+        guard importPreferences.deleteSourceAfterImport else {
+            return false
+        }
+        switch presentation.state {
+        case let .ready(summary, _, _):
+            return summary.copyCount == 0 && summary.companionCopyCount == 0
+        case let .executionUnavailable(summary, _):
+            return summary.copyCount == 0 && summary.companionCopyCount == 0
+        default:
+            return false
+        }
     }
 
     private var importEnabled: Bool {
@@ -83,22 +138,30 @@ struct ImportPlanFooter: View {
         case .waitingForMetadata, .queuedForReadiness:
             return true
         case let .ready(summary, _, _):
-            return summary.copyCount > 0 || summary.companionCopyCount > 0
-        case .executionUnavailable:
+            if summary.copyCount > 0 || summary.companionCopyCount > 0 {
+                return true
+            }
+            return importPreferences.deleteSourceAfterImport
+        case let .executionUnavailable(summary, _):
+            if summary.copyCount > 0 || summary.companionCopyCount > 0 {
+                return true
+            }
+            return importPreferences.deleteSourceAfterImport
+        case .executing:
             return false
         default:
             return false
         }
     }
 
-    private var totalsLine: String? {
+    private var statusLine: String? {
         switch presentation.state {
-        case let .ready(summary, _, skipped):
-            return totalsText(summary: summary, skippedPackages: skipped)
+        case let .ready(summary, _, _):
+            return readyStatusLine(summary: summary)
         case let .executionUnavailable(summary, _):
-            return totalsText(summary: summary, skippedPackages: 0)
+            return readyStatusLine(summary: summary)
         case let .completed(summary, skippedForeign, failed):
-            var text = totalsText(summary: summary, skippedPackages: 0)
+            var text = completedStatusLine(summary: summary)
             if skippedForeign > 0 {
                 text += " · \(skippedForeign) skipped (destination exists)"
             }
@@ -106,49 +169,84 @@ struct ImportPlanFooter: View {
                 text += " · \(failed) failed"
             }
             return text
+        case let .executing(progress):
+            return executingStatusLine(progress: progress)
         default:
             return nil
+        }
+    }
+
+    private var showsRetry: Bool {
+        switch presentation.state {
+        case let .ready(summary, _, _):
+            return summary.blockedCount > 0
+        case let .executionUnavailable(summary, _):
+            return summary.blockedCount > 0
+        default:
+            return false
         }
     }
 
     private var readinessText: String {
         switch presentation.state {
         case .inventory:
-            "Inventory…"
+            return "Inventory…"
         case let .waitingForMetadata(done, total):
-            "Waiting for metadata (\(done)/\(total))"
+            return "Waiting for metadata (\(done)/\(total))"
         case .planning:
-            "Planning…"
+            return "Planning…"
         case .ready:
-            "Ready"
+            return "Ready"
         case .queuedForReadiness:
-            "Import queued — finishing metadata…"
+            return "Import queued — finishing metadata…"
         case let .executing(progress):
-            "Importing \(progress.completedCount)/\(progress.totalCount)"
+            let bytesDone = ByteCountFormatter.string(fromByteCount: progress.completedBytes, countStyle: .file)
+            let bytesTotal = ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file)
+            return "Importing \(progress.completedCount)/\(progress.totalCount) · \(bytesDone) of \(bytesTotal)"
         case .needsReplan:
-            "Source changed — replanning…"
+            return "Source changed — replanning…"
         case .completed:
-            "Import complete"
+            return "Import complete"
         case let .failed(problem):
-            "Failed: \(problem)"
+            return "Failed: \(problem)"
         case .executionUnavailable:
-            "Import queued (execution lands in a later update)"
+            return "Import queued (execution lands in a later update)"
         }
     }
 
-    private func totalsText(summary: MediaOperationPlanTotals, skippedPackages: Int) -> String {
+    private func readyStatusLine(summary: MediaOperationPlanTotals) -> String {
         let bytes = ByteCountFormatter.string(fromByteCount: summary.copyBytes, countStyle: .file)
-        var parts = [
-            "\(summary.copyCount) copy",
-            "\(summary.skipCount) preexisting",
-            "\(summary.companionCopyCount) companion",
-            "\(summary.blockedCount) blocked",
-            bytes,
-        ]
-        if skippedPackages > 0 {
-            parts.append("\(skippedPackages) skipped packages")
+        if summary.copyCount == 0, summary.companionCopyCount == 0, summary.blockedCount == 0 {
+            if summary.skipCount == 0 {
+                return "This card is empty"
+            }
+            return "Nothing new — all \(summary.skipCount) items are already in your library"
         }
-        return parts.joined(separator: " · ")
+        if summary.copyCount == 0, summary.blockedCount > 0 {
+            return "Nothing can be imported yet · \(summary.blockedCount) need attention"
+        }
+        var line = "\(summary.copyCount) new · \(bytes)"
+        if summary.skipCount > 0 {
+            line += " — \(summary.skipCount) already in your library"
+        }
+        if summary.blockedCount > 0 {
+            line += " · \(summary.blockedCount) need attention"
+        }
+        return line
+    }
+
+    private func completedStatusLine(summary: MediaOperationPlanTotals) -> String {
+        let bytes = ByteCountFormatter.string(fromByteCount: summary.copyBytes, countStyle: .file)
+        if summary.copyCount == 0 {
+            return "Import complete — nothing new"
+        }
+        return "\(summary.copyCount) new · \(bytes) — import complete"
+    }
+
+    private func executingStatusLine(progress: MediaOperationProgress) -> String {
+        let bytesDone = ByteCountFormatter.string(fromByteCount: progress.completedBytes, countStyle: .file)
+        let bytesTotal = ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file)
+        return "\(progress.completedCount) of \(progress.totalCount) · \(bytesDone) of \(bytesTotal)"
     }
 
     private func policyText(_ prefs: ImportPreferences) -> String {
@@ -156,7 +254,6 @@ struct ImportPlanFooter: View {
         parts.append(prefs.importSidecarFiles ? "Sidecars on" : "Sidecars off")
         parts.append(prefs.deleteSourceAfterImport ? "Delete source after import" : "Keep source files")
         parts.append(prefs.autoEjectAfterImport ? "Auto-eject on" : "Auto-eject off")
-        parts.append("Cleanup/eject withheld while blocked or skipped-package attention remains")
         return parts.joined(separator: " · ")
     }
 }

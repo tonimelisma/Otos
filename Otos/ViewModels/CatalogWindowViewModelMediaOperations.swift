@@ -93,6 +93,24 @@ extension CatalogWindowViewModel {
         }
     }
 
+    func cancelImport(for source: LibraryRootPath) {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        Task {
+            await coordinator.cancelImport(for: source)
+        }
+    }
+
+    func retryImportPlanning(for source: LibraryRootPath) {
+        guard let coordinator = mediaOperationCoordinator else {
+            return
+        }
+        Task {
+            await coordinator.retryPlanning(for: source)
+        }
+    }
+
     func setImportPreferences(_ newPreferences: ImportPreferences) {
         importPreferences = newPreferences
         ImportPreferencesStore.save(newPreferences, defaults: preferences)
