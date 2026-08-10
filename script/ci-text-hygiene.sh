@@ -128,7 +128,8 @@ check_no_stray_attoseconds() {
 check_no_unchecked_sendable() {
   local head_sha="$1"
 
-  if git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests -- '*.swift'; then
+  if git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests | grep -q '\.swift:'; then
+    git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests | grep '\.swift:'
     echo "FAIL: ARC-042 forbids @unchecked Sendable. Found above." >&2
     echo "Use Mutex (Synchronization) or an actor. See docs/plans/0072-*.md." >&2
     exit 1
