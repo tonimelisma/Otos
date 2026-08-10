@@ -22,6 +22,22 @@ extension CatalogWindowViewModel {
         return max(1024, min(Int(longEdge.rounded()), 4096))
     }
 
+    /// Single focus writer — every loupe focus change goes through here so
+    /// `focusedAssetKind` stays consistent with `focusedAssetID` and views never
+    /// guess kind (plan 0073 D1). `nil` clears kind; a non-nil ID triggers an
+    /// async detail read that updates kind only if focus has not moved.
+    func setFocus(_ id: MediaAssetID?) {
+        focusedAssetID = id
+        focusedAssetKind = nil
+        guard let id else { return }
+        let reader = tileDetailReader
+        Task { @MainActor [weak self] in
+            let details = await reader.details(for: [id])
+            guard let self, self.focusedAssetID == id else { return }
+            self.focusedAssetKind = details[id]?.bestKind
+        }
+    }
+
     func setViewMode(_ mode: BrowserViewMode) {
         switch mode {
         case .grid:
