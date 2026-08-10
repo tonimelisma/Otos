@@ -56,7 +56,7 @@ struct SidebarView: View {
 
             if !importBatches.isEmpty {
                 Section("Imports") {
-                    ForEach(importBatches, id: \.batchID) { batch in
+                    ForEach(visibleImportBatches, id: \.batchID) { batch in
                         SidebarRow(
                             systemImage: "square.and.arrow.down.on.square",
                             title: ImportBatchFormatting.sidebarTitle(
@@ -69,6 +69,14 @@ struct SidebarView: View {
                                 .monospacedDigit()
                         }
                         .tag(SidebarSelection.importBatch(batch.batchID))
+                    }
+                    if importBatches.count > 5 {
+                        SidebarRow(systemImage: "list.bullet", title: "All Imports…") {
+                            Text("\(importBatches.count)")
+                                .foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        .tag(SidebarSelection.allImports)
                     }
                 }
             }
@@ -131,6 +139,20 @@ struct SidebarView: View {
             .buttonStyle(.borderless)
             .help("Eject")
         }
+    }
+
+    private var visibleImportBatches: [ImportBatchSummary] {
+        if importBatches.count <= 5 {
+            return importBatches
+        }
+        let lastFive = Array(importBatches.prefix(5))
+        if case let .importBatch(selectedID) = sidebarSelection,
+           !lastFive.contains(where: { $0.batchID == selectedID }),
+           let selected = importBatches.first(where: { $0.batchID == selectedID })
+        {
+            return lastFive + [selected]
+        }
+        return lastFive
     }
 
     private var selectionBinding: Binding<SidebarSelection> {

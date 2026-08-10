@@ -719,7 +719,7 @@ extension CatalogWindowViewModel {
                 && !nextState.removableSources.contains { $0.path == path }
         case let .importBatch(batchID):
             !nextState.importBatches.contains { $0.batchID == batchID }
-        case .allMedia:
+        case .allMedia, .allImports:
             false
         }
     }

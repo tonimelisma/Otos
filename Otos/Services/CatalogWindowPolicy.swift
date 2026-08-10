@@ -69,6 +69,14 @@ nonisolated enum CatalogWindowPolicy {
                 libraries: libraries,
                 removableSources: removableSources
             )
+        case .allImports:
+            if importBatches.isEmpty {
+                return SidebarSelectionPolicy.defaultSelection(
+                    libraries: libraries,
+                    removableSources: removableSources
+                )
+            }
+            return .allImports
         }
     }
 
@@ -101,7 +109,7 @@ nonisolated enum CatalogWindowPolicy {
                 return false
             }
             switch sidebarSelection {
-            case .allMedia, .importBatch:
+            case .allMedia, .importBatch, .allImports:
                 // Both scopes span the fixed libraries. Batch *membership* is applied by
                 // Store.orderedAssetIDs; this pass only re-applies the root-kind rule,
                 // which also holds for IDs carried over from a reused order (ADR 0007).
@@ -120,6 +128,8 @@ nonisolated enum CatalogWindowPolicy {
             libraries.first { $0.path == path }?.displayName ?? "Library"
         case let .importBatch(batchID):
             ImportBatchFormatting.sidebarTitle(for: batchID)
+        case .allImports:
+            "All Imports"
         }
     }
 
@@ -136,7 +146,7 @@ nonisolated enum CatalogWindowPolicy {
         }
         let sidebarSelection = descriptor.scope
         switch sidebarSelection {
-        case .allMedia, .importBatch:
+        case .allMedia, .importBatch, .allImports:
             // Both span the fixed libraries, so both answer emptiness the same way: a
             // batch whose rows exist but whose libraries are offline is unreachable,
             // not absent.

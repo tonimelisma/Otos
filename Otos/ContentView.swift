@@ -31,7 +31,16 @@ struct ContentView: View {
             )
         } detail: {
             VStack(spacing: 0) {
-                detailContent
+                if viewModel.sidebarSelection == .allImports {
+                    AllImportsListView(
+                        batches: viewModel.state.importBatches,
+                        selectBatch: { batchID in
+                            viewModel.selectSidebar(.importBatch(batchID))
+                        }
+                    )
+                } else {
+                    detailContent
+                }
                 if let presentation = viewModel.selectedImportPresentation {
                     ImportPlanFooter(
                         presentation: presentation,
@@ -147,7 +156,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder
-    private var detailContent: some View {
+    var detailContent: some View {
         switch viewModel.viewMode {
         case .grid:
             MediaGridView(
@@ -219,6 +228,30 @@ struct ContentView: View {
             )
             .navigationTitle(viewModel.state.title)
         }
+    }
+}
+
+private struct AllImportsListView: View {
+    let batches: [ImportBatchSummary]
+    let selectBatch: (ImportBatchID) -> Void
+
+    var body: some View {
+        List {
+            ForEach(batches, id: \.batchID) { batch in
+                Button {
+                    selectBatch(batch.batchID)
+                } label: {
+                    HStack {
+                        Text(ImportBatchFormatting.sidebarTitle(for: batch.batchID, among: batches))
+                        Spacer()
+                        Text("\(batch.assetCount) items")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .navigationTitle("All Imports")
     }
 }
 
