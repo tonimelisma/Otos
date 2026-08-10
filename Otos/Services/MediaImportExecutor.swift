@@ -1355,7 +1355,7 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
 /// `Mutex` (not `NSLock` + `nonisolated(unsafe)`): the state is genuinely shared
 /// across worker threads, and `Mutex<State>` expresses that with a *checked*
 /// `Sendable` conformance — ARC-042 forbids `@unchecked`.
-private struct ByteProgressTracker: Sendable {
+private nonisolated final class ByteProgressTracker: Sendable {
     private struct State {
         var settledCount = 0
         var settledBytes: Int64 = 0
@@ -1375,7 +1375,7 @@ private struct ByteProgressTracker: Sendable {
         self.totalBytes = totalBytes
     }
 
-    func inFlightUpdate(index: Int, offset: Int64) -> MediaOperationProgress? {
+    nonisolated func inFlightUpdate(index: Int, offset: Int64) -> MediaOperationProgress? {
         state.withLock { state in
             state.inFlightOffsets[index] = offset
             let now = ContinuousClock().now
@@ -1394,7 +1394,7 @@ private struct ByteProgressTracker: Sendable {
     /// would walk the bar backwards by a full file. Bytes already shown stay shown —
     /// `completedCount` is the honest item count, and it is the denominator the user
     /// reads. HIG: progress indicators move forward.
-    func finish(index: Int, resolvedItem: Bool, publishedBytes: Int64) {
+    nonisolated func finish(index: Int, resolvedItem: Bool, publishedBytes: Int64) {
         state.withLock { state in
             let observed = state.inFlightOffsets.removeValue(forKey: index) ?? 0
             if resolvedItem { state.settledCount += 1 }
@@ -1403,11 +1403,11 @@ private struct ByteProgressTracker: Sendable {
         }
     }
 
-    func current() -> MediaOperationProgress {
+    nonisolated func current() -> MediaOperationProgress {
         state.withLock { snapshot($0) }
     }
 
-    private func snapshot(_ state: State) -> MediaOperationProgress {
+    private nonisolated func snapshot(_ state: State) -> MediaOperationProgress {
         MediaOperationProgress(
             completedCount: state.settledCount,
             totalCount: totalCount,
@@ -1421,10 +1421,10 @@ private struct ByteProgressTracker: Sendable {
 }
 
 /// Thread-safe cancel flag for copyfile callbacks off the executor actor.
-private struct CancelFlag: Sendable {
+private nonisolated final class CancelFlag: Sendable {
     private let flag = Mutex(false)
-    func reset() { flag.withLock { $0 = false } }
-    func cancel() { flag.withLock { $0 = true } }
-    var isCancelled: Bool { flag.withLock { $0 } }
+    nonisolated func reset() { flag.withLock { $0 = false } }
+    nonisolated func cancel() { flag.withLock { $0 = true } }
+    nonisolated var isCancelled: Bool { flag.withLock { $0 } }
 }
 

@@ -122,7 +122,9 @@ final class CatalogWindowViewModel {
     /// `UserDefaults` seam, also import preferences (`importPreferences`,
     /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
     /// production `UserDefaults.standard` domain by omitting it (plan 0066 Stage 2).
-    @ObservationIgnored let preferences: UserDefaults
+    // UserDefaults is documented thread-safe; shared across ViewModel (MainActor) and
+    // MediaOperationCoordinator/LibraryReorganizationRunner (actor) without isolation hop.
+    @ObservationIgnored nonisolated(unsafe) let preferences: UserDefaults
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>

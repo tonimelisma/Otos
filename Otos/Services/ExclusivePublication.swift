@@ -43,8 +43,8 @@ nonisolated enum VolumeRenameCapability {
         let caps: vol_capabilities_attr_t = buffer.withUnsafeBytes { raw in
             raw.load(fromByteOffset: MemoryLayout<UInt32>.size, as: vol_capabilities_attr_t.self)
         }
-        let valid = caps.valid[Int(VOL_CAPABILITIES_INTERFACES)]
-        let capabilities = caps.capabilities[Int(VOL_CAPABILITIES_INTERFACES)]
+        let valid = caps.valid.1
+        let capabilities = caps.capabilities.1
         let renameExclBit = UInt32(VOL_CAP_INT_RENAME_EXCL)
         if (valid & renameExclBit) != 0, (capabilities & renameExclBit) != 0 {
             return .renameExcl

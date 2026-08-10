@@ -700,7 +700,7 @@ actor MediaOperationCoordinator {
                 "generation": "\(generation)",
             ]
         )
-        if destination == nil {
+        guard let destination else {
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: nil,

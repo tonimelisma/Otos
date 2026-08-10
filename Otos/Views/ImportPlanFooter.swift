@@ -11,7 +11,6 @@ struct ImportPlanFooter: View {
     let importPreferences: ImportPreferences
     let setDestination: (LibraryRootPath) -> Void
     let queueImport: () -> Void
-    let showPlanDetails: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -19,10 +18,6 @@ struct ImportPlanFooter: View {
                 destinationPicker
                 Spacer(minLength: 8)
                 readinessLabel
-                if canShowDetails {
-                    Button("Details…", action: showPlanDetails)
-                        .buttonStyle(.borderless)
-                }
                 importButton
             }
             if let totalsLine {
@@ -80,15 +75,6 @@ struct ImportPlanFooter: View {
             .keyboardShortcut(.defaultAction)
     }
 
-    private var canShowDetails: Bool {
-        switch presentation.state {
-        case .ready, .executionUnavailable, .completed:
-            true
-        default:
-            false
-        }
-    }
-
     private var importEnabled: Bool {
         guard presentation.destinationPath != nil else {
             return false
@@ -108,9 +94,9 @@ struct ImportPlanFooter: View {
     private var totalsLine: String? {
         switch presentation.state {
         case let .ready(summary, _, skipped):
-            totalsText(summary: summary, skippedPackages: skipped)
+            return totalsText(summary: summary, skippedPackages: skipped)
         case let .executionUnavailable(summary, _):
-            totalsText(summary: summary, skippedPackages: 0)
+            return totalsText(summary: summary, skippedPackages: 0)
         case let .completed(summary, skippedForeign, failed):
             var text = totalsText(summary: summary, skippedPackages: 0)
             if skippedForeign > 0 {
@@ -121,7 +107,7 @@ struct ImportPlanFooter: View {
             }
             return text
         default:
-            nil
+            return nil
         }
     }
 
