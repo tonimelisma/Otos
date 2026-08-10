@@ -47,6 +47,7 @@ struct MediaOperationCoordinatorTests {
         let batches = try await store.importBatches()
         #expect(batches.count == 1)
         #expect(batches.first?.assetCount == 12)
+        await coordinator.shutdown()
     }
 
     /// Plan 0064 Stage 4: the coordinator must discover an attached source purely via
@@ -191,9 +192,6 @@ struct MediaOperationCoordinatorTests {
             preferences: tempDefaults.defaults
         )
         await coordinator.start()
-        defer {
-            Task { await coordinator.shutdown() }
-        }
         await coordinator.setDestination(fixedPath, for: cardPath)
 
         // The real bug's destination changes occupancy while scanning, which primes
@@ -215,6 +213,7 @@ struct MediaOperationCoordinatorTests {
         )
         guard case let .ready(_, churnGeneration, _) = afterChurn.state else {
             Issue.record("Expected .ready after planRevision churn, got \(afterChurn.state)")
+            await coordinator.shutdown()
             return
         }
         #expect(churnGeneration == baseline)
@@ -227,6 +226,7 @@ struct MediaOperationCoordinatorTests {
             greaterThan: baseline
         )
         #expect(replanned > baseline)
+        await coordinator.shutdown()
     }
 
     /// Wait for the source to reach `.ready` (optionally with a generation past

@@ -149,10 +149,12 @@ actor MediaOperationCoordinator {
         )
     }
 
-    func shutdown() {
+    func shutdown() async {
         consumerTask?.cancel()
+        _ = await consumerTask?.value
         consumerTask = nil
         catalogChangeTask?.cancel()
+        _ = await catalogChangeTask?.value
         catalogChangeTask = nil
         for task in buildTasks.values {
             task.cancel()
