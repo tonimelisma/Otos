@@ -33,8 +33,8 @@ extension CatalogWindowViewModel {
         let reader = tileDetailReader
         Task { @MainActor [weak self] in
             let details = await reader.details(for: [id])
-            guard let self, self.focusedAssetID == id else { return }
-            self.focusedAssetKind = details[id]?.bestKind
+            guard let self, focusedAssetID == id else { return }
+            focusedAssetKind = details[id]?.bestKind
         }
     }
 

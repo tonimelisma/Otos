@@ -4,7 +4,7 @@ import Synchronization
 import Testing
 
 struct MediaEnricherTests {
-    private final class SequencedReadinessChecker: EnrichmentReadinessChecking, @unchecked Sendable {
+    private final class SequencedReadinessChecker: EnrichmentReadinessChecking, Sendable {
         private let statuses: Mutex<[FileMaterializationStatus]>
         private let calls = Mutex(0)
 

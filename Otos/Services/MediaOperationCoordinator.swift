@@ -411,9 +411,10 @@ actor MediaOperationCoordinator {
                 {
                     if !building.contains(otherSource), !executing.contains(otherSource) {
                         scheduleBuildIfNeeded(otherSource)
-                        // swiftlint:disable:next line_length
+                        let src = otherSource.rawValue
+                        let dst = dest.rawValue
                         OtosLog.catalog.notice(
-                            "op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)"
+                            "op=import.coordinator phase=flushRebuild source=\(src, privacy: .public) destination=\(dst, privacy: .public)"
                         )
                     }
                 }
@@ -568,9 +569,10 @@ actor MediaOperationCoordinator {
             for (source, destination) in destinationBySource where destination == change.rootPath {
                 dirty.insert(source)
                 if isDestinationUnderExecution {
-                    // swiftlint:disable:next line_length
+                    let src = source.rawValue
+                    let dst = destination.rawValue
                     OtosLog.catalog.notice(
-                        "op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)"
+                        "op=import.coordinator phase=suppressRebuild source=\(src, privacy: .public) destination=\(dst, privacy: .public)"
                     )
                     continue
                 }

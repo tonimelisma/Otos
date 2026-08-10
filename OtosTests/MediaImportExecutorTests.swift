@@ -1,5 +1,6 @@
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 struct ExclusivePublicationTests {
@@ -52,23 +53,13 @@ struct CopyfileTransferTests {
         let destination = temp.appending(path: "dest.bin")
         try Data(repeating: 0xCD, count: 2 * 1024 * 1024).write(to: source)
 
-        final class Counter: @unchecked Sendable {
-            private let lock = NSLock()
-            private var value = 0
-            func increment() -> Int {
-                lock.lock()
-                defer { lock.unlock() }
-                value += 1
-                return value
-            }
-        }
-        let counter = Counter()
+        let counter = TestCounter()
         let outcome = CopyfileTransfer.copy(
             from: source,
             to: destination,
             onProgress: { _ in },
             shouldContinue: {
-                counter.increment() < 2
+                counter.incrementAndGet() < 2
             }
         )
         #expect(outcome == .cancelled || outcome == .completed)
@@ -494,19 +485,14 @@ struct ImportExecutionProgressTests {
 
 private struct ReadyPlanUnavailable: Error {}
 
-private final class ProgressCollector: @unchecked Sendable {
-    private let lock = NSLock()
-    private var recorded: [MediaOperationProgress] = []
+private final class ProgressCollector: Sendable {
+    private let recorder = TestRecorder<MediaOperationProgress>()
 
     nonisolated func record(_ progress: MediaOperationProgress) {
-        lock.lock()
-        recorded.append(progress)
-        lock.unlock()
+        recorder.record(progress)
     }
 
     nonisolated var snapshots: [MediaOperationProgress] {
-        lock.lock()
-        defer { lock.unlock() }
-        return recorded
+        recorder.values
     }
 }

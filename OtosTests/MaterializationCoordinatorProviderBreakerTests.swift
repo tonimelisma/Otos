@@ -149,27 +149,21 @@ struct MaterializationCoordinatorProviderBreakerTests {
         await coordinator.shutdown()
     }
 
-    private final class AtomicCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var _value = 0
+    private final class AtomicCounter: Sendable {
+        private let storage = Mutex(0)
         var value: Int {
-            lock.lock()
-            defer { lock.unlock() }
-            return _value
+            storage.withLock { $0 }
         }
 
         func increment() {
-            lock.lock()
-            defer { lock.unlock() }
-            _value += 1
+            storage.withLock { $0 += 1 }
         }
 
         @discardableResult
         func incrementAndGet() -> Int {
-            lock.lock()
-            defer { lock.unlock() }
-            _value += 1
-            return _value
+            storage.withLock { $0 += 1
+                return $0
+            }
         }
     }
 }

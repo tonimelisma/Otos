@@ -1,5 +1,6 @@
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 struct ReorganizationRecoveryObservationTests {
@@ -331,34 +332,25 @@ struct ReorganizationExecutorMoveTests {
 
         let now = Date()
         let key = ReorganizationComponentKey.make()
-        final class Counter: @unchecked Sendable {
-            private let lock = NSLock()
-            private var willMove = 0
-            private var didMove = 0
-            private var complete = 0
+        final class Counter: Sendable {
+            private let willMoveStorage = Mutex(0)
+            private let didMoveStorage = Mutex(0)
+            private let completeStorage = Mutex(0)
 
             func bumpWillMove() {
-                lock.lock()
-                defer { lock.unlock() }
-                willMove += 1
+                willMoveStorage.withLock { $0 += 1 }
             }
 
             func bumpDidMove() {
-                lock.lock()
-                defer { lock.unlock() }
-                didMove += 1
+                didMoveStorage.withLock { $0 += 1 }
             }
 
             func bumpComplete() {
-                lock.lock()
-                defer { lock.unlock() }
-                complete += 1
+                completeStorage.withLock { $0 += 1 }
             }
 
             var counts: (Int, Int, Int) {
-                lock.lock()
-                defer { lock.unlock() }
-                return (willMove, didMove, complete)
+                (willMoveStorage.withLock { $0 }, didMoveStorage.withLock { $0 }, completeStorage.withLock { $0 })
             }
         }
         let counter = Counter()

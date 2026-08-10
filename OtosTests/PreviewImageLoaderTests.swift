@@ -162,9 +162,8 @@ struct PreviewImageLoaderTests {
     }
 }
 
-private final class PreviewMaterializationRecorder: MaterializationRequesting, @unchecked Sendable {
-    private let lock = NSLock()
-    private var request: MaterializationCoordinator.Request?
+private final class PreviewMaterializationRecorder: MaterializationRequesting, Sendable {
+    private let requestStorage = Mutex<MaterializationCoordinator.Request?>(nil)
     private let result: @Sendable () async -> MaterializationResult
 
     init(result: @escaping @Sendable () async -> MaterializationResult) {
@@ -172,7 +171,7 @@ private final class PreviewMaterializationRecorder: MaterializationRequesting, @
     }
 
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
-        lock.withLock { self.request = request }
+        requestStorage.withLock { $0 = request }
         return await result()
     }
 
@@ -182,7 +181,7 @@ private final class PreviewMaterializationRecorder: MaterializationRequesting, @
     }
 
     func lastRequest() -> MaterializationCoordinator.Request? {
-        lock.withLock { request }
+        requestStorage.withLock { $0 }
     }
 }
 

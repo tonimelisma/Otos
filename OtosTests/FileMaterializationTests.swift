@@ -1,5 +1,6 @@
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 /// These tests cover the two states reproducible without a cloud provider: a local
@@ -120,14 +121,12 @@ struct FileMaterializationTests {
         #expect(result.outcome == .timedOut)
     }
 
-    private final class AtomicCounter: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value = 0
+    private final class AtomicCounter: Sendable {
+        private let storage = Mutex(0)
         func next() -> Int {
-            lock.lock()
-            defer { lock.unlock() }
-            value += 1
-            return value
+            storage.withLock { $0 += 1
+                return $0
+            }
         }
     }
 }

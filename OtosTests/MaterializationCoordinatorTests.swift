@@ -1,5 +1,6 @@
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 struct MaterializationCoordinatorTests {
@@ -359,19 +360,18 @@ private actor ControlledMaterializationExecutor {
     }
 }
 
-private final class AdmissionDiagnosticRecorder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var values: [MaterializationCoordinator.AdmissionSnapshot?] = []
+private final class AdmissionDiagnosticRecorder: Sendable {
+    private let storage = Mutex<[MaterializationCoordinator.AdmissionSnapshot?]>([])
 
     func record(_ value: MaterializationCoordinator.AdmissionSnapshot?) {
-        lock.withLock { values.append(value) }
+        storage.withLock { $0.append(value) }
     }
 
     func blockedCount() -> Int {
-        lock.withLock { values.compactMap(\.self).count }
+        storage.withLock { $0.compactMap(\.self).count }
     }
 
     func unblockedCount() -> Int {
-        lock.withLock { values.count(where: { $0 == nil }) }
+        storage.withLock { $0.count(where: { $0 == nil }) }
     }
 }

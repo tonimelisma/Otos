@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 @testable import Otos
+import Synchronization
 import Testing
 
 @MainActor
@@ -46,34 +47,18 @@ struct VideoPreviewLoaderTests {
     }
 
     @Test func playMaterializesWhenDataless() async {
-        final class Counter: @unchecked Sendable {
-            private let lock = NSLock()
-            private var value = 0
-            func increment() {
-                lock.lock()
-                defer { lock.unlock() }
-                value += 1
-            }
-
-            var count: Int {
-                lock.lock()
-                defer { lock.unlock() }
-                return value
-            }
-        }
-        let counter = Counter()
+        let counter = TestCounter()
         let requester = ClosureMaterializationRequester { _ in
             counter.increment()
             return MaterializationResult(outcome: .materialized, rerequestCount: 0, elapsedMs: 10)
         }
-        final class CheckSeq: @unchecked Sendable {
-            private let lock = NSLock()
-            private var sequenceCount = 0
+        final class CheckSeq: Sendable {
+            private let storage = Mutex(0)
             func next() -> FileMaterializationStatus {
-                lock.lock()
-                defer { lock.unlock() }
-                sequenceCount += 1
-                return sequenceCount == 1 ? .dataless : .materialized
+                let count = storage.withLock { $0 += 1
+                    return $0
+                }
+                return count == 1 ? .dataless : .materialized
             }
         }
         let seq = CheckSeq()
@@ -84,7 +69,7 @@ struct VideoPreviewLoaderTests {
         let videoDetail = detail(kind: .video)
         let state = await loader.play(id: id("b.mp4"), detail: videoDetail)
         #expect(state != nil)
-        #expect(counter.count == 1)
+        #expect(counter.value == 1)
     }
 
     @Test func playReturnsNilOnProviderUnavailable() async {
