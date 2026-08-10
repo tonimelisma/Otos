@@ -35,6 +35,12 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0013](adr/0013-removable-and-device-sources.md) | Removable volume and MTP camera source identity, metadata, All Media exclusion, detach/forget, device staging. |
 | [0014](adr/0014-sidebar-selection-and-source-lifecycle.md) | Sidebar default/attach selection, All-Media visibility, and honest unmount-driven eject. |
 | [0015](adr/0015-observability.md) | Unified logging + Instruments-only signposts; rejects JSONL/event/counter sinks. |
+| [0016](adr/0016-view-modes-and-preview-decode.md) | Grid/loupe/compare view modes and full-size preview decode ownership. |
+| [0017](adr/0017-media-operation-ownership.md) | Media operation ownership: coordinator, executor, and Store journal split. |
+| [0018](adr/0018-xxh3-content-hash-overlay.md) | XXH3-128 content hash overlay, gated on byte locality. |
+| [0019](adr/0019-import-plan-namespace-and-build-ownership.md) | Import plan namespace resolution by folder enumeration; off-actor build ownership. |
+| [0020](adr/0020-production-data-locations-and-the-developer-smoke-seam.md) | Production data locations and the developer smoke-run seam. |
+| [0021](adr/0021-concurrent-import-planning-and-destination-reservations.md) | Concurrent import planning, the cross-plan destination reservation ledger, and execution-scoped rebuild suppression. |
 
 ## Research
 
