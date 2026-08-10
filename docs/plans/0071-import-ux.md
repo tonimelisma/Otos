@@ -26,6 +26,9 @@ and the architecture that concurrent multi-source import requires.
 13. **Launch-time selection of a connected card is kept.**
 14. **Session overrides discard on detach.**
 15. **The sidebar shows the last five import batches plus an expansion affordance.**
+16. **Each source reads the destination namespace independently.** No shared or deduplicated
+    read — the operation is directory entries plus `lstat` over a bounded folder set with no
+    byte reads, and duplicating it across a few attached cards does not justify the machinery.
 
 ## 2. What "blocked" means
 
@@ -131,33 +134,30 @@ pure, accepts only immutable `Sendable` values, and performs no I/O in `planImpo
 What they actually share is two things:
 
 - **The name space of D** → solved by the ledger (§5).
-- **The namespace *read* of D** → N cards planning into D each call `enumerateNamespace`
-  over overlapping folder sets. The clean fix is not a cache: it is **deduplicating identical
-  work at a known-identical revision**. One namespace read per `(destination,
-  destinationOccupancyRevision)`, shared by every plan built at that revision, discarded when
-  the revision changes. The invalidation key already exists and is already the planner's
-  input.
+- **The namespace *read* of D** → N cards planning into D each call `enumerateNamespace` over
+  overlapping folder sets. **Owner decision: leave N independent reads.** The read is
+  directory entries plus `lstat` over a small, bounded folder set with no byte reads, so
+  duplicating it across a handful of attached cards is not worth the machinery. This is the
+  measure-before-optimizing rule applied in its cheaper direction: do not build the
+  deduplication until something proves the simple path insufficient.
 
 Combined with the C4 fix — during any execution targeting D, suppress destination-driven
 rebuilds for all sources mapped to D and coalesce them into one rebuild per source after
-settlement — the concurrent case becomes: N pure plans, one shared read, one ledger.
+settlement — the concurrent case becomes: N pure plans, N independent reads, one ledger.
 
 ### Do we need a POC?
 
-Split the question honestly:
+No. The remaining work is correctness work, and it is unit-testable against the existing pure
+planner: a test that builds two snapshots for the same destination and asserts disjoint claims
+is a better artifact than a prototype. With the shared read declined, there is no longer an
+open empirical question gating a design choice, so no benchmark is a prerequisite either.
 
-- **Correctness — no POC.** The ledger and the shared-read dedup are unit-testable against
-  the existing pure planner. A test that builds two snapshots for the same destination and
-  asserts disjoint claims is a better artifact than a POC.
-- **Cost — yes, a measurement, not a POC.** The open empirical question is what
-  `enumerateNamespace` costs on a real cloud-synced library (the 25k-asset OneDrive root in
-  `docs/research/2026-08-01-…`) and how often C4 currently fires per import. That determines
-  whether the shared read is worth building at all, per CLAUDE.md's measure-before-optimizing
-  rule. Instrument first: `op=plan.namespace.enumerate` with folder count, entry count, and
-  elapsed; `op=plan.rebuild` with its trigger. Then decide.
+Instrumentation still lands — `op=plan.namespace.enumerate` (folder count, entry count,
+elapsed) and `op=plan.rebuild` (trigger) — but as ordinary observability under CLAUDE.md's
+"every meaningful path is observable before it is done", and as the evidence that the C4 fix
+actually stopped the rebuilds. It is no longer a decision input.
 
-**Recommended order:** C4 fix (pure win, no new structure) → instrument → ledger → decide on
-the shared read from the numbers.
+**Recommended order:** C4 fix (pure win, no new structure) → instrument → ledger.
 
 ## 7. `waitingForMetadata` is source-side only
 
@@ -303,7 +303,8 @@ it (confirm, do not assume). Every deletion removes *display*, not capability.
 - **Stage 2 — churn (C4).** During any execution targeting D, suppress destination-driven
   rebuilds for all sources mapped to D and coalesce one rebuild per source after settlement.
 - **Stage 3 — instrumentation.** `op=plan.namespace.enumerate` (folders, entries, elapsed) and
-  `op=plan.rebuild` (trigger). This is the evidence base for §6's cost question.
+  `op=plan.rebuild` (trigger), as ordinary observability and as the evidence that Stage 2
+  actually stopped the rebuilds.
 - **Stage 4 — reservation ledger (C1)**, with `.skippedForeign` surfaced in the Done summary as
   the backstop.
 - **Stage 5 — destination identity.** Device-identity-keyed persistence, the three-step default,
@@ -315,8 +316,7 @@ it (confirm, do not assume). Every deletion removes *display*, not capability.
 - **Stage 8 — grid badges, delete the sheet** (§10).
 - **Stage 9 — status/button matrix** (§9).
 - **Stage 10 — batch sidebar** (§11) and per-batch progress (§12).
-- **Stage 11 — shared namespace read**, only if Stage 3's numbers justify it.
-- **Stage 12 — enrichment/planning separation.** Planning needs no hashes (ARC-046A matches
+- **Stage 11 — enrichment/planning separation.** Planning needs no hashes (ARC-046A matches
   size and mtime); hold removable-source content hashing until that source's plan is ready.
 
 ## 15. Non-goals
@@ -334,4 +334,3 @@ settlement is the *source* content hash reused as overlay
 1. **Button count** — bare `Import` (recommended) or `Import 12 New Items`?
 2. **Badge composition** — can the AppKit tile compose a badge without touching the thumbnail
    paint path? Blocks Stage 8 if not.
-3. **Shared namespace read** — build it, or leave N independent reads? Decide from Stage 3.
