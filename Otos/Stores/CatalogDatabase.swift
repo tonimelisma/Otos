@@ -9,6 +9,10 @@ import OSLog
 /// writes; the former `CatalogStore` actor added only a queue in front of it — §2).
 /// Vend a `nonisolated` `CatalogReader` handle so components that only need SQLite plus an
 /// immutable roots snapshot stay off any actor (decision 1, §3).
+///
+/// Task ownership: `database()` is called once per `CatalogStore` via `loadIfNeeded` and
+/// `ensureStartedForMutation` (`CatalogStore.swift:1050`); no long-lived stream is held.
+/// Cancellation is via `Task.sleep` in `CatalogStore` callers, not here.
 actor CatalogDatabase {
     private var dbWriter: (any DatabaseWriter)?
     private let location: CatalogStore.Location
@@ -141,27 +145,27 @@ nonisolated struct CatalogReader: Sendable {
 
     func read<V: Sendable>(_ body: @Sendable @escaping (Database) throws -> V) async throws -> CatalogDatabase.DatabaseTimedValue<V> {
         let start = Date()
-        let result = try await writer.read { db in
+        return try await writer.read { db in
             let entered = Date()
             let value = try body(db)
-            return (value, entered)
+            return CatalogDatabase.DatabaseTimedValue(
+                value: value,
+                waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
-        let entered = result.1
-        let elapsedWait = DiagnosticsTiming.milliseconds(from: start, to: entered)
-        let elapsedExec = DiagnosticsTiming.milliseconds(since: entered)
-        return CatalogDatabase.DatabaseTimedValue(value: result.0, waitMs: elapsedWait, execMs: elapsedExec)
     }
 
     func write<V: Sendable>(_ body: @Sendable @escaping (Database) throws -> V) async throws -> CatalogDatabase.DatabaseTimedValue<V> {
         let start = Date()
-        let result = try await writer.write { db in
+        return try await writer.write { db in
             let entered = Date()
             let value = try body(db)
-            return (value, entered)
+            return CatalogDatabase.DatabaseTimedValue(
+                value: value,
+                waitMs: DiagnosticsTiming.milliseconds(from: start, to: entered),
+                execMs: DiagnosticsTiming.milliseconds(since: entered)
+            )
         }
-        let entered = result.1
-        let elapsedWait = DiagnosticsTiming.milliseconds(from: start, to: entered)
-        let elapsedExec = DiagnosticsTiming.milliseconds(since: entered)
-        return CatalogDatabase.DatabaseTimedValue(value: result.0, waitMs: elapsedWait, execMs: elapsedExec)
     }
 }
