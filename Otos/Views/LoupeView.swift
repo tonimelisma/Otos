@@ -10,6 +10,7 @@ import SwiftUI
 struct LoupeView: View {
     let grid: CatalogMediaGridState
     let focusedAssetID: MediaAssetID?
+    let focusedAssetKind: MediaKind?
     let panePreview: PanePreview?
     let loupeVideoState: LoupeVideoState?
     let isDownloading: Bool
@@ -73,7 +74,7 @@ struct LoupeView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture {
-                    guard let focusedAssetID else {
+                    guard let focusedAssetID, focusedAssetKind == .video else {
                         return
                     }
                     onPlayVideo(focusedAssetID)
@@ -95,15 +96,12 @@ struct LoupeView: View {
     }
 
     private func shouldShowPlayAffordance(for id: MediaAssetID) -> Bool {
-        // Only for video assets; loupeVideoState presence means video is active.
-        if loupeVideoState != nil {
-            return false
-        }
-        // Check bestKind via grid is not available here — caller ensures loupe
-        // focus is the tapped asset; ViewModel gates actual playback on
-        // bestKind == .video via detailReader, so affordance is optimistic.
-        // A non-video click will simply not start playback (nil return).
-        return id == focusedAssetID
+        PanePresentation.shouldShowPlayAffordance(
+            kind: focusedAssetKind,
+            hasActiveVideo: loupeVideoState != nil,
+            paneID: id,
+            focusedID: focusedAssetID
+        )
     }
 
     private var filmstrip: some View {

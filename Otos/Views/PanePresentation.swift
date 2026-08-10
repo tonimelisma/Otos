@@ -37,6 +37,23 @@ nonisolated enum PanePresentation {
         }
         return .thumbnail(paneID)
     }
+
+    /// Pure play-affordance decision — extracted for testability so a view-private
+    /// method does not hide the logic that once drew a play button on still photos
+    /// (plan 0073 D1). `nil` kind renders no affordance (MED-002).
+    /// `hasActiveVideo` is `loupeVideoState != nil` lifted to a Sendable Bool so this
+    /// pure function can remain `nonisolated` despite `LoupeVideoState` being
+    /// `@MainActor` (AVPlayer).
+    nonisolated static func shouldShowPlayAffordance(
+        kind: MediaKind?,
+        hasActiveVideo: Bool,
+        paneID: MediaAssetID,
+        focusedID: MediaAssetID?
+    ) -> Bool {
+        guard !hasActiveVideo else { return false }
+        guard paneID == focusedID else { return false }
+        return kind == .video
+    }
 }
 
 /// Shared enrichment-thumbnail fallback for loupe and compare panes.

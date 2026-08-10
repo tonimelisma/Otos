@@ -193,6 +193,7 @@ struct ContentView: View {
             LoupeView(
                 grid: viewModel.state.mediaGrid,
                 focusedAssetID: viewModel.focusedAssetID,
+                focusedAssetKind: viewModel.focusedAssetKind,
                 panePreview: viewModel.panePreviews[.loupe],
                 loupeVideoState: viewModel.loupeVideoState,
                 isDownloading: viewModel.downloadingSlots.contains(.loupe),
