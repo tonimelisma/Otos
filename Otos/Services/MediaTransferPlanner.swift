@@ -23,14 +23,25 @@ nonisolated enum MediaTransferPlanner {
     static func destinationFolders(for snapshot: ImportPlanningSnapshot) -> Set<String> {
         var folders: Set<String> = []
         for bundle in namingBundles(from: snapshot.sourceMedia, policy: snapshot.policy) {
-            guard !bundle.members.contains(where: { !$0.hasUsableDate }) else {
-                // Undatable bundles are blocked without a destination name.
+            guard !needsDate(policy: snapshot.policy)
+                || !bundle.members.contains(where: { !$0.hasUsableDate })
+            else {
+                // Undatable bundles are blocked without a destination name,
+                // but only when the selected policy actually needs a date.
                 continue
             }
             let timestamp = namingTimestamp(for: bundle, snapshot: snapshot)
             folders.insert(folderPath(timestamp: timestamp, policy: snapshot.policy))
         }
         return folders
+    }
+
+    /// Whether the current import policy requires a usable date to name a
+    /// destination. Under `.none`/`.original` the timestamp is never consulted,
+    /// so an undatable bundle must not be blocked.
+    static func needsDate(policy: ImportPolicy) -> Bool {
+        policy.destinationFolderPolicy == .yearMonth
+            || policy.destinationNamePolicy == .captureDateTime
     }
 
     /// Single pure pass over the source bundles against an already-read destination
@@ -178,7 +189,8 @@ private nonisolated extension MediaTransferPlanner {
         reserved: inout Set<MediaRelativePath>,
         namespace: DestinationNamespace
     ) -> [MediaOperationPlanEntry] {
-        if bundle.members.contains(where: { !$0.hasUsableDate }) {
+        if needsDate(policy: snapshot.policy),
+           bundle.members.contains(where: { !$0.hasUsableDate }) {
             return bundle.members.map { member in
                 MediaOperationPlanEntry(
                     source: member,

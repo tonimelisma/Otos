@@ -57,6 +57,7 @@ actor MediaOperationCoordinator {
     /// build instead of publishing into a presentation that no longer exists.
     private var buildTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var consumerTask: Task<Void, Never>?
+    private var catalogChangeTask: Task<Void, Never>?
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
 
@@ -109,6 +110,15 @@ actor MediaOperationCoordinator {
                 await handlePlanningChange(change)
             }
         }
+        let catalogChanges = await store.changeNotifications()
+        catalogChangeTask = Task { [weak self] in
+            for await _ in catalogChanges {
+                guard let self else {
+                    return
+                }
+                await handleCatalogChangeForMetadataGate()
+            }
+        }
         // Subscription liveness marker (plan 0064 Stage 4): a capture showing
         // `phase=subscribed` plus zero later `phase=receive` lines proves the app was
         // idle (nothing to emit), not that the coordinator stopped listening.
@@ -121,6 +131,8 @@ actor MediaOperationCoordinator {
     func shutdown() {
         consumerTask?.cancel()
         consumerTask = nil
+        catalogChangeTask?.cancel()
+        catalogChangeTask = nil
         for task in buildTasks.values {
             task.cancel()
         }
@@ -458,6 +470,32 @@ actor MediaOperationCoordinator {
         await refreshSources(reason: "planningChange")
     }
 
+    /// Resume path for `waitingForMetadata` (Stage 1 / F3). Enrichment updates
+    /// capture dates without bumping occupancy, so the occupancy-driven
+    /// `handlePlanningChange` never wakes a waiting source. Any catalog change
+    /// that may have supplied dates re-dirties waiting sources so they rebuild
+    /// and either progress to `.planning` or remain waiting with updated counts.
+    private func handleCatalogChangeForMetadataGate() async {
+        var waitingSources: [LibraryRootPath] = []
+        for (source, presentation) in presentations {
+            if case .waitingForMetadata = presentation.state {
+                waitingSources.append(source)
+            }
+        }
+        guard !waitingSources.isEmpty else {
+            return
+        }
+        for source in waitingSources {
+            dirty.insert(source)
+            if !building.contains(source), !executing.contains(source) {
+                scheduleBuildIfNeeded(source)
+            }
+        }
+        OtosLog.catalog.notice(
+            "op=import.coordinator phase=catalogChangeWake waitingCount=\(waitingSources.count, privacy: .public)"
+        )
+    }
+
     private func refreshSources(reason: String) async {
         let libraries = await store.currentLibraries()
         let fixedAvailable = libraries.filter { $0.root.kind == .library && $0.availability == .available }
@@ -748,10 +786,12 @@ actor MediaOperationCoordinator {
         let enriched = total - missingDates
         // Filesystem sources wait for enrichment wall facts when any media
         // still lacks both wall and mtime (mtime usually present). Cameras
-        // already carry capture dates from enumeration.
+        // already carry capture dates from enumeration. Policy-aware: if the
+        // selected policy never consults a date, there is nothing to wait for.
         let libraries = await store.currentLibraries()
         let sourceKind = libraries.first(where: { $0.path == source })?.root.kind
         guard sourceKind != .deviceMTP,
+              MediaTransferPlanner.needsDate(policy: snapshot.policy),
               snapshot.sourceMedia.contains(where: {
                   $0.captureWallCompact == nil && $0.contentModifiedAt == nil
               })
