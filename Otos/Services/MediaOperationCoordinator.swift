@@ -29,7 +29,10 @@ private nonisolated struct ImportPlanBuildResult {
 /// before publishing, and a build that lost the race re-dirties instead of applying.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
-    private let preferences: UserDefaults
+    // UserDefaults is documented thread-safe; this actor is the only writer for
+    // its suite, so a scoped nonisolated(unsafe) is more reviewable than a
+    // module-wide retroactive conformance (ARC-042).
+    private nonisolated(unsafe) let preferences: UserDefaults
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?

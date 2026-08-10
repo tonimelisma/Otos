@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import Synchronization
 import UniformTypeIdentifiers
 
 /// Filesystem import executor (plan 0055 Stage E).
@@ -1346,89 +1347,84 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
 }
 
 /// Thread-safe byte-progress accumulator for copy callbacks off the executor
-/// actor. Worker threads report in-flight offsets per entry index; settled
-/// totals advance only on the actor's group loop. A time gate bounds emission
-/// frequency so a fast copy cannot flood the coordinator stream, while a single
-/// large file still keeps the visible bar moving.
-private final class ByteProgressTracker: @unchecked Sendable {
-    private nonisolated static let emitInterval: Duration = .milliseconds(100)
+/// actor. Worker threads report in-flight offsets per entry index; settled totals
+/// advance only on the actor's group loop. A time gate bounds emission frequency
+/// so a fast copy cannot flood the coordinator stream, while a single large file
+/// still keeps the visible bar moving.
+///
+/// `Mutex` (not `NSLock` + `nonisolated(unsafe)`): the state is genuinely shared
+/// across worker threads, and `Mutex<State>` expresses that with a *checked*
+/// `Sendable` conformance — ARC-042 forbids `@unchecked`.
+private struct ByteProgressTracker: Sendable {
+    private struct State {
+        var settledCount = 0
+        var settledBytes: Int64 = 0
+        var creditedBytes: Int64 = 0
+        var inFlightOffsets: [Int: Int64] = [:]
+        var lastEmit: ContinuousClock.Instant?
+    }
+
+    private static let emitInterval: Duration = .milliseconds(100)
 
     private let totalCount: Int
     private let totalBytes: Int64
-    private let lock = NSLock()
-    private nonisolated(unsafe) var settledCount = 0
-    private nonisolated(unsafe) var settledBytes: Int64 = 0
-    private nonisolated(unsafe) var inFlightOffsets: [Int: Int64] = [:]
-    private nonisolated(unsafe) var lastEmit: ContinuousClock.Instant?
+    private let state = Mutex(State())
 
-    nonisolated init(totalCount: Int, totalBytes: Int64) {
+    init(totalCount: Int, totalBytes: Int64) {
         self.totalCount = totalCount
         self.totalBytes = totalBytes
     }
 
-    /// Records an in-flight offset; returns a progress snapshot when the emit
-    /// gate is open, nil otherwise.
-    nonisolated func inFlightUpdate(index: Int, offset: Int64) -> MediaOperationProgress? {
-        lock.lock()
-        inFlightOffsets[index] = offset
-        let now = ContinuousClock().now
-        let due = lastEmit.map { now - $0 >= Self.emitInterval } ?? true
-        if due {
-            lastEmit = now
+    func inFlightUpdate(index: Int, offset: Int64) -> MediaOperationProgress? {
+        state.withLock { state in
+            state.inFlightOffsets[index] = offset
+            let now = ContinuousClock().now
+            let due = state.lastEmit.map { now - $0 >= Self.emitInterval } ?? true
+            guard due else { return nil }
+            state.lastEmit = now
+            return snapshot(state)
         }
-        let snapshot = due ? currentLocked() : nil
-        lock.unlock()
-        return snapshot
     }
 
-    /// Removes an entry's in-flight offset once its outcome is known. Resolved
-    /// items advance the completed count; only published bytes count as copied.
-    nonisolated func finish(index: Int, resolvedItem: Bool, publishedBytes: Int64) {
-        lock.lock()
-        inFlightOffsets.removeValue(forKey: index)
-        if resolvedItem {
-            settledCount += 1
+    /// Removes an entry's in-flight offset once its outcome is known.
+    ///
+    /// `creditedBytes` is what makes the bar monotonic. An entry that reached the
+    /// end of its copy and then failed to publish (`.skippedForeign`, `.failed`,
+    /// `.cancelled`) has already been counted through `inFlightOffsets`; zeroing it
+    /// would walk the bar backwards by a full file. Bytes already shown stay shown —
+    /// `completedCount` is the honest item count, and it is the denominator the user
+    /// reads. HIG: progress indicators move forward.
+    func finish(index: Int, resolvedItem: Bool, publishedBytes: Int64) {
+        state.withLock { state in
+            let observed = state.inFlightOffsets.removeValue(forKey: index) ?? 0
+            if resolvedItem { state.settledCount += 1 }
+            state.settledBytes += publishedBytes
+            state.creditedBytes += max(0, observed - publishedBytes)
         }
-        settledBytes += publishedBytes
-        lock.unlock()
     }
 
-    nonisolated func current() -> MediaOperationProgress {
-        lock.lock()
-        defer { lock.unlock() }
-        return currentLocked()
+    func current() -> MediaOperationProgress {
+        state.withLock { snapshot($0) }
     }
 
-    private nonisolated func currentLocked() -> MediaOperationProgress {
+    private func snapshot(_ state: State) -> MediaOperationProgress {
         MediaOperationProgress(
-            completedCount: settledCount,
+            completedCount: state.settledCount,
             totalCount: totalCount,
-            completedBytes: settledBytes + inFlightOffsets.values.reduce(0, +),
+            completedBytes: min(
+                totalBytes,
+                state.settledBytes + state.creditedBytes + state.inFlightOffsets.values.reduce(0, +)
+            ),
             totalBytes: totalBytes
         )
     }
 }
 
 /// Thread-safe cancel flag for copyfile callbacks off the executor actor.
-private final class CancelFlag: @unchecked Sendable {
-    private nonisolated(unsafe) var cancelled = false
-    private let lock = NSLock()
-
-    nonisolated func reset() {
-        lock.lock()
-        cancelled = false
-        lock.unlock()
-    }
-
-    nonisolated func cancel() {
-        lock.lock()
-        cancelled = true
-        lock.unlock()
-    }
-
-    nonisolated var isCancelled: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return cancelled
-    }
+private struct CancelFlag: Sendable {
+    private let flag = Mutex(false)
+    func reset() { flag.withLock { $0 = false } }
+    func cancel() { flag.withLock { $0 = true } }
+    var isCancelled: Bool { flag.withLock { $0 } }
 }
+
