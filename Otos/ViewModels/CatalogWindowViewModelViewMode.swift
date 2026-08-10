@@ -67,7 +67,7 @@ extension CatalogWindowViewModel {
         }
         comparePair = .empty
         lastReplacedComparePane = nil
-        focusedAssetID = focus
+        setFocus(focus)
         viewMode = .loupe
         refreshPanePreviews()
         OtosLog.ui.notice(
