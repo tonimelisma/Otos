@@ -29,6 +29,8 @@ and the architecture that concurrent multi-source import requires.
 16. **Each source reads the destination namespace independently.** No shared or deduplicated
     read — the operation is directory entries plus `lstat` over a bounded folder set with no
     byte reads, and duplicating it across a few attached cards does not justify the machinery.
+17. **No per-tile import badges, in either grid.** The progress bar is the progress
+    indicator; tiles show media, not plan state (§10).
 
 ## 2. What "blocked" means
 
@@ -232,26 +234,64 @@ so there is no second implementation path. No destructive styling: per HIG, a de
 chosen destructive action does not get the red treatment, and the checkbox above it is the
 deliberate choice.
 
+Because tiles carry no badges (§10), `N need attention` is not a link to anywhere — it is
+self-explaining. Choosing it reveals the cause in plain language, and the fix where one
+exists: "Otos couldn't read the destination folder for 3 items. This is usually temporary."
+/ "3 items have no date. Set folder naming to None to import them." Never a raw disposition
+kind, never `namespaceUnreadable`.
+
 **Open question:** whether the button should carry the count (`Import 12 New Items`, the
 Capture One pattern) or stay bare (`Import`) with the count one line above. Capture One's
 button sits far from its counts; here they are adjacent. Recommended: bare, per decision 12's
 preference for short titles.
 
-## 10. Grid badges — exactly two
+## 10. Tiles carry no import badges
 
-With status in fixed chrome and no per-item selection, only two badges earn their place:
+**Owner decision: no per-tile badges anywhere.** Neither grid marks import state on tiles.
+An earlier revision of this plan proposed two badges — *already in your library* and *needs
+attention*. Both are withdrawn, and the reasoning is recorded here so they are not
+reinvented.
 
-- **Already in your library** — a subdued check. This is per-item information available
-  nowhere else, and it is what makes the word "new" honest.
-- **Needs attention** — on blocked tiles. It earns its place only as the *target* of the
-  status line's jump affordance: you need to recognize the item when you arrive at it.
+**No benchmarked app badges import state per tile.** The field has exactly three strategies:
 
-Nothing else. No companion badge, no per-tile destination path, no disposition text — those
-were the `Details…` sheet's job and the sheet is being deleted.
+| App | Treatment of already-imported items |
+|---|---|
+| Photo Mechanic | **Nothing.** Incremental Ingest is silent, and the ingest dialog has no source thumbnail grid at all |
+| Image Capture | **Nothing** — no library, so no such concept |
+| Capture One | `Exclude Duplicates` — a checkbox, i.e. **filtering** |
+| Photos | **Sections** — "Already Imported Photos" above, "New Photos" below |
+| Lightroom Classic | Per-photo **checkboxes** — selection, which decision 6 rules out |
 
-Badges compose *over* tile content and never replace it. **Open decision:** if the AppKit
-tile cannot compose a badge without touching the thumbnail paint path, the badge layer needs
-its own design first — the no-blank-grid invariant outranks this entire plan.
+Hide, group, or say nothing. Badging is not among them.
+
+**The actionability test decides it.** With no per-item selection, learning that a given tile
+is already imported changes nothing the user can do. Photos can afford its sections precisely
+because Photos lets you select those items and re-import them; Otos deliberately does not. A
+mark you cannot act on is decoration. The same test removes *needs attention*: blocked entries
+are rare (§2), nothing per-item can be done about them, and the status line already carries the
+cause and, where one exists, the fix — "Otos couldn't read the destination folder for 3 items.
+This is usually temporary." / "3 items have no date. Set folder naming to None to import them."
+That second one is a policy change, not a tile action.
+
+Ordering already answers the "which ones are new?" question well enough: the grid sorts by
+date, so a fresh shoot clusters at one end.
+
+**Each grid's honest signal:**
+
+| Grid | State it shows | How |
+|---|---|---|
+| Source (removable) | how many are new, and what will happen | status line (§9) and the checkboxes in the pinned bar |
+| Batch (destination) | what has landed so far | tiles appearing as entries settle, plus the progress bar |
+
+The batch grid needs nothing extra because **presence is the state** — everything in a batch is
+in the library by definition, and decision 9 already has items appear as they import, so the
+grid growing *is* the per-item progress. Badges could only ever have been source-side.
+
+**Non-goal, recorded deliberately:** if "which ones are new?" ever becomes a real complaint, the
+answer is a filter scope answered on demand, never a permanent mark on every tile. Even then it
+carries a boundary cost worth weighing: `MediaFilter` today holds `kinds` and `formats`
+(`CatalogQueryModels.swift:128`), both intrinsic media facts, whereas "new" is derived from the
+coordinator's plan.
 
 ## 11. Import batches in the sidebar
 
@@ -313,7 +353,8 @@ it (confirm, do not assume). Every deletion removes *display*, not capability.
   honest denominators per §8; Cancel.
 - **Stage 7 — per-source session overrides.** `sessionOptions` seeded from `ImportPreferences`,
   discarded on detach; the two checkboxes inline with live counts in labels.
-- **Stage 8 — grid badges, delete the sheet** (§10).
+- **Stage 8 — delete the sheet.** Remove `ImportPlanOverlay`, the `Details…` button, and the
+  totals/policy lines. No tile work: §10 adds nothing to the grid.
 - **Stage 9 — status/button matrix** (§9).
 - **Stage 10 — batch sidebar** (§11) and per-batch progress (§12).
 - **Stage 11 — enrichment/planning separation.** Planning needs no hashes (ARC-046A matches
@@ -332,5 +373,3 @@ settlement is the *source* content hash reused as overlay
 ## 16. Open decisions
 
 1. **Button count** — bare `Import` (recommended) or `Import 12 New Items`?
-2. **Badge composition** — can the AppKit tile compose a badge without touching the thumbnail
-   paint path? Blocks Stage 8 if not.
