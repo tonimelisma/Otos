@@ -84,7 +84,7 @@ actor MediaOperationCoordinator {
 
     init(
         store: CatalogStore,
-        preferences: UserDefaults,
+        preferences: sending UserDefaults,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil

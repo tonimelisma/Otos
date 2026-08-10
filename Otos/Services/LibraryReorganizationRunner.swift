@@ -11,7 +11,7 @@ actor LibraryReorganizationRunner {
     /// its suite (ARC-042).
     private nonisolated(unsafe) let preferences: UserDefaults
 
-    init(store: CatalogStore, preferences: UserDefaults) {
+    init(store: CatalogStore, preferences: sending UserDefaults) {
         self.store = store
         self.preferences = preferences
     }
