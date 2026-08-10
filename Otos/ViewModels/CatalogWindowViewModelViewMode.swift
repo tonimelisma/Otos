@@ -139,8 +139,9 @@ extension CatalogWindowViewModel {
             return
         case .loupe:
             if descriptorChanged {
-                focusedAssetID = ordered.first
-                if let focus = focusedAssetID {
+                let first = ordered.first
+                setFocus(first)
+                if let focus = first {
                     gridSelection = gridSelection.plainClick(focus)
                 }
                 refreshPanePreviews()
@@ -154,7 +155,7 @@ extension CatalogWindowViewModel {
             guard next != focusedAssetID else {
                 return
             }
-            focusedAssetID = next
+            setFocus(next)
             if let next {
                 gridSelection = gridSelection.plainClick(next)
             }
