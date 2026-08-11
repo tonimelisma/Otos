@@ -452,7 +452,14 @@ extension CatalogStore {
     }
 
     func currentLibraries() -> [CatalogLibraryState] {
-        roots.values.map { catalogLibraryState(from: $0) }
+        roots.values
+            .map { catalogLibraryState(from: $0) }
+            .sorted {
+                if $0.addOrder != $1.addOrder {
+                    return $0.addOrder < $1.addOrder
+                }
+                return $0.path.rawValue < $1.path.rawValue
+            }
     }
 
     /// Nonempty import batches newest-first. Projection publishes these for the
@@ -2255,6 +2262,7 @@ private extension CatalogStore {
     private func catalogLibraryState(from state: RootRuntimeState) -> CatalogLibraryState {
         CatalogLibraryState(
             root: state.root,
+            addOrder: state.rowID,
             availability: state.availability,
             activity: activity(for: state.path),
             isEjectable: state.isEjectable

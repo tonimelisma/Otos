@@ -72,7 +72,7 @@ actor MediaOperationCoordinator {
     private var claimsBySource: [LibraryRootPath: Set<MediaRelativePath>] = [:]
     /// Device-identity-keyed destination persistence (ARC-047): the three-step
     /// default — saved mapping for this device identity → last-used destination
-    /// → sole/first available fixed library — ensures a destination is always
+    /// → first-added available fixed library — ensures a destination is always
     /// defaulted and `.waitingForDestination` is never presented.
     private var destinationByDeviceIdentity: [String: LibraryRootPath] = [:]
     private var lastUsedDestination: LibraryRootPath?
@@ -627,7 +627,7 @@ actor MediaOperationCoordinator {
             }
             let previousMapping = destinationBySource[source.path]
             // Three-step default (ARC-047): saved mapping for this device
-            // identity → last-used destination → sole/first available fixed
+            // identity → last-used destination → first-added available fixed
             // library. A destination is always defaulted when one exists, so
             // `.waitingForDestination` is never presented.
             let currentMapped = destinationBySource[source.path]
@@ -645,13 +645,8 @@ actor MediaOperationCoordinator {
                 let lastUsedValid = lastUsedDestination.flatMap { dest in
                     fixedAvailable.contains(where: { $0.path == dest }) ? dest : nil
                 }
-                let soleOrFirst: LibraryRootPath? = {
-                    if fixedAvailable.count == 1 {
-                        return fixedAvailable.first?.path
-                    }
-                    return fixedAvailable.sorted { $0.path.rawValue < $1.path.rawValue }.first?.path
-                }()
-                let newDestination = deviceDest ?? lastUsedValid ?? soleOrFirst
+                let firstAddedAvailable = fixedAvailable.first?.path
+                let newDestination = deviceDest ?? lastUsedValid ?? firstAddedAvailable
                 if let newDestination {
                     destinationBySource[source.path] = newDestination
                     if let device = source.root.deviceIdentity {

@@ -229,6 +229,166 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    @Test func destinationDefaultsToFirstAddedLibrary() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:first-added"
+        )
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        await coordinator.start()
+
+        _ = try await readyGeneration(coordinator, source: fixture.source)
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(presentation.destinationPath == fixture.libraries[0])
+        await coordinator.shutdown()
+    }
+
+    @Test func destinationDefaultSkipsUnavailableFirstLibrary() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let firstURL = temp.appending(path: "Zebra", directoryHint: .isDirectory)
+        let secondURL = temp.appending(path: "Alpha", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        for url in [firstURL, secondURL, cardURL] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let firstStore = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await firstStore.start(scansSavedLibraries: false)
+        try await firstStore.addLibrary(url: firstURL)
+        try await firstStore.addLibrary(url: secondURL)
+        _ = try await waitForCatalogStoreState(firstStore) { snapshot in
+            snapshot.libraries.count == 2 && snapshot.libraries.allSatisfy { !$0.isScanning }
+        }
+        try FileManager.default.removeItem(at: firstURL)
+
+        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await store.start()
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.libraries.count == 2
+                && snapshot.libraries.contains { $0.path.rawValue == firstURL.path && $0.availability == .unavailable }
+                && snapshot.libraries.contains { $0.path.rawValue == secondURL.path && $0.availability == .available }
+        }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:skip-unavailable",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: store, preferences: defaults.defaults)
+        await coordinator.start()
+        _ = try await readyGeneration(coordinator, source: source)
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == source }
+        )
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
+        #expect(presentation.destinationPath == secondPath)
+        await coordinator.shutdown()
+    }
+
+    @Test func savedDeviceMappingBeatsAddOrder() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:saved-mapping"
+        )
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        defaults.defaults.set(
+            [fixture.identity: fixture.libraries[2].rawValue],
+            forKey: "import.destinationByDeviceIdentity"
+        )
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        await coordinator.start()
+        _ = try await readyGeneration(coordinator, source: fixture.source)
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(presentation.destinationPath == fixture.libraries[2])
+        await coordinator.shutdown()
+    }
+
+    @Test func lastUsedBeatsAddOrder() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:last-used"
+        )
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        defaults.defaults.set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        await coordinator.start()
+        _ = try await readyGeneration(coordinator, source: fixture.source)
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(presentation.destinationPath == fixture.libraries[1])
+        await coordinator.shutdown()
+    }
+
+    @Test func invalidSavedMappingIsDroppedNotUsed() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:invalid-mapping"
+        )
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        defaults.defaults.set(
+            [fixture.identity: "/definitely/not/a/configured/library"],
+            forKey: "import.destinationByDeviceIdentity"
+        )
+        defaults.defaults.set("/definitely/not/a/configured/library", forKey: "import.lastUsedDestination")
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        await coordinator.start()
+        _ = try await readyGeneration(coordinator, source: fixture.source)
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(presentation.destinationPath == fixture.libraries[0])
+        await coordinator.shutdown()
+    }
+
+    private struct DestinationFixture {
+        let store: CatalogStore
+        let libraries: [LibraryRootPath]
+        let source: LibraryRootPath
+        let identity: String
+    }
+
+    private func makeDestinationFixture(
+        libraryNames: [String],
+        identity: String
+    ) async throws -> DestinationFixture {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let libraryURLs = libraryNames.map { temp.appending(path: $0, directoryHint: .isDirectory) }
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        for url in libraryURLs + [cardURL] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        for url in libraryURLs {
+            try await store.addLibrary(url: url)
+        }
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.libraries.count == libraryURLs.count && snapshot.libraries.allSatisfy { !$0.isScanning }
+        }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: identity,
+            displayName: "Card",
+            isEjectable: true
+        )
+        let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        let libraries = try libraryURLs.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
+        return DestinationFixture(store: store, libraries: libraries, source: source, identity: identity)
+    }
+
     /// Wait for the source to reach `.ready` (optionally with a generation past
     /// `minimum`) and return that generation.
     private func readyGeneration(

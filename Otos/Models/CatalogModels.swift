@@ -266,6 +266,9 @@ nonisolated enum CatalogLibraryActivity: Hashable {
 /// adds transient runtime facts needed by the current UI surfaces.
 nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     let root: LibraryRoot
+    /// Durable SQLite insertion order used only for behavioral defaults such as
+    /// import destination selection. Presentation sorting remains a Projection concern.
+    let addOrder: Int64
     let availability: LibraryAvailability
     let activity: CatalogLibraryActivity
     let isEjectable: Bool
@@ -308,11 +311,13 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
 
     init(
         root: LibraryRoot,
+        addOrder: Int64 = 0,
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool = false
     ) {
         self.root = root
+        self.addOrder = addOrder
         self.availability = availability
         self.activity = activity
         self.isEjectable = isEjectable
