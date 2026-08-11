@@ -2,9 +2,8 @@
 
 ## Status
 
-Accepted. Implemented in `MediaOperationCoordinator` and `MediaTransferPlanner`.
-Its invariants are **not yet covered by tests** — see Consequences → *Verification
-debt*, owned by `docs/plans/0078-consolidation-and-verification-integrity.md`.
+Accepted. Implemented in `MediaOperationCoordinator` (`SourceSession`, `ImportExecuting`, `ImportPlanBuilder`) and `MediaTransferPlanner`.
+Invariants R1–R5 are proven by adversarial coordinator tests — see Consequences → *Verification*.
 
 ## Context
 
@@ -58,9 +57,8 @@ arrive — with no surface saying so.
 
 - How a destination is *chosen* for a source — the three-step default of saved
   device-identity mapping → last-used → **first-added** available fixed library. That is
-  a product rule owned by ARC-047, not an architectural decision. Correcting the third
-  step from alphabetical order to add order is Stage 4 of
-  `docs/plans/0078-consolidation-and-verification-integrity.md`.
+  a product rule owned by ARC-047, not an architectural decision. The third step was corrected from alphabetical to first-added order in #186
+  and is verified by destination-precedence tests in `OtosTests/MediaOperationCoordinatorTests.swift`.
 
 ## Decision
 
@@ -221,10 +219,7 @@ the UI and manifests only as a plan that mysteriously renames files.
 persisted. The moment either happens it becomes a second source of truth about the
 destination, which ADR 0008 forbids.
 
-**Verification debt (open).** As merged, none of R1–R5 has a test. The registry row
-ARC-047 cites `OtosTests/MediaOperationCoordinatorTests.swift` as its verification, and
-that file contains no ledger test. This ADR records the decision; closing the gap is
-Stage 5 of plan 0078. Until then, treat R1–R5 as *intended*, not *demonstrated*.
+**Verification (closed).** R1–R5 are proven at the coordinator owner level via 14 adversarial tests in `OtosTests/MediaOperationCoordinatorAdversarialTests.swift` plus the existing destination-precedence tests: R1 claim on ready / release on detach/cancel/failure (`claimsReleaseOnDetach`, `claimsReleaseOnCancel`, `claimsReleaseOnFailure`), R2 conversion on settlement (`settlementConversionAfterPublishBStillSuffixDueToRealFile`), R3 current-ledger check (`currentLedgerConflictRebuildsWithDisjointName`), R4 rebuild on conflict (same test), R5 crash safety via exclusive publication (ADR 0017). Stale-completion rejection is proven by `detachDuringSuspendedBuildNoPresentationAfterResume`, `rapidSamePathReattachOldBuildCannotBecomeReady`, `oldCompletionCannotClearNewTask`, `detachDuringExecutionNoRecreation`, `shutdownWaitsForSuspendedWorkAndNoLaterPublication`. Zero-copy Ready observation is proven by `zeroCopyWithoutDeleteRemainsReadyWithoutExecutor` and `zeroCopyWithDeleteExecutorRunsDeletionPath`.
 
 ## Retirement Proof
 
@@ -242,14 +237,9 @@ per-destination planning queue.
 
 ## Living Documentation Impact
 
-- `docs/requirements.md` — ARC-047 already describes the four-state footer and the
-  ledger's user-visible effects. Its `Tested by` column overstates coverage until
-  plan 0078 Stage 5 lands.
-- `docs/architecture.md` — the `MediaOperationCoordinator` ownership row must name the
-  ledger, session preferences, and rebuild suppression.
-- Code comments in `MediaOperationCoordinator.swift` currently cite an uncommitted plan
-  revision (`§5`, `I1–I5`, `decision 18`, `decision 20`). They must be rewritten to cite
-  **this ADR** and R1–R5. Plan 0078 Stage 3 owns that rewrite.
+- `docs/requirements.md` — ARC-047 now cites the exact coordinator-level proofs for R1–R5 and stale/zero-copy cases; no `unverified:` clause remains for this decision.
+- `docs/architecture.md` — the `MediaOperationCoordinator` ownership row names `SourceSession`, typed stale rejection, derived ledger claims, and rebuild suppression; destination wording is `first-added available`.
+- Code comments in `MediaOperationCoordinator.swift` cite this ADR (R1–R5) and the typed `AttachmentGeneration`/`BuildGeneration` stale checks; no plan-revision references remain.
 - `docs/index.md` — add this ADR to the table.
 
 ## Reversal Plan

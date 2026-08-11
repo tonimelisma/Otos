@@ -27,6 +27,7 @@ actor MediaOperationCoordinator {
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
     private let planBuilder: any ImportPlanBuilding
+    private let makeExecutor: @Sendable (LibraryRootPath) -> any ImportExecuting
 
     // MARK: - Stage 4 single-session model (plan 0079)
 
@@ -52,7 +53,7 @@ actor MediaOperationCoordinator {
     private struct ExecutionContext {
         let plan: MediaOperationPlan
         let claims: Set<MediaRelativePath>
-        let executor: MediaImportExecutor
+        let executor: any ImportExecuting
         let task: Task<Void, Never>
         let summary: MediaOperationPlanTotals
         let generation: UInt64
@@ -104,6 +105,7 @@ actor MediaOperationCoordinator {
         store: CatalogStore,
         preferencesDomain: PreferencesDomain,
         planBuilder: any ImportPlanBuilding = LiveImportPlanBuilder(),
+        makeExecutor: (@Sendable (LibraryRootPath) -> any ImportExecuting)? = nil,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
@@ -115,6 +117,20 @@ actor MediaOperationCoordinator {
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
+        if let makeExecutor {
+            self.makeExecutor = makeExecutor
+        } else {
+            let capturedStore = store
+            let capturedCamera = cameraImport
+            let capturedMaterialization = materializationRequester
+            self.makeExecutor = { _ in
+                LiveImportExecutor(
+                    store: capturedStore,
+                    cameraImport: capturedCamera,
+                    materializationRequester: capturedMaterialization
+                )
+            }
+        }
     }
 
     func presentationsStream() -> AsyncStream<[MediaOperationSourcePresentation]> {
@@ -154,6 +170,7 @@ actor MediaOperationCoordinator {
             for await _ in catalogChanges {
                 guard let self else { return }
                 await handleCatalogChangeForMetadataGate()
+                await self.refreshSources(reason: "catalogChange")
             }
         }
         let subscribed = consumerTask != nil
@@ -170,7 +187,7 @@ actor MediaOperationCoordinator {
         // Snapshot owned tasks before clearing sessions so we can await them.
         var ownedBuildTasks: [Task<Void, Never>] = []
         var ownedExecTasks: [Task<Void, Never>] = []
-        var ownedExecutors: [MediaImportExecutor] = []
+        var ownedExecutors: [any ImportExecuting] = []
         for session in sourceSessions.values {
             switch session.phase {
             case let .building(ctx):
@@ -350,11 +367,7 @@ actor MediaOperationCoordinator {
         guard case .ready = session.phase else { return }
 
         OtosLog.catalog.noticeOperation("import.activity", phase: "started", fields: ["rootPath": source.rawValue])
-        let executor = MediaImportExecutor(
-            store: store,
-            cameraImport: cameraImport,
-            materializationRequester: materializationRequester
-        )
+        let executor = makeExecutor(source)
         let claims = readyContext.claims
         let plan = readyContext.plan
         let summary = plan.totals
@@ -465,17 +478,11 @@ actor MediaOperationCoordinator {
                 await autoEjectIfRequested(sourceRoot)
             }
         case .cancelled:
-            // Return to ready with same plan.
-            if let execCtx = sessionForAttachment(source: source, attachment: attachment) {
-                let plan = execCtx.plan
-                let claims = planClaims(from: plan)
-                let ctx = ReadyContext(plan: plan, skippedPackageCount: skippedPackageCount, claims: claims)
-                session.phase = .ready(ctx)
-            } else {
-                // Fallback: if plan no longer available, go to inventory and rebuild.
-                session.phase = .inventory
-                session.isDirty = true
-            }
+            // Release claim: go to inventory and rebuild. This ensures the
+            // cancelled execution's destination reservation does not block
+            // other sources (e.g. B) from reclaiming the base name.
+            session.phase = .inventory
+            session.isDirty = true
             sourceSessions[source] = session
             publish()
         case let .failed(problem):

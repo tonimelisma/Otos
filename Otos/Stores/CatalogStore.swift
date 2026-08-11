@@ -1488,6 +1488,28 @@ extension CatalogStore {
                 lastSeenAt: lastSeenAt,
                 dbWriter: dbQueue
             )
+        } else if let existingState = roots[attachment.path] {
+            // Same mount point reused with different identity after detach (e.g. card swap at same /Volumes/Card).
+            // The old entry is still present as unavailable; reuse its row and update identity.
+            try validateNoOverlap(attachment.path, ignoring: existingState.rowID)
+            try await dbQueue.write { db in
+                try db.execute(
+                    sql: "UPDATE library_root SET device_identity = ?, display_name = ?, last_seen_at = ? WHERE id = ?",
+                    arguments: [
+                        attachment.identity,
+                        attachment.displayName,
+                        lastSeenAt.timeIntervalSince1970,
+                        existingState.rowID,
+                    ]
+                )
+                // Also ensure path is correct (may be same, but update for safety).
+                try Self.updateLibraryRootPath(rootRowID: existingState.rowID, path: attachment.path, db: db)
+            }
+            moveRootRuntimeState(
+                oldPath: existingState.root.path,
+                newRoot: attachment.root(lastSeenAt: lastSeenAt),
+                rootRowID: existingState.rowID
+            )
         } else {
             try await insertRemovableRoot(attachment, lastSeenAt: lastSeenAt, dbWriter: dbQueue)
         }

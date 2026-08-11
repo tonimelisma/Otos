@@ -19,23 +19,29 @@ actor ControlledImportPlanBuilder {
 
     private var recorded: [RecordedRequest] = []
     // swiftlint:disable:next line_length
-    private var pending: [LibraryRootPath: (snapshot: ImportPlanningSnapshot, reserved: Set<MediaRelativePath>, continuation: CheckedContinuation<ImportPlanBuildResult, Never>)] = [:]
-    private var suspendNext: Set<LibraryRootPath> = []
+    private var pending: [LibraryRootPath: [(snapshot: ImportPlanningSnapshot, reserved: Set<MediaRelativePath>, continuation: CheckedContinuation<ImportPlanBuildResult, Never>)]] = [:]
+    private var suspendNext: [LibraryRootPath: Int] = [:]
     private(set) var cancelled: Set<LibraryRootPath> = []
 
     /// Mark the next build for `source` as suspended. The next `build` call
     /// whose snapshot's sourceRoot matches this path will await a continuation
     /// until `resume(for:)` is called.
     func suspendNextBuild(for source: LibraryRootPath) {
-        suspendNext.insert(source)
+        suspendNext[source, default: 0] += 1
     }
 
     /// Resume a suspended build for `source` with a real live result. The
     /// result is computed via `LiveImportPlanBuilder` from the stored snapshot
     /// and reserved set, preserving the live planner's semantics.
     func resumePendingBuild(for source: LibraryRootPath) async {
-        guard let entry = pending.removeValue(forKey: source) else {
+        guard var queue = pending[source], !queue.isEmpty else {
             return
+        }
+        let entry = queue.removeFirst()
+        if queue.isEmpty {
+            pending.removeValue(forKey: source)
+        } else {
+            pending[source] = queue
         }
         let result = await LiveImportPlanBuilder().build(snapshot: entry.snapshot, additionalReserved: entry.reserved)
         entry.continuation.resume(returning: result)
@@ -45,7 +51,9 @@ actor ControlledImportPlanBuilder {
     func resumeAllPending() async {
         let keys = Array(pending.keys)
         for key in keys {
-            await resumePendingBuild(for: key)
+            while let q = pending[key], !q.isEmpty {
+                await resumePendingBuild(for: key)
+            }
         }
     }
 
@@ -57,12 +65,41 @@ actor ControlledImportPlanBuilder {
         Array(pending.keys)
     }
 
+    func pendingCount(for source: LibraryRootPath) -> Int {
+        pending[source]?.count ?? 0
+    }
+
     func recordedCancelled() -> Set<LibraryRootPath> {
         cancelled
     }
 
     private func recordCancel(for source: LibraryRootPath) {
         cancelled.insert(source)
+    }
+
+    /// Resume the oldest pending build for `source` with a dummy empty result so that
+    /// a cancelled `withTaskCancellationHandler` does not leave the task hanging
+    /// forever. The dummy will be discarded as stale by the coordinator's
+    /// post-build identity checks (attachment/generation/session), so it is safe.
+    private func resumeOnePendingWithCancellationDummy(for source: LibraryRootPath) {
+        guard var queue = pending[source], !queue.isEmpty else { return }
+        let entry = queue.removeFirst()
+        if queue.isEmpty {
+            pending.removeValue(forKey: source)
+        } else {
+            pending[source] = queue
+        }
+        let dummyPlan = MediaOperationPlan(
+            generation: entry.snapshot.generation,
+            mode: .import(source: entry.snapshot.sourceRoot, destination: entry.snapshot.destinationRoot, batch: ImportBatchID()),
+            sourceOccupancyRevision: entry.snapshot.sourceOccupancyRevision,
+            destinationOccupancyRevision: entry.snapshot.destinationOccupancyRevision,
+            policy: entry.snapshot.policy,
+            entries: [],
+            totals: MediaOperationPlanTotals(copyCount: 0, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+        )
+        let dummy = ImportPlanBuildResult(plan: dummyPlan, namespace: .empty, enumerateMs: 0, planMs: 0)
+        entry.continuation.resume(returning: dummy)
     }
 }
 
@@ -82,16 +119,25 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
     ) async -> ImportPlanBuildResult {
         recorded.append(RecordedRequest(snapshot: snapshot, additionalReserved: additionalReserved))
         let source = snapshot.sourceRoot
-        if suspendNext.contains(source) {
-            suspendNext.remove(source)
+        if let count = suspendNext[source], count > 0 {
+            if count == 1 {
+                suspendNext.removeValue(forKey: source)
+            } else {
+                suspendNext[source] = count - 1
+            }
             return await withTaskCancellationHandler(
                 operation: {
                     await withCheckedContinuation { (continuation: CheckedContinuation<ImportPlanBuildResult, Never>) in
-                        pending[source] = (snapshot, additionalReserved, continuation)
+                        var queue = pending[source] ?? []
+                        queue.append((snapshot, additionalReserved, continuation))
+                        pending[source] = queue
                     }
                 },
                 onCancel: {
-                    Task { await self.recordCancel(for: source) }
+                    Task {
+                        await self.recordCancel(for: source)
+                        await self.resumeOnePendingWithCancellationDummy(for: source)
+                    }
                 }
             )
         } else {
