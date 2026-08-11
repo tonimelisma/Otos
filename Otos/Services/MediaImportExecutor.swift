@@ -1352,7 +1352,7 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
 /// so a fast copy cannot flood the coordinator stream, while a single large file
 /// still keeps the visible bar moving.
 ///
-/// `Mutex` (not `NSLock` + `nonisolated(unsafe)`): the state is genuinely shared
+/// `Mutex` (rather than an unsafe global escape): the state is genuinely shared
 /// across worker threads, and `Mutex<State>` expresses that with a *checked*
 /// `Sendable` conformance — ARC-042 forbids `@unchecked`.
 private final nonisolated class ByteProgressTracker: Sendable {

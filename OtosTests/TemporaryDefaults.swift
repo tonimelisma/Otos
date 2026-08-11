@@ -35,7 +35,7 @@ import Foundation
 /// banned and `script/check-production-data-untouched.sh` fails on any data-carrying domain.
 final class TemporaryDefaults: Sendable {
     nonisolated(unsafe) let defaults: UserDefaults
-    private let suiteName: String
+    let suiteName: String
 
     /// `function` defaults to the caller's own function name so leaked-domain
     /// diagnostics (and `script/check-production-data-untouched.sh`, Stage 4)

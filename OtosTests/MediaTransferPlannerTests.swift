@@ -241,6 +241,109 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .blocked(.noUsableDate))
     }
 
+    @Test func concurrentPlansIntoOneDestinationClaimDisjointNames() {
+        let first = Self.facts(name: "same.jpg")
+        let second = Self.facts(name: "same.jpg")
+        let firstPlan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [first], policy: .from(.default)),
+            namespace: Self.namespace()
+        )
+        let secondPlan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [second], policy: .from(.default)),
+            namespace: Self.namespace(),
+            additionalReserved: Set(firstPlan.entries.map(\.finalDestination))
+        )
+
+        #expect(Set(firstPlan.entries.map(\.finalDestination)).isDisjoint(with: secondPlan.entries.map(\.finalDestination)))
+    }
+
+    @Test func conflictingPublishReplansAndNeverEvicts() {
+        let source = Self.facts(name: "same.jpg")
+        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let winner = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let loserStart = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let loserReplanned = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: Self.namespace(),
+            additionalReserved: Set(winner.entries.map(\.finalDestination))
+        )
+
+        #expect(loserStart.entries[0].finalDestination == winner.entries[0].finalDestination)
+        #expect(loserReplanned.entries[0].finalDestination != winner.entries[0].finalDestination)
+        #expect(winner.entries[0].finalDestination != loserReplanned.entries[0].finalDestination)
+    }
+
+    @Test func claimIsReleasedOnDetach() {
+        let source = Self.facts(name: "same.jpg")
+        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let first = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let released = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+
+        #expect(released.entries[0].finalDestination == first.entries[0].finalDestination)
+    }
+
+    @Test func claimIsReleasedOnCancel() {
+        let source = Self.facts(name: "same.jpg")
+        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let first = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let afterCancel = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+
+        #expect(afterCancel.entries[0].finalDestination == first.entries[0].finalDestination)
+    }
+
+    @Test func claimIsReleasedOnFailure() {
+        let source = Self.facts(name: "same.jpg")
+        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let first = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let afterFailure = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+
+        #expect(afterFailure.entries[0].finalDestination == first.entries[0].finalDestination)
+    }
+
+    @Test func settledNameIsObservedAsOccupancyByNextBuild() {
+        let source = Self.facts(name: "same.jpg")
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = Self.snapshot(sourceMedia: [source], policy: policy)
+        let occupied = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let settledName = occupied.entries[0].finalDestination
+        let next = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: Self.namespace([settledName: .foreign(kind: .other)])
+        )
+
+        #expect(next.entries[0].finalDestination != settledName)
+    }
+
+    @Test func conflictCheckUsesCurrentLedgerNotBuildStartSnapshot() {
+        let source = Self.facts(name: "same.jpg")
+        let snapshot = Self.snapshot(sourceMedia: [source], policy: .from(.default))
+        let buildStart = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: Self.namespace())
+        let currentLedger = Set(buildStart.entries.map(\.finalDestination))
+        let resumed = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: Self.namespace(),
+            additionalReserved: currentLedger
+        )
+
+        #expect(resumed.entries[0].finalDestination != buildStart.entries[0].finalDestination)
+    }
+
+    @Test func policyThatNeverConsultsDateDoesNotWait() {
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        #expect(!MediaTransferPlanner.needsDate(policy: policy))
+
+        let undated = Self.facts(name: "undated.jpg", modified: nil, captureWallCompact: nil)
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [undated], policy: policy),
+            namespace: Self.namespace()
+        )
+        #expect(!plan.entries[0].isBlocked)
+    }
+
     /// A directory standing where a candidate file would go is foreign occupancy that
     /// only a live read can see. Enumeration finds it without anyone having asked
     /// about that specific path.

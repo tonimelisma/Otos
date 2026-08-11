@@ -433,7 +433,7 @@ struct ImportExecutionProgressTests {
         }
         let tempDefaults = TemporaryDefaults()
         defer { tempDefaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferences: tempDefaults.defaults)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesSuiteName: tempDefaults.suiteName)
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         let plan = try await waitForReadyPlan(coordinator, source: source)
@@ -465,6 +465,97 @@ struct ImportExecutionProgressTests {
         #expect(snapshots.last?.completedCount == 12)
         #expect(snapshots.last?.completedBytes == expectedBytes)
         await coordinator.shutdown()
+    }
+
+    @Test func zeroCopyPlanWithDeleteRequestedExecutesDeletion() async throws {
+        let fixture = try await makeZeroCopyFixture()
+        let result = await MediaImportExecutor(store: fixture.store).execute(
+            plan: fixture.plan,
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:zero-copy-delete",
+            deleteSourceRequested: true
+        ) { _ in }
+
+        guard case .completed = result else {
+            Issue.record("Expected zero-copy deletion to complete, got \(result)")
+            return
+        }
+        #expect(!FileManager.default.fileExists(atPath: fixture.sourceFile.path))
+        #expect(try await fixture.store.activeImportOperations().isEmpty)
+    }
+
+    @Test func zeroCopyPlanWithoutDeleteStaysReady() async throws {
+        let fixture = try await makeZeroCopyFixture()
+        let result = await MediaImportExecutor(store: fixture.store).execute(
+            plan: fixture.plan,
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:zero-copy-no-delete",
+            deleteSourceRequested: false
+        ) { _ in }
+
+        guard case .completed = result else {
+            Issue.record("Expected zero-copy execution to complete, got \(result)")
+            return
+        }
+        #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
+        #expect(try await fixture.store.activeImportOperations().isEmpty)
+    }
+
+    private struct ZeroCopyFixture {
+        let store: CatalogStore
+        let plan: MediaOperationPlan
+        let sourceFile: URL
+    }
+
+    private func makeZeroCopyFixture() async throws -> ZeroCopyFixture {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        let sourceFile = sourceRoot.appending(path: "same.jpg")
+        let destinationFile = destinationRoot.appending(path: "same.jpg")
+        let modifiedAt = Date(timeIntervalSince1970: 100)
+        try Data(repeating: 0x42, count: 10).write(to: sourceFile)
+        try Data(repeating: 0x42, count: 10).write(to: destinationFile)
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: sourceFile.path)
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: destinationFile.path)
+
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        let relative = MediaRelativePath(rawValue: "same.jpg")
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: sourcePath, relativePath: relative),
+            sourceURL: sourceFile,
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: modifiedAt,
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "jpg",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourcePath,
+            destinationRoot: destinationPath,
+            sourceOccupancyRevision: 1,
+            destinationOccupancyRevision: 1,
+            sourceMedia: [facts],
+            destinationOccupants: [:],
+            policy: policy,
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
+        #expect(plan.entries.first?.isSkipPreexisting == true)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        return ZeroCopyFixture(store: store, plan: plan, sourceFile: sourceFile)
     }
 
     private func waitForReadyPlan(

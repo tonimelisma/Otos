@@ -29,10 +29,10 @@ private nonisolated struct ImportPlanBuildResult {
 /// before publishing, and a build that lost the race re-dirties instead of applying.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
-    // UserDefaults is documented thread-safe; this actor is the only writer for
-    // its suite, so a scoped nonisolated(unsafe) is more reviewable than a
-    // module-wide retroactive conformance (ARC-042).
-    private nonisolated(unsafe) let preferences: UserDefaults
+    // The actor owns this instance for the injected suite. The MainActor transfers
+    // only the Sendable suite name at initialization, so UserDefaults never crosses
+    // the isolation boundary as a shared reference (ARC-042).
+    private let preferences: UserDefaults
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
@@ -84,13 +84,13 @@ actor MediaOperationCoordinator {
 
     init(
         store: CatalogStore,
-        preferences: sending UserDefaults,
+        preferencesSuiteName: String? = nil,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
     ) {
         self.store = store
-        self.preferences = preferences
+        preferences = preferencesSuiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
@@ -453,11 +453,7 @@ actor MediaOperationCoordinator {
             {
                 await autoEjectIfRequested(sourceRoot)
             }
-        case let .cancelled(_, _, _, _, skippedForeignCount, failedCount):
-            // Cancelled still surfaces the counts for diagnostics, but the
-            // presentation returns to ready so the user can retry. The ledger
-            // was already cleared in runExecution before the rebuild.
-            _ = (skippedForeignCount, failedCount)
+        case .cancelled:
             presentations[source] = MediaOperationSourcePresentation(
                 sourcePath: source,
                 destinationPath: destinationBySource[source],

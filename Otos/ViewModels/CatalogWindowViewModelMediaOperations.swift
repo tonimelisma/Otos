@@ -28,7 +28,7 @@ extension CatalogWindowViewModel {
         let store = catalogStore
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: preferences,
+            preferencesSuiteName: preferencesSuiteName,
             cameraImport: cameraImport,
             materializationRequester: materializationCoordinator,
             autoEjectHandler: { root in
@@ -175,7 +175,10 @@ extension CatalogWindowViewModel {
         guard let path = selectedFixedLibraryPath else {
             return
         }
-        let runner = reorganizationRunner ?? LibraryReorganizationRunner(store: catalogStore, preferences: preferences)
+        let runner = reorganizationRunner ?? LibraryReorganizationRunner(
+            store: catalogStore,
+            preferencesSuiteName: preferencesSuiteName
+        )
         reorganizationRunner = runner
         Task { [weak self] in
             let outcome = await runner.preview(libraryRoot: path)
@@ -203,7 +206,10 @@ extension CatalogWindowViewModel {
             return
         }
         showsReorganizationConfirmation = false
-        let runner = reorganizationRunner ?? LibraryReorganizationRunner(store: catalogStore, preferences: preferences)
+        let runner = reorganizationRunner ?? LibraryReorganizationRunner(
+            store: catalogStore,
+            preferencesSuiteName: preferencesSuiteName
+        )
         reorganizationRunner = runner
         Task { [weak self] in
             let outcome = await runner.run(libraryRoot: path)

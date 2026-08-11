@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_PATH="$ROOT_DIR/script/$(basename "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<'EOF'
@@ -124,16 +125,15 @@ check_no_stray_attoseconds() {
   fi
 }
 
-# ARC-042: zero @unchecked Sendable in app and test sources.
+# ARC-042: zero unsound Sendable escapes in app and test sources.
 check_no_unchecked_sendable() {
-  local head_sha="$1"
+  local _head_sha="$1"
+  "$ROOT_DIR/script/check-no-unchecked-sendable.sh" check
+}
 
-  if git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests | grep -q '\.swift:'; then
-    git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests | grep '\.swift:'
-    echo "FAIL: ARC-042 forbids @unchecked Sendable. Found above." >&2
-    echo "Use Mutex (Synchronization) or an actor (ARC-042, docs/requirements.md)." >&2
-    exit 1
-  fi
+check_doc_citations() {
+  local _head_sha="$1"
+  "$ROOT_DIR/script/check-doc-citations.sh" check
 }
 
 check() {
@@ -144,6 +144,7 @@ check() {
   check_no_source_text_tests "$head_sha"
   check_no_stray_attoseconds "$head_sha"
   check_no_unchecked_sendable "$head_sha"
+  check_doc_citations "$head_sha"
 
   case "$event_name" in
     pull_request)

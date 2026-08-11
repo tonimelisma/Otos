@@ -32,7 +32,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: tempDefaults.defaults
+            preferencesSuiteName: tempDefaults.suiteName
         )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
@@ -73,7 +73,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: tempDefaults.defaults
+            preferencesSuiteName: tempDefaults.suiteName
         )
         await coordinator.start()
 
@@ -97,6 +97,111 @@ struct MediaOperationCoordinatorTests {
             await coordinator.shutdown()
             return
         }
+        await coordinator.shutdown()
+    }
+
+    @Test func catalogChangeWakesWaitingForMetadataSource() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        let relative = MediaRelativePath(rawValue: "undated.jpg")
+
+        let scanner = CatalogScanner { rootPath, _, batchHandler in
+            guard rootPath == cardPath else {
+                return .empty
+            }
+            try await batchHandler([
+                ScannedMediaFile(
+                    relativePath: relative,
+                    name: relative.rawValue,
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 10,
+                    createdAt: nil,
+                    contentModifiedAt: nil
+                ),
+            ])
+            return .mediaOnly([relative])
+        }
+        let store = CatalogStore(
+            location: .inMemory,
+            scanner: scanner,
+            scanCadence: .milliseconds(10)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:metadata-wake",
+            displayName: "Card",
+            isEjectable: true
+        )
+
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: store, preferencesSuiteName: tempDefaults.suiteName)
+        await coordinator.start()
+
+        let waitingDeadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < waitingDeadline {
+            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
+               case .waitingForMetadata = presentation.state
+            {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        let waiting = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+        )
+        guard case .waitingForMetadata = waiting.state else {
+            Issue.record("Expected metadata wait before enrichment, got \(waiting.state)")
+            await coordinator.shutdown()
+            return
+        }
+
+        let captureDate = Date(timeIntervalSince1970: 1_767_279_600)
+        let result = EnrichmentResult(
+            id: MediaAssetID(libraryRootPath: cardPath, relativePath: relative),
+            metadata: AssetMetadata(
+                timestamps: [
+                    CaptureTimestampRecord(
+                        role: "original",
+                        instant: captureDate,
+                        utcOffsetSeconds: nil,
+                        precision: "localFloating",
+                        year: 2026,
+                        month: 1,
+                        day: 1,
+                        hour: 12,
+                        minute: 0,
+                        second: 0
+                    ),
+                ]
+            ),
+            timestampFacts: EnrichmentTimestampFacts(original: captureDate),
+            enrichedKind: nil,
+            enrichedFormat: nil,
+            thumbnailPath: nil,
+            sourceSize: 10,
+            sourceMTimeSeconds: nil,
+            contentHash: nil
+        )
+        #expect(await store.applyEnrichmentBatch([result]) == .applied(count: 1))
+
+        let readyDeadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < readyDeadline {
+            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
+               case .ready = presentation.state
+            {
+                await coordinator.shutdown()
+                return
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        Issue.record("Catalog enrichment did not wake the waiting import source")
         await coordinator.shutdown()
     }
 
@@ -134,7 +239,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: tempDefaults.defaults
+            preferencesSuiteName: tempDefaults.suiteName
         )
         await coordinator.start()
 
@@ -189,7 +294,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferences: tempDefaults.defaults
+            preferencesSuiteName: tempDefaults.suiteName
         )
         await coordinator.start()
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -236,7 +341,7 @@ struct MediaOperationCoordinatorTests {
         )
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
         await coordinator.start()
 
         _ = try await readyGeneration(coordinator, source: fixture.source)
@@ -281,7 +386,7 @@ struct MediaOperationCoordinatorTests {
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferences: defaults.defaults)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesSuiteName: defaults.suiteName)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: source)
         let presentation = try #require(
@@ -303,7 +408,7 @@ struct MediaOperationCoordinatorTests {
             [fixture.identity: fixture.libraries[2].rawValue],
             forKey: "import.destinationByDeviceIdentity"
         )
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
@@ -321,7 +426,7 @@ struct MediaOperationCoordinatorTests {
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
         defaults.defaults.set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
@@ -343,7 +448,7 @@ struct MediaOperationCoordinatorTests {
             forKey: "import.destinationByDeviceIdentity"
         )
         defaults.defaults.set("/definitely/not/a/configured/library", forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferences: defaults.defaults)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(

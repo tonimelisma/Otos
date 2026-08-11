@@ -133,9 +133,12 @@ final class CatalogWindowViewModel {
     /// `UserDefaults` seam, also import preferences (`importPreferences`,
     /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
     /// production `UserDefaults.standard` domain by omitting it (ADR 0020).
-    // UserDefaults is documented thread-safe; shared across ViewModel (MainActor) and
-    // MediaOperationCoordinator/LibraryReorganizationRunner (actor) without isolation hop.
-    @ObservationIgnored nonisolated(unsafe) let preferences: UserDefaults
+    /// The ViewModel keeps the injected defaults for UI-owned settings; media-operation
+    /// actors receive only the separate Sendable suite name below.
+    @ObservationIgnored let preferences: UserDefaults
+    /// Sendable identity for the suite whose defaults are owned by media-operation
+    /// actors. `nil` selects the production standard domain.
+    @ObservationIgnored let preferencesSuiteName: String?
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
@@ -201,6 +204,7 @@ final class CatalogWindowViewModel {
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
         preferences: sending UserDefaults,
+        preferencesSuiteName: String? = nil,
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil
     ) {
@@ -216,6 +220,7 @@ final class CatalogWindowViewModel {
             bufferingPolicy: .bufferingNewest(1)
         )
         self.preferences = preferences
+        self.preferencesSuiteName = preferencesSuiteName
         let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
         gridColumnCount = GridColumnCount.validated(storedColumns)
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double

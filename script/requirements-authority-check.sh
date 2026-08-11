@@ -45,7 +45,7 @@ fi
 #    manual: and — are not accepted (allowlisted).
 #
 # ALLOWLIST holds the rows not yet migrated. It only ever shrinks; a new row may
-# never be added to it. Stage 4 deletes the allowlist and this comment.
+# never be added to it. The count gate below makes accidental re-expansion fail.
 ALLOWLIST=(
   "APP-001" "APP-002" "APP-003" "APP-006" "APP-008" "APP-009" "APP-010" "APP-011"
   "APP-013" "APP-014" "APP-015" "APP-017" "APP-018" "APP-019" "APP-020" "APP-021"
@@ -53,11 +53,16 @@ ALLOWLIST=(
   "ARC-007" "ARC-008" "ARC-009" "ARC-010" "ARC-011" "ARC-012" "ARC-013" "ARC-014"
   "ARC-015" "ARC-016" "ARC-018" "ARC-019" "ARC-021" "ARC-022" "ARC-023" "ARC-026"
   "ARC-031" "ARC-033" "ARC-034" "ARC-035" "ARC-037" "ARC-038" "ARC-041" "ARC-042"
-  "ARC-043" "ARC-044" "ARC-045" "ARC-046" "ARC-046A" "ARC-047" "ARC-048" "ARC-049"
+  "ARC-043" "ARC-044" "ARC-045" "ARC-046" "ARC-046A" "ARC-048" "ARC-049"
   "ARC-050" "ARC-051" "ARC-053" "ENR-001" "ENR-002" "ENR-003" "ENR-004" "ENR-005"
   "ENR-007" "ENR-008" "ENR-009" "ENR-010" "ENR-011" "ENR-012" "ENR-013" "ENR-014"
   "ENR-015" "MED-001" "MED-004"
 )
+ALLOWLIST_MAX_COUNT=74
+
+if (( ${#ALLOWLIST[@]} > ALLOWLIST_MAX_COUNT )); then
+  fail "requirements allowlist grew to ${#ALLOWLIST[@]} rows (maximum ${ALLOWLIST_MAX_COUNT})"
+fi
 
 is_allowlisted() {
   local id="$1"
@@ -98,6 +103,28 @@ while IFS= read -r line; do
   if [[ "$tested" == "—" ]] || [[ -z "$tested" ]]; then
     fail "requirement $id has no Tested by path"
   fi
+  named_tests=$(printf '%s\n' "$tested" | grep -oE '`[^`]+#[^`]+`' || true)
+  if [[ -z "$named_tests" ]]; then
+    fail "requirement $id Tested by entries must name a test as path#testName"
+  fi
+  while IFS= read -r token; do
+    [[ -z "$token" ]] && continue
+    token="${token#\`}"; token="${token%\`}"
+    test_path="${token%%#*}"
+    test_name="${token#*#}"
+    test_file="$ROOT_DIR/$test_path"
+    if [[ "$test_path" == *.swift ]]; then
+      if ! grep -Eq "func[[:space:]]+$test_name[[:space:]]*\\(" "$test_file"; then
+        fail "requirement $id names missing Swift test $token"
+      fi
+    elif [[ "$test_path" == *.sh ]]; then
+      if ! grep -Fq "$test_name" "$test_file"; then
+        fail "requirement $id names missing script self-test $token"
+      fi
+    else
+      fail "requirement $id names unsupported test file $test_path"
+    fi
+  done <<< "$named_tests"
 done < <(grep -E '^\| (ARC-|APP-|ENR-|MED-)' "$REQUIREMENTS")
 
 # Every backtick path in Implemented-in / Tested-by cells must exist on disk.
@@ -106,6 +133,7 @@ missing=0
 while IFS= read -r path; do
   [[ -z "$path" ]] && continue
   # Skip non-path tokens
+  path="${path%%#*}"
   case "$path" in
     manual:*) continue ;;
     *\**) continue ;;  # globs like Otos/ are directories we allow as prefixes

@@ -7,13 +7,13 @@ import OSLog
 /// catalog identities, and returns remap batches for ViewModel/TileContentStore.
 actor LibraryReorganizationRunner {
     private let store: CatalogStore
-    /// UserDefaults is documented thread-safe; this actor is the only writer for
-    /// its suite (ARC-042).
-    private nonisolated(unsafe) let preferences: UserDefaults
+    /// The actor owns this instance for the injected suite. Callers transfer only
+    /// the Sendable suite name, never a shared UserDefaults reference (ARC-042).
+    private let preferences: UserDefaults
 
-    init(store: CatalogStore, preferences: sending UserDefaults) {
+    init(store: CatalogStore, preferencesSuiteName: String? = nil) {
         self.store = store
-        self.preferences = preferences
+        preferences = preferencesSuiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
     }
 
     enum Outcome: Equatable, Sendable {
