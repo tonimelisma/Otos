@@ -244,9 +244,22 @@ struct MediaOperationCoordinatorTests {
         await coordinator.start()
 
         await coordinator.setDestination(fixedPath, for: cardPath)
-        try await Task.sleep(for: .milliseconds(250))
+        _ = try await readyGeneration(coordinator, source: cardPath)
         await coordinator.queueImport(for: cardPath)
-        try await Task.sleep(for: .milliseconds(400))
+        // Deterministically wait until presentation leaves inventory.
+        let deadline = ContinuousClock().now + .seconds(2)
+        while ContinuousClock().now < deadline {
+            if let p = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
+               case .inventory = p.state
+            {
+                try await Task.sleep(for: .milliseconds(25))
+                continue
+            }
+            if await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) != nil {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
 
         let presentations = await coordinator.currentPresentations()
         let card = try #require(presentations.first { $0.sourcePath == cardPath })
@@ -304,14 +317,15 @@ struct MediaOperationCoordinatorTests {
         // (an unseen root's first wake is conservatively treated as a possible
         // change) with one bump, then settle so the baseline is past it.
         _ = await store.bumpPlanRevision(for: fixedPath)
-        try await Task.sleep(for: .milliseconds(150))
         let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
 
         // No-op planRevision churn on the destination — the exact livelock trigger.
         for _ in 0 ..< 8 {
             _ = await store.bumpPlanRevision(for: fixedPath)
         }
-        try await Task.sleep(for: .milliseconds(300))
+        // Wait deterministically for the coordinator to settle after no-op churn.
+        // If it livelocks, settledReadyGeneration will see generation churn and timeout.
+        _ = try await settledReadyGeneration(coordinator, source: cardPath)
 
         let afterChurn = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
