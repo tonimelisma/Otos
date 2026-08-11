@@ -1,15 +1,6 @@
 import Foundation
 import OSLog
 
-/// One plan build's product plus the cost split that makes it diagnosable:
-/// namespace read time versus pure planning time.
-private nonisolated struct ImportPlanBuildResult {
-    let plan: MediaOperationPlan
-    let namespace: DestinationNamespace
-    let enumerateMs: Int
-    let planMs: Int
-}
-
 /// Media operation coordinator guide
 ///
 /// Owns greedy import-plan lifecycle for every attached removable source.
@@ -37,6 +28,7 @@ actor MediaOperationCoordinator {
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
+    private let planBuilder: any ImportPlanBuilding
     private var presentations: [LibraryRootPath: MediaOperationSourcePresentation] = [:]
     private var readyPlans: [LibraryRootPath: MediaOperationPlan] = [:]
     private var destinationBySource: [LibraryRootPath: LibraryRootPath] = [:]
@@ -86,6 +78,7 @@ actor MediaOperationCoordinator {
     init(
         store: CatalogStore,
         preferencesDomain: PreferencesDomain,
+        planBuilder: any ImportPlanBuilding = LiveImportPlanBuilder(),
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
@@ -93,6 +86,7 @@ actor MediaOperationCoordinator {
         self.store = store
         self.preferencesDomain = preferencesDomain
         preferences = preferencesDomain.makeDefaults()
+        self.planBuilder = planBuilder
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
@@ -778,46 +772,6 @@ actor MediaOperationCoordinator {
         }
     }
 
-    /// Enumerates the destination folders this snapshot can touch, then plans.
-    ///
-    /// `nonisolated` and `async` so the enumeration and the planning pass run on the
-    /// cooperative pool rather than on the coordinator, which stays free to service
-    /// planning changes and Import intents while a build is in flight.
-    private nonisolated static func buildPlanOffActor(
-        snapshot: ImportPlanningSnapshot,
-        additionalReserved: Set<MediaRelativePath>
-    ) async -> ImportPlanBuildResult {
-        let clock = ContinuousClock()
-        let enumerateStart = clock.now
-        let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
-            root: snapshot.destinationRoot,
-            folders: MediaTransferPlanner.destinationFolders(for: snapshot)
-        )
-        let planStart = clock.now
-        OtosLog.catalog.noticeOperation(
-            "plan.namespace.enumerate",
-            phase: "finish",
-            fields: [
-                "destination": snapshot.destinationRoot.rawValue,
-                "folders": "\(namespace.folderCount)",
-                "entries": "\(namespace.entryCount)",
-                "elapsedMs": "\(DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)))",
-            ]
-        )
-        let plan = MediaTransferPlanner.planImport(
-            snapshot: snapshot,
-            namespace: namespace,
-            additionalReserved: additionalReserved
-        )
-        let planEnd = clock.now
-        return ImportPlanBuildResult(
-            plan: plan,
-            namespace: namespace,
-            enumerateMs: DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)),
-            planMs: DiagnosticsTiming.milliseconds(planStart.duration(to: planEnd))
-        )
-    }
-
     /// One `phase=finish` line carrying the split that tells I/O cost from CPU cost.
     /// `folders`/`namespaceEntries` size the read; `enumerateMs`/`planMs` attribute
     /// the time without needing a side experiment to tell them apart.
@@ -885,7 +839,7 @@ actor MediaOperationCoordinator {
         // destination stay fully parallel; each seeds at build-start time.
         let seededClaims = ledgerClaims(for: destination, excluding: source)
         let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
-        let build = await Self.buildPlanOffActor(snapshot: snapshot, additionalReserved: seededClaims)
+        let build = await planBuilder.build(snapshot: snapshot, additionalReserved: seededClaims)
         OtosSignpost.performance.endInterval("ImportPlanBuild", signpost)
         let plan = build.plan
         Self.logPlanFinished(
