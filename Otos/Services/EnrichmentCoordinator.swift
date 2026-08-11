@@ -91,7 +91,7 @@ actor EnrichmentCoordinator {
         let isVideo: Bool
         let captureDate: Date?
         let isDeviceStaging: Bool
-        /// False only for `.removableVolume` sources (ADR 0018/plan 0062): hashing
+        /// False only for `.removableVolume` sources (ADR 0018): hashing
         /// them in place would force a full read of the whole card merely to
         /// checksum it. Populated in `makeWork` from `removableRootPaths`.
         let shouldHash: Bool

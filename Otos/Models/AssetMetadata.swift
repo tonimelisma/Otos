@@ -127,7 +127,7 @@ nonisolated struct EnrichmentResult: Equatable {
     let sourceSize: Int64?
     let sourceMTimeSeconds: Int?
     /// Absent when the enricher skipped hashing (`EnrichWork.shouldHash == false`,
-    /// a `.removableVolume` source — ADR 0018/plan 0062). The store then leaves the
+    /// a `.removableVolume` source — ADR 0018). The store then leaves the
     /// row's existing hash columns untouched rather than clearing them.
     let contentHash: XXH3Digest128?
 

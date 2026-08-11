@@ -13,7 +13,7 @@ import MediaMetadata
 /// are excluded. The compact integer is `YYYYMMDDHHMMSS` so naming can format
 /// components verbatim without zone math.
 nonisolated enum CaptureWallClock {
-    /// Role precedence for naming. Matches plan 0055 contract item 6.
+    /// Role precedence for naming (ENR-012).
     static let namingRolePrecedence = [
         "original",
         "digitized",

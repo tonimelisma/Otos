@@ -28,7 +28,7 @@ enum BrowserViewMode: String, CaseIterable, Identifiable {
         }
     }
 
-    /// SF Symbol verified available on the current macOS baseline (plan 0052 §0.2).
+    /// SF Symbol verified available on the current macOS baseline.
     var systemImage: String {
         switch self {
         case .grid:

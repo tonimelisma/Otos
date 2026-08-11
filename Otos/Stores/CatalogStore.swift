@@ -14,10 +14,10 @@ nonisolated enum CatalogStoreChange: Equatable {
 
 /// An asset the Store has claimed for enrichment, together with the claim-time
 /// `hashRequired` fact — decided once, by the owner of root kind, at the moment the row
-/// is claimed under a specific partial-index predicate (ADR 0018/plan 0062). Carried
+/// is claimed under a specific partial-index predicate (ADR 0018). Carried
 /// rather than re-derived downstream: a later re-derivation reads root kind from a
 /// possibly-staler cache and can disagree with the predicate the row was actually
-/// claimed under (plan 0065 Stage 2b).
+/// claimed under.
 nonisolated struct ClaimedEnrichmentCandidate: Sendable {
     let asset: MediaAsset
     let hashRequired: Bool
@@ -124,7 +124,7 @@ actor CatalogStore {
         /// True when any applied result changed the *effective* generated
         /// ordering/scope columns (`best_capture_unix`, `best_kind`, `best_format`).
         /// A batch that changed none of these is detail-only: the projection can skip
-        /// the full order query and re-sort (plan 0064 Stage 3).
+        /// the full order query and re-sort (ADR 0011).
         var structureChanged = false
         var promotionFailed = false
         var discardedThumbnails: [GeneratedThumbnail] = []
@@ -156,10 +156,10 @@ actor CatalogStore {
 
     /// Ordering/scope-relevant STORED generated columns, read either before or after an
     /// enrichment overwrite, so the batch can tell a detail-only apply from one that
-    /// actually changes the effective `best_capture`/`best_kind`/`best_format` (plan
-    /// 0064 Stage 3) by comparing what SQLite actually stored, not a Swift guess at what
-    /// it would store (plan 0065 Stage 2a — the guess had no fallback path matching the
-    /// generated column's own COALESCE chain and could silently disagree with it).
+    /// actually changes the effective `best_capture`/`best_kind`/`best_format` (ADR
+    /// 0011) by comparing what SQLite actually stored, not a Swift guess at what
+    /// it would store (the guess had no fallback path matching the generated
+    /// column's own COALESCE chain and could silently disagree with it).
     private struct EnrichmentOverlayBeforeWrite {
         let bestCaptureUnix: Double?
         let bestKind: String?
@@ -218,14 +218,15 @@ actor CatalogStore {
     private var lastSuccessfulFullRootScanAt: [LibraryRootPath: Date] = [:]
     private var integrityScanTask: Task<Void, Never>?
     private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
-    /// Typed reorganization lease per fixed root (plan 0055 §9.7). Spans one
+    /// Typed reorganization lease per fixed root (ARC-051). Spans one
     /// execution run; deferred dirty-only reconciliation runs at release.
     private var reorganizationLeases: [LibraryRootPath: ReorganizationLease] = [:]
     private var nextReorganizationLeaseGeneration: UInt64 = 0
 
     /// Long-running-session integrity interval. Launch scans already repair after
     /// process death; this bounds residual FSEvents/provider misses while the app
-    /// stays open. Chosen as 24h for measurement/review (plan 0056).
+    /// stays open. Chosen as 24h for measurement/review
+    /// (docs/research/2026-07-11-onedrive-materialization-fsevents.md).
     static let integrityScanInterval: Duration = .seconds(60 * 60 * 24)
     static let integrityScanPollInterval: Duration = .seconds(60 * 15)
 
@@ -273,7 +274,7 @@ extension CatalogStore {
         return stream
     }
 
-    /// Lossless planning-input revision stream (plan 0055 §6.1). Separate from
+    /// Lossless planning-input revision stream (ARC-046). Separate from
     /// coarse `CatalogStoreChange` so thumbnail-only mutations do not replan.
     func planningChangeNotifications() -> AsyncStream<RootPlanningChange> {
         let (stream, continuation) = AsyncStream<RootPlanningChange>.makeStream(
@@ -973,7 +974,7 @@ extension CatalogStore {
         }
         // `hashRequired` here is the claim predicate the row was just claimed under
         // (carried from the `claimGroups` entry above), not re-derived from current
-        // root kind — plan 0065 Stage 2b. A root's kind cannot change between the claim
+        // root kind. A root's kind cannot change between the claim
         // above and this mapping since both run inside the same actor-isolated call, but
         // carrying the value keeps one owner rather than inviting a second opinion later.
         let candidates: [ClaimedEnrichmentCandidate] = timedStoredAssets.value.compactMap { entry in
@@ -1174,7 +1175,7 @@ extension CatalogStore {
         if writeOutcome.appliedCount > 0 {
             // An enrichment batch that changed no effective ordering/scope column is a
             // detail-only change: the projection refreshes visible detail but skips the
-            // full order re-query (plan 0064 Stage 3). Any `best_capture`/`best_kind`/
+            // full order re-query (ADR 0011). Any `best_capture`/`best_kind`/
             // `best_format` change is structural and keeps the full rebuild.
             notifyCatalogChanged(writeOutcome.structureChanged ? .catalogChanged : .assetsDetailChanged)
         }
@@ -2738,7 +2739,7 @@ private extension CatalogStore {
 
     private func emitPlanningChange(rootPath: LibraryRootPath, occupancyRevision: UInt64) {
         let change = RootPlanningChange(rootPath: rootPath, occupancyRevision: occupancyRevision)
-        // Emit-side observability (plan 0064 Stage 4): a silence on the coordinator
+        // Emit-side observability: a silence on the coordinator
         // side can now be attributed to "no events emitted" vs "events not received"
         // by matching this line against the coordinator's receive/refresh lines.
         let listenerCount = planningChangeContinuations.count
@@ -2839,7 +2840,7 @@ private extension CatalogStore {
 
         let hasActiveScan = scanLeases.hasActiveFilesystemScan(for: root)
         // Arm watching as soon as the root is known and available, and never
-        // drop events while a scan lease owns the root (plan 0055 §6.2).
+        // drop events while a scan lease owns the root (ARC-041).
         if !filesystemWatchingArmed.contains(root) {
             if hasActiveScan || roots[root]?.availability == .available {
                 filesystemWatchingArmed.insert(root)
@@ -2976,7 +2977,7 @@ private extension CatalogStore {
             // Otos's own import staging files (`.otos-import-staging`, written into the
             // watched destination root while the import executor copies) are never
             // catalogued and must not record namespace mutations, bump occupancy, or
-            // fire reconcile/replan churn (plan 0064 Stage 2).
+            // fire reconcile/replan churn.
             if let relativePath, relativePath.rawValue.hasSuffix(MediaImportExecutor.importStagingSuffix) {
                 stagingSuppressedCount += 1
                 continue
@@ -3609,7 +3610,7 @@ extension CatalogStore {
         var reuseResult = ImportOverlayReuseResult.notReused
         if let sourceRootID = roots[operation.sourceRootPath]?.rowID {
             if operation.sourceKind == .removableVolume {
-                // ADR 0018/plan 0062: a `.removableVolume` source is never hashed in
+                // ADR 0018: a `.removableVolume` source is never hashed in
                 // place, so it can have no source digest to validate a reuse against.
                 // Short-circuit to a typed miss without fetching the overlay or
                 // attempting the digest comparison; the destination is enriched

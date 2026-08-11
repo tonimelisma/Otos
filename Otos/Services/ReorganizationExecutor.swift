@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-/// Same-volume reorganization executor (plan 0055 Stage G2 / §9.5–9.8).
+/// Same-volume reorganization executor (ARC-051).
 ///
 /// Persists the component recipe before the first move, executes ordered
 /// no-overwrite steps, and marks `.filesystemComplete` for Store settlement.

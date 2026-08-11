@@ -45,7 +45,7 @@ actor MediaOperationCoordinator {
     /// Sources with an executor in flight. This single ownership fact rejects
     /// repeated clicks and plan completions while execution suspends.
     private var executing: Set<LibraryRootPath> = []
-    /// One executor per executing source so the bar's Cancel reaches it (decision 20, Stage 6).
+    /// One executor per executing source so the bar's Cancel reaches it (ADR 0017).
     private var executors: [LibraryRootPath: MediaImportExecutor] = [:]
     /// Last occupancy revision observed per root (source or destination) from the
     /// planning-change stream. A change whose occupancy revision differs from this
@@ -63,20 +63,20 @@ actor MediaOperationCoordinator {
     private var buildTasks: [LibraryRootPath: Task<Void, Never>] = [:]
     private var consumerTask: Task<Void, Never>?
     private var catalogChangeTask: Task<Void, Never>?
-    /// Reservation ledger per §5: every `.copy` final destination plus every
+    /// Reservation ledger per ADR 0021: every `.copy` final destination plus every
     /// companion destination of a live (ready or executing) plan, keyed by
     /// source. Unioned on demand per destination; never persisted, never
     /// consulted by the executor, never a second truth about D — the filesystem
-    /// still wins. Invariants I1–I5 hold in one synchronous on-actor region at
-    /// publish time (§5, decision 18).
+    /// still wins. Invariants R1–R5 hold in one synchronous on-actor region at
+    /// publish time (ADR 0021 R3).
     private var claimsBySource: [LibraryRootPath: Set<MediaRelativePath>] = [:]
-    /// Device-identity-keyed destination persistence (Stage 5): the three-step
+    /// Device-identity-keyed destination persistence (ARC-047): the three-step
     /// default — saved mapping for this device identity → last-used destination
     /// → sole/first available fixed library — ensures a destination is always
     /// defaulted and `.waitingForDestination` is never presented.
     private var destinationByDeviceIdentity: [String: LibraryRootPath] = [:]
     private var lastUsedDestination: LibraryRootPath?
-    /// Per-source session overrides seeded from ImportPreferences, discarded on detach (Stage 7).
+    /// Per-source session overrides seeded from ImportPreferences, discarded on detach.
     private var sessionPreferences: [LibraryRootPath: ImportPreferences] = [:]
 
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
@@ -140,9 +140,9 @@ actor MediaOperationCoordinator {
                 await handleCatalogChangeForMetadataGate()
             }
         }
-        // Subscription liveness marker (plan 0064 Stage 4): a capture showing
-        // `phase=subscribed` plus zero later `phase=receive` lines proves the app was
-        // idle (nothing to emit), not that the coordinator stopped listening.
+        // Subscription liveness marker: a capture showing `phase=subscribed`
+        // plus zero later `phase=receive` lines proves the app was idle (nothing
+        // to emit), not that the coordinator stopped listening.
         let subscribed = consumerTask != nil
         OtosLog.catalog.notice(
             "op=import.coordinator phase=subscribed planningStream=\(subscribed, privacy: .public)"
@@ -224,7 +224,7 @@ actor MediaOperationCoordinator {
                     skippedPackageCount: skipped
                 )
             case let .executionUnavailable(summary, generation):
-                // Legacy gated state from Stage D — treat as ready queue.
+                // Legacy gated state — treat as ready queue.
                 presentations[source] = MediaOperationSourcePresentation(
                     sourcePath: source,
                     destinationPath: presentation.destinationPath,
@@ -341,8 +341,8 @@ actor MediaOperationCoordinator {
         skippedPackageCount: Int
     ) async {
         guard executing.insert(source).inserted else { return }
-        // Plan 0066 Stage 6b: publish liveness so smoke tooling can avoid
-        // killing an active import. One line on entry, one on exit per source.
+        // ADR 0020: publish liveness so smoke tooling can avoid killing an
+        // active import. One line on entry, one on exit per source.
         OtosLog.catalog.noticeOperation("import.activity", phase: "started", fields: ["rootPath": source.rawValue])
         queuedStart.remove(source)
         let executor = MediaImportExecutor(
@@ -391,14 +391,14 @@ actor MediaOperationCoordinator {
         let finishedDestination = destinationBySource[source]
         executors.removeValue(forKey: source)
         executing.remove(source)
-        // I2: conversion by death — every published name is already observable
-        // on disk, every unpublished name never will be. One release point per
-        // plan death keeps the ledger trivially auditable, and the next rebuild
-        // seeds from disk truth.
+        // ADR 0021 R2: conversion by death — every published name is already
+        // observable on disk, every unpublished name never will be. One release
+        // point per plan death keeps the ledger trivially auditable, and the
+        // next rebuild seeds from disk truth.
         claimsBySource.removeValue(forKey: source)
         dirty.insert(source)
         scheduleBuildIfNeeded(source)
-        // Flush coalesced destination-driven rebuilds (Stage 2 / C4).
+        // Flush coalesced destination-driven rebuilds (ADR 0021 §3).
         // While this destination was under execution, handlePlanningChange
         // suppressed rebuilds for every other source mapped to it, leaving
         // them dirty but unscheduled. After the last execution for this
@@ -560,7 +560,7 @@ actor MediaOperationCoordinator {
                     scheduleBuildIfNeeded(change.rootPath)
                 }
             }
-            // C4 fix: while any execution targets this destination, suppress
+            // ADR 0021 C4: while any execution targets this destination, suppress
             // destination-driven rebuilds for all sources mapped to it. Each
             // per-entry settlement bumps occupancy and would otherwise cause
             // every other card planning into the same library to re-enumerate
@@ -586,7 +586,7 @@ actor MediaOperationCoordinator {
         await refreshSources(reason: "planningChange")
     }
 
-    /// Resume path for `waitingForMetadata` (Stage 1 / F3). Enrichment updates
+    /// Resume path for `waitingForMetadata` (ARC-047). Enrichment updates
     /// capture dates without bumping occupancy, so the occupancy-driven
     /// `handlePlanningChange` never wakes a waiting source. Any catalog change
     /// that may have supplied dates re-dirties waiting sources so they rebuild
@@ -626,7 +626,7 @@ actor MediaOperationCoordinator {
                 attachStartedAt[source.path] = ContinuousClock().now
             }
             let previousMapping = destinationBySource[source.path]
-            // Three-step default (Stage 5): saved mapping for this device
+            // Three-step default (ARC-047): saved mapping for this device
             // identity → last-used destination → sole/first available fixed
             // library. A destination is always defaulted when one exists, so
             // `.waitingForDestination` is never presented.
@@ -888,8 +888,8 @@ actor MediaOperationCoordinator {
                 "destinationOccupants": "\(snapshot.destinationOccupants.count)",
             ]
         )
-        // Seed from ledger §5: concurrent builds for the same destination stay
-        // fully parallel; each seeds from the ledger at build-start time.
+        // Seed from the ledger (ADR 0021): concurrent builds for the same
+        // destination stay fully parallel; each seeds at build-start time.
         let seededClaims = ledgerClaims(for: destination, excluding: source)
         let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
         let build = await Self.buildPlanOffActor(snapshot: snapshot, additionalReserved: seededClaims)
@@ -930,7 +930,7 @@ actor MediaOperationCoordinator {
             return
         }
 
-        // Publish-time ledger conflict check (I4): conflict check plus
+        // Publish-time ledger conflict check (ADR 0021 R3): conflict check plus
         // registration happen in one synchronous on-actor region against the
         // *current* ledger, never the build-start snapshot. A conflicting build
         // re-dirties and rebuilds; it never evicts a registered claim.
@@ -952,7 +952,7 @@ actor MediaOperationCoordinator {
             scheduleBuildIfNeeded(source)
             return
         }
-        // No conflict: atomically release old claims and register new (I2, I3).
+        // No conflict: atomically release old claims and register new (ADR 0021 R1).
         if newClaims.isEmpty {
             claimsBySource.removeValue(forKey: source)
         } else {
@@ -1027,7 +1027,7 @@ actor MediaOperationCoordinator {
     /// process's coordinator observed the source through the first ready plan, so it
     /// deliberately includes any time the user spent choosing/confirming the
     /// destination and any metadata-wait state — it is NOT pure system latency, and
-    /// should not be read as one (plan 0064 Stage 4).
+    /// should not be read as one.
     private func recordAttachToReadyIfNeeded(source: LibraryRootPath, plan: MediaOperationPlan) {
         guard attachToReadyMs[source] == nil,
               let started = attachStartedAt[source]
@@ -1094,10 +1094,9 @@ actor MediaOperationCoordinator {
         if let last = preferences.string(forKey: Self.lastUsedDestinationKey) {
             lastUsedDestination = LibraryRootPath(rawValue: last)
         }
-        // Legacy path-keyed mapping (pre-Stage 5): migrate into runtime
-        // destinationBySource so existing installs keep their choice until the
-        // next per-device persist. The device-identity store is authoritative
-        // going forward.
+        // Legacy path-keyed mapping: migrate into runtime destinationBySource
+        // so existing installs keep their choice until the next per-device
+        // persist. The device-identity store is authoritative going forward.
         if let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] {
             for (source, destination) in raw {
                 let key = LibraryRootPath(rawValue: source)

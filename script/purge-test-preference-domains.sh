@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Removes every net.melisma.OtosTests.* preference domain. These are test-run
-# residue (plan 0066 / 0072); none is production state. Never touches
+# residue (ADR 0020); none is production state. Never touches
 # net.melisma.Otos.plist — the production domain — which is why the glob is
 # anchored to the `.OtosTests.` infix, not a prefix match on `net.melisma.Otos`.
 set -euo pipefail

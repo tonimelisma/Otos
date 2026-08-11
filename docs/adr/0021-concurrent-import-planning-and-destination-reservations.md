@@ -224,7 +224,7 @@ destination, which ADR 0008 forbids.
 **Verification debt (open).** As merged, none of R1–R5 has a test. The registry row
 ARC-047 cites `OtosTests/MediaOperationCoordinatorTests.swift` as its verification, and
 that file contains no ledger test. This ADR records the decision; closing the gap is
-Stage 4 of plan 0078. Until then, treat R1–R5 as *intended*, not *demonstrated*.
+Stage 5 of plan 0078. Until then, treat R1–R5 as *intended*, not *demonstrated*.
 
 ## Retirement Proof
 
@@ -244,7 +244,7 @@ per-destination planning queue.
 
 - `docs/requirements.md` — ARC-047 already describes the four-state footer and the
   ledger's user-visible effects. Its `Tested by` column overstates coverage until
-  plan 0078 Stage 4 lands.
+  plan 0078 Stage 5 lands.
 - `docs/architecture.md` — the `MediaOperationCoordinator` ownership row must name the
   ledger, session preferences, and rebuild suppression.
 - Code comments in `MediaOperationCoordinator.swift` currently cite an uncommitted plan

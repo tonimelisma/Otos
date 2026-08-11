@@ -34,9 +34,9 @@ if [[ -f "$ROADMAP" ]] && grep -n '^Requirement IDs:' "$ROADMAP"; then
   fail "docs/product/roadmap.md must not assign requirement IDs to unimplemented planning items"
 fi
 
-# Plan 0077 Stage 1: requirement rows state observable behavior, not implementation.
+# Requirement rows state observable behavior, not implementation.
 # These checks exist because the registry drifted into a changelog: mean row length
-# reached ~1,240 chars and 25 of 96 rows carried implementation constants (plan 0077 §1).
+# reached ~1,240 chars and 25 of 96 rows carried implementation constants.
 #
 # 1. Requirement and acceptance cells are each <= 400 characters (allowlisted).
 # 2. No row contains an implementation token: animatingDifferences, NSAnimationContext,

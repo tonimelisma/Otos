@@ -99,7 +99,7 @@ extension CatalogWindowViewModel {
     /// Adopts a live AppKit selection written by native keyboard handling (⌘A,
     /// ⇧-arrows). Idempotent when `live` already equals `gridSelection.selection`.
     /// Compare ignores native multi-selection writes — the pair is model-owned and
-    /// strip multi-select is disabled in Stage C.
+    /// strip multi-select is disabled (APP-021).
     @discardableResult
     func reconcileNativeSelection(_ live: Set<MediaAssetID>) -> GridSelection {
         if viewMode == .compare {

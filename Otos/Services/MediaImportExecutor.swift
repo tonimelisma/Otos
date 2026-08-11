@@ -3,7 +3,7 @@ import OSLog
 import Synchronization
 import UniformTypeIdentifiers
 
-/// Filesystem import executor (plan 0055 Stage E).
+/// Filesystem import executor (ARC-048).
 ///
 /// Runs bounded copy lanes for one ready plan: journal → copyfile/camera staging →
 /// exclusive publish → durable settlement. Camera downloads reuse enrichment
@@ -15,7 +15,7 @@ actor MediaImportExecutor {
     /// Suffix of the hidden adjacent staging file Otos writes into the destination
     /// root while copying (`.\(UUID().uuidString).otos-import-staging`). Shared with
     /// `CatalogStore`'s filesystem-event path so these Otos-owned transient files
-    /// never schedule reconciliation or occupancy bumps (plan 0064 Stage 2).
+    /// never schedule reconciliation or occupancy bumps.
     static let importStagingSuffix = ".otos-import-staging"
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?

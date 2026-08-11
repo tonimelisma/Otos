@@ -358,7 +358,7 @@ final class DeviceCameraSession: NSObject {
         filesByRelativePath[relativePath]
     }
 
-    /// Revalidates planned size/date against live `ICCameraFile` facts (Stage F guard).
+    /// Revalidates planned size/date against live `ICCameraFile` facts (ARC-049).
     func revalidate(
         relativePath: MediaRelativePath,
         byteSize: Int64?,

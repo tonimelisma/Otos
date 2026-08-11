@@ -113,25 +113,25 @@ check_no_source_text_tests() {
 # Duration.components.attoseconds is the sub-second remainder, not "the whole
 # duration in tiny units" — reading it alone silently discards every whole
 # second. DiagnosticsTiming.milliseconds(_:) converts it correctly and is the
-# only place allowed to touch the raw field. See plan 0067 Stage 1.
+# only place allowed to touch the raw field.
 check_no_stray_attoseconds() {
   local head_sha="$1"
 
   if git grep -n -F 'components.attoseconds' "$head_sha" -- Otos \
       | grep -v ':Otos/Support/DiagnosticsTiming\.swift:'; then
-    echo "Forbidden raw Duration.components.attoseconds outside Otos/Support/DiagnosticsTiming.swift: it discards whole seconds. Use DiagnosticsTiming.milliseconds(_:) instead (plan 0067 Stage 1)." >&2
+    echo "Forbidden raw Duration.components.attoseconds outside Otos/Support/DiagnosticsTiming.swift: it discards whole seconds. Use DiagnosticsTiming.milliseconds(_:) instead." >&2
     exit 1
   fi
 }
 
-# ARC-042: zero @unchecked Sendable in app and test sources (plan 0072 Stage 5).
+# ARC-042: zero @unchecked Sendable in app and test sources.
 check_no_unchecked_sendable() {
   local head_sha="$1"
 
   if git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests | grep -q '\.swift:'; then
     git grep -n -F '@unchecked Sendable' "$head_sha" -- Otos OtosTests | grep '\.swift:'
     echo "FAIL: ARC-042 forbids @unchecked Sendable. Found above." >&2
-    echo "Use Mutex (Synchronization) or an actor. See docs/plans/0072-*.md." >&2
+    echo "Use Mutex (Synchronization) or an actor (ARC-042, docs/requirements.md)." >&2
     exit 1
   fi
 }

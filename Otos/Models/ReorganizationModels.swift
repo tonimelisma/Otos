@@ -1,8 +1,9 @@
 import Foundation
 
-// Pure reorganization planning models (plan 0055 Stage G1).
+// Pure reorganization planning models (ARC-050).
 // No I/O. Physical members (media + companions) share one reservation namespace.
-// Components carry deterministic chain/cycle recipes; mutation is Stage G2.
+// Components carry deterministic chain/cycle recipes; mutation lives in the
+// journal/executor (ARC-051).
 
 nonisolated struct ReorganizationPlanningSnapshot: Equatable, Sendable {
     let libraryRoot: LibraryRootPath

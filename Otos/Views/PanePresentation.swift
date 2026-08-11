@@ -40,7 +40,7 @@ nonisolated enum PanePresentation {
 
     /// Pure play-affordance decision — extracted for testability so a view-private
     /// method does not hide the logic that once drew a play button on still photos
-    /// (plan 0073 D1). `nil` kind renders no affordance (MED-002).
+    /// `nil` kind renders no affordance (MED-002).
     /// `hasActiveVideo` is `loupeVideoState != nil` lifted to a Sendable Bool so this
     /// pure function can remain `nonisolated` despite `LoupeVideoState` being
     /// `@MainActor` (AVPlayer).
@@ -87,7 +87,7 @@ struct PaneThumbnailView: View {
             // Miss: decode off-main, exactly as MediaGridBridge.swift:938 does.
             // The previous shape called the synchronous `loadImage` directly inside
             // this MainActor `.task`, decoding a full JPEG on the main thread on every
-            // loupe entry and every arrow key (plan 0073 D3).
+            // loupe entry and every arrow key.
             guard let detailReader, let thumbnailDirectory else { return }
             let details = await detailReader.details(for: [id])
             guard let detail = details[id] else { return }

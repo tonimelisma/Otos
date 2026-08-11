@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import OSLog
 
-/// Volume rename-exclusivity capability (plan 0055 §8.1).
+/// Volume rename-exclusivity capability (ARC-048).
 ///
 /// Probes `VOL_CAP_INT_RENAME_EXCL` via `getattrlist`. APFS advertises it; exFAT
 /// and many SMB mounts do not. The exclusive-publication ladder uses this bit

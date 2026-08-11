@@ -3,7 +3,7 @@ import Foundation
 // Reorganization reservation + graph construction is intentionally cohesive.
 // swiftlint:disable cyclomatic_complexity function_body_length type_body_length
 
-/// Pure reorganization planner (plan 0055 Stage G1 / §9).
+/// Pure reorganization planner (ARC-050).
 ///
 /// Accepts only immutable Sendable values. Emits occupancy probe requests for
 /// targets/ancestors the catalog cannot prove free. Never writes the filesystem.
@@ -469,7 +469,7 @@ nonisolated enum ReorganizationPlanner {
         return result
     }
 
-    /// Deterministic chain/cycle recipe (plan §9.5).
+    /// Deterministic chain/cycle recipe (ARC-050).
     private static func recipe(
         for members: [ReorganizationPhysicalMember],
         capabilities: VolumeNamespaceCapabilities,

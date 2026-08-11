@@ -2,7 +2,8 @@
 import CoreServices
 import Foundation
 
-/// Bounded OneDrive materialization/FSEvents probe for plan 0056.
+/// Bounded OneDrive materialization/FSEvents probe;
+/// see docs/research/2026-07-11-onedrive-materialization-fsevents.md.
 /// Run from an authorized Terminal: `swift script/probe-onedrive-materialization-fsevents.swift`
 /// Does not modify catalog state. Materializes a few dataless samples only.
 

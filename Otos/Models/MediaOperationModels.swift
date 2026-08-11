@@ -1,10 +1,10 @@
 import Foundation
 import UniformTypeIdentifiers
 
-// Media operation planning models (plan 0055 Stage C).
+// Media operation planning models (ARC-046).
 //
 // Immutable Sendable values only. The pure planner consumes these; the
-// coordinator (Stage D) owns lifecycle. No I/O, no actor hops, no logging.
+// coordinator (ARC-047) owns lifecycle. No I/O, no actor hops, no logging.
 
 nonisolated enum MediaOperationMode: Equatable, Sendable {
     case `import`(source: LibraryRootPath, destination: LibraryRootPath, batch: ImportBatchID)
@@ -172,7 +172,7 @@ nonisolated struct RootPlanningChange: Equatable, Sendable {
     let occupancyRevision: UInt64
 }
 
-/// Per-source import lifecycle published to the footer/overlay (plan 0055 §6.3).
+/// Per-source import lifecycle published to the footer (ARC-047).
 nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case inventory
     case waitingForMetadata(done: Int, total: Int)

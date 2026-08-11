@@ -116,7 +116,7 @@ nonisolated struct GridSelection: Equatable {
         return GridSelection(selection: prunedSelection, anchor: anchor, base: base.intersection(orderSet))
     }
 
-    /// Applies a catalog identity remap batch atomically (plan 0055 Stage G3).
+    /// Applies a catalog identity remap batch atomically (ARC-051).
     func remapped(by batch: CatalogIdentityRemapBatch) -> GridSelection {
         guard !batch.remaps.isEmpty else {
             return self

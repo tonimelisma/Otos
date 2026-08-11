@@ -156,7 +156,7 @@ final class DeviceStagingRegistry {
             .appending(path: "DeviceStaging", directoryHint: .isDirectory)
     }
 
-    // MARK: - Import gateway (Stage F)
+    // MARK: - Import gateway (ARC-049)
 
     /// Builds a Sendable import gateway over the live session map.
     func makeCameraImportAccess() -> CameraImportAccess {
@@ -257,7 +257,7 @@ nonisolated enum CameraByteOutcome: Equatable, Sendable {
     case failed(String)
 }
 
-/// Camera-side import hooks used by `MediaImportExecutor` (plan 0055 Stage F).
+/// Camera-side import hooks used by `MediaImportExecutor` (ARC-049).
 nonisolated struct CameraImportAccess: Sendable {
     private let revalidate: @Sendable (String, MediaRelativePath, Int64?, Date?) async -> Bool
     private let ensureBytes: @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome

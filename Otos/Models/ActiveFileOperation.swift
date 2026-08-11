@@ -1,6 +1,6 @@
 import Foundation
 
-/// Durable import/copy settlement journal phases (plan 0055 §8.3).
+/// Durable import/copy settlement journal phases (ARC-048).
 nonisolated enum ActiveFileOperationPhase: String, Equatable, Sendable {
     case copying
     case readyToPublish

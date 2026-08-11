@@ -15,7 +15,7 @@ usage: script/smoke-run.sh [--jank|--verify] <library-root>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
-exist (plan 0066 Stage 6). There is no default: a machine's registered roots
+exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
 Environment:
@@ -48,7 +48,7 @@ LOG_FILE=""
 QUIT_ON_EXIT=0
 # The PID this run's own launch produced — the only PID `quit_app`'s fallback
 # may kill. A second overlapping run's Otos process must never be affected by
-# this run's cleanup (plan 0065 Stage 5).
+# this run's cleanup (ADR 0020).
 APP_PID=""
 
 usage() {
@@ -57,7 +57,7 @@ usage: script/smoke-run.sh [--jank|--verify] <library-root>
 
 The root must already be registered in the catalog. A smoke run selects an
 existing root; it never adds, removes, or otherwise changes what libraries
-exist (plan 0066 Stage 6). There is no default: a machine's registered roots
+exist (ADR 0020). There is no default: a machine's registered roots
 are never guessable, so pass the root explicitly, every time.
 
 Environment:
@@ -91,7 +91,7 @@ quit_app() {
   done
   # Fallback: kill only the PID this run launched. Never `pkill -x "$APP_NAME"`
   # — that matches any process with this name, including a second overlapping
-  # run's still-capturing app instance (observed during plan 0065's review; it
+  # run's still-capturing app instance (observed in review; it
   # silently truncated a session to a log that looked complete).
   if [[ -n "$APP_PID" ]]; then
     kill "$APP_PID" >/dev/null 2>&1 || true
@@ -141,7 +141,7 @@ cleanup() {
     local active_root
     if active_root="$(has_active_operational_work)"; then
       echo "Smoke run leaving app running: operational work still active (import or reorganization) for root=$active_root" >&2
-      echo "An import or reorganization was in flight; not quitting the app to avoid mid-operation termination (plan 0068)." >&2
+      echo "An import or reorganization was in flight; not quitting the app to avoid mid-operation termination (ARC-002A)." >&2
       return
     fi
     quit_app
@@ -185,8 +185,9 @@ run_selected_launch() {
 
 
 # A smoke run proves it scoped the window to the requested root, not that it
-# registered one — registering is exactly what Stage 6 removed. `outcome=selected`
-# is logged only after the root appeared among the Store's own published roots.
+# registered one — registering is exactly what the smoke seam forbids (ADR 0020).
+# `outcome=selected` is logged only after the root appeared among the Store's own
+# published roots.
 verify_selection_applied() {
   local app_pid="$1"
   local predicate="processID == $app_pid AND subsystem == \"$SUBSYSTEM\" AND eventMessage CONTAINS \"op=smoke.select\""
@@ -224,7 +225,7 @@ run_verify() {
 }
 
 check_provider_readiness() {
-  # Plan 0065 Stage 3b: a capture that silently measures a dead provider is worse than no capture.
+  # A capture that silently measures a dead provider is worse than no capture.
   # Do a real open()+read(4096) on one file under SMOKE_ROOT; if it times out with ETIMEDOUT,
   # refuse to start or loudly annotate. Process presence (pgrep OneDrive) is not readiness.
   local sample
@@ -259,11 +260,11 @@ except OSError as e:
 }
 
 run_jank() {
-  # Plan 0068: refuse to start when any operational journal is active
+  # ARC-002A: refuse to start when any operational journal is active
   local active_root
   if active_root="$(has_active_operational_work)"; then
     echo "Cannot start smoke run: operational work already active for root=$active_root" >&2
-    echo "Finish or cancel the import/reorganization before running --jank (plan 0068)." >&2
+    echo "Finish or cancel the import/reorganization before running --jank (ARC-002A)." >&2
     exit 1
   fi
   check_provider_readiness
@@ -287,7 +288,7 @@ run_jank() {
   # If operational work became active during the smoke run, leave the app alive
   if active_root="$(has_active_operational_work)"; then
     echo "Smoke run completed but operational work is now active for root=$active_root — leaving app running." >&2
-    echo "Work was started during the smoke run; not quitting to avoid termination (plan 0068)." >&2
+    echo "Work was started during the smoke run; not quitting to avoid termination (ARC-002A)." >&2
     QUIT_ON_EXIT=0
     echo "smoke log: $LOG_FILE"
     echo "Post-hoc logs: script/logs.sh show --last 10m"
@@ -303,7 +304,7 @@ if [[ "$MODE" != "--jank" && "$MODE" != "jank" && "$MODE" != "--verify" && "$MOD
 fi
 
 if [[ -z "$SMOKE_ROOT" ]]; then
-  echo "No library root given — there is no default (plan 0065 Stage 5)." >&2
+  echo "No library root given — there is no default (ADR 0020)." >&2
   echo "Pass a root path as an argument, or set OTOS_SMOKE_SELECT_ROOT." >&2
   echo >&2
   registered_roots_message >&2

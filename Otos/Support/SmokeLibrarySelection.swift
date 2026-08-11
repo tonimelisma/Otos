@@ -11,7 +11,7 @@
     /// the same `selectSidebar` intent a sidebar click applies. There is no path here
     /// that registers a root. A developer seam that could register one puts whatever
     /// path it is handed into the user's permanent library list, including a scratch
-    /// directory that will not exist tomorrow (plan 0066 Evidence 5).
+    /// directory that will not exist tomorrow (ADR 0020).
     ///
     /// The whole seam is `#if DEBUG`: a release build contains no way for an
     /// environment variable to steer the catalog at all.

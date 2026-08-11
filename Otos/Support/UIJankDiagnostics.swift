@@ -50,8 +50,8 @@ final class MainRunLoopStallMonitor {
     /// One in-flight sidebar/filter/sort intent awaiting the structural apply that
     /// renders it. Begins in `CatalogWindowViewModel.setQueryDescriptor` when the
     /// scope changes and completes in the grid controller's `completeStructuralApply`
-    /// for the same scope, so click→paint latency is measurable end to end (plan 0064
-    /// Stage 1). A newer intent replaces a stale pending one; a pending that never
+    /// for the same scope, so click→paint latency is measurable end to end.
+    /// A newer intent replaces a stale pending one; a pending that never
     /// reaches an apply of its scope leaks at most one interval.
     private struct PendingIntentToPaint {
         let signpost: OSSignpostIntervalState

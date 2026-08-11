@@ -179,7 +179,7 @@ extension CatalogStore {
         )
     }
 
-    /// Set-based identity remap (plan 0055 §4.3). Private intermediate keys never publish.
+    /// Set-based identity remap (ARC-051). Private intermediate keys never publish.
     static func settleRelocationComponent(
         rootRowID: Int64,
         libraryRootPath: LibraryRootPath,

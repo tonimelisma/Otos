@@ -21,8 +21,8 @@ nonisolated enum MediaGridAnimation {
     static let applyAnimationScrollQuietThreshold: TimeInterval = 0.25
 
     /// During live scrolling a move animation is invisible churn; apply instantly
-    /// instead. Never downgrades `animatingDifferences` — that path is the
-    /// reloadData teardown plan 0008 removed.
+    /// instead. Never downgrades `animatingDifferences` — downgrading is the
+    /// reloadData teardown this suppression exists to avoid.
     nonisolated static func suppressesApplyAnimation(
         lastScrollTickAge: TimeInterval
     ) -> Bool {

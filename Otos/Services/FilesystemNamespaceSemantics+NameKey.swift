@@ -1,6 +1,6 @@
 import Foundation
 
-/// Volume-aware filesystem name key for occupancy and equality (plan 0055 §9.3).
+/// Volume-aware filesystem name key for occupancy and equality (ARC-046).
 ///
 /// Not an unconditional lowercased string — case folding and Unicode form follow
 /// the probed volume capabilities. Ambiguous comparisons block before mutation.

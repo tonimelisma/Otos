@@ -73,11 +73,11 @@ final class CatalogWindowViewModel {
     /// file-scoped).
     var viewMode: BrowserViewMode = .grid
     /// Loupe focus identity within the current display order. Compare does not retarget
-    /// this; exit-to-grid keeps it so Stage C can center the grid on return.
+    /// this; exit-to-grid keeps it so the grid can center on return.
     var focusedAssetID: MediaAssetID?
     /// Media kind of `focusedAssetID`, read once per focus change through the same
     /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
-    /// drew a play button on still photographs (plan 0073 D1). `nil` means "not yet
+    /// drew a play button on still photographs. `nil` means "not yet
     /// known" and renders no affordance — MED-002, unknown stays unknown.
     var focusedAssetKind: MediaKind?
     /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
@@ -103,7 +103,7 @@ final class CatalogWindowViewModel {
     /// Decoded-image owner shared by grid, strip, and loupe/compare panes.
     /// Single owner per docs/architecture:83 — previously the grid controller
     /// owned it, now the ViewModel does so the pane can hit the same cache
-    /// without re-decoding (plan 0073 D4).
+    /// without re-decoding.
     @ObservationIgnored let tileContentStore = TileContentStore()
 
     var tileDetailReader: MediaTileDetailReader {
@@ -132,7 +132,7 @@ final class CatalogWindowViewModel {
     /// `stripTileEdgeDefaultsKey`) and, since it's the ViewModel's only injected
     /// `UserDefaults` seam, also import preferences (`importPreferences`,
     /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
-    /// production `UserDefaults.standard` domain by omitting it (plan 0066 Stage 2).
+    /// production `UserDefaults.standard` domain by omitting it (ADR 0020).
     // UserDefaults is documented thread-safe; shared across ViewModel (MainActor) and
     // MediaOperationCoordinator/LibraryReorganizationRunner (actor) without isolation hop.
     @ObservationIgnored nonisolated(unsafe) let preferences: UserDefaults
@@ -684,9 +684,9 @@ extension CatalogWindowViewModel {
     }
 
     func applySidebarSelectionPolicy(previous: CatalogWindowState, next: CatalogWindowState) {
-        // Attach-time selection hijack is removed (0071 §13, decision 7+13):
-        // attaching a card never moves the user. Launch-time selection of a
-        // connected card is still handled via the initial default below.
+        // Attach-time selection hijack is removed (ADR 0014): attaching a card
+        // never moves the user. Launch-time selection of a connected card is
+        // still handled via the initial default below.
 
         // Do not latch the initial default on a pre-load empty world (zero roots of
         // both kinds). That state can publish before `store.start()` finishes; latching

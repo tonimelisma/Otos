@@ -1,6 +1,7 @@
 import Foundation
 
-/// Known-materialization event suppression policy (plan 0056).
+/// Known-materialization event suppression policy
+/// (docs/research/2026-07-11-onedrive-materialization-fsevents.md).
 ///
 /// Provider hydration runs outside the Otos process, so `IgnoreSelf` cannot
 /// identify those FSEvents. When measurement shows fact-neutral hydration with a

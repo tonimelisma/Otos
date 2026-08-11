@@ -17,8 +17,8 @@ extension CatalogWindowViewModel {
         return importPresentations.first { $0.sourcePath == path }
     }
 
-    // Stage 8: ImportPlanDetailReader and the Details sheet are deleted; the
-    // grid is the plan view and the footer shows the status per §9.
+    // ImportPlanDetailReader and the Details sheet are deleted (ADR 0021): the
+    // grid is the plan view and the footer shows the status (ARC-047).
 
     func startMediaOperationsIfNeeded() {
         guard mediaOperationCoordinator == nil else {
@@ -155,7 +155,7 @@ extension CatalogWindowViewModel {
         await mediaOperationCoordinator?.readyPlan(for: source)
     }
 
-    // MARK: - Library reorganization (Stage G3)
+    // MARK: - Library reorganization (ARC-051)
 
     private var selectedFixedLibraryPath: LibraryRootPath? {
         guard case let .library(path) = sidebarSelection else {

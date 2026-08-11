@@ -24,7 +24,7 @@ extension CatalogWindowViewModel {
 
     /// Single focus writer — every loupe focus change goes through here so
     /// `focusedAssetKind` stays consistent with `focusedAssetID` and views never
-    /// guess kind (plan 0073 D1). `nil` clears kind; a non-nil ID triggers an
+    /// guess kind. `nil` clears kind; a non-nil ID triggers an
     /// async detail read that updates kind only if focus has not moved.
     func setFocus(_ id: MediaAssetID?) {
         focusedAssetID = id
@@ -339,7 +339,7 @@ extension CatalogWindowViewModel {
         Task { @MainActor [weak self] in
             // One exit point for the slot: every `return` below unwinds through it.
             // The previous shape removed the slot on two of four paths, leaving a
-            // permanent spinner after clicking a still image (plan 0073 D2).
+            // permanent spinner after clicking a still image.
             defer { self?.downloadingSlots.remove(.loupe) }
             guard let self else { return }
             let detail = await detailReader.details(for: [id])[id]

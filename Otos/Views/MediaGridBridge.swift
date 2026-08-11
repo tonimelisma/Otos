@@ -76,7 +76,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onArrowKey: (Int) -> Void = { _ in }
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
-    /// Catalog identity remap batch from reorganization settlement (Stage G3).
+    /// Catalog identity remap batch from reorganization settlement (ARC-051).
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
 
@@ -135,9 +135,9 @@ final class MediaGridViewController: NSViewController {
     /// Sticky, monotonic tile content (detail + best decoded image). Identity order lives
     /// in the diffable data source; this store is the single paint truth so a tile never
     /// blanks a painted same-asset thumbnail (APP-015 by construction).
-    /// Hoisted to ViewModel ownership (plan 0073 Stage 2) so grid, strip, and panes share one decoded-image owner.
+    /// Hoisted to ViewModel ownership so grid, strip, and panes share one decoded-image owner.
     var tileContents: TileContentStore = .init()
-    /// Last applied reorganization remap epoch from SwiftUI (Stage G3).
+    /// Last applied reorganization remap epoch from SwiftUI (ARC-051).
     var appliedIdentityRemapEpoch: UInt64 = 0
     private var detailQueryTask: Task<Void, Never>?
     private var detailQueryGeneration = 0

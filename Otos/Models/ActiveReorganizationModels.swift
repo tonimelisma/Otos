@@ -1,6 +1,6 @@
 import Foundation
 
-// Active reorganization journal models (plan 0055 Stage G2 / §4.2, §9.5–9.8).
+// Active reorganization journal models (ARC-051).
 // Bounded recovery recipe only — deleted after catalog commit or proven rollback.
 
 nonisolated struct ReorganizationComponentKey: Hashable, Sendable {

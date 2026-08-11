@@ -192,7 +192,7 @@ final class TileContentStore {
     }
 
     /// Moves painted tile content from old identities to new ones before the grid
-    /// publishes remapped ordered IDs (plan 0055 Stage G3 / never-blank invariant).
+    /// publishes remapped ordered IDs (APP-015 never-blank invariant).
     func applyIdentityRemapBatch(_ batch: CatalogIdentityRemapBatch) {
         guard !batch.remaps.isEmpty else { return }
         var next = entries
@@ -245,7 +245,7 @@ final class TileContentStore {
 
     /// Hit test for pane thumbnail: returns the decoded image if the store already
     /// holds one for this asset, without triggering a decode. Used by PaneThumbnailView
-    /// to avoid re-decoding an image the filmstrip is already showing (plan 0073 D4).
+    /// to avoid re-decoding an image the filmstrip is already showing.
     func image(for id: MediaAssetID) -> CGImage? {
         content(for: id)?.image
     }

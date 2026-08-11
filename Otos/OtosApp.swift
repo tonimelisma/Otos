@@ -14,7 +14,7 @@ struct OtosApp: App {
     /// The one place in the app that names the production catalog location and
     /// UserDefaults.standard — every other type takes both as required
     /// (no-default) parameters, so a caller cannot reach production data by
-    /// omitting an argument (plan 0066 Stage 2).
+    /// omitting an argument (ADR 0020).
     ///
     /// Blank-slate: the hosted test bundle must not even *allocate* the
     /// production store. The ViewModel is constructed with an in-memory store
@@ -39,8 +39,8 @@ struct OtosApp: App {
         Window("Otos", id: "main") {
             ContentView(viewModel: catalogViewModel)
                 .task {
-                    // Plan 0067 Stage 3: bracket the window-attach/start entry point so a
-                    // startup stall can be attributed to it. The monitor flags the stall;
+                    // Bracket the window-attach/start entry point so a startup stall
+                    // can be attributed to it. The monitor flags the stall;
                     // Instruments names the code.
                     let attachOp = catalogViewModel.uiStallMonitor.beginOperation("OtosApp.windowAttach")
                     defer { catalogViewModel.uiStallMonitor.endOperation(attachOp) }
@@ -49,7 +49,7 @@ struct OtosApp: App {
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
                     // The hosted test bundle launches this app to get a process to attach
                     // to; it must come up inert rather than touch the user's production
-                    // catalog and preferences (plan 0066 Stage 1). This check only ever
+                    // catalog and preferences (ADR 0020). This check only ever
                     // declines to start the product stack — never branches product
                     // behavior for a real launch.
                     guard !RunContext.isTestRun else {
@@ -104,7 +104,7 @@ struct OtosApp: App {
             // View commands belong in the *standard* View menu. `CommandMenu("View")`
             // creates a second top-level menu with the same title — measured 2026-08-09:
             // the menu bar read `Apple, Otos, Edit, View, Library, View, Window, Help`
-            // (plan 0075 §1.1). `CommandGroup(after:)` places into the existing one.
+            // `CommandGroup(after:)` places into the existing one.
             CommandGroup(after: .sidebar) {
                 Button("Grid") {
                     catalogViewModel.setViewMode(.grid)

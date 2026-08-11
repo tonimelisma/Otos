@@ -212,7 +212,7 @@ nonisolated enum ThumbnailStore {
             return nil
         }
         // Draw once into premultiplied-BGRA so CA can commit without copying
-        // each paint into an IOSurface (plan 0010 Part D).
+        // each paint into an IOSurface.
         return iosurfaceFriendlyImage(image) ?? image
     }
 

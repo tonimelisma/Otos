@@ -14,7 +14,7 @@ Usage:
   script/check-production-data-untouched.sh --before
   script/check-production-data-untouched.sh --after
 
-Guards the invariant plan 0066 exists for: a test run must never touch the
+Guards the invariant ADR 0020 exists for: a test run must never touch the
 user's production catalog or production preferences, and must never leave
 behind a test preference domain carrying real values.
 
@@ -68,7 +68,7 @@ other_domain_names() {
 # Absolute: no OtosTests domain may carry real values, whether or not this run
 # created it. The --before/--after diff catches regressions introduced by this
 # run; this catches the 111 data-carrying domains that accumulated before the
-# diff check existed (plan 0072 §1.2).
+# diff check existed.
 assert_no_data_carrying_test_domains() {
   local offenders=()
   for f in "$PREFS_DIR"/net.melisma.OtosTests.*.plist; do

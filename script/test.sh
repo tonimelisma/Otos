@@ -10,8 +10,8 @@ otos_require_full_xcode
 LOG_FILE="$(otos_log_file "$ROOT_DIR" test test)"
 echo "Capturing test output to $LOG_FILE"
 
-# OTOS_SCALE_TEST gates the on-disk ~25k-asset projection scale test (plan 0065
-# Stage 4) — it is materially slower than the default suite, so it stays skipped
+# OTOS_SCALE_TEST gates the on-disk ~25k-asset projection scale test — it is
+# materially slower than the default suite, so it stays skipped
 # unless requested. xcodebuild does not forward shell environment variables to a
 # UI-hosted XCTest bundle; the Otos.xcscheme's LaunchAction EnvironmentVariables
 # entry substitutes `$(OTOS_SCALE_TEST)`, which only resolves when passed as a

@@ -72,7 +72,7 @@ extension CatalogStore {
         var migrator = DatabaseMigrator()
         // Import history and other non-rebuildable overlay forbid destructive
         // schema reset. Unknown future migrations refuse to open; known schemas
-        // migrate additively. See ADR 0010 / plan 0055 Stage A.
+        // migrate additively. See ADR 0010.
 
         migrator.registerMigration("v3_sort_key_separator") { db in
             try db.create(table: "library_root") { table in
@@ -202,8 +202,8 @@ extension CatalogStore {
         // a newer predicate — doing so rewrites history for fresh installs only and
         // silently diverges them from every catalog already migrated through v12 in
         // the field. A new predicate needs a NEW migration. Text extracted verbatim
-        // from `SELECT sql FROM sqlite_master` on a live migrated catalog (plan 0065
-        // Stage 1) — do not hand-edit whitespace or clause order.
+        // from `SELECT sql FROM sqlite_master` on a live migrated catalog
+        // — do not hand-edit whitespace or clause order.
         migrator.registerMigration("v12_xxh3_content_hashes") { db in
             try addContentHashColumns(db)
             try db.drop(index: "idx_media_asset_needs_enrichment_global")
@@ -241,7 +241,7 @@ extension CatalogStore {
                   <> COALESCE(content_hash_source_mtime, -1)
             """)
         }
-        // Plan 0062: hash production is gated on root kind (ADR 0018) — a
+        // ADR 0018: hash production is gated on root kind — a
         // `.removableVolume` asset with current metadata is fully enriched even with
         // no hash. The broad pair from v12 stays for library/deviceMTP roots; this
         // adds a metadata-only pair so a removable-root row can leave the index
@@ -249,7 +249,7 @@ extension CatalogStore {
         //
         // FROZEN 2026-08, same rule as v12 above: this is a historical record, never
         // regenerated from EnrichmentLeaseGateway. Text extracted verbatim from a live
-        // migrated catalog (plan 0065 Stage 1).
+        // migrated catalog.
         migrator.registerMigration("v13_hash_gated_enrichment_claim_indexes") { db in
             try db.execute(sql: """
             CREATE INDEX idx_media_asset_needs_enrichment_global_metadata_only
@@ -274,7 +274,7 @@ extension CatalogStore {
     }
 
     /// Rebuilds `asset_metadata` so path remaps cascade with media_asset PK updates
-    /// (plan 0055 §4.3). SQLite cannot ALTER an existing FK action in place.
+    /// (ARC-043). SQLite cannot ALTER an existing FK action in place.
     static func rebuildAssetMetadataWithUpdateCascade(_ db: Database) throws {
         try db.execute(sql: "PRAGMA foreign_keys = OFF")
         try db.execute(
@@ -687,8 +687,8 @@ extension CatalogStore {
     }
 
     /// Hash columns use `COALESCE(?, column)` rather than a plain assignment: when
-    /// `result.contentHash` is absent (a `.removableVolume` source, ADR 0018/plan
-    /// 0062), the row's existing digest — if any was recorded before the source's
+    /// `result.contentHash` is absent (a `.removableVolume` source, ADR 0018),
+    /// the row's existing digest — if any was recorded before the source's
     /// root kind or facts changed — must survive, not be clobbered to NULL.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
         let captureWall = CaptureWallClock.select(from: result.metadata.timestamps)

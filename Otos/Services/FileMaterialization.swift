@@ -104,7 +104,7 @@ extension FileMaterialization {
     /// kernel returns ETIMEDOUT (~1s). Running that on the Swift cooperative pool —
     /// whose width is the core count, against `globalConcurrency = 16` — can occupy
     /// every cooperative thread and starve unrelated async work, including MainActor
-    /// continuations (plan 0074 B3). `.utility` because no user action waits on a probe.
+    /// continuations (ENR-008). `.utility` because no user action waits on a probe.
     private nonisolated static let probeQueue = DispatchQueue(
         label: "net.melisma.Otos.materialization.probe",
         qos: .utility,
@@ -399,7 +399,7 @@ nonisolated enum MaterializationOutcome: Equatable {
     /// twice consecutively, so continued polling would waste the 120s timeout
     /// holding `rootBackgroundCap=1` while the provider is not serving. Treated
     /// identically to `timedOut` by retry pacing, but attributed separately so a
-    /// future short-circuit can be measured (plan 0067 Stage 3b / 040347 9.1G).
+    /// future short-circuit can be measured.
     case providerUnavailable
     /// A device staging download was deferred because local free space is below the safety floor.
     case insufficientLocalSpace

@@ -21,7 +21,7 @@ extension CatalogWindowViewModel {
                 self?.submitCatalogMutation(.resumeRemovableSource(identity))
             },
             onDetach: { [weak self] identity, reason in
-                // Plan 0067 Stage 3: bracket the availability-change path that runs on eject.
+                // Bracket the availability-change path that runs on eject.
                 // The stall monitor flags; Instruments names the code.
                 let op = self?.uiStallMonitor.beginOperation("RemovableVolumeMonitor.detach")
                 self?.submitCatalogMutation(.detachRemovableSource(identity, reason))

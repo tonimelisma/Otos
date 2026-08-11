@@ -50,8 +50,8 @@ nonisolated struct MediaEnricher {
             guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
-            // `shouldHash` is false only for `.removableVolume` sources (ADR 0018/plan
-            // 0062): hashing them in place would force a full read of the whole card
+            // `shouldHash` is false only for `.removableVolume` sources (ADR
+            // 0018): hashing them in place would force a full read of the whole card
             // merely to checksum it. Skip the read entirely rather than hash and
             // discard — `contentHash` stays nil and the store leaves any existing
             // digest untouched.

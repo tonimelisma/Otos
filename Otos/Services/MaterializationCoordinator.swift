@@ -403,8 +403,8 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 // The breaker exists to stop a background storm on a dead provider — it must never
                 // swallow a direct user action. An interactive request is both the thing the user
                 // is waiting on and the cheapest probe of whether the provider recovered; suppressing
-                // it left loupe and click-to-play silently dead for up to 60s with no way to retry
-                // (plan 0074 B1). ENR-008 and APP-023 both say background only.
+                // it left loupe and click-to-play silently dead for up to 60s with no way to retry.
+                // ENR-008 and APP-023 both say background only.
                 if entry.effectivePriority != .interactive,
                    isBreakerOpen(for: entry.request.id.libraryRootPath)
                 {
@@ -601,7 +601,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         switch outcome {
         case .providerUnavailable:
             // Only background/device failures open the breaker. A user's own click
-            // failing must never lengthen a suppression window (decision 3).
+            // failing must never lengthen a suppression window.
             guard effectivePriority != .interactive else { return }
             let next = (providerUnavailableStreakByRoot[rootPath] ?? 0) + 1
             providerUnavailableStreakByRoot[rootPath] = next
@@ -621,7 +621,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             scheduleBreakerWake()
         case .materialized, .alreadyMaterialized:
             // Any success closes it, including an interactive one — that is the
-            // implicit retry path (decision 2).
+            // implicit retry path.
             let hadBreaker = breakerOpenUntilByRoot[rootPath] != nil
             let hadStreak = (providerUnavailableStreakByRoot[rootPath] ?? 0) > 0
             if hadBreaker || hadStreak {

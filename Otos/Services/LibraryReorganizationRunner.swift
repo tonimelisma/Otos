@@ -1,7 +1,7 @@
 import Foundation
 import OSLog
 
-/// Orchestrates one fixed-library reorganization run (plan 0055 Stage G3).
+/// Orchestrates one fixed-library reorganization run (ARC-051).
 ///
 /// Plans via `ReorganizationPlanner`, journals/executes each component, settles
 /// catalog identities, and returns remap batches for ViewModel/TileContentStore.

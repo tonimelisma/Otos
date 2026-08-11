@@ -16,7 +16,7 @@ actor CatalogProjection {
     /// Whether the next publication must rebuild the full ordered-asset query. A
     /// detail-only change (enrichment that touched no ordering/scope column) reuses
     /// the last published order — the grid's own same-identity `.refreshVisible` path
-    /// already updates visible details cheaply (plan 0064 Stage 3). `.none` means no
+    /// already updates visible details cheaply (ADR 0011). `.none` means no
     /// change is pending (the publish gate is `dirty`).
     private enum DirtyKind {
         case none
@@ -39,12 +39,12 @@ actor CatalogProjection {
     private var lastPublishedState: CatalogWindowState?
     /// Count of full ordered-asset queries executed by publications. A detail-only
     /// publication skips it; the count is the observable "full-catalog re-sort per
-    /// enrichment batch" metric (plan 0064 Stage 3) and drives the regression test.
+    /// enrichment batch" metric (ADR 0011) and drives the regression test.
     private(set) var orderQueryCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
 
     /// True when no change is pending and no publication is in flight. Lets a test
-    /// poll for settlement instead of guessing a sleep duration (plan 0065 Stage 4).
+    /// poll for settlement instead of guessing a sleep duration.
     var isQuiescent: Bool {
         !dirty && !publishing
     }

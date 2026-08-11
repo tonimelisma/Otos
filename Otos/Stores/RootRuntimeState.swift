@@ -13,7 +13,8 @@ nonisolated struct RootRuntimeState: Equatable {
     var activity: CatalogLibraryActivity
     var isEjectable: Bool
     /// Package directories skipped by the last completed scan (AVCHD and similar).
-    /// Surfaced as import-footer attention in Stage D; inventory-only here.
+    /// Surfaced as import-footer attention by the coordinator (ARC-047);
+    /// inventory-only here.
     var skippedPackageCount: Int
     /// Monotonic general planning revision. Bumped whenever reorganization planning
     /// inputs may have changed, including no-op rescans and event deferrals. Reorg

@@ -13,7 +13,7 @@ nonisolated enum EnrichmentLeaseGateway {
     /// Partial-index names for the claim queries' `INDEXED BY`. Two pairs (broad vs
     /// metadata-only) so a root that never hashes (`.removableVolume`) leaves the
     /// index as soon as its metadata is current, instead of staying pinned forever
-    /// because `content_hash_xxh3_128 IS NULL` never becomes false. See plan 0062.
+    /// because `content_hash_xxh3_128 IS NULL` never becomes false. See ADR 0018.
     static let broadGlobalIndexName = "idx_media_asset_needs_enrichment_global"
     static let broadRootIndexName = "idx_media_asset_needs_enrichment_root"
     static let metadataOnlyGlobalIndexName = "idx_media_asset_needs_enrichment_global_metadata_only"

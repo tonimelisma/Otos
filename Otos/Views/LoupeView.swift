@@ -177,7 +177,7 @@ struct FilmstripResizeHandle: View {
 /// A cursor rect rather than `NSCursor.push()/pop()` in `onHover`: SwiftUI does not
 /// guarantee a trailing `onHover(false)` when the view is removed mid-hover (exit
 /// loupe with ⌘1 while over the handle), which left the process-wide cursor stack
-/// unbalanced (plan 0073 D6).
+/// unbalanced.
 private struct ResizeCursorArea: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
         CursorView()

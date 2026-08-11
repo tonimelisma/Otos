@@ -2,9 +2,9 @@ import SwiftUI
 
 /// Bottom import plan footer for the selected removable source.
 ///
-/// Renders coordinator presentation only: destination picker, status line
-/// (§9), and Import/Cancel queue. The grid is the plan view; the footer
-/// is the fixed status surface. Honest denominators only (§8).
+/// Renders coordinator presentation only: destination picker, status line,
+/// and Import/Cancel queue (ARC-047). The grid is the plan view; the footer
+/// is the fixed status surface. Honest denominators only.
 struct ImportPlanFooter: View {
     let presentation: MediaOperationSourcePresentation
     let fixedLibraries: [CatalogLibraryState]
