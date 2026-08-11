@@ -10,25 +10,13 @@ fail() {
   exit 1
 }
 
-# ALLOWLIST holds the rows not yet migrated. It only ever shrinks; a new row may
-# never be added to it. The count gate below makes accidental re-expansion fail.
-ALLOWLIST=(
-  "APP-001" "APP-002" "APP-003" "APP-006" "APP-008" "APP-009" "APP-010" "APP-011"
-  "APP-013" "APP-014" "APP-015" "APP-017" "APP-018" "APP-019" "APP-020" "APP-021"
-  "APP-022" "APP-023" "ARC-001" "ARC-002" "ARC-002A" "ARC-003" "ARC-004" "ARC-005"
-  "ARC-007" "ARC-008" "ARC-009" "ARC-010" "ARC-011" "ARC-012" "ARC-013" "ARC-014"
-  "ARC-015" "ARC-016" "ARC-018" "ARC-019" "ARC-021" "ARC-022" "ARC-023" "ARC-026"
-  "ARC-031" "ARC-033" "ARC-034" "ARC-035" "ARC-037" "ARC-038" "ARC-041" "ARC-042"
-  "ARC-043" "ARC-044" "ARC-045" "ARC-046" "ARC-046A" "ARC-048" "ARC-049"
-  "ARC-050" "ARC-051" "ARC-053" "ENR-001" "ENR-002" "ENR-003" "ENR-004" "ENR-005"
-  "ENR-007" "ENR-008" "ENR-009" "ENR-010" "ENR-011" "ENR-012" "ENR-013" "ENR-014"
-  "ENR-015" "MED-001" "MED-004"
-)
-ALLOWLIST_MAX_COUNT=74
+# No allowlist — every row is validated. The gate must stay green without bypass.
+ALLOWLIST=()
+ALLOWLIST_MAX_COUNT=0
 
 is_allowlisted() {
   local id="$1"
-  for a in "${ALLOWLIST[@]}"; do
+  for a in "${ALLOWLIST[@]:-}"; do
     [[ "$a" == "$id" ]] && return 0
   done
   return 1
