@@ -49,7 +49,9 @@ final class TemporaryDefaults: Sendable {
     /// Convenience accessor for call sites that still need a `UserDefaults`
     /// instance directly. Each access creates a fresh instance for the same
     /// suite; the suite's on-disk state is shared, not the instance.
-    var defaults: UserDefaults { domain.makeDefaults() }
+    var defaults: UserDefaults {
+        domain.makeDefaults()
+    }
 
     /// `function` defaults to the caller's own function name so leaked-domain
     /// diagnostics (and `script/check-production-data-untouched.sh`, Stage 4)

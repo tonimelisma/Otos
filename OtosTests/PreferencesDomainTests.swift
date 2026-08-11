@@ -10,7 +10,7 @@ import Testing
 /// remains unchanged.
 @MainActor
 struct PreferencesDomainTests {
-    @Test func temporaryDomainPersistsViewModelStateAndIsolatesControl() async throws {
+    @Test func temporaryDomainPersistsViewModelStateAndIsolatesControl() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
         let control = TemporaryDefaults()
@@ -111,15 +111,15 @@ struct PreferencesDomainTests {
         defer { temp.cleanUp() }
         let store = CatalogStore(location: .inMemory)
         // Each construction explicitly passes the domain.
-        let _ = CatalogWindowViewModel(
+        _ = CatalogWindowViewModel(
             catalogStore: store,
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: temp.domain
         )
-        let _ = MediaOperationCoordinator(store: store, preferencesDomain: temp.domain)
-        let _ = LibraryReorganizationRunner(store: store, preferencesDomain: temp.domain)
+        _ = MediaOperationCoordinator(store: store, preferencesDomain: temp.domain)
+        _ = LibraryReorganizationRunner(store: store, preferencesDomain: temp.domain)
         // No assertion needed — compilation proves the requirement.
     }
 }

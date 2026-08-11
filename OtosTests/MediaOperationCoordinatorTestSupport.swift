@@ -18,6 +18,7 @@ actor ControlledImportPlanBuilder {
     }
 
     private var recorded: [RecordedRequest] = []
+    // swiftlint:disable:next line_length
     private var pending: [LibraryRootPath: (snapshot: ImportPlanningSnapshot, reserved: Set<MediaRelativePath>, continuation: CheckedContinuation<ImportPlanBuildResult, Never>)] = [:]
     private var suspendNext: Set<LibraryRootPath> = []
     private(set) var cancelled: Set<LibraryRootPath> = []
@@ -48,9 +49,17 @@ actor ControlledImportPlanBuilder {
         }
     }
 
-    func recordedRequests() -> [RecordedRequest] { recorded }
-    func pendingSources() -> [LibraryRootPath] { Array(pending.keys) }
-    func recordedCancelled() -> Set<LibraryRootPath> { cancelled }
+    func recordedRequests() -> [RecordedRequest] {
+        recorded
+    }
+
+    func pendingSources() -> [LibraryRootPath] {
+        Array(pending.keys)
+    }
+
+    func recordedCancelled() -> Set<LibraryRootPath> {
+        cancelled
+    }
 
     private func recordCancel(for source: LibraryRootPath) {
         cancelled.insert(source)

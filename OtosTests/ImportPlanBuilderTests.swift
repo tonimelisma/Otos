@@ -13,7 +13,7 @@ struct ImportPlanBuilderTests {
 
     private static func facts(
         name: String = "IMG_1.JPG",
-        captureWallCompact: Int64? = 20250101120000
+        captureWallCompact: Int64? = 20_250_101_120_000
     ) -> PlanningFileFacts {
         let relative = MediaRelativePath(rawValue: name)
         return PlanningFileFacts(
@@ -43,14 +43,16 @@ struct ImportPlanBuilderTests {
             destinationOccupancyRevision: 1,
             sourceMedia: sourceMedia,
             destinationOccupants: occupants,
+            // swiftlint:disable:next line_length
             policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false),
             calendar: Calendar(identifier: .gregorian),
             timeZone: TimeZone(secondsFromGMT: 0) ?? .current
         )
     }
 
-    @Test func liveBuilderProducesSameOutputAsDirectEnumerationAndPlanner() async throws {
-        let media = [Self.facts(name: "IMG_001.JPG", captureWallCompact: 20250101120000), Self.facts(name: "IMG_002.JPG", captureWallCompact: 20250102120000)]
+    @Test func liveBuilderProducesSameOutputAsDirectEnumerationAndPlanner() async {
+        // swiftlint:disable:next line_length
+        let media = [Self.facts(name: "IMG_001.JPG", captureWallCompact: 20_250_101_120_000), Self.facts(name: "IMG_002.JPG", captureWallCompact: 20_250_102_120_000)]
         let snapshot = Self.snapshot(sourceMedia: media)
         let live = LiveImportPlanBuilder()
         let viaBuilder = await live.build(snapshot: snapshot, additionalReserved: [])
@@ -69,9 +71,13 @@ struct ImportPlanBuilderTests {
         let sourceA = LibraryRootPath(rawValue: "/tmp/cardA")
         let sourceB = LibraryRootPath(rawValue: "/tmp/cardB")
         let dest = Self.destRoot
-        let mediaA = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceA, relativePath: MediaRelativePath(rawValue: "A1.JPG")), sourceURL: sourceA.url.appending(path: "A1.JPG"), relativePath: MediaRelativePath(rawValue: "A1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20250101120000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
-        let mediaB = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceB, relativePath: MediaRelativePath(rawValue: "B1.JPG")), sourceURL: sourceB.url.appending(path: "B1.JPG"), relativePath: MediaRelativePath(rawValue: "B1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20250102120000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        // swiftlint:disable:next line_length
+        let mediaA = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceA, relativePath: MediaRelativePath(rawValue: "A1.JPG")), sourceURL: sourceA.url.appending(path: "A1.JPG"), relativePath: MediaRelativePath(rawValue: "A1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_101_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        // swiftlint:disable:next line_length
+        let mediaB = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceB, relativePath: MediaRelativePath(rawValue: "B1.JPG")), sourceURL: sourceB.url.appending(path: "B1.JPG"), relativePath: MediaRelativePath(rawValue: "B1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_102_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        // swiftlint:disable:next line_length
         let snapA = ImportPlanningSnapshot(generation: 1, sourceRoot: sourceA, destinationRoot: dest, sourceOccupancyRevision: 1, destinationOccupancyRevision: 1, sourceMedia: mediaA, destinationOccupants: [:], policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false), calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0) ?? .current)
+        // swiftlint:disable:next line_length
         let snapB = ImportPlanningSnapshot(generation: 1, sourceRoot: sourceB, destinationRoot: dest, sourceOccupancyRevision: 1, destinationOccupancyRevision: 1, sourceMedia: mediaB, destinationOccupants: [:], policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false), calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0) ?? .current)
 
         let controlled = ControlledImportPlanBuilder()
@@ -101,7 +107,9 @@ struct ImportPlanBuilderTests {
     @Test func cancellingControlledBuildIsObservableButDoesNotResume() async throws {
         let source = LibraryRootPath(rawValue: "/tmp/cardC")
         let dest = Self.destRoot
-        let media = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: source, relativePath: MediaRelativePath(rawValue: "C1.JPG")), sourceURL: source.url.appending(path: "C1.JPG"), relativePath: MediaRelativePath(rawValue: "C1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20250101120000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        // swiftlint:disable:next line_length
+        let media = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: source, relativePath: MediaRelativePath(rawValue: "C1.JPG")), sourceURL: source.url.appending(path: "C1.JPG"), relativePath: MediaRelativePath(rawValue: "C1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_101_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        // swiftlint:disable:next line_length
         let snap = ImportPlanningSnapshot(generation: 1, sourceRoot: source, destinationRoot: dest, sourceOccupancyRevision: 1, destinationOccupancyRevision: 1, sourceMedia: media, destinationOccupants: [:], policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false), calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0) ?? .current)
         let controlled = ControlledImportPlanBuilder()
         await controlled.suspendNextBuild(for: source)

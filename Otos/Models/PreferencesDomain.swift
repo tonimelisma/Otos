@@ -19,12 +19,12 @@ nonisolated enum PreferencesDomain: Equatable, Sendable {
     func makeDefaults() -> UserDefaults {
         switch self {
         case .standard:
-            return UserDefaults.standard
-        case .suite(let name):
+            UserDefaults.standard
+        case let .suite(name):
             // A UUID-suffixed suite name is never a reserved domain, so this
             // force-unwrap is safe — suite creation cannot fail for the names
             // this codebase generates.
-            return UserDefaults(suiteName: name)!
+            UserDefaults(suiteName: name)!
         }
     }
 }

@@ -218,7 +218,7 @@ final class CatalogWindowViewModel {
             bufferingPolicy: .bufferingNewest(1)
         )
         self.preferencesDomain = preferencesDomain
-        self.preferences = preferencesDomain.makeDefaults()
+        preferences = preferencesDomain.makeDefaults()
         let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
         gridColumnCount = GridColumnCount.validated(storedColumns)
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
