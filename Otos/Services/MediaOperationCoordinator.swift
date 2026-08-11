@@ -1109,11 +1109,19 @@ actor MediaOperationCoordinator {
     }
 
     private func persistDestinationMappings() {
+        // Never write an empty dictionary: a suite whose only keys are empty
+        // maps still counts as a data-carrying preference domain, and there is
+        // no mapping to record anyway. Mirror lastUsedDestination: set when
+        // non-empty, remove otherwise.
         var deviceRaw: [String: String] = [:]
         for (device, dest) in destinationByDeviceIdentity {
             deviceRaw[device] = dest.rawValue
         }
-        preferences.set(deviceRaw, forKey: Self.destinationByDeviceIdentityKey)
+        if deviceRaw.isEmpty {
+            preferences.removeObject(forKey: Self.destinationByDeviceIdentityKey)
+        } else {
+            preferences.set(deviceRaw, forKey: Self.destinationByDeviceIdentityKey)
+        }
         if let last = lastUsedDestination {
             preferences.set(last.rawValue, forKey: Self.lastUsedDestinationKey)
         } else {
@@ -1125,7 +1133,11 @@ actor MediaOperationCoordinator {
         for (source, dest) in destinationBySource {
             legacyRaw[source.rawValue] = dest.rawValue
         }
-        preferences.set(legacyRaw, forKey: Self.destinationMappingKey)
+        if legacyRaw.isEmpty {
+            preferences.removeObject(forKey: Self.destinationMappingKey)
+        } else {
+            preferences.set(legacyRaw, forKey: Self.destinationMappingKey)
+        }
     }
 
     /// Snapshot of all known destinations, including unavailable sources whose
