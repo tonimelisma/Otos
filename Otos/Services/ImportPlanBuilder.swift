@@ -11,7 +11,7 @@ nonisolated struct ImportPlanBuildResult: Sendable {
 }
 
 /// The real substitution boundary between lifecycle ownership and expensive plan
-/// construction (plan 0079 Stage 3). The coordinator owns lifecycle; the builder
+/// construction. The coordinator owns lifecycle; the builder
 /// owns enumeration and pure planning. The live builder runs off the coordinator
 /// actor; the controlled test builder suspends on a continuation.
 ///

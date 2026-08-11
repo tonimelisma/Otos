@@ -135,7 +135,7 @@ final class CatalogWindowViewModel {
     /// production `UserDefaults.standard` domain by omitting it (ADR 0020).
     /// The ViewModel owns its `UserDefaults` instance for synchronous UI
     /// preferences; media-operation actors receive the same `PreferencesDomain`
-    /// and each creates its own actor-owned instance (Stage 2, plan 0079).
+    /// and each creates its own actor-owned instance.
     @ObservationIgnored let preferences: UserDefaults
     @ObservationIgnored let preferencesDomain: PreferencesDomain
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>

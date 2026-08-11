@@ -29,7 +29,7 @@ actor MediaOperationCoordinator {
     private let planBuilder: any ImportPlanBuilding
     private let makeExecutor: @Sendable (LibraryRootPath) -> any ImportExecuting
 
-    // MARK: - Stage 4 single-session model (plan 0079)
+    // MARK: - Stage 4 single-session model
 
     private struct AttachmentGeneration: Equatable, Hashable, Sendable {
         let rawValue: UInt64

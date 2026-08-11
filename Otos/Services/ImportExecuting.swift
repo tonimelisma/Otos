@@ -1,7 +1,7 @@
 import Foundation
 
 /// The real substitution boundary between lifecycle ownership and filesystem
-/// execution (plan 0079 Stage 4 follow-up). The coordinator owns lifecycle;
+/// execution. The coordinator owns lifecycle;
 /// the executor owns copy/journal mechanics. The live executor delegates to
 /// `MediaImportExecutor`; the controlled test executor can suspend a selected
 /// source's execution until the test resumes it with a controlled terminal
