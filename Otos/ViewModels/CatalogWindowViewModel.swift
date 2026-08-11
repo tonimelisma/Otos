@@ -133,12 +133,11 @@ final class CatalogWindowViewModel {
     /// `UserDefaults` seam, also import preferences (`importPreferences`,
     /// `ImportPreferencesStore`) — no default value, so a caller cannot reach the
     /// production `UserDefaults.standard` domain by omitting it (ADR 0020).
-    /// The ViewModel keeps the injected defaults for UI-owned settings; media-operation
-    /// actors receive only the separate Sendable suite name below.
+    /// The ViewModel owns its `UserDefaults` instance for synchronous UI
+    /// preferences; media-operation actors receive the same `PreferencesDomain`
+    /// and each creates its own actor-owned instance (Stage 2, plan 0079).
     @ObservationIgnored let preferences: UserDefaults
-    /// Sendable identity for the suite whose defaults are owned by media-operation
-    /// actors. `nil` selects the production standard domain.
-    @ObservationIgnored let preferencesSuiteName: String?
+    @ObservationIgnored let preferencesDomain: PreferencesDomain
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
@@ -203,8 +202,7 @@ final class CatalogWindowViewModel {
         startsStallMonitor: Bool = true,
         startsEnrichment: Bool = true,
         startsSourceMonitoring: Bool = true,
-        preferences: sending UserDefaults,
-        preferencesSuiteName: String? = nil,
+        preferencesDomain: PreferencesDomain,
         previewLoader: (any PreviewLoading)? = nil,
         videoLoader: VideoPreviewLoader? = nil
     ) {
@@ -219,8 +217,8 @@ final class CatalogWindowViewModel {
         let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
-        self.preferences = preferences
-        self.preferencesSuiteName = preferencesSuiteName
+        self.preferencesDomain = preferencesDomain
+        self.preferences = preferencesDomain.makeDefaults()
         let storedColumns = preferences.integer(forKey: Self.gridColumnCountDefaultsKey)
         gridColumnCount = GridColumnCount.validated(storedColumns)
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double

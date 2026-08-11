@@ -1,4 +1,5 @@
 import Foundation
+@testable import Otos
 
 /// A `UserDefaults` suite for one test, cleaned up via an explicit `defer` the
 /// caller writes immediately after construction:
@@ -33,9 +34,22 @@ import Foundation
 /// never cfprefsd: it means a writer ran after `cleanUp()`. As of plan 0072 the only way
 /// that happened was unawaited async teardown (`defer { Task { … } }`); that shape is now
 /// banned and `script/check-production-data-untouched.sh` fails on any data-carrying domain.
+///
+/// Stage 2 (plan 0079): the test helper now vends a single `PreferencesDomain`
+/// value. Every production/test construction site requires a domain; there is no
+/// default that can silently select `.standard`. The helper creates one unique
+/// suite per test and exposes it as `domain` (`.suite(suiteName)`) for explicit
+/// injection. `defaults` remains as a convenience accessor that creates a fresh
+/// instance from the domain — it is not stored as `nonisolated(unsafe)`, and no
+/// `UserDefaults` reference escapes its isolation owner.
 final class TemporaryDefaults: Sendable {
-    nonisolated(unsafe) let defaults: UserDefaults
     let suiteName: String
+    let domain: PreferencesDomain
+
+    /// Convenience accessor for call sites that still need a `UserDefaults`
+    /// instance directly. Each access creates a fresh instance for the same
+    /// suite; the suite's on-disk state is shared, not the instance.
+    var defaults: UserDefaults { domain.makeDefaults() }
 
     /// `function` defaults to the caller's own function name so leaked-domain
     /// diagnostics (and `script/check-production-data-untouched.sh`, Stage 4)
@@ -43,15 +57,13 @@ final class TemporaryDefaults: Sendable {
     /// prefix is the exact string Stage 4 greps for.
     init(function: String = #function) {
         suiteName = "net.melisma.OtosTests.\(function).\(UUID().uuidString)"
-        // A UUID-suffixed suite name is never a reserved domain, so this cannot
-        // fail in practice — force-unwrapping here (not inside a @Test body) is
-        // this codebase's accepted shape for a construction that cannot fail.
-        defaults = UserDefaults(suiteName: suiteName)!
+        domain = .suite(suiteName)
     }
 
     /// Call via `defer` right after `init` — see the type doc for why this is a
     /// `defer` target and not a `deinit`.
     func cleanUp() {
+        let defaults = domain.makeDefaults()
         defaults.removePersistentDomain(forName: suiteName)
         defaults.synchronize()
         let path = NSHomeDirectory() + "/Library/Preferences/\(suiteName).plist"

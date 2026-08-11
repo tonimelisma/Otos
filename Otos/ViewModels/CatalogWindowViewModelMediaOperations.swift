@@ -28,7 +28,7 @@ extension CatalogWindowViewModel {
         let store = catalogStore
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesSuiteName: preferencesSuiteName,
+            preferencesDomain: preferencesDomain,
             cameraImport: cameraImport,
             materializationRequester: materializationCoordinator,
             autoEjectHandler: { root in
@@ -177,7 +177,7 @@ extension CatalogWindowViewModel {
         }
         let runner = reorganizationRunner ?? LibraryReorganizationRunner(
             store: catalogStore,
-            preferencesSuiteName: preferencesSuiteName
+            preferencesDomain: preferencesDomain
         )
         reorganizationRunner = runner
         Task { [weak self] in
@@ -208,7 +208,7 @@ extension CatalogWindowViewModel {
         showsReorganizationConfirmation = false
         let runner = reorganizationRunner ?? LibraryReorganizationRunner(
             store: catalogStore,
-            preferencesSuiteName: preferencesSuiteName
+            preferencesDomain: preferencesDomain
         )
         reorganizationRunner = runner
         Task { [weak self] in

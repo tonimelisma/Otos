@@ -64,7 +64,7 @@ struct IdentityRemapUITests {
         let viewModel = CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory, scanCadence: .milliseconds(10)),
             startsSourceMonitoring: false,
-            preferences: temp.defaults
+            preferencesDomain: temp.domain
         )
         viewModel.gridSelection = GridSelection(selection: [oldID], anchor: oldID, base: [oldID])
         viewModel.focusedAssetID = oldID

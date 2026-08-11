@@ -274,7 +274,7 @@ private struct AllImportsListView: View {
     ContentView(
         viewModel: CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory),
-            preferences: UserDefaults(suiteName: "Otos.Preview.\(UUID().uuidString)")!
+            preferencesDomain: .suite("Otos.Preview.\(UUID().uuidString)")
         )
     )
 }

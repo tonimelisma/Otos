@@ -11,7 +11,7 @@ struct CatalogWindowViewModelGridZoomTests {
     @Test func defaultsToSixColumnsWithNoStoredPreference() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
         #expect(model.gridColumnCount == 6)
     }
 
@@ -19,7 +19,7 @@ struct CatalogWindowViewModelGridZoomTests {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
         temp.defaults.set(4, forKey: "mediaGridColumnCount")
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
         #expect(model.gridColumnCount == 4)
     }
 
@@ -27,14 +27,14 @@ struct CatalogWindowViewModelGridZoomTests {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
         temp.defaults.set(999, forKey: "mediaGridColumnCount")
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
         #expect(model.gridColumnCount == 6)
     }
 
     @Test func setGridColumnCountClampsPersistsAndPublishes() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
 
         model.setGridColumnCount(2) // one below minimum
         #expect(model.gridColumnCount == 3)
@@ -48,17 +48,17 @@ struct CatalogWindowViewModelGridZoomTests {
     @Test func setGridColumnCountRoundTripsThroughANewViewModelInstance() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let first = makeViewModel(defaults: temp.defaults)
+        let first = makeViewModel(domain: temp.domain)
         first.setGridColumnCount(9)
 
-        let second = makeViewModel(defaults: temp.defaults)
+        let second = makeViewModel(domain: temp.domain)
         #expect(second.gridColumnCount == 9)
     }
 
     @Test func zoomInDecreasesAndZoomOutIncreasesColumnCount() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
         #expect(model.gridColumnCount == 6)
 
         model.zoomInGrid()
@@ -71,7 +71,7 @@ struct CatalogWindowViewModelGridZoomTests {
     @Test func zoomInStopsAtMinimumAndZoomOutStopsAtMaximum() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
 
         for _ in 0 ..< 10 {
             model.zoomInGrid()
@@ -87,14 +87,14 @@ struct CatalogWindowViewModelGridZoomTests {
     @Test func defaultsToSeventyTwoStripTileEdge() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
         #expect(model.stripTileEdge == MediaGridPresentation.defaultStripTileEdge)
     }
 
     @Test func setStripTileEdgeClampsPersistsAndPublishes() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let model = makeViewModel(defaults: temp.defaults)
+        let model = makeViewModel(domain: temp.domain)
 
         model.setStripTileEdge(20)
         #expect(model.stripTileEdge == MediaGridPresentation.minStripTileEdge)
@@ -114,21 +114,21 @@ struct CatalogWindowViewModelGridZoomTests {
     @Test func setStripTileEdgeRoundTripsThroughANewViewModelInstance() {
         let temp = TemporaryDefaults()
         defer { temp.cleanUp() }
-        let first = makeViewModel(defaults: temp.defaults)
+        let first = makeViewModel(domain: temp.domain)
         first.setStripTileEdge(120)
 
-        let second = makeViewModel(defaults: temp.defaults)
+        let second = makeViewModel(domain: temp.domain)
         #expect(second.stripTileEdge == 120)
     }
 }
 
 @MainActor
-private func makeViewModel(defaults: UserDefaults) -> CatalogWindowViewModel {
+private func makeViewModel(domain: PreferencesDomain) -> CatalogWindowViewModel {
     CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferences: defaults
+        preferencesDomain: domain
     )
 }

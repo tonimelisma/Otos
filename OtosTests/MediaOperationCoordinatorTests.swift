@@ -32,7 +32,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesSuiteName: tempDefaults.suiteName
+            preferencesDomain: tempDefaults.domain
         )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
@@ -73,7 +73,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesSuiteName: tempDefaults.suiteName
+            preferencesDomain: tempDefaults.domain
         )
         await coordinator.start()
 
@@ -141,7 +141,7 @@ struct MediaOperationCoordinatorTests {
 
         let tempDefaults = TemporaryDefaults()
         defer { tempDefaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesSuiteName: tempDefaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults.domain)
         await coordinator.start()
 
         let waitingDeadline = ContinuousClock().now + .seconds(5)
@@ -239,7 +239,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesSuiteName: tempDefaults.suiteName
+            preferencesDomain: tempDefaults.domain
         )
         await coordinator.start()
 
@@ -294,7 +294,7 @@ struct MediaOperationCoordinatorTests {
         defer { tempDefaults.cleanUp() }
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesSuiteName: tempDefaults.suiteName
+            preferencesDomain: tempDefaults.domain
         )
         await coordinator.start()
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -341,7 +341,7 @@ struct MediaOperationCoordinatorTests {
         )
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
         await coordinator.start()
 
         _ = try await readyGeneration(coordinator, source: fixture.source)
@@ -386,7 +386,7 @@ struct MediaOperationCoordinatorTests {
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesSuiteName: defaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: source)
         let presentation = try #require(
@@ -408,7 +408,7 @@ struct MediaOperationCoordinatorTests {
             [fixture.identity: fixture.libraries[2].rawValue],
             forKey: "import.destinationByDeviceIdentity"
         )
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
@@ -426,7 +426,7 @@ struct MediaOperationCoordinatorTests {
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
         defaults.defaults.set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
@@ -448,7 +448,7 @@ struct MediaOperationCoordinatorTests {
             forKey: "import.destinationByDeviceIdentity"
         )
         defaults.defaults.set("/definitely/not/a/configured/library", forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesSuiteName: defaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(

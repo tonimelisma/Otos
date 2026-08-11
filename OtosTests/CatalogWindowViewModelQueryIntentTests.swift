@@ -142,7 +142,7 @@ private func makeQueryIntentModel(temp: TemporaryDefaults) -> (model: CatalogWin
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferences: temp.defaults
+        preferencesDomain: temp.domain
     )
     return (model, gate)
 }

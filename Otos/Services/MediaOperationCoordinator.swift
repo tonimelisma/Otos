@@ -29,10 +29,11 @@ private nonisolated struct ImportPlanBuildResult {
 /// before publishing, and a build that lost the race re-dirties instead of applying.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
-    // The actor owns this instance for the injected suite. The MainActor transfers
-    // only the Sendable suite name at initialization, so UserDefaults never crosses
+    // The actor owns this instance for the injected domain. The MainActor transfers
+    // only the Sendable domain value at initialization, so UserDefaults never crosses
     // the isolation boundary as a shared reference (ARC-042).
     private let preferences: UserDefaults
+    private let preferencesDomain: PreferencesDomain
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
@@ -84,13 +85,14 @@ actor MediaOperationCoordinator {
 
     init(
         store: CatalogStore,
-        preferencesSuiteName: String? = nil,
+        preferencesDomain: PreferencesDomain,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
         autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)? = nil
     ) {
         self.store = store
-        preferences = preferencesSuiteName.flatMap(UserDefaults.init(suiteName:)) ?? .standard
+        self.preferencesDomain = preferencesDomain
+        preferences = preferencesDomain.makeDefaults()
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler

@@ -21,7 +21,7 @@ struct ViewModelDefaultSelectionTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
 
         model.start()
@@ -105,7 +105,7 @@ struct ViewModelDefaultSelectionTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: temp.defaults
+            preferencesDomain: temp.domain
         )
     }
 

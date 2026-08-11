@@ -24,14 +24,14 @@ struct OtosApp: App {
         if RunContext.isTestRun {
             return CatalogWindowViewModel(
                 catalogStore: CatalogStore(location: .inMemory),
-                preferences: UserDefaults(suiteName: "net.melisma.blank-slate-\(UUID().uuidString)")!
+                preferencesDomain: .suite("net.melisma.blank-slate-\(UUID().uuidString)")
             )
         }
         return CatalogWindowViewModel(
             catalogStore: CatalogStore(
                 location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
             ),
-            preferences: UserDefaults.standard
+            preferencesDomain: .standard
         )
     }()
 

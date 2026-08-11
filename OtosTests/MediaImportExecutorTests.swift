@@ -433,7 +433,7 @@ struct ImportExecutionProgressTests {
         }
         let tempDefaults = TemporaryDefaults()
         defer { tempDefaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesSuiteName: tempDefaults.suiteName)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults.domain)
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         let plan = try await waitForReadyPlan(coordinator, source: source)

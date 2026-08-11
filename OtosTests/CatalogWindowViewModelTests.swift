@@ -35,7 +35,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
         weak let weakModel = model
 
@@ -70,7 +70,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
 
         model.start()
@@ -112,7 +112,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
 
         model.start()
@@ -150,7 +150,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
 
         model.start()
@@ -186,7 +186,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
 
         model.start()
@@ -225,7 +225,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -260,7 +260,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -302,7 +302,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
         weak let weakModel = model
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -340,7 +340,7 @@ struct CatalogWindowViewModelTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: tempDefaults.defaults
+            preferencesDomain: tempDefaults.domain
         )
 
         model.start()

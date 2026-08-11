@@ -14,7 +14,7 @@ struct RemovableEjectOutcomeTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferences: temp.defaults
+            preferencesDomain: temp.domain
         )
         model.ejectRemovableSource(LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/Gone"),
