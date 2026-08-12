@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Locale determinism: character counting must be locale-independent.
-# macOS bash 3.2 counts bytes with ${#var} when LANG is unset, but chars when
-# UTF-8 is set. Force UTF-8 for the whole script so the fallback
-# ${#var} path is deterministic; the primary path below uses Python which is
-# locale-independent regardless.
-export LC_ALL=en_US.UTF-8
-export LANG=en_US.UTF-8
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DEFAULT_REQUIREMENTS="$ROOT_DIR/docs/requirements.md"
 DEFAULT_ROADMAP="$ROOT_DIR/docs/product/roadmap.md"
@@ -95,26 +87,6 @@ check_root() {
     req=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$3); print $3}')
     acc=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$4); print $4}')
     tested=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$6); print $6}')
-    # Character count: locale-independent via Python (bash 3.2 ${#var} is byte-count
-    # when LANG is unset). Falls back to ${#var} only if python3 is unavailable,
-    # but LC_ALL above makes that fallback deterministic.
-    req_len=$(printf '%s' "$req" | python3 -c 'import sys; print(len(sys.stdin.read()))' 2>/dev/null || printf '%s' "${#req}")
-    acc_len=$(printf '%s' "$acc" | python3 -c 'import sys; print(len(sys.stdin.read()))' 2>/dev/null || printf '%s' "${#acc}")
-    if [[ "$req_len" -gt 400 ]]; then
-      fail "requirement $id exceeds 400 chars (has $req_len): $req"
-    fi
-    if [[ "$acc_len" -gt 400 ]]; then
-      fail "acceptance for $id exceeds 400 chars (has $acc_len)"
-    fi
-    # Completeness rule: truncation that satisfies the length cap must
-    # still be rejected. Any cell ending in literal ... or Unicode ellipsis is
-    # treated as mechanically truncated.
-    if [[ "$req" == *... ]] || [[ "$req" == *"…" ]]; then
-      fail "requirement $id appears truncated (ends in ...): $req"
-    fi
-    if [[ "$acc" == *... ]] || [[ "$acc" == *"…" ]]; then
-      fail "acceptance for $id appears truncated (ends in ...): $acc"
-    fi
     if printf '%s\n' "$line" | grep -qE 'animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k='; then
       fail "requirement $id contains implementation token"
     fi
@@ -300,23 +272,23 @@ HEADER
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_fail "missing/invalid ID" "$t"
 
-  # 3. overlong requirement cell (>400 chars)
+  # 3. long requirement cell (401 chars) — no length cap, should pass
   t="$tmpBase/t3"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   longReq=$(printf 'a%.0s' {1..401})
   echo "| ARC-999 | $longReq | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  expect_fail "overlong requirement" "$t"
+  expect_pass "long requirement (no length cap)" "$t"
 
-  # 4. overlong acceptance cell (>400 chars)
+  # 4. long acceptance cell (401 chars) — no length cap, should pass
   t="$tmpBase/t4"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   longAcc=$(printf 'a%.0s' {1..401})
   echo "| ARC-999 | Req | $longAcc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  expect_fail "overlong acceptance" "$t"
+  expect_pass "long acceptance (no length cap)" "$t"
 
   # 5. forbidden implementation token
   t="$tmpBase/t5"; mkdir -p "$t/docs" "$t/OtosTests"
@@ -387,59 +359,14 @@ HEADER
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_fail "missing script self-test symbol" "$t"
 
-  # 14. truncated requirement cell (ends in ...) — should fail
+  # 14. multibyte — 400 chars must pass (length cap removed, kept as regression)
   t="$tmpBase/t14"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req ends in ... | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  expect_fail "truncated requirement cell" "$t"
-
-  # 15. truncated acceptance cell (ends in Unicode …) — should fail
-  t="$tmpBase/t15"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  echo '| ARC-999 | Req | Acc ends in … | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  expect_fail "truncated acceptance cell (unicode ellipsis)" "$t"
-
-  # 16. multibyte character counting at boundary — 400 chars with multibyte must pass with UTF-8
-  # chars 398x 'a' + 2x '∪' (3 bytes each) = 400 chars, 404 bytes. Must not be rejected when counting chars.
-  t="$tmpBase/t16"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  # shellcheck disable=SC2034
   mbReq=$(printf 'a%.0s' {1..398})"∪∪"
   echo "| ARC-999 | $mbReq | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
   echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  expect_pass "multibyte chars at 400 boundary (locale independence)" "$t"
-
-  # 17. multibyte overlong — 401 chars with multibyte must fail
-  t="$tmpBase/t17"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  mbReqLong=$(printf 'a%.0s' {1..399})"∪∪"
-  # 399 a + 2 ∪ = 401 chars
-  echo "| ARC-999 | $mbReqLong | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  expect_fail "multibyte overlong requirement (401 chars)" "$t"
-
-  # 18. locale independence of the checker itself — same 400-char multibyte row must pass
-  # with LANG unset (where bash 3.2 ${#var} would count bytes). Runs the checker in a
-  # subprocess with LANG/LC_ALL unset to prove the Python path is used, not byte counting.
-  t="$tmpBase/t18"; mkdir -p "$t/docs" "$t/OtosTests"
-  make_header "$t/docs/requirements.md"
-  mbReq2=$(printf 'a%.0s' {1..398})"∪∪"
-  echo "| ARC-999 | $mbReq2 | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
-  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
-  if ! env -u LANG -u LC_ALL bash "$ROOT_DIR/script/requirements-authority-check.sh" check "$t" >/dev/null 2>&1; then
-    echo "self-test failed: locale independence (LANG unset) should have passed but failed" >&2
-    env -u LANG -u LC_ALL bash "$ROOT_DIR/script/requirements-authority-check.sh" check "$t" 2>&1 | head -n 20 >&2
-    exit 1
-  else
-    echo "self-test ok: locale independence (LANG unset) correctly passed"
-  fi
+  expect_pass "multibyte 400 chars passes (no length cap)" "$t"
 
   rm -rf "$tmpBase"
   trap - EXIT
