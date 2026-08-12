@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Locale determinism: character counting must be locale-independent.
 # macOS bash 3.2 counts bytes with ${#var} when LANG is unset, but chars when
-# UTF-8 is set (plan 0081). Force UTF-8 for the whole script so the fallback
+# UTF-8 is set. Force UTF-8 for the whole script so the fallback
 # ${#var} path is deterministic; the primary path below uses Python which is
 # locale-independent regardless.
 export LC_ALL=en_US.UTF-8
@@ -106,14 +106,14 @@ check_root() {
     if [[ "$acc_len" -gt 400 ]]; then
       fail "acceptance for $id exceeds 400 chars (has $acc_len)"
     fi
-    # Completeness rule (plan 0081): truncation that satisfies the length cap must
+    # Completeness rule: truncation that satisfies the length cap must
     # still be rejected. Any cell ending in literal ... or Unicode ellipsis is
-    # treated as mechanically truncated and fails with a pointer to the plan.
+    # treated as mechanically truncated.
     if [[ "$req" == *... ]] || [[ "$req" == *"…" ]]; then
-      fail "requirement $id appears truncated (ends in ... — see docs/plans/0081-restore-truncated-requirements.md): $req"
+      fail "requirement $id appears truncated (ends in ...): $req"
     fi
     if [[ "$acc" == *... ]] || [[ "$acc" == *"…" ]]; then
-      fail "acceptance for $id appears truncated (ends in ... — see docs/plans/0081-restore-truncated-requirements.md): $acc"
+      fail "acceptance for $id appears truncated (ends in ...): $acc"
     fi
     if printf '%s\n' "$line" | grep -qE 'animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k='; then
       fail "requirement $id contains implementation token"
@@ -387,7 +387,7 @@ HEADER
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_fail "missing script self-test symbol" "$t"
 
-  # 14. truncated requirement cell (ends in ...) — should fail (plan 0081)
+  # 14. truncated requirement cell (ends in ...) — should fail
   t="$tmpBase/t14"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   echo '| ARC-999 | Req ends in ... | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
@@ -395,7 +395,7 @@ HEADER
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_fail "truncated requirement cell" "$t"
 
-  # 15. truncated acceptance cell (ends in Unicode …) — should fail (plan 0081)
+  # 15. truncated acceptance cell (ends in Unicode …) — should fail
   t="$tmpBase/t15"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   echo '| ARC-999 | Req | Acc ends in … | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
