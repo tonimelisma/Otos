@@ -169,15 +169,9 @@ extension MediaGridViewController {
         if !context.reorderOnly {
             tileContents.prune(to: Set(context.grid.orderedAssetIDs))
         }
-        tileContents.pinVisible(Set(visibleAssetIDs()))
-        let visibleDetailRequestCount = requestVisibleDetails(reason: "structuralApply")
-        reportViewport()
-        let preheatCount = switch preheatLookahead(reason: "structuralApply") {
-        case let .started(count):
-            count
-        case .reused, .skipped:
-            0
-        }
+        let (visibleDetailRequestCount, preheatCount) = runPostApplyDetailAndPreheatPass(
+            reason: "structuralApply"
+        )
         // Model → view only. Prune/clear already ran in ViewModel.applyState.
         renderSelectionFromModel(reason: "structuralApply")
         if let pending = pendingFocusTargetID {
@@ -211,6 +205,39 @@ extension MediaGridViewController {
         // gate guarantees a layout swap never runs concurrently with a diffable apply in
         // either direction (spec 0048).
         perform(mutationGate.completeStructuralApply(applied: context.grid))
+    }
+
+    /// reloadData-class applies (`largeApply`/`reorderOnly == false`, `animatingDifferences:
+    /// false`) invalidate item layout without resolving it synchronously — AppKit queues
+    /// the recompute for the next layout pass. Querying `indexPathsForVisibleItems()`/
+    /// `layoutAttributesForElements(in:)` immediately after `apply(...)`'s completion, as
+    /// the pre-fix code did, therefore sees a stale/empty pass forever if nothing else
+    /// (scroll, another apply) happens to re-trigger the query — `layoutSubtreeIfNeeded()`
+    /// flushes it synchronously, mirroring `scrollToFocusTarget`'s fix for the same class of
+    /// race. Separately, if the window hasn't completed its first non-zero layout yet
+    /// (`collectionView.frame.width == 0`), this parks the reason in
+    /// `pendingPostApplyDetailReason` for `viewDidLayout`'s retry — same pattern as
+    /// `pendingFocusTargetID`.
+    @discardableResult
+    func runPostApplyDetailAndPreheatPass(
+        reason: String
+    ) -> (visibleDetailRequestCount: Int, preheatCount: Int) {
+        guard view.window != nil, collectionView.frame.width > 0 else {
+            pendingPostApplyDetailReason = reason
+            return (0, 0)
+        }
+        collectionView.layoutSubtreeIfNeeded()
+        tileContents.pinVisible(Set(visibleAssetIDs()))
+        let visibleDetailRequestCount = requestVisibleDetails(reason: reason)
+        reportViewport()
+        let preheatCount = switch preheatLookahead(reason: reason) {
+        case let .started(count):
+            count
+        case .reused, .skipped:
+            0
+        }
+        pendingPostApplyDetailReason = nil
+        return (visibleDetailRequestCount, preheatCount)
     }
 
     private func logFinishedStructuralApply(

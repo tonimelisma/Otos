@@ -187,6 +187,15 @@ final class MediaGridViewController: NSViewController {
     /// True while a deferred `viewDidLayout` focus retry is queued. Scrolling
     /// mid-layout is a silent no-op, so the retry hops to the next main-queue turn.
     private var focusLayoutRetryScheduled = false
+    /// Set by `completeStructuralApply` when the post-apply visible-detail/preheat
+    /// pass ran against a zero-sized frame (window attached before first layout) —
+    /// `indexPathsForVisibleItems()`/`layoutAttributesForElements(in:)` are a silent
+    /// empty no-op until then, same class of race as `pendingFocusTargetID`. Holds
+    /// the reason string for the retry's diagnostics.
+    var pendingPostApplyDetailReason: String?
+    /// True while a deferred `viewDidLayout` retry of the post-apply detail/preheat
+    /// pass is queued. Mirrors `focusLayoutRetryScheduled`.
+    private var postApplyLayoutRetryScheduled = false
     /// Bridges a pinch-driven zoom request up to the ViewModel intent; the pinch
     /// gesture never mutates column-count truth or the layout itself — see
     /// `MediaGridZoom.swift`. Column-count truth lives in `mutationGate`.
@@ -277,21 +286,42 @@ final class MediaGridViewController: NSViewController {
         // Window can attach before the first non-zero layout; scrolling a zero-sized
         // clip is a silent no-op. Scrolling *during* layout is also a silent no-op,
         // so hop once to the next turn after the frame has size.
-        guard pendingFocusTargetID != nil,
+        if pendingFocusTargetID != nil,
+           collectionView.frame.width > 0,
+           view.window != nil,
+           !focusLayoutRetryScheduled
+        {
+            focusLayoutRetryScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                focusLayoutRetryScheduled = false
+                if let pending = pendingFocusTargetID {
+                    scrollToFocusTarget(pending)
+                }
+            }
+        }
+        retryPostApplyDetailPassIfNeeded()
+    }
+
+    private func retryPostApplyDetailPassIfNeeded() {
+        guard pendingPostApplyDetailReason != nil,
               collectionView.frame.width > 0,
               view.window != nil,
-              !focusLayoutRetryScheduled
+              !postApplyLayoutRetryScheduled
         else {
             return
         }
-        focusLayoutRetryScheduled = true
+        postApplyLayoutRetryScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else {
                 return
             }
-            focusLayoutRetryScheduled = false
-            if let pending = pendingFocusTargetID {
-                scrollToFocusTarget(pending)
+            postApplyLayoutRetryScheduled = false
+            if let reason = pendingPostApplyDetailReason {
+                pendingPostApplyDetailReason = nil
+                runPostApplyDetailAndPreheatPass(reason: reason)
             }
         }
     }
