@@ -61,15 +61,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         source: LibraryRootPath,
         timeout: Duration = .seconds(5)
     ) async throws {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            let pending = await builder.pendingSources()
-            if pending.contains(source) {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        throw TestError.timeout("builder pending \(source.rawValue)")
+        try await waitForPendingBuilder(builder, source: source, timeout: timeout)
     }
 
     private func waitForPendingBuilderCount(
@@ -78,15 +70,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         count: Int,
         timeout: Duration = .seconds(5)
     ) async throws {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            let c = await builder.pendingCount(for: source)
-            if c >= count {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        throw TestError.timeout("builder pending count \(count) for \(source.rawValue)")
+        try await waitForPendingBuilderCount(builder, source: source, count: count, timeout: timeout)
     }
 
     private func waitForPendingExecution(

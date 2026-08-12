@@ -87,8 +87,8 @@ struct ImportPlanBuilderTests {
         async let buildA = controlled.build(snapshot: snapA, additionalReserved: [])
         async let buildB = controlled.build(snapshot: snapB, additionalReserved: [])
 
-        // Give builds time to suspend
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForPendingBuilderCount(controlled, source: sourceA, count: 1)
+        try await waitForPendingBuilderCount(controlled, source: sourceB, count: 1)
         let pending = await controlled.pendingSources()
         #expect(pending.count == 2)
         #expect(pending.contains(sourceA))
@@ -115,12 +115,12 @@ struct ImportPlanBuilderTests {
         await controlled.suspendNextBuild(for: source)
 
         let task = Task { await controlled.build(snapshot: snap, additionalReserved: []) }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForPendingBuilder(controlled, source: source)
         let pendingBefore = await controlled.pendingSources()
         #expect(pendingBefore.contains(source))
 
         task.cancel()
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForRecordedCancellation(controlled, source: source)
         let cancelled = await controlled.recordedCancelled()
         #expect(cancelled.contains(source))
         // Still pending — cancellation did not auto-resume

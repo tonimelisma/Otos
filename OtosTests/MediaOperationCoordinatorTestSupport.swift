@@ -105,6 +105,43 @@ actor ControlledImportPlanBuilder {
 
 // MARK: - ImportPlanBuilding conformance via nonisolated wrapper
 
+func waitForPendingBuilder(
+    _ builder: ControlledImportPlanBuilder,
+    source: LibraryRootPath,
+    timeout: Duration = .seconds(5)
+) async throws {
+    try await withTestTimeout("builder pending \(source.rawValue)", timeout: timeout) {
+        while await !builder.pendingSources().contains(source) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+func waitForPendingBuilderCount(
+    _ builder: ControlledImportPlanBuilder,
+    source: LibraryRootPath,
+    count: Int,
+    timeout: Duration = .seconds(5)
+) async throws {
+    try await withTestTimeout("builder pending count \(count) for \(source.rawValue)", timeout: timeout) {
+        while await builder.pendingCount(for: source) < count {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
+func waitForRecordedCancellation(
+    _ builder: ControlledImportPlanBuilder,
+    source: LibraryRootPath,
+    timeout: Duration = .seconds(5)
+) async throws {
+    try await withTestTimeout("builder recorded cancellation \(source.rawValue)", timeout: timeout) {
+        while await !builder.recordedCancelled().contains(source) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
 extension ControlledImportPlanBuilder: ImportPlanBuilding {
     nonisolated func build(
         snapshot: ImportPlanningSnapshot,

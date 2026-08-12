@@ -351,12 +351,15 @@ private actor ControlledMaterializationExecutor {
     }
 
     func waitForStarts(_ count: Int) async throws {
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(2))
-        while starts.count < count, clock.now < deadline {
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("controlled materialization starts \(count)") {
+            while await self.startedCount() < count {
+                await Task.yield()
+            }
         }
-        #expect(starts.count >= count)
+    }
+
+    private func startedCount() -> Int {
+        starts.count
     }
 }
 

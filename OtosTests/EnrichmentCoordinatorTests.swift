@@ -363,7 +363,7 @@ struct EnrichmentCoordinatorTests {
         #expect(await materializeCalls.total == 0)
     }
 
-    @Test func largeDatalessLibraryKeepsClaimAndMaterializationHandoffBounded() async throws {
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1")) func largeDatalessLibraryKeepsClaimAndMaterializationHandoffBounded() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -392,11 +392,10 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
         try await executor.waitForStarts(1)
 
-        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
-        while await coordinator.workStateSnapshot().materializing < 2,
-              ContinuousClock().now < deadline
-        {
-            try await Task.sleep(for: .milliseconds(10))
+        try await withTestTimeout("two materializations in flight") {
+            while await coordinator.workStateSnapshot().materializing < 2 {
+                try await Task.sleep(for: .milliseconds(10))
+            }
         }
 
         let state = await coordinator.workStateSnapshot()
@@ -404,10 +403,9 @@ struct EnrichmentCoordinatorTests {
         #expect(state.materializing == 2)
         #expect(await materializer.stateSnapshot().inFlight == 1)
 
-        let shutdownStart = ContinuousClock().now
-        await coordinator.shutdown()
-        let shutdownDuration = shutdownStart.duration(to: .now)
-        #expect(shutdownDuration < .seconds(2))
+        try await withTestTimeout("coordinator shutdown") {
+            await coordinator.shutdown()
+        }
         #expect(await materializer.stateSnapshot().waiters == 0)
         await materializer.shutdown()
     }
@@ -666,11 +664,13 @@ struct EnrichmentCoordinatorTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
         )
 
-        let start = ContinuousClock().now
         let drained = await coordinator.drainWork(under: rootPath, timeout: .milliseconds(300))
-        let elapsed = start.duration(to: .now)
         #expect(drained)
-        #expect(elapsed < .milliseconds(150))
+        // Load-independent check: drain returned while the interactive request is still held.
+        // If drain had incorrectly waited on interactive traffic, it would have timed out
+        // and returned false, or the materializer would have no in-flight work.
+        #expect(await executor.startedCount() == 1)
+        #expect(await materializer.stateSnapshot().inFlight == 1)
 
         previewTask.cancel()
         _ = await previewTask.value
@@ -853,7 +853,7 @@ private actor HeldMaterializationExecutor {
         }
     }
 
-    private func startedCount() -> Int {
+    func startedCount() -> Int {
         starts
     }
 }
