@@ -30,7 +30,16 @@ struct CatalogStateNamingTests {
 
     @Test func gridDetailRefreshIsSeparateFromOrderedIDs() {
         let desc = CatalogQueryDescriptor(scope: .allMedia)
-        let grid1 = CatalogMediaGridState(descriptor: desc, orderedAssetIDs: [MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/A"), relativePath: MediaRelativePath(rawValue: "a.jpg"))], detailRefreshGeneration: 1)
+        let grid1 = CatalogMediaGridState(
+            descriptor: desc,
+            orderedAssetIDs: [
+                MediaAssetID(
+                    libraryRootPath: LibraryRootPath(rawValue: "/A"),
+                    relativePath: MediaRelativePath(rawValue: "a.jpg")
+                ),
+            ],
+            detailRefreshGeneration: 1
+        )
         let grid2 = CatalogMediaGridState(descriptor: desc, orderedAssetIDs: grid1.orderedAssetIDs, detailRefreshGeneration: 2)
         // Same ordered IDs, different detail generation — proves the two are separate.
         #expect(grid1.orderedAssetIDs == grid2.orderedAssetIDs)
