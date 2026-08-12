@@ -363,7 +363,10 @@ struct EnrichmentCoordinatorTests {
         #expect(await materializeCalls.total == 0)
     }
 
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1")) func largeDatalessLibraryKeepsClaimAndMaterializationHandoffBounded() async throws {
+    @Test(
+        .enabled(if: ProcessInfo.processInfo.environment["OTOS_SCALE_TEST"] == "1")
+    )
+    func largeDatalessLibraryKeepsClaimAndMaterializationHandoffBounded() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pics", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)

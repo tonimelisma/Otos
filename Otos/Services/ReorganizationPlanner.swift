@@ -137,8 +137,7 @@ nonisolated enum ReorganizationPlanner {
             )
             if occupancy[request] == nil,
                !currentSources.contains(member.finalDestination),
-               !snapshot.knownForeignOccupants.contains(member.finalDestination)
-            {
+               !snapshot.knownForeignOccupants.contains(member.finalDestination) {
                 pendingOccupancy.append(request)
             }
             for ancestor in directoryAncestors(of: member.finalDestination) {
@@ -164,8 +163,7 @@ nonisolated enum ReorganizationPlanner {
                     relativePath: ancestor
                 )
                 if isBlockingAncestorOccupancy(occupancy[ancestorRequest]),
-                   let mediaID = member.mediaID
-                {
+                   let mediaID = member.mediaID {
                     mediaDispositions[mediaID] = .blocked(.ancestorConflict(ancestor))
                 }
             }
@@ -175,8 +173,7 @@ nonisolated enum ReorganizationPlanner {
         var pendingAfterResuffix: [NamespaceOccupancyRequest] = []
         for index in members.indices where members[index].source != members[index].finalDestination {
             if let mediaID = members[index].mediaID,
-               case .blocked = mediaDispositions[mediaID]
-            {
+               case .blocked = mediaDispositions[mediaID] {
                 continue
             }
             let destination = members[index].finalDestination
@@ -210,8 +207,7 @@ nonisolated enum ReorganizationPlanner {
                             relativePath: candidate
                         )
                     ]
-                )
-            {
+                ) {
                 suffix += 1
                 candidate = suffixed(members[index].idealDestination, suffix: suffix)
                 key = FilesystemNamespaceSemantics.nameKey(
@@ -511,8 +507,7 @@ nonisolated enum ReorganizationPlanner {
         let directedSources = Set(next.keys)
         if !directedSources.isEmpty,
            directedSources.count == next.values.filter({ directedSources.contains($0) }).count,
-           isSingleCycle(next)
-        {
+           isSingleCycle(next) {
             let pivotSource = directedSources.min {
                 $0.localizedStandardCompare($1) == .orderedAscending
             }!
@@ -537,8 +532,7 @@ nonisolated enum ReorganizationPlanner {
             steps.append(.move(from: temporary, to: pivot.finalDestination))
             // Companions without directed edges move after rotation.
             for member in members
-                where next[member.source.rawValue] == nil && member.source != pivot.source
-            {
+                where next[member.source.rawValue] == nil && member.source != pivot.source {
                 steps.append(.move(from: member.source, to: member.finalDestination))
             }
             return steps
@@ -579,8 +573,7 @@ nonisolated enum ReorganizationPlanner {
         let predecessorKey = next.first(where: { $0.value == end.source.rawValue })?.key
         if let predecessorKey,
            let predecessor = bySource[predecessorKey],
-           !moved.contains(predecessor.id)
-        {
+           !moved.contains(predecessor.id) {
             appendChain(
                 endingAt: predecessor,
                 bySource: bySource,

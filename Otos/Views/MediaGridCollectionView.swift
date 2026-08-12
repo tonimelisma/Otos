@@ -75,8 +75,7 @@ final class MediaGridCollectionView: NSCollectionView {
             default:
                 // ⇧+←/→ and other extension chords: consume in strip mode.
                 if event.modifierFlags.contains(.shift)
-                    || event.modifierFlags.contains(.command)
-                {
+                    || event.modifierFlags.contains(.command) {
                     return
                 }
             }

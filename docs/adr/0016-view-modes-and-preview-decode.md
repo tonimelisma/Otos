@@ -32,8 +32,13 @@ This ADR references, but does not own:
 
 ## Decision
 
-**`PreviewImageLoader` is a dedicated actor and the app's only full-size decode
-path.** Loupe and compare call it with a target long edge (main-display backing
+Amended by plan 0069: loupe gains `VideoPreviewLoader` (`@MainActor` stateless
+factory) for click-to-play inline `AVPlayerView` (`controlsStyle=.inline`) with
+the same `SF_DATALESS` gate and interactive `MaterializationCoordinator` demand
+as preview decode; compare stays poster-only.
+
+**`PreviewImageLoader` is a dedicated actor and the app's only full-size image
+decode path.** Loupe and compare call it with a target long edge (main-display backing
 scale × window long edge). It:
 
 1. Checks `FileMaterialization.status` immediately before every byte read.
@@ -44,8 +49,8 @@ scale × window long edge). It:
    `CGImageSourceCreateThumbnailAtIndex` with
    `kCGImageSourceThumbnailMaxPixelSize` (bounded memory; embedded RAW previews
    preferred when large enough).
-4. Decodes video posters via `QLThumbnailGenerator` at the same target (no
-   playback in v1).
+4. Decodes video posters via `QLThumbnailGenerator` at the same target; loupe
+   video playback after 0069 is via `VideoPreviewLoader` → `AVPlayerView` (not here).
 5. Coalesces per-id in-flight work and keeps a small byte-capped LRU (~256 MB)
    pinned to the focus neighborhood.
 

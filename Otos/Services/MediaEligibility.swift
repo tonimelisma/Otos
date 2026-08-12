@@ -81,8 +81,7 @@ nonisolated enum MediaEligibility {
         if components.count >= 3,
            components[components.count - 3] == "m4root",
            components[components.count - 2] == "clip",
-           components.last?.hasSuffix(".xml") == true
-        {
+           components.last?.hasSuffix(".xml") == true {
             return true
         }
         return false

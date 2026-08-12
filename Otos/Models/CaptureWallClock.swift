@@ -43,8 +43,7 @@ nonisolated enum CaptureWallClock {
                 continue
             }
             if let local = candidates.first(where: isLocalAuthority),
-               let selection = selection(from: local)
-            {
+               let selection = selection(from: local) {
                 return selection
             }
         }

@@ -148,8 +148,7 @@ struct SidebarView: View {
         let lastFive = Array(importBatches.prefix(5))
         if case let .importBatch(selectedID) = sidebarSelection,
            !lastFive.contains(where: { $0.batchID == selectedID }),
-           let selected = importBatches.first(where: { $0.batchID == selectedID })
-        {
+           let selected = importBatches.first(where: { $0.batchID == selectedID }) {
             return lastFive + [selected]
         }
         return lastFive

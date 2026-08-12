@@ -49,24 +49,20 @@ nonisolated struct MaterializationAdmissionPolicy: Equatable, Sendable {
             return .globalConcurrency
         }
         if request.priority == .background,
-           inFlight.count >= max(globalConcurrency - 1, 0)
-        {
+           inFlight.count >= max(globalConcurrency - 1, 0) {
             return .backgroundReserve
         }
         if request.priority == .background,
-           inFlight.backgroundByRoot[request.id.libraryRootPath, default: 0] >= backgroundPerRootCap
-        {
+           inFlight.backgroundByRoot[request.id.libraryRootPath, default: 0] >= backgroundPerRootCap {
             return .rootBackgroundCap
         }
         if isLargeVideo(request), inFlight.largeVideoCount >= largeVideoCap,
-           !allowsOversizedSolo(request, inFlight: inFlight)
-        {
+           !allowsOversizedSolo(request, inFlight: inFlight) {
             return .largeVideoCap
         }
         let bytes = estimatedBytes(request.sourceSize)
         if !inFlight.isEmpty, inFlight.bytes + bytes > byteBudget,
-           !allowsOversizedSolo(request, inFlight: inFlight)
-        {
+           !allowsOversizedSolo(request, inFlight: inFlight) {
             return .byteBudget
         }
         return nil

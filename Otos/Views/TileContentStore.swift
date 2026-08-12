@@ -117,8 +117,7 @@ final class TileContentStore {
         let previous = entry.content
         entry.content.detail = detail
         if previous.detail.durationSeconds != detail.durationSeconds
-            || previous.detail.bestKind != detail.bestKind
-        {
+            || previous.detail.bestKind != detail.bestKind {
             entry.content.formattedDuration = MediaAssetTilePresentation.videoBadgeText(detail)
         }
         entry.accessStamp = stamp

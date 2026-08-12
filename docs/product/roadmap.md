@@ -47,6 +47,8 @@ Earlier vocabulary notes in this file include:
 
 ## Non-Authoritative Idea Sequence
 
+P0/P1 items through Import Into User Libraries are now largely shipped; current truth is in `docs/requirements.md` — the sequence below is retained for historical context and does not guide work.
+
 ### P0. Libraries And Sidebar
 
 - Add Libraries Settings as the only place to add or remove library roots.
@@ -185,5 +187,5 @@ Earlier vocabulary notes in this file include:
   [user interface responsiveness](https://developer.apple.com/documentation/xcode/understanding-user-interface-responsiveness),
   [SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance).
 
-- Video playback in loupe — deferred; v1 is poster frame only (plan 0052).
+- Video playback in loupe — shipped as loupe click-to-play poster→player swap (plan 0069, APP-020).
 - Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped in plan 0052.

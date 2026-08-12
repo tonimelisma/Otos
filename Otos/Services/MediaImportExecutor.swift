@@ -138,8 +138,7 @@ actor MediaImportExecutor {
         }
         let totalBytes = copyEntries.reduce(Int64(0)) { $0 + ($1.source.byteSize ?? 0) }
         if let needed = freeSpaceRequired(for: copyEntries),
-           !hasEnoughFreeSpace(at: destination.url, required: needed)
-        {
+           !hasEnoughFreeSpace(at: destination.url, required: needed) {
             return .failed(problem: "insufficientSpace")
         }
         let hasBlockedEntries = plan.entries.contains {
@@ -1253,15 +1252,13 @@ actor MediaImportExecutor {
             let companionSource: URL? = if FileManager.default.fileExists(atPath: sourceURL.path) {
                 sourceURL
             } else if FileManager.default.fileExists(atPath: stagedBesidePrimary.path),
-                      stagedBesidePrimary.path != destURL.path
-            {
+                      stagedBesidePrimary.path != destURL.path {
                 stagedBesidePrimary
             } else {
                 nil
             }
             if let companionSource,
-               !FileManager.default.fileExists(atPath: destURL.path)
-            {
+               !FileManager.default.fileExists(atPath: destURL.path) {
                 try? FileManager.default.createDirectory(
                     at: destURL.deletingLastPathComponent(),
                     withIntermediateDirectories: true

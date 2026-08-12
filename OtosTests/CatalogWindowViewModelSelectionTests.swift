@@ -299,8 +299,7 @@ private func awaitApplyCompletion(
     let deadline = Date().addingTimeInterval(2)
     while Date() < deadline {
         if controller.mutationGate.displayedOrderedIDs == expectedIDs,
-           controller.mutationGate.inFlight == .none
-        {
+           controller.mutationGate.inFlight == .none {
             // One more run-loop pass so the apply completion block has run.
             RunLoop.current.run(until: Date().addingTimeInterval(0.01))
             return

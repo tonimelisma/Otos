@@ -195,8 +195,7 @@ private nonisolated extension MediaTransferPlanner {
         namespace: DestinationNamespace
     ) -> [MediaOperationPlanEntry] {
         if needsDate(policy: snapshot.policy),
-           bundle.members.contains(where: { !$0.hasUsableDate })
-        {
+           bundle.members.contains(where: { !$0.hasUsableDate }) {
             return bundle.members.map { member in
                 MediaOperationPlanEntry(
                     source: member,

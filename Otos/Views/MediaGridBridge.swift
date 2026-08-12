@@ -102,8 +102,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onEscapeKey = onEscapeKey
         controller.onArrowKey = onArrowKey
         if identityRemapEpoch != controller.appliedIdentityRemapEpoch,
-           let batch = identityRemapBatch
-        {
+           let batch = identityRemapBatch {
             controller.tileContents.applyIdentityRemapBatch(batch)
             controller.appliedIdentityRemapEpoch = identityRemapEpoch
         }
@@ -289,8 +288,7 @@ final class MediaGridViewController: NSViewController {
         if pendingFocusTargetID != nil,
            collectionView.frame.width > 0,
            view.window != nil,
-           !focusLayoutRetryScheduled
-        {
+           !focusLayoutRetryScheduled {
             focusLayoutRetryScheduled = true
             DispatchQueue.main.async { [weak self] in
                 guard let self else {

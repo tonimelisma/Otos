@@ -29,8 +29,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 return plan
             }
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }),
-               case .failed = pres.state
-            {
+               case .failed = pres.state {
                 throw TestError.planFailed(pres.state)
             }
             try await Task.sleep(for: .milliseconds(20))
@@ -47,8 +46,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }),
-               predicate(pres)
-            {
+               predicate(pres) {
                 return pres
             }
             try await Task.sleep(for: .milliseconds(20))
@@ -642,8 +640,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         while ContinuousClock().now < deadlineB3 {
             if let p = await coordinator.readyPlan(for: cardBPath),
                p.entries.first?.finalDestination.rawValue != "shared.jpg",
-               p.entries.first?.finalDestination.rawValue.contains("shared") == true
-            {
+               p.entries.first?.finalDestination.rawValue.contains("shared") == true {
                 planB = p
                 break
             }
@@ -1032,8 +1029,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         while ContinuousClock().now < deadline {
             deleted = !FileManager.default.fileExists(atPath: srcFile.path)
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .completed = pres.state
-            {
+               case .completed = pres.state {
                 completed = true
                 if deleted {
                     break

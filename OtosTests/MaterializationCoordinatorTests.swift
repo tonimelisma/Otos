@@ -199,8 +199,7 @@ struct MaterializationCoordinatorTests {
         }
         let deadline = ContinuousClock().now.advanced(by: .seconds(2))
         while await coordinator.stateSnapshot().effectiveInteractive != 1,
-              ContinuousClock().now < deadline
-        {
+              ContinuousClock().now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
         let device = Task {

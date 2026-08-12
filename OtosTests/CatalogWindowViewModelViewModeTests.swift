@@ -257,8 +257,7 @@ struct CatalogWindowViewModelViewModeTests {
         for _ in 0 ..< 20 {
             model.focusNext()
             if let preview = model.panePreviews[.loupe],
-               preview.id != model.focusedAssetID
-            {
+               preview.id != model.focusedAssetID {
                 publishedWrong = true
             }
         }
