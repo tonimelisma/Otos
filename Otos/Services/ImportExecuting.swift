@@ -127,7 +127,7 @@ actor ControlledExecutionControl {
         return true
     }
 
-    fileprivate func registerPending(
+    private func registerPending(
         for source: LibraryRootPath,
         continuation: CheckedContinuation<MediaImportExecutionResult, Never>
     ) {
@@ -136,7 +136,7 @@ actor ControlledExecutionControl {
         pending[source] = queue
     }
 
-    fileprivate func recordCancel(for source: LibraryRootPath) {
+    private func recordCancel(for source: LibraryRootPath) {
         cancelled.insert(source)
     }
 
@@ -144,7 +144,7 @@ actor ControlledExecutionControl {
         executed.append(source)
     }
 
-    fileprivate func resumeOnePendingWithCancellation(for source: LibraryRootPath) {
+    private func resumeOnePendingWithCancellation(for source: LibraryRootPath) {
         guard var queue = pending[source], !queue.isEmpty else { return }
         let cont = queue.removeFirst()
         if queue.isEmpty {
@@ -152,7 +152,14 @@ actor ControlledExecutionControl {
         } else {
             pending[source] = queue
         }
-        cont.resume(returning: .cancelled(publishedCount: 0, batch: nil, hasBlockedEntries: false, hasEntryFailures: false, skippedForeignCount: 0, failedCount: 0))
+        cont.resume(returning: .cancelled(
+            publishedCount: 0,
+            batch: nil,
+            hasBlockedEntries: false,
+            hasEntryFailures: false,
+            skippedForeignCount: 0,
+            failedCount: 0
+        ))
     }
 
     /// Suspend the caller's task until `resumePending` is called or cancellation

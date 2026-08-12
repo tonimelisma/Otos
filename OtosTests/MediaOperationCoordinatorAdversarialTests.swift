@@ -1,6 +1,6 @@
 import Foundation
-@testable import Otos
 import OSLog
+@testable import Otos
 import Testing
 
 /// Adversarial lifecycle tests for MediaOperationCoordinator (plan 0079 Stage 4).
@@ -64,7 +64,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             let pending = await builder.pendingSources()
-            if pending.contains(source) { return }
+            if pending.contains(source) {
+                return
+            }
             try await Task.sleep(for: .milliseconds(20))
         }
         throw TestError.timeout("builder pending \(source.rawValue)")
@@ -79,7 +81,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             let c = await builder.pendingCount(for: source)
-            if c >= count { return }
+            if c >= count {
+                return
+            }
             try await Task.sleep(for: .milliseconds(20))
         }
         throw TestError.timeout("builder pending count \(count) for \(source.rawValue)")
@@ -93,7 +97,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             let pending = await control.pendingSources()
-            if pending.contains(source) { return }
+            if pending.contains(source) {
+                return
+            }
             try await Task.sleep(for: .milliseconds(20))
         }
         throw TestError.timeout("execution pending \(source.rawValue)")
@@ -107,7 +113,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             let has = await coordinator.currentPresentations().contains(where: { $0.sourcePath == source })
-            if !has { return }
+            if !has {
+                return
+            }
             try await Task.sleep(for: .milliseconds(20))
         }
         throw TestError.timeout("still has presentation \(source.rawValue)")
@@ -118,15 +126,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         case planFailed(MediaOperationSourceState)
         var description: String {
             switch self {
-            case .timeout(let s): return "timeout: \(s)"
-            case .planFailed(let st): return "plan failed state: \(st)"
+            case let .timeout(s): "timeout: \(s)"
+            case let .planFailed(st): "plan failed state: \(st)"
             }
         }
     }
 
     // MARK: - 1. Detach during suspended build
 
-    @Test func detachDuringSuspendedBuildNoPresentationAfterResume() async throws { log("START detachDuringSuspendedBuildNoPresentationAfterResume");
+    @Test func detachDuringSuspendedBuildNoPresentationAfterResume() async throws {
+        log("START detachDuringSuspendedBuildNoPresentationAfterResume")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -169,13 +178,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(!stillHas, "Stale build after detach must not publish presentation")
         #expect(await coordinator.readyPlan(for: cardPath) == nil)
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 2. Rapid same-path reattach
 
-    @Test func rapidSamePathReattachOldBuildCannotBecomeReady() async throws { log("START rapidSamePathReattachOldBuildCannotBecomeReady");
+    @Test func rapidSamePathReattachOldBuildCannotBecomeReady() async throws {
+        log("START rapidSamePathReattachOldBuildCannotBecomeReady")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -219,16 +229,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         await builder.resumePendingBuild(for: cardPath)
         let plan = try await waitForReady(coordinator, source: cardPath)
         // The ready plan should be from B (contains c.jpg).
-        let entryNames = plan.entries.map { $0.source.relativePath.rawValue }.sorted()
+        let entryNames = plan.entries.map(\.source.relativePath.rawValue).sorted()
         #expect(entryNames.contains("c.jpg"))
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 3. Old completion cannot clear new task
 
-    @Test func oldCompletionCannotClearNewTask() async throws { log("START oldCompletionCannotClearNewTask");
+    @Test func oldCompletionCannotClearNewTask() async throws {
+        log("START oldCompletionCannotClearNewTask")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -277,13 +288,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Cancellation should have been observed for the pending build.
         #expect(cancelled.contains(cardPath))
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 4. Claims release on detach
 
-    @Test func claimsReleaseOnDetach() async throws { log("START claimsReleaseOnDetach");
+    @Test func claimsReleaseOnDetach() async throws {
+        log("START claimsReleaseOnDetach")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
@@ -325,13 +337,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         // After detach, B should get base name, not suffix.
         #expect(planB.entries.first?.finalDestination.rawValue == "shared.jpg", "Claim should be released on detach, B should get base name")
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 5. Claims release on cancel
 
-    @Test func claimsReleaseOnCancel() async throws { log("START claimsReleaseOnCancel");
+    @Test func claimsReleaseOnCancel() async throws {
+        log("START claimsReleaseOnCancel")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
@@ -350,7 +363,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:cancel-B", displayName: "CardB", isEjectable: true)
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.filter({ $0.availability == .available }).count == 2 && snap.removableSources.allSatisfy({ !$0.isScanning }) }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.filter { $0.availability == .available }.count == 2
+                && snap.removableSources.allSatisfy { !$0.isScanning }
+        }
 
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
@@ -369,9 +385,9 @@ struct MediaOperationCoordinatorAdversarialTests {
             planBuilder: builder,
             makeExecutor: { source in
                 if source == cardAPath {
-                    return ControlledImportExecutor(control: execControl)
+                    ControlledImportExecutor(control: execControl)
                 } else {
-                    return LiveImportExecutor(store: store)
+                    LiveImportExecutor(store: store)
                 }
             }
         )
@@ -384,7 +400,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         await builder.resumePendingBuild(for: cardBPath)
         log("STEP waitForReady B")
         let planBBefore = try await waitForReady(coordinator, source: cardBPath)
-        #expect(planBBefore.entries.first?.finalDestination.rawValue == "shared 2.jpg" || planBBefore.entries.first?.finalDestination.rawValue == "shared-2.jpg" || (planBBefore.entries.first?.finalDestination.rawValue.contains("shared") ?? false) , "B should have suffix while A holds claim")
+        #expect(
+            planBBefore.entries.first?.finalDestination.rawValue == "shared 2.jpg"
+                || planBBefore.entries.first?.finalDestination.rawValue == "shared-2.jpg"
+                || (planBBefore.entries.first?.finalDestination.rawValue.contains("shared") ?? false),
+            "B should have suffix while A holds claim"
+        )
 
         log("STEP queueImport")
         let queueTask = Task { await coordinator.queueImport(for: cardAPath) }
@@ -396,7 +417,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.cancelImport(for: cardAPath)
         // Resume A's execution with cancelled result — this simulates executor observing cancel and returning cancelled.
         log("STEP resumePending cancelled")
-        await execControl.resumePending(for: cardAPath, with: .cancelled(publishedCount: 0, batch: nil, hasBlockedEntries: false, hasEntryFailures: false, skippedForeignCount: 0, failedCount: 0))
+        await execControl.resumePending(
+            for: cardAPath,
+            with: .cancelled(
+                publishedCount: 0,
+                batch: nil,
+                hasBlockedEntries: false,
+                hasEntryFailures: false,
+                skippedForeignCount: 0,
+                failedCount: 0
+            )
+        )
         log("STEP sleep 300")
         try await Task.sleep(for: .milliseconds(300))
         await queueTask.value
@@ -417,13 +448,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         #expect(planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg", "After A's cancel, B should reclaim base name")
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 6. Claims release on failure
 
-    @Test func claimsReleaseOnFailure() async throws { log("START claimsReleaseOnFailure");
+    @Test func claimsReleaseOnFailure() async throws {
+        log("START claimsReleaseOnFailure")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
@@ -442,7 +474,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:fail-B", displayName: "CardB", isEjectable: true)
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.filter({ $0.availability == .available }).count == 2 && snap.removableSources.allSatisfy({ !$0.isScanning }) }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.filter { $0.availability == .available }.count == 2
+                && snap.removableSources.allSatisfy { !$0.isScanning }
+        }
 
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
@@ -461,9 +496,9 @@ struct MediaOperationCoordinatorAdversarialTests {
             planBuilder: builder2,
             makeExecutor: { source in
                 if source == cardAPath {
-                    return ControlledImportExecutor(control: execControl)
+                    ControlledImportExecutor(control: execControl)
                 } else {
-                    return LiveImportExecutor(store: store)
+                    LiveImportExecutor(store: store)
                 }
             }
         )
@@ -497,13 +532,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         #expect(planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg", "After failure, B should reclaim base name")
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 7. Current-ledger conflict
 
-    @Test func currentLedgerConflictRebuildsWithDisjointName() async throws { log("START currentLedgerConflictRebuildsWithDisjointName");
+    @Test func currentLedgerConflictRebuildsWithDisjointName() async throws {
+        log("START currentLedgerConflictRebuildsWithDisjointName")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
@@ -522,7 +558,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:ledger-B", displayName: "CardB", isEjectable: true)
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.filter({ $0.availability == .available }).count == 2 && snap.removableSources.allSatisfy({ !$0.isScanning }) }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.filter { $0.availability == .available }.count == 2
+                && snap.removableSources.allSatisfy { !$0.isScanning }
+        }
 
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
@@ -555,13 +594,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         let planAAfter = await coordinator.readyPlan(for: cardAPath)
         #expect(planAAfter?.entries.first?.finalDestination.rawValue == "shared.jpg")
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 8. Settlement conversion
 
-    @Test func settlementConversionAfterPublishBStillSuffixDueToRealFile() async throws { log("START settlementConversionAfterPublishBStillSuffixDueToRealFile");
+    @Test func settlementConversionAfterPublishBStillSuffixDueToRealFile() async throws {
+        log("START settlementConversionAfterPublishBStillSuffixDueToRealFile")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
@@ -580,7 +620,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:settle-B", displayName: "CardB", isEjectable: true)
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.filter({ $0.availability == .available }).count == 2 && snap.removableSources.allSatisfy({ !$0.isScanning }) }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.filter { $0.availability == .available }.count == 2
+                && snap.removableSources.allSatisfy { !$0.isScanning }
+        }
 
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
@@ -613,7 +656,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         var planB: MediaOperationPlan?
         let deadlineB3 = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < deadlineB3 {
-            if let p = await coordinator.readyPlan(for: cardBPath), p.entries.first?.finalDestination.rawValue != "shared.jpg", p.entries.first?.finalDestination.rawValue.contains("shared") == true {
+            if let p = await coordinator.readyPlan(for: cardBPath),
+               p.entries.first?.finalDestination.rawValue != "shared.jpg",
+               p.entries.first?.finalDestination.rawValue.contains("shared") == true
+            {
                 planB = p
                 break
             }
@@ -621,13 +667,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         #expect(planB?.entries.first?.finalDestination.rawValue != "shared.jpg", "B should still have suffix due to real file, even after A's claim dies")
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 9. Detach during execution
 
-    @Test func detachDuringExecutionNoRecreation() async throws { log("START detachDuringExecutionNoRecreation");
+    @Test func detachDuringExecutionNoRecreation() async throws {
+        log("START detachDuringExecutionNoRecreation")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -669,7 +716,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitUntilNoPresentation(coordinator, source: cardPath)
 
         // Late execution completion must not recreate presentation
-        await execControl.resumePending(for: cardPath, with: .completed(publishedCount: 1, batch: nil, hasBlockedEntries: false, hasEntryFailures: false, skippedForeignCount: 0, failedCount: 0))
+        await execControl.resumePending(
+            for: cardPath,
+            with: .completed(
+                publishedCount: 1,
+                batch: nil,
+                hasBlockedEntries: false,
+                hasEntryFailures: false,
+                skippedForeignCount: 0,
+                failedCount: 0
+            )
+        )
         try await Task.sleep(for: .milliseconds(200))
         await queueTask3.value
         let has = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
@@ -678,13 +735,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Controlled executor's cancel is observed via task cancellation; check control's cancelled set?
         // At least ensure no crash.
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 10. Shutdown
 
-    @Test func shutdownWaitsForSuspendedWorkAndNoLaterPublication() async throws { log("START shutdownWaitsForSuspendedWorkAndNoLaterPublication");
+    @Test func shutdownWaitsForSuspendedWorkAndNoLaterPublication() async throws {
+        log("START shutdownWaitsForSuspendedWorkAndNoLaterPublication")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardAURL = temp.appending(path: "CardA", directoryHint: .isDirectory)
@@ -703,7 +761,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:shutdown-B", displayName: "CardB", isEjectable: true)
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.filter({ $0.availability == .available }).count == 2 && snap.removableSources.allSatisfy({ !$0.isScanning }) }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.filter { $0.availability == .available }.count == 2
+                && snap.removableSources.allSatisfy { !$0.isScanning }
+        }
 
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
@@ -724,7 +785,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Start shutdown while builds are suspended. It should cancel builds and return.
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
         // After shutdown, no presentations should remain and no later publication after resuming old builds.
         let hasA = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardAPath })
@@ -741,13 +802,14 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 11. Repeated import
 
-    @Test func repeatedImportStartsExactlyOneBatch() async throws { log("START repeatedImportStartsExactlyOneBatch");
+    @Test func repeatedImportStartsExactlyOneBatch() async throws {
+        log("START repeatedImportStartsExactlyOneBatch")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
-        for i in 0..<4 {
+        for i in 0 ..< 4 {
             try Data(repeating: UInt8(i), count: 1024).write(to: cardURL.appending(path: "h\(i).jpg"))
         }
 
@@ -776,13 +838,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(batches.count == 1, "Repeated import should start exactly one batch")
         #expect(batches.first?.assetCount == 4)
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 12. Metadata wake (deterministic)
 
-    @Test func catalogChangeWakesWaitingForMetadataSourceDeterministic() async throws { log("START catalogChangeWakesWaitingForMetadataSourceDeterministic");
+    @Test func catalogChangeWakesWaitingForMetadataSourceDeterministic() async throws {
+        log("START catalogChangeWakesWaitingForMetadataSourceDeterministic")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -817,14 +880,16 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Wait for waitingForMetadata
         let waiting = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
-            if case .waitingForMetadata = pres.state { return true }
+            if case .waitingForMetadata = pres.state {
+                return true
+            }
             return false
         })
         guard case .waitingForMetadata = waiting.state else {
             Issue.record("Expected waitingForMetadata")
             log("END")
-        log("END");
-        await coordinator.shutdown()
+            log("END")
+            await coordinator.shutdown()
             return
         }
 
@@ -832,7 +897,18 @@ struct MediaOperationCoordinatorAdversarialTests {
         let result = EnrichmentResult(
             id: MediaAssetID(libraryRootPath: cardPath, relativePath: relative),
             metadata: AssetMetadata(timestamps: [
-                CaptureTimestampRecord(role: "original", instant: captureDate, utcOffsetSeconds: nil, precision: "localFloating", year: 2026, month: 1, day: 1, hour: 12, minute: 0, second: 0),
+                CaptureTimestampRecord(
+                    role: "original",
+                    instant: captureDate,
+                    utcOffsetSeconds: nil,
+                    precision: "localFloating",
+                    year: 2026,
+                    month: 1,
+                    day: 1,
+                    hour: 12,
+                    minute: 0,
+                    second: 0
+                ),
             ]),
             timestampFacts: EnrichmentTimestampFacts(original: captureDate),
             enrichedKind: nil,
@@ -845,17 +921,20 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(await store.applyEnrichmentBatch([result]) == .applied(count: 1))
 
         _ = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
-            if case .ready = pres.state { return true }
+            if case .ready = pres.state {
+                return true
+            }
             return false
         })
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 13. Zero-copy without delete
 
-    @Test func zeroCopyWithoutDeleteRemainsReadyWithoutExecutor() async throws { log("START zeroCopyWithoutDeleteRemainsReadyWithoutExecutor");
+    @Test func zeroCopyWithoutDeleteRemainsReadyWithoutExecutor() async throws {
+        log("START zeroCopyWithoutDeleteRemainsReadyWithoutExecutor")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -903,26 +982,29 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await Task.sleep(for: .milliseconds(400))
         // Should remain Ready, not executing/completed, and no executor invocation.
         let pres = try await waitForPresentation(coordinator, source: cardPath, predicate: { p in
-            if case .ready = p.state { return true }
+            if case .ready = p.state {
+                return true
+            }
             return false
         })
         guard case .ready = pres.state else {
             Issue.record("Expected to remain Ready for zero-copy without delete, got \(pres.state)")
             log("END")
-        log("END");
-        await coordinator.shutdown()
+            log("END")
+            await coordinator.shutdown()
             return
         }
         let executed = await execControl.recordedExecuted()
         #expect(executed.isEmpty, "Executor should not be invoked for zero-copy without delete")
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 
     // MARK: - 14. Zero-copy with delete
 
-    @Test func zeroCopyWithDeleteExecutorRunsDeletionPath() async throws { log("START zeroCopyWithDeleteExecutorRunsDeletionPath");
+    @Test func zeroCopyWithDeleteExecutorRunsDeletionPath() async throws {
+        log("START zeroCopyWithDeleteExecutorRunsDeletionPath")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -969,14 +1051,16 @@ struct MediaOperationCoordinatorAdversarialTests {
                case .completed = pres.state
             {
                 completed = true
-                if deleted { break }
+                if deleted {
+                    break
+                }
             }
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(deleted, "Source file should be deleted for zero-copy with delete")
         // Completed state is expected, but if deletion happened but presentation still ready due to timing, at least check file gone.
         log("END")
-        log("END");
+        log("END")
         await coordinator.shutdown()
     }
 }
