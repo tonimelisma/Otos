@@ -22,7 +22,8 @@ Earlier vocabulary notes in this file include:
 ## Non-Authoritative Baseline Ideas
 
 - Otos could start as a single-window app for this idea set.
-- Originals remain read-only.
+- Originals remain read-only except for an explicit, opt-in filesystem action such
+  as Move to Trash.
 - Libraries are recursive user-selected folder roots.
 - Library add and remove actions live only in Libraries Settings.
 - Sidebar navigation shows `All Media` plus added library sources.
@@ -134,11 +135,18 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
 - Original-media loading and rendering are performance-sensitive and require
   instrumentation in the implementing spec.
 
-### P2. Pick, Reject, And Unpick
+### P2. Liked, Not Rated, And Disliked
 
-- Pick/Reject/Unpick comes after Grid, Image, and Compare.
-- The curation state is persisted in the Otos catalog.
-- Rejected media remains visible unless a filter hides it.
+- Liked/Not Rated/Disliked comes after Grid, Image, and Compare and is specified
+  by active Plan 0091.
+- The mutually exclusive curation state is persisted in the Otos catalog.
+- Hover reveals heart, minus, and X direct controls; media has no curation chrome
+  at rest. `P/U/X`, menus, and accessibility actions remain equivalent paths.
+- Disliked media remains visible unless a filter hides it; Disliked never means
+  delete.
+- A default-off preference can advance after a choice.
+- Photo > Move to Trash uses Command-Backspace as a separate, explicit,
+  recoverable filesystem action.
 
 ### P2. Filters
 
