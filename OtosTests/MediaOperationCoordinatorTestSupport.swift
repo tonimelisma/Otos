@@ -142,6 +142,26 @@ func waitForRecordedCancellation(
     }
 }
 
+/// Cancellation has two effects: the source is recorded, and the suspended
+/// continuation is released with a dummy so it cannot leak. Gating on the
+/// first alone leaves the second racing with the assertion that reads it.
+func waitForCancellationSettled(
+    _ builder: ControlledImportPlanBuilder,
+    source: LibraryRootPath,
+    timeout: Duration = .seconds(5)
+) async throws {
+    try await withTestTimeout("builder cancellation settled \(source.rawValue)", timeout: timeout) {
+        while true {
+            let cancelled = await builder.recordedCancelled().contains(source)
+            let pending = await builder.pendingSources().contains(source)
+            if cancelled, !pending {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+    }
+}
+
 extension ControlledImportPlanBuilder: ImportPlanBuilding {
     nonisolated func build(
         snapshot: ImportPlanningSnapshot,

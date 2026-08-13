@@ -1,34 +1,11 @@
-import Foundation
-import OSLog
-
 // Media grid support guide
 //
 // These value helpers back the AppKit collection bridge without belonging to the
 // bridge's view-controller lifecycle. Sticky paint truth lives in `TileContentStore`;
-// this file keeps the detail reader and structural-apply policy. `MediaAssetTile*`
+// `MediaTileDetailReader` lives in Services because it queries the catalog; this file
+// keeps structural-apply policy. `MediaAssetTile*`
 // types intentionally keep the per-asset prefix — they are not grid-level and are
 // not part of this rename.
-
-struct MediaTileDetailReader {
-    private let store: CatalogStore
-
-    init(store: CatalogStore) {
-        self.store = store
-    }
-
-    func details(for ids: [MediaAssetID]) async -> [MediaAssetID: MediaTileDetail] {
-        do {
-            return try await store.mediaTileDetails(for: ids)
-        } catch is CancellationError {
-            return [:]
-        } catch {
-            OtosLog.catalog.error(
-                "Media tile detail query failed error=\(String(describing: error), privacy: .public)"
-            )
-            return [:]
-        }
-    }
-}
 
 nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     static let reloadDataFallbackItemCountThreshold = 1000

@@ -5,6 +5,7 @@ APP_NAME="Otos"
 SUBSYSTEM="net.melisma.Otos"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
+source "$ROOT_DIR/script/lib/operational-busy.sh"
 LOG_DIR="$(otos_logs_dir "$ROOT_DIR")"
 CATALOG_DB="$HOME/Library/Application Support/$SUBSYSTEM/Catalog/catalog.sqlite"
 
@@ -106,32 +107,6 @@ quit_app() {
 # SQLITE_CORRUPT, missing table) is treated as busy — the only safe direction.
 # `is_import_active` is kept as a compatibility alias; new code calls
 # `has_active_operational_work`.
-has_active_operational_work() {
-  if [[ ! -f "$CATALOG_DB" ]]; then
-    return 1
-  fi
-  if ! command -v sqlite3 >/dev/null 2>&1; then
-    return 1
-  fi
-  local out rc
-  out="$(sqlite3 -readonly "$CATALOG_DB" \
-    "SELECT source_root_path FROM active_file_operation UNION ALL SELECT library_root_path FROM active_reorganization_component LIMIT 1;" \
-    2>&1)"; rc=$?
-  if [[ $rc -ne 0 ]]; then
-    printf '%s\n' "$out" >&2
-    return 0
-  fi
-  if [[ -z "$out" ]]; then
-    return 1
-  fi
-  printf '%s\n' "$out"
-  return 0
-}
-
-is_import_active() {
-  has_active_operational_work "$@"
-}
-
 cleanup() {
   if [[ -n "$LOG_PID" ]]; then
     kill "$LOG_PID" >/dev/null 2>&1 || true
@@ -139,7 +114,7 @@ cleanup() {
   fi
   if [[ "$QUIT_ON_EXIT" == 1 ]]; then
     local active_root
-    if active_root="$(has_active_operational_work)"; then
+    if active_root="$(has_active_operational_work "$CATALOG_DB")"; then
       echo "Smoke run leaving app running: operational work still active (import or reorganization) for root=$active_root" >&2
       echo "An import or reorganization was in flight; not quitting the app to avoid mid-operation termination (ARC-002A)." >&2
       return
@@ -262,7 +237,7 @@ except OSError as e:
 run_jank() {
   # ARC-002A: refuse to start when any operational journal is active
   local active_root
-  if active_root="$(has_active_operational_work)"; then
+  if active_root="$(has_active_operational_work "$CATALOG_DB")"; then
     echo "Cannot start smoke run: operational work already active for root=$active_root" >&2
     echo "Finish or cancel the import/reorganization before running --jank (ARC-002A)." >&2
     exit 1
@@ -286,7 +261,7 @@ run_jank() {
 
   sleep 1
   # If operational work became active during the smoke run, leave the app alive
-  if active_root="$(has_active_operational_work)"; then
+  if active_root="$(has_active_operational_work "$CATALOG_DB")"; then
     echo "Smoke run completed but operational work is now active for root=$active_root — leaving app running." >&2
     echo "Work was started during the smoke run; not quitting to avoid termination (ARC-002A)." >&2
     QUIT_ON_EXIT=0

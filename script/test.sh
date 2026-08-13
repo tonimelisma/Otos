@@ -20,21 +20,105 @@ echo "Capturing test output to $LOG_FILE"
 # macOS ships bash 3.2, where `"${ARR[@]}"` on a zero-element array is an unbound
 # -variable error under `set -u` — branch on the two invocations rather than rely
 # on an always-safe empty-array expansion idiom.
-if [[ -n "${OTOS_SCALE_TEST:-}" ]]; then
-  echo "OTOS_SCALE_TEST set: including the on-disk projection scale test."
-  /usr/bin/xcodebuild \
-    -project "$ROOT_DIR/Otos.xcodeproj" \
-    -scheme Otos \
-    -configuration Debug \
-    -destination "platform=macOS" \
-    -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-    test "OTOS_SCALE_TEST=$OTOS_SCALE_TEST" | tee "$LOG_FILE"
-else
-  /usr/bin/xcodebuild \
-    -project "$ROOT_DIR/Otos.xcodeproj" \
-    -scheme Otos \
-    -configuration Debug \
-    -destination "platform=macOS" \
-    -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-    test | tee "$LOG_FILE"
-fi
+TEST_HOST_FOOTPRINT_LIMIT_MB="${OTOS_TEST_HOST_FOOTPRINT_LIMIT_MB:-2048}"
+
+test_host_descendants() {
+  local parent="$1"
+  local child
+  for child in $(pgrep -P "$parent" 2>/dev/null || true); do
+    echo "$child"
+    test_host_descendants "$child"
+  done
+}
+
+physical_footprint_mb() {
+  local pid="$1"
+  footprint -p "$pid" 2>/dev/null | awk '
+    /Footprint:/ && $0 !~ /peak/ {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "Footprint:") {
+          number = $(i + 1)
+          unit = $(i + 2)
+          if (unit == "GB" || unit == "G") number *= 1024
+          else if (unit == "KB" || unit == "K") number /= 1024
+          printf "%.0f\n", number
+          exit
+        }
+      }
+    }
+  '
+}
+
+monitored_test_pids() {
+  local xcodebuild_pid="$1"
+  echo "$xcodebuild_pid"
+  test_host_descendants "$xcodebuild_pid"
+}
+
+monitor_test_host_footprint() {
+  local xcodebuild_pid="$1"
+  local monitor_file="$2"
+
+  while kill -0 "$xcodebuild_pid" >/dev/null 2>&1; do
+    local pid footprint_mb last_test host_pid
+    for pid in $(monitored_test_pids "$xcodebuild_pid" | sort -u); do
+      footprint_mb="$(physical_footprint_mb "$pid")"
+      if [[ -n "$footprint_mb" && "$footprint_mb" -gt "$TEST_HOST_FOOTPRINT_LIMIT_MB" ]]; then
+        last_test="$(grep -E 'started\.|Test Case.*started|◇ Test.*started' "$LOG_FILE" | tail -n 1 || true)"
+        {
+          echo "Test-host resource ceiling exceeded."
+          echo "pid=$pid footprint_mb=$footprint_mb limit_mb=$TEST_HOST_FOOTPRINT_LIMIT_MB"
+          echo "last_test=${last_test:-unknown}"
+        } > "$monitor_file"
+        for host_pid in $(monitored_test_pids "$xcodebuild_pid" | sort -u); do
+          [[ "$host_pid" == "$xcodebuild_pid" ]] && continue
+          kill "$host_pid" >/dev/null 2>&1 || true
+        done
+        kill "$xcodebuild_pid" >/dev/null 2>&1 || true
+        return 1
+      fi
+    done
+    sleep 2
+  done
+  return 0
+}
+
+run_tests_with_footprint_guard() {
+  local monitor_file
+  monitor_file="$(mktemp)"
+
+  if [[ -n "${OTOS_SCALE_TEST:-}" ]]; then
+    echo "OTOS_SCALE_TEST set: including the on-disk projection scale test."
+    /usr/bin/xcodebuild \
+      -project "$ROOT_DIR/Otos.xcodeproj" \
+      -scheme Otos \
+      -configuration Debug \
+      -destination "platform=macOS" \
+      -derivedDataPath "$ROOT_DIR/build/DerivedData" \
+      test "OTOS_SCALE_TEST=$OTOS_SCALE_TEST" > "$LOG_FILE" 2>&1 &
+  else
+    /usr/bin/xcodebuild \
+      -project "$ROOT_DIR/Otos.xcodeproj" \
+      -scheme Otos \
+      -configuration Debug \
+      -destination "platform=macOS" \
+      -derivedDataPath "$ROOT_DIR/build/DerivedData" \
+      test > "$LOG_FILE" 2>&1 &
+  fi
+  local xcodebuild_pid="$!"
+  monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" &
+  local monitor_pid="$!"
+  local test_status=0
+  wait "$xcodebuild_pid" || test_status=$?
+  kill "$monitor_pid" >/dev/null 2>&1 || true
+  wait "$monitor_pid" >/dev/null 2>&1 || true
+  cat "$LOG_FILE"
+  if [[ -s "$monitor_file" ]]; then
+    cat "$monitor_file" >&2
+    test_status=1
+  fi
+  rm -f "$monitor_file"
+  return "$test_status"
+}
+
+run_tests_with_footprint_guard

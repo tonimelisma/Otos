@@ -104,7 +104,7 @@ struct ImportPlanBuilderTests {
         #expect(resultA.plan.entries.first?.finalDestination != resultB.plan.entries.first?.finalDestination)
     }
 
-    @Test func cancellingControlledBuildIsObservableButDoesNotResume() async throws {
+    @Test func cancellingSuspendedBuildRecordsCancelAndReleasesContinuation() async throws {
         let source = LibraryRootPath(rawValue: "/tmp/cardC")
         let dest = Self.destRoot
         // swiftlint:disable:next line_length
@@ -116,19 +116,20 @@ struct ImportPlanBuilderTests {
 
         let task = Task { await controlled.build(snapshot: snap, additionalReserved: []) }
         try await waitForPendingBuilder(controlled, source: source)
-        let pendingBefore = await controlled.pendingSources()
-        #expect(pendingBefore.contains(source))
+        let pendingBeforeCancellation = await controlled.pendingSources()
+        #expect(pendingBeforeCancellation.contains(source))
 
         task.cancel()
-        try await waitForRecordedCancellation(controlled, source: source)
-        let cancelled = await controlled.recordedCancelled()
-        #expect(cancelled.contains(source))
-        // Still pending — cancellation did not auto-resume
-        let pendingAfter = await controlled.pendingSources()
-        #expect(pendingAfter.contains(source))
+        try await waitForCancellationSettled(controlled, source: source)
 
-        // Clean up: resume to avoid leaking continuation
-        await controlled.resumePendingBuild(for: source)
-        _ = await task.value
+        let cancelled = await controlled.recordedCancelled()
+        let pendingAfterCancellation = await controlled.pendingSources()
+        #expect(cancelled.contains(source))
+        #expect(!pendingAfterCancellation.contains(source))
+
+        // A cancelled build yields a dummy that cannot install a plan.
+        let result = await task.value
+        #expect(result.plan.generation == snap.generation)
+        #expect(result.plan.entries.isEmpty)
     }
 }

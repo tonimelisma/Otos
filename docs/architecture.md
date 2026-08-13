@@ -81,7 +81,9 @@ everything expensive happens on an actor off the main thread.
   write selection truth; the model flows one way, ViewModel → renderer, and
   `selectionIndexPaths` is render output. Paint truth lives in
   `TileContentStore` (sole decoded-image owner, ViewModel-owned and shared by grid, strip, and panes; visible IDs pinned; cost-bounded);
-  tiles never blank a painted same-asset thumbnail (ADR 0006).
+  tiles never blank a painted same-asset thumbnail (ADR 0006). `GridPostLayoutWorkQueue`
+  owns keyed focus-scroll and visible-detail/preheat work that must wait for a real
+  collection-view layout; it coalesces deferred work and performs the one next-turn retry.
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
 - **Materialization** has one path: preview submits interactive demand and enrichment

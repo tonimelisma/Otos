@@ -125,6 +125,53 @@ check_no_stray_attoseconds() {
   fi
 }
 
+# An async wrapper whose whole body calls a same-named function is almost
+# certainly accidental self-recursion. This is intentionally narrow: it only
+# checks one-line functions with one call and matching argument labels, so
+# legitimate multi-line recursive algorithms remain the author's responsibility.
+check_no_single_line_self_delegation() {
+  local head_sha="$1"
+  local scan_root="${CI_TEXT_HYGIENE_ROOT:-$ROOT_DIR}"
+
+  python3 - "$scan_root" "$head_sha" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+
+def labels(text, signature):
+    values = []
+    for part in text.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            lhs = part.split(":", 1)[0].strip().split()
+            values.append(lhs[0])
+        else:
+            values.append("_")
+    return values
+
+pattern = re.compile(
+    r"^\s*(?:[A-Za-z_]+\s+)*func\s+([A-Za-z_]\w*)\s*"
+    r"\(([^{}()]*)\)[^{]*\{\s*(?:try\s+)?(?:await\s+)?"
+    r"([A-Za-z_]\w*)\s*\(([^{}()]*)\)\s*\}\s*$"
+)
+
+for directory in (root / "Otos", root / "OtosTests"):
+    for path in directory.rglob("*.swift"):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            match = pattern.match(line)
+            if not match:
+                continue
+            function_name, signature, callee, call = match.groups()
+            if function_name == callee and labels(signature, True) == labels(call, False):
+                print(f"{path}:{number}: single-line self-delegation in {function_name}", file=sys.stderr)
+                raise SystemExit(1)
+PY
+}
+
 # ARC-042: zero unsound Sendable escapes in app and test sources.
 check_no_unchecked_sendable() {
   local _head_sha="$1"
@@ -143,6 +190,7 @@ check() {
 
   check_no_source_text_tests "$head_sha"
   check_no_stray_attoseconds "$head_sha"
+  check_no_single_line_self_delegation "$head_sha"
   check_no_unchecked_sendable "$head_sha"
   check_doc_citations "$head_sha"
 
@@ -257,6 +305,12 @@ self_test() {
 
   run_expect_success "pull request merge-base range ignores base-only cleanup" \
     env EVENT_NAME=pull_request BASE_SHA="$advanced_base_sha" HEAD_SHA="$feature_sha" \
+    bash -c "cd '$temp_dir' && '$SCRIPT_PATH' check >/dev/null 2>&1"
+
+  mkdir -p "$temp_dir/Otos"
+  printf 'private func f(_ a: A, b: B) async throws { try await f(a, b: b) }\n' > "$temp_dir/Otos/Recursion.swift"
+  run_expect_failure "single-line self-delegation" \
+    env CI_TEXT_HYGIENE_ROOT="$temp_dir" EVENT_NAME=workflow_dispatch HEAD_SHA="$clean_sha" \
     bash -c "cd '$temp_dir' && '$SCRIPT_PATH' check >/dev/null 2>&1"
 
   echo "ci-text-hygiene self-test: clean"

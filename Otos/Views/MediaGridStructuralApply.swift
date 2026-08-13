@@ -207,25 +207,25 @@ extension MediaGridViewController {
         perform(mutationGate.completeStructuralApply(applied: context.grid))
     }
 
-    /// reloadData-class applies (`largeApply`/`reorderOnly == false`, `animatingDifferences:
-    /// false`) invalidate item layout without resolving it synchronously — AppKit queues
-    /// the recompute for the next layout pass. Querying `indexPathsForVisibleItems()`/
-    /// `layoutAttributesForElements(in:)` immediately after `apply(...)`'s completion, as
-    /// the pre-fix code did, therefore sees a stale/empty pass forever if nothing else
-    /// (scroll, another apply) happens to re-trigger the query — `layoutSubtreeIfNeeded()`
-    /// flushes it synchronously, mirroring `scrollToFocusTarget`'s fix for the same class of
-    /// race. Separately, if the window hasn't completed its first non-zero layout yet
-    /// (`collectionView.frame.width == 0`), this parks the reason in
-    /// `pendingPostApplyDetailReason` for `viewDidLayout`'s retry — same pattern as
-    /// `pendingFocusTargetID`.
+    /// Routes the visible-detail/preheat pass through the shared post-layout queue.
+    /// Reload-class applies invalidate item layout without resolving it synchronously;
+    /// the queue flushes layout when possible and coalesces one deferred pass until
+    /// the next real layout.
     @discardableResult
     func runPostApplyDetailAndPreheatPass(
         reason: String
     ) -> (visibleDetailRequestCount: Int, preheatCount: Int) {
-        guard view.window != nil, collectionView.frame.width > 0 else {
-            pendingPostApplyDetailReason = reason
-            return (0, 0)
+        var result = (visibleDetailRequestCount: 0, preheatCount: 0)
+        postLayoutWorkQueue.submit(.detailAndPreheat, reason: reason) { [weak self] in
+            guard let self else { return }
+            result = runPostApplyDetailAndPreheatPassNow(reason: reason)
         }
+        return result
+    }
+
+    private func runPostApplyDetailAndPreheatPassNow(
+        reason: String
+    ) -> (visibleDetailRequestCount: Int, preheatCount: Int) {
         collectionView.layoutSubtreeIfNeeded()
         tileContents.pinVisible(Set(visibleAssetIDs()))
         let visibleDetailRequestCount = requestVisibleDetails(reason: reason)
@@ -236,7 +236,6 @@ extension MediaGridViewController {
         case .reused, .skipped:
             0
         }
-        pendingPostApplyDetailReason = nil
         return (visibleDetailRequestCount, preheatCount)
     }
 

@@ -14,7 +14,6 @@ struct ReorganizationRecoveryObservationTests {
             [.modificationDate: modified],
             ofItemAtPath: source.path
         )
-
         let step = ActiveReorganizationStep(
             stepIndex: 0,
             memberIndex: 0,
@@ -329,6 +328,9 @@ struct ReorganizationExecutorMoveTests {
             [.modificationDate: modified],
             ofItemAtPath: source.path
         )
+        let sourceInode = try #require(
+            FileManager.default.attributesOfItem(atPath: source.path)[.systemFileNumber] as? NSNumber
+        )
 
         let now = Date()
         let key = ReorganizationComponentKey.make()
@@ -401,5 +403,9 @@ struct ReorganizationExecutorMoveTests {
         #expect(counts.2 == 1)
         #expect(FileManager.default.fileExists(atPath: temp.appending(path: "new.jpg").path))
         #expect(!FileManager.default.fileExists(atPath: source.path))
+        let destinationInode = try #require(
+            FileManager.default.attributesOfItem(atPath: temp.appending(path: "new.jpg").path)[.systemFileNumber] as? NSNumber
+        )
+        #expect(destinationInode == sourceInode)
     }
 }

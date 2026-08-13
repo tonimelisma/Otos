@@ -22,10 +22,57 @@ is_allowlisted() {
   return 1
 }
 
+check_swift_test_body() {
+  local test_file="$1"
+  local test_name="$2"
+  local requirement_id="$3"
+
+  python3 - "$test_file" "$test_name" "$requirement_id" <<'PY'
+import re
+import sys
+
+path, name, requirement_id = sys.argv[1:]
+source = open(path, encoding="utf-8").read()
+declaration = re.search(r"\bfunc\s+" + re.escape(name) + r"\s*\([^)]*\)[^{]*\{", source)
+if declaration is None:
+    print(f"requirements authority check failed: requirement {requirement_id} names missing Swift test {path}#{name}", file=sys.stderr)
+    raise SystemExit(1)
+
+opening = source.find("{", declaration.start(), declaration.end())
+depth = 0
+closing = None
+for index in range(opening, len(source)):
+    if source[index] == "{":
+        depth += 1
+    elif source[index] == "}":
+        depth -= 1
+        if depth == 0:
+            closing = index
+            break
+if closing is None:
+    print(f"requirements authority check failed: requirement {requirement_id} has unterminated Swift test {path}#{name}", file=sys.stderr)
+    raise SystemExit(1)
+
+body = source[opening + 1:closing]
+body_without_tautology = re.sub(r"#expect\s*\(\s*true\b[^\n]*\)", "", body)
+if not any(token in body_without_tautology for token in ("#expect(", "#require(", "Issue.record(")) and re.search(
+    r"\b(?:assert[A-Za-z_]*|waitFor[A-Za-z_]*|verify[A-Za-z_]*)\s*\(",
+    body_without_tautology,
+) is None:
+    print(
+        f"requirements authority check failed: requirement {requirement_id} cites a Swift test with no failing assertion {path}#{name}",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+PY
+}
+
 check_root() {
   local root="$1"
   local requirements="$root/docs/requirements.md"
   local roadmap="$root/docs/product/roadmap.md"
+  local shared_proofs_file
+  shared_proofs_file="$(mktemp)"
 
   if [[ ! -f "$requirements" ]]; then
     fail "missing docs/requirements.md"
@@ -87,7 +134,7 @@ check_root() {
     req=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$3); print $3}')
     acc=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$4); print $4}')
     tested=$(printf '%s\n' "$line" | awk -F'|' '{gsub(/^ *| *$/,"",$6); print $6}')
-    if printf '%s\n' "$line" | grep -qE 'animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k='; then
+    if printf '%s\n' "$req $acc" | grep -qE 'animatingDifferences|NSAnimationContext|PRAGMA|COALESCE|INDEXED BY|plan [0-9]{4}|n ≥|k='; then
       fail "requirement $id contains implementation token"
     fi
     if printf '%s\n' "$line" | grep -qE '[0-9]+ms|[0-9]+ ms'; then
@@ -160,6 +207,8 @@ check_root() {
           if ! grep -Eq "func[[:space:]]+$test_name[[:space:]]*\\(" "$test_file" 2>/dev/null; then
             fail "requirement $id names missing Swift test $token"
           fi
+          check_swift_test_body "$test_file" "$test_name" "$id" || return 1
+          printf '%s\n' "$token" >> "$shared_proofs_file"
         elif [[ "$test_path" == *.sh ]]; then
           if ! grep -Fq "$test_name" "$test_file" 2>/dev/null; then
             fail "requirement $id names missing script self-test $token"
@@ -170,6 +219,15 @@ check_root() {
       done <<< "$named_tests"
     fi
   done < <(grep -E '^\|' "$requirements" || true)
+
+  if [[ -s "$shared_proofs_file" ]]; then
+    while read -r count token; do
+      if (( count > 6 )); then
+        echo "requirements authority warning: proof $token is cited by $count rows" >&2
+      fi
+    done < <(sort "$shared_proofs_file" | uniq -c)
+  fi
+  rm -f "$shared_proofs_file"
 
   # Every backtick path in Implemented-in / Tested-by cells must exist on disk.
   # Traceability only — validates that cited paths are real files, not that they prove semantics.
@@ -277,7 +335,7 @@ HEADER
   make_header "$t/docs/requirements.md"
   longReq=$(printf 'a%.0s' {1..401})
   echo "| ARC-999 | $longReq | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
+  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_pass "long requirement (no length cap)" "$t"
 
@@ -286,7 +344,7 @@ HEADER
   make_header "$t/docs/requirements.md"
   longAcc=$(printf 'a%.0s' {1..401})
   echo "| ARC-999 | Req | $longAcc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
+  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_pass "long acceptance (no length cap)" "$t"
 
@@ -332,7 +390,7 @@ HEADER
   t="$tmpBase/t10"; mkdir -p "$t/docs" "$t/OtosTests"
   make_header "$t/docs/requirements.md"
   echo '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
+  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_pass "one valid named proof" "$t"
 
@@ -364,9 +422,17 @@ HEADER
   make_header "$t/docs/requirements.md"
   mbReq=$(printf 'a%.0s' {1..398})"∪∪"
   echo "| ARC-999 | $mbReq | Acc | \`Otos/Foo.swift\` | \`OtosTests/FooTests.swift#testFoo\` |" >> "$t/docs/requirements.md"
-  echo -e "import Foundation\nfunc testFoo() {}" > "$t/OtosTests/FooTests.swift"
+  echo -e "import Foundation\nfunc testFoo() { #expect(1 == 1) }" > "$t/OtosTests/FooTests.swift"
   mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
   expect_pass "multibyte 400 chars passes (no length cap)" "$t"
+
+  # 15. tautological Swift proof — must fail
+  t="$tmpBase/t15"; mkdir -p "$t/docs" "$t/OtosTests"
+  make_header "$t/docs/requirements.md"
+  printf '%s\n' '| ARC-999 | Req | Acc | `Otos/Foo.swift` | `OtosTests/FooTests.swift#testFoo` |' >> "$t/docs/requirements.md"
+  printf '%s\n' 'import Foundation' 'func testFoo() { #expect(true, "tautology") }' > "$t/OtosTests/FooTests.swift"
+  mkdir -p "$t/Otos"; touch "$t/Otos/Foo.swift"
+  expect_fail "tautological Swift proof" "$t"
 
   rm -rf "$tmpBase"
   trap - EXIT

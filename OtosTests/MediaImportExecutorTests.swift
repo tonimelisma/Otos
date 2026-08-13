@@ -417,6 +417,7 @@ struct ImportExecutionProgressTests {
             try payload.write(to: sourceURL.appending(path: "image-\(index).jpg"))
             expectedBytes += Int64(payload.count)
         }
+        let sourceBefore = try FilesystemTreeSnapshot.capture(root: sourceURL)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationURL)
@@ -464,6 +465,8 @@ struct ImportExecutionProgressTests {
         }
         #expect(snapshots.last?.completedCount == 12)
         #expect(snapshots.last?.completedBytes == expectedBytes)
+        let sourceAfter = try FilesystemTreeSnapshot.capture(root: sourceURL)
+        #expect(sourceAfter == sourceBefore)
         await coordinator.shutdown()
     }
 
@@ -486,6 +489,7 @@ struct ImportExecutionProgressTests {
 
     @Test func zeroCopyPlanWithoutDeleteStaysReady() async throws {
         let fixture = try await makeZeroCopyFixture()
+        let sourceBefore = try FilesystemTreeSnapshot.capture(root: fixture.sourceRoot)
         let result = await MediaImportExecutor(store: fixture.store).execute(
             plan: fixture.plan,
             sourceKind: .removableVolume,
@@ -498,12 +502,15 @@ struct ImportExecutionProgressTests {
             return
         }
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
+        let sourceAfter = try FilesystemTreeSnapshot.capture(root: fixture.sourceRoot)
+        #expect(sourceAfter == sourceBefore)
         #expect(try await fixture.store.activeImportOperations().isEmpty)
     }
 
     private struct ZeroCopyFixture {
         let store: CatalogStore
         let plan: MediaOperationPlan
+        let sourceRoot: URL
         let sourceFile: URL
     }
 
@@ -555,7 +562,7 @@ struct ImportExecutionProgressTests {
         #expect(plan.entries.first?.isSkipPreexisting == true)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
-        return ZeroCopyFixture(store: store, plan: plan, sourceFile: sourceFile)
+        return ZeroCopyFixture(store: store, plan: plan, sourceRoot: sourceRoot, sourceFile: sourceFile)
     }
 
     private func waitForReadyPlan(
