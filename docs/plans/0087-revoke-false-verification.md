@@ -33,7 +33,7 @@ tests that already existed and were written for other purposes.
 
 `script/requirements-authority-check.sh` validates the **grammar of a citation**,
 never the **semantics of a proof**. Its strongest check is
-`:169` and `:171`:
+`:160-161`:
 
 ```bash
 if ! grep -Eq "func[[:space:]]+$test_name[[:space:]]*\\(" "$test_file" 2>/dev/null; then
@@ -149,7 +149,7 @@ Verification: `bash script/requirements-authority-check.sh check` clean;
 ### Stage 2 — Teach the gate to reject what it just accepted
 
 Add to `script/requirements-authority-check.sh`, each with a self-test fixture
-alongside the existing 14 (`:200-330`):
+alongside the existing 14:
 
 1. **Reject tautological proofs.** For every cited `OtosTests/…#symbol`, extract
    the function body and fail if it contains no assertion other than
@@ -160,7 +160,7 @@ alongside the existing 14 (`:200-330`):
    distribution). A single test proving eight different requirements is the
    signature of re-citation. Report, do not fail, in the first iteration.
 3. **Recognise the guard class.** `script/*.sh#self-test` is already accepted by
-   `:172-176`; add a self-test fixture pinning that behavior so it cannot regress.
+   `:163-166`; add a self-test fixture pinning that behavior so it cannot regress.
 
 Do not attempt to check that a test *semantically* matches its row — that is not
 mechanisable, and pretending otherwise recreates the original error. The gate's

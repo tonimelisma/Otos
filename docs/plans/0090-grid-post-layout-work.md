@@ -24,16 +24,19 @@ The problem is the shape of the fix, and one omission.
 
 **The shape.** There are now two independent implementations of one idea:
 
+Line numbers below are current as of `08721bb`.
+
 | | Focus scroll | Post-apply detail/preheat |
 | --- | --- | --- |
-| pending state | `pendingFocusTargetID` (`MediaGridBridge.swift:185`) | `pendingPostApplyDetailReason` (`:194`) |
-| re-entrancy flag | `focusLayoutRetryScheduled` (`:188`) | `postApplyLayoutRetryScheduled` (`:197`) |
-| retry site | `viewDidLayout` (`:288-303`) | `viewDidLayout` → `retryPostApplyDetailPassIfNeeded()` (`:307-325`) |
-| flush | `layoutSubtreeIfNeeded()` (`:626`) | `layoutSubtreeIfNeeded()` (`MediaGridStructuralApply.swift:229`) |
+| pending state | `pendingFocusTargetID` (`MediaGridBridge.swift:186`) | `pendingPostApplyDetailReason` (`:195`) |
+| re-entrancy flag | `focusLayoutRetryScheduled` (`:189`) | `postApplyLayoutRetryScheduled` (`:198`) |
+| retry site | `viewDidLayout` (`:284`) | `viewDidLayout` → `retryPostApplyDetailPassIfNeeded()` (`:308`) |
+| flush | `layoutSubtreeIfNeeded()` (`:628`) | `layoutSubtreeIfNeeded()` (`MediaGridStructuralApply.swift:229`) |
 
 The code comments state the duplication outright: "same class of race as
-`pendingFocusTargetID`" (`:192`), "Mirrors `focusLayoutRetryScheduled`" (`:196`),
-"same pattern as `pendingFocusTargetID`" (`MediaGridStructuralApply.swift:219-220`).
+`pendingFocusTargetID`" (`MediaGridBridge.swift:193`), "Mirrors
+`focusLayoutRetryScheduled`" (`:197`), "same pattern as `pendingFocusTargetID`"
+(`MediaGridStructuralApply.swift:219-220`).
 
 Two copies is a coincidence; the comments make it a decision. A third caller —
 selection restore after a remap batch, strip scroll sync, any future post-apply
@@ -133,7 +136,7 @@ Code Review lens A.
 
 Route `scrollToFocusTarget` through the queue; delete `pendingFocusTargetID` and
 `focusLayoutRetryScheduled`. Note `pendingFocusTargetID` is also read at
-`MediaGridBridge.swift:583,594,599,614,628,640` and
+`MediaGridBridge.swift:585,596,601,616,630,642` and
 `MediaGridStructuralApply.swift:177` — those reads are the "did the apply land the
 focus target" question, which is not the same question as the retry. Keep that
 state if it is genuinely a second question; only the retry pair is being replaced.

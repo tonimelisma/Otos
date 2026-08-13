@@ -71,7 +71,7 @@ from being killed.
 - `script/check-no-unchecked-sendable.sh` — the established pattern, including
   the `ALLOWLIST` + `is_allowlisted` + `self-test` shape and the ARC-042 citation
   form `` `script/check-no-unchecked-sendable.sh#self-test` ``.
-- `script/requirements-authority-check.sh:172-176` — script citations are already
+- `script/requirements-authority-check.sh:163-166` — script citations are already
   a valid proof class; the gate greps the script for the named symbol.
 - `script/smoke-run.sh:104-133` — `has_active_operational_work()` reads
   `active_file_operation` and `active_reorganization_component` via
@@ -167,7 +167,7 @@ allowlist contains exactly one entry:
 ```bash
 ALLOWLIST=(
   # SwiftUI #Preview constructs a real in-memory store; preview-only, not a
-  # runtime view→store path. ContentView.swift:275-280.
+  # runtime view→store path. ContentView.swift:273-280.
   "Otos/ContentView.swift"
 )
 ```
