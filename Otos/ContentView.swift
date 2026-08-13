@@ -67,17 +67,6 @@ struct ContentView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    NSApp.keyWindow?.firstResponder?.tryToPerform(
-                        #selector(NSSplitViewController.toggleSidebar(_:)),
-                        with: nil
-                    )
-                } label: {
-                    Label("Toggle Sidebar", systemImage: "sidebar.leading")
-                }
-                .help("Toggle Sidebar")
-            }
             ToolbarItemGroup(placement: .primaryAction) {
                 ViewModePicker(
                     viewMode: viewModel.viewMode,
