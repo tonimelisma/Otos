@@ -207,6 +207,34 @@ grep -E "' passed" /tmp/otos-suite-1.log \
   | sed -E "s/.*'([^']+)'.*\(([0-9.]+) seconds\)/\2 \1/" | sort -rn | head -10
 ```
 
+### Stage 6 — Store lifecycle in tests
+
+Found while diagnosing the leak, and currently owned by no plan:
+
+- `CatalogStore` has no `deinit` and no `close()`. `shutdown()`
+  (`Otos/Stores/CatalogStore.swift:1914-1928`) cancels scan/integrity tasks,
+  clears leases, and stops the filesystem watcher — but never releases
+  `dbWriter`, so the SQLite connection stays open for the process lifetime.
+- Tests instantiate `CatalogStore(location:)` **127 times**; `shutdown()` appears
+  in only 11 test files. More than half of the stores created in the suite are
+  never shut down, leaving open connections and armed filesystem watchers for the
+  remainder of the run.
+
+This did not cause the 57 GB collapse — that was the recursion in `e5c92ef`, and
+the suite now peaks at 205 MB — so it is not urgent. It is still an ownership
+gap worth closing:
+
+1. Decide whether `shutdown()` should release `dbWriter`. In production there is
+   one store for the app's lifetime and one window, so it may be correct as-is;
+   if so, say so in the file guide rather than leaving it ambiguous.
+2. Give tests one teardown path so a store cannot outlive its test. Prefer a
+   helper that creates and tears down in one scope over adding 60 hand-written
+   `shutdown()` calls that the next test will forget.
+3. With Stage 4's ceiling in place, measure whether the change moves the peak. If
+   it does not, record that and stop — AGENTS.md requires measurement before
+   optimization, and a tidier lifecycle is a correctness/ownership argument, not
+   a performance one.
+
 ## Verification
 
 - `bash script/test.sh` green three consecutive whole-suite runs.
