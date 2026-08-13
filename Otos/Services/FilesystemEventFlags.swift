@@ -28,7 +28,8 @@ nonisolated struct FilesystemEventFlags: Equatable {
         }
         if contains(kFSEventStreamEventFlagKernelDropped)
             || contains(kFSEventStreamEventFlagUserDropped)
-            || contains(kFSEventStreamEventFlagRootChanged) {
+            || contains(kFSEventStreamEventFlagRootChanged)
+        {
             return .root
         }
         if contains(kFSEventStreamEventFlagItemIsSymlink) {
@@ -57,7 +58,8 @@ nonisolated struct FilesystemEventFlags: Equatable {
             || contains(kFSEventStreamEventFlagItemRenamed)
             || contains(kFSEventStreamEventFlagItemXattrMod)
             || contains(kFSEventStreamEventFlagItemChangeOwner)
-            || contains(kFSEventStreamEventFlagItemFinderInfoMod) {
+            || contains(kFSEventStreamEventFlagItemFinderInfoMod)
+        {
             return .file
         }
         return .root
@@ -113,7 +115,8 @@ nonisolated struct FilesystemEventFlags: Equatable {
             || contains(kFSEventStreamEventFlagKernelDropped)
             || contains(kFSEventStreamEventFlagUserDropped)
             || contains(kFSEventStreamEventFlagRootChanged)
-            || rawValue == 0 {
+            || rawValue == 0
+        {
             return false
         }
         return contains(kFSEventStreamEventFlagItemInodeMetaMod)

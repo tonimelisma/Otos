@@ -1,6 +1,6 @@
 import Foundation
-import SwiftUI
 @testable import Otos
+import SwiftUI
 import Testing
 
 /// APP-003 — fixed-library add/remove only in Settings, per-tab ownership.

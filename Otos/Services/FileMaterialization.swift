@@ -161,7 +161,8 @@ extension FileMaterialization {
         }
         // Foundation often wraps POSIX in NSCocoaErrorDomain with underlying
         if let underlying = ns.userInfo[NSUnderlyingErrorKey] as? NSError,
-           underlying.domain == NSPOSIXErrorDomain, underlying.code == Int(ETIMEDOUT) {
+           underlying.domain == NSPOSIXErrorDomain, underlying.code == Int(ETIMEDOUT)
+        {
             return .providerUnavailable
         }
         return .inconclusive

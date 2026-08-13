@@ -212,7 +212,8 @@ final class DeviceStagingRegistry {
            let size = try? enrichmentURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
            let file = session.file(for: relativePath),
            file.fileSize >= 0,
-           Int64(size) == Int64(file.fileSize) {
+           Int64(size) == Int64(file.fileSize)
+        {
             let source = enrichmentURL
             let destination = importStagingURL
             let outcome = await withCheckedContinuation {

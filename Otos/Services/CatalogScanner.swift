@@ -382,7 +382,8 @@ private nonisolated enum LiveCatalogScanner {
             if let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL),
                let kind = MediaCompanionKind.recognize(
                    fileExtension: URL(fileURLWithPath: relativePath.rawValue).pathExtension
-               ) {
+               )
+            {
                 return .companion(
                     ScannedCompanionFile(
                         relativePath: relativePath,

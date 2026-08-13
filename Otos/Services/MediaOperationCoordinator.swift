@@ -226,7 +226,8 @@ actor MediaOperationCoordinator {
     func setDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) async {
         let libraries = await store.currentLibraries()
         if let sourceState = libraries.first(where: { $0.path == source }),
-           let device = sourceState.root.deviceIdentity {
+           let device = sourceState.root.deviceIdentity
+        {
             destinationByDeviceIdentity[device] = destination
         }
         lastUsedDestination = destination

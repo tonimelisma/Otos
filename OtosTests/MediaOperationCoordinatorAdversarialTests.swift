@@ -29,7 +29,8 @@ struct MediaOperationCoordinatorAdversarialTests {
                 return plan
             }
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }),
-               case .failed = pres.state {
+               case .failed = pres.state
+            {
                 throw TestError.planFailed(pres.state)
             }
             try await Task.sleep(for: .milliseconds(20))
@@ -46,7 +47,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }),
-               predicate(pres) {
+               predicate(pres)
+            {
                 return pres
             }
             try await Task.sleep(for: .milliseconds(20))
@@ -54,22 +56,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         throw TestError.timeout("waitForPresentation \(source.rawValue)")
     }
 
-    private func waitForPendingBuilder(
-        _ builder: ControlledImportPlanBuilder,
-        source: LibraryRootPath,
-        timeout: Duration = .seconds(5)
-    ) async throws {
-        try await waitForPendingBuilder(builder, source: source, timeout: timeout)
-    }
-
-    private func waitForPendingBuilderCount(
-        _ builder: ControlledImportPlanBuilder,
-        source: LibraryRootPath,
-        count: Int,
-        timeout: Duration = .seconds(5)
-    ) async throws {
-        try await waitForPendingBuilderCount(builder, source: source, count: count, timeout: timeout)
-    }
+    // `waitForPendingBuilder` and `waitForPendingBuilderCount` are the shared gates in
+    // `MediaOperationCoordinatorTestSupport.swift`. Do not add same-named private
+    // wrappers here: an unqualified call inside this type resolves to the member, not
+    // the free function, so a wrapper that "delegates" calls itself. Because the call
+    // is `async`, each frame is heap-allocated rather than stack-allocated, so the
+    // recursion does not overflow — it allocates until the machine exhausts swap.
 
     private func waitForPendingExecution(
         _ control: ControlledExecutionControl,
@@ -640,7 +632,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         while ContinuousClock().now < deadlineB3 {
             if let p = await coordinator.readyPlan(for: cardBPath),
                p.entries.first?.finalDestination.rawValue != "shared.jpg",
-               p.entries.first?.finalDestination.rawValue.contains("shared") == true {
+               p.entries.first?.finalDestination.rawValue.contains("shared") == true
+            {
                 planB = p
                 break
             }
@@ -1029,7 +1022,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         while ContinuousClock().now < deadline {
             deleted = !FileManager.default.fileExists(atPath: srcFile.path)
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .completed = pres.state {
+               case .completed = pres.state
+            {
                 completed = true
                 if deleted {
                     break

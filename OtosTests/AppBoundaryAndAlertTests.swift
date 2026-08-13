@@ -1,6 +1,6 @@
 import Foundation
-import SwiftUI
 @testable import Otos
+import SwiftUI
 import Testing
 
 /// ARC-001: SwiftUI preference, ARC-002: unsandboxed, APP-008: no generic catalog alert.
@@ -44,12 +44,12 @@ struct AppBoundaryAndAlertTests {
         let cancelled = RemovableEjectOutcome.cancelled
 
         // Only busy/failed carry alert payloads — ejected/cancelled do not.
-        if case .busy(let name) = busy {
+        if case let .busy(name) = busy {
             #expect(name == "My Disk")
         } else {
             Issue.record("Expected busy case")
         }
-        if case .failed(let desc) = failed {
+        if case let .failed(desc) = failed {
             #expect(desc == "Unmount failed")
         } else {
             Issue.record("Expected failed case")
@@ -70,7 +70,7 @@ struct AppBoundaryAndAlertTests {
         #expect(outcome != .ejected)
         #expect(outcome != .cancelled)
         // The source identity is preserved for retry.
-        if case .busy(let name) = outcome {
+        if case let .busy(name) = outcome {
             #expect(name == "SD Card")
         } else {
             Issue.record("Expected busy")

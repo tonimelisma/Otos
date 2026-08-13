@@ -1,6 +1,6 @@
 import Foundation
-import SwiftUI
 @testable import Otos
+import SwiftUI
 import Testing
 
 /// ARC-011, ARC-012, ARC-014, ARC-015 — UI ownership boundaries.

@@ -142,7 +142,8 @@ extension CatalogWindowViewModel {
             return true
         }
         if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError,
-           isTypedBusyError(underlying) || isVolumeBusyError(underlying) {
+           isTypedBusyError(underlying) || isVolumeBusyError(underlying)
+        {
             return true
         }
         let description = error.localizedDescription

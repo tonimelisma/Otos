@@ -451,7 +451,8 @@ private final class GridSelectionTestHarness {
 
         _ = controller.ensureContentAndMaybeDecode(for: id)
         if let indexPath = controller.dataSource.indexPath(for: id),
-           let item = controller.collectionView.item(at: indexPath) as? MediaGridItem {
+           let item = controller.collectionView.item(at: indexPath) as? MediaGridItem
+        {
             item.render(
                 content: controller.tileContents.content(for: id),
                 change: .unchanged

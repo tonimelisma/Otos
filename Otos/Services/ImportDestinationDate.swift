@@ -6,7 +6,8 @@ import Foundation
 nonisolated enum ImportDestinationDate {
     static func expected(for source: PlanningFileFacts) -> Date? {
         if let compact = source.captureWallCompact,
-           let date = CaptureWallClock.date(fromCompact: compact) {
+           let date = CaptureWallClock.date(fromCompact: compact)
+        {
             return date
         }
         return source.contentModifiedAt

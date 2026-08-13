@@ -147,7 +147,8 @@ struct MediaOperationCoordinatorTests {
         let waitingDeadline = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < waitingDeadline {
             if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .waitingForMetadata = presentation.state {
+               case .waitingForMetadata = presentation.state
+            {
                 break
             }
             try await Task.sleep(for: .milliseconds(25))
@@ -193,7 +194,8 @@ struct MediaOperationCoordinatorTests {
         let readyDeadline = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < readyDeadline {
             if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .ready = presentation.state {
+               case .ready = presentation.state
+            {
                 await coordinator.shutdown()
                 return
             }
@@ -248,7 +250,8 @@ struct MediaOperationCoordinatorTests {
         let deadline = ContinuousClock().now + .seconds(2)
         while ContinuousClock().now < deadline {
             if let p = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .inventory = p.state {
+               case .inventory = p.state
+            {
                 try await Task.sleep(for: .milliseconds(25))
                 continue
             }
@@ -516,7 +519,8 @@ struct MediaOperationCoordinatorTests {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
             if let generation = await currentReadyGeneration(coordinator, source: source),
-               minimum.map({ generation > $0 }) ?? true {
+               minimum.map({ generation > $0 }) ?? true
+            {
                 return generation
             }
             try await Task.sleep(for: .milliseconds(25))

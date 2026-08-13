@@ -406,7 +406,8 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 // it left loupe and click-to-play silently dead for up to 60s with no way to retry.
                 // ENR-008 and APP-023 both say background only.
                 if entry.effectivePriority != .interactive,
-                   isBreakerOpen(for: entry.request.id.libraryRootPath) {
+                   isBreakerOpen(for: entry.request.id.libraryRootPath)
+                {
                     rejections[.providerBreakerOpen, default: 0] += 1
                     index += 1
                     continue

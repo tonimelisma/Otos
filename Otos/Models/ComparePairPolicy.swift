@@ -55,7 +55,8 @@ nonisolated enum ComparePairPolicy {
         case 1:
             let first = selected[0]
             if let index = orderedIDs.firstIndex(of: first),
-               orderedIDs.indices.contains(index + 1) {
+               orderedIDs.indices.contains(index + 1)
+            {
                 return ComparePair(left: first, right: orderedIDs[index + 1])
             }
             if let index = orderedIDs.firstIndex(of: first), index > 0 {

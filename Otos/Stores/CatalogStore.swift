@@ -811,7 +811,8 @@ extension CatalogStore {
             waitMs += queriedClaims.waitMs
             execMs += queriedClaims.execMs
             for candidate in queriedClaims.value
-                where candidates.count < limit && !claimedIDs.contains(candidate.asset.id) {
+                where candidates.count < limit && !claimedIDs.contains(candidate.asset.id)
+            {
                 claimedIDs.insert(candidate.asset.id)
                 candidates.append(candidate)
             }
@@ -1294,7 +1295,8 @@ extension CatalogStore {
         if let old = oldRow, let newRow,
            old.bestCaptureUnix != newRow.bestCaptureUnix
            || old.bestKind != newRow.bestKind
-           || old.bestFormat != newRow.bestFormat {
+           || old.bestFormat != newRow.bestFormat
+        {
             outcome.structureChanged = true
         }
         outcome.replaceThumbnail(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
@@ -2294,7 +2296,8 @@ private extension CatalogStore {
         // active lease before the async dirty-revisit Task starts the next pending
         // root; without this, waiters can observe a false idle gap and race.
         if scanLeases.hasActiveFilesystemScan(for: path)
-            || scanLeases.pendingScanPaths.contains(path) {
+            || scanLeases.pendingScanPaths.contains(path)
+        {
             return .scanning
         }
         return roots[path]?.activity ?? .idle
@@ -2996,7 +2999,8 @@ private extension CatalogStore {
                    id: MediaAssetID(libraryRootPath: root, relativePath: relativePath),
                    active: activeSuppression,
                    now: now
-               ) {
+               )
+            {
                 suppressedCount += 1
                 continue
             }
@@ -3286,7 +3290,8 @@ private extension CatalogStore {
                 continue
             }
             if scanLeases.hasActiveFilesystemScan(for: path)
-                || scanLeases.pendingScanPaths.contains(path) {
+                || scanLeases.pendingScanPaths.contains(path)
+            {
                 continue
             }
             if let accumulator = filesystemDirty[path], accumulator.isRootDirty {
