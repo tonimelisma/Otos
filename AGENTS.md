@@ -10,7 +10,9 @@ into the user's media folders.
 
 `docs/architecture.md` is the current-state code map. `docs/requirements.md` is the
 authoritative registry of implemented behavior. `docs/adr/` justifies the
-architecture. Read those for detail; this file is how to work here.
+architecture. `docs/design/design-system.md` is the authoritative registry of
+design rules for user-facing surfaces; per-screen specs live beside it in
+`docs/design/`. Read those for detail; this file is how to work here.
 
 ## Non-Negotiable Principles
 
@@ -62,6 +64,10 @@ architecture. Read those for detail; this file is how to work here.
 - Otos has exactly one main window — a permanent product invariant. Use a
   singleton SwiftUI `Window` (not `WindowGroup`) for it; never design, defer, or
   leave seams for multiple main windows.
+- User-facing surfaces follow `docs/design/design-system.md`. Its `DES-*` rules
+  are reviewed like requirements: a UI change that violates one either changes
+  the rule in the same PR or is wrong. Design deviations from macOS defaults are
+  marked `[deviation]` there with their justification; do not add unmarked ones.
 
 ## Measure Before Optimizing (Rob Pike's rules)
 

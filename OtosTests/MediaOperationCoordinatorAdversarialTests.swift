@@ -592,11 +592,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:settle-A", displayName: "CardA", isEjectable: true)
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:settle-B", displayName: "CardB", isEjectable: true)
-        let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
-            snap.removableSources.filter { $0.availability == .available }.count == 2
-                && snap.removableSources.allSatisfy { !$0.isScanning }
+            snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available && !$0.isScanning }
         }
 
         let defaults = TemporaryDefaults()
@@ -623,10 +620,20 @@ struct MediaOperationCoordinatorAdversarialTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(published, "A's file should be published")
-        // Now B's existing ready plan may have suffix due to ledger; after A's execution, ledger for A is gone,
-        // but the real file exists, so B's next rebuild should still produce suffix due to namespace occupancy, not ledger.
+
+        // Attach B only after A has published. This keeps the test about settlement
+        // against the real destination file rather than racing two initial claims.
+        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:settle-B", displayName: "CardB", isEjectable: true)
+        let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardBPath && $0.availability == .available && !$0.isScanning }
+        }
+
+        // B's first build sees the real file, not A's now-released ledger claim,
+        // so its plan must still use a suffix.
         await coordinator.retryPlanning(for: cardBPath)
-        // Poll until B's plan shows suffix (real file), since waitForReady may return old base immediately if B was not yet rebuilt.
+        // Poll until B's plan shows suffix (real file), since attachment may first
+        // deliver a transient plan before the explicit retry settles.
         var planB: MediaOperationPlan?
         let deadlineB3 = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < deadlineB3 {

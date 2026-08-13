@@ -1,0 +1,159 @@
+# Otos Design System
+
+Authoritative registry of **design rules** for user-facing surfaces. A row's
+presence means Current. Retired rows are deleted (git history remembers).
+
+This document is to visual and interaction design what `docs/requirements.md` is
+to behavior: the thing a change is reviewed against. It does not describe screens.
+Per-screen specs live beside it (`docs/design/import-bar.md`), and they cite these
+IDs rather than restating them.
+
+Otos uses Apple's semantic type styles, label colors, materials, and control
+metrics as-is. Nothing here introduces a typeface or a palette. What it decides is
+*which* semantic role each kind of Otos content gets, so hierarchy is a rule
+rather than a per-screen judgement. Deviations from the platform default are
+marked **[deviation]** and carry their justification inline.
+
+Column meanings:
+
+- **ID** — stable identifier (`DES-*`).
+- **Rule** — the rule itself, stated so a reviewer can fail a change against it.
+- **Check** — how to tell, by looking, that the rule holds.
+
+## Principles
+
+These are the design-side reading of the product invariants in `AGENTS.md`. When a
+rule below and a principle here disagree, the principle wins and the rule is a bug.
+
+- **Show the outcome, not the machine.** The user reads results and consequences.
+  Internal vocabulary — plan, disposition, inventory, replan, companion, execution,
+  queued — never reaches a label, even when it is the most accurate word available.
+- **One fact, one owner.** Any piece of state renders in exactly one place at a
+  time. A second rendering is permitted only when the first is off-screen, and it
+  is then smaller and quieter: an indicator, not a report.
+- **Honest numbers, or none.** No denominator that can move, no percentage the app
+  is guessing at. If a total is not yet known, state what is known and count up.
+  This is `AGENTS.md`'s "do not fabricate" applied to labels.
+- **Reassure rather than warn.** Originals are read-only and copies are additive,
+  so almost nothing in Otos is dangerous. Alerts and destructive styling are for
+  the few operations that actually destroy something.
+- **The content is the interface.** Photographs carry the color. Chrome stays
+  achromatic; the accent color marks only what to act on or what is selected.
+- **Predictable before clever.** Where the platform has an answer, use it in its
+  ordinary form. Custom behavior needs a reason that survives being written down.
+
+## Type
+
+macOS text styles are fixed sizes. Use the SwiftUI style name in code; never a
+hard-coded point size.
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-001 | Otos shall use the system font only. SF Mono is permitted in developer-facing surfaces (diagnostics, logs). No custom typeface shall be bundled. | Given source is inspected, no font file is bundled and no `Font.custom` call exists outside developer surfaces. |
+| DES-002 | Otos shall use exactly seven text styles: `.title2` (17), `.title3` (15 semibold), `.headline` (13 semibold), `.body` (13), `.callout` (12), `.subheadline` (11), `.footnote` (10). Other styles are out of scope. | Given a view is inspected, every `.font(...)` call names one of the seven; no `.system(size:)` literal appears. |
+| DES-003 | Role assignment shall be: `.title2` empty-state and sheet titles; `.title3` the primary fact of a status surface **[deviation: platform has no "status headline" role]**; `.headline` group headers inside content; `.body` the default for rows, control values, button titles, prose; `.callout` field labels beside a control; `.subheadline` secondary detail under a primary fact, and sidebar section headers; `.footnote` looked-up metadata. | Given a new string is added, it is assignable to exactly one of these roles without inventing an eighth. |
+| DES-004 | A single surface shall use at most two weights (regular, semibold) and at most three of the seven sizes. Bold, italic, and manual letter-spacing shall not be used. | Given a bar, sheet, or pane, count weights and sizes. |
+| DES-005 | Any number that changes in place shall use `.monospacedDigit()`: counts, byte totals, durations, sidebar item counts, progress figures. Text shall never reflow because a digit changed width. | Given an import runs, the status line's glyph positions do not shift as counts tick. |
+| DES-006 | No user-facing text shall render below 10 pt. | Given any surface, the smallest text is `.footnote`. |
+
+## Visual hierarchy
+
+Four levels. Every user-facing string is assigned to one. Level is expressed by
+**size and color together** — never by size alone, and never by weight alone.
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-010 | **L1 primary** — `.title3` semibold, `.primary` color. The answer to "what is happening" or "what will happen". Exactly one per surface. | Given a surface, exactly one string is L1. If the single primary fact cannot be named, the surface is not designed yet. |
+| DES-011 | **L2 label** — `.body`, `.primary`. Things read to navigate or operate: row titles, control values, button titles. | — |
+| DES-012 | **L3 supporting** — `.subheadline`, `.secondary`. Qualifies L1 and is optional by definition: if it disappeared the surface would remain usable. Field labels sit here. | Given L3 is hidden, the surface still states what it does and what the action is. |
+| DES-013 | **L4 ambient** — `.footnote`, `.tertiary`. Present for when the user goes looking. Shall never carry anything the user must notice, and shall never state policy or consequence. | Given a policy or consequence string exists, it is not at L4. |
+| DES-014 | Adjacent levels shall differ in both size and color. Two items at the same level, side by side, shall be separated by space or a hairline — never by a size tweak. | — |
+| DES-015 | Proximity: a number and the control acting on it shall be within 8 pt, or the number shall be inside the control's title. | Given a count and its action button, measure the gap or read the title. |
+| DES-016 | Alignment: field labels within a group shall share a left edge and a fixed label-column width. No centered text in chrome. | Given a group of labelled controls, one vertical edge runs through all labels. |
+| DES-017 | Repetition: the same relationship shall look the same everywhere — label left, control right, 7 pt gap — across every surface in the app. | Given two different surfaces with labelled controls, the metrics match. |
+| DES-018 | A status surface shall read left to right as *what* (L1 over L3) · *choices* (behind a hairline) · *the act*. Zones shall not swap sides between states, and the surface shall keep one fixed height across all states. | Given a state change, nothing above the surface reflows and no zone moves. |
+
+## Color
+
+Semantic roles only. Values below are documentation, not constants to paste into
+view code. Both appearances are first-class; every surface is reviewed in both.
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-020 | View code shall use semantic colors (`.primary`, `.secondary`, `.tertiary`, `Color.accentColor`, system materials). No literal hex or RGB value shall appear in a view. | Given a view is inspected, no color literal exists. |
+| DES-021 | Text colors shall be: label 85% (L1, L2), secondary 50% light / 55% dark (L3), tertiary 26% light / 25% dark (L4). | — |
+| DES-022 | Surface order shall be, light: content `#FFFFFF`, sidebar `#FAFAFB`, bar `#FBFBFC` **[deviation: lighter than the default window gray — the app's content is photographs, and a mid-gray chrome competes with them for the eye]**; dark: content `#1C1C1E`, sidebar `#242426`, bar `#2A2A2C` (bar brighter than content, per platform elevation order). | Given both appearances, chrome is distinguishable from content by value alone with no border needed. |
+| DES-023 | Separators shall be hairlines at 8% black / 10% white **[deviation: system separator is ~13% — at the reduced chrome contrast of DES-022 a 13% line reads as a drawn rule rather than a seam]**. Under Increase Contrast they revert to the system separator strength. | — |
+| DES-024 | The accent color shall be the user's system accent, used only for: selection, the single prominent button, focus rings, determinate progress. It shall never be a decorative tint nor a fill larger than a control. | Given a surface, every accent-colored pixel is selected, actionable, or progress. |
+| DES-025 | Green shall mean completion that has been *verified*, and nothing else: a checkmark on a filled circle, 22 pt, once per completed operation. Not "on", not "healthy". | — |
+| DES-026 | Orange shall mean needs attention with nothing lost — unreadable files, unavailable library, skipped items — and shall always be paired with a way to look at the thing. | Given an orange indicator, an adjacent control reveals the affected items. |
+| DES-027 | Red shall be reserved for destruction: erasing a card, removing a library. Per HIG, a destructive action the user deliberately chose is not styled red; red is for the one they might hit by accident. | — |
+| DES-028 | Contrast shall be at least 4.5:1 for L1 and L2, and 3:1 for L3 and L4, in both appearances. | Measure secondary-on-bar in light and dark. |
+| DES-029 | No information shall be carried by color alone. The attention badge carries a glyph, completion carries a checkmark, selection carries a border as well as a tint. | Given a grayscale screenshot, every state remains distinguishable. |
+
+## Status and copy
+
+Every long-running operation — scan, enrich, import, reorganize — exposes the same
+three user-facing states regardless of how many internal states it owns. Two
+further states exist only because they are actionable: *needs attention* and
+*failed*.
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-030 | User-facing operation status shall collapse to **Preparing**, **Working**, **Done**, plus **Needs attention** and **Failed**. Internal state names shall not be published, and the count of user-visible states shall not grow with the count of internal states. | Given an operation's states are listed in code, the user-facing strings number five or fewer. |
+| DES-031 | Preparing shall use the present participle, an indeterminate indicator that is always moving, and shall count up when a denominator is honest ("Checked 112 of 181 items"). Its primary action stays visible and disabled. | Given preparing, the indicator animates and the primary button is present but dimmed. |
+| DES-032 | Working shall use a determinate indicator with items at L1 and bytes plus remaining time at L3, and shall offer Cancel whenever cancelling is safe — labelled `Cancel`, with no confirmation, because copies are additive and originals are read-only. | Given an import, a determinate bar advances and Cancel is present. |
+| DES-033 | Done shall use the past tense and shall state the guarantee, not the plan ("42 items copied and verified"), then where the result went, then a way to go there. | — |
+| DES-034 | A status string shall contain one clause and at most one middot separating two facts of equal rank. A third fact requires a second line or a different level. Em-dash chains shall not be used. | Count middots and clauses per line. |
+| DES-035 | User-facing nouns shall be the ones the user owns: items, photos, videos, card, library. Domain nouns — plan, disposition, companion, preexisting, blocked, execution, inventory — shall not appear. | Grep the string catalog for the forbidden set. |
+| DES-036 | Button titles shall be verb phrases naming the result and carrying the count and scope where one exists: `Import 42 Items`, `Eject Card`, `Erase Card`. `OK` shall not be used on a consequential action. | — |
+| DES-037 | Copy shall be sentence case, except button titles and menu items, which take title case per macOS. | — |
+| DES-038 | An unactionable invariant shall never be stated as prose. Where a rule blocks a control, disable the control and explain it in that control's tooltip. | Given a withheld capability, the explanation lives on the disabled control, not in a status line. |
+| DES-039 | Build, roadmap, and implementation status shall never appear in user-facing copy. | Grep for "later update", "not yet implemented", "coming". |
+| DES-040 | A status surface at the bottom of the content pane owns the operation belonging to the current selection. A sidebar row may show a small indicator only for an operation whose surface is not currently visible. The toolbar shall never carry operation status. | Given a card is selected and its bar is visible, its sidebar row shows no spinner. |
+| DES-041 | Sheets are for a scoped task with an explicit Cancel. Read-only inspection shall use a panel or inline disclosure, never a modal sheet. A lone `Done` shall not be the only exit. | — |
+
+## Metrics and controls
+
+A 4 pt base unit. Permitted spacing steps: 2, 4, 7, 8, 12, 16, 20, 28. Radii: 4
+tile, 6 small control, 7 push button, 9–11 window and card.
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-050 | Spacing shall use only the permitted steps; radii only the permitted values. | Given a view, every padding and spacing value is in the set. |
+| DES-051 | Push buttons shall be 30 pt in a bar and 24 pt in dense inspectors; popups and small controls 22 pt; checkboxes 14 pt with a 12 pt label. Minimum click target 28×28 including padding. | — |
+| DES-052 | Exactly one prominent button per surface, and it shall be the one Return fires. | Given a surface, count `.borderedProminent` uses. |
+| DES-053 | A disabled primary action shall keep its position and its title. Controls shall not appear and disappear between states of the same surface. | Given every state of a surface, the control inventory and geometry are constant. |
+| DES-054 | Per-operation decisions (destination, eject, erase) shall sit next to the action that consumes them. Durable preferences stay in Settings and act as the defaults for those inline controls. | Given the import bar, no decision affecting this run is only reachable from Settings. |
+
+## Grid and tiles
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-060 | Tiles shall use radius 4, a 4 pt inset per item (8 pt gutters), and a 12 pt section inset — the current built geometry. | `Otos/Views/MediaGridPresentation.swift` |
+| DES-061 | Selection shall be a 2.5 pt accent border on the thumbnail face, never a fill or tint over the photograph. | — |
+| DES-062 | Badges shall be bottom-right, black 55%, radius 3, and shall appear only after a real thumbnail has painted. Broken or unavailable tiles shall carry no corner badge. | `Otos/Views/MediaAssetTilePresentation.swift` |
+| DES-063 | Placeholders shall use the kind glyph at tertiary strength; failures use the slash variant. No spinner in a tile. | — |
+| DES-064 | Tiles shall carry no shadow, no hover lift, and no radius change across zoom levels. | — |
+| DES-065 | The grid shall render identically for a library and a removable source. A card is a source, not a mode. | Given a card and a library at the same zoom, the tile treatment is indistinguishable. |
+
+## Motion
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-070 | Motion shall explain a change of position or state and never announce itself. Three durations only: 0.15 s ease-out for state within a control; 0.25 s ease-out for content appearing; 0.35 s spring (response 0.35, damping 0.85) for a surface entering or leaving. | Given an animation, its duration is one of the three. |
+| DES-071 | A status surface shall enter by sliding up 24 pt with a fade and leave the same way. State changes within it shall cross-fade text in place at fixed height. | — |
+| DES-072 | Progress indicators shall animate continuously while work is in flight and shall never be left stationary. | Given a stalled operation, the indicator still moves. |
+| DES-073 | Completion shall be marked by the checkmark scaling from 0.6 with a light overshoot — the one flourish in the app, and not repeated elsewhere. | — |
+| DES-074 | Grid reorders shall animate position only, never opacity, and shall coalesce into one pass. | `Otos/Views/MediaGridAnimation.swift` |
+| DES-075 | Under Reduce Motion every animation above shall become a 0.15 s cross-fade; the completion checkmark shall simply appear. | Given Reduce Motion, nothing translates or scales. |
+
+## Accessibility
+
+| ID | Rule | Check |
+| --- | --- | --- |
+| DES-080 | Every operation shall be completable with the keyboard alone: Tab reaches a surface's controls in reading order, Return fires the prominent button, Escape cancels. | Given the import bar, unplug the mouse and import. |
+| DES-081 | Focus rings shall never be suppressed. | — |
+| DES-082 | VoiceOver labels shall lead with what distinguishes the element — filename first on a tile — then kind, then state. | `Otos/Views/MediaAssetTilePresentation.swift` |
+| DES-083 | A status surface shall announce its primary line as a live region on state change only, never on every tick of a counter. | Given an import, VoiceOver speaks three times, not forty. |
+| DES-084 | Under Increase Contrast, hairlines revert to system separator strength and L4 is promoted to secondary. Under Reduce Transparency, bar and sidebar become opaque at the DES-022 values. | — |

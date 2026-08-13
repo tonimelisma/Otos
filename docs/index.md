@@ -12,6 +12,11 @@ behavior change. Git history owns old implementation history.
 | [../AGENTS.md](../AGENTS.md) | How to work here: product non-negotiables, engineering rules, git/CI/PR workflow, documentation model, and Definition of Done. |
 | [requirements.md](requirements.md) | The registry of implemented product/system behavior. Rows map to the source files and tests that implement/verify them. Current-state only. |
 | [architecture.md](architecture.md) | The one-page code map: one-directional dataflow, actor ownership, and where to make a change. |
+| [design/design-system.md](design/design-system.md) | The authoritative design rules for user-facing surfaces (`DES-*`). |
+
+Per-screen design specifications:
+
+- [design/import-bar.md](design/import-bar.md) — import status surface layout, states, and copy.
 
 ## Architecture Decision Records
 
@@ -54,7 +59,7 @@ Non-authoritative: they record what we learned, not current behavior.
 
 ## Plans and roadmap
 
-- [plans/](plans/) — active, numbered work plans. **Deleted when the work is done.**
+- [plans/](plans/) — numbered work plans; completed plans are deleted, and the directory is currently clear.
 - [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
   guides work unless the user explicitly asks for roadmap input.
 - [templates/adr-template.md](templates/adr-template.md) — the ADR format.

@@ -37,7 +37,9 @@ nonisolated struct ClaimedEnrichmentCandidate: Sendable {
 /// macOS events to per-root debounced reconciliation via `FilesystemReconciler`
 /// (pure batch classification) plus Store-owned debounce/execution: safe single-file
 /// events update one row and unsafe events fall back to the full scan pipeline. Views
-/// never access persistence directly.
+/// never access persistence directly. The app owns one Store for the process lifetime;
+/// `shutdown()` is therefore a cancellation and watcher boundary, while the database
+/// writer is released with the actor rather than through a partial mid-lifecycle close.
 ///
 /// Why an actor: the database handle, root runtime state, scan lifecycle, and
 /// background scans all touch the same catalog authority, and a scan streams in
