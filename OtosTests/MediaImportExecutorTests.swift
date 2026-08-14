@@ -442,6 +442,7 @@ struct ImportExecutionProgressTests {
         let collector = ProgressCollector()
         let result = await MediaImportExecutor(store: store).execute(
             plan: plan,
+            batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:byte-progress",
             deleteSourceRequested: false
@@ -458,13 +459,20 @@ struct ImportExecutionProgressTests {
         #expect(!snapshots.isEmpty)
         #expect(snapshots.allSatisfy { $0.totalCount == 12 && $0.totalBytes == expectedBytes })
         var previousBytes: Int64 = 0
+        var previousElapsedMs = 0
         for snapshot in snapshots {
             #expect(snapshot.completedBytes >= previousBytes)
             #expect(snapshot.completedBytes <= expectedBytes)
             previousBytes = snapshot.completedBytes
+            // The time base state E needs for "about N seconds left"
+            // (import-bar.md, DES-032): monotonic, and near zero at the run's
+            // first snapshot rather than carrying over from some other clock.
+            #expect(snapshot.elapsedMs >= previousElapsedMs)
+            previousElapsedMs = snapshot.elapsedMs
         }
         #expect(snapshots.last?.completedCount == 12)
         #expect(snapshots.last?.completedBytes == expectedBytes)
+        #expect((snapshots.first?.elapsedMs ?? .max) < 2000, "First snapshot should be near run start, not carried over")
         let sourceAfter = try FilesystemTreeSnapshot.capture(root: sourceURL)
         #expect(sourceAfter == sourceBefore)
         await coordinator.shutdown()
@@ -474,6 +482,7 @@ struct ImportExecutionProgressTests {
         let fixture = try await makeZeroCopyFixture()
         let result = await MediaImportExecutor(store: fixture.store).execute(
             plan: fixture.plan,
+            batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:zero-copy-delete",
             deleteSourceRequested: true
@@ -492,6 +501,7 @@ struct ImportExecutionProgressTests {
         let sourceBefore = try FilesystemTreeSnapshot.capture(root: fixture.sourceRoot)
         let result = await MediaImportExecutor(store: fixture.store).execute(
             plan: fixture.plan,
+            batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:zero-copy-no-delete",
             deleteSourceRequested: false

@@ -11,6 +11,7 @@ import Foundation
 nonisolated protocol ImportExecuting: Sendable {
     func execute(
         plan: MediaOperationPlan,
+        batch: ImportBatchID,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
@@ -39,6 +40,7 @@ actor LiveImportExecutor: ImportExecuting {
 
     func execute(
         plan: MediaOperationPlan,
+        batch: ImportBatchID,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
@@ -53,6 +55,7 @@ actor LiveImportExecutor: ImportExecuting {
         defer { activeExecutor = nil }
         return await executor.execute(
             plan: plan,
+            batch: batch,
             sourceKind: sourceKind,
             sourceDeviceIdentity: sourceDeviceIdentity,
             deleteSourceRequested: deleteSourceRequested,
@@ -154,7 +157,6 @@ actor ControlledExecutionControl {
         }
         cont.resume(returning: .cancelled(
             publishedCount: 0,
-            batch: nil,
             hasBlockedEntries: false,
             hasEntryFailures: false,
             skippedForeignCount: 0,
@@ -198,13 +200,14 @@ actor ControlledImportExecutor: ImportExecuting {
 
     func execute(
         plan: MediaOperationPlan,
+        batch: ImportBatchID,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         guard case let .import(source, _, _) = plan.mode else {
-            return .failed(problem: "notAnImportPlan")
+            return .failed(reason: .unexpected(detail: "notAnImportPlan"))
         }
         await control.recordExecuted(for: source)
         let shouldSuspend = await control.takeSuspend(for: source)
@@ -214,6 +217,7 @@ actor ControlledImportExecutor: ImportExecuting {
         if let liveFallback {
             return await liveFallback.execute(
                 plan: plan,
+                batch: batch,
                 sourceKind: sourceKind,
                 sourceDeviceIdentity: sourceDeviceIdentity,
                 deleteSourceRequested: deleteSourceRequested,
@@ -223,7 +227,6 @@ actor ControlledImportExecutor: ImportExecuting {
         // No fallback: synthesize a minimal completed result so ledger tests can proceed without real I/O.
         return .completed(
             publishedCount: 0,
-            batch: nil,
             hasBlockedEntries: false,
             hasEntryFailures: false,
             skippedForeignCount: 0,

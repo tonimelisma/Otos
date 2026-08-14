@@ -50,6 +50,46 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// `import-bar.md` "What the presentation must carry": destination display
+    /// name and whether the card still exists are facts the presentation states
+    /// explicitly rather than leaving the view to re-derive them from
+    /// `fixedLibraries`/`removableSources` itself.
+    @Test func presentationCarriesDestinationDisplayNameAndCardStillExists() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let sourceURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sourceURL, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 1024).write(to: sourceURL.appending(path: "a.jpg"))
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationURL)
+        let destination = try CatalogPath.normalizedDirectoryPath(for: destinationURL)
+        try await store.attachRemovableVolume(
+            mountURL: sourceURL,
+            identity: "volume:display-name",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let source = try CatalogPath.normalizedDirectoryPath(for: sourceURL)
+        _ = try await waitForCatalogStoreState(store) { state in
+            !state.isScanning && state.removableSources.first?.activity == .idle
+        }
+        let tempDefaults = TemporaryDefaults()
+        defer { tempDefaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults.domain)
+        await coordinator.start()
+        await coordinator.setDestination(destination, for: source)
+        _ = try await readyGeneration(coordinator, source: source)
+
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == source }
+        )
+        #expect(presentation.destinationDisplayName == "Pictures")
+        #expect(presentation.cardStillExists)
+        await coordinator.shutdown()
+    }
+
     /// Plan 0064 Stage 4: the coordinator must discover an attached source purely via
     /// the store's `RootPlanningChange` stream — no `setDestination`/`queueImport`
     /// intent. This pins the emit → subscribe → refreshSources chain that a field
@@ -330,7 +370,7 @@ struct MediaOperationCoordinatorTests {
         let afterChurn = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
         )
-        guard case let .ready(_, churnGeneration, _) = afterChurn.state else {
+        guard case let .ready(_, churnGeneration, _, _) = afterChurn.state else {
             Issue.record("Expected .ready after planRevision churn, got \(afterChurn.state)")
             await coordinator.shutdown()
             return
@@ -560,7 +600,7 @@ struct MediaOperationCoordinatorTests {
     ) async -> UInt64? {
         let presentations = await coordinator.currentPresentations()
         guard let card = presentations.first(where: { $0.sourcePath == source }),
-              case let .ready(_, generation, _) = card.state
+              case let .ready(_, generation, _, _) = card.state
         else {
             return nil
         }

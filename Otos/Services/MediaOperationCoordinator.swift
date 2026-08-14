@@ -48,6 +48,7 @@ actor MediaOperationCoordinator {
         let plan: MediaOperationPlan
         let skippedPackageCount: Int
         let claims: Set<MediaRelativePath>
+        let attentionItems: [MediaAttentionItem]
     }
 
     private struct ExecutionContext {
@@ -59,6 +60,7 @@ actor MediaOperationCoordinator {
         let generation: UInt64
         let skippedPackageCount: Int
         let prefs: ImportPreferences
+        let batch: ImportBatchID
     }
 
     private enum SourcePhase {
@@ -68,7 +70,19 @@ actor MediaOperationCoordinator {
         case ready(ReadyContext)
         case executing(ExecutionContext)
         case completed
-        case failed(problem: String)
+        case failed(reason: MediaOperationFailureReason, publishedCount: Int)
+    }
+
+    /// The most recent execution's outcome for the current attachment, kept
+    /// across the post-settlement re-plan so a card left in the reader keeps
+    /// reporting what it just copied (`import-bar.md` state F) instead of that
+    /// fact vanishing the moment the phase leaves `.completed`. Cleared only by
+    /// a new `AttachmentGeneration` (card ejected and re-inserted) — never by a
+    /// later re-plan within the same attachment.
+    private struct AttachmentCompletion {
+        let batch: ImportBatchID
+        let publishedCount: Int
+        let isFullyClean: Bool
     }
 
     private struct SourceSession {
@@ -82,11 +96,16 @@ actor MediaOperationCoordinator {
         var nextBuildGeneration: BuildGeneration
         var attachStartedAt: ContinuousClock.Instant
         var attachToReadyMs: Int?
+        var lastCompletion: AttachmentCompletion?
     }
 
     private var sourceSessions: [LibraryRootPath: SourceSession] = [:]
     private var nextAttachmentGeneration: UInt64 = 1
     private var isShuttingDown = false
+    /// Snapshot of `store.currentLibraries()` refreshed every `refreshSources()`
+    /// call, so `presentation(for:)` can resolve the destination's display name
+    /// synchronously instead of adding an actor hop to every publish.
+    private var librariesByPath: [LibraryRootPath: CatalogLibraryState] = [:]
 
     /// Persistent per-source destination mapping, retained even after detach for
     /// Settings display (includes unavailable sources). Mirrors `session.destination`
@@ -311,7 +330,12 @@ actor MediaOperationCoordinator {
         let libraries = await store.currentLibraries()
         guard let sourceState = libraries.first(where: { $0.path == source }) else { return }
         guard isExecutableSource(sourceState) else {
-            markExecutionUnavailable(source: source, summary: ctx.plan.totals, generation: ctx.plan.generation)
+            markExecutionUnavailable(
+                source: source,
+                summary: ctx.plan.totals,
+                generation: ctx.plan.generation,
+                attentionItems: ctx.attentionItems
+            )
             return
         }
         // Zero-copy without delete: stay ready.
@@ -335,27 +359,25 @@ actor MediaOperationCoordinator {
         }
     }
 
-    private func markExecutionUnavailable(source: LibraryRootPath, summary: MediaOperationPlanTotals, generation: UInt64) {
+    private func markExecutionUnavailable(
+        source: LibraryRootPath,
+        summary: MediaOperationPlanTotals,
+        generation: UInt64,
+        attentionItems: [MediaAttentionItem]
+    ) {
         guard var session = sourceSessions[source] else { return }
-        session.phase = .failed(problem: "executionUnavailable")
+        // Bookkeeping so scheduleBuildIfNeeded won't rebuild this session; the
+        // presentation actually shown is the `.executionUnavailable` override
+        // published below, not this phase. Pre-existing risk, unchanged by
+        // this diff: any later unrelated `publish()` re-derives from
+        // `session.phase` via `presentation(for:)` and would show this
+        // `.failed` phase instead, since nothing here is sticky.
+        session.phase = .failed(reason: .unexpected(detail: "executionUnavailable"), publishedCount: 0)
         sourceSessions[source] = session
-        // Also publish as executionUnavailable presentation for UI compatibility.
-        // Use a synthetic presentation; derived presentation would show failed.
-        // To keep UI, we publish directly via override? Instead, store as failed and let
-        // presentation show failed. Original showed executionUnavailable. Keep that
-        // by temporarily publishing executionUnavailable directly.
-        // For Stage 4, we keep direct publish for this branch.
-        var presentation = presentation(for: session)
-        presentation = MediaOperationSourcePresentation(
-            sourcePath: source,
-            destinationPath: session.destination,
-            state: .executionUnavailable(summary: summary, generation: generation),
-            attachToReadyMs: session.attachToReadyMs
+        let presentation = makePresentation(
+            session: session,
+            state: .executionUnavailable(summary: summary, generation: generation, attentionItems: attentionItems)
         )
-        // Temporarily override: store session as failed but publish executionUnavailable
-        // so test queueImportSurfacesExecutionUnavailableOrQueuedState can observe it.
-        // We keep session failed, but yield executionUnavailable once.
-        // To avoid diverging sources, we publish override via continuations directly.
         let values = sortedPresentations().map { $0.sourcePath == source ? presentation : $0 }
         for continuation in continuations.values {
             continuation.yield(values)
@@ -375,6 +397,12 @@ actor MediaOperationCoordinator {
         let skipped = readyContext.skippedPackageCount
         let prefs = session.preferences
         let attachmentGen = session.attachmentGeneration
+        // Minted here, not read off `plan.mode` (a throwaway id re-minted on
+        // every re-plan — trap #6) and not left to the executor to mint deep
+        // inside `execute()`: the coordinator is the one place that must know
+        // it before execution starts, so it can publish it as state on every
+        // frame from here on (`import-bar.md` "Where the user is standing").
+        let batch = ImportBatchID()
 
         // Keep execution task for cancellation/shutdown, but execution itself
         // runs as the current actor task (awaited) so the caller (queueImport)
@@ -389,7 +417,8 @@ actor MediaOperationCoordinator {
             summary: summary,
             generation: generation,
             skippedPackageCount: skipped,
-            prefs: prefs
+            prefs: prefs,
+            batch: batch
         )
         session.phase = .executing(ctx)
         session.importRequested = false
@@ -398,6 +427,7 @@ actor MediaOperationCoordinator {
 
         let result = await executor.execute(
             plan: plan,
+            batch: batch,
             sourceKind: sourceState.root.kind,
             sourceDeviceIdentity: sourceState.root.deviceIdentity,
             deleteSourceRequested: prefs.deleteSourceAfterImport
@@ -408,11 +438,8 @@ actor MediaOperationCoordinator {
             result,
             source: source,
             attachment: attachmentGen,
-            sourceRoot: sourceState.root,
-            summary: summary,
-            generation: generation,
-            skippedPackageCount: skipped,
-            prefs: prefs
+            context: ctx,
+            sourceRoot: sourceState.root
         )
     }
 
@@ -423,35 +450,21 @@ actor MediaOperationCoordinator {
         else {
             return
         }
-        var updated = session
-        // Update progress is not stored; just publish executing with new progress.
-        // We publish via presentation override that shows progress, but session's
-        // executing context remains. To avoid storing progress in session, we
-        // publish directly.
-        let base = presentation(for: session)
-        let progPresentation = MediaOperationSourcePresentation(
-            sourcePath: source,
-            destinationPath: base.destinationPath,
-            state: .executing(progress: progress),
-            attachToReadyMs: base.attachToReadyMs
-        )
+        // Progress is not stored on the session — published directly. The
+        // session's `.executing` phase (and its batch) is unchanged.
+        let progPresentation = makePresentation(session: session, state: .executing(progress: progress))
         let values = sortedPresentations().map { $0.sourcePath == source ? progPresentation : $0 }
         for continuation in continuations.values {
             continuation.yield(values)
         }
-        // Keep session unchanged (still executing).
-        _ = updated
     }
 
     private func applyExecutionResult(
         _ result: MediaImportExecutionResult,
         source: LibraryRootPath,
         attachment: AttachmentGeneration,
-        sourceRoot: LibraryRoot,
-        summary: MediaOperationPlanTotals,
-        generation: UInt64,
-        skippedPackageCount: Int,
-        prefs: ImportPreferences
+        context: ExecutionContext,
+        sourceRoot: LibraryRoot
     ) async {
         guard var session = sourceSessions[source],
               session.attachmentGeneration == attachment,
@@ -460,33 +473,46 @@ actor MediaOperationCoordinator {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=execResultStale source=\(source.rawValue, privacy: .public)")
             return
         }
+        let summary = context.summary
         switch result {
-        case let .completed(_, _, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount):
+        case let .completed(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount):
             session.phase = .completed
+            // Stricter than the auto-eject gate just below on purpose: a
+            // foreign skip doesn't block physically ejecting the card, but it
+            // does keep the bar from auto-dismissing, since the plan's own
+            // "must join" list for the auto-dismiss gate names it explicitly
+            // (`import-bar.md` "What the presentation must carry").
+            session.lastCompletion = AttachmentCompletion(
+                batch: context.batch,
+                publishedCount: publishedCount,
+                isFullyClean: !hasBlockedEntries && !hasEntryFailures
+                    && skippedForeignCount == 0 && summary.blockedCount == 0
+            )
             sourceSessions[source] = session
-            let completedPresentation = MediaOperationSourcePresentation(
-                sourcePath: source,
-                destinationPath: session.destination,
-                state: .completed(summary: summary, skippedForeignCount: skippedForeignCount, failedCount: failedCount),
-                attachToReadyMs: session.attachToReadyMs
+            let completedPresentation = makePresentation(
+                session: session,
+                state: .completed(summary: summary, skippedForeignCount: skippedForeignCount, failedCount: failedCount)
             )
             let values = sortedPresentations().map { $0.sourcePath == source ? completedPresentation : $0 }
             for continuation in continuations.values {
                 continuation.yield(values)
             }
-            if prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
+            if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
                 await autoEjectIfRequested(sourceRoot)
             }
-        case .cancelled:
+        case let .cancelled(publishedCount, _, _, _, _):
             // Release claim: go to inventory and rebuild. This ensures the
             // cancelled execution's destination reservation does not block
-            // other sources (e.g. B) from reclaiming the base name.
+            // other sources (e.g. B) from reclaiming the base name. A cancelled
+            // run is never fully clean (J8): the re-planned Ready state still
+            // reports what landed before the stop.
             session.phase = .inventory
             session.isDirty = true
+            session.lastCompletion = AttachmentCompletion(batch: context.batch, publishedCount: publishedCount, isFullyClean: false)
             sourceSessions[source] = session
             publish()
-        case let .failed(problem):
-            session.phase = .failed(problem: problem)
+        case let .failed(reason):
+            session.phase = .failed(reason: reason, publishedCount: 0)
             sourceSessions[source] = session
             publish()
         }
@@ -647,6 +673,7 @@ actor MediaOperationCoordinator {
 
     private func refreshSources(reason: String) async {
         let libraries = await store.currentLibraries()
+        librariesByPath = CatalogWindowPolicy.rootsByPath(from: libraries)
         let fixedAvailable = libraries.filter { $0.root.kind == .library && $0.availability == .available }
         let removable = libraries.filter { $0.root.kind != .library && $0.availability == .available }
         var seen = Set<LibraryRootPath>()
@@ -696,7 +723,8 @@ actor MediaOperationCoordinator {
                     importRequested: false,
                     nextBuildGeneration: BuildGeneration(rawValue: 1),
                     attachStartedAt: ContinuousClock().now,
-                    attachToReadyMs: nil
+                    attachToReadyMs: nil,
+                    lastCompletion: nil
                 )
                 sourceSessions[source.path] = newSession
                 scheduleBuildIfNeeded(source.path)
@@ -748,6 +776,18 @@ actor MediaOperationCoordinator {
                 case let .executing(ctx):
                     ctx.task.cancel()
                     Task { await ctx.executor.cancel() }
+                // J9 wants the card pulled mid-execution to fail with a
+                // named cause, while this source's own row still
+                // disappears (matches the existing removal below). A typed
+                // `.sourceRemoved` frame published here would be
+                // overwritten by this same method's final `publish()`
+                // before any consumer's turn to observe it — `refreshSources`
+                // has no suspension point between the two — so it is not a
+                // real producer, only a misleading one. The batch this
+                // execution belongs to (`ctx.batch`) is what needs to carry
+                // the cause forward once a later increment gives batches
+                // their own durable presentation independent of this
+                // source's session; deferred there, not invented here.
                 default: break
                 }
             }
@@ -777,7 +817,10 @@ actor MediaOperationCoordinator {
         // swiftlint:disable:next line_length
         OtosLog.catalog.noticeOperation("plan.rebuild", phase: "schedule", fields: ["source": source.rawValue, "destination": destination?.rawValue ?? "none", "generation": "\(buildGen.rawValue)", "attachment": "\(attachmentGen.rawValue)"])
         guard let destination else {
-            session.phase = .failed(problem: "noDestinationLibrary")
+            // No destination is state B ("No destination"), not a failure —
+            // `destinationPath == nil` on the presentation is what the mapper
+            // reads; this reason is never shown.
+            session.phase = .failed(reason: .unexpected(detail: "noDestinationLibrary"), publishedCount: 0)
             sourceSessions[source] = session
             publish()
             return
@@ -809,7 +852,7 @@ actor MediaOperationCoordinator {
                 return
             }
             var updated = session
-            updated.phase = .failed(problem: String(describing: error))
+            updated.phase = .failed(reason: .unexpected(detail: String(describing: error)), publishedCount: 0)
             sourceSessions[source] = updated
             publish()
         }
@@ -851,8 +894,14 @@ actor MediaOperationCoordinator {
         let prefs = session.preferences
         let policy = ImportPolicy.from(prefs)
         guard let snapshot = try await store.importPlanningSnapshot(source: source, destination: destination, policy: policy, generation: generation) else {
+            let libraries = await store.currentLibraries()
+            let reason = MediaOperationFailureReason.forMissingSnapshot(
+                source: source,
+                destination: destination,
+                availableRoots: CatalogWindowPolicy.availablePaths(from: libraries)
+            )
             var updated = session
-            updated.phase = .failed(problem: "snapshotUnavailable")
+            updated.phase = .failed(reason: reason, publishedCount: 0)
             sourceSessions[source] = updated
             publish()
             return
@@ -906,7 +955,12 @@ actor MediaOperationCoordinator {
             return
         }
         let skipped = await store.skippedPackageCount(for: source)
-        let readyCtx = ReadyContext(plan: plan, skippedPackageCount: skipped, claims: newClaims)
+        let readyCtx = ReadyContext(
+            plan: plan,
+            skippedPackageCount: skipped,
+            claims: newClaims,
+            attentionItems: plan.attentionItems
+        )
         var updated = current
         updated.phase = .ready(readyCtx)
         updated.isDirty = false
@@ -983,19 +1037,56 @@ actor MediaOperationCoordinator {
         case .building:
             session.importRequested ? .queuedForReadiness : .planning
         case let .ready(ctx):
-            // swiftlint:disable:next line_length
-            session.importRequested ? .queuedForReadiness : .ready(summary: ctx.plan.totals, generation: ctx.plan.generation, skippedPackageCount: ctx.skippedPackageCount)
+            session.importRequested ? .queuedForReadiness : .ready(
+                summary: ctx.plan.totals,
+                generation: ctx.plan.generation,
+                skippedPackageCount: ctx.skippedPackageCount,
+                attentionItems: ctx.attentionItems
+            )
         case let .executing(ctx):
-            .executing(progress: MediaOperationProgress(completedCount: 0, totalCount: ctx.plan.totals.copyCount, completedBytes: 0, totalBytes: 0))
+            .executing(progress: MediaOperationProgress(
+                completedCount: 0,
+                totalCount: ctx.plan.totals.copyCount,
+                completedBytes: 0,
+                totalBytes: 0,
+                elapsedMs: 0
+            ))
         case .completed:
             // Completed is a transient terminal presentation; keep summary empty for now.
             // The real completed presentation is published via execution result override.
             .completed(summary: MediaOperationPlanTotals(copyCount: 0, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0))
-        case let .failed(problem):
-            .failed(problem: problem)
+        case let .failed(reason, publishedCount):
+            .failed(reason: reason, publishedCount: publishedCount)
         }
-        // swiftlint:disable:next line_length
-        return MediaOperationSourcePresentation(sourcePath: session.root.path, destinationPath: session.destination, state: state, attachToReadyMs: session.attachToReadyMs)
+        return makePresentation(session: session, state: state)
+    }
+
+    /// The batch this attachment is currently working on or last worked on:
+    /// the live execution's batch while executing, else the most recent
+    /// completed execution's batch, else `nil` before any execution has
+    /// started (`import-bar.md` "Where the user is standing").
+    private func currentBatchID(for session: SourceSession) -> ImportBatchID? {
+        if case let .executing(ctx) = session.phase {
+            return ctx.batch
+        }
+        return session.lastCompletion?.batch
+    }
+
+    private func makePresentation(
+        session: SourceSession,
+        state: MediaOperationSourceState
+    ) -> MediaOperationSourcePresentation {
+        MediaOperationSourcePresentation(
+            sourcePath: session.root.path,
+            destinationPath: session.destination,
+            destinationDisplayName: session.destination.flatMap { librariesByPath[$0]?.displayName },
+            state: state,
+            attachToReadyMs: session.attachToReadyMs,
+            batchID: currentBatchID(for: session),
+            cardStillExists: session.root.availability == .available,
+            copiedJustNow: session.lastCompletion?.publishedCount,
+            isFullyClean: session.lastCompletion?.isFullyClean
+        )
     }
 
     private func sortedPresentations() -> [MediaOperationSourcePresentation] {

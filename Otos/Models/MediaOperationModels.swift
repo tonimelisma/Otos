@@ -111,6 +111,43 @@ nonisolated enum MediaOperationBlockReason: Equatable, Sendable {
     case filesystemObservationUnavailable(destination: MediaRelativePath, detail: String)
 }
 
+/// One blocked plan entry the user can act on via "Show them" (state D). Carries
+/// identity, not just a count, so the ViewModel can select and scroll the affected
+/// tiles (`import-bar.md` state D).
+nonisolated struct MediaAttentionItem: Equatable, Sendable, Identifiable {
+    let id: MediaAssetID
+    let reason: MediaOperationBlockReason
+}
+
+/// Causes of an import failure a user can act on (DES-035/DES-039 forbid
+/// publishing internal vocabulary to the bar). `.unexpected` is the one case
+/// whose detail is for the log, never the bar (`import-bar.md` state G).
+nonisolated enum MediaOperationFailureReason: Equatable, Sendable {
+    case sourceRemoved
+    case destinationUnavailable
+    case outOfSpace
+    case unexpected(detail: String)
+
+    /// Classifies why an import-planning snapshot came back empty: whichever of
+    /// the two roots is missing from the currently available set, or unexpected
+    /// when both are present. `blocked` is never "can't be read"
+    /// (`MediaOperationBlockReason`); this applies the same discipline to a
+    /// failed plan build instead of guessing (trap #3).
+    static func forMissingSnapshot(
+        source: LibraryRootPath,
+        destination: LibraryRootPath,
+        availableRoots: Set<LibraryRootPath>
+    ) -> MediaOperationFailureReason {
+        if !availableRoots.contains(source) {
+            return .sourceRemoved
+        }
+        if !availableRoots.contains(destination) {
+            return .destinationUnavailable
+        }
+        return .unexpected(detail: "snapshotUnavailable")
+    }
+}
+
 nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
     let source: PlanningFileFacts
     let idealDestination: MediaRelativePath
@@ -161,6 +198,16 @@ nonisolated struct MediaOperationPlan: Equatable, Sendable {
     let policy: ImportPolicy
     let entries: [MediaOperationPlanEntry]
     let totals: MediaOperationPlanTotals
+
+    /// Blocked entries' identities and reasons, for state D's "Show them"
+    /// (`import-bar.md` state D). `totals.blockedCount` is a count only; this is
+    /// what lets the ViewModel select and scroll the affected tiles.
+    var attentionItems: [MediaAttentionItem] {
+        entries.compactMap { entry in
+            guard case let .blocked(reason) = entry.disposition else { return nil }
+            return MediaAttentionItem(id: entry.source.id, reason: reason)
+        }
+    }
 }
 
 /// Import-planning wake published on the Store's planning-change stream. Carries
@@ -177,7 +224,12 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case inventory
     case waitingForMetadata(done: Int, total: Int)
     case planning
-    case ready(summary: MediaOperationPlanTotals, generation: UInt64, skippedPackageCount: Int)
+    case ready(
+        summary: MediaOperationPlanTotals,
+        generation: UInt64,
+        skippedPackageCount: Int,
+        attentionItems: [MediaAttentionItem] = []
+    )
     case queuedForReadiness
     case executing(progress: MediaOperationProgress)
     case needsReplan
@@ -186,9 +238,13 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
         skippedForeignCount: Int = 0,
         failedCount: Int = 0
     )
-    case failed(problem: String)
+    case failed(reason: MediaOperationFailureReason, publishedCount: Int = 0)
     /// Source kind cannot execute import (for example a fixed library selected as source).
-    case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64)
+    case executionUnavailable(
+        summary: MediaOperationPlanTotals,
+        generation: UInt64,
+        attentionItems: [MediaAttentionItem] = []
+    )
 }
 
 nonisolated struct MediaOperationProgress: Equatable, Sendable {
@@ -196,13 +252,52 @@ nonisolated struct MediaOperationProgress: Equatable, Sendable {
     let totalCount: Int
     let completedBytes: Int64
     let totalBytes: Int64
+    /// Milliseconds since this execution started. The time base `import-bar.md`
+    /// state E needs to compute "about N seconds left" from bytes-over-elapsed;
+    /// the mapper omits the estimate until this and `completedBytes` are large
+    /// enough for a rate to be meaningful, never guessing one.
+    let elapsedMs: Int
 }
 
 nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identifiable {
     let sourcePath: LibraryRootPath
     let destinationPath: LibraryRootPath?
+    /// The destination library's display name, so the bar states it without a
+    /// second lookup at the view layer (`import-bar.md` "What the presentation
+    /// must carry").
+    let destinationDisplayName: String?
     let state: MediaOperationSourceState
     let attachToReadyMs: Int?
+    /// Present on every frame from execution start onward, as state rather than
+    /// an event `presentationsStream()`'s dropping buffer could lose
+    /// (`import-bar.md` "Where the user is standing").
+    let batchID: ImportBatchID?
+    /// Whether this source is still attached and available, read fresh from the
+    /// catalog rather than inferred from session existence — a fact about the
+    /// world, not about where the user is standing (`import-bar.md` state F).
+    /// Always `true` today: the coordinator removes a session outright the
+    /// moment its source drops out of the catalog's available set, rather than
+    /// keeping it around long enough to be observed unavailable. Meaningfully
+    /// varying needs a later increment's batch-keyed presentation that outlives
+    /// the source session (see the comment on the detach path in
+    /// `refreshSources`); this field is where that increment plugs in.
+    let cardStillExists: Bool
+    /// Count copied by the most recent *settled* (completed or cancelled)
+    /// execution in this attachment, and whether that run was fully clean (no
+    /// skips, failures, or blocked entries) — the auto-dismiss gate. Both
+    /// persist across the post-settlement re-plan so state F keeps reporting
+    /// what it just copied instead of that fact vanishing once `state` leaves
+    /// `.completed`; `nil` until the first execution in this attachment
+    /// settles (`import-bar.md` "What the presentation must carry").
+    ///
+    /// Deliberately independent of a *subsequently failed* retry: if a clean
+    /// run lands 5 items and a later retry in the same attachment fails before
+    /// copying anything, these still report the 5 that really did land —
+    /// `state`'s own `.failed(reason:publishedCount:)` carries that failed
+    /// attempt's own count separately (`import-bar.md` state G: "nothing
+    /// already copied is lost").
+    let copiedJustNow: Int?
+    let isFullyClean: Bool?
 
     var id: String {
         sourcePath.rawValue

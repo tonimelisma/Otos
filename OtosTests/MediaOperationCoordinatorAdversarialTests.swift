@@ -395,7 +395,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             for: cardAPath,
             with: .cancelled(
                 publishedCount: 0,
-                batch: nil,
                 hasBlockedEntries: false,
                 hasEntryFailures: false,
                 skippedForeignCount: 0,
@@ -489,7 +488,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("STEP waitForPendingExecution")
         try await waitForPendingExecution(execControl, source: cardAPath)
         await builder2.suspendNextBuild(for: cardAPath)
-        await execControl.resumePending(for: cardAPath, with: .failed(problem: "injectedFailure"))
+        await execControl.resumePending(for: cardAPath, with: .failed(reason: .unexpected(detail: "injectedFailure")))
         try await Task.sleep(for: .milliseconds(300))
         await queueTask2.value
         log("STEP retryPlanning")
@@ -701,7 +700,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             for: cardPath,
             with: .completed(
                 publishedCount: 1,
-                batch: nil,
                 hasBlockedEntries: false,
                 hasEntryFailures: false,
                 skippedForeignCount: 0,
@@ -716,6 +714,95 @@ struct MediaOperationCoordinatorAdversarialTests {
         // Controlled executor's cancel is observed via task cancellation; check control's cancelled set?
         // At least ensure no crash.
         log("END")
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// `import-bar.md` "Where the user is standing": the batch ID is carried as
+    /// state on the presentation, present from execution start onward, so a
+    /// consumer never needs to have observed the `.executing` frame itself —
+    /// only the current snapshot — to know which batch this attachment landed
+    /// in. `presentationsStream()`'s `.bufferingNewest(1)` can drop any number
+    /// of intermediate frames (trap #5); this proves the fact survives that by
+    /// construction rather than by having watched every frame.
+    @Test func batchIDIsStateThatSurvivesADroppedIntermediateFrame() async throws {
+        log("START batchIDIsStateThatSurvivesADroppedIntermediateFrame")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:batch-id", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults.domain,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+
+        // The batch is minted eagerly at execution start — no completed result
+        // has been produced yet, and no frame has been consumed from the
+        // stream. This snapshot getter (not the stream) is deliberately the
+        // only thing read here.
+        let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        guard case .executing = executing.state else {
+            Issue.record("Expected .executing, got \(executing.state)")
+            await coordinator.shutdown()
+            return
+        }
+        let mintedBatch = try #require(executing.batchID, "batchID must be present from execution start")
+
+        // Resume straight to completion. Whatever progress frames the
+        // executor's onProgress would have emitted are never observed by this
+        // test — standing in for the dropped intermediate frames the real
+        // stream's bufferingNewest(1) can lose.
+        await execControl.resumePending(
+            for: cardPath,
+            with: .completed(
+                publishedCount: 1,
+                hasBlockedEntries: false,
+                hasEntryFailures: false,
+                skippedForeignCount: 0,
+                failedCount: 0
+            )
+        )
+        await queueTask.value
+
+        let deadline = ContinuousClock().now + Duration.seconds(5)
+        var sawCompletion = false
+        while ContinuousClock().now < deadline {
+            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
+               pres.copiedJustNow != nil
+            {
+                #expect(pres.batchID == mintedBatch, "Batch ID must be the same value minted at execution start")
+                #expect(pres.copiedJustNow == 1)
+                sawCompletion = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(sawCompletion, "Expected lastCompletion to be recorded after the executor result settled")
         log("END")
         await coordinator.shutdown()
     }

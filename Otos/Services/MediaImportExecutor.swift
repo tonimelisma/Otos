@@ -127,6 +127,7 @@ actor MediaImportExecutor {
 
     func execute(
         plan: MediaOperationPlan,
+        batch: ImportBatchID,
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
@@ -134,11 +135,10 @@ actor MediaImportExecutor {
     ) async -> MediaImportExecutionResult {
         cancelFlag.reset()
         guard case let .import(_, destination, _) = plan.mode else {
-            return .failed(problem: "notAnImportPlan")
+            return .failed(reason: .unexpected(detail: "notAnImportPlan"))
         }
         await recoverJournal()
         await removeOrphanedStaging(near: destinationParentURLs(plan: plan, destination: destination))
-        let batch = ImportBatchID()
         let copyEntries = plan.entries.filter {
             if case .copy = $0.disposition {
                 return true
@@ -149,7 +149,7 @@ actor MediaImportExecutor {
         if let needed = freeSpaceRequired(for: copyEntries),
            !hasEnoughFreeSpace(at: destination.url, required: needed)
         {
-            return .failed(problem: "insufficientSpace")
+            return .failed(reason: .outOfSpace)
         }
         let hasBlockedEntries = plan.entries.contains {
             if case .blocked = $0.disposition {
@@ -166,7 +166,7 @@ actor MediaImportExecutor {
                 for: destination,
                 owner: .importPublication
             ) else {
-                return .failed(problem: "namespaceLeaseUnavailable")
+                return .failed(reason: .destinationUnavailable)
             }
             namespaceLease = lease
         }
@@ -224,7 +224,6 @@ actor MediaImportExecutor {
         if cancelFlag.isCancelled {
             return .cancelled(
                 publishedCount: entryTotals.publishedCount,
-                batch: entryTotals.publishedCount > 0 ? batch : nil,
                 hasBlockedEntries: hasBlockedEntries,
                 hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
                 skippedForeignCount: entryTotals.skippedForeignCount,
@@ -233,7 +232,6 @@ actor MediaImportExecutor {
         }
         return .completed(
             publishedCount: entryTotals.publishedCount,
-            batch: entryTotals.publishedCount > 0 ? batch : nil,
             hasBlockedEntries: hasBlockedEntries,
             hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
             skippedForeignCount: entryTotals.skippedForeignCount,
@@ -1392,7 +1390,6 @@ actor MediaImportExecutor {
 nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
     case completed(
         publishedCount: Int,
-        batch: ImportBatchID?,
         hasBlockedEntries: Bool,
         hasEntryFailures: Bool,
         skippedForeignCount: Int,
@@ -1400,13 +1397,12 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
     )
     case cancelled(
         publishedCount: Int,
-        batch: ImportBatchID?,
         hasBlockedEntries: Bool,
         hasEntryFailures: Bool,
         skippedForeignCount: Int,
         failedCount: Int
     )
-    case failed(problem: String)
+    case failed(reason: MediaOperationFailureReason)
 }
 
 /// Thread-safe byte-progress accumulator for copy callbacks off the executor
@@ -1431,6 +1427,7 @@ private final nonisolated class ByteProgressTracker: Sendable {
 
     private let totalCount: Int
     private let totalBytes: Int64
+    private let startedAt = ContinuousClock().now
     private let state = Mutex(State())
 
     init(totalCount: Int, totalBytes: Int64) {
@@ -1480,7 +1477,8 @@ private final nonisolated class ByteProgressTracker: Sendable {
                 totalBytes,
                 state.settledBytes + state.creditedBytes + state.inFlightOffsets.values.reduce(0, +)
             ),
-            totalBytes: totalBytes
+            totalBytes: totalBytes,
+            elapsedMs: DiagnosticsTiming.milliseconds(from: startedAt, to: .now)
         )
     }
 }

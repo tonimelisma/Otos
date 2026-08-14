@@ -171,9 +171,9 @@ struct ImportPlanFooter: View {
             return false
         }
         switch presentation.state {
-        case let .ready(summary, _, _):
+        case let .ready(summary, _, _, _):
             return summary.copyCount == 0 && summary.companionCopyCount == 0
-        case let .executionUnavailable(summary, _):
+        case let .executionUnavailable(summary, _, _):
             return summary.copyCount == 0 && summary.companionCopyCount == 0
         default:
             return false
@@ -182,7 +182,7 @@ struct ImportPlanFooter: View {
 
     private var deleteCheckboxLabel: String {
         switch presentation.state {
-        case let .ready(summary, _, _):
+        case let .ready(summary, _, _, _):
             if summary.blockedCount > 0 {
                 return "Delete items from the card after importing"
             }
@@ -191,7 +191,7 @@ struct ImportPlanFooter: View {
                 return "Delete all \(total) items from the card after importing"
             }
             return "Delete items from the card after importing"
-        case let .executionUnavailable(summary, _):
+        case let .executionUnavailable(summary, _, _):
             if summary.blockedCount > 0 {
                 return "Delete items from the card after importing"
             }
@@ -212,12 +212,12 @@ struct ImportPlanFooter: View {
         switch presentation.state {
         case .waitingForMetadata, .queuedForReadiness:
             return true
-        case let .ready(summary, _, _):
+        case let .ready(summary, _, _, _):
             if summary.copyCount > 0 || summary.companionCopyCount > 0 {
                 return true
             }
             return effectivePreferences.deleteSourceAfterImport
-        case let .executionUnavailable(summary, _):
+        case let .executionUnavailable(summary, _, _):
             if summary.copyCount > 0 || summary.companionCopyCount > 0 {
                 return true
             }
@@ -231,9 +231,9 @@ struct ImportPlanFooter: View {
 
     private var statusLine: String? {
         switch presentation.state {
-        case let .ready(summary, _, _):
+        case let .ready(summary, _, _, _):
             return readyStatusLine(summary: summary)
-        case let .executionUnavailable(summary, _):
+        case let .executionUnavailable(summary, _, _):
             return readyStatusLine(summary: summary)
         case let .completed(summary, skippedForeign, failed):
             var text = completedStatusLine(summary: summary)
@@ -253,9 +253,9 @@ struct ImportPlanFooter: View {
 
     private var showsRetry: Bool {
         switch presentation.state {
-        case let .ready(summary, _, _):
+        case let .ready(summary, _, _, _):
             summary.blockedCount > 0
-        case let .executionUnavailable(summary, _):
+        case let .executionUnavailable(summary, _, _):
             summary.blockedCount > 0
         default:
             false
@@ -263,6 +263,13 @@ struct ImportPlanFooter: View {
     }
 
     private var readinessText: String {
+        // No destination is state B ("No destination"), not a failure — check
+        // it ahead of `state` so a card attached before any library exists
+        // never reads the placeholder failure reason underneath it
+        // (`scheduleBuildIfNeeded`'s `noDestinationLibrary` bookkeeping).
+        guard presentation.destinationPath != nil else {
+            return "No library to copy into"
+        }
         switch presentation.state {
         case .inventory:
             return "Inventory…"
@@ -282,8 +289,8 @@ struct ImportPlanFooter: View {
             return "Source changed — replanning…"
         case .completed:
             return "Import complete"
-        case let .failed(problem):
-            return "Failed: \(problem)"
+        case let .failed(reason, _):
+            return "Failed: \(Self.interimFailureDescription(reason))"
         case .executionUnavailable:
             return "Import queued (execution lands in a later update)"
         }
@@ -330,5 +337,17 @@ struct ImportPlanFooter: View {
         parts.append(prefs.deleteSourceAfterImport ? "Delete source after import" : "Keep source files")
         parts.append(prefs.autoEjectAfterImport ? "Auto-eject on" : "Auto-eject off")
         return parts.joined(separator: " · ")
+    }
+
+    /// Placeholder only: this whole view is rewritten by plan 0092 increment 5,
+    /// whose pure mapper owns the real state-G copy (`import-bar.md`). This just
+    /// keeps the interim build off raw internal tokens (DES-035/DES-039).
+    private static func interimFailureDescription(_ reason: MediaOperationFailureReason) -> String {
+        switch reason {
+        case .sourceRemoved: "source removed"
+        case .destinationUnavailable: "destination unavailable"
+        case .outOfSpace: "not enough space"
+        case let .unexpected(detail): detail
+        }
     }
 }
