@@ -82,6 +82,7 @@ actor CatalogStore {
         let deviceIdentity: String?
         let displayName: String?
         let lastSeenAt: Date?
+        let sortIndex: Int64
     }
 
     struct ThumbnailPathMigration {
@@ -467,8 +468,8 @@ extension CatalogStore {
         roots.values
             .map { catalogLibraryState(from: $0) }
             .sorted {
-                if $0.addOrder != $1.addOrder {
-                    return $0.addOrder < $1.addOrder
+                if $0.sortIndex != $1.sortIndex {
+                    return $0.sortIndex < $1.sortIndex
                 }
                 return $0.path.rawValue < $1.path.rawValue
             }
@@ -1511,6 +1512,41 @@ extension CatalogStore {
         startNextScanIfNeeded()
     }
 
+    /// Reorders library-kind roots, moving the one at `sourceIndex` (within the
+    /// library-only, currently-displayed order) to `destinationIndex`. Settings →
+    /// Libraries' drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ all call this one intent
+    /// (plan 0092 increment 4) — one user action, one path. The first entry in the
+    /// result becomes the deterministic import destination
+    /// (`MediaOperationCoordinator.refreshSources`).
+    func moveLibrary(from sourceIndex: Int, to destinationIndex: Int) async throws {
+        try await ensureStartedForMutation()
+        var libraries = currentLibraries().filter { $0.kind == .library }
+        guard libraries.indices.contains(sourceIndex) else { return }
+        let clampedDestination = min(max(destinationIndex, 0), libraries.count - 1)
+        guard clampedDestination != sourceIndex else { return }
+        let moved = libraries.remove(at: sourceIndex)
+        libraries.insert(moved, at: clampedDestination)
+        let orderedPaths = libraries.map(\.path)
+
+        // Apply to in-memory state before the write suspends, not after: a
+        // concurrent second call must compute its own reorder against this
+        // one's result, not against the pre-move snapshot it would otherwise
+        // still see while this call awaits the DB write.
+        for (index, path) in orderedPaths.enumerated() {
+            guard var state = roots[path] else { continue }
+            state.sortIndex = Int64(index)
+            roots.upsert(state)
+        }
+        let dbQueue = try database()
+        try await dbQueue.write { db in
+            try Self.writeLibraryRootSortIndexes(orderedPaths, db: db)
+        }
+        OtosLog.catalog.notice(
+            "op=catalog.library.reorder phase=finish count=\(orderedPaths.count, privacy: .public)"
+        )
+        notifyCatalogChanged()
+    }
+
     private func thumbnailPathsForLibraryRemoval(
         path: LibraryRootPath,
         root: LibraryRoot,
@@ -1671,6 +1707,7 @@ extension CatalogStore {
         upsert(RootRuntimeState(
             root: root,
             rowID: storedRoot.id,
+            sortIndex: storedRoot.sortIndex,
             availability: .unknown,
             activity: .idle,
             isEjectable: false
@@ -1715,6 +1752,7 @@ extension CatalogStore {
         upsert(RootRuntimeState(
             root: newRoot,
             rowID: rootRowID,
+            sortIndex: previous?.sortIndex ?? 0,
             availability: previous?.availability ?? .unknown,
             activity: previous?.activity ?? .idle,
             isEjectable: previous?.isEjectable ?? false,
@@ -1748,6 +1786,7 @@ extension CatalogStore {
         upsert(RootRuntimeState(
             root: root,
             rowID: storedRoot.id,
+            sortIndex: storedRoot.sortIndex,
             availability: .available,
             activity: .idle,
             isEjectable: false
@@ -2230,6 +2269,7 @@ private extension CatalogStore {
             roots.upsert(RootRuntimeState(
                 root: root,
                 rowID: storedRoot.id,
+                sortIndex: storedRoot.sortIndex,
                 availability: root.kind == .library ? .unknown : .unavailable,
                 activity: .idle,
                 isEjectable: false
@@ -2283,7 +2323,8 @@ private extension CatalogStore {
                 kind: storedRoot.kind,
                 deviceIdentity: storedRoot.deviceIdentity,
                 displayName: storedRoot.displayName,
-                lastSeenAt: storedRoot.lastSeenAt
+                lastSeenAt: storedRoot.lastSeenAt,
+                sortIndex: storedRoot.sortIndex
             )
         } catch {
             await recordRootNormalizationFailure(storedRoot, normalizedPath: normalizedPath, error: error)
@@ -2390,7 +2431,7 @@ private extension CatalogStore {
     private func catalogLibraryState(from state: RootRuntimeState) -> CatalogLibraryState {
         CatalogLibraryState(
             root: state.root,
-            addOrder: state.rowID,
+            sortIndex: state.sortIndex,
             availability: state.availability,
             activity: activity(for: state.path),
             isEjectable: state.isEjectable

@@ -807,6 +807,96 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// A live execution's `ExecutionContext` (claims, namespace lease) already
+    /// committed to a specific destination. Reordering libraries while that
+    /// execution is in flight must not rewrite `session.destination` out from
+    /// under it — only a session still on the default may track a reorder.
+    @Test func executingDestinationSurvivesLibraryReorder() async throws {
+        log("START executingDestinationSurvivesLibraryReorder")
+        let temp = try makeTempRoot()
+        let firstDestURL = temp.appending(path: "Zebra", directoryHint: .isDirectory)
+        let secondDestURL = temp.appending(path: "Alpha", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        for url in [firstDestURL, secondDestURL, cardURL] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try Data(repeating: 9, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: firstDestURL)
+        try await store.addLibrary(url: secondDestURL)
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.libraries.count == 2 && snap.libraries.allSatisfy { !$0.isScanning }
+        }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:executing-reorder", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults.domain,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let firstDest = try CatalogPath.normalizedDirectoryPath(for: firstDestURL)
+        let secondDest = try CatalogPath.normalizedDirectoryPath(for: secondDestURL)
+        let beforeExec = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        #expect(beforeExec.destinationPath == firstDest, "Default destination before execution")
+
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+        let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        guard case .executing = executing.state else {
+            Issue.record("Expected .executing, got \(executing.state)")
+            await coordinator.shutdown()
+            return
+        }
+        #expect(executing.destinationPath == firstDest)
+
+        // Reorder while the execution is in flight.
+        try await store.moveLibrary(from: 0, to: 1)
+        try await Task.sleep(for: .milliseconds(300))
+        let stillExecuting = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        #expect(stillExecuting.destinationPath == firstDest, "Destination must not move mid-execution")
+
+        await execControl.resumePending(
+            for: cardPath,
+            with: .completed(
+                publishedCount: 1,
+                hasBlockedEntries: false,
+                hasEntryFailures: false,
+                skippedForeignCount: 0,
+                failedCount: 0
+            )
+        )
+        await queueTask.value
+
+        // The controlled executor is a mock — it never touches the store, so
+        // nothing occupancy-related naturally wakes the coordinator the way a
+        // real settlement would. Simulate that wake directly: once no longer
+        // executing, the next refresh is where a still-default destination
+        // picks the reorder back up.
+        _ = await store.bumpOccupancyRevision(for: cardPath)
+        _ = try await waitForPresentation(
+            coordinator,
+            source: cardPath,
+            predicate: { $0.destinationPath == secondDest }
+        )
+        log("END")
+        await coordinator.shutdown()
+    }
+
     // MARK: - 10. Shutdown
 
     @Test func shutdownWaitsForSuspendedWorkAndNoLaterPublication() async throws {

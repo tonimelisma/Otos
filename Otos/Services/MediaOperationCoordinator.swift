@@ -89,6 +89,15 @@ actor MediaOperationCoordinator {
         let attachmentGeneration: AttachmentGeneration
         var root: CatalogLibraryState
         var destination: LibraryRootPath?
+        /// Whether `destination` was picked via the pop-up this attachment,
+        /// rather than still tracking the default. A default destination keeps
+        /// following the first available library — including through a
+        /// Settings → Libraries reorder while the card is attached, which is
+        /// the deliberate consequence plan 0092 increment 4 calls out. An
+        /// explicit pick only falls back when it actually becomes unavailable,
+        /// per its own "must survive until that run finishes" rule. Reset to
+        /// `false` only by a new attachment, never by an incidental re-plan.
+        var isDestinationExplicit: Bool
         var preferences: ImportPreferences
         var phase: SourcePhase
         var isDirty: Bool
@@ -111,8 +120,6 @@ actor MediaOperationCoordinator {
     /// Settings display (includes unavailable sources). Mirrors `session.destination`
     /// while attached but is never cleared on detach.
     private var destinationBySource: [LibraryRootPath: LibraryRootPath] = [:]
-    private var destinationByDeviceIdentity: [String: LibraryRootPath] = [:]
-    private var lastUsedDestination: LibraryRootPath?
     private var lastSeenOccupancy: [LibraryRootPath: UInt64] = [:]
 
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
@@ -243,21 +250,18 @@ actor MediaOperationCoordinator {
     }
 
     func setDestination(_ destination: LibraryRootPath, for source: LibraryRootPath) async {
-        let libraries = await store.currentLibraries()
-        if let sourceState = libraries.first(where: { $0.path == source }),
-           let device = sourceState.root.deviceIdentity
-        {
-            destinationByDeviceIdentity[device] = destination
-        }
-        lastUsedDestination = destination
         destinationBySource[source] = destination
         persistDestinationMappings()
         guard var session = sourceSessions[source] else {
-            // Source not yet attached; mapping will be applied on next refresh.
+            // Source not yet attached. `destinationBySource` above is
+            // recorded for Settings display only — a session created later
+            // always starts on the default (first available library), not
+            // this value.
             return
         }
         let previous = session.destination
         session.destination = destination
+        session.isDestinationExplicit = true
         if previous != destination {
             session.isDirty = true
         }
@@ -683,40 +687,24 @@ actor MediaOperationCoordinator {
                 let attachmentGen = AttachmentGeneration(rawValue: nextAttachmentGeneration)
                 nextAttachmentGeneration &+= 1
                 let prefs = ImportPreferencesStore.load(defaults: preferences)
-                // Determine destination via three-step default
-                let previousMapping = destinationBySource[source.path]
-                let currentMapped = destinationBySource[source.path]
-                let isCurrentValid = currentMapped.map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
-                var chosen: LibraryRootPath?
-                if !isCurrentValid {
-                    let deviceDest: LibraryRootPath? = {
-                        // swiftlint:disable:next line_length
-                        guard let device = source.root.deviceIdentity, let saved = destinationByDeviceIdentity[device], fixedAvailable.contains(where: { $0.path == saved }) else { return nil }
-                        return saved
-                    }()
-                    let lastUsedValid = lastUsedDestination.flatMap { dest in fixedAvailable.contains(where: { $0.path == dest }) ? dest : nil }
-                    let firstAddedAvailable = fixedAvailable.first?.path
-                    chosen = deviceDest ?? lastUsedValid ?? firstAddedAvailable
-                    if let chosen {
-                        destinationBySource[source.path] = chosen
-                        if let device = source.root.deviceIdentity {
-                            destinationByDeviceIdentity[device] = chosen
-                        }
-                        lastUsedDestination = chosen
+                // A new attachment always defaults to the first available
+                // library in the user's own Settings → Libraries order. The
+                // per-source map below is write-only bookkeeping for Settings
+                // display; it does not feed this decision.
+                let destination = fixedAvailable.first?.path
+                if destinationBySource[source.path] != destination {
+                    if let destination {
+                        destinationBySource[source.path] = destination
                     } else {
                         destinationBySource.removeValue(forKey: source.path)
                     }
-                    if destinationBySource[source.path] != previousMapping {
-                        persistDestinationMappings()
-                    }
-                } else {
-                    chosen = currentMapped
+                    persistDestinationMappings()
                 }
-                let destination = chosen
                 let newSession = SourceSession(
                     attachmentGeneration: attachmentGen,
                     root: source,
                     destination: destination,
+                    isDestinationExplicit: false,
                     preferences: prefs,
                     phase: .inventory,
                     isDirty: true,
@@ -731,40 +719,50 @@ actor MediaOperationCoordinator {
             } else {
                 // Update root for existing session (availability may have changed)
                 sourceSessions[source.path]?.root = source
-                // Also ensure destination still valid
-                let currentMapped = destinationBySource[source.path]
-                let isCurrentValid = currentMapped.map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
-                if !isCurrentValid {
-                    let previousMapping = destinationBySource[source.path]
-                    let deviceDest: LibraryRootPath? = {
-                        // swiftlint:disable:next line_length
-                        guard let device = source.root.deviceIdentity, let saved = destinationByDeviceIdentity[device], fixedAvailable.contains(where: { $0.path == saved }) else { return nil }
-                        return saved
-                    }()
-                    let lastUsedValid = lastUsedDestination.flatMap { dest in fixedAvailable.contains(where: { $0.path == dest }) ? dest : nil }
-                    let firstAddedAvailable = fixedAvailable.first?.path
-                    let newDestination = deviceDest ?? lastUsedValid ?? firstAddedAvailable
-                    let prev = sourceSessions[source.path]?.destination
-                    if let newDestination {
-                        destinationBySource[source.path] = newDestination
-                        sourceSessions[source.path]?.destination = newDestination
-                        if let device = source.root.deviceIdentity {
-                            destinationByDeviceIdentity[device] = newDestination
+                // Never touch the destination of a session that is actively
+                // executing: its ExecutionContext (claims, namespace lease)
+                // already committed to a specific destination, and rewriting
+                // `session.destination` out from under a live copy would
+                // desync it from the ledger it's actually writing into.
+                let isExecuting = if case .executing = sourceSessions[source.path]?.phase {
+                    true
+                } else {
+                    false
+                }
+                let currentDestination = sourceSessions[source.path]?.destination
+                let isExplicit = sourceSessions[source.path]?.isDestinationExplicit ?? false
+                // A default destination keeps tracking the first available
+                // library on every refresh, including a Settings → Libraries
+                // reorder while attached. An explicit pop-up pick instead
+                // survives an ordinary refresh until it actually becomes
+                // unavailable, at which point it reverts to tracking the
+                // default again rather than staying pinned to the fallback.
+                var newDestination = currentDestination
+                var explicitAfterUpdate = isExplicit
+                if !isExecuting {
+                    if isExplicit {
+                        let isCurrentValid = currentDestination.map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
+                        if !isCurrentValid {
+                            newDestination = fixedAvailable.first?.path
+                            explicitAfterUpdate = false
                         }
-                        lastUsedDestination = newDestination
                     } else {
-                        destinationBySource.removeValue(forKey: source.path)
-                        sourceSessions[source.path]?.destination = nil
+                        newDestination = fixedAvailable.first?.path
                     }
-                    if destinationBySource[source.path] != previousMapping {
+                }
+                if newDestination != currentDestination || explicitAfterUpdate != isExplicit {
+                    sourceSessions[source.path]?.destination = newDestination
+                    sourceSessions[source.path]?.isDestinationExplicit = explicitAfterUpdate
+                    if destinationBySource[source.path] != newDestination {
+                        if let newDestination {
+                            destinationBySource[source.path] = newDestination
+                        } else {
+                            destinationBySource.removeValue(forKey: source.path)
+                        }
                         persistDestinationMappings()
                     }
-                    if prev != newDestination {
-                        sourceSessions[source.path]?.isDirty = true
-                        scheduleBuildIfNeeded(source.path)
-                    }
-                } else {
-                    sourceSessions[source.path]?.destination = currentMapped
+                    sourceSessions[source.path]?.isDirty = true
+                    scheduleBuildIfNeeded(source.path)
                 }
             }
         }
@@ -1106,18 +1104,14 @@ actor MediaOperationCoordinator {
     }
 
     private static let destinationMappingKey = "import.destinationBySource"
-    private static let destinationByDeviceIdentityKey = "import.destinationByDeviceIdentity"
-    private static let lastUsedDestinationKey = "import.lastUsedDestination"
+    // Unused by any current logic — named only so `loadDestinationMappings`
+    // can clear whatever an earlier build persisted under these keys.
+    private static let retiredDestinationByDeviceIdentityKey = "import.destinationByDeviceIdentity"
+    private static let retiredLastUsedDestinationKey = "import.lastUsedDestination"
 
     private func loadDestinationMappings() {
-        if let raw = preferences.dictionary(forKey: Self.destinationByDeviceIdentityKey) as? [String: String] {
-            for (device, dest) in raw {
-                destinationByDeviceIdentity[device] = LibraryRootPath(rawValue: dest)
-            }
-        }
-        if let last = preferences.string(forKey: Self.lastUsedDestinationKey) {
-            lastUsedDestination = LibraryRootPath(rawValue: last)
-        }
+        preferences.removeObject(forKey: Self.retiredDestinationByDeviceIdentityKey)
+        preferences.removeObject(forKey: Self.retiredLastUsedDestinationKey)
         if let raw = preferences.dictionary(forKey: Self.destinationMappingKey) as? [String: String] {
             for (source, destination) in raw {
                 let key = LibraryRootPath(rawValue: source)
@@ -1129,36 +1123,18 @@ actor MediaOperationCoordinator {
     }
 
     private func persistDestinationMappings() {
-        var deviceRaw: [String: String] = [:]
-        for (device, dest) in destinationByDeviceIdentity {
-            deviceRaw[device] = dest.rawValue
-        }
-        if deviceRaw.isEmpty {
-            preferences.removeObject(forKey: Self.destinationByDeviceIdentityKey)
-        } else {
-            preferences.set(deviceRaw, forKey: Self.destinationByDeviceIdentityKey)
-        }
-        if let last = lastUsedDestination {
-            preferences.set(last.rawValue, forKey: Self.lastUsedDestinationKey)
-        } else {
-            preferences.removeObject(forKey: Self.lastUsedDestinationKey)
-        }
-        var legacyRaw: [String: String] = [:]
+        var raw: [String: String] = [:]
         for (source, dest) in destinationBySource {
-            legacyRaw[source.rawValue] = dest.rawValue
+            raw[source.rawValue] = dest.rawValue
         }
-        if legacyRaw.isEmpty {
+        if raw.isEmpty {
             preferences.removeObject(forKey: Self.destinationMappingKey)
         } else {
-            preferences.set(legacyRaw, forKey: Self.destinationMappingKey)
+            preferences.set(raw, forKey: Self.destinationMappingKey)
         }
     }
 
     func allDestinations() -> [LibraryRootPath: LibraryRootPath] {
         destinationBySource
-    }
-
-    func allDeviceDestinations() -> [String: LibraryRootPath] {
-        destinationByDeviceIdentity
     }
 }

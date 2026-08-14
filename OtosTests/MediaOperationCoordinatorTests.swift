@@ -451,10 +451,13 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    @Test func savedDeviceMappingBeatsAddOrder() async throws {
+    /// The device-identity and last-used heuristics are deleted (plan 0092
+    /// increment 4): the coordinator ignores any value an earlier build left in
+    /// these keys and always defaults to first-available.
+    @Test func staleLegacyDestinationPreferencesAreIgnored() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:saved-mapping"
+            identity: "volume:stale-legacy"
         )
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
@@ -462,23 +465,6 @@ struct MediaOperationCoordinatorTests {
             [fixture.identity: fixture.libraries[2].rawValue],
             forKey: "import.destinationByDeviceIdentity"
         )
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
-        await coordinator.start()
-        _ = try await readyGeneration(coordinator, source: fixture.source)
-        let presentation = try #require(
-            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
-        )
-        #expect(presentation.destinationPath == fixture.libraries[2])
-        await coordinator.shutdown()
-    }
-
-    @Test func lastUsedBeatsAddOrder() async throws {
-        let fixture = try await makeDestinationFixture(
-            libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:last-used"
-        )
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
         defaults.defaults.set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
         await coordinator.start()
@@ -486,29 +472,104 @@ struct MediaOperationCoordinatorTests {
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
-        #expect(presentation.destinationPath == fixture.libraries[1])
+        #expect(presentation.destinationPath == fixture.libraries[0])
+        #expect(defaults.defaults.dictionary(forKey: "import.destinationByDeviceIdentity") == nil)
+        #expect(defaults.defaults.string(forKey: "import.lastUsedDestination") == nil)
         await coordinator.shutdown()
     }
 
-    @Test func invalidSavedMappingIsDroppedNotUsed() async throws {
+    /// "Dragging a library to the top changes [the default destination]" — the
+    /// Done-when bar for plan 0092 increment 4 — including for a card already
+    /// attached, which is the deliberate consequence the plan calls out: the
+    /// re-plan against the new first library is the same one the destination
+    /// pop-up already triggers.
+    @Test func destinationFollowsUserReorderWhileAttached() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
-            identity: "volume:invalid-mapping"
+            identity: "volume:reorder-attached"
         )
         let defaults = TemporaryDefaults()
         defer { defaults.cleanUp() }
-        defaults.defaults.set(
-            [fixture.identity: "/definitely/not/a/configured/library"],
-            forKey: "import.destinationByDeviceIdentity"
-        )
-        defaults.defaults.set("/definitely/not/a/configured/library", forKey: "import.lastUsedDestination")
         let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
         await coordinator.start()
-        _ = try await readyGeneration(coordinator, source: fixture.source)
-        let presentation = try #require(
+        let baseline = try await readyGeneration(coordinator, source: fixture.source)
+        let before = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
-        #expect(presentation.destinationPath == fixture.libraries[0])
+        #expect(before.destinationPath == fixture.libraries[0])
+
+        // Move the last library ("Middle") to the front.
+        try await fixture.store.moveLibrary(from: 2, to: 0)
+
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline, timeout: .seconds(15))
+        let after = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(after.destinationPath == fixture.libraries[2])
+        await coordinator.shutdown()
+    }
+
+    /// A destination picked via the pop-up survives an ordinary refresh even
+    /// while it stays available — the "must survive from the moment it is made
+    /// until that run finishes" rule (`import-bar.md`) — unlike the default,
+    /// which always tracks the first available library.
+    @Test func explicitDestinationSurvivesReorderWhileStillAvailable() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:explicit-survives-reorder"
+        )
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        await coordinator.start()
+        let baseline = try await readyGeneration(coordinator, source: fixture.source)
+        await coordinator.setDestination(fixture.libraries[1], for: fixture.source)
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline)
+
+        // Reorder without touching the explicitly chosen library at all.
+        try await fixture.store.moveLibrary(from: 2, to: 0)
+        try await Task.sleep(for: .milliseconds(200))
+
+        let after = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(after.destinationPath == fixture.libraries[1])
+        await coordinator.shutdown()
+    }
+
+    /// An automatic fallback is not a continued user choice: once an explicit
+    /// pick becomes unavailable and the session falls back to first-available,
+    /// it must resume tracking the default — not stay pinned to whichever
+    /// library happened to be first at the moment of the fallback.
+    @Test func explicitDestinationResumesTrackingDefaultAfterItBecomesUnavailable() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:explicit-then-unavailable"
+        )
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        await coordinator.start()
+        let baseline = try await readyGeneration(coordinator, source: fixture.source)
+        await coordinator.setDestination(fixture.libraries[2], for: fixture.source)
+        let afterPick = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline)
+
+        // The explicitly chosen library ("Middle") goes away. The session
+        // falls back to first-available ("Zebra").
+        try await fixture.store.removeLibrary(path: fixture.libraries[2])
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: afterPick, timeout: .seconds(15))
+        let afterFallback = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(afterFallback.destinationPath == fixture.libraries[0])
+
+        // Reordering now must move the (no-longer-explicit) destination too.
+        try await fixture.store.moveLibrary(from: 0, to: 1)
+        try await Task.sleep(for: .milliseconds(300))
+        let afterReorder = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(afterReorder.destinationPath == fixture.libraries[1])
         await coordinator.shutdown()
     }
 

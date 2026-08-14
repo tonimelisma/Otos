@@ -193,6 +193,7 @@ struct OtosApp: App {
                 removableDestinations: catalogViewModel.removableDestinations,
                 addLibrary: { catalogViewModel.addLibrary(url: $0) },
                 removeLibrary: { catalogViewModel.removeLibrary($0) },
+                moveLibrary: { from, to in catalogViewModel.moveLibrary(from: from, to: to) },
                 forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) },
                 importPreferences: catalogViewModel.importPreferences,
                 setImportPreferences: catalogViewModel.setImportPreferences,

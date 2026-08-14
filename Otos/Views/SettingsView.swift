@@ -9,6 +9,7 @@ struct SettingsView: View {
     let removableDestinations: [LibraryRootPath: LibraryRootPath]
     let addLibrary: (URL) -> Void
     let removeLibrary: (LibraryRoot) -> Void
+    let moveLibrary: (Int, Int) -> Void
     let forgetRemovableSource: (LibraryRoot) -> Void
     let importPreferences: ImportPreferences
     let setImportPreferences: (ImportPreferences) -> Void
@@ -34,7 +35,8 @@ struct SettingsView: View {
             LibrariesSettingsView(
                 libraries: libraries,
                 addLibrary: addLibrary,
-                removeLibrary: removeLibrary
+                removeLibrary: removeLibrary,
+                moveLibrary: moveLibrary
             )
             .tabItem {
                 Label("Libraries", systemImage: "folder")
@@ -217,6 +219,10 @@ private struct LibrariesSettingsView: View {
     let libraries: [CatalogLibraryState]
     let addLibrary: (URL) -> Void
     let removeLibrary: (LibraryRoot) -> Void
+    /// Drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ all call this one intent (plan
+    /// 0092 increment 4) — one user action, one path. Indices are positions in
+    /// `libraries`' current (stored) order.
+    let moveLibrary: (Int, Int) -> Void
 
     @State private var showingImporter = false
     @State private var selectedPath: LibraryRootPath?
@@ -241,26 +247,39 @@ private struct LibrariesSettingsView: View {
                 .disabled(selectedRoot == nil)
             }
 
-            Table(libraries, selection: $selectedPath) {
-                TableColumn("Name") { library in
-                    Text(library.displayName)
-                        .lineLimit(1)
+            // List, because only List supports drag-to-reorder (`.onMove`) in
+            // this SDK, and drag/Move Up/Move Down/⌘↑/⌘↓ all need to share
+            // one path.
+            List(selection: $selectedPath) {
+                ForEach(Array(libraries.enumerated()), id: \.element.path) { index, library in
+                    libraryRow(library)
+                        .tag(library.path)
+                        .contextMenu {
+                            Button("Move Up") { moveLibrary(index, index - 1) }
+                                .disabled(index == 0)
+                            Button("Move Down") { moveLibrary(index, index + 1) }
+                                .disabled(index == libraries.count - 1)
+                        }
                 }
-                .width(min: 140, ideal: 180)
-
-                TableColumn("Path") { library in
-                    Text(library.path.rawValue)
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
+                .onMove { indices, destination in
+                    guard let sourceIndex = indices.first else { return }
+                    let resolvedDestination = destination > sourceIndex ? destination - 1 : destination
+                    moveLibrary(sourceIndex, resolvedDestination)
                 }
-
-                TableColumn("Availability") { library in
-                    Text(library.availability.label)
-                        .foregroundStyle(
-                            library.availability == .unavailable ? Color.orange : Color.secondary
-                        )
-                }
-                .width(min: 100, ideal: 120)
+            }
+            // Invisible, keyboard-only mirrors of the Move Up/Down menu items —
+            // ⌘↑/⌘↓ act on the current selection without requiring the context
+            // menu to be open (DES-080: reorder is completable from the
+            // keyboard alone).
+            .background {
+                Button("Move Up") { moveSelected(by: -1) }
+                    .keyboardShortcut(.upArrow, modifiers: .command)
+                    .disabled(!canMoveSelected(by: -1))
+                    .opacity(0).allowsHitTesting(false)
+                Button("Move Down") { moveSelected(by: 1) }
+                    .keyboardShortcut(.downArrow, modifiers: .command)
+                    .disabled(!canMoveSelected(by: 1))
+                    .opacity(0).allowsHitTesting(false)
             }
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.folder]) { result in
@@ -285,6 +304,43 @@ private struct LibrariesSettingsView: View {
                 """
             )
         }
+    }
+
+    private func libraryRow(_ library: CatalogLibraryState) -> some View {
+        HStack {
+            Text(library.displayName)
+                .lineLimit(1)
+                .frame(minWidth: 140, idealWidth: 180, alignment: .leading)
+            Text(library.path.rawValue)
+                .lineLimit(1)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(library.availability.label)
+                .foregroundStyle(library.availability == .unavailable ? Color.orange : Color.secondary)
+                .frame(minWidth: 100, idealWidth: 120, alignment: .leading)
+        }
+    }
+
+    private var selectedIndex: Int? {
+        guard let selectedPath else {
+            return nil
+        }
+        return libraries.firstIndex { $0.path == selectedPath }
+    }
+
+    private func canMoveSelected(by offset: Int) -> Bool {
+        guard let selectedIndex else {
+            return false
+        }
+        let destination = selectedIndex + offset
+        return libraries.indices.contains(destination)
+    }
+
+    private func moveSelected(by offset: Int) {
+        guard let selectedIndex, canMoveSelected(by: offset) else {
+            return
+        }
+        moveLibrary(selectedIndex, selectedIndex + offset)
     }
 
     private var selectedRoot: LibraryRoot? {
@@ -318,6 +374,7 @@ private struct LibrariesSettingsView: View {
         removableDestinations: [:],
         addLibrary: { _ in },
         removeLibrary: { _ in },
+        moveLibrary: { _, _ in },
         forgetRemovableSource: { _ in },
         importPreferences: .default,
         setImportPreferences: { _ in },

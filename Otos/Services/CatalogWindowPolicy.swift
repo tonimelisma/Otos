@@ -7,14 +7,20 @@ import Foundation
 /// publish UI state; `CatalogProjection` calls them from its actor-owned
 /// publication loop.
 nonisolated enum CatalogWindowPolicy {
+    /// Library-kind roots preserve the caller's incoming order — `sort_index`
+    /// order from `CatalogStore.currentLibraries()`, user-owned via Settings →
+    /// Libraries (plan 0092 increment 4). Removable sources have no user-facing
+    /// order to preserve, so they keep the previous display-name rule.
     static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
-        libraries.sorted { left, right in
+        let fixed = libraries.filter { $0.kind == .library }
+        let removable = libraries.filter { $0.kind != .library }.sorted { left, right in
             let displayComparison = left.displayName.localizedStandardCompare(right.displayName)
             if displayComparison == .orderedSame {
                 return left.path.rawValue.localizedStandardCompare(right.path.rawValue) == .orderedAscending
             }
             return displayComparison == .orderedAscending
         }
+        return fixed + removable
     }
 
     static func sourceRows(

@@ -125,6 +125,42 @@ struct CatalogStoreTests {
         #expect(reloaded.testAssets.map(\.name) == ["a.jpg"])
     }
 
+    /// Plan 0092 increment 4: library order is a stored property of the root,
+    /// user-owned via `moveLibrary(from:to:)` — not derived, and not a parallel
+    /// list in preferences that would drift when a root is removed.
+    @Test func moveLibraryReordersAndSurvivesReload() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let urls = ["Zebra", "Alpha", "Middle"].map { temp.appending(path: $0, directoryHint: .isDirectory) }
+        for url in urls {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        for url in urls {
+            try await store.addLibrary(url: url)
+        }
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.libraries.count == 3 && snapshot.libraries.allSatisfy { !$0.isScanning }
+        }
+        let paths = try urls.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
+        #expect(await store.currentLibraries().map(\.path) == paths, "New libraries append in add order")
+
+        // Move "Middle" (index 2) to the front.
+        try await store.moveLibrary(from: 2, to: 0)
+        let reordered = [paths[2], paths[0], paths[1]]
+        #expect(await store.currentLibraries().map(\.path) == reordered)
+
+        // No-op moves (already-clamped or same index) must not disturb order.
+        try await store.moveLibrary(from: 0, to: 0)
+        try await store.moveLibrary(from: 1, to: 99)
+        #expect(await store.currentLibraries().map(\.path) == [reordered[0], paths[1], reordered[1]])
+
+        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        try await reloadedStore.start(scansSavedLibraries: false)
+        #expect(await reloadedStore.currentLibraries().map(\.path) == [reordered[0], paths[1], reordered[1]])
+    }
+
     @Test func mediaChoiceDefaultsPersistsAcceptsSameValueAndSurvivesReload() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

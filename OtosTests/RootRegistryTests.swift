@@ -21,6 +21,7 @@ struct RootRegistryTests {
                 displayName: path.rawValue
             ),
             rowID: rowID,
+            sortIndex: rowID,
             availability: availability,
             activity: .idle,
             isEjectable: false
@@ -36,6 +37,7 @@ struct RootRegistryTests {
                 displayName: "Card"
             ),
             rowID: rowID,
+            sortIndex: rowID,
             availability: availability,
             activity: .idle,
             isEjectable: true

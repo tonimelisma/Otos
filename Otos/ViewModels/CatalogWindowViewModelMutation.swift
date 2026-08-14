@@ -43,6 +43,15 @@ extension CatalogWindowViewModel {
         submitCatalogMutation(.removeLibrary(library.path))
     }
 
+    /// One path for drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ in Settings →
+    /// Libraries (plan 0092 increment 4).
+    func moveLibrary(from sourceIndex: Int, to destinationIndex: Int) {
+        OtosLog.ui.noticeOperation("intent.moveLibrary", phase: "received", fields: [
+            "from": "\(sourceIndex)", "to": "\(destinationIndex)",
+        ])
+        submitCatalogMutation(.moveLibrary(from: sourceIndex, to: destinationIndex))
+    }
+
     func ejectRemovableSource(_ source: LibraryRoot) {
         OtosLog.ui.noticeOperation("intent.eject", phase: "received", fields: [
             "sourcePath": source.path.rawValue,
@@ -82,6 +91,9 @@ extension CatalogWindowViewModel {
             return nil
         case let .removeLibrary(path):
             await performRemoveLibrary(path, store: store)
+            return nil
+        case let .moveLibrary(sourceIndex, destinationIndex):
+            await performMoveLibrary(from: sourceIndex, to: destinationIndex, store: store)
             return nil
         case let .ejectRemovableSource(root):
             return await performEjectRemovableSource(
@@ -221,6 +233,23 @@ private extension CatalogWindowViewModel {
                 "Catalog remove library failed",
                 operation: "catalog.library.remove",
                 fields: ["rootPath": path.rawValue],
+                error: error
+            )
+        }
+    }
+
+    nonisolated static func performMoveLibrary(
+        from sourceIndex: Int,
+        to destinationIndex: Int,
+        store: CatalogStore
+    ) async {
+        do {
+            try await store.moveLibrary(from: sourceIndex, to: destinationIndex)
+        } catch {
+            await recordMutationError(
+                "Catalog move library failed",
+                operation: "catalog.library.move",
+                fields: ["from": "\(sourceIndex)", "to": "\(destinationIndex)"],
                 error: error
             )
         }

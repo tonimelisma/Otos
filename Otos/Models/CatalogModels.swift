@@ -321,9 +321,13 @@ nonisolated enum CatalogLibraryActivity: Hashable {
 /// adds transient runtime facts needed by the current UI surfaces.
 nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     let root: LibraryRoot
-    /// Durable SQLite insertion order used only for behavioral defaults such as
-    /// import destination selection. Presentation sorting remains a Projection concern.
-    let addOrder: Int64
+    /// User-controlled order, durable on the root row (plan 0092 increment 4).
+    /// Authoritative for library-kind roots: the first available one, in this
+    /// order, is the deterministic import destination, and Settings → Libraries
+    /// shows and reorders exactly this order. Removable sources carry a value
+    /// too but are sorted by display name at query time regardless
+    /// (`CatalogWindowPolicy.sortLibraries`).
+    let sortIndex: Int64
     let availability: LibraryAvailability
     let activity: CatalogLibraryActivity
     let isEjectable: Bool
@@ -366,13 +370,13 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
 
     init(
         root: LibraryRoot,
-        addOrder: Int64 = 0,
+        sortIndex: Int64 = 0,
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool = false
     ) {
         self.root = root
-        self.addOrder = addOrder
+        self.sortIndex = sortIndex
         self.availability = availability
         self.activity = activity
         self.isEjectable = isEjectable

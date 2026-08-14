@@ -276,7 +276,52 @@ extension CatalogStore {
                 CHECK (media_choice IN ('liked', 'notRated', 'disliked'))
             """)
         }
+        migrator.registerMigration("v15_library_root_sort_index") { db in
+            try db.execute(sql: "ALTER TABLE library_root ADD COLUMN sort_index INTEGER NOT NULL DEFAULT 0")
+            try backfillLibraryRootSortIndex(db)
+        }
         return migrator
+    }
+
+    /// Backfills `sort_index` in **today's displayed order** so upgrading does not
+    /// reshuffle the sidebar (ADR/plan 0092 increment 4). That order is the display
+    /// name (falling back to the path's last component), the same comparison
+    /// `CatalogWindowPolicy.sortLibraries` used before this migration made the
+    /// column authoritative — replicated here in Swift because SQLite has no
+    /// locale-aware string comparison. Only library-kind roots get a meaningful
+    /// order; removable sources are ordered by display name at query time
+    /// regardless of this column, so insertion order is a harmless default for them.
+    private static func backfillLibraryRootSortIndex(_ db: Database) throws {
+        struct LegacyRoot { let id: Int64
+            let path: String
+            let displayName: String?
+        }
+        let rows = try Row.fetchAll(db, sql: "SELECT id, path, display_name, kind FROM library_root")
+        let libraries = rows.filter { ($0["kind"] as String?) == LibraryRootKind.library.rawValue }
+            .map { LegacyRoot(id: $0["id"], path: $0["path"], displayName: $0["display_name"]) }
+        let others = rows.filter { ($0["kind"] as String?) != LibraryRootKind.library.rawValue }
+            .map { LegacyRoot(id: $0["id"], path: $0["path"], displayName: $0["display_name"]) }
+
+        func effectiveDisplayName(_ root: LegacyRoot) -> String {
+            if let displayName = root.displayName, !displayName.isEmpty {
+                return displayName
+            }
+            let name = (root.path as NSString).lastPathComponent
+            return name.isEmpty ? root.path : name
+        }
+        let orderedLibraries = libraries.sorted { left, right in
+            let comparison = effectiveDisplayName(left).localizedStandardCompare(effectiveDisplayName(right))
+            if comparison == .orderedSame {
+                return left.path.localizedStandardCompare(right.path) == .orderedAscending
+            }
+            return comparison == .orderedAscending
+        }
+        for (index, root) in orderedLibraries.enumerated() {
+            try db.execute(sql: "UPDATE library_root SET sort_index = ? WHERE id = ?", arguments: [index, root.id])
+        }
+        for root in others.sorted(by: { $0.id < $1.id }) {
+            try db.execute(sql: "UPDATE library_root SET sort_index = ? WHERE id = ?", arguments: [root.id, root.id])
+        }
     }
 
     /// Rebuilds `asset_metadata` so path remaps cascade with media_asset PK updates
@@ -498,9 +543,9 @@ extension CatalogStore {
         let roots = try Row.fetchAll(
             db,
             sql: """
-            SELECT id, path, kind, device_identity, display_name, last_seen_at
+            SELECT id, path, kind, device_identity, display_name, last_seen_at, sort_index
             FROM library_root
-            ORDER BY path COLLATE NOCASE, path
+            ORDER BY sort_index, path COLLATE NOCASE, path
             """
         ).map { row in
             let kindRaw: String = row["kind"]
@@ -511,11 +556,21 @@ extension CatalogStore {
                 kind: LibraryRootKind(rawValue: kindRaw) ?? .library,
                 deviceIdentity: row["device_identity"],
                 displayName: row["display_name"],
-                lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:))
+                lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:)),
+                sortIndex: row["sort_index"]
             )
         }
         let assetCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
         return (roots, assetCount)
+    }
+
+    /// One past the highest `sort_index` currently in use, so a newly added root
+    /// (library or removable) appends after everything else rather than colliding.
+    /// Global rather than scoped to `kind` — the column is only *meaningful* for
+    /// ordering library-kind roots (`import-bar.md`/plan 0092 increment 4), but
+    /// every row needs some value, and a single counter is simpler than two.
+    static func nextLibraryRootSortIndex(db: Database) throws -> Int64 {
+        try (Int64.fetchOne(db, sql: "SELECT MAX(sort_index) FROM library_root") ?? -1) + 1
     }
 
     static func insertLibraryRoot(
@@ -524,12 +579,14 @@ extension CatalogStore {
         deviceIdentity: String? = nil,
         displayName: String? = nil,
         lastSeenAt: Date? = nil,
+        sortIndex: Int64? = nil,
         db: Database
     ) throws -> StoredRoot {
+        let resolvedSortIndex = try sortIndex ?? nextLibraryRootSortIndex(db: db)
         try db.execute(
             sql: """
-            INSERT INTO library_root (path, kind, device_identity, display_name, last_seen_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO library_root (path, kind, device_identity, display_name, last_seen_at, sort_index)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 path.rawValue,
@@ -537,6 +594,7 @@ extension CatalogStore {
                 deviceIdentity,
                 displayName,
                 lastSeenAt?.timeIntervalSince1970,
+                resolvedSortIndex,
             ]
         )
         return StoredRoot(
@@ -545,8 +603,23 @@ extension CatalogStore {
             kind: kind,
             deviceIdentity: deviceIdentity,
             displayName: displayName,
-            lastSeenAt: lastSeenAt
+            lastSeenAt: lastSeenAt,
+            sortIndex: resolvedSortIndex
         )
+    }
+
+    /// Writes new `sort_index` values for a reordered set of library roots. The
+    /// caller (`CatalogStore.moveLibrary(from:to:)`) computes the reordered array;
+    /// this only persists it. One statement per row rather than a single UPDATE
+    /// with a CASE expression — the set is sidebar-sized (tens, not thousands) and
+    /// this reads far more directly than a generated CASE list.
+    static func writeLibraryRootSortIndexes(_ pathsInOrder: [LibraryRootPath], db: Database) throws {
+        for (index, path) in pathsInOrder.enumerated() {
+            try db.execute(
+                sql: "UPDATE library_root SET sort_index = ? WHERE path = ?",
+                arguments: [index, path.rawValue]
+            )
+        }
     }
 
     static func updateLibraryRootPath(

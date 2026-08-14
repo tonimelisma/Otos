@@ -7,6 +7,12 @@ import Foundation
 nonisolated struct RootRuntimeState: Equatable {
     var root: LibraryRoot
     var rowID: Int64
+    /// User-controlled order (plan 0092 increment 4), authoritative only for
+    /// library-kind roots — the first available one is the deterministic import
+    /// destination. Removable sources carry it too (every row needs a value,
+    /// `nextLibraryRootSortIndex` is not kind-scoped) but their sidebar order
+    /// comes from display name at query time regardless.
+    var sortIndex: Int64
     var availability: LibraryAvailability
     /// Stored activity (idle / enumerating / …). `.scanning` is derived from `activeScan`
     /// in `CatalogStore.activity(for:)` and is not written here.
@@ -42,6 +48,7 @@ nonisolated struct RootRuntimeState: Equatable {
     init(
         root: LibraryRoot,
         rowID: Int64,
+        sortIndex: Int64,
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
@@ -52,6 +59,7 @@ nonisolated struct RootRuntimeState: Equatable {
     ) {
         self.root = root
         self.rowID = rowID
+        self.sortIndex = sortIndex
         self.availability = availability
         self.activity = activity
         self.isEjectable = isEjectable
