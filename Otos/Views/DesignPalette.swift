@@ -1,0 +1,92 @@
+import AppKit
+import SwiftUI
+
+/// DES-021/DES-022/DES-023 palette guide.
+///
+/// The one file DES-020 permits to write a color literal: Otos's chrome is
+/// lighter than the system default (DES-022) and its text levels use custom
+/// opacities because the system secondary/tertiary label colors fail the text
+/// contrast minimum on that lighter chrome (`hig-validation.md` F-1/F-2).
+/// Every other view names colors semantically via `.primary`/system
+/// materials/`Color.accentColor` or these members; `guard-design-system.sh`
+/// allowlists only this file.
+nonisolated enum DesignPalette {
+    // MARK: - DES-021 text
+
+    /// L1/L2: label at 85% opacity, both appearances. L1 and L2 share this one
+    /// text color; DES-002/DES-003 differentiate them by weight and size, not
+    /// color.
+    static func label(for colorScheme: ColorScheme) -> Color {
+        base(for: colorScheme).opacity(0.85)
+    }
+
+    /// L3: 60% black light / 60% white dark — 5.7:1 / 6.2:1 against the bar
+    /// chrome (`hig-validation.md` F-1), clearing the 4.5:1 text minimum the
+    /// system secondary label color fails at this chrome's lightness.
+    static func l3(for colorScheme: ColorScheme) -> Color {
+        base(for: colorScheme).opacity(0.60)
+    }
+
+    /// L4: 45%, both appearances — 3.3:1 light / 4.1:1 dark against the bar
+    /// chrome. DES-084: under Increase Contrast, L4 is promoted to `l3`'s
+    /// value rather than kept at 45%, since 45% falls under the 4.5:1 text
+    /// floor `hig-validation.md` F-2 requires once a user has asked for more
+    /// contrast. `increaseContrast` defaults to the live accessibility
+    /// setting; callers pass it explicitly only to test the promotion rule.
+    static func l4(
+        for colorScheme: ColorScheme,
+        increaseContrast: Bool = prefersIncreaseContrast
+    ) -> Color {
+        increaseContrast ? l3(for: colorScheme) : base(for: colorScheme).opacity(0.45)
+    }
+
+    // MARK: - DES-022 chrome
+
+    static func content(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? Color(hex: 0x1C1C1E) : Color(hex: 0xFFFFFF)
+    }
+
+    static func sidebar(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? Color(hex: 0x242426) : Color(hex: 0xFAFAFB)
+    }
+
+    static func bar(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? Color(hex: 0x2A2A2C) : Color(hex: 0xFBFBFC)
+    }
+
+    // MARK: - DES-023 hairline
+
+    /// 8% black light / 10% white dark. DES-084: under Increase Contrast,
+    /// hairlines revert to the system separator strength instead of this
+    /// deviation. `increaseContrast` defaults to the live accessibility
+    /// setting; callers pass it explicitly only to test the reversion rule.
+    static func hairline(
+        for colorScheme: ColorScheme,
+        increaseContrast: Bool = prefersIncreaseContrast
+    ) -> Color {
+        guard !increaseContrast else {
+            return Color(nsColor: .separatorColor)
+        }
+        return base(for: colorScheme).opacity(colorScheme == .dark ? 0.10 : 0.08)
+    }
+
+    // MARK: - Live accessibility state
+
+    static var prefersIncreaseContrast: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
+    }
+
+    private static func base(for colorScheme: ColorScheme) -> Color {
+        colorScheme == .dark ? .white : .black
+    }
+}
+
+private nonisolated extension Color {
+    init(hex: UInt32) {
+        self.init(
+            red: Double((hex >> 16) & 0xFF) / 255,
+            green: Double((hex >> 8) & 0xFF) / 255,
+            blue: Double(hex & 0xFF) / 255
+        )
+    }
+}

@@ -4,7 +4,7 @@ ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # DES-001/DES-020: no font-size or color literals in views. Otos's own values
 # live in exactly one allowlisted file, the DES-021/022 palette.
-FONT_COLOR_ALLOWLIST=()
+FONT_COLOR_ALLOWLIST=("Otos/Views/DesignPalette.swift")
 is_font_color_allowlisted() {
   local p="$1" a
   for a in "${FONT_COLOR_ALLOWLIST[@]+"${FONT_COLOR_ALLOWLIST[@]}"}"; do [[ "$p" == "$a" ]] && return 0; done

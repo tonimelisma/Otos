@@ -29,9 +29,14 @@ same way on a light window. But Otos's chrome is *lighter* than the system defau
 information — counts, remaining time — so it cannot be treated as decorative.
 
 **Correction:** L3 uses 60% black on light chrome and 60% white on dark (5.7:1 and
-6.0:1). L4 uses 45% (3.3:1 light, 4.4:1 dark). The tertiary level is reserved for
-non-text elements — hairlines, disabled glyphs — where the 3:1 non-text rule
-applies and the drafted values pass.
+6.2:1 against the bar chrome). L4 uses 45% (3.3:1 light, 4.1:1 dark against the bar
+chrome). The tertiary level is reserved for non-text elements — hairlines, disabled
+glyphs — where the 3:1 non-text rule applies and the drafted values pass.
+
+Re-measured 2026-08-13 against `DesignPalette`'s shipped values (`DesignPaletteTests`
+computes WCAG contrast from the actual resolved `Color`s, alpha-composited over the
+bar chrome) — the L3-dark and L4-dark figures above were revised from the original
+estimate (6.0:1, 4.4:1) to match.
 
 ### F-2 — L4 was permitted to carry information it cannot legibly carry (applied)
 
