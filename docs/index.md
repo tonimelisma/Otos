@@ -18,6 +18,10 @@ Per-screen design specifications:
 
 - [design/import-bar.md](design/import-bar.md) — import status surface layout, states, and copy.
 
+Design supporting documents:
+
+- [design/hig-validation.md](design/hig-validation.md) — HIG and accessibility audit of the `DES-*` rules, with the measured contrast table and the re-test procedure.
+
 ## Architecture Decision Records
 
 Each ADR owns one architectural decision and justifies what was built. Supersede or
@@ -46,6 +50,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0019](adr/0019-import-plan-namespace-and-build-ownership.md) | Import plan namespace resolution by folder enumeration; off-actor build ownership. |
 | [0020](adr/0020-production-data-locations-and-the-developer-smoke-seam.md) | Production data locations and the developer smoke-run seam. |
 | [0021](adr/0021-concurrent-import-planning-and-destination-reservations.md) | Concurrent import planning, the cross-plan destination reservation ledger, and execution-scoped rebuild suppression. |
+| [0022](adr/0022-recoverable-media-deletion.md) | Recoverable Move to Trash: system Trash only, catalog-proven members, no permanent deletion. |
 
 ## Research
 
@@ -59,7 +64,7 @@ Non-authoritative: they record what we learned, not current behavior.
 
 ## Plans and roadmap
 
-- [plans/](plans/) — numbered work plans; completed plans are deleted, and the directory is currently clear.
+- [plans/](plans/) — numbered work plans; completed plans are deleted. Active: 0091 (curation), 0092 (import screen and design-system adoption).
 - [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
   guides work unless the user explicitly asks for roadmap input.
 - [templates/adr-template.md](templates/adr-template.md) — the ADR format.

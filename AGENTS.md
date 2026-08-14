@@ -197,6 +197,23 @@ is a concrete failure scenario plus `file:line`. A confirmed correctness bug or 
 lost invariant/requirement blocks merge; smells and Lens-B notes are logged on
 the PR.
 
+**(C) Design, for any change to a user-facing surface.** Five checks against
+`docs/design/design-system.md`, in this order:
+
+1. Name the surface's single L1 primary fact (DES-010). If you cannot, stop — the
+   surface is not designed yet.
+2. Assign every string on it to a level (DES-010–013).
+3. Check the zones and the fixed height across every state (DES-018, DES-053).
+4. Screenshot light and dark (DES-022), then grayscale one of them (DES-029).
+5. Tab through it with no mouse, and run it once with Reduce Motion on
+   (DES-080, DES-075).
+
+Cite the `DES-*` rules the change satisfies. A change that violates a rule either
+changes the rule in the same PR or is wrong. When a `DES-*` rule becomes observable
+behavior worth testing, add or update the `APP-*` row in `docs/requirements.md` and
+cite the `DES-*` ID in its Requirement text: the design doc says what it should look
+like, the requirement row says it is implemented and points at the test.
+
 ## Toolchain
 
 Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The
