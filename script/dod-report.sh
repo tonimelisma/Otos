@@ -83,6 +83,7 @@ if [[ -n "${DOD_PR:-}" ]]; then
 fi
 printf '\nThis is the single final DoD report for the increment. Do not use this output as a review handoff, partial, pre-merge, or ready-for-review report.\n'
 printf 'Post this full report on the PR and send the same full report to the user — never a summary with a link.\n'
+printf 'UI change: cites the DES-* rules it satisfies, and was reviewed in light and dark.\n'
 
 section "Final Questions"
 row_env DOD_DONE_STATUS "What was done" DOD_DONE

@@ -79,7 +79,8 @@ struct LoupeView: View {
                         // Poster-first — keep thumbnail until isReadyForDisplay.
                         if shouldShowPlayAffordance(for: id) {
                             Image(systemName: "play.circle.fill")
-                                .font(.system(size: 60))
+                                .resizable()
+                                .frame(width: 60, height: 60)
                                 .foregroundStyle(.white.opacity(0.92))
                                 .shadow(radius: 8)
                                 .allowsHitTesting(false)

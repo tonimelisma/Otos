@@ -183,6 +183,12 @@ check_doc_citations() {
   "$ROOT_DIR/script/check-doc-citations.sh" check
 }
 
+# DES-001/DES-020/DES-035/DES-039: no font/color literals or domain nouns in views.
+check_guard_design_system() {
+  local _head_sha="$1"
+  "$ROOT_DIR/script/guard-design-system.sh" check
+}
+
 check() {
   local event_name="${EVENT_NAME:-${GITHUB_EVENT_NAME:-workflow_dispatch}}"
   local base_sha="${BASE_SHA:-}"
@@ -193,6 +199,7 @@ check() {
   check_no_single_line_self_delegation "$head_sha"
   check_no_unchecked_sendable "$head_sha"
   check_doc_citations "$head_sha"
+  check_guard_design_system "$head_sha"
 
   case "$event_name" in
     pull_request)
