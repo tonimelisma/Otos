@@ -152,7 +152,7 @@ nonisolated enum CatalogQueryGateway {
                        content_hash_xxh3_128, content_hash_source_size, content_hash_source_mtime,
                        thumbnail_path,
                        duration_seconds,
-                       best_capture_unix, best_kind, best_format
+                       best_capture_unix, best_kind, best_format, media_choice
                 FROM media_asset
                 WHERE library_root_id = ? AND relative_path IN (\(placeholders))
                 """,
@@ -188,7 +188,7 @@ nonisolated enum CatalogQueryGateway {
                 sql: """
                 SELECT library_root_id, relative_path,
                        enriched_source_size, enriched_source_mtime, thumbnail_path,
-                       duration_seconds, best_kind
+                       duration_seconds, best_kind, media_choice
                 FROM media_asset
                 WHERE library_root_id = ? AND relative_path IN (\(placeholders))
                 """,
@@ -373,16 +373,25 @@ private nonisolated func filterPredicate(
     var clauses: [String] = []
     var arguments: [any DatabaseValueConvertible] = []
     let kinds = filter.kinds.sorted { $0.rawValue < $1.rawValue }
+    var mediaClauses: [String] = []
     if !kinds.isEmpty {
-        clauses.append("best_kind IN (\(sqlPlaceholders(count: kinds.count)))")
+        mediaClauses.append("best_kind IN (\(sqlPlaceholders(count: kinds.count)))")
         arguments.append(contentsOf: kinds.map(\.rawValue))
     }
     let formats = filter.formats.sorted()
     if !formats.isEmpty {
-        clauses.append("best_format IN (\(sqlPlaceholders(count: formats.count)))")
+        mediaClauses.append("best_format IN (\(sqlPlaceholders(count: formats.count)))")
         arguments.append(contentsOf: formats.map(\.rawValue))
     }
-    return ("(\(clauses.joined(separator: " OR ")))", arguments)
+    if !mediaClauses.isEmpty {
+        clauses.append("(\(mediaClauses.joined(separator: " OR ")))")
+    }
+    let choices = filter.choices.sorted { $0.rawValue < $1.rawValue }
+    if !choices.isEmpty {
+        clauses.append("media_choice IN (\(sqlPlaceholders(count: choices.count)))")
+        arguments.append(contentsOf: choices.map(\.rawValue))
+    }
+    return (clauses.isEmpty ? nil : clauses.joined(separator: " AND "), arguments)
 }
 
 private extension MediaSortDirection {
@@ -425,7 +434,8 @@ private nonisolated func storedAsset(from row: Row) -> StoredAsset {
         enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
         contentHash: (row["content_hash_xxh3_128"] as Data?).flatMap(XXH3Digest128.init(data:)),
         contentHashSourceSize: row["content_hash_source_size"],
-        contentHashSourceMTimeSeconds: row["content_hash_source_mtime"]
+        contentHashSourceMTimeSeconds: row["content_hash_source_mtime"],
+        mediaChoice: MediaChoice(rawValue: row["media_choice"] ?? "") ?? .default
     )
 }
 
@@ -438,6 +448,7 @@ private nonisolated func storedTileDetail(from row: Row) -> StoredTileDetail {
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
         enrichedSourceSize: row["enriched_source_size"],
-        enrichedSourceMTimeSeconds: row["enriched_source_mtime"]
+        enrichedSourceMTimeSeconds: row["enriched_source_mtime"],
+        mediaChoice: MediaChoice(rawValue: row["media_choice"] ?? "") ?? .default
     )
 }

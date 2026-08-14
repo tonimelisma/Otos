@@ -29,6 +29,7 @@ final class MediaGridCollectionView: NSCollectionView {
     var onReturnKey: (() -> Void)?
     var onEscapeKey: (() -> Void)?
     var onArrowKey: ((Int) -> Void)?
+    var onMediaChoiceKey: ((MediaChoice) -> Void)?
     /// When true, ←/→ are forwarded to `onArrowKey` instead of native collection nav.
     var forwardsArrowKeys = false
 
@@ -50,6 +51,13 @@ final class MediaGridCollectionView: NSCollectionView {
 
     override func keyDown(with event: NSEvent) {
         let chars = event.charactersIgnoringModifiers ?? ""
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if modifiers.subtracting(.shift).isEmpty,
+           let choice = MediaChoice(keyCharacter: chars)
+        {
+            onMediaChoiceKey?(choice)
+            return
+        }
         if chars == "\r" || chars == "\n" {
             onReturnKey?()
             return

@@ -126,34 +126,39 @@ struct MediaAssetTilePresentationTests {
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: brokenImage,
             badgeContent: .none
-        ) == "x.jpg, image, preview unavailable")
+        ) == "x.jpg, image, preview unavailable, not rated")
         let brokenVideo = makeDetail(path: "x.mp4", kind: .video, enrichedMTime: 1)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: brokenVideo,
             badgeContent: .none
-        ) == "x.mp4, video, preview unavailable")
+        ) == "x.mp4, video, preview unavailable, not rated")
         let brokenRaw = makeDetail(path: "x.CR3", kind: .raw, enrichedMTime: 1)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: brokenRaw,
             badgeContent: .none
-        ) == "x.CR3, image, preview unavailable")
+        ) == "x.CR3, image, preview unavailable, not rated")
 
         let loadingVideo = makeDetail(path: "v.mp4", kind: .video)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: loadingVideo,
             badgeContent: .none
-        ) == "v.mp4, video")
+        ) == "v.mp4, video, not rated")
         let loadingRaw = makeDetail(path: "r.CR3", kind: .raw)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: loadingRaw,
             badgeContent: .none
-        ) == "r.CR3, RAW image")
+        ) == "r.CR3, RAW image, not rated")
 
         let painted = makeDetail(path: "v.mp4", kind: .video, thumbnailPath: "t.jpg", durationSeconds: 42)
         #expect(MediaAssetTilePresentation.accessibilityLabel(
             detail: painted,
             badgeContent: .durationText("0:42")
-        ) == "v.mp4, video, 0:42")
+        ) == "v.mp4, video, 0:42, not rated")
+        let liked = makeDetail(path: "liked.jpg", kind: .image, mediaChoice: .liked)
+        #expect(MediaAssetTilePresentation.accessibilityLabel(
+            detail: liked,
+            badgeContent: .none
+        ) == "liked.jpg, image, liked")
     }
 
     @Test func thumbnailUnavailableIsDerivedFromStampWithoutPath() {
@@ -424,7 +429,8 @@ private func makeDetail(
     thumbnailPath: String? = nil,
     enrichedMTime: Int? = nil,
     enrichedSize: Int64? = nil,
-    durationSeconds: Double? = nil
+    durationSeconds: Double? = nil,
+    mediaChoice: MediaChoice = .default
 ) -> MediaTileDetail {
     MediaTileDetail(
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
@@ -433,6 +439,7 @@ private func makeDetail(
         bestKind: kind,
         durationSeconds: durationSeconds,
         enrichedSourceSize: enrichedSize,
-        enrichedSourceMTimeSeconds: enrichedMTime
+        enrichedSourceMTimeSeconds: enrichedMTime,
+        mediaChoice: mediaChoice
     )
 }

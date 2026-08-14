@@ -244,6 +244,22 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.lastReplacedComparePane == .left)
     }
 
+    @Test func swappingCompareKeepsActivePanePosition() {
+        let model = makeViewModeModel(loader: FakePreviewLoader())
+        let ids = makeViewModeIDs(count: 3)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
+        _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
+        model.enterCompare()
+        model.activateComparePane(.left)
+
+        model.swapComparedPhotos()
+
+        #expect(model.comparePair.left == ids[1])
+        #expect(model.comparePair.right == ids[0])
+        #expect(model.activeComparePane == .left)
+    }
+
     @Test func rapidArrowStormKeepsFinalFocusIdentity() async throws {
         let fake = FakePreviewLoader()
         await fake.setHold(true)

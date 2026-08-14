@@ -141,13 +141,13 @@ struct ReorganizationLeaseTests {
         try await store.start(scansSavedLibraries: false)
         try await store.ensureLibrary(url: root)
         let rootPath = LibraryRootPath(rawValue: root.path)
-        guard let lease = await store.acquireReorganizationLease(for: rootPath) else {
+        guard let lease = await store.acquireNamespaceMutationLease(for: rootPath, owner: .reorganization) else {
             Issue.record("expected lease")
             return
         }
-        #expect(await store.hasReorganizationLease(for: rootPath))
-        #expect(await store.releaseReorganizationLease(lease))
-        #expect(await store.hasReorganizationLease(for: rootPath) == false)
+        #expect(await store.hasNamespaceMutationLease(for: rootPath))
+        #expect(await store.releaseNamespaceMutationLease(lease))
+        #expect(await store.hasNamespaceMutationLease(for: rootPath) == false)
     }
 }
 
@@ -170,6 +170,11 @@ struct ReorganizationSettlementTests {
         }
 
         let rootPath = LibraryRootPath(rawValue: root.path)
+        let aID = MediaAssetID(
+            libraryRootPath: rootPath,
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+        #expect(try await store.setMediaChoice(.liked, for: [aID]).changedCount == 1)
         let now = Date(timeIntervalSince1970: 1_700_000_200)
         let key = ReorganizationComponentKey.make()
         let component = ActiveReorganizationComponent(
@@ -235,6 +240,13 @@ struct ReorganizationSettlementTests {
         let state = try await catalogStoreTestState(store)
         let paths = Set(state.testAssets.map(\.relativePath.rawValue))
         #expect(paths == ["a.jpg", "b.jpg"])
+        let remapped = try await store.mediaAssets(for: [
+            MediaAssetID(
+                libraryRootPath: rootPath,
+                relativePath: MediaRelativePath(rawValue: "b.jpg")
+            ),
+        ])
+        #expect(remapped.values.first?.mediaChoice == .liked)
     }
 
     @Test func journalStepsBindCurrentPathNotFinal() {

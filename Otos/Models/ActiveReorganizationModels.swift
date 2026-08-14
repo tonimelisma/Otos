@@ -86,9 +86,16 @@ nonisolated struct CatalogIdentityRemapBatch: Equatable, Sendable {
     let rootRevision: UInt64
 }
 
-nonisolated struct ReorganizationLease: Equatable, Sendable {
+nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
+    case importPublication
+    case reorganization
+    case mediaTrash
+}
+
+nonisolated struct RootNamespaceMutationLease: Equatable, Sendable {
     let libraryRootPath: LibraryRootPath
     let generation: UInt64
+    let owner: RootNamespaceMutationOwner
     var markedDirtyByExternalEvents: Bool
 }
 

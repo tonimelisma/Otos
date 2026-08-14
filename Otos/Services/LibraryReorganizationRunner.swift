@@ -64,7 +64,7 @@ actor LibraryReorganizationRunner {
                     // swiftlint:disable:next line_length
                     "op=reorganization.recover phase=retainJournal key=\(component.componentKey.rawValue, privacy: .public) componentPhase=\(component.phase.rawValue, privacy: .public)"
                 )
-                _ = await store.acquireReorganizationLease(for: component.libraryRootPath)
+                _ = await store.acquireNamespaceMutationLease(for: component.libraryRootPath, owner: .reorganization)
             }
         }
     }
@@ -111,13 +111,13 @@ actor LibraryReorganizationRunner {
     // Component loop + lease/settlement is intentionally cohesive.
     // swiftlint:disable:next function_body_length
     func run(libraryRoot: LibraryRootPath) async -> Outcome {
-        guard let lease = await store.acquireReorganizationLease(for: libraryRoot) else {
+        guard let lease = await store.acquireNamespaceMutationLease(for: libraryRoot, owner: .reorganization) else {
             return .failed(reason: "leaseUnavailable")
         }
 
         let built = await buildReadyPlan(libraryRoot: libraryRoot)
         guard case let .ready(plan) = built else {
-            _ = await store.releaseReorganizationLease(lease)
+            _ = await store.releaseNamespaceMutationLease(lease)
             if case let .blocked(reason) = built {
                 return .blocked(reason: reason)
             }
@@ -128,7 +128,7 @@ actor LibraryReorganizationRunner {
         }
 
         if plan.components.isEmpty {
-            _ = await store.releaseReorganizationLease(lease)
+            _ = await store.releaseNamespaceMutationLease(lease)
             return .completed(remapBatches: [], noOpCount: plan.noOpCount, relocateCount: 0)
         }
 
@@ -165,14 +165,14 @@ actor LibraryReorganizationRunner {
                 ),
                 factsByPath: factsByPath
             ) else {
-                _ = await store.releaseReorganizationLease(lease)
+                _ = await store.releaseNamespaceMutationLease(lease)
                 return .failed(reason: "journalBuildFailed")
             }
 
             do {
                 try await store.prepareReorganizationComponent(journal)
             } catch {
-                _ = await store.releaseReorganizationLease(lease)
+                _ = await store.releaseNamespaceMutationLease(lease)
                 return .failed(reason: "journalInsert")
             }
 
@@ -221,14 +221,14 @@ actor LibraryReorganizationRunner {
                     let batch = try await store.settleReorganizationComponent(key: key, remaps: remaps)
                     remapBatches.append(batch)
                 } catch {
-                    _ = await store.releaseReorganizationLease(lease)
+                    _ = await store.releaseNamespaceMutationLease(lease)
                     return .failed(reason: "settlementFailed")
                 }
             case .cancelled:
-                _ = await store.releaseReorganizationLease(lease)
+                _ = await store.releaseNamespaceMutationLease(lease)
                 return .cancelled
             case let .blocked(reason), let .failed(reason):
-                _ = await store.releaseReorganizationLease(lease)
+                _ = await store.releaseNamespaceMutationLease(lease)
                 return .failed(reason: reason)
             }
         }
@@ -237,7 +237,7 @@ actor LibraryReorganizationRunner {
             // swiftlint:disable:next line_length
             "op=reorganization.run phase=finish rootPath=\(libraryRoot.rawValue, privacy: .public) components=\(remapBatches.count, privacy: .public)"
         )
-        _ = await store.releaseReorganizationLease(lease)
+        _ = await store.releaseNamespaceMutationLease(lease)
         return .completed(
             remapBatches: remapBatches,
             noOpCount: plan.noOpCount,

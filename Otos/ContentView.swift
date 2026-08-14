@@ -81,6 +81,7 @@ struct ContentView: View {
                     ),
                     setKind: viewModel.setMediaKind,
                     setFileType: viewModel.setMediaFileType,
+                    setChoice: viewModel.setMediaChoice,
                     clearFilters: viewModel.clearMediaFilter
                 )
                 CatalogSortMenu(
@@ -115,6 +116,26 @@ struct ContentView: View {
             if let message = viewModel.ejectAlertMessage {
                 Text(message)
             }
+        }
+        .alert(
+            viewModel.trashAlertMessage ?? "Move to Trash",
+            isPresented: Binding(
+                get: { viewModel.trashAlertMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissTrashAlert()
+                    }
+                }
+            )
+        ) {
+            Button("Show in Finder") {
+                viewModel.showFailedTrashItemsInFinder()
+            }
+            Button("Dismiss", role: .cancel) {
+                viewModel.dismissTrashAlert()
+            }
+        } message: {
+            Text("The affected items remain selected.")
         }
         .confirmationDialog(
             "Reorganize Library?",
@@ -175,6 +196,10 @@ struct ContentView: View {
                 selectionHandlers: .from(viewModel),
                 onItemDoubleClick: { viewModel.openLoupe(id: $0) },
                 onReturnKey: { viewModel.openLoupe(id: nil) },
+                onMediaChoiceKey: { viewModel.submitMediaChoice($0, origin: .keyboard) },
+                onMediaChoice: { id, choice in
+                    viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
+                },
                 focusTargetID: viewModel.focusedAssetID,
                 identityRemapEpoch: viewModel.identityRemapEpoch,
                 identityRemapBatch: viewModel.identityRemapBatch
@@ -203,8 +228,17 @@ struct ContentView: View {
                     }
                 },
                 onEscape: viewModel.exitToGrid,
+                onMediaChoiceKey: { viewModel.submitMediaChoice($0, origin: .keyboard) },
+                onMediaChoice: { id, choice in
+                    viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
+                },
                 onDoubleClickPreview: viewModel.exitToGrid,
-                onPlayVideo: { id in viewModel.playLoupeVideo(id: id) }
+                onPlayVideo: { id in viewModel.playLoupeVideo(id: id) },
+                focusedMediaChoice: viewModel.panePreviews[.loupe]?.mediaChoice,
+                onPreviewMediaChoice: { choice in
+                    guard let id = viewModel.focusedAssetID else { return }
+                    viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
+                }
             )
             .navigationTitle(viewModel.state.title)
         case .compare:
@@ -228,7 +262,17 @@ struct ContentView: View {
                 onStripArrow: { delta in
                     viewModel.slideCompare(delta)
                 },
-                onEscape: viewModel.exitToGrid
+                onEscape: viewModel.exitToGrid,
+                onMediaChoiceKey: { viewModel.submitMediaChoice($0, origin: .keyboard) },
+                onMediaChoice: { id, choice in
+                    viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
+                },
+                leftMediaChoice: viewModel.panePreviews[.compareLeft]?.mediaChoice,
+                rightMediaChoice: viewModel.panePreviews[.compareRight]?.mediaChoice,
+                onPaneMediaChoice: { pane, choice in
+                    viewModel.submitMediaChoice(choice, target: .compare(pane), origin: .inline)
+                },
+                onPaneActivated: viewModel.activateComparePane
             )
             .navigationTitle(viewModel.state.title)
         }

@@ -12,9 +12,25 @@ struct SettingsView: View {
     let forgetRemovableSource: (LibraryRoot) -> Void
     let importPreferences: ImportPreferences
     let setImportPreferences: (ImportPreferences) -> Void
+    let advanceAfterMediaChoice: Bool
+    let setAdvanceAfterMediaChoice: (Bool) -> Void
 
     var body: some View {
         TabView {
+            Form {
+                Toggle(
+                    "Advance after choosing Liked, Not Rated, or Disliked",
+                    isOn: Binding(
+                        get: { advanceAfterMediaChoice },
+                        set: { value in setAdvanceAfterMediaChoice(value) }
+                    )
+                )
+            }
+            .formStyle(.grouped)
+            .tabItem {
+                Label("General", systemImage: "gearshape")
+            }
+
             LibrariesSettingsView(
                 libraries: libraries,
                 addLibrary: addLibrary,
@@ -304,7 +320,9 @@ private struct LibrariesSettingsView: View {
         removeLibrary: { _ in },
         forgetRemovableSource: { _ in },
         importPreferences: .default,
-        setImportPreferences: { _ in }
+        setImportPreferences: { _ in },
+        advanceAfterMediaChoice: false,
+        setAdvanceAfterMediaChoice: { _ in }
     )
 }
 

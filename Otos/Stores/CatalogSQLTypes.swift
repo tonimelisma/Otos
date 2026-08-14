@@ -26,6 +26,7 @@ nonisolated struct StoredAsset {
     var contentHash: XXH3Digest128?
     var contentHashSourceSize: Int64?
     var contentHashSourceMTimeSeconds: Int?
+    var mediaChoice: MediaChoice = .default
 }
 
 /// Store-owned, one-settlement snapshot of rebuildable enrichment. It is never
@@ -55,6 +56,7 @@ nonisolated struct StoredTileDetail {
     var durationSeconds: Double?
     var enrichedSourceSize: Int64?
     var enrichedSourceMTimeSeconds: Int?
+    var mediaChoice: MediaChoice = .default
 }
 
 nonisolated struct SQLQuery {

@@ -136,6 +136,9 @@ tile, 6 small control, 7 push button, 9–11 window and card.
 | DES-063 | Placeholders shall use the kind glyph at tertiary strength; failures use the slash variant. No spinner in a tile. | — |
 | DES-064 | Tiles shall carry no shadow, no hover lift, and no radius change across zoom levels. | — |
 | DES-065 | The grid shall render identically for a library and a removable source. A card is a source, not a mode. | Given a card and a library at the same zoom, the tile treatment is indistinguishable. |
+| DES-066 | Curation uses one three-action group — heart.fill, minus, xmark — with the exact user-facing states Liked, Not Rated, and Disliked. It is absent at rest and appears only on pointer hover in one material-backed group at the upper-left of Grid, filmstrip, Loupe, and each Compare pane. No resting badge, dimming, color label, star, thumb, or role text may communicate choice. | Given a tile or pane at rest, all three choices have identical visual treatment; given hover, exactly three verb-first actions appear without moving the media or covering the centered play affordance. |
+| DES-067 | Hover curation controls use at least 28×28 pt hit regions, preserve the configured 48, 72, and 192 pt filmstrip sizes, remain visible while traversing the group, consume their click, and use the 0.15 s state animation. Invisible controls are not keyboard-focus stops. | Given the smallest filmstrip, every action remains individually targetable; given Reduce Motion, appearance cross-fades without translation or scale. |
+| DES-068 | Curation is never color-only. The selected state is conveyed by symbol shape plus the accessibility value `liked`, `not rated`, or `disliked`; selected control/focus indication uses the system accent only for the actionable state. | Given grayscale or Increase Contrast, all three symbols and the active Compare target remain distinguishable. |
 
 ## Motion
 
@@ -147,6 +150,7 @@ tile, 6 small control, 7 push button, 9–11 window and card.
 | DES-073 | Completion shall be marked by the checkmark scaling from 0.6 with a light overshoot — the one flourish in the app, and not repeated elsewhere. | — |
 | DES-074 | Grid reorders shall animate position only, never opacity, and shall coalesce into one pass. | `Otos/Views/MediaGridAnimation.swift` |
 | DES-075 | Under Reduce Motion every animation above shall become a 0.15 s cross-fade; the completion checkmark shall simply appear. | Given Reduce Motion, nothing translates or scales. |
+| DES-076 | Move to Trash has no confirmation or success alert. A failure alert uses exactly `This Item Couldn't Be Moved to Trash` for one item or `Some Items Couldn't Be Moved to Trash` for a partial/multi-item failure, gives bounded counts without raw paths, and offers Show in Finder and Dismiss. | Given one or more moves fail, the alert identifies the bounded outcome and leaves failed items selected. |
 
 ## Accessibility
 
@@ -155,5 +159,6 @@ tile, 6 small control, 7 push button, 9–11 window and card.
 | DES-080 | Every operation shall be completable with the keyboard alone: Tab reaches a surface's controls in reading order, Return fires the prominent button, Escape cancels. | Given the import bar, unplug the mouse and import. |
 | DES-081 | Focus rings shall never be suppressed. | — |
 | DES-082 | VoiceOver labels shall lead with what distinguishes the element — filename first on a tile — then kind, then state. | `Otos/Views/MediaAssetTilePresentation.swift` |
+| DES-085 | Grid and filmstrip expose Like item, Mark item as not rated, and Dislike item as VoiceOver custom actions on the item rather than three Tab stops per tile. Loupe and Compare expose the current item/pane through the same menu, shortcut, and custom-action owner. | Given Full Keyboard Access or VoiceOver, every curation state can be performed and its resulting value is announced once. |
 | DES-083 | A status surface shall announce its primary line as a live region on state change only, never on every tick of a counter. | Given an import, VoiceOver speaks three times, not forty. |
 | DES-084 | Under Increase Contrast, hairlines revert to system separator strength and L4 is promoted to secondary. Under Reduce Transparency, bar and sidebar become opaque at the DES-022 values. | — |

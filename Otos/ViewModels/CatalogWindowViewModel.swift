@@ -85,6 +85,14 @@ final class CatalogWindowViewModel {
     /// Which compare pane was most recently replaced (click/slide/entry). Drives strip
     /// focus centering; defaults to `.right` on entry.
     var lastReplacedComparePane: PanePosition?
+    /// The pane targeted by the next curation command in compare mode. This is separate
+    /// from `lastReplacedComparePane`: a choice changes metadata, while pane focus is a
+    /// navigation concern and must remain stable when the detail projection refreshes.
+    var activeComparePane: PanePosition = .right
+    /// When enabled, a successful choice advances to the next surviving item in display
+    /// order. The preference is read and written here so grid, loupe, compare, keyboard,
+    /// and menu commands share one behavior owner.
+    var advanceAfterMediaChoice: Bool
     /// Full-size decodes keyed by pane slot and bound to the asset they belong to.
     /// Views render `image` only when `id` matches the pane's expected asset.
     var panePreviews: [PaneSlot: PanePreview] = [:]
@@ -142,6 +150,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
     @ObservationIgnored private let mutationStream: AsyncStream<CatalogMutationIntent>
     @ObservationIgnored let mutationContinuation: AsyncStream<CatalogMutationIntent>.Continuation
+    @ObservationIgnored let mediaChoiceStream: AsyncStream<MediaChoiceCommand>
+    @ObservationIgnored let mediaChoiceContinuation: AsyncStream<MediaChoiceCommand>.Continuation
     // Newest-value: only the latest viewport is a useful priority hint; an obsolete
     // scroll position carries no value, so an intermediate one is dropped.
     @ObservationIgnored private let viewportStream: AsyncStream<[MediaAssetID]>
@@ -171,14 +181,19 @@ final class CatalogWindowViewModel {
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
+    var trashAlertMessage: String?
+    var trashFailedIDs: [MediaAssetID] = []
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
     @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
+    @ObservationIgnored var mediaTrashCoordinator: MediaTrashCoordinator?
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
     @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
+    @ObservationIgnored var mediaChoiceForwardingTask: Task<Void, Never>?
+    @ObservationIgnored var mediaTrashTask: Task<Void, Never>?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
     @ObservationIgnored var deviceStagingSweepTask: Task<Void, Never>?
@@ -187,7 +202,7 @@ final class CatalogWindowViewModel {
     /// requests cancel before enqueueing another full-size decode.
     @ObservationIgnored var paneRequestTasks: [PaneSlot: Task<Void, Never>] = [:]
     @ObservationIgnored private var hasStarted = false
-    @ObservationIgnored private var queryGeneration = CatalogQueryRequest.initial.generation
+    @ObservationIgnored var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
     @ObservationIgnored let previewLoader: any PreviewLoading
@@ -214,6 +229,9 @@ final class CatalogWindowViewModel {
         let (mutationStream, mutationContinuation) = AsyncStream<CatalogMutationIntent>.makeStream(
             bufferingPolicy: .unbounded
         )
+        let (mediaChoiceStream, mediaChoiceContinuation) = AsyncStream<MediaChoiceCommand>.makeStream(
+            bufferingPolicy: .unbounded
+        )
         let (viewportStream, viewportContinuation) = AsyncStream<[MediaAssetID]>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
@@ -223,6 +241,7 @@ final class CatalogWindowViewModel {
         gridColumnCount = GridColumnCount.validated(storedColumns)
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
         stripTileEdge = Self.clampedStripTileEdge(storedStrip.map { CGFloat($0) })
+        advanceAfterMediaChoice = preferences.bool(forKey: Self.advanceAfterMediaChoiceDefaultsKey)
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
@@ -269,6 +288,8 @@ final class CatalogWindowViewModel {
         self.queryContinuation = queryContinuation
         self.mutationStream = mutationStream
         self.mutationContinuation = mutationContinuation
+        self.mediaChoiceStream = mediaChoiceStream
+        self.mediaChoiceContinuation = mediaChoiceContinuation
         self.viewportStream = viewportStream
         self.viewportContinuation = viewportContinuation
     }
@@ -281,6 +302,8 @@ final class CatalogWindowViewModel {
         catalogStartupTask?.cancel()
         queryForwardingTask?.cancel()
         mutationForwardingTask?.cancel()
+        mediaChoiceForwardingTask?.cancel()
+        mediaTrashTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()
@@ -299,6 +322,7 @@ final class CatalogWindowViewModel {
         paneRequestTasks.removeAll()
         queryContinuation.finish()
         mutationContinuation.finish()
+        mediaChoiceContinuation.finish()
         viewportContinuation.finish()
         if let mediaOps = mediaOperationCoordinator {
             Task { await mediaOps.shutdown() }
@@ -346,6 +370,7 @@ extension CatalogWindowViewModel {
 
         startQueryForwarding(projection: projection)
         startMutationForwarding(store: store, coordinator: enrichmentCoordinator)
+        startMediaChoiceForwarding(store: store)
         startStateConsumption(
             projection: projection,
             store: store,
@@ -658,6 +683,10 @@ extension CatalogWindowViewModel {
         ))
     }
 
+    func setMediaChoice(_ choice: MediaChoice, included: Bool) {
+        setMediaFilter(queryDescriptor.filter.settingChoice(choice, included: included))
+    }
+
     func setSortOrder(_ sort: MediaSortOrder) {
         setQueryDescriptor(CatalogQueryDescriptor(
             scope: queryDescriptor.scope,
@@ -751,6 +780,7 @@ extension CatalogWindowViewModel {
     /// Not `private`: `init` also reads this key to load the stored preference.
     static let gridColumnCountDefaultsKey = "mediaGridColumnCount"
     static let stripTileEdgeDefaultsKey = "mediaStripTileEdge"
+    static let advanceAfterMediaChoiceDefaultsKey = "advanceAfterMediaChoice"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
     func setGridColumnCount(_ requested: Int) {

@@ -87,6 +87,7 @@ extension CatalogStore {
     static func settleImportedAsset(
         operation: ActiveFileOperation,
         destinationRootID: Int64,
+        sourceRootID: Int64?,
         destinationRootPath: LibraryRootPath,
         relativePath: MediaRelativePath,
         byteSize: Int64,
@@ -125,7 +126,12 @@ extension CatalogStore {
                 import_destination_modified_at_epoch = ?,
                 content_hash_xxh3_128 = ?,
                 content_hash_source_size = ?,
-                content_hash_source_mtime = ?
+                content_hash_source_mtime = ?,
+                media_choice = COALESCE(
+                    (SELECT media_choice FROM media_asset
+                     WHERE library_root_id = ? AND relative_path = ?),
+                    media_choice
+                )
             WHERE library_root_id = ? AND relative_path = ?
             """,
             arguments: [
@@ -139,6 +145,8 @@ extension CatalogStore {
                 operation.contentHash?.data,
                 operation.contentHash == nil ? nil : byteSize,
                 operation.contentHash == nil ? nil : Int(contentModifiedAt.timeIntervalSince1970.rounded(.down)),
+                sourceRootID,
+                operation.sourceRelativePath.rawValue,
                 destinationRootID,
                 relativePath.rawValue,
             ]

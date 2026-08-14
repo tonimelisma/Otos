@@ -128,22 +128,39 @@ nonisolated struct MediaFileTypeOption: Hashable, Comparable {
 nonisolated struct MediaFilter: Hashable {
     var kinds: Set<MediaKind> = []
     var formats: Set<MediaFormatToken> = []
+    var choices: Set<MediaChoice> = []
 
     static let all = MediaFilter()
 
     var isActive: Bool {
-        !kinds.isEmpty || !formats.isEmpty
+        !kinds.isEmpty || !formats.isEmpty || !choices.isEmpty
     }
 
     func includes(kind: MediaKind?, format: MediaFormatToken?) -> Bool {
-        guard isActive else { return true }
-        if let kind, kinds.contains(kind) {
-            return true
+        (kinds.isEmpty && formats.isEmpty)
+            || (kind.map(kinds.contains) ?? false)
+            || (format.map(formats.contains) ?? false)
+    }
+
+    func includes(kind: MediaKind?, format: MediaFormatToken?, choice: MediaChoice) -> Bool {
+        let includesMedia = (kinds.isEmpty && formats.isEmpty)
+            || (kind.map(kinds.contains) ?? false)
+            || (format.map(formats.contains) ?? false)
+        let includesChoice = choices.isEmpty || choices.contains(choice)
+        return includesMedia && includesChoice
+    }
+
+    func settingChoice(_ choice: MediaChoice, included: Bool) -> MediaFilter {
+        var updated = self
+        if included {
+            updated.choices.insert(choice)
+        } else {
+            updated.choices.remove(choice)
         }
-        if let format, formats.contains(format) {
-            return true
+        if updated.choices == Set(MediaChoice.allCases) {
+            updated.choices = []
         }
-        return false
+        return updated
     }
 
     func settingKind(
@@ -195,7 +212,10 @@ nonisolated struct MediaFilter: Hashable {
             && kinds == availableKinds
             && formats.isEmpty
         if selectsEveryAvailableKind {
-            return .all
+            var result = self
+            result.kinds = []
+            result.formats = []
+            return result.choices.isEmpty ? .all : result
         }
         return self
     }
@@ -272,11 +292,13 @@ nonisolated struct CatalogQueryDescriptor: Hashable {
     var diagnosticDescription: String {
         let kindList = filter.kinds.map(\.rawValue).sorted().joined(separator: ",")
         let formatList = filter.formats.map(\.rawValue).sorted().joined(separator: ",")
+        let choiceList = filter.choices.map(\.rawValue).sorted().joined(separator: ",")
         return """
         scope=\(scope.diagnosticDescription) \
         sort=\(sort.field.rawValue):\(sort.direction.rawValue) \
         kinds=\(kindList.isEmpty ? "all" : kindList) \
-        formats=\(formatList.isEmpty ? "all" : formatList)
+        formats=\(formatList.isEmpty ? "all" : formatList) \
+        choices=\(choiceList.isEmpty ? "all" : choiceList)
         """
     }
 }

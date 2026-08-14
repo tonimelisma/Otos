@@ -123,11 +123,13 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(columns.contains("content_hash_xxh3_128"))
         #expect(columns.contains("content_hash_source_size"))
         #expect(columns.contains("content_hash_source_mtime"))
+        #expect(columns.contains("media_choice"))
         #expect(try await Self.activeFileOperationColumns(databaseURL).contains("content_hash_xxh3_128"))
 
         let applied = try await Self.appliedMigrationIdentifiers(databaseURL)
         #expect(applied.contains("v11_import_destination_provenance"))
         #expect(applied.contains("v12_xxh3_content_hashes"))
+        #expect(applied.contains("v14_media_choice"))
     }
 
     @Test func v5FixtureMigratesToImportHistoryAndCaptureWallWithoutErase() async throws {
@@ -148,6 +150,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(columns.contains("content_hash_xxh3_128"))
         #expect(columns.contains("content_hash_source_size"))
         #expect(columns.contains("content_hash_source_mtime"))
+        #expect(columns.contains("media_choice"))
 
         let snapshot = try await catalogStoreTestState(store)
         #expect(snapshot.libraries.count == 1)

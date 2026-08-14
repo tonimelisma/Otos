@@ -34,6 +34,12 @@ struct CatalogStoreAvailabilityTests {
         _ = try await waitForCatalogStoreState(firstStore) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.relativePath.rawValue) == ["a.jpg"]
         }
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let assetID = MediaAssetID(
+            libraryRootPath: rootPath,
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+        #expect(try await firstStore.setMediaChoice(.liked, for: [assetID]).changedCount == 1)
 
         try FileManager.default.removeItem(at: root)
 
@@ -46,6 +52,7 @@ struct CatalogStoreAvailabilityTests {
         }
         #expect(unavailable.libraries.first?.availability == .unavailable)
         #expect(unavailable.testAssets.map(\.relativePath.rawValue) == ["a.jpg"])
+        #expect(try await secondStore.mediaAssets(for: [assetID])[assetID]?.mediaChoice == .liked)
     }
 
     @Test func scanFailureRechecksRootBeforeMarkingUnavailable() async throws {

@@ -125,6 +125,95 @@ struct CatalogStoreTests {
         #expect(reloaded.testAssets.map(\.name) == ["a.jpg"])
     }
 
+    @Test func mediaChoiceDefaultsPersistsAcceptsSameValueAndSurvivesReload() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        try writeCatalogStoreFile(root.appending(path: "b.jpg"), contents: "jpeg")
+
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let store = CatalogStore(location: .databaseFile(databaseURL), scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 2 }
+        let ids = scanned.testAssets.map(\.id).sorted { $0.relativePath.rawValue < $1.relativePath.rawValue }
+        #expect(ids.count == 2)
+        #expect(try await store.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .notRated })
+
+        let firstWrite = try await store.setMediaChoice(.liked, for: ids)
+        #expect(firstWrite.existingCount == 2)
+        #expect(firstWrite.changedCount == 2)
+        let repeatedWrite = try await store.setMediaChoice(.liked, for: ids)
+        #expect(repeatedWrite.accepted)
+        #expect(repeatedWrite.changedCount == 0)
+        #expect(try await store.mediaAssets(for: ids).values.allSatisfy { $0.mediaChoice == .liked })
+
+        let reloadedStore = CatalogStore(location: .databaseFile(databaseURL))
+        try await reloadedStore.start(scansSavedLibraries: false)
+        let reloaded = try await reloadedStore.mediaAssets(for: ids)
+        #expect(reloaded.values.allSatisfy { $0.mediaChoice == .liked })
+    }
+
+    @Test func importSettlementCarriesChoiceFromCatalogedSource() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Source", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Destination", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(sourceRoot.appending(path: "source.jpg"), contents: "jpeg")
+
+        let store = CatalogStore(location: .databaseFile(temp.appending(path: "db/catalog.sqlite")))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: sourceRoot)
+        try await store.addLibrary(url: destinationRoot)
+        let scanned = try await waitForCatalogStoreState(store) { snapshot in
+            !snapshot.isScanning && snapshot.testAssets.count == 1
+        }
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        let sourceID = MediaAssetID(
+            libraryRootPath: sourcePath,
+            relativePath: MediaRelativePath(rawValue: "source.jpg")
+        )
+        #expect(scanned.testAssets.contains(where: { $0.id == sourceID }))
+        #expect(try await store.setMediaChoice(.liked, for: [sourceID]).changedCount == 1)
+
+        let operation = ActiveFileOperation(
+            operationKey: .make(),
+            mode: "test",
+            sourceKind: .library,
+            sourceDeviceIdentity: nil,
+            sourceRootPath: sourcePath,
+            sourceRelativePath: sourceID.relativePath,
+            destinationRootPath: destinationPath,
+            destinationRelativePath: MediaRelativePath(rawValue: "imported.jpg"),
+            stagingPath: nil,
+            contentHash: nil,
+            importBatchUnixMs: 1,
+            sourceByteSize: 4,
+            sourceModifiedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            destinationModifiedAt: Date(timeIntervalSince1970: 1_700_000_001),
+            phase: .publishedPendingSettlement,
+            deleteSourceRequested: false,
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_001)
+        )
+        try await store.beginImportOperation(operation)
+        _ = try await store.settleImportedAsset(
+            operation: operation,
+            byteSize: 4,
+            contentModifiedAt: operation.destinationModifiedAt ?? operation.sourceModifiedAt,
+            batch: ImportBatchID(unixMilliseconds: 1),
+            companions: []
+        )
+
+        let destinationID = MediaAssetID(
+            libraryRootPath: destinationPath,
+            relativePath: MediaRelativePath(rawValue: "imported.jpg")
+        )
+        #expect(try await store.mediaAssets(for: [destinationID])[destinationID]?.mediaChoice == .liked)
+    }
+
     @Test func scanSkipsPackageDescendantsAndRecordsDiagnostics() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -186,6 +275,11 @@ struct CatalogStoreTests {
         }
 
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+        let assetID = MediaAssetID(
+            libraryRootPath: rootPath,
+            relativePath: MediaRelativePath(rawValue: "a.jpg")
+        )
+        #expect(try await store.setMediaChoice(.disliked, for: [assetID]).changedCount == 1)
         try await store.removeLibrary(path: rootPath)
 
         let snapshot = try await catalogStoreTestState(store)

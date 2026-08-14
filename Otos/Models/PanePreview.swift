@@ -16,8 +16,15 @@ nonisolated enum PaneSlot: CaseIterable, Hashable {
 nonisolated struct PanePreview: Equatable {
     let id: MediaAssetID
     let image: CGImage
+    let mediaChoice: MediaChoice?
+
+    init(id: MediaAssetID, image: CGImage, mediaChoice: MediaChoice? = nil) {
+        self.id = id
+        self.image = image
+        self.mediaChoice = mediaChoice
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.id == rhs.id && lhs.image === rhs.image
+        lhs.id == rhs.id && lhs.image === rhs.image && lhs.mediaChoice == rhs.mediaChoice
     }
 }

@@ -74,6 +74,8 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onReturnKey: () -> Void = {}
     var onEscapeKey: () -> Void = {}
     var onArrowKey: (Int) -> Void = { _ in }
+    var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
+    var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
     /// Catalog identity remap batch from reorganization settlement (ARC-051).
@@ -101,6 +103,8 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onReturnKey = onReturnKey
         controller.onEscapeKey = onEscapeKey
         controller.onArrowKey = onArrowKey
+        controller.onMediaChoiceKey = onMediaChoiceKey
+        controller.onMediaChoice = onMediaChoice
         if identityRemapEpoch != controller.appliedIdentityRemapEpoch,
            let batch = identityRemapBatch
         {
@@ -193,6 +197,8 @@ final class MediaGridViewController: NSViewController {
     var onReturnKey: () -> Void = {}
     var onEscapeKey: () -> Void = {}
     var onArrowKey: (Int) -> Void = { _ in }
+    var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
+    var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     /// Current presentation; strip disables pinch and forwards arrow keys.
     private(set) var presentation: MediaGridPresentation
     /// The item under the gesture location at pinch start, held for the gesture's
@@ -462,6 +468,9 @@ extension MediaGridViewController {
         collectionView.onArrowKey = { [weak self] delta in
             self?.onArrowKey(delta)
         }
+        collectionView.onMediaChoiceKey = { [weak self] choice in
+            self?.onMediaChoiceKey(choice)
+        }
         collectionView.forwardsArrowKeys = presentation.isStrip
         collectionView.register(
             MediaGridItem.self,
@@ -487,6 +496,15 @@ extension MediaGridViewController {
             return nil
         }
         tileContents.pin(assetID)
+        item.onMediaChoice = { [weak self, weak item] choice in
+            guard let self, let item,
+                  let indexPath = self.collectionView.indexPath(for: item),
+                  let id = dataSource.itemIdentifier(for: indexPath)
+            else {
+                return
+            }
+            onMediaChoice(id, choice)
+        }
         let change = ensureContentAndMaybeDecode(for: assetID)
         renderItem(item, assetID: assetID, change: change)
         return item

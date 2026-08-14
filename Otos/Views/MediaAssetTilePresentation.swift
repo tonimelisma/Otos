@@ -156,22 +156,29 @@ enum MediaAssetTilePresentation {
         badgeContent: TileBadgeContent
     ) -> String {
         let name = (detail.relativePath.rawValue as NSString).lastPathComponent
-        if detail.thumbnailUnavailable {
-            return detail.bestKind == .video
+        let base: String = if detail.thumbnailUnavailable {
+            detail.bestKind == .video
                 ? "\(name), video, preview unavailable"
                 : "\(name), image, preview unavailable"
+        } else {
+            switch badgeContent {
+            case let .durationText(text): "\(name), video, \(text)"
+            case .filmIcon: "\(name), video"
+            case .rawLabel: "\(name), RAW image"
+            case .none:
+                switch detail.bestKind {
+                case .video: "\(name), video"
+                case .raw: "\(name), RAW image"
+                case .image: "\(name), image"
+                case .none: name
+                }
+            }
         }
-        switch badgeContent {
-        case let .durationText(text): return "\(name), video, \(text)"
-        case .filmIcon: return "\(name), video"
-        case .rawLabel: return "\(name), RAW image"
-        case .none: break
-        }
-        switch detail.bestKind {
-        case .video: return "\(name), video"
-        case .raw: return "\(name), RAW image"
-        case .image, .none: return name
-        }
+        return "\(base), \(detail.mediaChoice.accessibilityValue)"
+    }
+
+    nonisolated static func accessibilityValue(detail: MediaTileDetail) -> String {
+        detail.mediaChoice.accessibilityValue
     }
 
     /// SF Symbol for the centered placeholder glyph. Loading uses kind glyphs

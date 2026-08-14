@@ -24,8 +24,12 @@ struct LoupeView: View {
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     var onStripArrow: (Int) -> Void = { _ in }
     var onEscape: () -> Void = {}
+    var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
+    var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     var onDoubleClickPreview: () -> Void = {}
     var onPlayVideo: (MediaAssetID) -> Void = { _ in }
+    var focusedMediaChoice: MediaChoice?
+    var onPreviewMediaChoice: (MediaChoice) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,63 +45,68 @@ struct LoupeView: View {
     }
 
     private var previewPane: some View {
-        ZStack {
-            Color.black.opacity(0.92)
-            switch PanePresentation.display(
-                paneID: focusedAssetID,
-                preview: panePreview,
-                videoState: loupeVideoState
-            ) {
-            case let .video(state):
-                LoupeVideoPlayerView(state: state)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            case let .full(image):
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .accessibilityElement()
-                    .accessibilityLabel(paneAccessibilityLabel)
-                    .accessibilityAddTraits(.isImage)
-            case let .thumbnail(id):
-                ZStack {
-                    PaneThumbnailView(
-                        id: id,
-                        tileContentStore: tileContentStore,
-                        thumbnailDirectory: thumbnailDirectory,
-                        detailReader: detailReader
-                    )
-                    // Click-to-play affordance for video: centered play glyph.
-                    // Poster-first — keep thumbnail until isReadyForDisplay.
-                    if shouldShowPlayAffordance(for: id) {
-                        Image(systemName: "play.circle.fill")
-                            .font(.system(size: 60))
-                            .foregroundStyle(.white.opacity(0.92))
-                            .shadow(radius: 8)
-                            .allowsHitTesting(false)
+        MediaChoiceHoverRegion(
+            currentChoice: focusedMediaChoice,
+            onChoice: onPreviewMediaChoice
+        ) {
+            ZStack {
+                Color.black.opacity(0.92)
+                switch PanePresentation.display(
+                    paneID: focusedAssetID,
+                    preview: panePreview,
+                    videoState: loupeVideoState
+                ) {
+                case let .video(state):
+                    LoupeVideoPlayerView(state: state)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case let .full(image):
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityElement()
+                        .accessibilityLabel(paneAccessibilityLabel)
+                        .accessibilityAddTraits(.isImage)
+                case let .thumbnail(id):
+                    ZStack {
+                        PaneThumbnailView(
+                            id: id,
+                            tileContentStore: tileContentStore,
+                            thumbnailDirectory: thumbnailDirectory,
+                            detailReader: detailReader
+                        )
+                        // Click-to-play affordance for video: centered play glyph.
+                        // Poster-first — keep thumbnail until isReadyForDisplay.
+                        if shouldShowPlayAffordance(for: id) {
+                            Image(systemName: "play.circle.fill")
+                                .font(.system(size: 60))
+                                .foregroundStyle(.white.opacity(0.92))
+                                .shadow(radius: 8)
+                                .allowsHitTesting(false)
+                        }
                     }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    guard let focusedAssetID, focusedAssetKind == .video else {
-                        return
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        guard let focusedAssetID, focusedAssetKind == .video else {
+                            return
+                        }
+                        onPlayVideo(focusedAssetID)
                     }
-                    onPlayVideo(focusedAssetID)
+                case .empty:
+                    ContentUnavailableView("No Selection", systemImage: "photo")
                 }
-            case .empty:
-                ContentUnavailableView("No Selection", systemImage: "photo")
+                if isDownloading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(16)
+                }
             }
-            if isDownloading {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(16)
-            }
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2, perform: onDoubleClickPreview)
         }
-        .contentShape(Rectangle())
-        .onTapGesture(count: 2, perform: onDoubleClickPreview)
     }
 
     private func shouldShowPlayAffordance(for id: MediaAssetID) -> Bool {
@@ -129,6 +138,8 @@ struct LoupeView: View {
             presentation: .strip(tileEdge: stripTileEdge),
             onEscapeKey: onEscape,
             onArrowKey: onStripArrow,
+            onMediaChoiceKey: onMediaChoiceKey,
+            onMediaChoice: onMediaChoice,
             focusTargetID: focusedAssetID
         )
     }

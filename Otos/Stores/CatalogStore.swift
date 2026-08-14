@@ -176,6 +176,15 @@ actor CatalogStore {
         }
     }
 
+    nonisolated struct MediaChoiceMutationResult: Equatable, Sendable {
+        let existingCount: Int
+        let changedCount: Int
+
+        var accepted: Bool {
+            existingCount > 0
+        }
+    }
+
     private struct DatabaseTimedValue<Value: Sendable> {
         let value: Value
         let waitMs: Int
@@ -220,10 +229,11 @@ actor CatalogStore {
     private var lastSuccessfulFullRootScanAt: [LibraryRootPath: Date] = [:]
     private var integrityScanTask: Task<Void, Never>?
     private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
-    /// Typed reorganization lease per fixed root (ARC-051). Spans one
-    /// execution run; deferred dirty-only reconciliation runs at release.
-    private var reorganizationLeases: [LibraryRootPath: ReorganizationLease] = [:]
-    private var nextReorganizationLeaseGeneration: UInt64 = 0
+    /// Typed namespace-mutation lease per root. Import publication, library
+    /// reorganization, and system Trash share this one exclusion boundary;
+    /// deferred dirty-only reconciliation runs when the owner releases it.
+    private var namespaceMutationLeases: [LibraryRootPath: RootNamespaceMutationLease] = [:]
+    private var nextNamespaceMutationLeaseGeneration: UInt64 = 0
 
     /// Long-running-session integrity interval. Launch scans already repair after
     /// process death; this bounds residual FSEvents/provider misses while the app
@@ -720,6 +730,95 @@ extension CatalogStore {
             )
         }
         return detailsByID
+    }
+
+    /// Snapshots only catalog-proven physical members for explicit system-Trash
+    /// commands. Device/MTP rows are intentionally excluded because they do not
+    /// represent user-filesystem originals. Companion membership comes from the
+    /// inventoried pairing table, never from a filename heuristic.
+    func mediaTrashItems(for ids: [MediaAssetID]) async throws -> [MediaTrashItem] {
+        var seen = Set<MediaAssetID>()
+        let requested = ids.filter { seen.insert($0).inserted }
+        let assets = try await mediaAssets(for: requested)
+        let dbWriter = try database()
+        var items: [MediaTrashItem] = []
+        for id in requested {
+            guard let rootState = roots[id.libraryRootPath],
+                  rootState.root.kind != .deviceMTP,
+                  assets[id] != nil
+            else {
+                continue
+            }
+            let companions = try await dbWriter.read { db in
+                try Self.fetchCompanions(libraryRootID: rootState.rowID, db: db)
+                    .filter { $0.primaryRelativePath == id.relativePath }
+            }
+            let members = companions.map {
+                MediaTrashMember(relativePath: $0.relativePath, role: .companion)
+            } + [MediaTrashMember(relativePath: id.relativePath, role: .primary)]
+            items.append(MediaTrashItem(id: id, root: rootState.root, members: members))
+        }
+        return items
+    }
+
+    /// Changes the authored choice for every existing requested asset in one SQLite
+    /// transaction. A repeated choice is accepted with zero changed rows so the UI's
+    /// optional advance policy can still treat `U` as a deliberate command.
+    func setMediaChoice(
+        _ choice: MediaChoice,
+        for ids: [MediaAssetID]
+    ) async throws -> MediaChoiceMutationResult {
+        let requested = Array(Set(ids))
+        guard !requested.isEmpty else {
+            return MediaChoiceMutationResult(existingCount: 0, changedCount: 0)
+        }
+        let rootIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        let result = try await dbWriter.write { db in
+            var existingCount = 0
+            var changedCount = 0
+            for id in requested {
+                guard let rootID = rootIDs[id.libraryRootPath] else {
+                    continue
+                }
+                let exists = try Int.fetchOne(
+                    db,
+                    sql: "SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [rootID, id.relativePath.rawValue]
+                ) != nil
+                guard exists else {
+                    continue
+                }
+                existingCount += 1
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset
+                    SET media_choice = ?
+                    WHERE library_root_id = ? AND relative_path = ? AND media_choice <> ?
+                    """,
+                    arguments: [choice.rawValue, rootID, id.relativePath.rawValue, choice.rawValue]
+                )
+                changedCount += db.changesCount
+            }
+            return MediaChoiceMutationResult(
+                existingCount: existingCount,
+                changedCount: changedCount
+            )
+        }
+        if result.changedCount > 0 {
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.noticeOperation(
+            "catalog.mediaChoice",
+            phase: "finish",
+            fields: [
+                "choice": choice.rawValue,
+                "requested": "\(requested.count)",
+                "existing": "\(result.existingCount)",
+                "changed": "\(result.changedCount)",
+            ]
+        )
+        return result
     }
 
     private func recordSlowTileDetailQuery(
@@ -1367,6 +1466,9 @@ extension CatalogStore {
         try await ensureStartedForMutation()
         guard let rootState = roots[path] else {
             return
+        }
+        guard namespaceMutationLeases[path] == nil else {
+            throw CatalogStoreError.catalogUnavailable
         }
         let root = rootState.root
         let rootRowID = rootState.rowID
@@ -2258,7 +2360,8 @@ private extension CatalogStore {
             enrichedSourceMTimeSeconds: storedAsset.enrichedSourceMTimeSeconds,
             contentHash: storedAsset.contentHash,
             contentHashSourceSize: storedAsset.contentHashSourceSize,
-            contentHashSourceMTimeSeconds: storedAsset.contentHashSourceMTimeSeconds
+            contentHashSourceMTimeSeconds: storedAsset.contentHashSourceMTimeSeconds,
+            mediaChoice: storedAsset.mediaChoice
         )
     }
 
@@ -2270,7 +2373,8 @@ private extension CatalogStore {
             bestKind: storedDetail.bestKind,
             durationSeconds: storedDetail.durationSeconds,
             enrichedSourceSize: storedDetail.enrichedSourceSize,
-            enrichedSourceMTimeSeconds: storedDetail.enrichedSourceMTimeSeconds
+            enrichedSourceMTimeSeconds: storedDetail.enrichedSourceMTimeSeconds,
+            mediaChoice: storedDetail.mediaChoice
         )
     }
 
@@ -2351,7 +2455,7 @@ private extension CatalogStore {
             else {
                 continue
             }
-            if reorganizationLeases[nextPath] != nil {
+            if namespaceMutationLeases[nextPath] != nil {
                 // Defer until lease release; do not spin the pending queue.
                 scanLeases.markRescanAfterCurrentScan(nextPath)
                 continue
@@ -2886,8 +2990,8 @@ private extension CatalogStore {
         OtosLog.catalog.debug(
             "Filesystem event received path=\(event.path, privacy: .public) root=\(root.rawValue, privacy: .public)"
         )
-        if reorganizationLeases[root] != nil {
-            markReorganizationLeaseDirty(for: root)
+        if namespaceMutationLeases[root] != nil {
+            markNamespaceMutationLeaseDirty(for: root)
             bumpPlanRevision(for: root)
             filesystemEventBatches.removeValue(forKey: root)
             OtosLog.catalog.debug(
@@ -3081,7 +3185,7 @@ private extension CatalogStore {
                 filesystemDirty.removeValue(forKey: root)
                 return
             }
-            guard reorganizationLeases[root] == nil else {
+            guard namespaceMutationLeases[root] == nil else {
                 return
             }
             guard !scanLeases.hasActiveFilesystemScan(for: root) else {
@@ -3288,7 +3392,7 @@ private extension CatalogStore {
             guard rootIsAvailable(path), filesystemWatchingArmed.contains(path) else {
                 continue
             }
-            guard reorganizationLeases[path] == nil else {
+            guard namespaceMutationLeases[path] == nil else {
                 continue
             }
             if scanLeases.hasActiveFilesystemScan(for: path)
@@ -3753,6 +3857,7 @@ extension CatalogStore {
             try Self.settleImportedAsset(
                 operation: operation,
                 destinationRootID: rootRowID,
+                sourceRootID: roots[operation.sourceRootPath]?.rowID,
                 destinationRootPath: operation.destinationRootPath,
                 relativePath: operation.destinationRelativePath,
                 byteSize: byteSize,
@@ -3799,43 +3904,90 @@ extension CatalogStore {
         Task { await self.drainDirtyReconcile(for: root) }
     }
 
-    // MARK: - Reorganization lease and journal settlement
-
-    func acquireReorganizationLease(for rootPath: LibraryRootPath) -> ReorganizationLease? {
-        guard roots[rootPath] != nil else { return nil }
-        if let existing = reorganizationLeases[rootPath] {
-            return existing
+    /// Acquires the existing root namespace lease only when no other namespace
+    /// mutation owns it. Reorganization recovery remains idempotent through its
+    /// original API; Trash uses this atomic variant so two destructive commands
+    /// cannot both believe they own one root between separate actor awaits.
+    func acquireNamespaceMutationLease(
+        for rootPath: LibraryRootPath,
+        owner: RootNamespaceMutationOwner
+    ) -> RootNamespaceMutationLease? {
+        guard roots[rootPath] != nil, namespaceMutationLeases[rootPath] == nil else {
+            return nil
         }
-        nextReorganizationLeaseGeneration &+= 1
-        let lease = ReorganizationLease(
+        nextNamespaceMutationLeaseGeneration &+= 1
+        let lease = RootNamespaceMutationLease(
             libraryRootPath: rootPath,
-            generation: nextReorganizationLeaseGeneration,
+            generation: nextNamespaceMutationLeaseGeneration,
+            owner: owner,
             markedDirtyByExternalEvents: false
         )
-        reorganizationLeases[rootPath] = lease
+        namespaceMutationLeases[rootPath] = lease
         OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
-            "op=reorganization.lease phase=acquire rootPath=\(rootPath.rawValue, privacy: .public) generation=\(lease.generation, privacy: .public)"
+            """
+            op=namespaceMutation.lease phase=acquire rootPath=\(rootPath.rawValue, privacy: .public) \
+            owner=\(owner.rawValue, privacy: .public) generation=\(lease.generation, privacy: .public)
+            """
         )
         return lease
     }
 
-    private func markReorganizationLeaseDirty(for rootPath: LibraryRootPath) {
-        guard var lease = reorganizationLeases[rootPath] else { return }
+    func ownsNamespaceMutationLease(_ lease: RootNamespaceMutationLease) -> Bool {
+        guard roots[lease.libraryRootPath] != nil,
+              let current = namespaceMutationLeases[lease.libraryRootPath]
+        else {
+            return false
+        }
+        return current.generation == lease.generation && current.owner == lease.owner
+    }
+
+    /// Removes only catalog rows for paths the filesystem executor reports as
+    /// successfully moved to system Trash. Unmoved members remain cataloged for the
+    /// next scan/retry, and overlay—including media choice—is retained with them.
+    func reconcileTrashedPaths(_ paths: [MediaTrashPathResult]) async {
+        var changed = false
+        for path in paths where path.succeeded {
+            guard let rootRowID = roots[path.rootPath]?.rowID else {
+                continue
+            }
+            recordIndependentNamespaceMutation(
+                root: path.rootPath,
+                scope: .file(path.relativePath),
+                fileAction: .deleteIfMissing
+            )
+            changed = await deleteCatalogedPath(
+                relativePath: path.relativePath,
+                rootRowID: rootRowID
+            ) || changed
+        }
+        if changed {
+            notifyCatalogChanged()
+        }
+    }
+
+    // MARK: - Reorganization lease and journal settlement
+
+    private func markNamespaceMutationLeaseDirty(for rootPath: LibraryRootPath) {
+        guard var lease = namespaceMutationLeases[rootPath] else { return }
         lease.markedDirtyByExternalEvents = true
-        reorganizationLeases[rootPath] = lease
+        namespaceMutationLeases[rootPath] = lease
     }
 
     @discardableResult
-    func releaseReorganizationLease(_ lease: ReorganizationLease) -> Bool {
-        guard reorganizationLeases[lease.libraryRootPath]?.generation == lease.generation else {
+    func releaseNamespaceMutationLease(_ lease: RootNamespaceMutationLease) -> Bool {
+        guard let current = namespaceMutationLeases[lease.libraryRootPath],
+              current.generation == lease.generation,
+              current.owner == lease.owner
+        else {
             return false
         }
-        let dirty = reorganizationLeases[lease.libraryRootPath]?.markedDirtyByExternalEvents == true
-        reorganizationLeases.removeValue(forKey: lease.libraryRootPath)
+        let dirty = current.markedDirtyByExternalEvents
+        namespaceMutationLeases.removeValue(forKey: lease.libraryRootPath)
         OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
-            "op=reorganization.lease phase=release rootPath=\(lease.libraryRootPath.rawValue, privacy: .public) dirty=\(dirty, privacy: .public)"
+            """
+            op=namespaceMutation.lease phase=release rootPath=\(lease.libraryRootPath.rawValue, privacy: .public) \
+            owner=\(lease.owner.rawValue, privacy: .public) dirty=\(dirty, privacy: .public)
+            """
         )
         if dirty || scanLeases.takeRescanAfterCurrentScan(lease.libraryRootPath) {
             enqueueScans([lease.libraryRootPath])
@@ -3845,8 +3997,8 @@ extension CatalogStore {
         return true
     }
 
-    func hasReorganizationLease(for rootPath: LibraryRootPath) -> Bool {
-        reorganizationLeases[rootPath] != nil
+    func hasNamespaceMutationLease(for rootPath: LibraryRootPath) -> Bool {
+        namespaceMutationLeases[rootPath] != nil
     }
 
     func activeReorganizationComponents() async throws -> [ActiveReorganizationComponent] {

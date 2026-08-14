@@ -84,6 +84,7 @@ extension CatalogWindowViewModel {
         // viewMode must be .compare before applyComparePair → refreshPanePreviews,
         // otherwise expectedAsset(for: compare*) returns nil and no decode starts.
         viewMode = .compare
+        activeComparePane = .right
         lastReplacedComparePane = .right
         applyComparePair(pair, orderedIDs: ordered)
         OtosLog.ui.notice(
@@ -120,6 +121,7 @@ extension CatalogWindowViewModel {
         let ordered = state.mediaGrid.orderedAssetIDs
         let next = ComparePairPolicy.slide(delta, pair: comparePair, orderedIDs: ordered)
         lastReplacedComparePane = delta > 0 ? .right : .left
+        activeComparePane = lastReplacedComparePane ?? .right
         applyComparePair(next, orderedIDs: ordered)
     }
 
@@ -135,7 +137,33 @@ extension CatalogWindowViewModel {
             orderedIDs: orderedIDs
         )
         lastReplacedComparePane = position
+        activeComparePane = position
         applyComparePair(next, orderedIDs: orderedIDs)
+    }
+
+    func activateComparePane(_ position: PanePosition) {
+        guard viewMode == .compare else {
+            return
+        }
+        activeComparePane = position
+    }
+
+    func swapComparedPhotos() {
+        guard viewMode == .compare, comparePair.members.count == 2 else {
+            return
+        }
+        comparePair = ComparePairPolicy.swapped(comparePair)
+        gridSelection = GridSelection(
+            selection: Set(comparePair.members),
+            anchor: comparePair.left,
+            base: Set(comparePair.members)
+        )
+        let activePosition = activeComparePane
+        // Compare panes are positional peers: swapping assets must leave the
+        // keyboard target on the same left/right position.
+        lastReplacedComparePane = activePosition
+        refreshPanePreviews()
+        OtosLog.ui.notice("op=compare.swap")
     }
 
     /// Structural-apply / descriptor churn for loupe and compare.
@@ -180,6 +208,7 @@ extension CatalogWindowViewModel {
             if descriptorChanged {
                 let pair = ComparePairPolicy.entry(selection: .empty, orderedIDs: ordered)
                 lastReplacedComparePane = .right
+                activeComparePane = .right
                 applyComparePair(pair, orderedIDs: ordered)
                 return
             }
@@ -299,7 +328,11 @@ extension CatalogWindowViewModel {
                 }
                 switch outcome {
                 case let .image(image):
-                    self.panePreviews[slot] = PanePreview(id: id, image: image)
+                    self.panePreviews[slot] = PanePreview(
+                        id: id,
+                        image: image,
+                        mediaChoice: detail?.mediaChoice
+                    )
                     self.downloadingSlots.remove(slot)
                 case .downloading:
                     self.downloadingSlots.insert(slot)

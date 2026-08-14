@@ -9,6 +9,10 @@ import OSLog
 // lifecycle and records slow synchronous configuration spans.
 
 final class MediaGridItem: NSCollectionViewItem {
+    var onMediaChoice: ((MediaChoice) -> Void)? {
+        didSet { tileView?.onMediaChoice = onMediaChoice }
+    }
+
     private var tileView: MediaAssetTileView? {
         view as? MediaAssetTileView
     }
@@ -28,6 +32,7 @@ final class MediaGridItem: NSCollectionViewItem {
 
     override func loadView() {
         view = MediaAssetTileView()
+        tileView?.onMediaChoice = onMediaChoice
     }
 
     override func prepareForReuse() {

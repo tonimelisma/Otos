@@ -242,6 +242,61 @@ nonisolated enum LibraryRootKind: String, CaseIterable, Hashable, Codable {
     }
 }
 
+/// The one authored curation value for a cataloged image or video. It is overlay
+/// state, not a filesystem fact: originals and useful companions remain untouched.
+nonisolated enum MediaChoice: String, Codable, CaseIterable, Hashable, Sendable {
+    case liked
+    case notRated
+    case disliked
+
+    static let `default` = MediaChoice.notRated
+
+    var label: String {
+        switch self {
+        case .liked: "Liked"
+        case .notRated: "Not Rated"
+        case .disliked: "Disliked"
+        }
+    }
+
+    var actionLabel: String {
+        switch self {
+        case .liked: "Like"
+        case .notRated: "Mark as Not Rated"
+        case .disliked: "Dislike"
+        }
+    }
+
+    var accessibilityValue: String {
+        rawValue == "notRated" ? "not rated" : rawValue
+    }
+
+    var accessibilityActionLabel: String {
+        switch self {
+        case .liked: "Like item"
+        case .notRated: "Mark item as not rated"
+        case .disliked: "Dislike item"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .liked: "heart.fill"
+        case .notRated: "minus"
+        case .disliked: "xmark"
+        }
+    }
+
+    init?(keyCharacter: String) {
+        switch keyCharacter.lowercased() {
+        case "p": self = .liked
+        case "u": self = .notRated
+        case "x": self = .disliked
+        default: return nil
+        }
+    }
+}
+
 /// Availability is the most recent reachability observation for a saved root.
 /// Loaded roots begin unknown because SQLite proves only that the path was saved;
 /// the pre-scan filesystem check is what proves available or unavailable. This
@@ -364,6 +419,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     let contentHash: XXH3Digest128?
     let contentHashSourceSize: Int64?
     let contentHashSourceMTimeSeconds: Int?
+    let mediaChoice: MediaChoice
 
     init(
         libraryRootPath: LibraryRootPath,
@@ -382,7 +438,8 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         enrichedSourceMTimeSeconds: Int? = nil,
         contentHash: XXH3Digest128? = nil,
         contentHashSourceSize: Int64? = nil,
-        contentHashSourceMTimeSeconds: Int? = nil
+        contentHashSourceMTimeSeconds: Int? = nil,
+        mediaChoice: MediaChoice = .default
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
@@ -401,6 +458,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
         self.contentHash = contentHash
         self.contentHashSourceSize = contentHashSourceSize
         self.contentHashSourceMTimeSeconds = contentHashSourceMTimeSeconds
+        self.mediaChoice = mediaChoice
         sortKey = MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: relativePath)
     }
 
@@ -458,6 +516,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     let durationSeconds: Double?
     let enrichedSourceSize: Int64?
     let enrichedSourceMTimeSeconds: Int?
+    let mediaChoice: MediaChoice
 
     init(
         libraryRootPath: LibraryRootPath,
@@ -466,7 +525,8 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         bestKind: MediaKind? = nil,
         durationSeconds: Double? = nil,
         enrichedSourceSize: Int64? = nil,
-        enrichedSourceMTimeSeconds: Int? = nil
+        enrichedSourceMTimeSeconds: Int? = nil,
+        mediaChoice: MediaChoice = .default
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
@@ -475,6 +535,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
         self.durationSeconds = durationSeconds
         self.enrichedSourceSize = enrichedSourceSize
         self.enrichedSourceMTimeSeconds = enrichedSourceMTimeSeconds
+        self.mediaChoice = mediaChoice
     }
 
     var id: MediaAssetID {

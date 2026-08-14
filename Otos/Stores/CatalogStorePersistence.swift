@@ -270,6 +270,12 @@ extension CatalogStore {
                   <> COALESCE(enriched_source_mtime, -1)
             """)
         }
+        migrator.registerMigration("v14_media_choice") { db in
+            try db.execute(sql: """
+            ALTER TABLE media_asset ADD COLUMN media_choice TEXT NOT NULL DEFAULT 'notRated'
+                CHECK (media_choice IN ('liked', 'notRated', 'disliked'))
+            """)
+        }
         return migrator
     }
 
@@ -1513,6 +1519,7 @@ private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
         "enriched_source_mtime",
         "thumbnail_path",
         "duration_seconds",
+        "media_choice",
         "enrichment_claimed_until",
         "import_batch_unix_ms",
         "capture_wall_compact",

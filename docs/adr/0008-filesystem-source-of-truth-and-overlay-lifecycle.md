@@ -35,8 +35,10 @@ Verified facts that shaped this decision:
   - [Globbing materializes dataless directories on macOS](https://github.com/fish-shell/fish-shell/issues/8399)
 - The current scanner reads only metadata resource values and no bytes, so
   cataloging does not materialize cloud files today.
-- There is no user-authored overlay in the app yet. Today every catalog row and
-  every value stored about a file is rebuildable by re-observing the filesystem.
+- The authored `MediaChoice` overlay is the first user-authored overlay. It is a
+  single mutually exclusive `liked` / `notRated` / `disliked` value, retained
+  while the cataloged item exists and purged with the item only on proven deletion
+  or root removal. It never writes an XMP sidecar or changes filesystem truth.
 
 Captured owner guidance for verification:
 
@@ -62,6 +64,9 @@ Captured owner guidance for verification:
   identity or overlay files. Existing user-owned useful companions (`.xmp` / `.srt`)
   may be inventoried and transferred during explicit import/reorganization. The
   catalog can be made exportable if portability is ever needed.
+- Explicit Move to Trash is the one current filesystem mutation exception and is
+  owned by ADR 0022: system Trash only, catalog-proven members only, exact-path
+  partial reconciliation, and no byte read or materialization request.
 - Persisting one thumbnail per asset is acceptable even at a million assets;
   regenerating thumbnails is expensive precisely because most originals are in the
   cloud, so thumbnails are kept, not evicted.

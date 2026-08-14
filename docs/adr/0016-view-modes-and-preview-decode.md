@@ -29,6 +29,8 @@ This ADR references, but does not own:
   selection ownership on the ViewModel).
 - Compare pair semantics (product requirements / plan 0052; no separate ADR
   until persistence or a second owner appears).
+- Compare's active pane is a transient positional keyboard-command target only;
+  it is not a Select/Candidate role and never owns a curation value.
 
 ## Decision
 
@@ -89,6 +91,10 @@ placeholder).
   retry) at `.userInitiated`; superseded requests cancel after the detail fetch
   before enqueueing another decode. `PreviewImageLoader`'s per-id dedup task is
   also `.userInitiated` so decode does not inherit ambient/default QoS.
+- Entering Compare activates the right position; clicking a pane activates only
+  that position; strip replacement and sliding activate the arriving position;
+  swapping exchanges the two asset identities while preserving the active
+  position. `MediaChoice` remains attached to each asset across the swap.
 - The filmstrip uses a horizontal `NSCollectionViewCompositionalLayout`
   configuration (plain layout, not `MediaGridAnimatedLayout`) so the outer clip
   view scrolls horizontally. Orthogonal section scrolling was rejected: an

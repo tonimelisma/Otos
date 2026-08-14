@@ -88,6 +88,35 @@ struct CatalogQueryGatewayTests {
         #expect(details.isEmpty)
     }
 
+    @Test func choiceFilterQueryReturnsOnlySelectedChoices() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        try await dbQueue.write { db in
+            try insertScopeRoot(id: 1, path: "/Library", db: db)
+            try insertScopeAsset(rootID: 1, path: "liked.jpg", kind: "image", format: "JPEG", batchMs: nil, choice: "liked", db: db)
+            try insertScopeAsset(rootID: 1, path: "unrated.jpg", kind: "image", format: "JPEG", batchMs: nil, choice: "notRated", db: db)
+            try insertScopeAsset(rootID: 1, path: "disliked.jpg", kind: "image", format: "JPEG", batchMs: nil, choice: "disliked", db: db)
+        }
+        let descriptor = CatalogQueryDescriptor(
+            scope: .allMedia,
+            filter: MediaFilter(choices: [.liked, .disliked]),
+            sort: .filenameAscending
+        )
+        let query = try #require(CatalogQueryGateway.orderedAssetIDQuery(
+            descriptor: descriptor,
+            scope: CatalogScopePredicate(rootIDs: [1])
+        ))
+        #expect(query.sql.contains("media_choice IN"))
+        let paths = try await dbQueue.read { db in
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(
+                descriptor: descriptor,
+                scope: CatalogScopePredicate(rootIDs: [1]),
+                db: db
+            ).map(\.1.rawValue)
+        }
+        #expect(paths == ["disliked.jpg", "liked.jpg"])
+    }
+
     @Test func metadataExtraReturnsNilWhenRowMissing() async throws {
         let dbQueue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(dbQueue)
@@ -115,16 +144,17 @@ private func insertScopeAsset(
     kind: String,
     format: String,
     batchMs: Int64?,
+    choice: String = "notRated",
     db: Database
 ) throws {
     try db.execute(
         sql: """
         INSERT INTO media_asset (
             library_root_id, relative_path, sort_key, name_sort_key, name,
-            kind, format, import_batch_unix_ms
+            kind, format, media_choice, import_batch_unix_ms
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        arguments: [rootID, path, path, path, path, kind, format, batchMs]
+        arguments: [rootID, path, path, path, path, kind, format, choice, batchMs]
     )
 }

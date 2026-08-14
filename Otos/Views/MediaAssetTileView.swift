@@ -9,6 +9,26 @@ private final class FlippedView: NSView {
     }
 }
 
+private final class MediaChoiceButton: NSButton {
+    let choice: MediaChoice
+
+    init(choice: MediaChoice) {
+        self.choice = choice
+        super.init(frame: .zero)
+        image = NSImage(systemSymbolName: choice.systemImage, accessibilityDescription: choice.label)
+        imagePosition = .imageOnly
+        isBordered = false
+        focusRingType = .none
+        setAccessibilityElement(false)
+        toolTip = choice.actionLabel
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
 // Media tile view guide
 //
 // Pure renderer for controller-owned `TileContent`. The tile paints `content.image` when
@@ -30,6 +50,10 @@ final class MediaAssetTileView: NSView {
     private let badgeLabel = NSTextField(labelWithString: "")
     private let filmIconView = NSImageView()
     private let placeholderIconView = NSImageView()
+    private let choiceControl = NSVisualEffectView()
+    private var choiceButtons: [MediaChoiceButton] = []
+    private var trackingArea: NSTrackingArea?
+    var onMediaChoice: ((MediaChoice) -> Void)?
 
     /// Aspect-fit face size for the currently painted image; nil while placeholder.
     private(set) var paintedImagePixelSize: CGSize?
@@ -85,6 +109,22 @@ final class MediaAssetTileView: NSView {
         placeholderIconView.alphaValue = Layout.placeholderIconAlpha
         contentView.addSubview(placeholderIconView)
 
+        choiceControl.material = .hudWindow
+        choiceControl.blendingMode = .withinWindow
+        choiceControl.state = .active
+        choiceControl.wantsLayer = true
+        choiceControl.layer?.cornerRadius = 5
+        choiceControl.layer?.masksToBounds = true
+        choiceControl.isHidden = true
+        contentView.addSubview(choiceControl)
+        for choice in MediaChoice.allCases {
+            let button = MediaChoiceButton(choice: choice)
+            button.target = self
+            button.action = #selector(choiceButtonClicked(_:))
+            choiceControl.addSubview(button)
+            choiceButtons.append(button)
+        }
+
         contentView.layer?.borderColor = NSColor.controlAccentColor.cgColor
 
         // Accessibility: the tile is the unit VoiceOver navigates. A bare NSView
@@ -96,6 +136,45 @@ final class MediaAssetTileView: NSView {
         badgeLabel.setAccessibilityElement(false)
         filmIconView.setAccessibilityElement(false)
         placeholderIconView.setAccessibilityElement(false)
+        setAccessibilityCustomActions(MediaChoice.allCases.map { choice in
+            NSAccessibilityCustomAction(
+                name: choice.accessibilityActionLabel,
+                handler: { [weak self] in
+                    guard let self else { return false }
+                    onMediaChoice?(choice)
+                    return true
+                }
+            )
+        })
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        choiceControl.isHidden = false
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        choiceControl.isHidden = true
+    }
+
+    @objc private func choiceButtonClicked(_ sender: MediaChoiceButton) {
+        onMediaChoice?(sender.choice)
     }
 
     @available(*, unavailable)
@@ -151,6 +230,13 @@ extension MediaAssetTileView {
         setAccessibilityLabel(
             MediaAssetTilePresentation.accessibilityLabel(detail: detail, badgeContent: content)
         )
+        setAccessibilityValue(MediaAssetTilePresentation.accessibilityValue(detail: detail))
+        for button in choiceButtons {
+            button.state = button.choice == detail.mediaChoice ? .on : .off
+            button.contentTintColor = button.choice == detail.mediaChoice
+                ? .controlAccentColor
+                : .labelColor
+        }
     }
 
     private func applyBadgeContent(_ content: TileBadgeContent) {
@@ -201,9 +287,15 @@ extension MediaAssetTileView {
         badgeLabel.isHidden = true
         filmIconView.isHidden = true
         kindBadge.isHidden = true
+        choiceControl.isHidden = true
+        for button in choiceButtons {
+            button.state = .off
+            button.contentTintColor = .labelColor
+        }
         updatePlaceholderPresentation()
         setSelected(false, animated: false)
         setAccessibilityLabel(nil)
+        setAccessibilityValue(nil)
     }
 
     func hitTestsThumbnailFace(at pointInWindow: CGPoint) -> Bool {
@@ -229,6 +321,26 @@ extension MediaAssetTileView {
         imageView.frame = contentView.bounds
         updatePlaceholderPresentation()
         layoutKindBadge()
+        let choiceButtonSize: CGFloat = 28
+        let choiceSpacing: CGFloat = 1
+        let choiceSize = CGSize(
+            width: choiceButtonSize * CGFloat(choiceButtons.count) + choiceSpacing * CGFloat(max(0, choiceButtons.count - 1)) + 4,
+            height: choiceButtonSize + 2
+        )
+        choiceControl.frame = CGRect(
+            x: 6,
+            y: 6,
+            width: choiceSize.width,
+            height: choiceSize.height
+        )
+        for (index, button) in choiceButtons.enumerated() {
+            button.frame = CGRect(
+                x: 2 + CGFloat(index) * (choiceButtonSize + choiceSpacing),
+                y: 1,
+                width: choiceButtonSize,
+                height: choiceButtonSize
+            )
+        }
     }
 
     func setSelected(_ selected: Bool, animated: Bool) {

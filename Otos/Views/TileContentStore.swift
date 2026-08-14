@@ -207,7 +207,8 @@ final class TileContentStore {
                     bestKind: moved.content.detail.bestKind,
                     durationSeconds: moved.content.detail.durationSeconds,
                     enrichedSourceSize: moved.content.detail.enrichedSourceSize,
-                    enrichedSourceMTimeSeconds: moved.content.detail.enrichedSourceMTimeSeconds
+                    enrichedSourceMTimeSeconds: moved.content.detail.enrichedSourceMTimeSeconds,
+                    mediaChoice: moved.content.detail.mediaChoice
                 )
                 // Keep imageKey/image so the painted thumbnail survives the identity change.
                 next[remap.newID] = moved

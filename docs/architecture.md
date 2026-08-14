@@ -36,6 +36,15 @@ schemas refuse to open instead of erasing.
                      MediaGridBridgeView (AppKit NSCollectionView; .grid or .strip)
                      PreviewImageLoader (actor) — full-size decode off MainActor; submits interactive demand
                      LoupeVideoPlayerView (NSViewRepresentable AVPlayerView) — inline controls; player owned by ViewModel
+
+  curation / Move to Trash intents
+        │
+        ▼
+  CatalogWindowViewModel ── typed serial intent ──▶ CatalogStore
+        │                                             │
+        │                                             └─ one SQLite overlay transaction / exact-path reconciliation
+        ▼
+  MediaTrashCoordinator ── per-root namespace lease ──▶ FileManager.trashItem
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a
@@ -46,6 +55,7 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | Type | Isolation | Owns | Why an actor |
 | --- | --- | --- | --- |
 | `CatalogStore` | actor | SQLite, atomic import/reorganization journal transitions and catalog settlement, `RootRegistry`/`RootRuntimeState`, per-root namespace mutation epochs, filesystem/reorganization lease arbitration, scan reconciliation, planning revisions, removable-source state, change notifications, all catalog queries | serializes catalog truth and every transaction that must agree with it; an older scan may upsert observed facts but its captured epoch cannot authorize missing-row or companion deletion |
+| `MediaTrashCoordinator` | actor | lossless serial system-Trash commands, catalog-proven physical-member ordering, and per-root namespace-mutation lease ownership | companions must precede primaries, partial filesystem success must remain truthful, and destructive work must never run on the MainActor or through a permanent-delete path |
 | `CatalogProjection` | actor | coalesced `CatalogWindowState` publication + all sorting/filtering/hiding/empty-state/scope derivation; detail-only enrichment changes (no `best_capture`/`best_kind`/`best_format` change) reuse the last order query instead of re-sorting (plan 0064 Stage 3) | keeps derivation off the main thread (that is what would hang the UI) |
 | `MediaOperationCoordinator` | actor | greedy import-plan lifecycle per attached removable source, device-identity destination policy (saved mapping → last-used → first-added available), one actor-owned `SourceSession` per source (typed `AttachmentGeneration`/`BuildGeneration`, six-check stale-completion rejection), ImportPlanBuilder and ImportExecuting boundaries, derived ledger claims from `Ready`/`Executing` phases, per-source session preference overrides discarded on detach, scalar presentation stream, queued Import, and one-executor-per-source ownership | serializes per-source dirtiness/execution; plan building is an owned per-source child task never awaited from the planning-change consumer, so a long build cannot make the coordinator deaf to an attaching card; namespace enumeration and the planning pass run off the actor; ledger conflict-check and registration happen in one synchronous on-actor region against the current ledger, and a losing build re-plans rather than evicting; destination-driven replans are suppressed while any execution targets that destination and coalesced into one rebuild per dirty source afterwards |
 | `MediaImportExecutor` | actor | import filesystem lifecycle for volumes and cameras: recovery sequencing, orphan staging cleanup, 8 bounded entry workers, staging, exclusive publish, ownership-proving recovery, and optional source deletion | owns monotonic aggregate progress while independent workers suspend; Store serializes durable journal prerequisites, zero-row failures, and atomic settlement; ambiguous final-only recovery gates hashing through the shared materialization requester |
@@ -148,6 +158,16 @@ everything expensive happens on an actor off the main thread.
   `LibraryReorganizationRunner` owns execution and recovery sequencing. Store owns
   the typed root lease, durable `active_reorganization_*` transitions, and atomic
   catalog remap; ViewModel/`TileContentStore` apply each remap batch atomically.
+- **Curation**: `CatalogWindowViewModelCuration.swift` is the single target resolver
+  and lossless serial choice-command owner. `CatalogStore.setMediaChoice` is the one
+  transaction; `MediaFilter.choices` is a query descriptor dimension, not selection
+  or a second ViewModel truth. `MediaChoice` stays in tile/pane detail values so Grid,
+  filmstrip, Loupe, and Compare render the same persisted overlay.
+- **Move to Trash**: `CatalogWindowViewModelTrash.swift` resolves the current browser
+  target and owns stale-navigation checks; `MediaTrashCoordinator` owns the serial
+  filesystem lifecycle; `CatalogStore` supplies catalog-proven companions and
+  reconciles only successful paths. The shared typed namespace-mutation lease excludes
+  import publication and reorganization on one root.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
   `CatalogWindowPolicy`, `SidebarSelectionPolicy`, `GridColumnCount`,
   `MediaGridZoomPolicy`, `GridSelection`, `MediaCompanionPairing`.
@@ -167,6 +187,8 @@ everything expensive happens on an actor off the main thread.
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader`/`VideoPreviewLoader` + `LoupeVideoPlayerView` (`AVPlayerView` inline) (ADR 0016); mode intents on `CatalogWindowViewModel` |
 | loupe video (click-to-play) | `VideoPreviewLoader` + `LoupeVideoPlayerView` + `LoupeView` poster/AVPlayer swap; compare stays poster-only |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |
+| curation choice/filter | `MediaChoice` + `CatalogStore.setMediaChoice` + `MediaFilter`/`CatalogQueryGateway`; ViewModel owns intents, views remain passive |
+| recoverable deletion | `CatalogWindowViewModelTrash` + `MediaTrashCoordinator` + Store namespace lease/reconciliation; never use a view or permanent-delete API |
 
 Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main

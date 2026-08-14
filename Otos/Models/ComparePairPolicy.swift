@@ -122,6 +122,10 @@ nonisolated enum ComparePairPolicy {
         return pair
     }
 
+    static func swapped(_ pair: ComparePair) -> ComparePair {
+        ComparePair(left: pair.right, right: pair.left)
+    }
+
     /// Structural-apply prune: a removed member's own slot is refilled with its nearest
     /// display-order survivor; the other slot is untouched. Both gone → fresh entry.
     static func prune(

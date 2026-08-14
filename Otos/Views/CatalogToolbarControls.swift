@@ -13,6 +13,7 @@ struct CatalogFilterControl: View {
     @Binding var isPresented: Bool
     let setKind: (MediaKind, Bool) -> Void
     let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
+    let setChoice: (MediaChoice, Bool) -> Void
     let clearFilters: () -> Void
 
     var body: some View {
@@ -28,6 +29,7 @@ struct CatalogFilterControl: View {
                 options: options,
                 setKind: setKind,
                 setFileType: setFileType,
+                setChoice: setChoice,
                 clearFilters: clearFilters
             )
             .frame(width: 260)
@@ -42,12 +44,29 @@ struct CatalogFilterPopoverContent: View {
     let options: CatalogFilterOptions
     let setKind: (MediaKind, Bool) -> Void
     let setFileType: (MediaFileTypeOption, MediaKind, Bool) -> Void
+    let setChoice: (MediaChoice, Bool) -> Void
     let clearFilters: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Filter")
                 .font(.headline)
+            Text("Curation")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(MediaChoice.allCases, id: \.self) { choice in
+                Toggle(isOn: Binding(
+                    get: { descriptor.filter.choices.contains(choice) },
+                    set: { setChoice(choice, $0) }
+                )) {
+                    Label(choice.label, systemImage: choice.systemImage)
+                }
+                .toggleStyle(.checkbox)
+            }
+            Divider()
+            Text("Media")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
             ForEach(availableKinds, id: \.self) { kind in
                 VStack(alignment: .leading, spacing: 6) {
                     Toggle(kind.label, sources: kindToggleSources(kind), isOn: \.isOn)

@@ -51,6 +51,15 @@ actor MediaImportExecutor {
         let overlayReuse: OverlayReuseSummary
     }
 
+    private struct EntryExecutionContext: Sendable {
+        let plan: MediaOperationPlan
+        let batch: ImportBatchID
+        let sourceKind: LibraryRootKind
+        let sourceDeviceIdentity: String?
+        let allowSourceDeletion: Bool
+        let namespaceLease: RootNamespaceMutationLease?
+    }
+
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
@@ -149,6 +158,18 @@ actor MediaImportExecutor {
             return false
         }
         let allowSourceDeletion = deleteSourceRequested && !hasBlockedEntries
+        let namespaceLease: RootNamespaceMutationLease?
+        if copyEntries.isEmpty {
+            namespaceLease = nil
+        } else {
+            guard let lease = await store.acquireNamespaceMutationLease(
+                for: destination,
+                owner: .importPublication
+            ) else {
+                return .failed(problem: "namespaceLeaseUnavailable")
+            }
+            namespaceLease = lease
+        }
         let started = ContinuousClock().now
         let batchSignpost = OtosSignpost.mediaIO.beginInterval("MediaImportBatch")
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "start", fields: [
@@ -157,16 +178,23 @@ actor MediaImportExecutor {
             "files": "\(copyEntries.count)",
             "workers": "\(Self.workerCount)",
         ])
-        let entryTotals = await runPlanEntries(
+        let executionContext = EntryExecutionContext(
             plan: plan,
             batch: batch,
             sourceKind: sourceKind,
             sourceDeviceIdentity: sourceDeviceIdentity,
             allowSourceDeletion: allowSourceDeletion,
+            namespaceLease: namespaceLease
+        )
+        let entryTotals = await runPlanEntries(
+            context: executionContext,
             totalCount: copyEntries.count,
             totalBytes: totalBytes,
             onProgress: onProgress
         )
+        if let namespaceLease {
+            _ = await store.releaseNamespaceMutationLease(namespaceLease)
+        }
         let storedBatchCount = await (try? store.importBatchAssetCount(batch)) ?? -1
         let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
         OtosLog.catalog.notice(
@@ -235,11 +263,7 @@ actor MediaImportExecutor {
     }
 
     private func runPlanEntries(
-        plan: MediaOperationPlan,
-        batch: ImportBatchID,
-        sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
-        allowSourceDeletion: Bool,
+        context: EntryExecutionContext,
         totalCount: Int,
         totalBytes: Int64,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
@@ -248,7 +272,7 @@ actor MediaImportExecutor {
         var failedCount = 0
         var skippedForeignCount = 0
         var overlayReuse = OverlayReuseSummary()
-        let copyEntries = plan.entries.filter {
+        let copyEntries = context.plan.entries.filter {
             if case .copy = $0.disposition {
                 true
             } else {
@@ -266,11 +290,7 @@ actor MediaImportExecutor {
                     }
                     let outcome = await self.copyEntry(
                         entry,
-                        plan: plan,
-                        batch: batch,
-                        sourceKind: sourceKind,
-                        sourceDeviceIdentity: sourceDeviceIdentity,
-                        deleteSourceRequested: allowSourceDeletion,
+                        context: context,
                         workerID: index % Self.workerCount,
                         onByteProgress: { offset in
                             // Worker-thread callback: the tracker gates emissions so
@@ -310,13 +330,13 @@ actor MediaImportExecutor {
                 }
             }
         }
-        if allowSourceDeletion {
-            for entry in plan.entries where entry.isSkipPreexisting {
+        if context.allowSourceDeletion {
+            for entry in context.plan.entries where entry.isSkipPreexisting {
                 if await deleteSourceIfRequested(
                     entry: entry,
-                    plan: plan,
-                    sourceKind: sourceKind,
-                    sourceDeviceIdentity: sourceDeviceIdentity,
+                    plan: context.plan,
+                    sourceKind: context.sourceKind,
+                    sourceDeviceIdentity: context.sourceDeviceIdentity,
                     batch: nil
                 ) == false {
                     failedCount += 1
@@ -520,17 +540,16 @@ actor MediaImportExecutor {
     // swiftlint:disable:next function_body_length
     private nonisolated func copyEntry(
         _ entry: MediaOperationPlanEntry,
-        plan: MediaOperationPlan,
-        batch: ImportBatchID,
-        sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
-        deleteSourceRequested: Bool,
+        context: EntryExecutionContext,
         workerID: Int,
         onByteProgress: @escaping @Sendable (Int64) -> Void
     ) async -> EntryOutcome {
-        guard case let .import(sourceRoot, destinationRoot, _) = plan.mode,
+        guard case let .import(sourceRoot, destinationRoot, _) = context.plan.mode,
               case let .copy(destinationRelative) = entry.disposition
         else {
+            return .failed
+        }
+        guard let namespaceLease = context.namespaceLease else {
             return .failed
         }
         let sourceURL = entry.source.sourceURL
@@ -540,7 +559,7 @@ actor MediaImportExecutor {
             OtosSignpost.mediaIO.endInterval("MediaImportFileCopy", signpost)
             let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
             OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "finish", fields: [
-                "batch": "\(batch.unixMilliseconds)",
+                "batch": "\(context.batch.unixMilliseconds)",
                 "bytes": "\(entry.source.byteSize ?? 0)",
                 "elapsedMs": "\(elapsedMs)",
                 "mbps": throughputMBps(bytes: entry.source.byteSize ?? 0, elapsedMs: elapsedMs),
@@ -554,8 +573,8 @@ actor MediaImportExecutor {
         let sourceModified = entry.source.contentModifiedAt
         let matches = await sourceStillMatches(
             entry: entry,
-            sourceKind: sourceKind,
-            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceKind: context.sourceKind,
+            sourceDeviceIdentity: context.sourceDeviceIdentity,
             sourceURL: sourceURL,
             sourceByteSize: sourceByteSize,
             sourceModified: sourceModified
@@ -579,19 +598,19 @@ actor MediaImportExecutor {
         var operation = ActiveFileOperation(
             operationKey: .make(),
             mode: "import",
-            sourceKind: sourceKind,
-            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceKind: context.sourceKind,
+            sourceDeviceIdentity: context.sourceDeviceIdentity,
             sourceRootPath: sourceRoot,
             sourceRelativePath: entry.source.relativePath,
             destinationRootPath: destinationRoot,
             destinationRelativePath: destinationRelative,
             stagingPath: stagingURL.path,
-            importBatchUnixMs: batch.unixMilliseconds,
+            importBatchUnixMs: context.batch.unixMilliseconds,
             sourceByteSize: sourceByteSize,
             sourceModifiedAt: operationSourceModified,
             destinationModifiedAt: destinationModified,
             phase: .copying,
-            deleteSourceRequested: deleteSourceRequested,
+            deleteSourceRequested: context.allowSourceDeletion,
             updatedAt: Date()
         )
         do {
@@ -606,8 +625,8 @@ actor MediaImportExecutor {
         )
         if let early = await transferBytesToStaging(
             entry: entry,
-            sourceKind: sourceKind,
-            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceKind: context.sourceKind,
+            sourceDeviceIdentity: context.sourceDeviceIdentity,
             sourceURL: sourceURL,
             stagingURL: stagingURL,
             operationKey: operation.operationKey,
@@ -642,7 +661,7 @@ actor MediaImportExecutor {
                     "owner": "import",
                     "rootPath": operation.sourceRootPath.rawValue,
                     "relativePath": operation.sourceRelativePath.rawValue,
-                    "batch": "\(batch.unixMilliseconds)",
+                    "batch": "\(context.batch.unixMilliseconds)",
                     "worker": "\(workerID)",
                     "bytes": "\(sourceByteSize)",
                     "elapsedMs": "\(hashMs)",
@@ -659,7 +678,7 @@ actor MediaImportExecutor {
                     "owner": "import",
                     "rootPath": operation.sourceRootPath.rawValue,
                     "relativePath": operation.sourceRelativePath.rawValue,
-                    "batch": "\(batch.unixMilliseconds)",
+                    "batch": "\(context.batch.unixMilliseconds)",
                     "worker": "\(workerID)",
                 ]
             )
@@ -674,7 +693,7 @@ actor MediaImportExecutor {
                     "owner": "import",
                     "rootPath": operation.sourceRootPath.rawValue,
                     "relativePath": operation.sourceRelativePath.rawValue,
-                    "batch": "\(batch.unixMilliseconds)",
+                    "batch": "\(context.batch.unixMilliseconds)",
                     "worker": "\(workerID)",
                     "category": category.rawValue,
                 ]
@@ -695,13 +714,14 @@ actor MediaImportExecutor {
             destinationRoot: destinationRoot,
             destinationRelative: destinationRelative,
             sourceURL: sourceURL,
-            sourceKind: sourceKind,
-            sourceDeviceIdentity: sourceDeviceIdentity,
+            sourceKind: context.sourceKind,
+            sourceDeviceIdentity: context.sourceDeviceIdentity,
             sourceRelativePath: entry.source.relativePath,
             sourceByteSize: sourceByteSize,
             destinationModified: destinationModified,
-            batch: batch,
-            deleteSourceRequested: deleteSourceRequested,
+            batch: context.batch,
+            namespaceLease: namespaceLease,
+            deleteSourceRequested: context.allowSourceDeletion,
             workerID: workerID,
             copyStarted: started,
             copyFinished: copyFinished,
@@ -725,6 +745,7 @@ actor MediaImportExecutor {
         let sourceByteSize: Int64
         let destinationModified: Date
         let batch: ImportBatchID
+        let namespaceLease: RootNamespaceMutationLease
         let deleteSourceRequested: Bool
         let workerID: Int
         let copyStarted: ContinuousClock.Instant
@@ -736,6 +757,17 @@ actor MediaImportExecutor {
     // durable pending-settlement transition, and the single Store settlement transaction.
     // swiftlint:disable:next function_body_length
     private nonisolated static func publishAndSettle(_ request: PublishSettleRequest) async -> EntryOutcome {
+        guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
+            try? await request.store.abandonImportOperation(key: request.operation.operationKey)
+            OtosLog.catalog.notice(
+                "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
+            )
+            return .failed
+        }
+        return await publishAndSettleBody(request)
+    }
+
+    private nonisolated static func publishAndSettleBody(_ request: PublishSettleRequest) async -> EntryOutcome {
         var operation = request.operation
         Self.stampModificationDate(request.destinationModified, at: request.stagingURL)
         operation.phase = .readyToPublish
@@ -744,6 +776,14 @@ actor MediaImportExecutor {
             try await request.store.recordImportOperationProgress(operation)
         } catch {
             return await Self.journalFailureBeforePublication(request, error: error)
+        }
+        guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
+            try? FileManager.default.removeItem(at: request.stagingURL)
+            try? await request.store.abandonImportOperation(key: operation.operationKey)
+            OtosLog.catalog.notice(
+                "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
+            )
+            return .failed
         }
 
         switch ExclusivePublication.publish(staging: request.stagingURL, final: request.finalURL) {
@@ -755,6 +795,9 @@ actor MediaImportExecutor {
                 OtosLog.catalog.error(
                     "op=mediaOperation.journal phase=foreignAbandonFailed error=\(String(describing: error), privacy: .public)"
                 )
+                return .failed
+            }
+            guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
                 return .failed
             }
             await request.store.recordForeignOccupant(
@@ -803,6 +846,12 @@ actor MediaImportExecutor {
             )
             return .failed
         }
+        guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
+            OtosLog.catalog.notice(
+                "op=mediaOperation.settle phase=blocked reason=namespaceLeaseUnavailable"
+            )
+            return .failed
+        }
 
         let companionRows = Self.companionDestinations(
             entry: request.entry,
@@ -834,6 +883,9 @@ actor MediaImportExecutor {
         ])
 
         if request.deleteSourceRequested {
+            guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
+                return .failed
+            }
             guard await Self.deleteSource(
                 kind: request.sourceKind,
                 identity: request.sourceDeviceIdentity,
@@ -880,6 +932,15 @@ actor MediaImportExecutor {
     }
 
     private func recover(_ operation: ActiveFileOperation) async {
+        guard let lease = await store.acquireNamespaceMutationLease(
+            for: operation.destinationRootPath,
+            owner: .importPublication
+        ) else {
+            OtosLog.catalog.notice(
+                "op=mediaOperation.recover phase=blocked reason=namespaceLeaseUnavailable"
+            )
+            return
+        }
         let staging = operation.stagingPath.map { URL(fileURLWithPath: $0) }
         let final = operation.destinationRootPath.url
             .appendingPathComponent(operation.destinationRelativePath.rawValue)
@@ -939,6 +1000,7 @@ actor MediaImportExecutor {
                 filesystemURL: sourceURL,
                 cameraImport: cameraImport
             ) else {
+                _ = await store.releaseNamespaceMutationLease(lease)
                 return
             }
             do {
@@ -953,6 +1015,7 @@ actor MediaImportExecutor {
             // swiftlint:disable:next line_length
             "op=mediaOperation.recover phase=\(operation.phase.rawValue, privacy: .public) key=\(operation.operationKey.rawValue, privacy: .public) stagingExists=\(stagingExists, privacy: .public) finalExists=\(finalExists, privacy: .public)"
         )
+        _ = await store.releaseNamespaceMutationLease(lease)
     }
 
     private func recoverFinalOnly(_ operation: ActiveFileOperation, final: URL) async {

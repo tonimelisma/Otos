@@ -27,12 +27,18 @@ struct CompareView: View {
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
     var onStripArrow: (Int) -> Void = { _ in }
     var onEscape: () -> Void = {}
+    var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
+    var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    var leftMediaChoice: MediaChoice?
+    var rightMediaChoice: MediaChoice?
+    var onPaneMediaChoice: (PanePosition, MediaChoice) -> Void = { _, _ in }
+    var onPaneActivated: (PanePosition) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 1) {
-                pane(id: leftID, preview: leftPreview, isDownloading: leftIsDownloading)
-                pane(id: rightID, preview: rightPreview, isDownloading: rightIsDownloading)
+                pane(position: .left, id: leftID, preview: leftPreview, mediaChoice: leftMediaChoice, isDownloading: leftIsDownloading)
+                pane(position: .right, id: rightID, preview: rightPreview, mediaChoice: rightMediaChoice, isDownloading: rightIsDownloading)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             FilmstripResizeHandle(
@@ -44,52 +50,70 @@ struct CompareView: View {
         }
     }
 
-    private func pane(id: MediaAssetID?, preview: PanePreview?, isDownloading: Bool) -> some View {
-        ZStack {
-            Color.black.opacity(0.92)
-            switch PanePresentation.display(paneID: id, preview: preview) {
-            case let .full(image):
-                Image(decorative: image, scale: 1)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .accessibilityElement()
-                    .accessibilityLabel(paneAccessibilityLabel(for: id))
-                    .accessibilityAddTraits(.isImage)
-            case let .thumbnail(paneID):
-                PaneThumbnailView(
-                    id: paneID,
-                    thumbnailDirectory: thumbnailDirectory,
-                    detailReader: detailReader
-                )
-            case .video:
-                // Compare stays poster-only by design; stale video never shows here.
-                Group {
-                    if let fallbackID = id ?? preview?.id {
-                        PaneThumbnailView(
-                            id: fallbackID,
-                            tileContentStore: tileContentStore,
-                            thumbnailDirectory: thumbnailDirectory,
-                            detailReader: detailReader
-                        )
-                    } else {
-                        ContentUnavailableView("No Photo", systemImage: "photo")
-                            .foregroundStyle(.secondary)
+    private func pane(
+        position: PanePosition,
+        id: MediaAssetID?,
+        preview: PanePreview?,
+        mediaChoice: MediaChoice?,
+        isDownloading: Bool
+    ) -> some View {
+        MediaChoiceHoverRegion(
+            currentChoice: mediaChoice,
+            onChoice: { choice in
+                onPaneActivated(position)
+                onPaneMediaChoice(position, choice)
+            }
+        ) {
+            ZStack {
+                Color.black.opacity(0.92)
+                switch PanePresentation.display(paneID: id, preview: preview) {
+                case let .full(image):
+                    Image(decorative: image, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .accessibilityElement()
+                        .accessibilityLabel(paneAccessibilityLabel(for: id))
+                        .accessibilityAddTraits(.isImage)
+                case let .thumbnail(paneID):
+                    PaneThumbnailView(
+                        id: paneID,
+                        thumbnailDirectory: thumbnailDirectory,
+                        detailReader: detailReader
+                    )
+                case .video:
+                    // Compare stays poster-only by design; stale video never shows here.
+                    Group {
+                        if let fallbackID = id ?? preview?.id {
+                            PaneThumbnailView(
+                                id: fallbackID,
+                                tileContentStore: tileContentStore,
+                                thumbnailDirectory: thumbnailDirectory,
+                                detailReader: detailReader
+                            )
+                        } else {
+                            ContentUnavailableView("No Photo", systemImage: "photo")
+                                .foregroundStyle(.secondary)
+                        }
                     }
+                case .empty:
+                    ContentUnavailableView("No Photo", systemImage: "photo")
+                        .foregroundStyle(.secondary)
                 }
-            case .empty:
-                ContentUnavailableView("No Photo", systemImage: "photo")
-                    .foregroundStyle(.secondary)
+                if isDownloading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .padding(8)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .padding(12)
+                }
             }
-            if isDownloading {
-                ProgressView()
-                    .controlSize(.small)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .padding(12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onPaneActivated(position)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func paneAccessibilityLabel(for id: MediaAssetID?) -> String {
@@ -107,6 +131,8 @@ struct CompareView: View {
             presentation: .strip(tileEdge: stripTileEdge),
             onEscapeKey: onEscape,
             onArrowKey: onStripArrow,
+            onMediaChoiceKey: onMediaChoiceKey,
+            onMediaChoice: onMediaChoice,
             focusTargetID: focusTargetID
         )
     }

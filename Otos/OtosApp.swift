@@ -101,6 +101,29 @@ struct OtosApp: App {
                 .keyboardShortcut("a", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .textEditing) {}
+            CommandMenu("Photo") {
+                Button(MediaChoice.liked.actionLabel) {
+                    catalogViewModel.submitMediaChoice(.liked, origin: .menu)
+                }
+                .keyboardShortcut("p", modifiers: [])
+                .disabled(!catalogViewModel.hasMediaChoiceTarget)
+                Button(MediaChoice.notRated.actionLabel) {
+                    catalogViewModel.submitMediaChoice(.notRated, origin: .menu)
+                }
+                .keyboardShortcut("u", modifiers: [])
+                .disabled(!catalogViewModel.hasMediaChoiceTarget)
+                Button(MediaChoice.disliked.actionLabel) {
+                    catalogViewModel.submitMediaChoice(.disliked, origin: .menu)
+                }
+                .keyboardShortcut("x", modifiers: [])
+                .disabled(!catalogViewModel.hasMediaChoiceTarget)
+                Divider()
+                Button("Move to Trash", role: .destructive) {
+                    catalogViewModel.moveTargetedMediaToTrash()
+                }
+                .keyboardShortcut(.delete, modifiers: .command)
+                .disabled(!catalogViewModel.canMoveTargetedMediaToTrash)
+            }
             // View commands belong in the *standard* View menu. `CommandMenu("View")`
             // creates a second top-level menu with the same title — measured 2026-08-09:
             // the menu bar read `Apple, Otos, Edit, View, Library, View, Window, Help`
@@ -118,6 +141,15 @@ struct OtosApp: App {
                     catalogViewModel.setViewMode(.compare)
                 }
                 .keyboardShortcut("3", modifiers: .command)
+                Divider()
+                Button("Swap Compared Photos") {
+                    catalogViewModel.swapComparedPhotos()
+                }
+                .keyboardShortcut(.downArrow, modifiers: [])
+                .disabled(
+                    catalogViewModel.viewMode != .compare
+                        || catalogViewModel.comparePair.members.count != 2
+                )
                 Divider()
                 Menu("Sort") {
                     CatalogSortMenuContent(
@@ -163,7 +195,9 @@ struct OtosApp: App {
                 removeLibrary: { catalogViewModel.removeLibrary($0) },
                 forgetRemovableSource: { catalogViewModel.forgetRemovableSource($0) },
                 importPreferences: catalogViewModel.importPreferences,
-                setImportPreferences: catalogViewModel.setImportPreferences
+                setImportPreferences: catalogViewModel.setImportPreferences,
+                advanceAfterMediaChoice: catalogViewModel.advanceAfterMediaChoice,
+                setAdvanceAfterMediaChoice: catalogViewModel.setAdvanceAfterMediaChoice
             )
         }
     }
