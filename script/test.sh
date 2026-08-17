@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# test-without-building reuses whatever script/build.sh (build-for-testing)
+# last produced in build/DerivedData; run that first, or this has nothing to
+# test against.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -95,7 +98,7 @@ run_tests_with_footprint_guard() {
       -configuration Debug \
       -destination "platform=macOS" \
       -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-      test "OTOS_SCALE_TEST=$OTOS_SCALE_TEST" > "$LOG_FILE" 2>&1 &
+      test-without-building "OTOS_SCALE_TEST=$OTOS_SCALE_TEST" > "$LOG_FILE" 2>&1 &
   else
     /usr/bin/xcodebuild \
       -project "$ROOT_DIR/Otos.xcodeproj" \
@@ -103,7 +106,7 @@ run_tests_with_footprint_guard() {
       -configuration Debug \
       -destination "platform=macOS" \
       -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-      test > "$LOG_FILE" 2>&1 &
+      test-without-building > "$LOG_FILE" 2>&1 &
   fi
   local xcodebuild_pid="$!"
   monitor_test_host_footprint "$xcodebuild_pid" "$monitor_file" &

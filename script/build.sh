@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# build-for-testing (not plain build) so script/test.sh's test-without-building
+# has products to run against without xcodebuild compiling everything twice.
+# It still produces Otos.app, since the Otos.xcscheme's BuildActionEntry has
+# buildForTesting=YES for it - callers that only want the app (build_and_run.sh,
+# smoke-run.sh) are unaffected.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,4 +17,4 @@ otos_require_full_xcode
   -configuration Debug \
   -destination "platform=macOS" \
   -derivedDataPath "$ROOT_DIR/build/DerivedData" \
-  build
+  build-for-testing
