@@ -52,6 +52,17 @@ The environment variable was renamed from its previous spelling rather than reus
 so an exported value left over in a shell cannot silently keep the old
 "register this path" meaning under the new read-only one.
 
+**A durable operational journal, not a log scrape, is the busy truth that protects an
+in-flight operation.** The app publishes busy state through `active_file_operation`
+and `active_reorganization_component` (`CatalogStore.hasActiveOperationalWork()` /
+`activeOperationalRootPaths()`), and `script/smoke-run.sh` reads the same predicate
+through `sqlite3 -readonly` under WAL (`has_active_operational_work()`). Any
+`SQLITE_BUSY`, `SQLITE_CORRUPT`, or missing-table error counts as busy, and both the
+import and reorganization journals are covered. The safety invariant is global: the
+single `Otos` process is never `kill`ed while any journal row exists, even for a
+different root — per-root output is diagnostic only. `is_import_active` remains as an
+alias.
+
 ## Rejected alternatives
 
 - **Clean up after the fact in a teardown hook.** Deleting stray preference domains
@@ -75,6 +86,10 @@ so an exported value left over in a shell cannot silently keep the old
 - **Deleting the smoke seam entirely.** Running against the real library is the
   point — synthetic fixtures do not reproduce cloud-placeholder behavior or 16k-item
   scroll load. A read-only seam keeps the value and removes the hazard.
+- **Scraping `log show --last 5m` for busy state.** Global last-line-wins, 5-minute
+  truncation, and daemon-drop false-idle could each report idle during a live
+  operation and `kill` the app mid-`copyfile(3)` or mid-move. The journal survives
+  window, drop, and reboot, and already drives import/reorganization recovery.
 
 ## Consequences
 
@@ -88,27 +103,16 @@ so an exported value left over in a shell cannot silently keep the old
 - `script/smoke-run.sh --verify` proves selection was applied by looking for
   `op=smoke.select phase=finish outcome=selected`, rather than proving a library was
   registered.
+- `script/verify.sh` enforces that the production catalog and preference domains are
+  untouched across a run, so a regression that reaches production data fails the
+  local gate rather than being noticed later.
+- A smoke run refuses to `kill` the app while any operational journal row exists, so
+  an in-flight import or reorganization is never interrupted by developer tooling.
 
 ## Defers
 
-- **Enforcement in `verify.sh`** that the production catalog and preference domains
-  are untouched across a run (plan 0066 Stages 4 and 5) — landed.
 - **Where overlay lives and when it is purged** — ADR 0008.
-- **Test-suite process isolation mechanics** beyond data locations — the hosted-bundle
-  arrangement itself is unchanged.
-
-## Addendum 2026-08-06 — Operational journal is the busy truth (plan 0068)
-
-The busy-state defers above is fulfilled. The app publishes busy state via the
-durable journals `active_file_operation` and `active_reorganization_component`
-(`CatalogStore.hasActiveOperationalWork()` / `activeOperationalRootPaths()`).
-`script/smoke-run.sh` reads the same predicate through `sqlite3 -readonly`
-under WAL (`has_active_operational_work()`), pessimistically treating any
-`SQLITE_BUSY`/`SQLITE_CORRUPT`/missing-table error as busy, and covering both
-import and reorganization journals. The safety invariant is global: the single
-`Otos` process is never `kill`ed while any journal row exists, even for a
-different root — per-root output is diagnostic only. `is_import_active` is kept
-as a compatibility alias. The old `log show --last 5m | grep` path had
-global-last-line-wins, 5m truncation, and daemon-drop false-idle that would
-`kill` mid-`copyfile(3)` or mid-move; the journal survives window, drop, and
-reboot and already drives import/reorganization recovery.
+- **Test-suite process isolation mechanics** beyond data locations. This ADR owns
+  *where* data lives, not whether the test bundle is hosted. Plan 0094 closes this
+  deferral; when it lands, its ADR owns the hosting arrangement and this entry
+  points there instead.

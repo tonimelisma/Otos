@@ -1,5 +1,9 @@
 # ADR 0019: Import Plan Namespace Resolution And Build Ownership
 
+## Status
+
+Accepted. Implemented in `ImportPlanBuilder` and `MediaTransferPlanner`.
+
 ## Context
 
 Import planning must decide, for every file on an attached source, whether to copy

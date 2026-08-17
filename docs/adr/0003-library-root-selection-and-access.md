@@ -2,7 +2,9 @@
 
 ## Status
 
-Proposed
+Accepted. Implemented: the app runs unsandboxed with no security-scoped bookmarks
+(ARC-002), and the normalized filesystem path is the library-root identity
+(`LibraryRootPath`, ARC-008).
 
 ## Context
 

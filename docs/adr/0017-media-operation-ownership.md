@@ -1,5 +1,10 @@
 # ADR 0017: Media Operation Ownership
 
+## Status
+
+Accepted. Implemented in `MediaOperationCoordinator` and the durable import and
+reorganization journals owned by `CatalogStore`.
+
 ## Context
 
 Import and library reorganization both cross a failure-sensitive boundary between

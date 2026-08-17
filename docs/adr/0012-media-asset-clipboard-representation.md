@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed
+Accepted. Implemented as APP-012: Copy writes one `public.fileURL` per selected
+asset in display order and reads no media bytes.
 
 ## Context
 
