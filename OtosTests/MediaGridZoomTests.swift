@@ -101,8 +101,8 @@ private func makeController(itemCount: Int) -> MediaGridViewController {
 
     let assetIDs = (0 ..< itemCount).map { makeAssetID(path: "asset-\($0).jpg") }
     var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-    snapshot.appendSections([.media])
-    snapshot.appendItems(assetIDs, toSection: .media)
+    snapshot.appendSections([.ungrouped])
+    snapshot.appendItems(assetIDs, toSection: .ungrouped)
     controller.dataSource.apply(snapshot, animatingDifferences: false)
 
     let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: assetIDs)

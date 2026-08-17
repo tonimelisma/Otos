@@ -451,9 +451,9 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// The device-identity and last-used heuristics are deleted (plan 0092
-    /// increment 4): the coordinator ignores any value an earlier build left in
-    /// these keys and always defaults to first-available.
+    /// The device-identity and last-used heuristics are deleted: the coordinator
+    /// ignores any value an earlier build left in these keys and always defaults
+    /// to first-available.
     @Test func staleLegacyDestinationPreferencesAreIgnored() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
@@ -478,9 +478,9 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// "Dragging a library to the top changes [the default destination]" — the
-    /// Done-when bar for plan 0092 increment 4 — including for a card already
-    /// attached, which is the deliberate consequence the plan calls out: the
+    /// "Dragging a library to the top changes [the default destination]" —
+    /// including for a card already attached, which is the deliberate
+    /// consequence of following the order rather than a fixed pick: the
     /// re-plan against the new first library is the same one the destination
     /// pop-up already triggers.
     @Test func destinationFollowsUserReorderWhileAttached() async throws {

@@ -97,9 +97,9 @@ actor MediaOperationCoordinator {
         /// Whether `destination` was picked via the pop-up this attachment,
         /// rather than still tracking the default. A default destination keeps
         /// following the first available library — including through a
-        /// Settings → Libraries reorder while the card is attached, which is
-        /// the deliberate consequence plan 0092 increment 4 calls out. An
-        /// explicit pick only falls back when it actually becomes unavailable,
+        /// Settings → Libraries reorder while the card is attached — a
+        /// deliberate consequence of following the order rather than a fixed
+        /// pick. An explicit pick only falls back when it actually becomes unavailable,
         /// per its own "must survive until that run finishes" rule. Reset to
         /// `false` only by a new attachment, never by an incidental re-plan.
         var isDestinationExplicit: Bool
@@ -118,7 +118,7 @@ actor MediaOperationCoordinator {
         /// otherwise lose its batch ID the instant the phase leaves
         /// `.executing` — right when state G most needs it, to stay pinned and
         /// visible on the batch row (`import-bar.md` state G, "never
-        /// auto-dismisses"; plan 0092 increment 6).
+        /// auto-dismisses").
         var lastAttemptedBatch: ImportBatchID?
     }
 

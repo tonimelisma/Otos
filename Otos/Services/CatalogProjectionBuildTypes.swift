@@ -1,3 +1,5 @@
+import Foundation
+
 /// Small value carriers used while `CatalogProjection` builds a window state.
 ///
 /// These are kept outside the actor file so the actor's source stays focused on
@@ -10,6 +12,9 @@ nonisolated struct CatalogProjectionWindowStateParts {
     let resolvedDescriptor: CatalogQueryDescriptor
     let queryGeneration: UInt64
     let scopedAssetIDs: [MediaAssetID]
+    /// DES-069 day-grouping key, index-paired with `scopedAssetIDs`; empty
+    /// under any sort but `.bestDate`. See `CatalogMediaGridState.dayBuckets`.
+    let scopedDayBuckets: [Date?]
     let filterOptions: CatalogFilterOptions
     let mediaEmptyState: CatalogMediaEmptyState
 }

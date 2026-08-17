@@ -123,11 +123,24 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
 
 @MainActor
 final class MediaGridViewController: NSViewController {
+    /// DES-069: the grid groups by day only under `.bestDate` sort, where the
+    /// list is date-contiguous — `.name`/`.size` sort has no defined date
+    /// relationship between neighbors, so it stays one ungrouped section, same
+    /// as before day headers existed. `.day(nil)` is the "no known capture
+    /// date" bucket, still grouped (not folded into `.ungrouped`) so those
+    /// assets get their own header rather than silently vanishing from the
+    /// day structure. Section *order* in the diffable snapshot comes from the
+    /// order sections are first encountered walking the already-sorted asset
+    /// list (`mediaSnapshot(for:)`), not from this type — nulls land wherever
+    /// SQLite's `ORDER BY` places them, contiguously, and the walk groups
+    /// whatever run it finds.
     enum Section: Hashable {
-        case media
+        case ungrouped
+        case day(Date?)
     }
 
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaGridItem")
+    private static let dayHeaderIdentifier = NSUserInterfaceItemIdentifier("MediaGridDayHeader")
 
     let scrollView = NSScrollView()
     let collectionView = MediaGridCollectionView()
@@ -239,7 +252,7 @@ final class MediaGridViewController: NSViewController {
             }
         }
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
-        collectionView.collectionViewLayout = Self.makeLayout(presentation: presentation)
+        collectionView.collectionViewLayout = makeLayout(presentation: presentation)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
 
         configureCollectionView()
@@ -476,12 +489,50 @@ extension MediaGridViewController {
             MediaGridItem.self,
             forItemWithIdentifier: Self.itemIdentifier
         )
+        collectionView.register(
+            MediaGridDayHeaderView.self,
+            forSupplementaryViewOfKind: MediaGridDayHeaderView.elementKind,
+            withIdentifier: Self.dayHeaderIdentifier
+        )
 
         dataSource = NSCollectionViewDiffableDataSource<Section, MediaAssetID>(
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, assetID in
             self?.makeCollectionItem(collectionView: collectionView, indexPath: indexPath, assetID: assetID)
         }
+        dataSource.supplementaryViewProvider = {
+            [weak self] (
+                collectionView: NSCollectionView,
+                kind: NSCollectionView.SupplementaryElementKind,
+                indexPath: IndexPath
+            ) -> (any NSView & NSCollectionViewElement)? in
+            self?.makeDayHeader(collectionView: collectionView, kind: kind, indexPath: indexPath)
+        }
+    }
+
+    private func makeDayHeader(
+        collectionView: NSCollectionView,
+        kind: NSCollectionView.SupplementaryElementKind,
+        indexPath: IndexPath
+    ) -> MediaGridDayHeaderView? {
+        guard kind == MediaGridDayHeaderView.elementKind,
+              let header = collectionView.makeSupplementaryView(
+                  ofKind: kind,
+                  withIdentifier: Self.dayHeaderIdentifier,
+                  for: indexPath
+              ) as? MediaGridDayHeaderView
+        else {
+            return nil
+        }
+        let snapshot = dataSource.snapshot()
+        guard indexPath.section < snapshot.sectionIdentifiers.count,
+              case let .day(date) = snapshot.sectionIdentifiers[indexPath.section]
+        else {
+            return header
+        }
+        let itemCount = snapshot.numberOfItems(inSection: snapshot.sectionIdentifiers[indexPath.section])
+        header.configure(.map(date: date, itemCount: itemCount))
+        return header
     }
 
     private func makeCollectionItem(
@@ -541,7 +592,7 @@ extension MediaGridViewController {
             return
         }
         let layoutSignpost = OtosSignpost.ui.beginInterval("MediaGridLayoutReplace")
-        collectionView.collectionViewLayout = Self.makeLayout(presentation: next)
+        collectionView.collectionViewLayout = makeLayout(presentation: next)
         OtosSignpost.ui.endInterval("MediaGridLayoutReplace", layoutSignpost)
         configureScrollView()
     }

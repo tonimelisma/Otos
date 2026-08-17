@@ -7,9 +7,9 @@ import Foundation
 nonisolated struct RootRuntimeState: Equatable {
     var root: LibraryRoot
     var rowID: Int64
-    /// User-controlled order (plan 0092 increment 4), authoritative only for
-    /// library-kind roots — the first available one is the deterministic import
-    /// destination. Removable sources carry it too (every row needs a value,
+    /// User-controlled order, authoritative only for library-kind roots — the
+    /// first available one is the deterministic import destination. Removable
+    /// sources carry it too (every row needs a value,
     /// `nextLibraryRootSortIndex` is not kind-scoped) but their sidebar order
     /// comes from display name at query time regardless.
     var sortIndex: Int64

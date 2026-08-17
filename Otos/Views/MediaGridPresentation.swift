@@ -24,21 +24,58 @@ enum MediaGridPresentation: Equatable {
 }
 
 extension MediaGridViewController {
-    static func makeLayout(presentation: MediaGridPresentation) -> NSCollectionViewLayout {
+    func makeLayout(presentation: MediaGridPresentation) -> NSCollectionViewLayout {
         switch presentation {
         case let .grid(columnCount):
             makeGridLayout(columnCount: columnCount)
         case let .strip(tileEdge):
-            makeStripLayout(tileEdge: tileEdge)
+            Self.makeStripLayout(tileEdge: tileEdge)
         }
     }
 
     /// Backward-compatible entry used by zoom swaps (grid only).
-    static func makeLayout(columnCount: Int) -> MediaGridAnimatedLayout {
+    func makeLayout(columnCount: Int) -> MediaGridAnimatedLayout {
         makeGridLayout(columnCount: columnCount)
     }
 
-    private static func makeGridLayout(columnCount: Int) -> MediaGridAnimatedLayout {
+    /// A `sectionProvider` closure (not a fixed `section:`) so `.ungrouped` and
+    /// `.day` sections — which never coexist in one snapshot, but alternate as
+    /// sort changes — can differ in whether they carry a header, without ever
+    /// needing to rebuild this layout object on a data change. Compositional
+    /// layout re-invokes the closure per section on every layout pass that
+    /// follows a diffable-data-source apply, so it always sees the just-applied
+    /// snapshot. `dataSource` is read fresh each call (never captured by value)
+    /// for the same reason. Column-count changes still replace the whole layout
+    /// object via the existing zoom-swap path (`MediaGridZoom.swift`); this
+    /// closure only varies per-section header presence within one such object.
+    private func makeGridLayout(columnCount: Int) -> MediaGridAnimatedLayout {
+        let configuration = NSCollectionViewCompositionalLayoutConfiguration()
+        return MediaGridAnimatedLayout(
+            sectionProvider: { [weak self] sectionIndex, _ in
+                Self.gridLayoutSection(
+                    columnCount: columnCount,
+                    showsDayHeader: self?.sectionShowsDayHeader(at: sectionIndex) ?? false
+                )
+            },
+            configuration: configuration
+        )
+    }
+
+    private func sectionShowsDayHeader(at sectionIndex: Int) -> Bool {
+        guard let dataSource else {
+            return false
+        }
+        let identifiers = dataSource.snapshot().sectionIdentifiers
+        guard sectionIndex < identifiers.count else {
+            return false
+        }
+        if case .day = identifiers[sectionIndex] {
+            return true
+        }
+        return false
+    }
+
+    private static func gridLayoutSection(columnCount: Int, showsDayHeader: Bool) -> NSCollectionLayoutSection {
         let itemSize = NSCollectionLayoutSize(
             widthDimension: .fractionalWidth(1),
             heightDimension: .fractionalHeight(1)
@@ -57,7 +94,21 @@ extension MediaGridViewController {
         )
         let section = NSCollectionLayoutSection(group: group)
         section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-        return MediaGridAnimatedLayout(section: section)
+        if showsDayHeader {
+            // DES-069: pinned header, self-sized to its SwiftUI content.
+            let headerSize = NSCollectionLayoutSize(
+                widthDimension: .fractionalWidth(1),
+                heightDimension: .estimated(32)
+            )
+            let header = NSCollectionLayoutBoundarySupplementaryItem(
+                layoutSize: headerSize,
+                elementKind: MediaGridDayHeaderView.elementKind,
+                alignment: .top
+            )
+            header.pinToVisibleBounds = true
+            section.boundarySupplementaryItems = [header]
+        }
+        return section
     }
 
     /// Horizontal filmstrip: plain compositional layout (no animated subclass). The strip

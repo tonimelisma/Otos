@@ -186,7 +186,7 @@ final class CatalogWindowViewModel {
     /// leaves `.executing` (`applyImportPresentations`).
     var cancellingImportSources: Set<LibraryRootPath> = []
     /// Batch IDs already offered the once-only automatic sidebar move
-    /// (`import-bar.md` "Where the user is standing", plan 0092 increment 6).
+    /// (`import-bar.md` "Where the user is standing").
     /// UI-only ViewModel state, same tier as `cancellingImportSources` — the
     /// coordinator publishes the batch ID as state and has no notion of
     /// "have we already followed it."

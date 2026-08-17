@@ -44,7 +44,7 @@ extension CatalogWindowViewModel {
     }
 
     /// One path for drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ in Settings →
-    /// Libraries (plan 0092 increment 4).
+    /// Libraries.
     func moveLibrary(from sourceIndex: Int, to destinationIndex: Int) {
         OtosLog.ui.noticeOperation("intent.moveLibrary", phase: "received", fields: [
             "from": "\(sourceIndex)", "to": "\(destinationIndex)",

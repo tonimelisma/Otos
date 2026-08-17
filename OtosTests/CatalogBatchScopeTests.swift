@@ -38,14 +38,14 @@ struct CatalogBatchScopeTests {
         let batchIDs = try await store.orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: batchScope),
             availableLibraryPaths: available
-        )
+        ).ids
         let hiddenByFilter = try await store.orderedAssetIDs(
             for: CatalogQueryDescriptor(
                 scope: batchScope,
                 filter: MediaFilter(formats: [MediaFormatToken(rawValue: "HEIC")])
             ),
             availableLibraryPaths: available
-        )
+        ).ids
         let batchVisibleCount = try await store.visibleAssetCount(
             for: batchScope,
             availableLibraryPaths: available

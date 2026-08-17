@@ -79,7 +79,7 @@ extension MediaGridViewController {
         // count), animating a not-yet-visible view is pointless work and makes launch
         // timing test-hostile: install the layout directly and complete synchronously.
         guard collectionView.window != nil else {
-            collectionView.collectionViewLayout = Self.makeLayout(columnCount: requested)
+            collectionView.collectionViewLayout = makeLayout(columnCount: requested)
             finishZoomSwap(
                 signpost: signpost,
                 oldCount: oldCount,
@@ -96,7 +96,7 @@ extension MediaGridViewController {
             }
             context.duration = MediaGridAnimation.zoomDuration
             context.timingFunction = MediaGridAnimation.zoomTimingFunction
-            collectionView.animator().collectionViewLayout = Self.makeLayout(columnCount: requested)
+            collectionView.animator().collectionViewLayout = makeLayout(columnCount: requested)
             if let anchor {
                 collectionView.animator().scrollToItems(at: [anchor], scrollPosition: .centeredVertically)
             }

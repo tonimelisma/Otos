@@ -321,7 +321,7 @@ nonisolated enum CatalogLibraryActivity: Hashable {
 /// adds transient runtime facts needed by the current UI surfaces.
 nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     let root: LibraryRoot
-    /// User-controlled order, durable on the root row (plan 0092 increment 4).
+    /// User-controlled order, durable on the root row.
     /// Authoritative for library-kind roots: the first available one, in this
     /// order, is the deterministic import destination, and Settings → Libraries
     /// shows and reorders exactly this order. Removable sources carry a value
@@ -600,10 +600,21 @@ nonisolated enum MediaSortKey {
 /// The collection view consumes identity order plus a scalar detail-refresh
 /// generation. Visible cell details are faulted through the Store-backed detail
 /// reader owned by the AppKit grid boundary, so publishing a window state never
-/// copies every asset value.
+/// copies every asset's detail (thumbnail, kind, size, …).
+///
+/// `dayBuckets` is the one deliberate exception, and it is not detail: it is a
+/// single lightweight grouping key per asset (DES-069's day headers), computed
+/// once per catalog change at the same cadence `orderedAssetIDs` already is —
+/// not per scroll, not per visible window. Empty under any sort but `.bestDate`
+/// (day-contiguity only holds under that sort; `.name`/`.size` render one
+/// ungrouped section, same as before this field existed). When populated it is
+/// always the same length as `orderedAssetIDs`, index-for-index; an individual
+/// entry is `nil` when that asset has no known capture date (still grouped —
+/// into a single "no date" section, per `MediaGridBridge`'s section grouping).
 nonisolated struct CatalogMediaGridState: Equatable {
     var descriptor: CatalogQueryDescriptor
     var orderedAssetIDs: [MediaAssetID]
+    var dayBuckets: [Date?] = []
     var detailRefreshGeneration: UInt64 = 0
 
     var scope: SidebarSelection {
@@ -618,11 +629,13 @@ nonisolated struct CatalogMediaGridState: Equatable {
     init(
         scope: SidebarSelection,
         orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?] = [],
         detailRefreshGeneration: UInt64 = 0
     ) {
         self.init(
             descriptor: CatalogQueryDescriptor(scope: scope),
             orderedAssetIDs: orderedAssetIDs,
+            dayBuckets: dayBuckets,
             detailRefreshGeneration: detailRefreshGeneration
         )
     }
@@ -630,10 +643,12 @@ nonisolated struct CatalogMediaGridState: Equatable {
     init(
         descriptor: CatalogQueryDescriptor,
         orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?] = [],
         detailRefreshGeneration: UInt64 = 0
     ) {
         self.descriptor = descriptor
         self.orderedAssetIDs = orderedAssetIDs
+        self.dayBuckets = dayBuckets
         self.detailRefreshGeneration = detailRefreshGeneration
     }
 }

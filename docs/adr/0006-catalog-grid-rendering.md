@@ -85,6 +85,25 @@ never a continuous interactive transition: macOS exposes
 (that API is UIKit-only, verified against the Xcode 27 beta SDK), so there is no
 documented way to drive a transition incrementally from a pinch gesture.
 
+Under Date sort the grid groups into day sections (DES-069, APP-030) via a
+`sectionProvider` closure on `NSCollectionViewCompositionalLayout` rather than a
+fixed `section:` layout — the closure looks up the diffable data source's current
+section identifier per index and attaches a pinned boundary header only for
+`.day` sections, never `.ungrouped`. This avoids rebuilding the layout object
+whenever grouping toggles between sort orders: compositional layout already
+re-invokes the closure on every layout pass that follows a diffable apply, so it
+always sees the just-applied snapshot without a second coordination mechanism.
+Section membership is derived fresh from `CatalogMediaGridState.orderedAssetIDs`
+plus a parallel `dayBuckets: [Date?]` (populated only under `.bestDate` sort, one
+`Calendar.startOfDay` per asset) on every structural apply
+(`MediaGridSectionGroupingPolicy`, pure and independent of AppKit); nothing diffs
+sections against the previous snapshot, so there is no separate section-level
+invalidation to go stale. The day header itself is the one `NSHostingView` in this
+otherwise pure-AppKit grid — justified by cardinality (one header per day, not one
+per tile), letting it reuse `DesignPalette`'s SwiftUI dynamic-appearance colors
+instead of new AppKit-native dynamic-color infrastructure built for a single
+low-cardinality view.
+
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. Each square collection cell is transparent; the visible tile
 face is the loaded thumbnail's native aspect-fit rect, or a full-square neutral
@@ -201,6 +220,14 @@ data-driven change rather than a new rendering mechanism.
   `MediaAssetTilePresentation` so the hit-test and the drawn face cannot drift.
 - Settings may continue using SwiftUI `Table`; this decision concerns only the
   high-cardinality media browser.
+- Day-section grouping needed no changes to `MediaGridStructuralApplyPolicy` or
+  `MediaGridMutationGate`: both operate purely on flat `[MediaAssetID]`/
+  `Set<MediaAssetID>` identity, agnostic to section structure, because sections
+  are rebuilt fresh from current data on every apply rather than independently
+  diffed. The no-blank invariant (APP-015) holds across a day-bucket change
+  (enrichment correcting a capture date moves an asset between sections) for the
+  same reason it holds across any other structural churn: `TileContentStore` is
+  keyed by asset identity, not position or section.
 
 ## References
 
@@ -211,5 +238,6 @@ data-driven change rather than a new rendering mechanism.
   `reloadData`; there is no `applySnapshotUsingReloadData`.
 - Implemented in `Otos/Views/MediaGrid*.swift`, `Otos/Views/MediaGrid*.swift`,
   `Otos/Views/MediaAssetTileView.swift`, `Otos/Views/GridSelection.swift`,
+  `Otos/Views/MediaGridDayHeaderView.swift`,
   `Otos/ViewModels/CatalogWindowViewModelSelection.swift`;
-  requirements APP-006/010/011/015.
+  requirements APP-006/010/011/015/030.

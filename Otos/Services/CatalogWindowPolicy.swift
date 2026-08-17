@@ -9,7 +9,7 @@ import Foundation
 nonisolated enum CatalogWindowPolicy {
     /// Library-kind roots preserve the caller's incoming order — `sort_index`
     /// order from `CatalogStore.currentLibraries()`, user-owned via Settings →
-    /// Libraries (plan 0092 increment 4). Removable sources have no user-facing
+    /// Libraries. Removable sources have no user-facing
     /// order to preserve, so they keep the previous display-name rule.
     static func sortLibraries(_ libraries: [CatalogLibraryState]) -> [CatalogLibraryState] {
         let fixed = libraries.filter { $0.kind == .library }
@@ -104,13 +104,19 @@ nonisolated enum CatalogWindowPolicy {
         )
     }
 
+    /// `dayBuckets` is the grid's day-grouping key (DES-069) — empty under any
+    /// sort but `.bestDate` (see `CatalogMediaGridState.dayBuckets`), otherwise
+    /// paired index-for-index with `orderedAssetIDs`. Filtered in the same pass
+    /// as the IDs so the two never desync; an empty `dayBuckets` in means an
+    /// empty `dayBuckets` out, regardless of how many IDs survive the filter.
     static func assetIDs(
         for sidebarSelection: SidebarSelection,
         orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?],
         availableLibraryPaths: Set<LibraryRootPath>,
         rootsByPath: [LibraryRootPath: CatalogLibraryState]
-    ) -> [MediaAssetID] {
-        orderedAssetIDs.filter { id in
+    ) -> (ids: [MediaAssetID], dayBuckets: [Date?]) {
+        func keeps(_ id: MediaAssetID) -> Bool {
             guard availableLibraryPaths.contains(id.libraryRootPath) else {
                 return false
             }
@@ -124,6 +130,18 @@ nonisolated enum CatalogWindowPolicy {
                 return id.libraryRootPath == path
             }
         }
+        guard dayBuckets.count == orderedAssetIDs.count else {
+            return (orderedAssetIDs.filter(keeps), [])
+        }
+        var filteredIDs: [MediaAssetID] = []
+        var filteredBuckets: [Date?] = []
+        filteredIDs.reserveCapacity(orderedAssetIDs.count)
+        filteredBuckets.reserveCapacity(orderedAssetIDs.count)
+        for (id, bucket) in zip(orderedAssetIDs, dayBuckets) where keeps(id) {
+            filteredIDs.append(id)
+            filteredBuckets.append(bucket)
+        }
+        return (filteredIDs, filteredBuckets)
     }
 
     static func title(for sidebarSelection: SidebarSelection, libraries: [CatalogLibraryState]) -> String {
@@ -189,6 +207,7 @@ nonisolated enum CatalogWindowPolicy {
             mediaGrid: CatalogMediaGridState(
                 descriptor: parts.resolvedDescriptor,
                 orderedAssetIDs: parts.scopedAssetIDs,
+                dayBuckets: parts.scopedDayBuckets,
                 detailRefreshGeneration: detailRefreshGeneration
             ),
             filterOptions: parts.filterOptions,

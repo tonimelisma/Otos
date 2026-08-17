@@ -250,8 +250,8 @@ private final class StripHarness {
 @MainActor
 private func adoptStripGrid(_ controller: MediaGridViewController, ids: [MediaAssetID]) {
     var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-    snapshot.appendSections([.media])
-    snapshot.appendItems(ids, toSection: .media)
+    snapshot.appendSections([.ungrouped])
+    snapshot.appendItems(ids, toSection: .ungrouped)
     controller.dataSource.apply(snapshot, animatingDifferences: false)
 
     let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)

@@ -4,8 +4,8 @@ import Testing
 
 struct CatalogProjectionTests {
     /// Library-kind roots preserve their incoming (`sort_index`) order rather
-    /// than being re-sorted by name — the user's own Settings → Libraries order
-    /// (plan 0092 increment 4). Asset ordering within the grid is unaffected.
+    /// than being re-sorted by name — the user's own Settings → Libraries order.
+    /// Asset ordering within the grid is unaffected.
     @Test func windowStatePreservesLibraryOrderAndSortsAssets() async {
         let pictures = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures"))
         let archive = LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Archive"))

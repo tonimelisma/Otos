@@ -43,7 +43,7 @@ extension MediaGridViewController {
         // Selection truth lives in the ViewModel and is already pruned/cleared in
         // `applyState` before this apply runs; completion only renders the model.
         let snapshotStart = Date()
-        let snapshot = mediaSnapshot(for: grid.orderedAssetIDs)
+        let snapshot = mediaSnapshot(for: grid)
         let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
 
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
@@ -142,12 +142,25 @@ extension MediaGridViewController {
         NSAnimationContext.endGrouping()
     }
 
+    /// Sections are rebuilt fresh from current identity + bucket data on every
+    /// apply via `MediaGridSectionGroupingPolicy` (`MediaGridSupport.swift`,
+    /// pure and independently tested); nothing here diffs against the previous
+    /// snapshot's sections, so no separate section-level invalidation exists to
+    /// go stale (`MediaGridStructuralApplyPolicy.summarize`, which does drive
+    /// real diffing, works entirely off the flat ID list and needs no
+    /// day-bucket awareness of its own).
     private func mediaSnapshot(
-        for orderedIDs: [MediaAssetID]
+        for grid: CatalogMediaGridState
     ) -> NSDiffableDataSourceSnapshot<Section, MediaAssetID> {
         var snapshot = NSDiffableDataSourceSnapshot<Section, MediaAssetID>()
-        snapshot.appendSections([.media])
-        snapshot.appendItems(orderedIDs, toSection: .media)
+        let runs = MediaGridSectionGroupingPolicy.sectionRuns(
+            orderedIDs: grid.orderedAssetIDs,
+            dayBuckets: grid.dayBuckets
+        )
+        for run in runs {
+            snapshot.appendSections([run.section])
+            snapshot.appendItems(run.ids, toSection: run.section)
+        }
         return snapshot
     }
 

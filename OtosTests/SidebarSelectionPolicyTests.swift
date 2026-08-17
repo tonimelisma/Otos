@@ -105,7 +105,7 @@ struct SidebarSelectionPolicyTests {
         )
     }
 
-    // MARK: - Status ownership (plan 0092 increment 6, `import-bar.md` "Ownership of status")
+    // MARK: - Status ownership (`import-bar.md` "Ownership of status")
 
     private static let cardPath = LibraryRootPath(rawValue: "/Volumes/CARD")
     private static let batchID = ImportBatchID(unixMilliseconds: 1_704_067_200_000)

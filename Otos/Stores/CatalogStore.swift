@@ -532,13 +532,17 @@ extension CatalogStore {
         roots[rootPath]?.skippedPackageCount ?? 0
     }
 
+    /// `dayBuckets` is empty unless `descriptor.sort.field == .bestDate`
+    /// (day-contiguity — and so grouping — only holds under that sort), else
+    /// index-paired with the returned IDs (DES-069; see
+    /// `CatalogMediaGridState.dayBuckets`).
     func orderedAssetIDs(
         for descriptor: CatalogQueryDescriptor,
         availableLibraryPaths: Set<LibraryRootPath>
-    ) async throws -> [MediaAssetID] {
+    ) async throws -> (ids: [MediaAssetID], dayBuckets: [Date?]) {
         let scope = scopePredicate(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
         guard !scope.selectsNothing else {
-            return []
+            return ([], [])
         }
 
         let signpost = OtosSignpost.persistence.beginInterval("CatalogStoreOrderedAssetIDQuery")
@@ -555,11 +559,22 @@ extension CatalogStore {
         let validRootPathsByRowID = roots.pathsByRowID.filter { rowID, path in
             scope.rootIDs.contains(rowID) && availableLibraryPaths.contains(path)
         }
-        let ids = timedRows.value.compactMap { rootRowID, relativePath -> MediaAssetID? in
-            guard let rootPath = validRootPathsByRowID[rootRowID] else {
-                return nil
+        let groupsByDate = descriptor.sort.field == .bestDate
+        var ids: [MediaAssetID] = []
+        var dayBuckets: [Date?] = []
+        ids.reserveCapacity(timedRows.value.count)
+        if groupsByDate {
+            dayBuckets.reserveCapacity(timedRows.value.count)
+        }
+        for row in timedRows.value {
+            guard let rootPath = validRootPathsByRowID[row.libraryRootID] else {
+                continue
             }
-            return MediaAssetID(libraryRootPath: rootPath, relativePath: relativePath)
+            ids.append(MediaAssetID(libraryRootPath: rootPath, relativePath: row.relativePath))
+            if groupsByDate {
+                let dayStart = row.bestCaptureUnix.map { Calendar.current.startOfDay(for: Date(timeIntervalSince1970: $0)) }
+                dayBuckets.append(dayStart)
+            }
         }
         let queryMs = timedRows.totalMs
         OtosLog.catalog.debug(
@@ -574,7 +589,7 @@ extension CatalogStore {
             // swiftlint:disable:next line_length
             "op=catalog.store.query.order phase=finish descriptor=\(descriptor.diagnosticDescription, privacy: .public) rootCount=\(scope.rootIDs.count, privacy: .public) count=\(ids.count, privacy: .public) waitMs=\(timedRows.waitMs, privacy: .public) execMs=\(timedRows.execMs, privacy: .public) queryMs=\(queryMs, privacy: .public)"
         )
-        return ids
+        return (ids, dayBuckets)
     }
 
     func orderedAssetIDs(
@@ -584,7 +599,7 @@ extension CatalogStore {
         try await orderedAssetIDs(
             for: CatalogQueryDescriptor(scope: selection),
             availableLibraryPaths: availableLibraryPaths
-        )
+        ).ids
     }
 
     /// Rows this scope holds regardless of whether their roots are reachable right
@@ -1514,8 +1529,8 @@ extension CatalogStore {
 
     /// Reorders library-kind roots, moving the one at `sourceIndex` (within the
     /// library-only, currently-displayed order) to `destinationIndex`. Settings →
-    /// Libraries' drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ all call this one intent
-    /// (plan 0092 increment 4) — one user action, one path. The first entry in the
+    /// Libraries' drag, `Move Up`/`Move Down`, and ⌘↑/⌘↓ all call this one intent —
+    /// one user action, one path. The first entry in the
     /// result becomes the deterministic import destination
     /// (`MediaOperationCoordinator.refreshSources`).
     func moveLibrary(from sourceIndex: Int, to destinationIndex: Int) async throws {

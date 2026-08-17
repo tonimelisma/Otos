@@ -62,7 +62,7 @@ nonisolated enum SidebarSelectionPolicy {
         }
     }
 
-    // MARK: - Status ownership (plan 0092 increment 6, `import-bar.md` "Ownership of status")
+    // MARK: - Status ownership (`import-bar.md` "Ownership of status")
 
     /// Whether the import bar is currently on screen for the operation that
     /// produced `presentation` — true whenever the current selection is that

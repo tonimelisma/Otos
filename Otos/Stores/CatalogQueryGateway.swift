@@ -29,11 +29,17 @@ nonisolated enum CatalogQueryGateway {
         return json.flatMap(CatalogStore.decodeMetadataExtraJSON)
     }
 
+    /// `bestCaptureUnix` is carried alongside identity purely as a day-grouping
+    /// key for the grid (DES-069) — a single scalar already read by the index
+    /// for `ORDER BY`, not a step toward per-asset detail in window state.
+    /// `nil` under any sort other than `.bestDate`: the value is date-contiguous
+    /// only under that sort, so callers that don't ask for it don't pay to
+    /// decode it (see `orderPlan`).
     static func fetchOrderedAssetIDRows(
         descriptor: CatalogQueryDescriptor,
         scope: CatalogScopePredicate,
         db: Database
-    ) throws -> [(Int64, MediaRelativePath)] {
+    ) throws -> [(libraryRootID: Int64, relativePath: MediaRelativePath, bestCaptureUnix: Double?)] {
         guard let query = orderedAssetIDQuery(descriptor: descriptor, scope: scope) else {
             return []
         }
@@ -42,7 +48,7 @@ nonisolated enum CatalogQueryGateway {
             sql: query.sql,
             arguments: query.arguments
         ).map { row in
-            (row["library_root_id"], MediaRelativePath(rawValue: row["relative_path"]))
+            (row["library_root_id"], MediaRelativePath(rawValue: row["relative_path"]), row["best_capture_unix"])
         }
     }
 
@@ -60,7 +66,7 @@ nonisolated enum CatalogQueryGateway {
         let filterSQL = filter.sql.map { "\n  AND \($0)" } ?? ""
         return SQLQuery(
             sql: """
-            SELECT library_root_id, relative_path
+            SELECT library_root_id, relative_path, best_capture_unix
             FROM media_asset INDEXED BY \(order.indexName)
             WHERE \(scopeClause.sql)\(filterSQL)
             ORDER BY \(order.orderBy)

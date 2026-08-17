@@ -117,6 +117,36 @@ struct CatalogQueryGatewayTests {
         #expect(paths == ["disliked.jpg", "liked.jpg"])
     }
 
+    /// DES-069's day bucket comes from this column — the ordering query already reads
+    /// it for `ORDER BY`; this checks it is also carried through to the fetched rows,
+    /// nil included, rather than silently dropped.
+    @Test func fetchOrderedAssetIDRowsCarriesBestCaptureUnixPerRow() async throws {
+        let dbQueue = try DatabaseQueue()
+        try CatalogStore.migrator.migrate(dbQueue)
+        try await dbQueue.write { db in
+            try insertScopeRoot(id: 1, path: "/Library", db: db)
+            try insertScopeAsset(rootID: 1, path: "dated.jpg", kind: "image", format: "JPEG", batchMs: nil, db: db)
+            try insertScopeAsset(rootID: 1, path: "undated.jpg", kind: "image", format: "JPEG", batchMs: nil, db: db)
+            // best_capture_unix is a GENERATED column (COALESCE over the ts_*/created_at/
+            // content_modified_at columns) — write one of its sources, not the column itself.
+            try db.execute(
+                sql: "UPDATE media_asset SET ts_original_unix = ? WHERE relative_path = ?",
+                arguments: [1_700_000_000.0, "dated.jpg"]
+            )
+        }
+        let rows = try await dbQueue.read { db in
+            try CatalogQueryGateway.fetchOrderedAssetIDRows(
+                descriptor: CatalogQueryDescriptor(scope: .allMedia, sort: .dateNewest),
+                scope: CatalogScopePredicate(rootIDs: [1]),
+                db: db
+            )
+        }
+        let byPath = Dictionary(uniqueKeysWithValues: rows.map { ($0.relativePath.rawValue, $0.bestCaptureUnix) })
+        #expect((byPath["dated.jpg"] ?? nil) == 1_700_000_000.0)
+        #expect((byPath["undated.jpg"] ?? nil) == nil)
+        #expect(byPath.keys.contains("undated.jpg"))
+    }
+
     @Test func metadataExtraReturnsNilWhenRowMissing() async throws {
         let dbQueue = try DatabaseQueue()
         try CatalogStore.migrator.migrate(dbQueue)

@@ -69,6 +69,36 @@ struct MediaGridPaintInvariantTests {
         #expect(harness.controller.tileContents.content(for: recycled) == nil)
     }
 
+    /// DES-069 regression: an enrichment correcting a capture date moves an asset
+    /// between day sections (same membership, same relative order, different
+    /// section assignment) — the painted tile must survive exactly like any other
+    /// structural churn, per APP-015.
+    @Test func dayBucketChangeBetweenAppliesDoesNotBlankPaintedVisibleTile() throws {
+        let harness = try PaintInvariantHarness(itemCount: 4)
+        let visible = harness.ids[0]
+        harness.paintThumbnail(for: visible, pixelSize: CGSize(width: 64, height: 48))
+        let before = try harness.requirePaintedSize(for: visible)
+
+        let dayOne = Date(timeIntervalSince1970: 0)
+        let dayTwo = Date(timeIntervalSince1970: 86400)
+        var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
+        for run in MediaGridSectionGroupingPolicy.sectionRuns(
+            orderedIDs: harness.ids,
+            dayBuckets: [dayTwo, dayOne, dayOne, dayOne]
+        ) {
+            snapshot.appendSections([run.section])
+            snapshot.appendItems(run.ids, toSection: run.section)
+        }
+        harness.controller.dataSource.apply(snapshot, animatingDifferences: false)
+        harness.controller.tileContents.pinVisible([visible])
+        harness.controller.tileContents.prune(to: Set(harness.ids))
+        harness.reconfigureVisible(visible)
+
+        let after = try harness.requirePaintedSize(for: visible)
+        #expect(after == before)
+        #expect(harness.controller.tileContents.content(for: visible)?.image != nil)
+    }
+
     @Test func reconfigureVisibleItemsPinsOnce() throws {
         let harness = try PaintInvariantHarness(itemCount: 4)
         harness.controller.reconfigureVisibleItems(reason: "test")
@@ -104,8 +134,8 @@ private final class PaintInvariantHarness {
             )
         }
         var snapshot = NSDiffableDataSourceSnapshot<MediaGridViewController.Section, MediaAssetID>()
-        snapshot.appendSections([.media])
-        snapshot.appendItems(ids, toSection: .media)
+        snapshot.appendSections([.ungrouped])
+        snapshot.appendItems(ids, toSection: .ungrouped)
         controller.dataSource.apply(snapshot, animatingDifferences: false)
 
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)

@@ -284,7 +284,7 @@ extension CatalogStore {
     }
 
     /// Backfills `sort_index` in **today's displayed order** so upgrading does not
-    /// reshuffle the sidebar (ADR/plan 0092 increment 4). That order is the display
+    /// reshuffle the sidebar. That order is the display
     /// name (falling back to the path's last component), the same comparison
     /// `CatalogWindowPolicy.sortLibraries` used before this migration made the
     /// column authoritative — replicated here in Swift because SQLite has no
@@ -567,7 +567,7 @@ extension CatalogStore {
     /// One past the highest `sort_index` currently in use, so a newly added root
     /// (library or removable) appends after everything else rather than colliding.
     /// Global rather than scoped to `kind` — the column is only *meaningful* for
-    /// ordering library-kind roots (`import-bar.md`/plan 0092 increment 4), but
+    /// ordering library-kind roots (`import-bar.md`), but
     /// every row needs some value, and a single counter is simpler than two.
     static func nextLibraryRootSortIndex(db: Database) throws -> Int64 {
         try (Int64.fetchOne(db, sql: "SELECT MAX(sort_index) FROM library_root") ?? -1) + 1

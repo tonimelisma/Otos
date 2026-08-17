@@ -233,12 +233,15 @@ private extension CatalogProjection {
         // short-circuits on the shared array buffer. A structural change or a newer
         // user intent re-runs the full query.
         let reuseOrderedAssetIDs: [MediaAssetID]?
+        let reuseDayBuckets: [Date?]?
         let reuseDescriptor: CatalogQueryDescriptor?
         if pendingDirtyKind == .detailOnly, let previous = lastPublishedState {
             reuseOrderedAssetIDs = previous.mediaGrid.orderedAssetIDs
+            reuseDayBuckets = previous.mediaGrid.dayBuckets
             reuseDescriptor = previous.queryDescriptor
         } else {
             reuseOrderedAssetIDs = nil
+            reuseDayBuckets = nil
             reuseDescriptor = nil
         }
 
@@ -254,6 +257,7 @@ private extension CatalogProjection {
             libraries: libraries,
             request: selectedRequest,
             reuseOrderedAssetIDs: reuseOrderedAssetIDs,
+            reuseDayBuckets: reuseDayBuckets,
             reuseDescriptor: reuseDescriptor
         )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
@@ -365,6 +369,7 @@ private extension CatalogProjection {
         libraries unsortedLibraries: [CatalogLibraryState],
         request: CatalogQueryRequest,
         reuseOrderedAssetIDs: [MediaAssetID]? = nil,
+        reuseDayBuckets: [Date?]? = nil,
         reuseDescriptor: CatalogQueryDescriptor? = nil
     ) async -> (CatalogWindowState, CatalogProjectionBuildMetrics) {
         let allRoots = CatalogWindowPolicy.sortLibraries(unsortedLibraries)
@@ -386,15 +391,17 @@ private extension CatalogProjection {
             importBatches: importBatches
         )
         let orderedAssetIDs: [MediaAssetID]
+        let dayBuckets: [Date?]
         let orderQueryMs: Int
         if let reuseOrderedAssetIDs, let reuseDescriptor, resolvedDescriptor == reuseDescriptor {
             orderedAssetIDs = reuseOrderedAssetIDs
+            dayBuckets = reuseDayBuckets ?? []
             orderQueryMs = 0
         } else {
             orderQueryCount &+= 1
             let orderStart = Date()
             do {
-                orderedAssetIDs = try await store.orderedAssetIDs(
+                (orderedAssetIDs, dayBuckets) = try await store.orderedAssetIDs(
                     for: resolvedDescriptor,
                     availableLibraryPaths: availableLibraryPaths
                 )
@@ -404,12 +411,14 @@ private extension CatalogProjection {
                     "Catalog ordered asset query failed error=\(String(describing: error), privacy: .public)"
                 )
                 orderedAssetIDs = []
+                dayBuckets = []
                 orderQueryMs = DiagnosticsTiming.milliseconds(since: orderStart)
             }
         }
         return await buildWindowState(
             libraries: allRoots,
             orderedAssetIDs: orderedAssetIDs,
+            dayBuckets: dayBuckets,
             request: request,
             resolvedDescriptor: resolvedDescriptor,
             store: store,
@@ -422,6 +431,7 @@ private extension CatalogProjection {
     private func buildWindowState(
         libraries unsortedLibraries: [CatalogLibraryState],
         orderedAssetIDs: [MediaAssetID],
+        dayBuckets: [Date?] = [],
         request: CatalogQueryRequest,
         resolvedDescriptor providedResolvedDescriptor: CatalogQueryDescriptor? = nil,
         store: CatalogStore? = nil,
@@ -467,9 +477,10 @@ private extension CatalogProjection {
             )
         let resolvedSidebarSelection = resolvedDescriptor.scope
         let title = CatalogWindowPolicy.title(for: resolvedSidebarSelection, libraries: allRoots)
-        let scopedAssetIDs = CatalogWindowPolicy.assetIDs(
+        let (scopedAssetIDs, scopedDayBuckets) = CatalogWindowPolicy.assetIDs(
             for: resolvedSidebarSelection,
             orderedAssetIDs: orderedAssetIDs,
+            dayBuckets: dayBuckets,
             availableLibraryPaths: availableLibraryPaths,
             rootsByPath: rootsByPath
         )
@@ -492,6 +503,7 @@ private extension CatalogProjection {
             resolvedDescriptor: resolvedDescriptor,
             queryGeneration: request.generation,
             scopedAssetIDs: scopedAssetIDs,
+            scopedDayBuckets: scopedDayBuckets,
             filterOptions: filterOptions,
             mediaEmptyState: mediaEmptyState
         )), CatalogProjectionBuildMetrics(orderQueryMs: orderQueryMs))
