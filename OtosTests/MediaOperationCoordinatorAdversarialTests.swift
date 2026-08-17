@@ -703,7 +703,8 @@ struct MediaOperationCoordinatorAdversarialTests {
                 hasBlockedEntries: false,
                 hasEntryFailures: false,
                 skippedForeignCount: 0,
-                failedCount: 0
+                failedCount: 0,
+                incompleteItems: []
             )
         )
         try await Task.sleep(for: .milliseconds(200))
@@ -784,7 +785,8 @@ struct MediaOperationCoordinatorAdversarialTests {
                 hasBlockedEntries: false,
                 hasEntryFailures: false,
                 skippedForeignCount: 0,
-                failedCount: 0
+                failedCount: 0,
+                incompleteItems: []
             )
         )
         await queueTask.value
@@ -803,6 +805,86 @@ struct MediaOperationCoordinatorAdversarialTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(sawCompletion, "Expected lastCompletion to be recorded after the executor result settled")
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// `import-bar.md` state F ("card gone"): the batch row outlives the
+    /// source session. A settled (not executing) attachment's final
+    /// presentation must still be findable by `batchID` after its source
+    /// detaches, with `cardStillExists` now false, so the bar can keep
+    /// rendering on `.importBatch(id)` after the removable row disappears.
+    @Test func batchPresentationSurvivesDetachAfterCleanSettle() async throws {
+        log("START batchPresentationSurvivesDetachAfterCleanSettle")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 9, count: 1024).write(to: cardURL.appending(path: "g.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:gone-snapshot", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults.domain,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+
+        await execControl.resumePending(
+            for: cardPath,
+            with: .completed(
+                publishedCount: 1,
+                hasBlockedEntries: false,
+                hasEntryFailures: false,
+                skippedForeignCount: 0,
+                failedCount: 0,
+                incompleteItems: []
+            )
+        )
+        await queueTask.value
+
+        let settled = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
+        let batchID = try #require(settled.batchID)
+        #expect(settled.cardStillExists)
+
+        // Detach races the post-settlement re-plan on purpose: the detach
+        // path snapshots the batch's last presentation regardless of whether
+        // it catches the session `.completed`, `.building`, or `.ready` — the
+        // fact that matters (`session.lastCompletion`) is set the moment
+        // `copiedJustNow` above became non-nil and does not depend on phase.
+        try await store.detachRemovableSource(identity: "volume:gone-snapshot", reason: .ejected)
+        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+
+        // The batch's presentation survives its source session's removal by
+        // design (`import-bar.md` state F, "card gone") and keeps the same
+        // `sourcePath` — it is a fact about that batch, not a live session —
+        // so the oracle here is `cardStillExists` flipping to false under the
+        // stable `batchID`, never "no presentation for this source" (that
+        // would never resolve, since the snapshot is the intended survivor).
+        let afterDetach = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            pres.batchID == batchID && pres.cardStillExists == false
+        }
+        #expect(afterDetach.copiedJustNow == 1)
         log("END")
         await coordinator.shutdown()
     }
@@ -877,7 +959,8 @@ struct MediaOperationCoordinatorAdversarialTests {
                 hasBlockedEntries: false,
                 hasEntryFailures: false,
                 skippedForeignCount: 0,
-                failedCount: 0
+                failedCount: 0,
+                incompleteItems: []
             )
         )
         await queueTask.value

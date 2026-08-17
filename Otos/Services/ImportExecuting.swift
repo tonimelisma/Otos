@@ -230,7 +230,8 @@ actor ControlledImportExecutor: ImportExecuting {
             hasBlockedEntries: false,
             hasEntryFailures: false,
             skippedForeignCount: 0,
-            failedCount: 0
+            failedCount: 0,
+            incompleteItems: []
         )
     }
 

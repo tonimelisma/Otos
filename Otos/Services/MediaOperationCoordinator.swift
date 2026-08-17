@@ -83,6 +83,11 @@ actor MediaOperationCoordinator {
         let batch: ImportBatchID
         let publishedCount: Int
         let isFullyClean: Bool
+        /// Items that started this run but did not land, carried alongside the
+        /// rest of the completion so state F's incomplete variant can still
+        /// select and scroll them after the post-settlement re-plan
+        /// (`import-bar.md` state F).
+        let incompleteItems: [MediaAssetID]
     }
 
     private struct SourceSession {
@@ -109,6 +114,21 @@ actor MediaOperationCoordinator {
     }
 
     private var sourceSessions: [LibraryRootPath: SourceSession] = [:]
+    /// The last presentation a *settled* attachment showed, captured at the
+    /// moment its source session is removed (card ejected or pulled once
+    /// nothing is executing). The batch row outlives the source session
+    /// (`import-bar.md` "Where the user is standing"), so this is what lets F
+    /// keep rendering as "card gone" from `.importBatch(id)` after the
+    /// removable row disappears — the fact `MediaOperationSourcePresentation`'s
+    /// `cardStillExists` documents as needing "a later increment's
+    /// batch-keyed presentation that outlives the source session". Kept for
+    /// the app session's lifetime, same as every other in-memory coordinator
+    /// fact here; the population is bounded by how many imports a session
+    /// actually runs, so no eviction is warranted yet. A source still
+    /// `.executing` at detach (the card pulled mid-copy, J9) is not snapshot
+    /// here — that needs the cancel-vs-detach race disentangled first, which
+    /// is separate follow-up work, not this one.
+    private var detachedBatchPresentations: [ImportBatchID: MediaOperationSourcePresentation] = [:]
     private var nextAttachmentGeneration: UInt64 = 1
     private var isShuttingDown = false
     /// Snapshot of `store.currentLibraries()` refreshed every `refreshSources()`
@@ -479,7 +499,7 @@ actor MediaOperationCoordinator {
         }
         let summary = context.summary
         switch result {
-        case let .completed(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount):
+        case let .completed(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems):
             session.phase = .completed
             // Stricter than the auto-eject gate just below on purpose: a
             // foreign skip doesn't block physically ejecting the card, but it
@@ -490,12 +510,18 @@ actor MediaOperationCoordinator {
                 batch: context.batch,
                 publishedCount: publishedCount,
                 isFullyClean: !hasBlockedEntries && !hasEntryFailures
-                    && skippedForeignCount == 0 && summary.blockedCount == 0
+                    && skippedForeignCount == 0 && summary.blockedCount == 0,
+                incompleteItems: incompleteItems
             )
             sourceSessions[source] = session
             let completedPresentation = makePresentation(
                 session: session,
-                state: .completed(summary: summary, skippedForeignCount: skippedForeignCount, failedCount: failedCount)
+                state: .completed(
+                    summary: summary,
+                    skippedForeignCount: skippedForeignCount,
+                    failedCount: failedCount,
+                    incompleteItems: incompleteItems
+                )
             )
             let values = sortedPresentations().map { $0.sourcePath == source ? completedPresentation : $0 }
             for continuation in continuations.values {
@@ -512,7 +538,12 @@ actor MediaOperationCoordinator {
             // reports what landed before the stop.
             session.phase = .inventory
             session.isDirty = true
-            session.lastCompletion = AttachmentCompletion(batch: context.batch, publishedCount: publishedCount, isFullyClean: false)
+            session.lastCompletion = AttachmentCompletion(
+                batch: context.batch,
+                publishedCount: publishedCount,
+                isFullyClean: false,
+                incompleteItems: []
+            )
             sourceSessions[source] = session
             publish()
         case let .failed(reason):
@@ -769,24 +800,48 @@ actor MediaOperationCoordinator {
         // Detach: remove sessions for missing sources, cancel owned work.
         for path in Array(sourceSessions.keys) where !seen.contains(path) {
             if let session = sourceSessions[path] {
+                var isExecutingNewImport = false
                 switch session.phase {
                 case let .building(ctx): ctx.task.cancel()
                 case let .executing(ctx):
                     ctx.task.cancel()
                     Task { await ctx.executor.cancel() }
-                // J9 wants the card pulled mid-execution to fail with a
-                // named cause, while this source's own row still
-                // disappears (matches the existing removal below). A typed
-                // `.sourceRemoved` frame published here would be
-                // overwritten by this same method's final `publish()`
-                // before any consumer's turn to observe it — `refreshSources`
-                // has no suspension point between the two — so it is not a
-                // real producer, only a misleading one. The batch this
-                // execution belongs to (`ctx.batch`) is what needs to carry
-                // the cause forward once a later increment gives batches
-                // their own durable presentation independent of this
-                // source's session; deferred there, not invented here.
+                    isExecutingNewImport = true
                 default: break
+                }
+                // A settled attachment snapshots its final presentation under
+                // its batch identity before the session disappears, so F
+                // (card gone) can still render on the batch row
+                // (`import-bar.md` state F, J1 step 7). `.building` here is
+                // the ordinary post-settlement re-plan racing this same
+                // detach, not a fresh execution — `lastCompletion` already
+                // carries what matters and must snapshot the same as any
+                // other non-executing phase.
+                //
+                // J9 wants the card pulled *while a new import is executing*
+                // to fail with a named cause instead. A typed `.sourceRemoved`
+                // frame published here would be overwritten by this same
+                // method's final `publish()` before any consumer's turn to
+                // observe it — `refreshSources` has no suspension point
+                // between the two — so it is not a real producer, only a
+                // misleading one. Doing this right needs the cancel-vs-detach
+                // race disentangled from an ordinary user Cancel, which this
+                // snapshot does not attempt — follow-up work, not this one.
+                if !isExecutingNewImport, let completion = session.lastCompletion {
+                    detachedBatchPresentations[completion.batch] = makePresentation(
+                        session: session,
+                        state: .completed(
+                            summary: MediaOperationPlanTotals(
+                                copyCount: completion.publishedCount,
+                                skipCount: 0,
+                                blockedCount: 0,
+                                companionCopyCount: 0,
+                                copyBytes: 0
+                            ),
+                            incompleteItems: completion.incompleteItems
+                        ),
+                        cardStillExists: false
+                    )
                 }
             }
             sourceSessions.removeValue(forKey: path)
@@ -1072,7 +1127,8 @@ actor MediaOperationCoordinator {
 
     private func makePresentation(
         session: SourceSession,
-        state: MediaOperationSourceState
+        state: MediaOperationSourceState,
+        cardStillExists: Bool? = nil
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: session.root.path,
@@ -1081,15 +1137,19 @@ actor MediaOperationCoordinator {
             state: state,
             attachToReadyMs: session.attachToReadyMs,
             batchID: currentBatchID(for: session),
-            cardStillExists: session.root.availability == .available,
+            cardStillExists: cardStillExists ?? (session.root.availability == .available),
             copiedJustNow: session.lastCompletion?.publishedCount,
-            isFullyClean: session.lastCompletion?.isFullyClean
+            isFullyClean: session.lastCompletion?.isFullyClean,
+            incompleteItems: session.lastCompletion?.incompleteItems ?? []
         )
     }
 
     private func sortedPresentations() -> [MediaOperationSourcePresentation] {
+        let live = sourceSessions.values.map { presentation(for: $0) }
+        let liveBatchIDs = Set(live.compactMap(\.batchID))
+        let detached = detachedBatchPresentations.filter { batchID, _ in !liveBatchIDs.contains(batchID) }.values
         // swiftlint:disable:next line_length
-        sourceSessions.values.map { presentation(for: $0) }.sorted { $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending }
+        return (live + detached).sorted { $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending }
     }
 
     private func publish() {

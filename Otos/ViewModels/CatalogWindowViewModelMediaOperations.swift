@@ -7,14 +7,27 @@ import OSLog
 /// The coordinator actor owns plan lifecycle; this MainActor bridge only assigns
 /// SwiftUI-visible presentation, destination intents, and queued Import starts.
 extension CatalogWindowViewModel {
+    /// The bar is reachable from two sidebar rows once execution starts — the
+    /// removable row and the batch row — both views onto the same operation
+    /// (`import-bar.md` "Where the user is standing", state F: "Both the
+    /// removable row and the import batch row are views onto the same
+    /// operation, so both show the same bar"). A batch row can outlive its
+    /// source's session (card ejected or pulled), which is why matching by
+    /// `batchID` also has to see `detachedBatchPresentations` on the
+    /// coordinator — `applyImportPresentations` already folds those into
+    /// `importPresentations`.
     var selectedImportPresentation: MediaOperationSourcePresentation? {
-        guard case let .library(path) = sidebarSelection else {
+        switch sidebarSelection {
+        case let .library(path):
+            guard state.removableSources.contains(where: { $0.path == path }) else {
+                return nil
+            }
+            return importPresentations.first { $0.sourcePath == path }
+        case let .importBatch(batchID):
+            return importPresentations.first { $0.batchID == batchID }
+        default:
             return nil
         }
-        guard state.removableSources.contains(where: { $0.path == path }) else {
-            return nil
-        }
-        return importPresentations.first { $0.sourcePath == path }
     }
 
     // ImportPlanDetailReader and the Details sheet are deleted (ADR 0021): the
@@ -59,6 +72,13 @@ extension CatalogWindowViewModel {
 
     func applyImportPresentations(_ presentations: [MediaOperationSourcePresentation]) {
         importPresentations = presentations
+        if !cancellingImportSources.isEmpty {
+            let stillExecuting = Set(presentations.compactMap { presentation -> LibraryRootPath? in
+                guard case .executing = presentation.state else { return nil }
+                return presentation.sourcePath
+            })
+            cancellingImportSources.formIntersection(stillExecuting)
+        }
         Task {
             await refreshRemovableDestinations()
             await refreshSessionPreferences()
@@ -126,6 +146,7 @@ extension CatalogWindowViewModel {
         guard let coordinator = mediaOperationCoordinator else {
             return
         }
+        cancellingImportSources.insert(source)
         Task {
             await coordinator.cancelImport(for: source)
         }

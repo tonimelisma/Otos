@@ -45,6 +45,9 @@ struct ContentView: View {
                     ImportPlanFooter(
                         presentation: presentation,
                         fixedLibraries: viewModel.state.libraries.filter { $0.availability == .available },
+                        sourceDisplayName: viewModel.state.removableSources
+                            .first { $0.path == presentation.sourcePath }?.displayName ?? "",
+                        isCancelling: viewModel.cancellingImportSources.contains(presentation.sourcePath),
                         importPreferences: viewModel.importPreferences,
                         setDestination: { destination in
                             viewModel.setImportDestination(destination, for: presentation.sourcePath)
@@ -55,8 +58,21 @@ struct ContentView: View {
                         cancelImport: {
                             viewModel.cancelImport(for: presentation.sourcePath)
                         },
+                        ejectCard: {
+                            if let source = viewModel.state.removableSources
+                                .first(where: { $0.path == presentation.sourcePath })
+                            {
+                                viewModel.ejectRemovableSource(source.root)
+                            }
+                        },
                         retryPlanning: {
                             viewModel.retryImportPlanning(for: presentation.sourcePath)
+                        },
+                        showTheseItems: presentation.batchID.map { batchID in
+                            { viewModel.selectSidebar(.importBatch(batchID)) }
+                        },
+                        revealAttentionItems: { ids in
+                            viewModel.selectAssets(ids)
                         },
                         sessionPreferences: viewModel.sessionPreferences(for: presentation.sourcePath),
                         setSessionPreferences: { prefs in

@@ -48,6 +48,12 @@ actor MediaImportExecutor {
         let publishedCount: Int
         let failedCount: Int
         let skippedForeignCount: Int
+        /// Identities of entries that started this run but did not land —
+        /// failed or skipped as foreign — for state F's "couldn't be copied ·
+        /// Show them" (`import-bar.md` state F). Blocked entries never reach
+        /// execution, so they are not included; they carry their own reveal
+        /// via `MediaOperationPlan.attentionItems`.
+        let incompleteItems: [MediaAssetID]
         let overlayReuse: OverlayReuseSummary
     }
 
@@ -235,7 +241,8 @@ actor MediaImportExecutor {
             hasBlockedEntries: hasBlockedEntries,
             hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
             skippedForeignCount: entryTotals.skippedForeignCount,
-            failedCount: entryTotals.failedCount
+            failedCount: entryTotals.failedCount,
+            incompleteItems: entryTotals.incompleteItems
         )
     }
 
@@ -269,6 +276,7 @@ actor MediaImportExecutor {
         var publishedCount = 0
         var failedCount = 0
         var skippedForeignCount = 0
+        var incompleteItems: [MediaAssetID] = []
         var overlayReuse = OverlayReuseSummary()
         let copyEntries = context.plan.entries.filter {
             if case .copy = $0.disposition {
@@ -316,9 +324,11 @@ actor MediaImportExecutor {
                     byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
                 case .skippedForeign:
                     skippedForeignCount += 1
+                    incompleteItems.append(copyEntries[result.index].source.id)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 case .failed:
                     failedCount += 1
+                    incompleteItems.append(copyEntries[result.index].source.id)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 }
                 onProgress(byteProgress.current())
@@ -345,6 +355,7 @@ actor MediaImportExecutor {
             publishedCount: publishedCount,
             failedCount: failedCount,
             skippedForeignCount: skippedForeignCount,
+            incompleteItems: incompleteItems,
             overlayReuse: overlayReuse
         )
     }
@@ -1393,7 +1404,8 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
         hasBlockedEntries: Bool,
         hasEntryFailures: Bool,
         skippedForeignCount: Int,
-        failedCount: Int
+        failedCount: Int,
+        incompleteItems: [MediaAssetID]
     )
     case cancelled(
         publishedCount: Int,

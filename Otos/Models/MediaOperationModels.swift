@@ -236,7 +236,8 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     case completed(
         summary: MediaOperationPlanTotals,
         skippedForeignCount: Int = 0,
-        failedCount: Int = 0
+        failedCount: Int = 0,
+        incompleteItems: [MediaAssetID] = []
     )
     case failed(reason: MediaOperationFailureReason, publishedCount: Int = 0)
     /// Source kind cannot execute import (for example a fixed library selected as source).
@@ -298,6 +299,15 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// already copied is lost").
     let copiedJustNow: Int?
     let isFullyClean: Bool?
+    /// Items from that same settled execution that started but did not land —
+    /// failed mid-copy, or skipped because an identical file already exists in
+    /// a *different* library — so state F's incomplete variant can select and
+    /// scroll them the same way state D does for blocked items
+    /// (`import-bar.md` state F, "couldn't be copied · Show them"). Blocked
+    /// entries (never attempted; state D) are a separate population with their
+    /// own reason and are not included here. Persists across the
+    /// post-settlement re-plan alongside `copiedJustNow`/`isFullyClean`.
+    let incompleteItems: [MediaAssetID]
 
     var id: String {
         sourcePath.rawValue

@@ -1,353 +1,335 @@
 import SwiftUI
 
-/// Bottom import plan footer for the selected removable source.
-///
-/// Renders coordinator presentation only: destination picker, status line,
-/// and Import/Cancel queue (ARC-047). The grid is the plan view; the footer
-/// is the fixed status surface. Honest denominators only.
+/// Bottom import status surface for the selected removable source (ARC-047,
+/// `docs/design/import-bar.md`). Three fixed zones, left to right: *what* (L1
+/// over L3), *choices* (destination pop-up, eject/erase checkboxes), *the act*
+/// (one prominent button). The view is passive: `ImportBarPresentation.map`
+/// computes every string and the middle zone's shape; this file renders that
+/// value and calls intents (`AGENTS.md` → Architecture Standards). One fixed
+/// height across every state (DES-018, DES-053) — a state with nothing to show
+/// in the middle zone holds blank space rather than resizing the surface.
 struct ImportPlanFooter: View {
     let presentation: MediaOperationSourcePresentation
     let fixedLibraries: [CatalogLibraryState]
+    let sourceDisplayName: String
+    let isCancelling: Bool
     let importPreferences: ImportPreferences
     let setDestination: (LibraryRootPath) -> Void
     let queueImport: () -> Void
     let cancelImport: () -> Void
+    let ejectCard: () -> Void
     let retryPlanning: (() -> Void)?
+    let showTheseItems: (() -> Void)?
+    let revealAttentionItems: (([MediaAssetID]) -> Void)?
     let sessionPreferences: ImportPreferences?
     let setSessionPreferences: ((ImportPreferences) -> Void)?
 
-    init(
-        presentation: MediaOperationSourcePresentation,
-        fixedLibraries: [CatalogLibraryState],
-        importPreferences: ImportPreferences,
-        setDestination: @escaping (LibraryRootPath) -> Void,
-        queueImport: @escaping () -> Void,
-        cancelImport: @escaping () -> Void = {},
-        retryPlanning: (() -> Void)? = nil,
-        sessionPreferences: ImportPreferences? = nil,
-        setSessionPreferences: ((ImportPreferences) -> Void)? = nil
-    ) {
-        self.presentation = presentation
-        self.fixedLibraries = fixedLibraries
-        self.importPreferences = importPreferences
-        self.setDestination = setDestination
-        self.queueImport = queueImport
-        self.cancelImport = cancelImport
-        self.retryPlanning = retryPlanning
-        self.sessionPreferences = sessionPreferences
-        self.setSessionPreferences = setSessionPreferences
-    }
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsEraseConfirmation = false
+
+    /// Fixed content height (excludes the surface's own vertical padding), so
+    /// the bar's total height never changes across states (DES-018, DES-053):
+    /// the choices zone's two 22 pt rows plus its row gap set the floor.
+    private static let contentHeight: CGFloat = 50
 
     private var effectivePreferences: ImportPreferences {
         sessionPreferences ?? importPreferences
     }
 
+    private var drawn: ImportBarDrawnState {
+        ImportBarPresentation.map(
+            presentation: presentation,
+            preferences: effectivePreferences,
+            sourceDisplayName: sourceDisplayName,
+            isCancelling: isCancelling
+        )
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                destinationPicker
-                Spacer(minLength: 8)
-                readinessLabel
-                actionButtons
-            }
-            if let line = statusLine {
-                HStack(spacing: 8) {
-                    Text(line)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if showsRetry {
-                        Button("Retry", action: { retryPlanning?() })
-                            .buttonStyle(.borderless)
-                            .font(.caption)
-                    }
-                }
-            }
-            sessionControls
+        HStack(alignment: .top, spacing: 28) {
+            whatZone
+            Divider().overlay(DesignPalette.hairline(for: colorScheme))
+            choicesZone
+            Divider().overlay(DesignPalette.hairline(for: colorScheme))
+            actZone
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .frame(minHeight: Self.contentHeight, maxHeight: Self.contentHeight)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(DesignPalette.bar(for: colorScheme))
+        .animation(surfaceAnimation, value: drawn)
+        .transition(surfaceTransition)
+        .accessibilityElement(children: .contain)
+    }
+
+    // MARK: - What
+
+    private var whatZone: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                switch drawn.primaryBadge {
+                case .checkmark:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .transition(checkmarkTransition)
+                case .attention:
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.orange)
+                        .transition(checkmarkTransition)
+                case .none:
+                    EmptyView()
+                }
+                Text(drawn.primaryLine)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(DesignPalette.label(for: colorScheme))
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityLabel(drawn.primaryLine)
+            secondaryLineView
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
-    private var sessionControls: some View {
-        if let sessionPrefs = sessionPreferences, let setter = setSessionPreferences {
-            HStack(spacing: 16) {
-                Toggle(isOn: Binding(
-                    get: { sessionPrefs.deleteSourceAfterImport },
-                    set: { newValue in
-                        var updated = sessionPrefs
-                        updated.deleteSourceAfterImport = newValue
-                        setter(updated)
-                    }
-                )) {
-                    Text(deleteCheckboxLabel)
+    private var secondaryLineView: some View {
+        switch drawn.secondaryLine {
+        case .none:
+            Color.clear.frame(height: 14)
+        case let .plain(text):
+            Text(text)
+                .font(.subheadline)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .monospacedDigit()
+                .lineLimit(1)
+        case let .attention(clause, revealLabel, itemIDs):
+            HStack(spacing: 4) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                Text(clause)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                Button(revealLabel) {
+                    revealAttentionItems?(itemIDs)
                 }
-                .toggleStyle(.checkbox)
-                Toggle(isOn: Binding(
-                    get: { sessionPrefs.autoEjectAfterImport },
-                    set: { newValue in
-                        var updated = sessionPrefs
-                        updated.autoEjectAfterImport = newValue
-                        setter(updated)
-                    }
-                )) {
-                    Text("Eject the card after importing")
-                }
-                .toggleStyle(.checkbox)
+                .buttonStyle(.borderless)
+                .font(.subheadline)
             }
-            .font(.caption)
-        } else {
-            policySummary
         }
     }
 
-    private var destinationPicker: some View {
-        HStack(spacing: 6) {
-            Text("Destination")
-                .foregroundStyle(.secondary)
-            Picker(
-                "Destination",
-                selection: Binding(
-                    get: { presentation.destinationPath },
-                    set: { path in
-                        if let path {
-                            setDestination(path)
+    // MARK: - Choices
+
+    @ViewBuilder
+    private var choicesZone: some View {
+        switch drawn.middleZone {
+        case let .choices(eraseEnabled, eraseDisabledReason):
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    introLabel("Copy into")
+                    Picker("Copy into", selection: destinationBinding) {
+                        ForEach(fixedLibraries) { library in
+                            Text(library.displayName).tag(Optional(library.path))
                         }
                     }
-                )
-            ) {
-                Text("Choose…").tag(LibraryRootPath?.none)
-                ForEach(fixedLibraries) { library in
-                    Text(library.displayName).tag(Optional(library.path))
+                    .labelsHidden()
+                    .frame(maxWidth: 200)
+                }
+                HStack(spacing: 6) {
+                    introLabel("Afterwards")
+                    Toggle("Eject the card", isOn: ejectPreferenceBinding)
+                        .toggleStyle(.checkbox)
+                    Toggle("Erase the card", isOn: erasePreferenceBinding)
+                        .toggleStyle(.checkbox)
+                        .disabled(!eraseEnabled)
+                        .help(eraseDisabledReason ?? "")
                 }
             }
-            .labelsHidden()
-            .frame(maxWidth: 220)
+            .font(.body)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .addLibraryButton:
+            SettingsLink {
+                Text("Add a Library…")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case let .progress(track, caption):
+            VStack(alignment: .leading, spacing: 4) {
+                progressTrackView(track)
+                if let caption {
+                    Text(caption)
+                        .font(.subheadline)
+                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                        .lineLimit(1)
+                } else {
+                    Color.clear.frame(height: 14)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        case .hidden:
+            Color.clear.frame(maxWidth: .infinity)
         }
     }
 
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    private var readinessLabel: some View {
-        Text(readinessText)
-            .foregroundStyle(.secondary)
-            .lineLimit(1)
-            .accessibilityAddTraits(.isHeader)
-    }
-
-    private var policySummary: some View {
-        Text(policyText(importPreferences))
-            .font(.caption2)
-            .foregroundStyle(.tertiary)
+    private func introLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(DesignPalette.l3(for: colorScheme))
+            .frame(width: 66, alignment: .leading)
     }
 
     @ViewBuilder
-    private var actionButtons: some View {
-        switch presentation.state {
-        case .executing:
+    private func progressTrackView(_ track: ImportBarDrawnState.ProgressTrack) -> some View {
+        switch track {
+        case .indeterminate:
+            ProgressView()
+                .progressViewStyle(.linear)
+        case let .determinate(completed, total):
+            ProgressView(value: Double(completed), total: Double(max(total, 1)))
+                .progressViewStyle(.linear)
+        }
+    }
+
+    private var destinationBinding: Binding<LibraryRootPath?> {
+        Binding(
+            get: { presentation.destinationPath },
+            set: { path in
+                if let path {
+                    setDestination(path)
+                }
+            }
+        )
+    }
+
+    private var ejectPreferenceBinding: Binding<Bool> {
+        Binding(
+            get: { effectivePreferences.autoEjectAfterImport },
+            set: { newValue in
+                var updated = effectivePreferences
+                updated.autoEjectAfterImport = newValue
+                setSessionPreferences?(updated)
+            }
+        )
+    }
+
+    private var erasePreferenceBinding: Binding<Bool> {
+        Binding(
+            get: { effectivePreferences.deleteSourceAfterImport },
+            set: { newValue in
+                var updated = effectivePreferences
+                updated.deleteSourceAfterImport = newValue
+                setSessionPreferences?(updated)
+            }
+        )
+    }
+
+    // MARK: - The act
+
+    private var actZone: some View {
+        HStack(spacing: 8) {
+            if drawn.showsSecondaryShowItemsButton {
+                Button("Show These Items") {
+                    showTheseItems?()
+                }
+                .buttonStyle(.borderless)
+            }
+            primaryButton
+        }
+        .frame(minWidth: 140, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private var primaryButton: some View {
+        switch drawn.primaryAction {
+        case .importPending:
+            Button("Import") {}
+                .disabled(true)
+                .buttonStyle(.borderedProminent)
+                .frame(height: 30)
+                .accessibilityHint("Imports new items from the card")
+        case let .importItems(count):
+            Button("Import \(count) \(count == 1 ? "Item" : "Items")", action: queueImport)
+                .disabled(!drawn.primaryEnabled)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .frame(height: 30)
+                .accessibilityHint("Imports new items from the card")
+        case .ejectCard:
+            Button("Eject Card", action: ejectCard)
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .frame(height: 30)
+                .accessibilityHint("Ejects the card")
+        case let .eraseItems(count):
+            Button("Erase \(count) \(count == 1 ? "Item" : "Items")") {
+                showsEraseConfirmation = true
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.red)
+            .keyboardShortcut(.defaultAction)
+            .frame(height: 30)
+            .accessibilityHint("Deletes items from the card")
+            .confirmationDialog(
+                "Erase \(sourceDisplayName)?",
+                isPresented: $showsEraseConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Erase", role: .destructive, action: queueImport)
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                if drawn.eraseConfirmationProvenClean {
+                    let destinationName = presentation.destinationDisplayName ?? "your library"
+                    Text(
+                        "\(count) \(count == 1 ? "item" : "items") will be deleted from the card. " +
+                            "All of them are already in \(destinationName)."
+                    )
+                } else {
+                    Text("\(count) \(count == 1 ? "item" : "items") will be deleted from the card.")
+                }
+            }
+        case .showTheseItems:
+            Button("Show These Items") {
+                showTheseItems?()
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .frame(height: 30)
+        case .cancel:
             Button("Cancel", action: cancelImport)
+                .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.cancelAction)
-                .accessibilityLabel("Cancel import")
+                .frame(height: 30)
                 .accessibilityHint("Stops the current import")
-        default:
-            Button(importButtonTitle, action: queueImport)
-                .disabled(!importEnabled)
-                .keyboardShortcut(isDeleteOnly ? nil : .defaultAction)
-                .accessibilityLabel(importButtonTitle)
-                .accessibilityHint(isDeleteOnly ? "Deletes all items from the card without importing" : "Imports new items from the card")
-        }
-    }
-
-    private var importButtonTitle: String {
-        if isDeleteOnly {
-            return "Delete from Card"
-        }
-        return "Import"
-    }
-
-    private var isDeleteOnly: Bool {
-        guard effectivePreferences.deleteSourceAfterImport else {
-            return false
-        }
-        switch presentation.state {
-        case let .ready(summary, _, _, _):
-            return summary.copyCount == 0 && summary.companionCopyCount == 0
-        case let .executionUnavailable(summary, _, _):
-            return summary.copyCount == 0 && summary.companionCopyCount == 0
-        default:
-            return false
-        }
-    }
-
-    private var deleteCheckboxLabel: String {
-        switch presentation.state {
-        case let .ready(summary, _, _, _):
-            if summary.blockedCount > 0 {
-                return "Delete items from the card after importing"
+        case .tryAgain:
+            Button("Try Again") {
+                retryPlanning?()
             }
-            let total = summary.copyCount + summary.skipCount + summary.blockedCount + summary.companionCopyCount
-            if total > 0 {
-                return "Delete all \(total) items from the card after importing"
-            }
-            return "Delete items from the card after importing"
-        case let .executionUnavailable(summary, _, _):
-            if summary.blockedCount > 0 {
-                return "Delete items from the card after importing"
-            }
-            let total = summary.copyCount + summary.skipCount + summary.blockedCount + summary.companionCopyCount
-            if total > 0 {
-                return "Delete all \(total) items from the card after importing"
-            }
-            return "Delete items from the card after importing"
-        default:
-            return "Delete items from the card after importing"
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.defaultAction)
+            .frame(height: 30)
         }
     }
 
-    private var importEnabled: Bool {
-        guard presentation.destinationPath != nil else {
-            return false
-        }
-        switch presentation.state {
-        case .waitingForMetadata, .queuedForReadiness:
-            return true
-        case let .ready(summary, _, _, _):
-            if summary.copyCount > 0 || summary.companionCopyCount > 0 {
-                return true
-            }
-            return effectivePreferences.deleteSourceAfterImport
-        case let .executionUnavailable(summary, _, _):
-            if summary.copyCount > 0 || summary.companionCopyCount > 0 {
-                return true
-            }
-            return effectivePreferences.deleteSourceAfterImport
-        case .executing:
-            return false
-        default:
-            return false
-        }
+    // MARK: - Motion (DES-070–075)
+
+    private var surfaceAnimation: Animation {
+        reduceMotion ? .easeInOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.85)
     }
 
-    private var statusLine: String? {
-        switch presentation.state {
-        case let .ready(summary, _, _, _):
-            return readyStatusLine(summary: summary)
-        case let .executionUnavailable(summary, _, _):
-            return readyStatusLine(summary: summary)
-        case let .completed(summary, skippedForeign, failed):
-            var text = completedStatusLine(summary: summary)
-            if skippedForeign > 0 {
-                text += " · \(skippedForeign) skipped (destination exists)"
-            }
-            if failed > 0 {
-                text += " · \(failed) failed"
-            }
-            return text
-        case let .executing(progress):
-            return executingStatusLine(progress: progress)
-        default:
-            return nil
-        }
+    private var surfaceTransition: AnyTransition {
+        reduceMotion
+            ? .opacity.animation(.easeInOut(duration: 0.15))
+            : .move(edge: .bottom).combined(with: .opacity)
     }
 
-    private var showsRetry: Bool {
-        switch presentation.state {
-        case let .ready(summary, _, _, _):
-            summary.blockedCount > 0
-        case let .executionUnavailable(summary, _, _):
-            summary.blockedCount > 0
-        default:
-            false
-        }
-    }
-
-    private var readinessText: String {
-        // No destination is state B ("No destination"), not a failure — check
-        // it ahead of `state` so a card attached before any library exists
-        // never reads the placeholder failure reason underneath it
-        // (`scheduleBuildIfNeeded`'s `noDestinationLibrary` bookkeeping).
-        guard presentation.destinationPath != nil else {
-            return "No library to copy into"
-        }
-        switch presentation.state {
-        case .inventory:
-            return "Inventory…"
-        case let .waitingForMetadata(done, total):
-            return "Waiting for metadata (\(done)/\(total))"
-        case .planning:
-            return "Planning…"
-        case .ready:
-            return "Ready"
-        case .queuedForReadiness:
-            return "Import queued — finishing metadata…"
-        case let .executing(progress):
-            let bytesDone = ByteCountFormatter.string(fromByteCount: progress.completedBytes, countStyle: .file)
-            let bytesTotal = ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file)
-            return "Importing \(progress.completedCount)/\(progress.totalCount) · \(bytesDone) of \(bytesTotal)"
-        case .needsReplan:
-            return "Source changed — replanning…"
-        case .completed:
-            return "Import complete"
-        case let .failed(reason, _):
-            return "Failed: \(Self.interimFailureDescription(reason))"
-        case .executionUnavailable:
-            return "Import queued (execution lands in a later update)"
-        }
-    }
-
-    private func readyStatusLine(summary: MediaOperationPlanTotals) -> String {
-        let bytes = ByteCountFormatter.string(fromByteCount: summary.copyBytes, countStyle: .file)
-        if summary.copyCount == 0, summary.companionCopyCount == 0, summary.blockedCount == 0 {
-            if summary.skipCount == 0 {
-                return "This card is empty"
-            }
-            return "Nothing new — all \(summary.skipCount) items are already in your library"
-        }
-        if summary.copyCount == 0, summary.blockedCount > 0 {
-            return "Nothing can be imported yet · \(summary.blockedCount) need attention"
-        }
-        var line = "\(summary.copyCount) new · \(bytes)"
-        if summary.skipCount > 0 {
-            line += " — \(summary.skipCount) already in your library"
-        }
-        if summary.blockedCount > 0 {
-            line += " · \(summary.blockedCount) need attention"
-        }
-        return line
-    }
-
-    private func completedStatusLine(summary: MediaOperationPlanTotals) -> String {
-        let bytes = ByteCountFormatter.string(fromByteCount: summary.copyBytes, countStyle: .file)
-        if summary.copyCount == 0 {
-            return "Import complete — nothing new"
-        }
-        return "\(summary.copyCount) new · \(bytes) — import complete"
-    }
-
-    private func executingStatusLine(progress: MediaOperationProgress) -> String {
-        let bytesDone = ByteCountFormatter.string(fromByteCount: progress.completedBytes, countStyle: .file)
-        let bytesTotal = ByteCountFormatter.string(fromByteCount: progress.totalBytes, countStyle: .file)
-        return "\(progress.completedCount) of \(progress.totalCount) · \(bytesDone) of \(bytesTotal)"
-    }
-
-    private func policyText(_ prefs: ImportPreferences) -> String {
-        var parts: [String] = []
-        parts.append(prefs.importSidecarFiles ? "Sidecars on" : "Sidecars off")
-        parts.append(prefs.deleteSourceAfterImport ? "Delete source after import" : "Keep source files")
-        parts.append(prefs.autoEjectAfterImport ? "Auto-eject on" : "Auto-eject off")
-        return parts.joined(separator: " · ")
-    }
-
-    /// Placeholder only: this whole view is rewritten by plan 0092 increment 5,
-    /// whose pure mapper owns the real state-G copy (`import-bar.md`). This just
-    /// keeps the interim build off raw internal tokens (DES-035/DES-039).
-    private static func interimFailureDescription(_ reason: MediaOperationFailureReason) -> String {
-        switch reason {
-        case .sourceRemoved: "source removed"
-        case .destinationUnavailable: "destination unavailable"
-        case .outOfSpace: "not enough space"
-        case let .unexpected(detail): detail
-        }
+    private var checkmarkTransition: AnyTransition {
+        reduceMotion
+            ? .opacity
+            : .scale(scale: 0.6).combined(with: .opacity)
     }
 }

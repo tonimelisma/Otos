@@ -142,6 +142,19 @@ extension CatalogWindowViewModel {
         gridSelection = .empty
     }
 
+    /// Selects and scrolls to a specific set of assets. Used by the import bar's
+    /// `Show them` (state D, `import-bar.md`): the grid is the plan view, so
+    /// revealing attention items is a selection, not a modal list.
+    func selectAssets(_ ids: [MediaAssetID]) {
+        guard !ids.isEmpty else { return }
+        gridSelection = GridSelection(
+            selection: Set(ids),
+            anchor: ids.first,
+            base: Set(ids)
+        )
+        setFocus(ids.first)
+    }
+
     /// Copies selected asset file URLs to the pasteboard in display order.
     func copySelection() {
         let ids = orderedSelectedAssetIDs
