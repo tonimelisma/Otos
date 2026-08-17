@@ -1,5 +1,6 @@
 import Foundation
 @testable import Otos
+import OtosXXH3
 import Synchronization
 import Testing
 

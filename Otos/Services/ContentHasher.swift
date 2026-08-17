@@ -1,4 +1,5 @@
 import Foundation
+import OtosXXH3
 
 /// Stateless XXH3-128 file reader used only by existing enrichment and import
 /// workers. It owns no queue, retry state, materialization policy, or task. The
