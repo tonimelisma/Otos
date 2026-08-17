@@ -8,7 +8,7 @@ import Foundation
 ///
 /// Pure policy helpers below own entry focus, arrow navigation, and prune-survivor focus
 /// so the LrC-inspired rules are unit-tested without UI.
-enum BrowserViewMode: String, CaseIterable, Identifiable, Equatable {
+nonisolated enum BrowserViewMode: String, CaseIterable, Identifiable, Equatable {
     case grid
     case loupe
     case compare

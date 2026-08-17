@@ -2,7 +2,6 @@ import CoreGraphics
 @testable import OtosKit
 import Testing
 
-@MainActor
 struct MediaAssetTilePresentationTests {
     @Test func onlyVideoDetailsReceiveVideoPresentation() {
         #expect(MediaAssetTilePresentation.isVideo(makeDetail(path: "movie.mp4", kind: .video)))
@@ -371,6 +370,7 @@ struct MediaAssetTilePresentationTests {
         ) == "photo.slash")
     }
 
+    @MainActor
     @Test func placeholderIconCacheReturnsSameInstanceForSameName() throws {
         let photoA = try #require(MediaAssetTilePresentation.placeholderIcon(for: .image))
         let photoB = try #require(MediaAssetTilePresentation.placeholderIcon(for: nil))
@@ -422,7 +422,6 @@ struct MediaAssetTilePresentationTests {
     }
 }
 
-@MainActor
 private func makeDetail(
     path: String = "a.jpg",
     kind: MediaKind? = nil,

@@ -100,13 +100,13 @@ nonisolated enum MediaAssetTileLayout {
     }
 }
 
-enum MediaAssetTilePresentation {
+nonisolated enum MediaAssetTilePresentation {
     static func isVideo(_ detail: MediaTileDetail) -> Bool {
         detail.bestKind == .video
     }
 
     /// Formats known finite video duration for the lower-right badge.
-    nonisolated static func videoBadgeText(_ detail: MediaTileDetail) -> String? {
+    static func videoBadgeText(_ detail: MediaTileDetail) -> String? {
         guard detail.bestKind == .video,
               let durationSeconds = detail.durationSeconds,
               durationSeconds.isFinite
@@ -125,7 +125,7 @@ enum MediaAssetTilePresentation {
     /// badge; painted video shows duration or a film-icon fallback; painted raw
     /// shows `RAW`. `thumbnailUnavailable` is an explicit gate so a future paint
     /// of non-thumbnail content cannot resurrect badges on broken tiles.
-    nonisolated static func badgeContent(
+    static func badgeContent(
         detail: MediaTileDetail,
         thumbnailPainted: Bool,
         formattedDuration: String? = nil
@@ -151,7 +151,7 @@ enum MediaAssetTilePresentation {
     /// "Image" is not navigable — then kind and state. The filename is derived from
     /// `MediaTileDetail.relativePath`, which the tile already holds, so this adds no
     /// query and does not widen `MediaTileDetail` (ENR-005).
-    nonisolated static func accessibilityLabel(
+    static func accessibilityLabel(
         detail: MediaTileDetail,
         badgeContent: TileBadgeContent
     ) -> String {
@@ -177,13 +177,13 @@ enum MediaAssetTilePresentation {
         return "\(base), \(detail.mediaChoice.accessibilityValue)"
     }
 
-    nonisolated static func accessibilityValue(detail: MediaTileDetail) -> String {
+    static func accessibilityValue(detail: MediaTileDetail) -> String {
         detail.mediaChoice.accessibilityValue
     }
 
     /// SF Symbol for the centered placeholder glyph. Loading uses kind glyphs
     /// (`r.square` for RAW); broken uses slash "unavailable" grammar. No spinner.
-    nonisolated static func placeholderIconSystemName(
+    static func placeholderIconSystemName(
         for kind: MediaKind?,
         thumbnailUnavailable: Bool
     ) -> String {
@@ -220,7 +220,7 @@ enum MediaAssetTilePresentation {
     @MainActor
     private static var placeholderIconCache: [String: NSImage?] = [:]
 
-    nonisolated static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
+    static func contentRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
         guard bounds.width > 0, bounds.height > 0 else {
             return bounds
         }
@@ -244,28 +244,28 @@ enum MediaAssetTilePresentation {
     /// The aspect-fit thumbnail face inside `bounds`, used for both rendering and mouse
     /// hit-testing. For a not-yet-decoded placeholder (`imagePixelSize == nil`) the face is
     /// the full bounds, so the whole tile remains selectable.
-    nonisolated static func thumbnailFaceRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
+    static func thumbnailFaceRect(imagePixelSize: CGSize?, bounds: CGRect) -> CGRect {
         contentRect(imagePixelSize: imagePixelSize, bounds: bounds)
     }
 
     /// Size gate for any lower-right badge content (duration, film icon, RAW).
-    nonisolated static func showsKindBadge(contentRect: CGRect) -> Bool {
+    static func showsKindBadge(contentRect: CGRect) -> Bool {
         contentRect.width >= 56 && contentRect.height >= 56
     }
 
     /// Thumbnail path plus source stamp; badge updates do not change image identity.
-    nonisolated static func imageContentKey(_ detail: MediaTileDetail) -> String {
+    static func imageContentKey(_ detail: MediaTileDetail) -> String {
         let thumbnail = detail.thumbnailPath ?? ""
         let size = detail.enrichedSourceSize ?? -1
         let stamp = detail.enrichedSourceMTimeSeconds ?? -1
         return "\(thumbnail)#\(size)#\(stamp)"
     }
 
-    nonisolated static func decodedThumbnailImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> CGImage? {
+    static func decodedThumbnailImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> CGImage? {
         loadImage(detail: detail, thumbnailDirectory: thumbnailDirectory).image
     }
 
-    nonisolated static func loadImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> LoadedTile {
+    static func loadImage(detail: MediaTileDetail, thumbnailDirectory: URL?) -> LoadedTile {
         let image = detail.thumbnailPath.flatMap { name in
             thumbnailDirectory.flatMap { ThumbnailStore.load(name, in: $0) }
         }

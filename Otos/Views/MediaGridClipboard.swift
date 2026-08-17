@@ -8,7 +8,7 @@ import Foundation
 /// so copy is instant and never materializes a dataless cloud original. Finder pastes
 /// the files; Messages and Mail attach them. The pasteboard is a parameter so the
 /// write can be exercised against an isolated `NSPasteboard(name:)` in tests.
-enum MediaGridClipboard {
+nonisolated enum MediaGridClipboard {
     @discardableResult
     static func write(_ ids: [MediaAssetID], to pasteboard: NSPasteboard) -> Int {
         pasteboard.clearContents()

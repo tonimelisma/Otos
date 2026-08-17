@@ -5,7 +5,7 @@ import AppKit
 /// One paint/selection/mutation owner (`MediaGridViewController`); only layout,
 /// scroller axis, and zoom plumbing differ. Grid and strip are never on screen at
 /// the same time — each mode hosts one representable instance.
-enum MediaGridPresentation: Equatable {
+nonisolated enum MediaGridPresentation: Equatable {
     /// Multi-column vertical grid. `columnCount` is ViewModel-owned (3–9).
     case grid(columnCount: Int)
     /// Single-row horizontal filmstrip. `tileEdge` is the square tile size in points.
