@@ -218,7 +218,9 @@ struct ContentView: View {
                 },
                 focusTargetID: viewModel.focusedAssetID,
                 identityRemapEpoch: viewModel.identityRemapEpoch,
-                identityRemapBatch: viewModel.identityRemapBatch
+                identityRemapBatch: viewModel.identityRemapBatch,
+                dismissedCameraBannerIdentities: viewModel.dismissedCameraBannerIdentities,
+                onDismissCameraBanner: { viewModel.dismissCameraConnectionBanner($0.identity) }
             )
         case .loupe:
             LoupeView(

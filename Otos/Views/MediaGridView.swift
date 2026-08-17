@@ -25,7 +25,8 @@ struct MediaGridView: View {
     var focusTargetID: MediaAssetID?
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
-    @AppStorage("dismissedCameraConnectionBannerIdentities") private var dismissedCameraBannerIdentities = ""
+    var dismissedCameraBannerIdentities: Set<String> = []
+    var onDismissCameraBanner: (CatalogDeviceConnectionBanner) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -99,14 +100,11 @@ struct MediaGridView: View {
     }
 
     private func isDismissed(_ banner: CatalogDeviceConnectionBanner) -> Bool {
-        Set(dismissedCameraBannerIdentities.split(separator: "\n").map(String.init))
-            .contains(banner.identity)
+        dismissedCameraBannerIdentities.contains(banner.identity)
     }
 
     private func dismiss(_ banner: CatalogDeviceConnectionBanner) {
-        var identities = Set(dismissedCameraBannerIdentities.split(separator: "\n").map(String.init))
-        identities.insert(banner.identity)
-        dismissedCameraBannerIdentities = identities.sorted().joined(separator: "\n")
+        onDismissCameraBanner(banner)
     }
 }
 

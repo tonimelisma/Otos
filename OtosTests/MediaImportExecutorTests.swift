@@ -432,9 +432,8 @@ struct ImportExecutionProgressTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults.domain)
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         let plan = try await waitForReadyPlan(coordinator, source: source)

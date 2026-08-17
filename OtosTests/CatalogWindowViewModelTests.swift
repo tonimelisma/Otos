@@ -27,15 +27,14 @@ struct CatalogWindowViewModelTests {
                 )
             }
         )
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         var model: CatalogWindowViewModel? = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: projection,
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         weak let weakModel = model
 
@@ -62,15 +61,14 @@ struct CatalogWindowViewModelTests {
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()
@@ -104,15 +102,14 @@ struct CatalogWindowViewModelTests {
             scanner: scanner,
             scanCadence: .milliseconds(10)
         )
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()
@@ -142,15 +139,14 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()
@@ -178,15 +174,14 @@ struct CatalogWindowViewModelTests {
         try writeFile(root.appending(path: "one.jpg"), contents: "jpeg")
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()
@@ -217,15 +212,14 @@ struct CatalogWindowViewModelTests {
 
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -252,15 +246,14 @@ struct CatalogWindowViewModelTests {
 
         let scanner = CatalogScanner { _, _, _ in .empty }
         let store = CatalogStore(location: .inMemory, scanner: scanner)
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
@@ -294,15 +287,14 @@ struct CatalogWindowViewModelTests {
                 await loadGate.pause()
             }
         )
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         var model: CatalogWindowViewModel? = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         weak let weakModel = model
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
@@ -332,15 +324,14 @@ struct CatalogWindowViewModelTests {
         try FileManager.default.createDirectory(at: archiveURL, withIntermediateDirectories: true)
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()

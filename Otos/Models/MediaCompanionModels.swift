@@ -159,7 +159,7 @@ nonisolated enum DestinationNamePolicy: String, Equatable, Sendable, CaseIterabl
 /// Typed read/write owner for import preferences. Keys are stable for the
 /// Settings Import tab.
 nonisolated enum ImportPreferencesStore {
-    static func load(defaults: UserDefaults) -> ImportPreferences {
+    static func load(defaults: any PreferenceStore) -> ImportPreferences {
         ImportPreferences(
             importSidecarFiles: defaults.object(forKey: ImportPreferences.sidecarImportKey) as? Bool
                 ?? ImportPreferences.default.importSidecarFiles,
@@ -178,7 +178,7 @@ nonisolated enum ImportPreferencesStore {
         )
     }
 
-    static func save(_ preferences: ImportPreferences, defaults: UserDefaults) {
+    static func save(_ preferences: ImportPreferences, defaults: any PreferenceStore) {
         defaults.set(preferences.importSidecarFiles, forKey: ImportPreferences.sidecarImportKey)
         defaults.set(preferences.deleteSourceAfterImport, forKey: ImportPreferences.deleteSourceAfterImportKey)
         defaults.set(preferences.autoEjectAfterImport, forKey: ImportPreferences.autoEjectAfterImportKey)

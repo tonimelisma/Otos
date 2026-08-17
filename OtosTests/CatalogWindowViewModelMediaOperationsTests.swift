@@ -29,15 +29,14 @@ struct CatalogWindowViewModelMediaOperationsTests {
     }
 
     private func makeModel() -> CatalogWindowViewModel {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         return CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory),
             enrichmentCoordinator: nil,
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp.domain
+            preferencesDomain: temp
         )
     }
 

@@ -128,13 +128,12 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain, planBuilder: builder)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -177,13 +176,12 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain, planBuilder: builder)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -231,13 +229,12 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain, planBuilder: builder)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
@@ -285,13 +282,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardAPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
         #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
@@ -342,12 +338,11 @@ struct MediaOperationCoordinatorAdversarialTests {
                 && snap.removableSources.allSatisfy { !$0.isScanning }
         }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardBPath)
@@ -355,7 +350,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await execControl.suspendNextExecution(for: cardAPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             planBuilder: builder,
             makeExecutor: { source in
                 if source == cardAPath {
@@ -452,12 +447,11 @@ struct MediaOperationCoordinatorAdversarialTests {
                 && snap.removableSources.allSatisfy { !$0.isScanning }
         }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let builder2 = ControlledImportPlanBuilder()
         await builder2.suspendNextBuild(for: cardBPath)
@@ -465,7 +459,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await execControl.suspendNextExecution(for: cardAPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             planBuilder: builder2,
             makeExecutor: { source in
                 if source == cardAPath {
@@ -536,17 +530,16 @@ struct MediaOperationCoordinatorAdversarialTests {
                 && snap.removableSources.allSatisfy { !$0.isScanning }
         }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardAPath)
         await builder.suspendNextBuild(for: cardBPath)
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardAPath)
         try await waitForPendingBuilder(builder, source: cardBPath)
@@ -595,15 +588,14 @@ struct MediaOperationCoordinatorAdversarialTests {
             snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available && !$0.isScanning }
         }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         // Use live executor for A so it actually publishes a file.
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         let planA = try await waitForReady(coordinator, source: cardAPath)
         #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
@@ -670,18 +662,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -743,18 +734,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -831,18 +821,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -912,18 +901,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
         let destPath = try CatalogPath.normalizedDirectoryPath(for: destURL)
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -983,18 +971,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let execControl = ControlledExecutionControl()
         await execControl.suspendNextExecution(for: cardPath)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1075,8 +1062,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 && snap.removableSources.allSatisfy { !$0.isScanning }
         }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardAPath)
         await builder.suspendNextBuild(for: cardBPath)
@@ -1084,7 +1070,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // We won't reach execution in this test, but need to test shutdown with builds suspended
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             planBuilder: builder,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
@@ -1130,9 +1116,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         _ = try await waitForReady(coordinator, source: cardPath)
 
@@ -1182,9 +1167,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.addLibrary(url: destURL)
         try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:metadata-wake-adversarial", displayName: "Card", isEjectable: true)
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
 
         // Wait for waitingForMetadata
@@ -1269,19 +1253,18 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
         prefs.deleteSourceAfterImport = false
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         let execControl = ControlledExecutionControl()
         // No suspension for this test; we will check that executor is NOT invoked.
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: defaults.domain,
+            preferencesDomain: defaults,
             makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
         )
         await coordinator.start()
@@ -1335,16 +1318,15 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
         prefs.deleteSourceAfterImport = true
-        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
 
         // Use live executor for this test so deletion actually happens.
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         let plan = try await waitForReady(coordinator, source: cardPath)
         #expect(plan.totals.copyCount == 0, "Should be zero-copy")

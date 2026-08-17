@@ -7,8 +7,7 @@ struct CatalogWindowViewModelCurationTests {
     @Test func rapidChoicesRemainLosslessAndOrdered() async throws {
         let fixture = try await makeCurationFixture(count: 1)
         defer { fixture.removeRoot() }
-        let (model, preferences) = makeCurationModel()
-        defer { preferences.cleanUp() }
+        let model = makeCurationModel()
         model.applyState(curationWindowState(ids: fixture.ids))
         _ = model.applyGridClick(hit: fixture.ids[0], modifiers: [], orderedIDs: fixture.ids)
         model.startMediaChoiceForwarding(store: fixture.store)
@@ -27,8 +26,7 @@ struct CatalogWindowViewModelCurationTests {
     @Test func acceptedSameValueChoiceAdvancesOnlyWhenEnabled() async throws {
         let fixture = try await makeCurationFixture(count: 2)
         defer { fixture.removeRoot() }
-        let (model, preferences) = makeCurationModel()
-        defer { preferences.cleanUp() }
+        let model = makeCurationModel()
         model.applyState(curationWindowState(ids: fixture.ids))
         _ = model.applyGridClick(hit: fixture.ids[0], modifiers: [], orderedIDs: fixture.ids)
         model.setAdvanceAfterMediaChoice(true)
@@ -46,8 +44,7 @@ struct CatalogWindowViewModelCurationTests {
     @Test func acceptedChoiceAtEndDoesNotWrap() async throws {
         let fixture = try await makeCurationFixture(count: 2)
         defer { fixture.removeRoot() }
-        let (model, preferences) = makeCurationModel()
-        defer { preferences.cleanUp() }
+        let model = makeCurationModel()
         model.applyState(curationWindowState(ids: fixture.ids))
         _ = model.applyGridClick(hit: fixture.ids[1], modifiers: [], orderedIDs: fixture.ids)
         model.setAdvanceAfterMediaChoice(true)
@@ -63,8 +60,7 @@ struct CatalogWindowViewModelCurationTests {
     }
 
     @Test func rejectedStoreMutationNeverAdvances() async throws {
-        let (model, preferences) = makeCurationModel()
-        defer { preferences.cleanUp() }
+        let model = makeCurationModel()
         let ids = curationIDs(root: "/missing", count: 2)
         model.applyState(curationWindowState(ids: ids))
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
@@ -80,16 +76,14 @@ struct CatalogWindowViewModelCurationTests {
 }
 
 @MainActor
-private func makeCurationModel() -> (CatalogWindowViewModel, TemporaryDefaults) {
-    let preferences = TemporaryDefaults()
-    let model = CatalogWindowViewModel(
+private func makeCurationModel() -> CatalogWindowViewModel {
+    CatalogWindowViewModel(
         catalogStore: CatalogStore(location: .inMemory),
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: preferences.domain
+        preferencesDomain: .suite(UUID().uuidString)
     )
-    return (model, preferences)
 }
 
 private struct CurationFixture {

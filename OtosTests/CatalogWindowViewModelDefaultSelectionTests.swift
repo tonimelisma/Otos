@@ -13,15 +13,14 @@ struct ViewModelDefaultSelectionTests {
         try Data("jpeg".utf8).write(to: root.appending(path: "one.jpg"))
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()
@@ -97,15 +96,14 @@ struct ViewModelDefaultSelectionTests {
     @MainActor
     private func makePolicyTestViewModel() -> CatalogWindowViewModel {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         return CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp.domain
+            preferencesDomain: temp
         )
     }
 

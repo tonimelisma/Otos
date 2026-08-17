@@ -11,10 +11,8 @@ import Testing
 @MainActor
 struct PreferencesDomainTests {
     @Test func temporaryDomainPersistsViewModelStateAndIsolatesControl() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let control = TemporaryDefaults()
-        defer { control.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let control = PreferencesDomain.suite(UUID().uuidString)
 
         // First ViewModel persists grid column count and ImportPreferences into temp.
         let first = CatalogWindowViewModel(
@@ -22,7 +20,7 @@ struct PreferencesDomainTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp.domain
+            preferencesDomain: temp
         )
         first.setGridColumnCount(9)
         first.setStripTileEdge(150)
@@ -35,7 +33,7 @@ struct PreferencesDomainTests {
         ))
 
         // Control suite remains at defaults.
-        let controlDefaults = control.domain.makeDefaults()
+        let controlDefaults = control.makeDefaults()
         #expect(controlDefaults.integer(forKey: "mediaGridColumnCount") == 0)
         #expect(controlDefaults.object(forKey: "mediaStripTileEdge") == nil)
 
@@ -45,7 +43,7 @@ struct PreferencesDomainTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp.domain
+            preferencesDomain: temp
         )
         #expect(second.gridColumnCount == 9)
         #expect(second.stripTileEdge == 150)
@@ -53,16 +51,14 @@ struct PreferencesDomainTests {
         #expect(second.importPreferences.deleteSourceAfterImport == true)
 
         // Direct UserDefaults read proves the suite was written.
-        let tempDefaults = temp.domain.makeDefaults()
+        let tempDefaults = temp.makeDefaults()
         #expect(tempDefaults.integer(forKey: "mediaGridColumnCount") == 9)
-        #expect(tempDefaults.double(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey) == 150)
+        #expect(tempDefaults.object(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey) as? Double == 150)
     }
 
     @Test func temporaryDomainPersistsCoordinatorDestinationAndIsolatesControl() async throws {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let control = TemporaryDefaults()
-        defer { control.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let control = PreferencesDomain.suite(UUID().uuidString)
 
         let tempDir = try makeCatalogStoreTemporaryDirectory()
         let destURL = tempDir.appending(path: "Dest", directoryHint: .isDirectory)
@@ -74,7 +70,7 @@ struct PreferencesDomainTests {
 
         // First coordinator persists a device mapping into temp.
         let storeA = CatalogStore(location: .inMemory)
-        let coordinatorA = MediaOperationCoordinator(store: storeA, preferencesDomain: temp.domain)
+        let coordinatorA = MediaOperationCoordinator(store: storeA, preferencesDomain: temp)
         await coordinatorA.setDestination(destPath, for: sourcePath)
         // Also persist via the device-identity path to exercise that mapping.
         let deviceIdentity = "volume:test-device-123"
@@ -86,15 +82,15 @@ struct PreferencesDomainTests {
 
         // Reconstructing from the same domain observes the mapping.
         let storeB = CatalogStore(location: .inMemory)
-        let coordinatorB = MediaOperationCoordinator(store: storeB, preferencesDomain: temp.domain)
+        let coordinatorB = MediaOperationCoordinator(store: storeB, preferencesDomain: temp)
         let loadedB = await coordinatorB.allDestinations()
         // The persisted file should contain the mapping; check via UserDefaults directly.
-        let tempDefaults = temp.domain.makeDefaults()
+        let tempDefaults = temp.makeDefaults()
         let legacy = tempDefaults.dictionary(forKey: "import.destinationBySource") as? [String: String]
         #expect(legacy?[sourcePath.rawValue] == destPath.rawValue)
 
         // Control suite remains empty.
-        let controlDefaults = control.domain.makeDefaults()
+        let controlDefaults = control.makeDefaults()
         #expect(controlDefaults.dictionary(forKey: "import.destinationBySource") == nil)
         #expect(controlDefaults.dictionary(forKey: "import.destinationByDeviceIdentity") == nil)
         #expect(controlDefaults.string(forKey: "import.lastUsedDestination") == nil)
@@ -107,8 +103,7 @@ struct PreferencesDomainTests {
         // Compile-time proof: these initializers require a PreferencesDomain value.
         // If any site had a default that silently selected .standard, this test
         // would not need to supply the domain explicitly.
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         let store = CatalogStore(location: .inMemory)
         // Each construction explicitly passes the domain.
         _ = CatalogWindowViewModel(
@@ -116,10 +111,10 @@ struct PreferencesDomainTests {
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp.domain
+            preferencesDomain: temp
         )
-        _ = MediaOperationCoordinator(store: store, preferencesDomain: temp.domain)
-        _ = LibraryReorganizationRunner(store: store, preferencesDomain: temp.domain)
+        _ = MediaOperationCoordinator(store: store, preferencesDomain: temp)
+        _ = LibraryReorganizationRunner(store: store, preferencesDomain: temp)
         // No assertion needed — compilation proves the requirement.
     }
 }

@@ -63,6 +63,11 @@ final class CatalogWindowViewModel {
     /// Filmstrip square tile edge in points (48–192). Same persistence pattern as
     /// `gridColumnCount`; loupe/compare strips read this for frame height and layout.
     private(set) var stripTileEdge: CGFloat
+    /// Camera-connection banner identities the user has dismissed. Same persistence
+    /// pattern as `gridColumnCount`; injected into `MediaGridView` rather than read via
+    /// `@AppStorage`, which would silently fall back to `UserDefaults.standard`
+    /// regardless of the ViewModel's own injected `preferences` (ADR 0020).
+    private(set) var dismissedCameraBannerIdentities: Set<String>
     /// Ephemeral mouse-selection truth (selection, ⇧-range anchor, base islands). Owned
     /// here so grid and filmstrip renderers share one model across mode switches; mutated
     /// only through the intents in `CatalogWindowViewModelSelection.swift`. Not
@@ -145,7 +150,7 @@ final class CatalogWindowViewModel {
     /// The ViewModel owns its `UserDefaults` instance for synchronous UI
     /// preferences; media-operation actors receive the same `PreferencesDomain`
     /// and each creates its own actor-owned instance.
-    @ObservationIgnored let preferences: UserDefaults
+    @ObservationIgnored let preferences: any PreferenceStore
     @ObservationIgnored let preferencesDomain: PreferencesDomain
     @ObservationIgnored private let queryStream: AsyncStream<CatalogQueryRequest>
     @ObservationIgnored private let queryContinuation: AsyncStream<CatalogQueryRequest>.Continuation
@@ -255,6 +260,10 @@ final class CatalogWindowViewModel {
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
         stripTileEdge = Self.clampedStripTileEdge(storedStrip.map { CGFloat($0) })
         advanceAfterMediaChoice = preferences.bool(forKey: Self.advanceAfterMediaChoiceDefaultsKey)
+        let storedDismissedIdentities = preferences.string(forKey: Self.dismissedCameraBannerIdentitiesDefaultsKey)
+        dismissedCameraBannerIdentities = Set(
+            (storedDismissedIdentities ?? "").split(separator: "\n").map(String.init)
+        )
         importPreferences = ImportPreferencesStore.load(defaults: preferences)
         self.catalogStore = catalogStore
         self.catalogProjection = catalogProjection
@@ -814,6 +823,7 @@ extension CatalogWindowViewModel {
     static let gridColumnCountDefaultsKey = "mediaGridColumnCount"
     static let stripTileEdgeDefaultsKey = "mediaStripTileEdge"
     static let advanceAfterMediaChoiceDefaultsKey = "advanceAfterMediaChoice"
+    static let dismissedCameraBannerIdentitiesDefaultsKey = "dismissedCameraConnectionBannerIdentities"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
     func setGridColumnCount(_ requested: Int) {
@@ -850,6 +860,18 @@ extension CatalogWindowViewModel {
         return min(
             MediaGridPresentation.maxStripTileEdge,
             max(MediaGridPresentation.minStripTileEdge, requested)
+        )
+    }
+
+    /// A no-op re-dismiss does not re-persist, matching `setGridColumnCount`'s pattern.
+    func dismissCameraConnectionBanner(_ identity: String) {
+        guard !dismissedCameraBannerIdentities.contains(identity) else {
+            return
+        }
+        dismissedCameraBannerIdentities.insert(identity)
+        preferences.set(
+            dismissedCameraBannerIdentities.sorted().joined(separator: "\n"),
+            forKey: Self.dismissedCameraBannerIdentitiesDefaultsKey
         )
     }
 }

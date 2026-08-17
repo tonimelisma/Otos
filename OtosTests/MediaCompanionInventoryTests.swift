@@ -63,8 +63,7 @@ struct MediaCompanionPairingTests {
 
 struct ImportPreferencesStoreTests {
     @Test func roundTripsThroughUserDefaults() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
 
         var prefs = ImportPreferences.default
         prefs.importSidecarFiles = false
@@ -72,9 +71,9 @@ struct ImportPreferencesStoreTests {
         prefs.autoEjectAfterImport = true
         prefs.destinationFolderPolicy = .none
         prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: temp.defaults)
+        ImportPreferencesStore.save(prefs, defaults: temp.makeDefaults())
 
-        let loaded = ImportPreferencesStore.load(defaults: temp.defaults)
+        let loaded = ImportPreferencesStore.load(defaults: temp.makeDefaults())
         #expect(loaded == prefs)
     }
 }

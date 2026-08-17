@@ -28,11 +28,10 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
@@ -75,9 +74,8 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults.domain)
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
         await coordinator.setDestination(destination, for: source)
         _ = try await readyGeneration(coordinator, source: source)
@@ -109,11 +107,10 @@ struct MediaOperationCoordinatorTests {
         try await store.addLibrary(url: fixedRoot)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         await coordinator.start()
 
@@ -179,9 +176,8 @@ struct MediaOperationCoordinatorTests {
             isEjectable: true
         )
 
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults.domain)
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
 
         let waitingDeadline = ContinuousClock().now + .seconds(5)
@@ -275,11 +271,10 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         await coordinator.start()
 
@@ -343,11 +338,10 @@ struct MediaOperationCoordinatorTests {
             }
         }
 
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(
             store: store,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
         await coordinator.start()
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -393,9 +387,8 @@ struct MediaOperationCoordinatorTests {
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:first-added"
         )
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
         await coordinator.start()
 
         _ = try await readyGeneration(coordinator, source: fixture.source)
@@ -438,9 +431,8 @@ struct MediaOperationCoordinatorTests {
             isEjectable: true
         )
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: source)
         let presentation = try #require(
@@ -459,22 +451,21 @@ struct MediaOperationCoordinatorTests {
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:stale-legacy"
         )
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        defaults.defaults.set(
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        defaults.makeDefaults().set(
             [fixture.identity: fixture.libraries[2].rawValue],
             forKey: "import.destinationByDeviceIdentity"
         )
-        defaults.defaults.set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        defaults.makeDefaults().set(fixture.libraries[1].rawValue, forKey: "import.lastUsedDestination")
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
         await coordinator.start()
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
         #expect(presentation.destinationPath == fixture.libraries[0])
-        #expect(defaults.defaults.dictionary(forKey: "import.destinationByDeviceIdentity") == nil)
-        #expect(defaults.defaults.string(forKey: "import.lastUsedDestination") == nil)
+        #expect(defaults.makeDefaults().dictionary(forKey: "import.destinationByDeviceIdentity") == nil)
+        #expect(defaults.makeDefaults().string(forKey: "import.lastUsedDestination") == nil)
         await coordinator.shutdown()
     }
 
@@ -488,9 +479,8 @@ struct MediaOperationCoordinatorTests {
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:reorder-attached"
         )
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         let before = try #require(
@@ -518,9 +508,8 @@ struct MediaOperationCoordinatorTests {
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:explicit-survives-reorder"
         )
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[1], for: fixture.source)
@@ -546,9 +535,8 @@ struct MediaOperationCoordinatorTests {
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:explicit-then-unavailable"
         )
-        let defaults = TemporaryDefaults()
-        defer { defaults.cleanUp() }
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults.domain)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[2], for: fixture.source)

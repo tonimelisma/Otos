@@ -9,56 +9,50 @@ import Testing
 @MainActor
 struct CatalogWindowViewModelGridZoomTests {
     @Test func defaultsToSixColumnsWithNoStoredPreference() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain: temp)
         #expect(model.gridColumnCount == 6)
     }
 
     @Test func loadsAndValidatesAStoredPreference() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        temp.defaults.set(4, forKey: "mediaGridColumnCount")
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        temp.makeDefaults().set(4, forKey: "mediaGridColumnCount")
+        let model = makeViewModel(domain: temp)
         #expect(model.gridColumnCount == 4)
     }
 
     @Test func garbageStoredPreferenceFallsBackToDefault() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        temp.defaults.set(999, forKey: "mediaGridColumnCount")
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        temp.makeDefaults().set(999, forKey: "mediaGridColumnCount")
+        let model = makeViewModel(domain: temp)
         #expect(model.gridColumnCount == 6)
     }
 
     @Test func setGridColumnCountClampsPersistsAndPublishes() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain: temp)
 
         model.setGridColumnCount(2) // one below minimum
         #expect(model.gridColumnCount == 3)
-        #expect(temp.defaults.integer(forKey: "mediaGridColumnCount") == 3)
+        #expect(temp.makeDefaults().integer(forKey: "mediaGridColumnCount") == 3)
 
         model.setGridColumnCount(10) // one above maximum
         #expect(model.gridColumnCount == 9)
-        #expect(temp.defaults.integer(forKey: "mediaGridColumnCount") == 9)
+        #expect(temp.makeDefaults().integer(forKey: "mediaGridColumnCount") == 9)
     }
 
     @Test func setGridColumnCountRoundTripsThroughANewViewModelInstance() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let first = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let first = makeViewModel(domain: temp)
         first.setGridColumnCount(9)
 
-        let second = makeViewModel(domain: temp.domain)
+        let second = makeViewModel(domain: temp)
         #expect(second.gridColumnCount == 9)
     }
 
     @Test func zoomInDecreasesAndZoomOutIncreasesColumnCount() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain: temp)
         #expect(model.gridColumnCount == 6)
 
         model.zoomInGrid()
@@ -69,9 +63,8 @@ struct CatalogWindowViewModelGridZoomTests {
     }
 
     @Test func zoomInStopsAtMinimumAndZoomOutStopsAtMaximum() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain: temp)
 
         for _ in 0 ..< 10 {
             model.zoomInGrid()
@@ -85,39 +78,36 @@ struct CatalogWindowViewModelGridZoomTests {
     }
 
     @Test func defaultsToSeventyTwoStripTileEdge() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain: temp)
         #expect(model.stripTileEdge == MediaGridPresentation.defaultStripTileEdge)
     }
 
     @Test func setStripTileEdgeClampsPersistsAndPublishes() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let model = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let model = makeViewModel(domain: temp)
 
         model.setStripTileEdge(20)
         #expect(model.stripTileEdge == MediaGridPresentation.minStripTileEdge)
         #expect(
-            temp.defaults.double(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
+            temp.makeDefaults().object(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey) as? Double
                 == Double(MediaGridPresentation.minStripTileEdge)
         )
 
         model.setStripTileEdge(400)
         #expect(model.stripTileEdge == MediaGridPresentation.maxStripTileEdge)
         #expect(
-            temp.defaults.double(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey)
+            temp.makeDefaults().object(forKey: CatalogWindowViewModel.stripTileEdgeDefaultsKey) as? Double
                 == Double(MediaGridPresentation.maxStripTileEdge)
         )
     }
 
     @Test func setStripTileEdgeRoundTripsThroughANewViewModelInstance() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
-        let first = makeViewModel(domain: temp.domain)
+        let temp = PreferencesDomain.suite(UUID().uuidString)
+        let first = makeViewModel(domain: temp)
         first.setStripTileEdge(120)
 
-        let second = makeViewModel(domain: temp.domain)
+        let second = makeViewModel(domain: temp)
         #expect(second.stripTileEdge == 120)
     }
 }

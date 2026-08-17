@@ -6,15 +6,14 @@ import Testing
 struct RemovableEjectOutcomeTests {
     @MainActor
     @Test func missingIdentitySurfacesEjectFailure() {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: CatalogStore(location: .inMemory),
             catalogProjection: CatalogProjection(),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
-            preferencesDomain: temp.domain
+            preferencesDomain: temp
         )
         model.ejectRemovableSource(LibraryRoot(
             path: LibraryRootPath(rawValue: "/Volumes/Gone"),

@@ -8,8 +8,8 @@ import OSLog
 actor LibraryReorganizationRunner {
     private let store: CatalogStore
     /// The actor owns this instance for the injected domain. Callers transfer only
-    /// the Sendable domain value, never a shared UserDefaults reference (ARC-042).
-    private let preferences: UserDefaults
+    /// the Sendable domain value, never a shared PreferenceStore reference (ARC-042).
+    private let preferences: any PreferenceStore
     private let preferencesDomain: PreferencesDomain
 
     init(store: CatalogStore, preferencesDomain: PreferencesDomain) {

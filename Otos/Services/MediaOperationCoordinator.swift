@@ -21,7 +21,7 @@ import OSLog
 /// before publishing.
 actor MediaOperationCoordinator {
     private let store: CatalogStore
-    private let preferences: UserDefaults
+    private let preferences: any PreferenceStore
     private let preferencesDomain: PreferencesDomain
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?

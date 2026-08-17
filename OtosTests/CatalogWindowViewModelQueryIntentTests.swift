@@ -6,8 +6,7 @@ import Testing
 struct CatalogWindowViewModelQueryIntentTests {
     @MainActor
     @Test func normalizedNoOpQueryIntentDoesNotBumpOrRollbackGeneration() async throws {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
@@ -29,8 +28,7 @@ struct CatalogWindowViewModelQueryIntentTests {
 
     @MainActor
     @Test func staleProjectedStateDoesNotRollbackNewerQueryIntent() async throws {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
@@ -64,8 +62,7 @@ struct CatalogWindowViewModelQueryIntentTests {
 
     @MainActor
     @Test func staleProjectedStateDoesNotRollbackToggledBackQueryIntent() async throws {
-        let temp = TemporaryDefaults()
-        defer { temp.cleanUp() }
+        let temp = PreferencesDomain.suite(UUID().uuidString)
         let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
@@ -126,7 +123,7 @@ private func waitForRequestsReleasingBuilds(
 }
 
 @MainActor
-private func makeQueryIntentModel(temp: TemporaryDefaults) -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
+private func makeQueryIntentModel(temp: PreferencesDomain) -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
     let store = CatalogStore(location: .inMemory)
     let gate = WindowStateBuildGate()
     let projection = CatalogProjection(
@@ -142,7 +139,7 @@ private func makeQueryIntentModel(temp: TemporaryDefaults) -> (model: CatalogWin
         startsStallMonitor: false,
         startsEnrichment: false,
         startsSourceMonitoring: false,
-        preferencesDomain: temp.domain
+        preferencesDomain: temp
     )
     return (model, gate)
 }

@@ -23,15 +23,14 @@ struct CatalogWindowViewModelEnrichmentTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: store,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
             // startsEnrichment defaults true: start() must start the injected coordinator.
         )
 
@@ -99,15 +98,14 @@ struct CatalogWindowViewModelEnrichmentTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
             applyFlushInterval: .milliseconds(1)
         )
-        let tempDefaults = TemporaryDefaults()
-        defer { tempDefaults.cleanUp() }
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let model = CatalogWindowViewModel(
             catalogStore: secondStore,
             catalogProjection: CatalogProjection(cadence: .milliseconds(10)),
             enrichmentCoordinator: coordinator,
             startsStallMonitor: false,
             startsSourceMonitoring: false,
-            preferencesDomain: tempDefaults.domain
+            preferencesDomain: tempDefaults
         )
 
         model.start()
