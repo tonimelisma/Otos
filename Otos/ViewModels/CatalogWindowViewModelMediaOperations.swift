@@ -79,9 +79,34 @@ extension CatalogWindowViewModel {
             })
             cancellingImportSources.formIntersection(stillExecuting)
         }
+        followNewBatchesOnce(presentations)
         Task {
             await refreshRemovableDestinations()
             await refreshSessionPreferences()
+        }
+    }
+
+    /// Moves the sidebar selection to a batch the first time its ID appears on
+    /// a presentation, and never again for that batch (`import-bar.md` "Where
+    /// the user is standing", "Required change"). `batchID` is carried as
+    /// state rather than an event specifically so this can't miss a dropped
+    /// intermediate frame — the check is "have we seen this ID," not "did we
+    /// just observe a transition."
+    ///
+    /// `.allImports` counts as not having navigated away (J12: "that list is a
+    /// navigation surface, not a place to watch work from"); any other
+    /// selection — a different library, a different removable source, All
+    /// Media — is a real navigation choice and is respected.
+    private func followNewBatchesOnce(_ presentations: [MediaOperationSourcePresentation]) {
+        for presentation in presentations {
+            guard let batchID = presentation.batchID, !autoSelectedBatchIDs.contains(batchID) else {
+                continue
+            }
+            autoSelectedBatchIDs.insert(batchID)
+            let hasNotNavigatedAway = sidebarSelection == .library(presentation.sourcePath) || sidebarSelection == .allImports
+            if hasNotNavigatedAway {
+                selectSidebar(.importBatch(batchID))
+            }
         }
     }
 

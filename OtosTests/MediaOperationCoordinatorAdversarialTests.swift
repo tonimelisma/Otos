@@ -889,6 +889,74 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// Plan 0092 increment 6: a failure before any copy never sets
+    /// `lastCompletion`, so without `lastAttemptedBatch` the presentation's
+    /// `batchID` would go nil the instant `.executing` becomes `.failed` —
+    /// right when the sidebar-follow feature and state G ("never
+    /// auto-dismisses") most need it to stay identified by batch.
+    @Test func batchIDSurvivesAnImmediateFailureBeforeAnyCopy() async throws {
+        log("START batchIDSurvivesAnImmediateFailureBeforeAnyCopy")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "h.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:immediate-fail", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        let destPath = try CatalogPath.normalizedDirectoryPath(for: destURL)
+
+        let defaults = TemporaryDefaults()
+        defer { defaults.cleanUp() }
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.defaults)
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults.domain,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+
+        let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        let mintedBatch = try #require(executing.batchID, "batchID must be present from execution start")
+
+        // A failure with nothing really wrong self-heals via the coordinator's
+        // ordinary "rebuild after any terminal settlement" behavior — `.failed`
+        // would be gone again within the same actor turn, before any poll
+        // could observe it. Removing the destination first makes the
+        // triggered rebuild fail too (no destination), settling on a stable
+        // `.failed` this test can actually poll for — the same shape a real
+        // persistent problem (genuinely out of space, destination genuinely
+        // gone) would have in production.
+        try await store.removeLibrary(path: destPath)
+        await execControl.resumePending(for: cardPath, with: .failed(reason: .outOfSpace))
+        await queueTask.value
+
+        let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .failed = pres.state {
+                return true
+            }
+            return false
+        }
+        #expect(failed.batchID == mintedBatch, "The batch ID that failed must survive into the Failed presentation")
+        log("END")
+        await coordinator.shutdown()
+    }
+
     /// A live execution's `ExecutionContext` (claims, namespace lease) already
     /// committed to a specific destination. Reordering libraries while that
     /// execution is in flight must not rewrite `session.destination` out from

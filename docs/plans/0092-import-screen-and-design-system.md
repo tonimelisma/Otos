@@ -238,14 +238,16 @@ and journeys J1, J2 and J10 hold.
 
 ## Increment 7 — grid day headers (DES-069)
 
-**Do this last, and treat it as its own plan if it grows.** It is the only increment
-that touches the AppKit grid, which owns the no-blank invariant (APP-015) and the
-structural-apply machinery (ARC-023). The grid is currently one section
-(`MediaGridPresentation.swift:41-61`); day sections mean supplementary header views,
-a section-aware data source, and a pinned-header layout.
-
-Read `docs/adr/0006-catalog-grid-rendering.md` before touching anything, and treat
-"no painted thumbnail ever blanks" as the acceptance bar, not a nice-to-have.
+**It grew.** Spun off into [`docs/plans/0093-grid-day-headers.md`](0093-grid-day-headers.md)
+after increment 6 landed: the real blocker turned out not to be the AppKit grid
+itself but a missing data path one layer down (no per-asset date reaches the grid
+beyond the visible window today, by deliberate scale design), plus an unresolved
+spec question DES-069 doesn't answer (header behavior under name/size sort). Both
+need their own review before an implementation plan can be written, exactly as this
+section originally anticipated ("do this last, and treat it as its own plan if it
+grows"). Read `docs/adr/0006-catalog-grid-rendering.md` before touching anything
+there, and treat "no painted thumbnail ever blanks" as the acceptance bar, not a
+nice-to-have.
 
 ## Requirements and ADRs
 

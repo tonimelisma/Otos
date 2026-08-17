@@ -61,4 +61,80 @@ nonisolated enum SidebarSelectionPolicy {
             (left.lastSeenAt ?? .distantPast) < (right.lastSeenAt ?? .distantPast)
         }
     }
+
+    // MARK: - Status ownership (plan 0092 increment 6, `import-bar.md` "Ownership of status")
+
+    /// Whether the import bar is currently on screen for the operation that
+    /// produced `presentation` — true whenever the current selection is that
+    /// operation's removable row, or its batch row once one exists. A batch
+    /// row's presentation shares its originating source's `sourcePath`, so one
+    /// check covers both selection forms (DES-040: one fact, one owner).
+    static func barOwnsStatus(
+        sidebarSelection: SidebarSelection,
+        presentation: MediaOperationSourcePresentation
+    ) -> Bool {
+        switch sidebarSelection {
+        case let .library(path):
+            path == presentation.sourcePath
+        case let .importBatch(batchID):
+            batchID == presentation.batchID
+        default:
+            false
+        }
+    }
+
+    /// The removable row's own indicator. Ownership moves to the batch row
+    /// the moment `presentation.batchID` exists and never returns to the
+    /// removable row for that attachment (batchID survives settlement, same
+    /// as `import-bar.md`'s "F is derived, not remembered") — in practice this
+    /// means the removable row is only ever a candidate pre-batch, i.e. states
+    /// A/B, since `.executing` always already carries a batch ID.
+    static func removableIndicator(
+        presentation: MediaOperationSourcePresentation?,
+        sidebarSelection: SidebarSelection
+    ) -> SidebarStatusIndicator {
+        guard let presentation, presentation.batchID == nil else {
+            return .none
+        }
+        if barOwnsStatus(sidebarSelection: sidebarSelection, presentation: presentation) {
+            return .none
+        }
+        return switch presentation.state {
+        case let .waitingForMetadata(done, total):
+            .determinate(completed: done, total: total)
+        case .inventory, .planning, .queuedForReadiness, .needsReplan:
+            .indeterminate
+        default:
+            .none
+        }
+    }
+
+    /// The batch row's own indicator — live only while its operation is
+    /// actively `.executing`; a settled or failed batch shows its ordinary
+    /// accessory instead (DES-040 covers in-progress status, not terminal
+    /// states).
+    static func batchIndicator(
+        batchID: ImportBatchID,
+        presentations: [MediaOperationSourcePresentation],
+        sidebarSelection: SidebarSelection
+    ) -> SidebarStatusIndicator {
+        guard let presentation = presentations.first(where: { $0.batchID == batchID }),
+              case let .executing(progress) = presentation.state
+        else {
+            return .none
+        }
+        if barOwnsStatus(sidebarSelection: sidebarSelection, presentation: presentation) {
+            return .none
+        }
+        return .determinate(completed: progress.completedCount, total: progress.totalCount)
+    }
+}
+
+/// A sidebar row's status indicator, per `import-bar.md` "Ownership of status":
+/// at most one row shows this at a time, and only while the bar is off screen
+/// for that operation.
+nonisolated enum SidebarStatusIndicator: Equatable {
+    case none
+    case indeterminate
+    case determinate(completed: Int, total: Int)
 }

@@ -185,6 +185,12 @@ final class CatalogWindowViewModel {
     /// `cancelImport` is called and cleared once that source's presentation
     /// leaves `.executing` (`applyImportPresentations`).
     var cancellingImportSources: Set<LibraryRootPath> = []
+    /// Batch IDs already offered the once-only automatic sidebar move
+    /// (`import-bar.md` "Where the user is standing", plan 0092 increment 6).
+    /// UI-only ViewModel state, same tier as `cancellingImportSources` — the
+    /// coordinator publishes the batch ID as state and has no notion of
+    /// "have we already followed it."
+    var autoSelectedBatchIDs: Set<ImportBatchID> = []
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
@@ -569,7 +575,7 @@ extension CatalogWindowViewModel {
         // A -> B -> A toggles that equality alone cannot distinguish.
         if nextState.queryGeneration == queryGeneration {
             queryDescriptor = nextState.queryDescriptor
-            sidebarSelection = nextState.resolvedSidebarSelection
+            sidebarSelection = resolvedSidebarSelectionKeepingFreshBatch(nextState)
         } else if currentSelectionWasRemoved(in: nextState) {
             applyAutomaticSidebarSelection(
                 SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
@@ -772,6 +778,26 @@ extension CatalogWindowViewModel {
         case .allMedia, .allImports:
             false
         }
+    }
+
+    /// `CatalogWindowPolicy.resolvedSidebarSelection` only accepts a batch that
+    /// already has a journaled asset — correct for the pure Store-side policy,
+    /// which has no reason to know about media operations. But a batch is
+    /// selected (`followNewBatchesOnce`) the moment execution starts, before
+    /// any asset has copied, so trusting the resolved value unconditionally
+    /// here would bounce that selection away again on this very publish cycle,
+    /// almost every time. Keep the optimistic selection instead while the
+    /// coordinator still has a live presentation for that batch — it will
+    /// stop needing this exception the moment the batch gets its first asset,
+    /// because `resolvedSidebarSelection` then agrees on its own.
+    func resolvedSidebarSelectionKeepingFreshBatch(_ nextState: CatalogWindowState) -> SidebarSelection {
+        if case let .importBatch(id) = sidebarSelection,
+           !nextState.importBatches.contains(where: { $0.batchID == id }),
+           importPresentations.contains(where: { $0.batchID == id })
+        {
+            return sidebarSelection
+        }
+        return nextState.resolvedSidebarSelection
     }
 }
 

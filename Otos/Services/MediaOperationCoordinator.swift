@@ -111,6 +111,15 @@ actor MediaOperationCoordinator {
         var attachStartedAt: ContinuousClock.Instant
         var attachToReadyMs: Int?
         var lastCompletion: AttachmentCompletion?
+        /// The most recently minted batch for this attachment, set the moment
+        /// execution begins and left alone afterward. `lastCompletion` only
+        /// exists for a *settled* execution, so a run that fails before ever
+        /// producing one (out of space detected immediately, say) would
+        /// otherwise lose its batch ID the instant the phase leaves
+        /// `.executing` — right when state G most needs it, to stay pinned and
+        /// visible on the batch row (`import-bar.md` state G, "never
+        /// auto-dismisses"; plan 0092 increment 6).
+        var lastAttemptedBatch: ImportBatchID?
     }
 
     private var sourceSessions: [LibraryRootPath: SourceSession] = [:]
@@ -446,6 +455,7 @@ actor MediaOperationCoordinator {
         )
         session.phase = .executing(ctx)
         session.importRequested = false
+        session.lastAttemptedBatch = batch
         sourceSessions[source] = session
         publish()
 
@@ -743,7 +753,8 @@ actor MediaOperationCoordinator {
                     nextBuildGeneration: BuildGeneration(rawValue: 1),
                     attachStartedAt: ContinuousClock().now,
                     attachToReadyMs: nil,
-                    lastCompletion: nil
+                    lastCompletion: nil,
+                    lastAttemptedBatch: nil
                 )
                 sourceSessions[source.path] = newSession
                 scheduleBuildIfNeeded(source.path)
@@ -1116,13 +1127,14 @@ actor MediaOperationCoordinator {
 
     /// The batch this attachment is currently working on or last worked on:
     /// the live execution's batch while executing, else the most recent
-    /// completed execution's batch, else `nil` before any execution has
-    /// started (`import-bar.md` "Where the user is standing").
+    /// *settled* execution's batch, else the most recent *attempted* one —
+    /// covering a run that failed before ever settling — else `nil` before any
+    /// execution has started (`import-bar.md` "Where the user is standing").
     private func currentBatchID(for session: SourceSession) -> ImportBatchID? {
         if case let .executing(ctx) = session.phase {
             return ctx.batch
         }
-        return session.lastCompletion?.batch
+        return session.lastCompletion?.batch ?? session.lastAttemptedBatch
     }
 
     private func makePresentation(

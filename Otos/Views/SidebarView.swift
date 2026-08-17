@@ -64,9 +64,7 @@ struct SidebarView: View {
                                 among: importBatches
                             )
                         ) {
-                            Text("\(batch.assetCount)")
-                                .foregroundStyle(.secondary)
-                                .monospacedDigit()
+                            batchTrailingAccessory(for: batch)
                         }
                         .tag(SidebarSelection.importBatch(batch.batchID))
                     }
@@ -102,32 +100,44 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func removableTrailingAccessory(for source: CatalogLibraryState) -> some View {
-        if let presentation = importPresentations.first(where: { $0.sourcePath == source.path }) {
-            switch presentation.state {
-            case .inventory, .waitingForMetadata, .planning, .queuedForReadiness, .needsReplan:
-                ProgressView()
-                    .controlSize(.small)
-                    .accessibilityLabel("\(source.displayName), preparing")
-            case let .executing(progress):
-                ProgressView(value: Double(progress.completedCount), total: Double(max(progress.totalCount, 1)))
-                    .controlSize(.small)
-                    .frame(width: 32)
-                    .accessibilityLabel("\(source.displayName), importing, \(progress.completedCount) of \(progress.totalCount)")
-            case .ready, .completed, .failed, .executionUnavailable:
-                if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if source.isEjectable {
-                    Button {
-                        ejectSource(source.root)
-                    } label: {
-                        Image(systemName: "eject.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Eject")
-                }
-            }
-        } else if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
+        let presentation = importPresentations.first(where: { $0.sourcePath == source.path })
+        switch SidebarSelectionPolicy.removableIndicator(presentation: presentation, sidebarSelection: sidebarSelection) {
+        case .indeterminate:
+            ProgressView()
+                .controlSize(.small)
+                .accessibilityLabel("\(source.displayName), preparing")
+        case let .determinate(completed, total):
+            ProgressView(value: Double(completed), total: Double(max(total, 1)))
+                .controlSize(.small)
+                .frame(width: 32)
+                .accessibilityLabel("\(source.displayName), importing, \(completed) of \(total)")
+        case .none:
+            ejectAccessory(for: source)
+        }
+    }
+
+    @ViewBuilder
+    private func batchTrailingAccessory(for batch: ImportBatchSummary) -> some View {
+        switch SidebarSelectionPolicy.batchIndicator(
+            batchID: batch.batchID,
+            presentations: importPresentations,
+            sidebarSelection: sidebarSelection
+        ) {
+        case let .determinate(completed, total):
+            ProgressView(value: Double(completed), total: Double(max(total, 1)))
+                .controlSize(.small)
+                .frame(width: 32)
+                .accessibilityLabel("Importing, \(completed) of \(total)")
+        case .none, .indeterminate:
+            Text("\(batch.assetCount)")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+    }
+
+    @ViewBuilder
+    private func ejectAccessory(for source: CatalogLibraryState) -> some View {
+        if let identity = source.deviceIdentity, ejectingSourceIdentities.contains(identity) {
             ProgressView()
                 .controlSize(.small)
         } else if source.isEjectable {

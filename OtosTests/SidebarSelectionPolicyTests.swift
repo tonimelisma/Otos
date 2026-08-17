@@ -104,4 +104,122 @@ struct SidebarSelectionPolicyTests {
             isEjectable: true
         )
     }
+
+    // MARK: - Status ownership (plan 0092 increment 6, `import-bar.md` "Ownership of status")
+
+    private static let cardPath = LibraryRootPath(rawValue: "/Volumes/CARD")
+    private static let batchID = ImportBatchID(unixMilliseconds: 1_704_067_200_000)
+
+    private static func presentation(
+        state: MediaOperationSourceState,
+        batchID: ImportBatchID? = nil
+    ) -> MediaOperationSourcePresentation {
+        MediaOperationSourcePresentation(
+            sourcePath: cardPath,
+            destinationPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
+            destinationDisplayName: "Pictures",
+            state: state,
+            attachToReadyMs: nil,
+            batchID: batchID,
+            cardStillExists: true,
+            copiedJustNow: nil,
+            isFullyClean: nil,
+            incompleteItems: []
+        )
+    }
+
+    @Test func barOwnsStatusMatchesLibrarySelection() {
+        let pres = Self.presentation(state: .inventory)
+        #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .library(Self.cardPath), presentation: pres))
+        #expect(!SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .allMedia, presentation: pres))
+    }
+
+    @Test func barOwnsStatusMatchesBatchSelection() {
+        let pres = Self.presentation(
+            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            batchID: Self.batchID
+        )
+        #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .importBatch(Self.batchID), presentation: pres))
+        // A batch row's presentation shares its source's sourcePath, so the
+        // removable-row selection form also matches — one operation, either row.
+        #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .library(Self.cardPath), presentation: pres))
+        #expect(!SidebarSelectionPolicy.barOwnsStatus(
+            sidebarSelection: .importBatch(ImportBatchID(unixMilliseconds: 999)),
+            presentation: pres
+        ))
+    }
+
+    @Test func removableIndicatorShowsIndeterminateBeforeBatchExists() {
+        let pres = Self.presentation(state: .inventory)
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .indeterminate)
+    }
+
+    @Test func removableIndicatorShowsDeterminateCountWhilePreparing() {
+        let pres = Self.presentation(state: .waitingForMetadata(done: 3, total: 10))
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .determinate(completed: 3, total: 10))
+    }
+
+    @Test func removableIndicatorHidesWhenBarOwnsStatus() {
+        let pres = Self.presentation(state: .inventory)
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .library(Self.cardPath)) == .none)
+    }
+
+    @Test func removableIndicatorHidesOnceBatchIDExists() {
+        // Ownership has moved to the batch row — the removable row shows
+        // nothing even though the user is looking elsewhere.
+        let pres = Self.presentation(
+            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            batchID: Self.batchID
+        )
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .none)
+    }
+
+    @Test func removableIndicatorHidesWithNoPresentation() {
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: nil, sidebarSelection: .allMedia) == .none)
+    }
+
+    @Test func batchIndicatorShowsDeterminateWhileExecuting() {
+        let pres = Self.presentation(
+            state: .executing(progress: MediaOperationProgress(completedCount: 4, totalCount: 9, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            batchID: Self.batchID
+        )
+        let indicator = SidebarSelectionPolicy.batchIndicator(
+            batchID: Self.batchID,
+            presentations: [pres],
+            sidebarSelection: .allMedia
+        )
+        #expect(indicator == .determinate(completed: 4, total: 9))
+    }
+
+    @Test func batchIndicatorHidesWhenBarOwnsStatus() {
+        let pres = Self.presentation(
+            state: .executing(progress: MediaOperationProgress(completedCount: 4, totalCount: 9, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            batchID: Self.batchID
+        )
+        let indicator = SidebarSelectionPolicy.batchIndicator(
+            batchID: Self.batchID,
+            presentations: [pres],
+            sidebarSelection: .importBatch(Self.batchID)
+        )
+        #expect(indicator == .none)
+        let indicatorFromLibraryRow = SidebarSelectionPolicy.batchIndicator(
+            batchID: Self.batchID,
+            presentations: [pres],
+            sidebarSelection: .library(Self.cardPath)
+        )
+        #expect(indicatorFromLibraryRow == .none)
+    }
+
+    @Test func batchIndicatorHidesForTerminalStates() {
+        let pres = Self.presentation(
+            state: .completed(summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)),
+            batchID: Self.batchID
+        )
+        let indicator = SidebarSelectionPolicy.batchIndicator(
+            batchID: Self.batchID,
+            presentations: [pres],
+            sidebarSelection: .allMedia
+        )
+        #expect(indicator == .none)
+    }
 }
