@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Intent-level coverage for ViewModel-owned grid selection (plan 0053 Stage A).

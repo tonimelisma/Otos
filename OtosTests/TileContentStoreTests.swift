@@ -1,5 +1,5 @@
 import CoreGraphics
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 @MainActor

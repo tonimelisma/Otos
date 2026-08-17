@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Tests `CatalogWindowViewModel`'s grid-zoom intent (spec 0048): clamping, persistence,

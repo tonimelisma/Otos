@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// The mapper is the oracle for `docs/design/import-bar.md`'s state inventory

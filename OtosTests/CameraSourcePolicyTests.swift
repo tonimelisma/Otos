@@ -1,6 +1,6 @@
 import AppKit
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 struct CameraSourcePolicyTests {

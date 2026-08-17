@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// The view model owns the `EnrichmentCoordinator`'s lifetime: it starts it, feeds it the

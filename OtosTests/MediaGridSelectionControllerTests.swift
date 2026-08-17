@@ -1,7 +1,7 @@
 import AppKit
 import Foundation
 import os
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Controller-level tests for the model-owned mouse selection (spec 0046).

@@ -1,5 +1,5 @@
 import AppKit
-@testable import Otos
+@testable import OtosKit
 import SwiftUI
 import Testing
 

@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 
 /// A `UserDefaults` suite for one test, cleaned up via an explicit `defer` the
 /// caller writes immediately after construction:

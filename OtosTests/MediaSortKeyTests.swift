@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// The precomputed sort key replaces localized collation per comparison. These

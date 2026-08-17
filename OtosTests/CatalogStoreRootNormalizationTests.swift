@@ -1,6 +1,6 @@
 import Foundation
 import GRDB
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 struct CatalogStoreRootNormalizationTests {

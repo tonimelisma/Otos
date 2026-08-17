@@ -1,6 +1,6 @@
 import Foundation
 import OSLog
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Adversarial lifecycle tests for MediaOperationCoordinator (plan 0079 Stage 4).

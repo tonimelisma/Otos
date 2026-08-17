@@ -1,6 +1,6 @@
 import CoreServices
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 struct FilesystemReconcilerTests {

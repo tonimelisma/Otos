@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 import ImageIO
-@testable import Otos
+@testable import OtosKit
 import Testing
 import UniformTypeIdentifiers
 

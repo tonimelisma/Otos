@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Synchronization
 import Testing
 

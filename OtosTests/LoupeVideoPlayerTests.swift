@@ -1,5 +1,5 @@
 import AVKit
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 @MainActor

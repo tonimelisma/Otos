@@ -1,6 +1,6 @@
 import Foundation
 import Observation
-@testable import Otos
+@testable import OtosKit
 
 @MainActor
 func windowStateStream(

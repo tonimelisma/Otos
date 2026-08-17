@@ -7,8 +7,13 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		3BCB10072FEAFB0000010001 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 3BCB10062FEAFB0000010001 /* GRDB */; };
-		3BCB100A2FEAFB0000010001 /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = 3BCB10092FEAFB0000010001 /* MediaMetadata */; };
+		031A33F1C0E9C535BFB21219 /* OtosKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		3159B8E9FEB7DFB431F9B56E /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = 1C8F7A15A3DB3475BAFE398A /* MediaMetadata */; };
+		9D47B12EC89438D47050175D /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 5AB3FD2588303421082D48CD /* GRDB */; };
+		CFD2256CD4D769F5622195B7 /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = D0447D14BAA0788D26975931 /* MediaMetadata */; };
+		DE7F62197C13E995EEE9E501 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A07256481F38A90EADD1A61F /* Cocoa.framework */; };
+		E22ED6B0D74682661C2AF3F6 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = C818A507037575021CBE8CAA /* GRDB */; };
+		F6B99F2C261A631FF9367973 /* OtosKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -19,29 +24,205 @@
 			remoteGlobalIDString = 5980D4726503709D9D7F52EB;
 			remoteInfo = OtosXXH3;
 		};
-		3B44EB6C2FCEBA59007E4158 /* PBXContainerItemProxy */ = {
+		510B1DC9C2F3D792D5651E92 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 3B44EB562FCEBA57007E4158 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 3B44EB5D2FCEBA57007E4158;
-			remoteInfo = Otos;
+			remoteGlobalIDString = E3AF0A4A4C05349C25C4A3BC;
+			remoteInfo = OtosKit;
+		};
+		6412BE2FF2B1F1D030C27026 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3B44EB562FCEBA57007E4158 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5980D4726503709D9D7F52EB;
+			remoteInfo = OtosXXH3;
+		};
+		8185B88BDB1A41FF86C64695 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 3B44EB562FCEBA57007E4158 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E3AF0A4A4C05349C25C4A3BC;
+			remoteInfo = OtosKit;
 		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		9E15BB4D535CD2CA3272DE93 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				031A33F1C0E9C535BFB21219 /* OtosKit.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		3B44EB5E2FCEBA57007E4158 /* Otos.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Otos.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3B44EB6B2FCEBA59007E4158 /* OtosTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OtosTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A07256481F38A90EADD1A61F /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		A90203CC9F2BB2998AC21811 /* libOtosXXH3.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libOtosXXH3.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		B399849F083A8A241AA47BE2 /* OtosKit.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = OtosKit.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		2FF9500192B89B315E8A84D1 /* Exceptions for "Otos" folder in "OtosKit" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Assets.xcassets/AccentColor.colorset/Contents.json,
+				Assets.xcassets/AppIcon.appiconset/Contents.json,
+				Assets.xcassets/Contents.json,
+				Support/OtosXXH3.c,
+				Support/OtosXXH3.h,
+				Support/module.modulemap,
+				"Vendor/xxHash-0.8.3/LICENSE",
+				"Vendor/xxHash-0.8.3/README.md",
+				"Vendor/xxHash-0.8.3/xxhash.c",
+				"Vendor/xxHash-0.8.3/xxhash.h",
+				main.swift,
+			);
+			target = E3AF0A4A4C05349C25C4A3BC /* OtosKit */;
+		};
 		6D0F18C301F79354A2999F84 /* Exceptions for "Otos" folder in "Otos" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				ContentView.swift,
+				Models/ActiveFileOperation.swift,
+				Models/ActiveReorganizationModels.swift,
+				Models/AssetMetadata.swift,
+				Models/BrowserViewMode.swift,
+				Models/CaptureWallClock.swift,
+				Models/CatalogModels.swift,
+				Models/CatalogPath.swift,
+				Models/CatalogQueryModels.swift,
+				Models/CatalogWindowState.swift,
+				Models/ComparePairPolicy.swift,
+				Models/GridColumnCount.swift,
+				Models/ImportBatchFormatting.swift,
+				Models/MediaCompanionModels.swift,
+				Models/MediaOperationModels.swift,
+				Models/MediaTrashModels.swift,
+				Models/PanePreview.swift,
+				Models/PreferencesDomain.swift,
+				Models/RemovableEjectOutcome.swift,
+				Models/ReorganizationModels.swift,
+				Models/XXH3Digest128.swift,
+				OtosApp.swift,
+				Services/CameraSourceMonitor.swift,
+				Services/CatalogFilesystemWatcher.swift,
+				Services/CatalogProjection.swift,
+				Services/CatalogProjectionBuildTypes.swift,
+				Services/CatalogProjectionDiagnostics.swift,
+				Services/CatalogProjectionWindowStateBuild.swift,
+				Services/CatalogScannedFileReader.swift,
+				Services/CatalogScanner.swift,
+				Services/CatalogWindowPolicy.swift,
+				Services/ContentHasher.swift,
+				Services/CopyfileTransfer.swift,
+				Services/DeviceCameraSessionError.swift,
+				Services/DeviceStagingRegistry.swift,
+				Services/EnrichmentAdmissionPolicy.swift,
+				Services/EnrichmentCoordinator.swift,
+				Services/EnrichmentCoordinatorCompletion.swift,
+				Services/EnrichmentCoordinatorWorkSelection.swift,
+				Services/EnrichmentReadinessRouter.swift,
+				Services/ExclusivePublication.swift,
+				Services/FileMaterialization.swift,
+				Services/FilesystemEventFlags.swift,
+				"Services/FilesystemNamespaceSemantics+NameKey.swift",
+				Services/FilesystemNamespaceSemantics.swift,
+				Services/ImportDestinationDate.swift,
+				Services/ImportExecuting.swift,
+				Services/ImportPlanBuilder.swift,
+				Services/LibraryReorganizationRunner.swift,
+				Services/MaterializationAdmissionPolicy.swift,
+				Services/MaterializationCoordinator.swift,
+				Services/MediaEligibility.swift,
+				Services/MediaEnricher.swift,
+				Services/MediaImportExecutor.swift,
+				Services/MediaOperationCoordinator.swift,
+				Services/MediaTileDetailReader.swift,
+				Services/MediaTransferPlanner.swift,
+				Services/MediaTrashCoordinator.swift,
+				Services/PreviewImageLoader.swift,
+				Services/RemovableVolumeMonitor.swift,
+				Services/ReorganizationExecutor.swift,
+				Services/ReorganizationPlanner.swift,
+				Services/SidebarSelectionPolicy.swift,
+				Services/ThumbnailStore.swift,
+				Services/VideoPreviewLoader.swift,
+				Stores/CatalogQueryGateway.swift,
+				Stores/CatalogSQLTypes.swift,
+				Stores/CatalogStore.swift,
+				Stores/CatalogStoreImportJournal.swift,
+				Stores/CatalogStorePersistence.swift,
+				Stores/CatalogStoreReorganizationJournal.swift,
+				Stores/EnrichmentLeaseGateway.swift,
+				Stores/FilesystemDirtyScope.swift,
+				Stores/FilesystemReconciler.swift,
+				Stores/KnownMaterializationSuppression.swift,
+				Stores/MediaOperationGateway.swift,
+				Stores/RootRegistry.swift,
+				Stores/RootRuntimeState.swift,
+				Stores/ScanLeaseController.swift,
+				Support/DiagnosticsTiming.swift,
+				Support/Instrumentation.swift,
 				Support/OtosXXH3.c,
 				Support/OtosXXH3.h,
+				Support/RelativeDateText.swift,
+				Support/RunContext.swift,
+				Support/SmokeLibrarySelection.swift,
+				Support/UIJankDiagnostics.swift,
+				Support/module.modulemap,
+				"Vendor/xxHash-0.8.3/LICENSE",
+				"Vendor/xxHash-0.8.3/README.md",
 				"Vendor/xxHash-0.8.3/xxhash.c",
 				"Vendor/xxHash-0.8.3/xxhash.h",
+				ViewModels/CatalogWindowViewModel.swift,
+				ViewModels/CatalogWindowViewModelCuration.swift,
+				ViewModels/CatalogWindowViewModelMediaOperations.swift,
+				ViewModels/CatalogWindowViewModelMutation.swift,
+				ViewModels/CatalogWindowViewModelSelection.swift,
+				ViewModels/CatalogWindowViewModelSourceMonitoring.swift,
+				ViewModels/CatalogWindowViewModelTrash.swift,
+				ViewModels/CatalogWindowViewModelViewMode.swift,
+				Views/CatalogToolbarControls.swift,
+				Views/CompareView.swift,
+				Views/DesignPalette.swift,
+				Views/GridPostLayoutWorkQueue.swift,
+				Views/GridSelection.swift,
+				Views/ImportBarPresentation.swift,
+				Views/ImportPlanFooter.swift,
+				Views/LoupeVideoPlayerView.swift,
+				Views/LoupeView.swift,
+				Views/MediaAssetTilePresentation.swift,
+				Views/MediaAssetTileView.swift,
+				Views/MediaChoiceControl.swift,
+				Views/MediaGridAnimatedLayout.swift,
+				Views/MediaGridAnimation.swift,
+				Views/MediaGridBridge.swift,
+				Views/MediaGridClipboard.swift,
+				Views/MediaGridCollectionView.swift,
+				Views/MediaGridDayHeaderView.swift,
+				Views/MediaGridItem.swift,
+				Views/MediaGridLayoutFactory.swift,
+				Views/MediaGridMutationGate.swift,
+				Views/MediaGridPrefetch.swift,
+				Views/MediaGridPresentation.swift,
+				Views/MediaGridSelectionController.swift,
+				Views/MediaGridStructuralApply.swift,
+				Views/MediaGridSupport.swift,
+				Views/MediaGridView.swift,
+				Views/MediaGridZoom.swift,
+				Views/MediaGridZoomPolicy.swift,
+				Views/PanePresentation.swift,
+				Views/SettingsView.swift,
+				Views/SidebarView.swift,
+				Views/TileContentStore.swift,
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
 		};
@@ -136,6 +317,7 @@
 				Support/RunContext.swift,
 				Support/SmokeLibrarySelection.swift,
 				Support/UIJankDiagnostics.swift,
+				Support/module.modulemap,
 				"Vendor/xxHash-0.8.3/LICENSE",
 				"Vendor/xxHash-0.8.3/README.md",
 				ViewModels/CatalogWindowViewModel.swift,
@@ -179,6 +361,7 @@
 				Views/SettingsView.swift,
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
+				main.swift,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 		};
@@ -190,6 +373,7 @@
 			exceptions = (
 				A8685DBD37D06A6C4E2EAE4B /* Exceptions for "Otos" folder in "OtosXXH3" target */,
 				6D0F18C301F79354A2999F84 /* Exceptions for "Otos" folder in "Otos" target */,
+				2FF9500192B89B315E8A84D1 /* Exceptions for "Otos" folder in "OtosKit" target */,
 			);
 			path = Otos;
 			sourceTree = "<group>";
@@ -208,8 +392,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3BCB10072FEAFB0000010001 /* GRDB in Frameworks */,
-				3BCB100A2FEAFB0000010001 /* MediaMetadata in Frameworks */,
+				9D47B12EC89438D47050175D /* GRDB in Frameworks */,
+				CFD2256CD4D769F5622195B7 /* MediaMetadata in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -217,6 +401,17 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F6B99F2C261A631FF9367973 /* OtosKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		79E4D6CCA21E6338FCAB0EDC /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DE7F62197C13E995EEE9E501 /* Cocoa.framework in Frameworks */,
+				E22ED6B0D74682661C2AF3F6 /* GRDB in Frameworks */,
+				3159B8E9FEB7DFB431F9B56E /* MediaMetadata in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -236,6 +431,7 @@
 				3B44EB602FCEBA57007E4158 /* Otos */,
 				3B44EB6E2FCEBA59007E4158 /* OtosTests */,
 				3B44EB5F2FCEBA57007E4158 /* Products */,
+				922BB757F077ADE243EBDC90 /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -245,13 +441,37 @@
 				3B44EB5E2FCEBA57007E4158 /* Otos.app */,
 				3B44EB6B2FCEBA59007E4158 /* OtosTests.xctest */,
 				A90203CC9F2BB2998AC21811 /* libOtosXXH3.a */,
+				B399849F083A8A241AA47BE2 /* OtosKit.framework */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		3C5EBCD642194F13A183DC65 /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				A07256481F38A90EADD1A61F /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		922BB757F077ADE243EBDC90 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				3C5EBCD642194F13A183DC65 /* OS X */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXHeadersBuildPhase section */
+		51C3CD09A9A7418CBF39CEDD /* Headers */ = {
+			isa = PBXHeadersBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		FD57F04531FCD5990244E4C4 /* Headers */ = {
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
@@ -269,19 +489,21 @@
 				3B44EB5A2FCEBA57007E4158 /* Sources */,
 				3B44EB5B2FCEBA57007E4158 /* Frameworks */,
 				3B44EB5C2FCEBA57007E4158 /* Resources */,
+				9E15BB4D535CD2CA3272DE93 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				14B3E97405D7517746F07919 /* PBXTargetDependency */,
+				86B4C09E9F191C2E44059CAB /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3B44EB602FCEBA57007E4158 /* Otos */,
 			);
 			name = Otos;
 			packageProductDependencies = (
-				3BCB10062FEAFB0000010001 /* GRDB */,
-				3BCB10092FEAFB0000010001 /* MediaMetadata */,
+				5AB3FD2588303421082D48CD /* GRDB */,
+				D0447D14BAA0788D26975931 /* MediaMetadata */,
 			);
 			productName = Otos;
 			productReference = 3B44EB5E2FCEBA57007E4158 /* Otos.app */;
@@ -298,7 +520,7 @@
 			buildRules = (
 			);
 			dependencies = (
-				3B44EB6D2FCEBA59007E4158 /* PBXTargetDependency */,
+				BB0F151630B3917B7C31430C /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				3B44EB6E2FCEBA59007E4158 /* OtosTests */,
@@ -327,6 +549,32 @@
 			productName = OtosXXH3;
 			productReference = A90203CC9F2BB2998AC21811 /* libOtosXXH3.a */;
 			productType = "com.apple.product-type.library.static";
+		};
+		E3AF0A4A4C05349C25C4A3BC /* OtosKit */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F1C98939DAD54967712D7ADC /* Build configuration list for PBXNativeTarget "OtosKit" */;
+			buildPhases = (
+				51C3CD09A9A7418CBF39CEDD /* Headers */,
+				7C48A302E45E356E69FADF3C /* Sources */,
+				79E4D6CCA21E6338FCAB0EDC /* Frameworks */,
+				442C38372ACF1C388F8B1FB3 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				2E6B201AA529F5D5460F6B10 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				3B44EB602FCEBA57007E4158 /* Otos */,
+			);
+			name = OtosKit;
+			packageProductDependencies = (
+				C818A507037575021CBE8CAA /* GRDB */,
+				1C8F7A15A3DB3475BAFE398A /* MediaMetadata */,
+			);
+			productName = OtosKit;
+			productReference = B399849F083A8A241AA47BE2 /* OtosKit.framework */;
+			productType = "com.apple.product-type.framework";
 		};
 /* End PBXNativeTarget section */
 
@@ -368,6 +616,7 @@
 				3B44EB5D2FCEBA57007E4158 /* Otos */,
 				3B44EB6A2FCEBA59007E4158 /* OtosTests */,
 				5980D4726503709D9D7F52EB /* OtosXXH3 */,
+				E3AF0A4A4C05349C25C4A3BC /* OtosKit */,
 			);
 		};
 /* End PBXProject section */
@@ -381,6 +630,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		3B44EB692FCEBA59007E4158 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		442C38372ACF1C388F8B1FB3 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -411,6 +667,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7C48A302E45E356E69FADF3C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -420,10 +683,23 @@
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 			targetProxy = 1319FC7CC26FB31C9A8FFA7A /* PBXContainerItemProxy */;
 		};
-		3B44EB6D2FCEBA59007E4158 /* PBXTargetDependency */ = {
+		2E6B201AA529F5D5460F6B10 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
-			targetProxy = 3B44EB6C2FCEBA59007E4158 /* PBXContainerItemProxy */;
+			name = OtosXXH3;
+			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
+			targetProxy = 6412BE2FF2B1F1D030C27026 /* PBXContainerItemProxy */;
+		};
+		86B4C09E9F191C2E44059CAB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = OtosKit;
+			target = E3AF0A4A4C05349C25C4A3BC /* OtosKit */;
+			targetProxy = 8185B88BDB1A41FF86C64695 /* PBXContainerItemProxy */;
+		};
+		BB0F151630B3917B7C31430C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = OtosKit;
+			target = E3AF0A4A4C05349C25C4A3BC /* OtosKit */;
+			targetProxy = 510B1DC9C2F3D792D5651E92 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -571,15 +847,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(BUILT_PRODUCTS_DIR)",
-				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lOtosXXH3",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.melisma.Otos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -613,15 +882,8 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				LIBRARY_SEARCH_PATHS = (
-					"$(inherited)",
-					"$(BUILT_PRODUCTS_DIR)",
-				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = (
-					"$(inherited)",
-					"-lOtosXXH3",
-				);
 				PRODUCT_BUNDLE_IDENTIFIER = net.melisma.Otos;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -639,7 +901,6 @@
 		3B44EB832FCEBA59007E4158 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "$(OTOS_DEVELOPMENT_TEAM)";
@@ -655,14 +916,12 @@
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Otos.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Otos";
 			};
 			name = Debug;
 		};
 		3B44EB842FCEBA59007E4158 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = "$(OTOS_DEVELOPMENT_TEAM)";
@@ -678,7 +937,6 @@
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 6.0;
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Otos.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Otos";
 			};
 			name = Release;
 		};
@@ -694,6 +952,88 @@
 				SKIP_INSTALL = YES;
 			};
 			name = Debug;
+		};
+		67F5CCED5788A6E30A1FA978 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = "$(OTOS_DEVELOPMENT_TEAM)";
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lOtosXXH3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Debug;
+		};
+		73CC37077153A56763ADCAB3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DEVELOPMENT_TEAM = "$(OTOS_DEVELOPMENT_TEAM)";
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(BUILT_PRODUCTS_DIR)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 27.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lOtosXXH3",
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_INCLUDE_PATHS = "$(inherited) $(SRCROOT)/Otos/Support";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Release;
 		};
 		B7A1BBED30FBDB907002DA16 /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -747,6 +1087,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		F1C98939DAD54967712D7ADC /* Build configuration list for PBXNativeTarget "OtosKit" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				73CC37077153A56763ADCAB3 /* Release */,
+				67F5CCED5788A6E30A1FA978 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -769,12 +1118,22 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		3BCB10062FEAFB0000010001 /* GRDB */ = {
+		1C8F7A15A3DB3475BAFE398A /* MediaMetadata */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */;
+			productName = MediaMetadata;
+		};
+		5AB3FD2588303421082D48CD /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
 		};
-		3BCB10092FEAFB0000010001 /* MediaMetadata */ = {
+		C818A507037575021CBE8CAA /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+		D0447D14BAA0788D26975931 /* MediaMetadata */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */;
 			productName = MediaMetadata;

@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Plan 0064 Stage 3: enrichment that leaves the effective ordering/scope facts

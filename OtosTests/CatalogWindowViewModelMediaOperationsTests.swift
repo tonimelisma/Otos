@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Plan 0092 increment 6, `import-bar.md` "Where the user is standing": the

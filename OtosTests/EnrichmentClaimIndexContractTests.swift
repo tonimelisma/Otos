@@ -1,6 +1,6 @@
 import Foundation
 import GRDB
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Guards the freeze plan 0065 Stage 1 introduced: the v12/v13 migration bodies in

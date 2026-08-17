@@ -9,33 +9,21 @@ import AppKit
 import OSLog
 import SwiftUI
 
-@main
-struct OtosApp: App {
+public struct OtosApp: App {
+    public init() {}
+
     /// The one place in the app that names the production catalog location and
     /// UserDefaults.standard — every other type takes both as required
     /// (no-default) parameters, so a caller cannot reach production data by
     /// omitting an argument (ADR 0020).
-    ///
-    /// Blank-slate: the hosted test bundle must not even *allocate* the
-    /// production store. The ViewModel is constructed with an in-memory store
-    /// and an ephemeral defaults suite when isTestRun, so no production
-    /// mtime/size or .plist is touched even before the .task bails.
-    @State private var catalogViewModel: CatalogWindowViewModel = {
-        if RunContext.isTestRun {
-            return CatalogWindowViewModel(
-                catalogStore: CatalogStore(location: .inMemory),
-                preferencesDomain: .suite("net.melisma.blank-slate-\(UUID().uuidString)")
-            )
-        }
-        return CatalogWindowViewModel(
-            catalogStore: CatalogStore(
-                location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
-            ),
-            preferencesDomain: .standard
-        )
-    }()
+    @State private var catalogViewModel = CatalogWindowViewModel(
+        catalogStore: CatalogStore(
+            location: .application(bundleIdentifier: Bundle.main.bundleIdentifier ?? "net.melisma.Otos")
+        ),
+        preferencesDomain: .standard
+    )
 
-    var body: some Scene {
+    public var body: some Scene {
         Window("Otos", id: "main") {
             ContentView(viewModel: catalogViewModel)
                 .task {
@@ -47,14 +35,6 @@ struct OtosApp: App {
                     let state = OtosSignpost.app.beginInterval("MainWindowContentAttached")
                     OtosLog.app.info("Main window content attached")
                     OtosSignpost.app.endInterval("MainWindowContentAttached", state)
-                    // The hosted test bundle launches this app to get a process to attach
-                    // to; it must come up inert rather than touch the user's production
-                    // catalog and preferences (ADR 0020). This check only ever
-                    // declines to start the product stack — never branches product
-                    // behavior for a real launch.
-                    guard !RunContext.isTestRun else {
-                        return
-                    }
                     catalogViewModel.start()
                     OtosLog.app.notice(
                         "op=sessionStart session=\(RunContext.sessionID, privacy: .public) kind=\(RunContext.runKind, privacy: .public)"

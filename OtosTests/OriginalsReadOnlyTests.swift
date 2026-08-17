@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Snapshot-based proof for the product's filesystem promise. The snapshot is

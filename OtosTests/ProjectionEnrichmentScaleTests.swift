@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Plan 0065 Stage 4: `ProjectionEnrichmentCoalescingTests` proves the detail/structural

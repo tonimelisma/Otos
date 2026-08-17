@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Stage 2 (plan 0079): the single `PreferencesDomain` value is the only way to

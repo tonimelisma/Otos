@@ -1,4 +1,4 @@
-@testable import Otos
+@testable import OtosKit
 
 struct CatalogStoreTestState: Equatable {
     var libraries: [CatalogLibraryState]

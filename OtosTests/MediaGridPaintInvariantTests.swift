@@ -1,6 +1,6 @@
 import AppKit
 import CoreGraphics
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Regression for APP-015 / plan 0001 F3–F4: a painted visible tile must keep its

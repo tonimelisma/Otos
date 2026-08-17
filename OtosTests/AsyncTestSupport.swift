@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 
 extension MaterializationResult {
     static var testMaterialized: MaterializationResult {

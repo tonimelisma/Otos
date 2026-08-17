@@ -1,5 +1,5 @@
 import AppKit
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Tests the pure update-tracking bookkeeping (spec 0047). `NSCollectionViewUpdateItem`

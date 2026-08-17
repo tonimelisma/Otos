@@ -1,6 +1,6 @@
 import Foundation
 import GRDB
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// An Imports row narrows by root *and* by batch stamp. These cover the seam where

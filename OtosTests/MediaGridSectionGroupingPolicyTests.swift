@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// DES-069 grouping is a pure linear pass over an already date-sorted list — these

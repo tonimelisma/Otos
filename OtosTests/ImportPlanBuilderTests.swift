@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Stage 3 (plan 0079): the plan-building boundary is a real substitution seam.

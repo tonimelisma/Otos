@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 
 /// Controlled builder for Stage 3 (plan 0079). It records each request, can
 /// suspend a selected source build on a continuation, resumes it with a real

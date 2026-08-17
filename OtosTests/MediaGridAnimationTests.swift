@@ -1,4 +1,4 @@
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 struct MediaGridAnimationTests {

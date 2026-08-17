@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// `CatalogWindowPolicy.assetIDs` filters `orderedAssetIDs` by availability/scope

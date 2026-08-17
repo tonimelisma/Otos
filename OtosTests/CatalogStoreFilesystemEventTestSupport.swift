@@ -1,5 +1,5 @@
 import Foundation
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 func recordingScanner(_ recorder: FilesystemEventScanInvocationRecorder) -> CatalogScanner {

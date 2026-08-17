@@ -1,5 +1,5 @@
 import AppKit
-@testable import Otos
+@testable import OtosKit
 import Testing
 
 /// Stage C (plan 0053) / Stage A (plan 0054): horizontal strip scroll loading,
