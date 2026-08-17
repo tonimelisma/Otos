@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  body { margin:0; background:#F2F2F4; font-family:-apple-system,"SF Pro Text","Helvetica Neue",Helvetica,sans-serif; -webkit-font-smoothing:antialiased; }
+  a { color:#0A6FD8; text-decoration:none; }
+  a:hover { color:#0A84FF; text-decoration:underline; }
+</style>
+</helmet>
+
+<div style="max-width:1180px; margin:0 auto; padding:72px 56px 140px; display:flex; flex-direction:column; gap:64px; color:rgba(0,0,0,.847)">
+
+  <!-- ============== masthead ============== -->
+  <div style="display:flex; flex-direction:column; gap:14px; max-width:760px">
+    <div style="font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace; letter-spacing:.1em; text-transform:uppercase; color:rgba(0,0,0,.498)">Otos · Design guidelines · v0.1 draft</div>
+    <div style="font:600 34px/1.15 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.015em">A macOS system, calibrated</div>
+    <div style="font:400 15px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Otos uses Apple's semantic type styles, label colors, materials and control metrics as-is. Nothing here invents a typeface or a palette. What it does is decide <em>which</em> semantic role each piece of Otos content gets, so that hierarchy is a rule rather than a judgement call per screen. Where Otos deviates from the platform default, the deviation is marked <span style="display:inline-block; padding:2px 6px; border-radius:4px; background:rgba(10,132,255,.12); color:#0A5CB8; font:600 11px/1.3 -apple-system,Helvetica,sans-serif; vertical-align:1px">Otos</span> and justified.</div>
+  </div>
+
+  <!-- ============== 1 principles ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">01</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Principles</div>
+      <div style="font:400 13px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); max-width:680px">Lifted from the repo's own architecture invariants, restated as things you can check a screen against.</div>
+    </div>
+    <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:18px 20px; display:flex; flex-direction:column; gap:7px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Show the outcome, not the machine</div>
+        <div style="font:400 12.5px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">The user reads results and consequences. Internal vocabulary — plan, disposition, inventory, replan, companion, execution — never reaches a label, even when it is the most accurate word available.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:18px 20px; display:flex; flex-direction:column; gap:7px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">One fact, one owner</div>
+        <div style="font:400 12.5px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Any given piece of state is rendered in exactly one place at a time. A second rendering is only allowed when the first is off-screen, and then it is smaller and quieter — an indicator, not a report.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:18px 20px; display:flex; flex-direction:column; gap:7px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Honest numbers, or none</div>
+        <div style="font:400 12.5px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Never show a denominator that can move, or a percentage the app is guessing at. If the total isn't known yet, say what is known and count up. Numerals always, never spelled out; tabular figures wherever a number changes in place.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:18px 20px; display:flex; flex-direction:column; gap:7px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Reassure rather than warn</div>
+        <div style="font:400 12.5px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Originals are read-only and copies are additive, so almost nothing in Otos is dangerous. Reserve alerts and destructive styling for the few operations that actually destroy something — erasing a card, removing a library.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:18px 20px; display:flex; flex-direction:column; gap:7px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">The content is the interface</div>
+        <div style="font:400 12.5px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Photographs carry all the colour in this app. Chrome stays achromatic and quiet, and the accent colour appears only on the thing you should act on or the thing that is selected — never as decoration.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:18px 20px; display:flex; flex-direction:column; gap:7px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Predictable before clever</div>
+        <div style="font:400 12.5px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Where the platform has an answer — a popup menu, a sheet, a toolbar, a progress bar — use it in its ordinary form. Familiarity is the feature. Custom behaviour needs a reason that survives being written down.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 2 type ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">02</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Type</div>
+      <div style="font:400 13px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); max-width:680px">The system font at the system sizes. macOS text styles are fixed sizes, so this ramp is literal: use the SwiftUI style name in code and never a hard-coded point size. Otos uses six of the eleven styles; the rest are out of scope and should not appear.</div>
+    </div>
+
+    <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); overflow:hidden">
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; gap:0; padding:11px 20px; background:rgba(120,120,128,.07); border-bottom:.5px solid rgba(0,0,0,.08); font:600 11px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">
+        <div>SwiftUI style</div><div>Size / weight</div><div>Specimen</div><div>Used for</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px; border-bottom:.5px solid rgba(0,0,0,.06)">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.title2</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">17 / regular</div>
+        <div style="font:400 17px/1.3 -apple-system,'SF Pro Display',Helvetica,sans-serif">All Media</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">Empty-state and sheet titles. One per surface, never two.</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px; border-bottom:.5px solid rgba(0,0,0,.06)">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.title3</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">15 / semibold</div>
+        <div style="font:600 15px/1.3 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.005em">42 new items · 68.2 MB</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)"><span style="display:inline-block; padding:1px 5px; border-radius:4px; background:rgba(10,132,255,.12); color:#0A5CB8; font:600 10px/1.4 -apple-system,Helvetica,sans-serif">Otos</span> The <strong>primary fact</strong> of a status surface: the one line the user came to read. Exactly one per bar.</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px; border-bottom:.5px solid rgba(0,0,0,.06)">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.headline</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">13 / semibold</div>
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Sunday, 10 August</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">Group headers inside content: grid day sections, settings group titles.</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px; border-bottom:.5px solid rgba(0,0,0,.06)">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.body</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">13 / regular</div>
+        <div style="font:400 13px/1.3 -apple-system,Helvetica,sans-serif">Summer Photos</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">The default. Sidebar rows, list rows, button titles, menu items, prose.</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px; border-bottom:.5px solid rgba(0,0,0,.06)">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.callout</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">12 / regular</div>
+        <div style="font:400 12px/1.3 -apple-system,Helvetica,sans-serif">Copy into · Afterwards</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">Field labels and inline control labels sitting beside a control.</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px; border-bottom:.5px solid rgba(0,0,0,.06)">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.subheadline</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">11 / regular</div>
+        <div style="font:400 11px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">139 already in your library</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)"><strong>Secondary detail</strong> beneath a primary fact, and sidebar section headers (semibold there).</div>
+      </div>
+
+      <div style="display:grid; grid-template-columns:132px 128px 1fr 232px; align-items:baseline; padding:15px 20px">
+        <div style="font:600 12px/1.4 ui-monospace,Menlo,monospace; color:#0A5CB8">.footnote</div>
+        <div style="font:400 12px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">10 / regular</div>
+        <div style="font:400 10px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.26)">CR3 · 24.1 MP · f/2.8</div>
+        <div style="font:400 12px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">Metadata that is looked up, not read. Floor for the app — nothing smaller ships.</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:16px 18px; display:flex; flex-direction:column; gap:6px">
+        <div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">Two weights, three sizes</div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Any single surface uses at most regular and semibold, and at most three of the sizes above. Bold, italic and letter-spacing tricks are not part of the system.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:16px 18px; display:flex; flex-direction:column; gap:6px">
+        <div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">Numbers</div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Anything that ticks gets <span style="font:400 11.5px/1 ui-monospace,Menlo,monospace">.monospacedDigit()</span> — counts, byte totals, durations, sidebar item counts. Text must never reflow while a number changes.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:16px 18px; display:flex; flex-direction:column; gap:6px">
+        <div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">No custom faces</div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">SF only, plus SF Mono in developer-facing surfaces (logs, diagnostics). A custom face would break the one thing this app is trading on.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 3 hierarchy ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">03</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Visual hierarchy</div>
+      <div style="font:400 13px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); max-width:680px">Four levels, and every string in the app is assigned to one of them. Level is expressed by <em>size and colour together</em> — not by size alone, and never by weight alone.</div>
+    </div>
+
+    <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:26px 28px; display:grid; grid-template-columns:repeat(4,1fr); gap:26px">
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <div style="font:600 11px/1 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">L1 · PRIMARY</div>
+        <div style="font:600 15px/1.3 -apple-system,'SF Pro Display',Helvetica,sans-serif">Importing 12 of 42</div>
+        <div style="height:1px; background:rgba(0,0,0,.08)"></div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">.title3 semibold · <span style="font:400 11.5px/1 ui-monospace,Menlo,monospace">.primary</span>. The answer to "what is happening / what will happen". One per surface. If you can't name the single primary fact of a screen, the screen isn't designed yet.</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <div style="font:600 11px/1 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">L2 · LABEL</div>
+        <div style="font:400 13px/1.3 -apple-system,Helvetica,sans-serif">Summer Photos</div>
+        <div style="height:1px; background:rgba(0,0,0,.08)"></div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">.body · <span style="font:400 11.5px/1 ui-monospace,Menlo,monospace">.primary</span>. Things the user reads to navigate or operate: row titles, control values, button titles. The bulk of the app lives here.</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <div style="font:600 11px/1 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">L3 · SUPPORTING</div>
+        <div style="font:400 11px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498)">19.4 MB of 68.2 MB · 40 seconds left</div>
+        <div style="height:1px; background:rgba(0,0,0,.08)"></div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">.subheadline · <span style="font:400 11.5px/1 ui-monospace,Menlo,monospace">.secondary</span>. Qualifies the primary fact and is optional by definition: if L3 disappeared, the surface would still be usable. Field labels sit here too.</div>
+      </div>
+      <div style="display:flex; flex-direction:column; gap:10px">
+        <div style="font:600 11px/1 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">L4 · AMBIENT</div>
+        <div style="font:400 10px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.26)">CR3 · 24.1 MP</div>
+        <div style="height:1px; background:rgba(0,0,0,.08)"></div>
+        <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6)">.footnote · <span style="font:400 11.5px/1 ui-monospace,Menlo,monospace">.tertiary</span>. Present for when you go looking. Never carries anything the user must notice, and never states policy or consequence.</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:9px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Grouping rules — the CRAP pass</div>
+        <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty"><strong>Proximity:</strong> a number and the control that acts on it belong within 8pt of each other, or the number belongs inside the control's title. <strong>Alignment:</strong> field labels in a group share a left edge and a fixed label column width; nothing is centred. <strong>Repetition:</strong> the same relationship looks the same everywhere — label left, control right, 7pt gap, everywhere in the app. <strong>Contrast:</strong> adjacent levels must differ in both size and colour; two things at the same level, side by side, must be separated by space or a hairline, not by a size tweak.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:9px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Reading order for a status bar</div>
+        <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Left is <em>what</em> (L1 over L3), centre is <em>choices</em> behind a hairline, right is <em>the act</em>. That ordering is not decoration: it matches the sentence the user is forming — "42 items, into this library, go" — and it puts the primary button where every macOS sheet and dialog puts it. Zones never swap sides between states, and the bar keeps one fixed height across all states so content above it never reflows.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 4 color ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">04</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Colour</div>
+      <div style="font:400 13px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); max-width:680px">Semantic roles only. Never a literal hex in view code — the light and dark values below are documentation, not constants to paste. Both appearances are first-class; every screen is reviewed in both.</div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px">
+      <!-- light -->
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); overflow:hidden">
+        <div style="padding:12px 18px; background:rgba(120,120,128,.07); border-bottom:.5px solid rgba(0,0,0,.08); font:600 12px/1.3 -apple-system,Helvetica,sans-serif">Light</div>
+        <div style="padding:18px; display:flex; flex-direction:column; gap:12px">
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(0,0,0,.847); box-shadow:0 0 0 .5px rgba(0,0,0,.1)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Label</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">black 85%</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(0,0,0,.498); box-shadow:0 0 0 .5px rgba(0,0,0,.1)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Secondary label (L3)</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">black 60% — raised from the system 50%, which measures 3.9:1</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(0,0,0,.26); box-shadow:0 0 0 .5px rgba(0,0,0,.1)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Ambient (L4)</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">black 45% — 26% measures 1.9:1 and fails</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:#FFF; box-shadow:0 0 0 .5px rgba(0,0,0,.14)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Content background</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">#FFFFFF — grid, loupe</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:#FAFAFB; box-shadow:0 0 0 .5px rgba(0,0,0,.14)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Sidebar <span style="display:inline-block; padding:1px 5px; border-radius:4px; background:rgba(10,132,255,.12); color:#0A5CB8; font:600 10px/1.4 -apple-system,Helvetica,sans-serif">Otos</span></div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">#FAFAFB, lighter than default</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:#FBFBFC; box-shadow:0 0 0 .5px rgba(0,0,0,.14)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Bar <span style="display:inline-block; padding:1px 5px; border-radius:4px; background:rgba(10,132,255,.12); color:#0A5CB8; font:600 10px/1.4 -apple-system,Helvetica,sans-serif">Otos</span></div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">#FBFBFC, toolbar and status bar</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(0,0,0,.08); box-shadow:0 0 0 .5px rgba(0,0,0,.1)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif">Separator <span style="display:inline-block; padding:1px 5px; border-radius:4px; background:rgba(10,132,255,.12); color:#0A5CB8; font:600 10px/1.4 -apple-system,Helvetica,sans-serif">Otos</span></div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(0,0,0,.498)">black 8%, hairline (system: 13%)</div></div></div>
+        </div>
+      </div>
+
+      <!-- dark -->
+      <div style="background:#1C1C1E; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.3),0 1px 3px rgba(0,0,0,.2); overflow:hidden">
+        <div style="padding:12px 18px; background:rgba(255,255,255,.06); border-bottom:.5px solid rgba(255,255,255,.1); font:600 12px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Dark</div>
+        <div style="padding:18px; display:flex; flex-direction:column; gap:12px">
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(255,255,255,.847)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Label</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">white 85%</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(255,255,255,.545)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Secondary label</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">white 55%</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(255,255,255,.247)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Tertiary label</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">white 25%</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:#1C1C1E; box-shadow:0 0 0 .5px rgba(255,255,255,.14)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Content background</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">#1C1C1E — photos sit on near-black</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:#242426; box-shadow:0 0 0 .5px rgba(255,255,255,.14)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Sidebar</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">#242426</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:#2A2A2C; box-shadow:0 0 0 .5px rgba(255,255,255,.14)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Bar</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">#2A2A2C — brighter than content</div></div></div>
+          <div style="display:flex; align-items:center; gap:12px"><div style="width:44px; height:26px; border-radius:6px; background:rgba(255,255,255,.1)"></div><div style="flex:1"><div style="font:400 12.5px/1.3 -apple-system,Helvetica,sans-serif; color:rgba(255,255,255,.847)">Separator</div><div style="font:400 11px/1.4 ui-monospace,Menlo,monospace; color:rgba(255,255,255,.545)">white 10%, hairline</div></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); padding:22px 24px; display:flex; flex-direction:column; gap:16px">
+      <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Chromatic colour — four uses, no fifth</div>
+      <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:20px">
+        <div style="display:flex; flex-direction:column; gap:9px">
+          <div style="display:flex; gap:7px; align-items:center"><div style="width:20px; height:20px; border-radius:5px; background:#0A84FF"></div><div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">Accent</div></div>
+          <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">System accent, whatever the user has set. Selection, the one prominent button, focus rings, determinate progress. Never a background fill larger than a control, never a decorative tint.</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:9px">
+          <div style="display:flex; gap:7px; align-items:center"><div style="width:20px; height:20px; border-radius:5px; background:#30A14E"></div><div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">Green</div></div>
+          <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Completion that has been <em>verified</em>, and nothing else. A checkmark on a filled circle, at 22pt, once per completed operation. Not for "on", not for health.</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:9px">
+          <div style="display:flex; gap:7px; align-items:center"><div style="width:20px; height:20px; border-radius:5px; background:#C77800"></div><div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">Orange</div></div>
+          <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Needs attention, nothing lost — unreadable files, unavailable library, skipped items. Always paired with a way to look at the thing.</div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:9px">
+          <div style="display:flex; gap:7px; align-items:center"><div style="width:20px; height:20px; border-radius:5px; background:#D7373F"></div><div style="font:600 12.5px/1.3 -apple-system,Helvetica,sans-serif">Red</div></div>
+          <div style="font:400 12px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Destruction only: erasing a card, removing a library. Per HIG, a destructive action the user deliberately chose doesn't get red — red is for the one they might have hit by accident.</div>
+        </div>
+      </div>
+      <div style="font:400 12px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); border-top:.5px solid rgba(0,0,0,.08); padding-top:14px; text-wrap:pretty">Contrast floor: 4.5:1 for anything at L1 or L2, 3:1 for L3 and L4. Secondary label on the bar background clears 4.5:1 in both appearances; tertiary is reserved for text that is decorative-by-role. Colour is never the only signal — the orange badge carries a glyph, the green carries a checkmark, selection carries a border as well as a tint.</div>
+    </div>
+  </div>
+
+  <!-- ============== 5 status copy ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">05</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Status and copy</div>
+      <div style="font:400 13px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); max-width:680px">Every long-running operation in Otos — scan, enrich, import, reorganize — exposes the same three user-facing states, regardless of how many internal states it has. Two extra states exist only because they're actionable: <em>needs attention</em> and <em>failed</em>.</div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:8px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Preparing</div>
+        <div style="font:400 12px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Present participle, no ellipsis stacking: "Looking through the card…". Indeterminate bar, always moving. Count up if you can ("Checked 112 of 181"); say nothing if you can't. Primary action stays visible and disabled — never removed.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:8px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Working</div>
+        <div style="font:400 12px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Determinate bar, items in the primary line, bytes and remaining time in the supporting line. Cancel present whenever cancelling is safe, labelled Cancel, no confirmation — because nothing is lost.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:8px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Done</div>
+        <div style="font:400 12px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Past tense, and it states the guarantee: "42 items copied and verified". Where the result went, then a way to go there. Auto-dismisses after ~6s; the result stays reachable in the sidebar.</div>
+      </div>
+    </div>
+
+    <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09),0 1px 3px rgba(0,0,0,.05); overflow:hidden">
+      <div style="padding:12px 20px; background:rgba(120,120,128,.07); border-bottom:.5px solid rgba(0,0,0,.08); font:600 12px/1.3 -apple-system,Helvetica,sans-serif">Copy, rewritten — the pattern to follow</div>
+      <div style="display:grid; grid-template-columns:1fr 24px 1fr; align-items:center; gap:0">
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); border-bottom:.5px solid rgba(0,0,0,.06)">Waiting for metadata (12/139)</div>
+        <div style="text-align:center; color:rgba(0,0,0,.26); border-bottom:.5px solid rgba(0,0,0,.06); padding:14px 0">→</div>
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; border-bottom:.5px solid rgba(0,0,0,.06)">Looking through the card… <span style="color:rgba(0,0,0,.498)">Checked 12 of 139 items</span></div>
+
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); border-bottom:.5px solid rgba(0,0,0,.06)">Source changed — replanning…</div>
+        <div style="text-align:center; color:rgba(0,0,0,.26); border-bottom:.5px solid rgba(0,0,0,.06); padding:14px 0">→</div>
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; border-bottom:.5px solid rgba(0,0,0,.06)">Looking through the card… <span style="color:rgba(0,0,0,.498)">(same state — the cause is ours, not theirs)</span></div>
+
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); border-bottom:.5px solid rgba(0,0,0,.06)">12 copy · 4 preexisting · 3 companion · 1 blocked · 521 MB · 2 skipped packages</div>
+        <div style="text-align:center; color:rgba(0,0,0,.26); border-bottom:.5px solid rgba(0,0,0,.06); padding:14px 0">→</div>
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; border-bottom:.5px solid rgba(0,0,0,.06)">12 new items · 521 MB <span style="color:rgba(0,0,0,.498)">/ 4 already in your library · 1 can't be read</span></div>
+
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); border-bottom:.5px solid rgba(0,0,0,.06)">Cleanup/eject withheld while blocked or skipped-package attention remains</div>
+        <div style="text-align:center; color:rgba(0,0,0,.26); border-bottom:.5px solid rgba(0,0,0,.06); padding:14px 0">→</div>
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; border-bottom:.5px solid rgba(0,0,0,.06)">Nothing. The eject checkbox goes disabled with a tooltip: "Some items still need attention."</div>
+
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); border-bottom:.5px solid rgba(0,0,0,.06)">Importing 12/139</div>
+        <div style="text-align:center; color:rgba(0,0,0,.26); border-bottom:.5px solid rgba(0,0,0,.06); padding:14px 0">→</div>
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; border-bottom:.5px solid rgba(0,0,0,.06)">Importing 12 of 139 <span style="color:rgba(0,0,0,.498)">19.4 MB of 68.2 MB · about 40 seconds left</span></div>
+
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498)">Import queued (execution lands in a later update)</div>
+        <div style="text-align:center; color:rgba(0,0,0,.26); padding:14px 0">→</div>
+        <div style="padding:14px 20px; font:400 12.5px/1.5 -apple-system,Helvetica,sans-serif">Never shipped. Build status is not user-facing copy.</div>
+      </div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:8px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Sentence rules</div>
+        <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">One clause per line. At most one middot per line, separating two facts of equal rank — a third fact means a second line or a different level. No em-dash chains. Nouns the user owns: items, photos, videos, card, library. Buttons are verb phrases naming the result and carrying the count: "Import 42 Items", "Eject Card", "Erase Card". Sentence case everywhere except button titles, which take title case per macOS.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:8px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Where status may appear</div>
+        <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">A status bar at the bottom of the content pane owns the operation that belongs to the current selection. A sidebar row may show a small indicator — spinner or 32pt determinate bar — <em>only</em> for an operation whose bar is not currently visible. Toolbar never carries status. Sheets are for a scoped task with a Cancel; read-only inspection is a panel or an inline disclosure, not a modal.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============== 6 metrics ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">06</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Metrics, controls, grid</div>
+      <div style="font:400 13px/1.55 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); max-width:680px">A 4pt base unit. Only these steps: 2, 4, 7, 8, 12, 16, 20, 28. Radii: 4 tile, 6 small control, 7 push button, 9–11 window and card.</div>
+    </div>
+
+    <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:10px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Controls</div>
+        <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; padding:6px 0">
+          <div style="height:30px; padding:0 18px; border-radius:7px; background:#0A84FF; color:#FFF; font:600 13.5px/30px -apple-system,Helvetica,sans-serif">Import 42 Items</div>
+          <div style="height:30px; padding:0 16px; border-radius:7px; background:#FFF; box-shadow:0 0 0 .5px rgba(0,0,0,.16),0 .5px 1.5px rgba(0,0,0,.1); font:400 13.5px/30px -apple-system,Helvetica,sans-serif">Cancel</div>
+          <div style="width:150px; height:22px; border-radius:6px; background:#FFF; box-shadow:0 0 0 .5px rgba(0,0,0,.15),0 .5px 1.5px rgba(0,0,0,.1); display:flex; align-items:center; padding:0 4px 0 9px; font:400 12.5px/1 -apple-system,Helvetica,sans-serif">
+            <div style="flex:1">Summer Photos</div>
+            <div style="width:16px; height:18px; border-radius:4px; background:#0A84FF; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px"><div style="width:0; height:0; border-left:3px solid transparent; border-right:3px solid transparent; border-bottom:3.5px solid #fff"></div><div style="width:0; height:0; border-left:3px solid transparent; border-right:3px solid transparent; border-top:3.5px solid #fff"></div></div>
+          </div>
+          <div style="display:flex; gap:6px; align-items:center; font:400 12.5px/1 -apple-system,Helvetica,sans-serif"><div style="width:14px; height:14px; border-radius:3.5px; background:#0A84FF; display:flex; align-items:center; justify-content:center"><div style="width:7px; height:4px; border-left:1.6px solid #fff; border-bottom:1.6px solid #fff; transform:rotate(-45deg) translate(1px,-1px)"></div></div>Eject the card</div>
+        </div>
+        <div style="font:400 12px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Push buttons 30pt in a bar, 24pt in dense inspectors; popups and small controls 22pt; checkboxes 14pt with a 12pt label. Minimum click target 28×28 including padding. Exactly one prominent button per surface, and it is the one the Return key fires. A disabled primary keeps its place and its title — controls never appear and disappear between states.</div>
+      </div>
+
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:10px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Grid and tiles</div>
+        <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px; padding:4px 0">
+          <div style="aspect-ratio:4/3; border-radius:4px; background:linear-gradient(150deg,#C96A4E,#E3A886)"></div>
+          <div style="aspect-ratio:4/3; border-radius:4px; background:linear-gradient(150deg,#8FB6D6,#B9C9A8); box-shadow:0 0 0 2.5px #0A84FF"></div>
+          <div style="aspect-ratio:4/3; border-radius:4px; background:linear-gradient(150deg,#B4523F,#D9C0A6); position:relative"><div style="position:absolute; right:0; bottom:0; height:20px; min-width:22px; padding:0 5px; border-radius:3px; background:rgba(0,0,0,.55); color:#fff; font:400 11px/20px -apple-system,Helvetica,sans-serif; text-align:center; font-variant-numeric:tabular-nums">0:27</div></div>
+          <div style="aspect-ratio:4/3; border-radius:4px; background:rgba(120,120,128,.12); display:flex; align-items:center; justify-content:center"><div style="width:22px; height:17px; border:1.6px solid rgba(0,0,0,.26); border-radius:3px"></div></div>
+        </div>
+        <div style="font:400 12px/1.6 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Tile radius 4, 4pt inset per item (8pt gutters), 12pt section inset — as built today. Selection is a 2.5pt accent border on the thumbnail face, not a fill, so the photograph is never tinted. Badges are bottom-right, black 55%, radius 3, and appear only once a real thumbnail has painted. Placeholders use the kind glyph at tertiary strength; failures use the slash variant. No shadows, no hover lift, no rounded-corner drift between zoom levels.</div>
+      </div>
+    </div>
+
+    <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:9px">
+      <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Ideas for the grid, offered rather than assumed</div>
+      <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Three things would make the grid read better without changing what it is, and they'd work identically for a library and a card. <strong>One:</strong> day headers (.headline plus a secondary count) with the header pinning while its run scrolls — Photos' structure, and it gives the eye an anchor in a 1,374-item scroll. <strong>Two:</strong> square tiles by default with aspect-fit contents on a neutral face, so rows form clean columns; the current aspect-shaped tiles create ragged rows that make scanning harder. Offer the current behaviour as a "vary tile shape" preference if you like it. <strong>Three:</strong> a two-line hover overlay at the bottom of the tile (filename, capture time) at the two largest zoom levels only, since at small sizes it covers the photo. All three are additive and reversible.</div>
+    </div>
+  </div>
+
+  <!-- ============== 7 motion + a11y ============== -->
+  <div style="display:flex; flex-direction:column; gap:18px">
+    <div style="display:flex; flex-direction:column; gap:6px">
+      <div style="font:600 11px/1 ui-monospace,Menlo,monospace; letter-spacing:.09em; text-transform:uppercase; color:rgba(0,0,0,.498)">07</div>
+      <div style="font:600 22px/1.25 -apple-system,'SF Pro Display',Helvetica,sans-serif; letter-spacing:-.01em">Motion and accessibility</div>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px">
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:9px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Motion</div>
+        <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Motion explains a change in position or state; it never announces itself. Three durations: 0.15s ease-out for state within a control, 0.25s ease-out for content appearing, 0.35s spring (response 0.35, damping 0.85) for a surface entering or leaving. The status bar slides up 24pt with a fade on card mount and leaves the same way. State changes cross-fade text in place while the bar's height stays fixed. The completion checkmark scales from 0.6 with a light overshoot — the one flourish in the app. Progress bars animate continuously and are never left stationary. Grid reorders animate positions only, never opacity, and coalesce into one pass. Under Reduce Motion every one of these becomes a 0.15s cross-fade; the checkmark simply appears.</div>
+      </div>
+      <div style="background:#FFF; border-radius:10px; box-shadow:0 0 0 .5px rgba(0,0,0,.09); padding:18px 20px; display:flex; flex-direction:column; gap:9px">
+        <div style="font:600 13px/1.3 -apple-system,Helvetica,sans-serif">Accessibility</div>
+        <div style="font:400 12.5px/1.65 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.6); text-wrap:pretty">Every operation is reachable and completable with the keyboard alone: Tab reaches the bar's controls in reading order, Return fires the prominent button, Escape cancels. Focus rings are never suppressed. VoiceOver labels lead with what distinguishes the element — filename first on a tile, as the tile presentation layer already does — then kind, then state; a status bar announces its primary line as a live region when it changes state, not on every tick. Under Increase Contrast, hairlines go to the system separator strength and the tertiary level is promoted to secondary. Under Reduce Transparency, bar and sidebar become opaque at the values in §04. Nothing is communicated by colour alone, and no text below 10pt ships.</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="border-top:.5px solid rgba(0,0,0,.1); padding-top:22px; font:400 12.5px/1.7 -apple-system,Helvetica,sans-serif; color:rgba(0,0,0,.498); max-width:760px; text-wrap:pretty">Open for you: whether square tiles and day headers are welcome; whether "Copy into" or "Destination" is the right label; whether the completion bar should also offer Photos' Keep/Erase choice for the card rather than a pre-flight checkbox. Once these settle, this becomes the reference every screen is reviewed against, and I'll apply it to grid, loupe, compare, sidebar and settings in that order.</div>
+</div>
+
+</x-dc>
+</body>
+</html>

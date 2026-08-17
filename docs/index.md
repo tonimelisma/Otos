@@ -21,6 +21,7 @@ Per-screen design specifications:
 Design supporting documents:
 
 - [design/hig-validation.md](design/hig-validation.md) — HIG and accessibility audit of the `DES-*` rules, with the measured contrast table and the re-test procedure.
+- [design/mockups/](design/mockups/) — HTML visual references for the design system and the import bar. The markdown above is authoritative; where a mockup disagrees, the markdown wins.
 
 ## Architecture Decision Records
 

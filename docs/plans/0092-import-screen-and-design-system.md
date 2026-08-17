@@ -18,8 +18,8 @@ the earlier ones publish.
 | `docs/design/hig-validation.md` | Why the contrast and control rules are what they are, plus the re-test procedure at the foot. |
 | `AGENTS.md` → Code Review (C) | The five-check design pass every one of these PRs must run. |
 
-The `.dc.html` mockups are design references held outside the repo. The markdown is
-authoritative; where they disagree, the markdown wins.
+The `.dc.html` mockups live in `docs/design/mockups/`. The markdown is authoritative;
+where they disagree, the markdown wins.
 
 ## Where the design and the code disagree
 

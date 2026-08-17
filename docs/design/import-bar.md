@@ -9,7 +9,7 @@ Owner: `Otos/Views/ImportPlanFooter.swift`. Presentation source:
 Grid is unchanged — a card renders exactly like a library (DES-065). Per-item
 import selection is out of scope: import imports all new media.
 
-Visual reference: `Otos Import.dc.html` in the design project.
+Visual reference: `docs/design/mockups/Otos Import.dc.html`.
 
 ## Terminology
 
