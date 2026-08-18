@@ -52,6 +52,8 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0020](adr/0020-production-data-locations-and-the-developer-smoke-seam.md) | Production data locations and the developer smoke-run seam. |
 | [0021](adr/0021-concurrent-import-planning-and-destination-reservations.md) | Concurrent import planning, the cross-plan destination reservation ledger, and execution-scoped rebuild suppression. |
 | [0022](adr/0022-recoverable-media-deletion.md) | Recoverable Move to Trash: system Trash only, catalog-proven members, no permanent deletion. |
+| [0023](adr/0023-test-architecture.md) | Test architecture: an OtosKit framework, an unhosted `OtosTests` bundle, and an in-memory preference store. |
+| [0024](adr/0024-import-source-readiness-gate.md) | Import source readiness gate: withholding the Ready offer until a source's live scan/enumeration proves itself, not just its plan build completing. |
 
 ## Research
 

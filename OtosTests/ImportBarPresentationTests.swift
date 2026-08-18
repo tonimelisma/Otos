@@ -18,10 +18,12 @@ struct ImportBarPresentationTests {
         cardStillExists: Bool = true,
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
-        incompleteItems: [MediaAssetID] = []
+        incompleteItems: [MediaAssetID] = [],
+        sourceKind: LibraryRootKind = .removableVolume
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: source,
+            sourceKind: sourceKind,
             destinationPath: destinationPath,
             destinationDisplayName: destinationDisplayName,
             state: state,
@@ -94,6 +96,13 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .preparing)
         #expect(drawn.primaryAction == .importPending)
         #expect(drawn.primaryEnabled == false)
+    }
+
+    @Test func preparingWordingIsCameraForDeviceMTPAndCardForRemovableVolume() {
+        let camera = Self.map(Self.presentation(state: .inventory, sourceKind: .deviceMTP))
+        #expect(camera.primaryLine == "Checking the camera…")
+        let card = Self.map(Self.presentation(state: .inventory, sourceKind: .removableVolume))
+        #expect(card.primaryLine == "Checking the card…")
     }
 
     // MARK: - B · No destination (row 2, 14)

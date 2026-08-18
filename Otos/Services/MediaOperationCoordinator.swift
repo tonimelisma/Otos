@@ -362,6 +362,14 @@ actor MediaOperationCoordinator {
         }
         let libraries = await store.currentLibraries()
         guard let sourceState = libraries.first(where: { $0.path == source }) else { return }
+        guard ImportSourceReadiness.evaluate(sourceState) == .ready else {
+            // Still enumerating/scanning, or unreachable. `importRequested`
+            // stays set; the next occupancy-driven rebuild (D2) or the
+            // catalog-change refresh once activity flips idle (see
+            // `refreshSources`) retries this same request.
+            OtosLog.catalog.notice("op=import.execute phase=deferred reason=sourceNotReady rootPath=\(source.rawValue, privacy: .public)")
+            return
+        }
         guard isExecutableSource(sourceState) else {
             markExecutionUnavailable(
                 source: source,
@@ -827,6 +835,22 @@ actor MediaOperationCoordinator {
                     sourceSessions[source.path]?.isDirty = true
                     scheduleBuildIfNeeded(source.path)
                 }
+                // Readiness can turn `.ready` (enumeration/scan activity flips
+                // idle) via this cheap catalog-change refresh alone, without an
+                // occupancy change of its own — device enumeration's final
+                // completion bump already retried a still-not-ready
+                // `beginExecutionIfPossible` once above, but the idle flip
+                // itself lands as a separate, occupancy-unchanged event.
+                // Without this, a queued Import that lost that race would
+                // never be retried. Safe to call unconditionally: it no-ops
+                // unless the session is genuinely `.ready` with a matching
+                // plan generation and still has `importRequested` set.
+                if let session = sourceSessions[source.path],
+                   session.importRequested,
+                   case let .ready(ctx) = session.phase
+                {
+                    await beginExecutionIfPossible(source: source.path, readyContext: ctx)
+                }
             }
         }
         // Detach: remove sessions for missing sources, cancel owned work.
@@ -1122,12 +1146,7 @@ actor MediaOperationCoordinator {
         case .building:
             session.importRequested ? .queuedForReadiness : .planning
         case let .ready(ctx):
-            session.importRequested ? .queuedForReadiness : .ready(
-                summary: ctx.plan.totals,
-                generation: ctx.plan.generation,
-                skippedPackageCount: ctx.skippedPackageCount,
-                attentionItems: ctx.attentionItems
-            )
+            session.importRequested ? .queuedForReadiness : readyState(for: session, ctx: ctx)
         case let .executing(ctx):
             .executing(progress: MediaOperationProgress(
                 completedCount: 0,
@@ -1144,6 +1163,44 @@ actor MediaOperationCoordinator {
             .failed(reason: reason, publishedCount: publishedCount)
         }
         return makePresentation(session: session, state: state)
+    }
+
+    /// A built, internally-`.ready` plan is only shown as state C once the
+    /// source itself proves its live inventory is trustworthy (plan 0095 D1):
+    /// a plan built the instant a device root became available — from
+    /// whatever rows were already persisted at attach — must not be offered
+    /// while enumeration is still filling in the real picture. Readiness alone
+    /// isn't quite enough for the empty-card branch specifically: readiness
+    /// can flip to `.ready` (activity idle) in the same beat an occupancy bump
+    /// lands, before this session's own plan has had a chance to rebuild
+    /// against it, so a *provably* empty plan additionally requires
+    /// `!session.isDirty` — no rebuild is currently owed against a staleness
+    /// signal the coordinator has already received — otherwise a genuinely-
+    /// populated source could flash "This card is empty" for one frame.
+    ///
+    /// This checks the dirty bit rather than comparing `lastSeenOccupancy`
+    /// against `ctx.plan.sourceOccupancyRevision` directly: a source whose
+    /// inventory never changes again after settling (an empty card that never
+    /// gains a file) never earns another occupancy bump to reconcile the two
+    /// independently-sampled values, so an equality check between them can
+    /// permanently disagree with no future event able to fix it — the dirty
+    /// bit is the coordinator's own accounting of whether it is guaranteed
+    /// caught up, not a second, freestanding derivation of the same fact.
+    private func readyState(for session: SourceSession, ctx: ReadyContext) -> MediaOperationSourceState {
+        guard ImportSourceReadiness.evaluate(session.root) == .ready else {
+            return .inventory
+        }
+        let totals = ctx.plan.totals
+        let isEmptyCard = totals.copyCount == 0 && totals.companionCopyCount == 0 && totals.skipCount == 0
+        if isEmptyCard, session.isDirty {
+            return .inventory
+        }
+        return .ready(
+            summary: totals,
+            generation: ctx.plan.generation,
+            skippedPackageCount: ctx.skippedPackageCount,
+            attentionItems: ctx.attentionItems
+        )
     }
 
     /// The batch this attachment is currently working on or last worked on:
@@ -1165,6 +1222,7 @@ actor MediaOperationCoordinator {
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: session.root.path,
+            sourceKind: session.root.kind,
             destinationPath: session.destination,
             destinationDisplayName: session.destination.flatMap { librariesByPath[$0]?.displayName },
             state: state,

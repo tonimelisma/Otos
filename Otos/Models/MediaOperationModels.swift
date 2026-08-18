@@ -262,6 +262,9 @@ nonisolated struct MediaOperationProgress: Equatable, Sendable {
 
 nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identifiable {
     let sourcePath: LibraryRootPath
+    /// Chooses "the camera" vs. "the card" wording while preparing
+    /// (`import-bar.md` state A) without the mapper re-deriving it.
+    let sourceKind: LibraryRootKind
     let destinationPath: LibraryRootPath?
     /// The destination library's display name, so the bar states it without a
     /// second lookup at the view layer (`import-bar.md` "What the presentation

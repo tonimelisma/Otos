@@ -131,7 +131,7 @@ nonisolated enum ImportBarPresentation {
         if let (summary, _) = readyTotals(presentation.state) {
             return ready(summary: summary, presentation: presentation, preferences: preferences)
         }
-        return preparing(state: presentation.state)
+        return preparing(state: presentation.state, sourceKind: presentation.sourceKind)
     }
 
     private static func readyTotals(
@@ -149,7 +149,10 @@ nonisolated enum ImportBarPresentation {
 
     // MARK: - A · Preparing
 
-    private static func preparing(state: MediaOperationSourceState) -> ImportBarDrawnState {
+    private static func preparing(
+        state: MediaOperationSourceState,
+        sourceKind: LibraryRootKind
+    ) -> ImportBarDrawnState {
         let itemsLine: String?
         let track: ImportBarDrawnState.ProgressTrack
         switch state {
@@ -163,9 +166,10 @@ nonisolated enum ImportBarPresentation {
             itemsLine = nil
             track = .indeterminate
         }
+        let primaryLine = sourceKind == .deviceMTP ? "Checking the camera…" : "Checking the card…"
         return ImportBarDrawnState(
             kind: .preparing,
-            primaryLine: "Checking the card…",
+            primaryLine: primaryLine,
             primaryBadge: .none,
             secondaryLine: itemsLine.map { ImportBarDrawnState.SecondaryLine.plain($0) } ?? .none,
             middleZone: .progress(track: track, caption: nil),

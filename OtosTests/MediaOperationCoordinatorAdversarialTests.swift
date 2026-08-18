@@ -1422,4 +1422,106 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("END")
         await coordinator.shutdown()
     }
+
+    // MARK: - 15. Import refused while still enumerating (plan 0095 D1, ImportSourceReadiness)
+
+    @Test func importIsRefusedWhileDeviceIsStillEnumerating() async throws {
+        log("START importIsRefusedWhileDeviceIsStillEnumerating")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot,
+            identity: "camera:readiness-gate-adversarial",
+            displayName: "Camera"
+        )
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: rootPath)
+
+        // Live device inventory lands while the session already has a plan
+        // (D1's exact precondition) — enumeration is still in progress the
+        // whole time; activity never flips idle here.
+        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
+        try await store.recordDeviceCatalogBatch([
+            ScannedMediaFile(
+                relativePath: relativePath,
+                name: "IMG_0001.JPG",
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 64,
+                createdAt: Date(timeIntervalSince1970: 1000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ], scan: scan)
+
+        // The internal plan now has the item (proves it built while still
+        // enumerating) but the bar must hold state A the entire time —
+        // never offering a plan built from a not-yet-stable inventory.
+        let deadline = ContinuousClock().now + .seconds(8)
+        var sawNonEmptyInternalPlan = false
+        while ContinuousClock().now < deadline, !sawNonEmptyInternalPlan {
+            if let plan = await coordinator.readyPlan(for: rootPath), plan.totals.copyCount == 1 {
+                sawNonEmptyInternalPlan = true
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(sawNonEmptyInternalPlan, "Internal plan should build from the batch even while still enumerating")
+        let stillPreparing = await coordinator.currentPresentations().first(where: { $0.sourcePath == rootPath })
+        var isPreparing = false
+        if case .inventory = stillPreparing?.state {
+            isPreparing = true
+        }
+        if case .queuedForReadiness = stillPreparing?.state {
+            isPreparing = true
+        }
+        #expect(isPreparing, "Published state must stay in the preparing family while still enumerating")
+
+        // Pressing Import while still enumerating must not execute.
+        await coordinator.queueImport(for: rootPath)
+        try await Task.sleep(for: .milliseconds(300))
+        let afterQueue = await coordinator.currentPresentations().first(where: { $0.sourcePath == rootPath })
+        if case .executing = afterQueue?.state {
+            Issue.record("Import executed while the device was still enumerating")
+        }
+        if case .completed = afterQueue?.state {
+            Issue.record("Import completed while the device was still enumerating")
+        }
+
+        // Enumeration finishes: readiness flips .ready and the deferred
+        // request is retried. This coordinator has no camera import access
+        // wired in, so `isExecutableSource` then fails and execution stops at
+        // `markExecutionUnavailable` rather than actually copying — reaching
+        // that failure reason at all proves the request made it past the
+        // readiness gate, which is what this test verifies. (The one-shot
+        // `.executionUnavailable` presentation `markExecutionUnavailable`
+        // yields isn't observable by polling `currentPresentations()` — it
+        // only reaches subscribers of the live stream; polling re-derives
+        // from `session.phase`, which the same call sets to
+        // `.failed(.unexpected("executionUnavailable"))`.)
+        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
+        let resolved = try await waitForPresentation(coordinator, source: rootPath, predicate: { pres in
+            if case .failed = pres.state {
+                return true
+            }
+            return false
+        })
+        if case let .failed(reason, _) = resolved.state {
+            #expect(reason == .unexpected(detail: "executionUnavailable"))
+        } else {
+            Issue.record("Expected a failed state once readiness resolved")
+        }
+        log("END")
+        log("END")
+        await coordinator.shutdown()
+    }
 }

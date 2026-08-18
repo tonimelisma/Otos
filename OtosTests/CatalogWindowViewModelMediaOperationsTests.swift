@@ -16,6 +16,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
     private static func presentation(batchID: ImportBatchID?) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: cardPath,
+            sourceKind: .removableVolume,
             destinationPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
             destinationDisplayName: "Pictures",
             state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),

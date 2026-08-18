@@ -116,6 +116,7 @@ struct SidebarSelectionPolicyTests {
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: cardPath,
+            sourceKind: .removableVolume,
             destinationPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
             destinationDisplayName: "Pictures",
             state: state,

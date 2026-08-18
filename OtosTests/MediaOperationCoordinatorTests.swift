@@ -124,7 +124,12 @@ struct MediaOperationCoordinatorTests {
             isEjectable: true
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
-        _ = try await readyGeneration(coordinator, source: cardPath)
+        // Wider timeout (plan 0095 increment 4): this test's whole point is
+        // that `.ready` arrives via the planning-change stream alone, with no
+        // precondition wait possible without defeating that — so it carries
+        // the full round trip from scan-completion through
+        // ImportSourceReadiness under this file's parallel-test contention.
+        _ = try await readyGeneration(coordinator, source: cardPath, timeout: .seconds(30))
 
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
@@ -430,6 +435,10 @@ struct MediaOperationCoordinatorTests {
             displayName: "Card",
             isEjectable: true
         )
+        // See makeDestinationFixture's comment (plan 0095 increment 4).
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.first?.activity == .idle
+        }
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
@@ -600,6 +609,16 @@ struct MediaOperationCoordinatorTests {
             displayName: "Card",
             isEjectable: true
         )
+        // Plan 0095 increment 4: `.ready` now requires the card's own scan to
+        // reach `.idle` (ImportSourceReadiness), not just a plan build
+        // completing. Proving that here — before the coordinator ever starts —
+        // rather than racing the coordinator's own catalog-change refresh
+        // against it, matches `repeatedIntentAndOccupancyChangeStartOneBatch`'s
+        // existing pattern and avoids the coordinator missing a same-beat
+        // scan-completion event under this file's parallel test execution.
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.first?.activity == .idle
+        }
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let libraries = try libraryURLs.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
         return DestinationFixture(store: store, libraries: libraries, source: source, identity: identity)
@@ -607,11 +626,20 @@ struct MediaOperationCoordinatorTests {
 
     /// Wait for the source to reach `.ready` (optionally with a generation past
     /// `minimum`) and return that generation.
+    ///
+    /// Default widened 5s → 15s (plan 0095 increment 4): `.ready` now requires
+    /// `ImportSourceReadiness == .ready`, i.e. the source's *real* filesystem
+    /// scan reaching `.idle` — not just a plan build completing, which used to
+    /// race ahead of it. This suite's tests run unserialized (parallel), so
+    /// under full-class concurrent load the real `CatalogScanner` work for
+    /// several fixtures competes for the same `.utility`-priority thread pool;
+    /// 5s measured as insufficient margin (repeated ReadyPlanTimeout across
+    /// several tests in this file, 2026-08-18 verify.sh study).
     private func readyGeneration(
         _ coordinator: MediaOperationCoordinator,
         source: LibraryRootPath,
         greaterThan minimum: UInt64? = nil,
-        timeout: Duration = .seconds(5)
+        timeout: Duration = .seconds(15)
     ) async throws -> UInt64 {
         let deadline = ContinuousClock().now + timeout
         while ContinuousClock().now < deadline {
@@ -627,11 +655,12 @@ struct MediaOperationCoordinatorTests {
 
     /// Wait until the source's ready generation stops changing for `settleFor`,
     /// then return it — so a later assertion is not raced by initial planning churn.
+    /// Default widened 8s → 15s alongside `readyGeneration`, same reasoning.
     private func settledReadyGeneration(
         _ coordinator: MediaOperationCoordinator,
         source: LibraryRootPath,
         settleFor: Duration = .milliseconds(400),
-        timeout: Duration = .seconds(8)
+        timeout: Duration = .seconds(15)
     ) async throws -> UInt64 {
         let deadline = ContinuousClock().now + timeout
         var lastGeneration: UInt64?
