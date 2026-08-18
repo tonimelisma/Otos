@@ -167,7 +167,7 @@ final class DeviceStagingRegistry {
                         relativePath: relativePath,
                         byteSize: byteSize,
                         modifiedAt: modifiedAt
-                    ) ?? false
+                    ) ?? .sourceNotReady
                 }
             },
             ensureBytes: { [weak self] identity, relativePath, enrichmentURL, importStagingURL in
@@ -259,14 +259,14 @@ nonisolated enum CameraByteOutcome: Equatable, Sendable {
 
 /// Camera-side import hooks used by `MediaImportExecutor` (ARC-049).
 nonisolated struct CameraImportAccess: Sendable {
-    private let revalidate: @Sendable (String, MediaRelativePath, Int64?, Date?) async -> Bool
+    private let revalidate: @Sendable (String, MediaRelativePath, Int64?, Date?) async -> SourceValidation
     private let ensureBytes: @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome
     private let deleteItemHook: @Sendable (String, MediaRelativePath) async -> Bool
     private let canDeleteHook: @Sendable (String) async -> Bool
     private let ejectHook: @Sendable (String) async -> RemovableEjectOutcome
 
     init(
-        revalidate: @escaping @Sendable (String, MediaRelativePath, Int64?, Date?) async -> Bool,
+        revalidate: @escaping @Sendable (String, MediaRelativePath, Int64?, Date?) async -> SourceValidation,
         ensureBytes: @escaping @Sendable (String, MediaRelativePath, URL, URL) async -> CameraByteOutcome,
         deleteItem: @escaping @Sendable (String, MediaRelativePath) async -> Bool,
         canDelete: @escaping @Sendable (String) async -> Bool,
@@ -284,7 +284,7 @@ nonisolated struct CameraImportAccess: Sendable {
         relativePath: MediaRelativePath,
         byteSize: Int64?,
         modifiedAt: Date?
-    ) async -> Bool {
+    ) async -> SourceValidation {
         await revalidate(identity, relativePath, byteSize, modifiedAt)
     }
 

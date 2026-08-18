@@ -531,7 +531,11 @@ nonisolated enum ImportBarPresentation {
         presentation: MediaOperationSourcePresentation
     ) -> ImportBarDrawnState {
         var clauseParts: [String] = []
-        if let cause = failureClause(reason: reason, destinationName: presentation.destinationDisplayName) {
+        if let cause = failureClause(
+            reason: reason,
+            destinationName: presentation.destinationDisplayName,
+            sourceKind: presentation.sourceKind
+        ) {
             clauseParts.append(cause)
         }
         if publishedCount > 0 {
@@ -555,7 +559,8 @@ nonisolated enum ImportBarPresentation {
 
     private static func failureClause(
         reason: MediaOperationFailureReason,
-        destinationName: String?
+        destinationName: String?,
+        sourceKind: LibraryRootKind
     ) -> String? {
         switch reason {
         case .sourceRemoved:
@@ -568,6 +573,8 @@ nonisolated enum ImportBarPresentation {
             }
         case .outOfSpace:
             "The disk is full"
+        case .sourceNotReady:
+            sourceKind == .deviceMTP ? "The camera is still reading its card" : "The card is still being read"
         case .unexpected:
             nil
         }

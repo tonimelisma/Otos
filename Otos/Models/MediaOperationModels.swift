@@ -11,6 +11,29 @@ nonisolated enum MediaOperationMode: Equatable, Sendable {
     case reorganize(library: LibraryRootPath)
 }
 
+/// Which fact changed between what a plan expected and what the live source
+/// reports (plan 0095 D8).
+nonisolated enum ChangedFact: Equatable, Sendable {
+    case size
+    case date
+}
+
+/// Why a plan entry's live source does or does not still match what the plan
+/// captured. One typed owner for every "does this still match" check
+/// (`MediaImportExecutor.sourceStillMatches`, `DeviceCameraSession.revalidate`)
+/// replaces the collapsed `Bool` each used to return, so a systemic cause
+/// (the source itself wasn't ready) can be told apart from an ordinary
+/// per-file one (plan 0095 D8).
+nonisolated enum SourceValidation: Equatable, Sendable {
+    case matches
+    /// The device session or volume mount wasn't ready to answer at all —
+    /// true for every entry from this source simultaneously, not a fact
+    /// about any one file.
+    case sourceNotReady
+    case changed(ChangedFact)
+    case absent
+}
+
 nonisolated struct ImportPolicy: Equatable, Sendable {
     var destinationFolderPolicy: DestinationFolderPolicy
     var destinationNamePolicy: DestinationNamePolicy
@@ -126,6 +149,12 @@ nonisolated enum MediaOperationFailureReason: Equatable, Sendable {
     case sourceRemoved
     case destinationUnavailable
     case outOfSpace
+    /// Every attempted entry failed `SourceValidation` with the same
+    /// non-per-file reason — the source itself wasn't ready, not any one
+    /// file (plan 0095 D8). Per the owner decision, the increment 4 readiness
+    /// gate should make this unreachable in practice; it exists so that if it
+    /// ever happens, the bar says something true instead of "Done".
+    case sourceNotReady
     case unexpected(detail: String)
 
     /// Classifies why an import-planning snapshot came back empty: whichever of

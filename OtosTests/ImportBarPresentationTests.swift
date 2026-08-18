@@ -527,6 +527,25 @@ struct ImportBarPresentationTests {
         }
     }
 
+    /// The systemic classification from plan 0095 D8 must still land on a true,
+    /// wording-appropriate state G rather than "Done" — camera vs. card wording
+    /// follows `sourceKind`, matching the other `[deviation]`-free A-state wording.
+    @Test func failedSourceNotReadyReachesFailedWithCameraOrCardWording() {
+        let camera = Self.map(Self.presentation(
+            state: .failed(reason: .sourceNotReady, publishedCount: 0),
+            sourceKind: .deviceMTP
+        ))
+        #expect(camera.kind == .failed)
+        #expect(camera.secondaryLine == .plain("The camera is still reading its card"))
+        #expect(camera.primaryAction == .tryAgain)
+
+        let card = Self.map(Self.presentation(
+            state: .failed(reason: .sourceNotReady, publishedCount: 0),
+            sourceKind: .removableVolume
+        ))
+        #expect(card.secondaryLine == .plain("The card is still being read"))
+    }
+
     // MARK: - Byte formatting (Number formatting table)
 
     @Test func byteFormattingMatchesTheSpecTable() {

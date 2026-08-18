@@ -351,7 +351,7 @@ struct CameraImportAccessTests {
     @Test func mockGatewayRevalidatesAndReportsDeleteCapability() async throws {
         let access = CameraImportAccess(
             revalidate: { identity, path, size, _ in
-                identity == "cam-1" && path.rawValue == "IMG_1.JPG" && size == 10
+                identity == "cam-1" && path.rawValue == "IMG_1.JPG" && size == 10 ? .matches : .sourceNotReady
             },
             ensureBytes: { _, _, enrichment, staging in
                 do {
@@ -372,7 +372,7 @@ struct CameraImportAccessTests {
                 relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
                 byteSize: 10,
                 modifiedAt: nil
-            )
+            ) == .matches
         )
         #expect(await access.canDelete(identity: "cam-1"))
         #expect(await access.eject(identity: "cam-1") == .ejected)
@@ -475,6 +475,146 @@ struct ImportExecutionProgressTests {
         let sourceAfter = try FilesystemTreeSnapshot.capture(root: sourceURL)
         #expect(sourceAfter == sourceBefore)
         await coordinator.shutdown()
+    }
+
+    /// Plan 0095 D8: when every attempted entry fails `sourceStillMatches` for the
+    /// same non-per-file reason — no `cameraImport` gateway wired up, matching a
+    /// device session that never opened — the run must report itself as a failure,
+    /// not a misleadingly-labeled `.completed(failedCount: N of N)`.
+    @Test func allEntriesFailingSourceNotReadyClassifiesRunAsFailed() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Camera", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        let facts = (0 ..< 2).map { index -> PlanningFileFacts in
+            let relative = MediaRelativePath(rawValue: "IMG_\(index).JPG")
+            return PlanningFileFacts(
+                id: MediaAssetID(libraryRootPath: sourcePath, relativePath: relative),
+                sourceURL: sourceRoot.appending(path: relative.rawValue),
+                relativePath: relative,
+                byteSize: 10,
+                contentModifiedAt: Date(timeIntervalSince1970: 100),
+                captureWallCompact: nil,
+                mediaKind: .image,
+                fileExtension: "JPG",
+                companions: [],
+                contentTypeIdentifier: "public.jpeg"
+            )
+        }
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourcePath,
+            destinationRoot: destinationPath,
+            sourceOccupancyRevision: 1,
+            destinationOccupancyRevision: 1,
+            sourceMedia: facts,
+            destinationOccupants: [:],
+            policy: policy,
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
+        #expect(plan.entries.count == 2)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationRoot)
+        let result = await MediaImportExecutor(store: store).execute(
+            plan: plan,
+            batch: ImportBatchID(),
+            sourceKind: .deviceMTP,
+            sourceDeviceIdentity: "camera:serial",
+            deleteSourceRequested: false
+        ) { _ in }
+
+        guard case let .failed(reason) = result else {
+            Issue.record("Expected systemic sourceNotReady failure, got \(result)")
+            return
+        }
+        #expect(reason == .sourceNotReady)
+    }
+
+    /// A per-file staleness failure alongside a successful entry must stay
+    /// `.completed(failedCount:)` — only a run where every attempted entry fails
+    /// the *same* `.sourceNotReady` way is systemic (plan 0095 D8).
+    @Test func mixedFailureReasonsStayCompletedNotSystemic() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+
+        let keepURL = sourceRoot.appending(path: "keep.jpg")
+        let staleURL = sourceRoot.appending(path: "stale.jpg")
+        let modifiedAt = Date(timeIntervalSince1970: 100)
+        try Data(repeating: 0x01, count: 10).write(to: keepURL)
+        try Data(repeating: 0x02, count: 10).write(to: staleURL)
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: keepURL.path)
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: staleURL.path)
+
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        func facts(name: String) -> PlanningFileFacts {
+            let relative = MediaRelativePath(rawValue: name)
+            return PlanningFileFacts(
+                id: MediaAssetID(libraryRootPath: sourcePath, relativePath: relative),
+                sourceURL: sourceRoot.appending(path: name),
+                relativePath: relative,
+                byteSize: 10,
+                contentModifiedAt: modifiedAt,
+                captureWallCompact: nil,
+                mediaKind: .image,
+                fileExtension: "jpg",
+                companions: [],
+                contentTypeIdentifier: "public.jpeg"
+            )
+        }
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourcePath,
+            destinationRoot: destinationPath,
+            sourceOccupancyRevision: 1,
+            destinationOccupancyRevision: 1,
+            sourceMedia: [facts(name: "keep.jpg"), facts(name: "stale.jpg")],
+            destinationOccupants: [:],
+            policy: policy,
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
+        #expect(plan.entries.count == 2)
+
+        // Mutate stale.jpg's live bytes after the plan captured its facts, forcing
+        // a per-file `.changed(.size)` staleness failure alongside the other
+        // entry's success.
+        try Data(repeating: 0x03, count: 20).write(to: staleURL)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationRoot)
+        let result = await MediaImportExecutor(store: store).execute(
+            plan: plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:mixed-failure",
+            deleteSourceRequested: false
+        ) { _ in }
+
+        guard case let .completed(publishedCount, _, hasEntryFailures, _, failedCount, _) = result else {
+            Issue.record("Expected completed with one per-file failure, got \(result)")
+            return
+        }
+        #expect(publishedCount == 1)
+        #expect(failedCount == 1)
+        #expect(hasEntryFailures)
     }
 
     @Test func zeroCopyPlanWithDeleteRequestedExecutesDeletion() async throws {

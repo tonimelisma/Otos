@@ -468,36 +468,42 @@ final class DeviceCameraSession: NSObject {
     }
 
     /// Revalidates planned size/date against live `ICCameraFile` facts (ARC-049).
+    /// Distinguishes "the session itself isn't ready" from "this specific file
+    /// is gone" (plan 0095 D8) — previously both collapsed into one `Bool`.
     func revalidate(
         relativePath: MediaRelativePath,
         byteSize: Int64?,
         modifiedAt: Date?
-    ) -> Bool {
-        guard !isClosed, device.hasOpenSession, let file = filesByRelativePath[relativePath] else {
-            logRevalidateMiss(relativePath: relativePath, reason: "sourceNotReady")
-            return false
+    ) -> SourceValidation {
+        guard !isClosed, device.hasOpenSession else {
+            logRevalidateMiss(relativePath: relativePath, validation: .sourceNotReady)
+            return .sourceNotReady
+        }
+        guard let file = filesByRelativePath[relativePath] else {
+            logRevalidateMiss(relativePath: relativePath, validation: .absent)
+            return .absent
         }
         if let byteSize {
             guard file.fileSize >= 0, Int64(file.fileSize) == byteSize else {
-                logRevalidateMiss(relativePath: relativePath, reason: "sizeMismatch")
-                return false
+                logRevalidateMiss(relativePath: relativePath, validation: .changed(.size))
+                return .changed(.size)
             }
         }
         if let modifiedAt {
             let live = CameraFileDate.modificationDate(file)
             guard let live, abs(live.timeIntervalSince(modifiedAt)) < 1.0 else {
-                logRevalidateMiss(relativePath: relativePath, reason: "dateMismatch")
-                return false
+                logRevalidateMiss(relativePath: relativePath, validation: .changed(.date))
+                return .changed(.date)
             }
         }
-        return true
+        return .matches
     }
 
-    private func logRevalidateMiss(relativePath: MediaRelativePath, reason: String) {
+    private func logRevalidateMiss(relativePath: MediaRelativePath, validation: SourceValidation) {
         OtosLog.fileAccess.noticeOperation("camera.revalidate", phase: "miss", fields: [
             "identity": identity,
             "relativePath": relativePath.rawValue,
-            "reason": reason,
+            "reason": String(describing: validation),
         ])
     }
 

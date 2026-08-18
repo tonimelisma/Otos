@@ -56,6 +56,10 @@ actor MediaImportExecutor {
         /// via `MediaOperationPlan.attentionItems`.
         let incompleteItems: [MediaAssetID]
         let overlayReuse: OverlayReuseSummary
+        /// Every failed entry's reason, in encounter order — lets `execute()`
+        /// tell a systemic failure (every attempted entry failed the same
+        /// non-per-file way) from an ordinary per-file one (plan 0095 D8).
+        let failureReasons: [EntryFailure]
     }
 
     private struct EntryExecutionContext: Sendable {
@@ -237,6 +241,20 @@ actor MediaImportExecutor {
                 failedCount: entryTotals.failedCount
             )
         }
+        // Every attempted entry failing the same non-per-file way means the source
+        // itself wasn't ready — a systemic cause, not per-file damage. Report it as
+        // a run failure rather than the misleading "N of N files failed" shape of
+        // `.completed(failedCount:)` (plan 0095 D8). The increment 4 readiness gate
+        // should make this unreachable in normal operation; this is a backstop so a
+        // gate miss still produces a true statement instead of "Done".
+        let allFailedWithSourceNotReady = !copyEntries.isEmpty
+            && entryTotals.publishedCount == 0
+            && entryTotals.skippedForeignCount == 0
+            && entryTotals.failedCount == copyEntries.count
+            && entryTotals.failureReasons.allSatisfy { $0 == .sourceNotReady }
+        if allFailedWithSourceNotReady {
+            return .failed(reason: .sourceNotReady)
+        }
         return .completed(
             publishedCount: entryTotals.publishedCount,
             hasBlockedEntries: hasBlockedEntries,
@@ -280,6 +298,7 @@ actor MediaImportExecutor {
         var skippedForeignCount = 0
         var incompleteItems: [MediaAssetID] = []
         var overlayReuse = OverlayReuseSummary()
+        var failureReasons: [EntryFailure] = []
         let copyEntries = context.plan.entries.filter {
             if case .copy = $0.disposition {
                 true
@@ -329,8 +348,9 @@ actor MediaImportExecutor {
                     skippedForeignCount += 1
                     incompleteItems.append(copyEntries[result.index].source.id)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
-                case .failed:
+                case let .failed(failure):
                     failedCount += 1
+                    failureReasons.append(failure)
                     incompleteItems.append(copyEntries[result.index].source.id)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 }
@@ -351,6 +371,7 @@ actor MediaImportExecutor {
                     batch: nil
                 ) == false {
                     failedCount += 1
+                    failureReasons.append(.other)
                 }
             }
         }
@@ -360,15 +381,37 @@ actor MediaImportExecutor {
             failedCount: failedCount,
             skippedForeignCount: skippedForeignCount,
             incompleteItems: incompleteItems,
-            overlayReuse: overlayReuse
+            overlayReuse: overlayReuse,
+            failureReasons: failureReasons
         )
+    }
+
+    /// Why one plan entry failed to copy. `.sourceNotReady` is the only
+    /// systemic reason — `execute()` classifies a run as `.failed` rather than
+    /// `.completed(failedCount:)` when every attempted entry failed with this
+    /// same reason (plan 0095 D8); every other case is inherently per-file
+    /// and never drives that classification.
+    private enum EntryFailure: Equatable, Sendable {
+        case sourceNotReady
+        case sourceChanged(ChangedFact)
+        case sourceAbsent
+        case other
+
+        init(_ validation: SourceValidation) {
+            switch validation {
+            case .matches: self = .other // unreachable: callers only convert a non-match.
+            case .sourceNotReady: self = .sourceNotReady
+            case let .changed(fact): self = .sourceChanged(fact)
+            case .absent: self = .sourceAbsent
+            }
+        }
     }
 
     private enum EntryOutcome: Sendable {
         case published(ImportOverlayReuseResult)
         case skippedForeign
         case cancelled
-        case failed
+        case failed(EntryFailure)
     }
 
     private struct EntryResult: Sendable {
@@ -384,16 +427,16 @@ actor MediaImportExecutor {
         sourceURL: URL,
         sourceByteSize: Int64,
         sourceModified: Date?
-    ) async -> Bool {
+    ) async -> SourceValidation {
         switch sourceKind {
         case .removableVolume:
             guard let sourceModified else {
-                return false
+                return .changed(.date)
             }
-            return Self.fileMatches(url: sourceURL, byteSize: sourceByteSize, modifiedAt: sourceModified)
+            return Self.fileValidation(url: sourceURL, byteSize: sourceByteSize, modifiedAt: sourceModified)
         case .deviceMTP:
             guard let identity = sourceDeviceIdentity, let cameraImport else {
-                return false
+                return .sourceNotReady
             }
             return await cameraImport.revalidateItem(
                 identity: identity,
@@ -402,7 +445,7 @@ actor MediaImportExecutor {
                 modifiedAt: sourceModified
             )
         case .library:
-            return false
+            return .sourceNotReady
         }
     }
 
@@ -434,7 +477,7 @@ actor MediaImportExecutor {
             )
         case .library:
             try? await store.abandonImportOperation(key: operationKey)
-            return .failed
+            return .failed(.other)
         }
     }
 
@@ -470,7 +513,7 @@ actor MediaImportExecutor {
             OtosLog.catalog.error(
                 "op=mediaOperation.copy phase=failed detail=\(message, privacy: .public)"
             )
-            return .failed
+            return .failed(.other)
         }
         return nil
     }
@@ -485,7 +528,7 @@ actor MediaImportExecutor {
     ) async -> EntryOutcome? {
         guard let identity, let cameraImport else {
             try? await store.abandonImportOperation(key: operationKey)
-            return .failed
+            return .failed(.other)
         }
         if cancelFlag.isCancelled {
             try? FileManager.default.removeItem(at: stagingURL)
@@ -530,7 +573,7 @@ actor MediaImportExecutor {
                         // swiftlint:disable:next line_length
                         "op=mediaOperation.camera phase=companionFailed detail=\(message, privacy: .public)"
                     )
-                    return .failed
+                    return .failed(.other)
                 }
             }
             return nil
@@ -544,7 +587,7 @@ actor MediaImportExecutor {
             OtosLog.catalog.error(
                 "op=mediaOperation.camera phase=failed detail=\(message, privacy: .public)"
             )
-            return .failed
+            return .failed(.other)
         }
     }
 
@@ -560,10 +603,10 @@ actor MediaImportExecutor {
         guard case let .import(sourceRoot, destinationRoot, _) = context.plan.mode,
               case let .copy(destinationRelative) = entry.disposition
         else {
-            return .failed
+            return .failed(.other)
         }
         guard let namespaceLease = context.namespaceLease else {
-            return .failed
+            return .failed(.other)
         }
         let sourceURL = entry.source.sourceURL
         let started = ContinuousClock().now
@@ -582,10 +625,10 @@ actor MediaImportExecutor {
         let finalURL = destinationRoot.url.appendingPathComponent(destinationRelative.rawValue)
         guard let sourceByteSize = entry.source.byteSize else {
             logSkipped(reason: "missingPlannedByteSize")
-            return .failed
+            return .failed(.other)
         }
         let sourceModified = entry.source.contentModifiedAt
-        let matches = await sourceStillMatches(
+        let validation = await sourceStillMatches(
             entry: entry,
             sourceKind: context.sourceKind,
             sourceDeviceIdentity: context.sourceDeviceIdentity,
@@ -593,9 +636,12 @@ actor MediaImportExecutor {
             sourceByteSize: sourceByteSize,
             sourceModified: sourceModified
         )
-        guard matches else {
-            logSkipped(reason: "staleSource", extra: ["path": sourceURL.path])
-            return .failed
+        guard case .matches = validation else {
+            logSkipped(
+                reason: "staleSource",
+                extra: ["path": sourceURL.path, "validation": String(describing: validation)]
+            )
+            return .failed(EntryFailure(validation))
         }
         if FileManager.default.fileExists(atPath: finalURL.path) {
             logSkipped(reason: "destinationExists")
@@ -606,7 +652,7 @@ actor MediaImportExecutor {
         guard let destinationModified = ImportDestinationDate.expected(for: entry.source)
         else {
             logSkipped(reason: "missingDestinationDate")
-            return .failed
+            return .failed(.other)
         }
         let operationSourceModified = sourceModified ?? destinationModified
         var operation = ActiveFileOperation(
@@ -631,7 +677,7 @@ actor MediaImportExecutor {
             try await store.beginImportOperation(operation)
         } catch {
             logSkipped(reason: "journalBeginFailed")
-            return .failed
+            return .failed(.other)
         }
 
         try? FileManager.default.createDirectory(
@@ -721,12 +767,12 @@ actor MediaImportExecutor {
                 ]
             )
             logSkipped(reason: "hashFailed", extra: ["category": category.rawValue])
-            return .failed
+            return .failed(.other)
         }
 
         guard let hashFinished else {
             logSkipped(reason: "unexpectedHashState")
-            return .failed
+            return .failed(.other)
         }
         let outcome = await Self.publishAndSettle(PublishSettleRequest(
             operation: operation,
@@ -794,7 +840,7 @@ actor MediaImportExecutor {
             OtosLog.catalog.notice(
                 "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
             )
-            return .failed
+            return .failed(.other)
         }
         return await publishAndSettleBody(request)
     }
@@ -815,7 +861,7 @@ actor MediaImportExecutor {
             OtosLog.catalog.notice(
                 "op=mediaOperation.publish phase=blocked reason=namespaceLeaseUnavailable"
             )
-            return .failed
+            return .failed(.other)
         }
 
         switch ExclusivePublication.publish(staging: request.stagingURL, final: request.finalURL) {
@@ -827,10 +873,10 @@ actor MediaImportExecutor {
                 OtosLog.catalog.error(
                     "op=mediaOperation.journal phase=foreignAbandonFailed error=\(String(describing: error), privacy: .public)"
                 )
-                return .failed
+                return .failed(.other)
             }
             guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-                return .failed
+                return .failed(.other)
             }
             await request.store.recordForeignOccupant(
                 root: request.destinationRoot,
@@ -845,12 +891,12 @@ actor MediaImportExecutor {
                 OtosLog.catalog.error(
                     "op=mediaOperation.journal phase=publishFailureAbandonFailed error=\(String(describing: error), privacy: .public)"
                 )
-                return .failed
+                return .failed(.other)
             }
             OtosLog.catalog.error(
                 "op=mediaOperation.publish phase=failed detail=\(message, privacy: .public)"
             )
-            return .failed
+            return .failed(.other)
         case .published:
             break
         }
@@ -862,7 +908,7 @@ actor MediaImportExecutor {
             let settledModified = finalValues.contentModificationDate
         else {
             OtosLog.catalog.error("op=mediaOperation.publish phase=finalFactsUnavailable")
-            return .failed
+            return .failed(.other)
         }
         let settledByteSize = Int64(finalSize)
 
@@ -876,13 +922,13 @@ actor MediaImportExecutor {
             OtosLog.catalog.error(
                 "op=mediaOperation.journal phase=publishedPendingSettlementFailed error=\(String(describing: error), privacy: .public)"
             )
-            return .failed
+            return .failed(.other)
         }
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
             OtosLog.catalog.notice(
                 "op=mediaOperation.settle phase=blocked reason=namespaceLeaseUnavailable"
             )
-            return .failed
+            return .failed(.other)
         }
 
         let companionRows = Self.companionDestinations(
@@ -902,7 +948,7 @@ actor MediaImportExecutor {
             OtosLog.catalog.error(
                 "op=mediaOperation.settle phase=failed error=\(String(describing: error), privacy: .public)"
             )
-            return .failed
+            return .failed(.other)
         }
         let settleFinished = ContinuousClock().now
         let totalElapsedMs = max(
@@ -927,7 +973,7 @@ actor MediaImportExecutor {
 
         if request.deleteSourceRequested {
             guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
-                return .failed
+                return .failed(.other)
             }
             guard await Self.deleteSource(
                 kind: request.sourceKind,
@@ -936,7 +982,7 @@ actor MediaImportExecutor {
                 filesystemURL: request.sourceURL,
                 cameraImport: request.cameraImport
             ) else {
-                return .failed
+                return .failed(.other)
             }
             do {
                 try await request.store.completeImportOperation(key: operation.operationKey)
@@ -944,7 +990,7 @@ actor MediaImportExecutor {
                 OtosLog.catalog.error(
                     "op=mediaOperation.journal phase=sourceDeletionCompletionFailed error=\(String(describing: error), privacy: .public)"
                 )
-                return .failed
+                return .failed(.other)
             }
         }
         return .published(reuseResult)
@@ -965,7 +1011,7 @@ actor MediaImportExecutor {
         OtosLog.catalog.error(
             "op=mediaOperation.journal phase=readyToPublishFailed error=\(String(describing: error), privacy: .public)"
         )
-        return .failed
+        return .failed(.other)
     }
 
     private enum RecoveryOwnership: Sendable {
@@ -1402,15 +1448,20 @@ actor MediaImportExecutor {
         )
     }
 
-    private nonisolated static func fileMatches(url: URL, byteSize: Int64, modifiedAt: Date) -> Bool {
+    private nonisolated static func fileValidation(url: URL, byteSize: Int64, modifiedAt: Date) -> SourceValidation {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
               let size = values.fileSize,
               let modified = values.contentModificationDate
         else {
-            return false
+            return .absent
         }
-        return Int64(size) == byteSize
-            && Int(modified.timeIntervalSince1970) == Int(modifiedAt.timeIntervalSince1970)
+        guard Int64(size) == byteSize else {
+            return .changed(.size)
+        }
+        guard Int(modified.timeIntervalSince1970) == Int(modifiedAt.timeIntervalSince1970) else {
+            return .changed(.date)
+        }
+        return .matches
     }
 
     private func freeSpaceRequired(for entries: [MediaOperationPlanEntry]) -> Int64? {
