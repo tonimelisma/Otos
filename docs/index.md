@@ -65,7 +65,7 @@ Non-authoritative: they record what we learned, not current behavior.
 
 ## Plans and roadmap
 
-- [plans/](plans/) — numbered work plans; completed plans are deleted. Active: 0091 (curation), 0092 (import screen and design-system adoption).
+- [plans/](plans/) — numbered work plans; completed plans are deleted. Active: 0095 (honest import — MTP correctness, one writer per published fact, app-wide design system).
 - [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
   guides work unless the user explicitly asks for roadmap input.
 - [templates/adr-template.md](templates/adr-template.md) — the ADR format.
