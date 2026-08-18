@@ -46,6 +46,7 @@ actor MediaImportExecutor {
 
     private struct EntryTotals: Sendable {
         let publishedCount: Int
+        let publishedBytes: Int64
         let failedCount: Int
         let skippedForeignCount: Int
         /// Identities of entries that started this run but did not land —
@@ -221,10 +222,10 @@ actor MediaImportExecutor {
         let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
             "batch": "\(batch.unixMilliseconds)",
-            "bytes": "\(totalBytes)",
+            "bytes": "\(entryTotals.publishedBytes)",
             "elapsedMs": "\(elapsedMs)",
             "files": "\(copyEntries.count)",
-            "mbps": throughputMBps(bytes: totalBytes, elapsedMs: elapsedMs),
+            "mbps": throughputMBps(bytes: entryTotals.publishedBytes, elapsedMs: elapsedMs),
             "workers": "\(Self.workerCount)",
         ])
         if cancelFlag.isCancelled {
@@ -274,6 +275,7 @@ actor MediaImportExecutor {
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> EntryTotals {
         var publishedCount = 0
+        var publishedBytes: Int64 = 0
         var failedCount = 0
         var skippedForeignCount = 0
         var incompleteItems: [MediaAssetID] = []
@@ -317,6 +319,7 @@ actor MediaImportExecutor {
                 switch result.outcome {
                 case let .published(reuseResult):
                     publishedCount += 1
+                    publishedBytes += result.byteSize
                     overlayReuse.record(reuseResult)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: result.byteSize)
                 case .cancelled:
@@ -353,6 +356,7 @@ actor MediaImportExecutor {
         }
         return EntryTotals(
             publishedCount: publishedCount,
+            publishedBytes: publishedBytes,
             failedCount: failedCount,
             skippedForeignCount: skippedForeignCount,
             incompleteItems: incompleteItems,
@@ -564,19 +568,20 @@ actor MediaImportExecutor {
         let sourceURL = entry.source.sourceURL
         let started = ContinuousClock().now
         let signpost = OtosSignpost.mediaIO.beginInterval("MediaImportFileCopy")
-        defer {
-            OtosSignpost.mediaIO.endInterval("MediaImportFileCopy", signpost)
-            let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
-            OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "finish", fields: [
+        defer { OtosSignpost.mediaIO.endInterval("MediaImportFileCopy", signpost) }
+        func logSkipped(reason: String, extra: [String: String] = [:]) {
+            var fields = [
                 "batch": "\(context.batch.unixMilliseconds)",
-                "bytes": "\(entry.source.byteSize ?? 0)",
-                "elapsedMs": "\(elapsedMs)",
-                "mbps": throughputMBps(bytes: entry.source.byteSize ?? 0, elapsedMs: elapsedMs),
+                "bytes": "0",
+                "reason": reason,
                 "worker": "\(workerID)",
-            ])
+            ]
+            fields.merge(extra) { _, new in new }
+            OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "skipped", fields: fields)
         }
         let finalURL = destinationRoot.url.appendingPathComponent(destinationRelative.rawValue)
         guard let sourceByteSize = entry.source.byteSize else {
+            logSkipped(reason: "missingPlannedByteSize")
             return .failed
         }
         let sourceModified = entry.source.contentModifiedAt
@@ -589,18 +594,18 @@ actor MediaImportExecutor {
             sourceModified: sourceModified
         )
         guard matches else {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.copy phase=staleSource path=\(sourceURL.path, privacy: .public)"
-            )
+            logSkipped(reason: "staleSource", extra: ["path": sourceURL.path])
             return .failed
         }
         if FileManager.default.fileExists(atPath: finalURL.path) {
+            logSkipped(reason: "destinationExists")
             return .skippedForeign
         }
 
         let stagingURL = Self.stagingURL(adjacentTo: finalURL)
         guard let destinationModified = ImportDestinationDate.expected(for: entry.source)
         else {
+            logSkipped(reason: "missingDestinationDate")
             return .failed
         }
         let operationSourceModified = sourceModified ?? destinationModified
@@ -625,6 +630,7 @@ actor MediaImportExecutor {
         do {
             try await store.beginImportOperation(operation)
         } catch {
+            logSkipped(reason: "journalBeginFailed")
             return .failed
         }
 
@@ -641,12 +647,18 @@ actor MediaImportExecutor {
             operationKey: operation.operationKey,
             onByteProgress: onByteProgress
         ) {
+            if case .cancelled = early {
+                logSkipped(reason: "cancelled")
+            } else {
+                logSkipped(reason: "transferFailed")
+            }
             return early
         }
 
         guard !cancelFlag.isCancelled else {
             try? FileManager.default.removeItem(at: stagingURL)
             try? await store.abandonImportOperation(key: operation.operationKey)
+            logSkipped(reason: "cancelled")
             return .cancelled
         }
         let copyFinished = ContinuousClock().now
@@ -691,6 +703,7 @@ actor MediaImportExecutor {
                     "worker": "\(workerID)",
                 ]
             )
+            logSkipped(reason: "cancelled")
             return .cancelled
         case let .failed(category):
             try? FileManager.default.removeItem(at: stagingURL)
@@ -707,13 +720,15 @@ actor MediaImportExecutor {
                     "category": category.rawValue,
                 ]
             )
+            logSkipped(reason: "hashFailed", extra: ["category": category.rawValue])
             return .failed
         }
 
         guard let hashFinished else {
+            logSkipped(reason: "unexpectedHashState")
             return .failed
         }
-        return await Self.publishAndSettle(PublishSettleRequest(
+        let outcome = await Self.publishAndSettle(PublishSettleRequest(
             operation: operation,
             store: store,
             cameraImport: cameraImport,
@@ -736,6 +751,14 @@ actor MediaImportExecutor {
             copyFinished: copyFinished,
             hashFinished: hashFinished
         ))
+        if case .published = outcome {
+            // Honest `mediaOperation.copy phase=finish` (actual bytes written) is
+            // emitted inside publishAndSettleBody, which is the only place that
+            // knows the settled byte size — never fabricated here.
+        } else {
+            logSkipped(reason: "publishFailed")
+        }
+        return outcome
     }
 
     private struct PublishSettleRequest {
@@ -882,6 +905,17 @@ actor MediaImportExecutor {
             return .failed
         }
         let settleFinished = ContinuousClock().now
+        let totalElapsedMs = max(
+            DiagnosticsTiming.milliseconds(from: request.copyStarted, to: settleFinished),
+            1
+        )
+        OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "finish", fields: [
+            "batch": "\(request.batch.unixMilliseconds)",
+            "bytes": "\(settledByteSize)",
+            "elapsedMs": "\(totalElapsedMs)",
+            "mbps": throughputMBps(bytes: settledByteSize, elapsedMs: totalElapsedMs),
+            "worker": "\(request.workerID)",
+        ])
         OtosLog.mediaIO.noticeOperation("mediaOperation.copy", phase: "timings", fields: [
             "batch": "\(request.batch.unixMilliseconds)",
             "publishMs": elapsedMilliseconds(from: request.copyFinished, to: publishFinished),

@@ -224,10 +224,22 @@ final class DeviceCameraSession: NSObject {
     }
 
     func catalogSnapshot() async throws -> DeviceCameraCatalogSnapshot {
+        let started = ContinuousClock().now
+        OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "start", fields: [
+            "identity": identity,
+        ])
         try await openAndWaitForCatalogReady()
         let isStable = await waitForCatalogStability(timeout: .seconds(30))
+        let items = currentCatalogItems()
+        let elapsedMs = DiagnosticsTiming.milliseconds(from: started, to: .now)
+        OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "finish", fields: [
+            "identity": identity,
+            "count": "\(items.count)",
+            "elapsedMs": "\(elapsedMs)",
+            "isStable": "\(isStable)",
+        ])
         return DeviceCameraCatalogSnapshot(
-            items: currentCatalogItems(),
+            items: items,
             companions: currentCompanionItems(),
             isStable: isStable
         )
@@ -323,6 +335,10 @@ final class DeviceCameraSession: NSObject {
         guard let file = filesByRelativePath[relativePath] else {
             throw DeviceCameraSessionError.itemUnavailable(relativePath.rawValue)
         }
+        let started = ContinuousClock().now
+        OtosLog.fileAccess.noticeOperation("camera.download", phase: "start", fields: [
+            "relativePath": relativePath.rawValue,
+        ])
         try FileManager.default.createDirectory(
             at: destinationURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
@@ -336,22 +352,37 @@ final class DeviceCameraSession: NSObject {
             .overwrite: true,
             .sidecarFiles: false,
         ]
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            file.requestDownload(options: downloadOptions) { savedFilename, error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                file.requestDownload(options: downloadOptions) { savedFilename, error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                        return
+                    }
+                    if let savedFilename,
+                       savedFilename != destinationURL.lastPathComponent
+                    { // swiftlint:disable:this opening_brace
+                        let savedURL = destinationURL.deletingLastPathComponent().appending(path: savedFilename)
+                        try? FileManager.default.removeItem(at: destinationURL)
+                        try? FileManager.default.moveItem(at: savedURL, to: destinationURL)
+                    }
+                    continuation.resume(returning: ())
                 }
-                if let savedFilename,
-                   savedFilename != destinationURL.lastPathComponent
-                { // swiftlint:disable:this opening_brace
-                    let savedURL = destinationURL.deletingLastPathComponent().appending(path: savedFilename)
-                    try? FileManager.default.removeItem(at: destinationURL)
-                    try? FileManager.default.moveItem(at: savedURL, to: destinationURL)
-                }
-                continuation.resume(returning: ())
             }
+        } catch {
+            OtosLog.fileAccess.errorOperation("camera.download", phase: "failed", fields: [
+                "relativePath": relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            throw error
         }
+        let elapsedMs = DiagnosticsTiming.milliseconds(from: started, to: .now)
+        let bytes = (try? destinationURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        OtosLog.fileAccess.noticeOperation("camera.download", phase: "finish", fields: [
+            "relativePath": relativePath.rawValue,
+            "bytes": "\(bytes)",
+            "elapsedMs": "\(elapsedMs)",
+        ])
     }
 
     func file(for relativePath: MediaRelativePath) -> ICCameraFile? {
@@ -365,10 +396,12 @@ final class DeviceCameraSession: NSObject {
         modifiedAt: Date?
     ) -> Bool {
         guard !isClosed, device.hasOpenSession, let file = filesByRelativePath[relativePath] else {
+            logRevalidateMiss(relativePath: relativePath, reason: "sourceNotReady")
             return false
         }
         if let byteSize {
             guard file.fileSize >= 0, Int64(file.fileSize) == byteSize else {
+                logRevalidateMiss(relativePath: relativePath, reason: "sizeMismatch")
                 return false
             }
         }
@@ -380,10 +413,19 @@ final class DeviceCameraSession: NSObject {
                 ?? validCameraDate(file.exifCreationDate)
                 ?? validCameraDate(file.fileCreationDate)
             guard let live, abs(live.timeIntervalSince(modifiedAt)) < 1.0 else {
+                logRevalidateMiss(relativePath: relativePath, reason: "dateMismatch")
                 return false
             }
         }
         return true
+    }
+
+    private func logRevalidateMiss(relativePath: MediaRelativePath, reason: String) {
+        OtosLog.fileAccess.noticeOperation("camera.revalidate", phase: "miss", fields: [
+            "identity": identity,
+            "relativePath": relativePath.rawValue,
+            "reason": reason,
+        ])
     }
 
     var canDeleteOneFile: Bool {
@@ -425,6 +467,9 @@ final class DeviceCameraSession: NSObject {
     func close() {
         failAllWaiters(DeviceCameraSessionError.disconnected)
         if device.hasOpenSession {
+            // `didCloseSessionWithError` (below) logs the confirmed close once
+            // ImageCapture completes it; logging here too would claim the session
+            // closed before it actually did.
             device.requestCloseSession()
         }
     }
@@ -537,6 +582,12 @@ final class DeviceCameraSession: NSObject {
             let sample = (didAddItemCount, (device.mediaFiles ?? []).count)
             if let previous, previous == sample {
                 return true
+            }
+            if previous != nil {
+                OtosLog.fileAccess.noticeOperation("camera.enumerate", phase: "batch", fields: [
+                    "identity": identity,
+                    "count": "\(sample.1)",
+                ])
             }
             previous = sample
             if DiagnosticsTiming.milliseconds(since: startedAt) >= DiagnosticsTiming.milliseconds(timeout) {
@@ -651,14 +702,24 @@ extension DeviceCameraSession: @preconcurrency ICCameraDeviceDelegate {
         if let error {
             sessionOpenResult = .failure(error)
             resolveWaiters(condition: .open, result: .failure(error))
+            OtosLog.fileAccess.errorOperation("camera.session", phase: "openFailed", fields: [
+                "identity": identity,
+                "error": String(describing: error),
+            ])
         } else {
             sessionOpenResult = .success(())
             resolveWaiters(condition: .open, result: .success(()))
+            OtosLog.fileAccess.noticeOperation("camera.session", phase: "open", fields: [
+                "identity": identity,
+            ])
         }
     }
 
     func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
         failAllWaiters(error ?? DeviceCameraSessionError.disconnected)
+        OtosLog.fileAccess.noticeOperation("camera.session", phase: "close", fields: [
+            "identity": identity,
+        ])
     }
 
     func device(_ device: ICDevice, didReceiveStatusInformation status: [ICDeviceStatus: Any]) {}
