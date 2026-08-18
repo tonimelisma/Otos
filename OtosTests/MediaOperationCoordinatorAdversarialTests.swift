@@ -1360,4 +1360,66 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("END")
         await coordinator.shutdown()
     }
+
+    // MARK: - 14. Device inventory triggers a replan (plan 0095 D2)
+
+    @Test func deviceInventoryLandingAfterAttachTriggersReplan() async throws {
+        log("START deviceInventoryLandingAfterAttachTriggersReplan")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: stagingRoot,
+            identity: "camera:replan-adversarial",
+            displayName: "Camera"
+        )
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        await coordinator.start()
+
+        // The session is created and reaches Ready the instant the device root
+        // becomes available, before any device rows exist — exactly the D1/D2
+        // repro shape: a plan built from whatever was there at attach.
+        let emptyPlan = try await waitForReady(coordinator, source: rootPath)
+        #expect(emptyPlan.totals.copyCount == 0)
+
+        // Live device inventory lands after the session already reached Ready.
+        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        let relativePath = MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG")
+        try await store.recordDeviceCatalogBatch([
+            ScannedMediaFile(
+                relativePath: relativePath,
+                name: "IMG_0001.JPG",
+                contentTypeIdentifier: "public.jpeg",
+                byteSize: 42,
+                createdAt: Date(timeIntervalSince1970: 1000),
+                contentModifiedAt: Date(timeIntervalSince1970: 1000)
+            ),
+        ], scan: scan)
+        try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
+
+        // Without the D2 fix, the coordinator would sit forever on the stale
+        // empty plan from before device inventory landed.
+        let deadline = ContinuousClock().now + .seconds(8)
+        var replannedCopyCount: Int?
+        while ContinuousClock().now < deadline {
+            if let plan = await coordinator.readyPlan(for: rootPath), plan.totals.copyCount == 1 {
+                replannedCopyCount = plan.totals.copyCount
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(replannedCopyCount == 1, "Coordinator should replan once device inventory lands after attach")
+        log("END")
+        log("END")
+        await coordinator.shutdown()
+    }
 }

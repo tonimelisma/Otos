@@ -1981,6 +1981,11 @@ extension CatalogStore {
             throw CancellationError()
         }
         if timedChangedCount.value > 0 {
+            // A device batch that actually changed rows is a real import-occupancy
+            // change — same rule as the fixed/removable scan path (D2, D1: a plan
+            // built from persisted rows before this fires is stale, and never
+            // reprocessed without this bump).
+            bumpOccupancyRevision(for: scan.rootPath)
             notifyCatalogChanged()
         }
         OtosLog.catalog.notice(
@@ -2026,6 +2031,15 @@ extension CatalogStore {
             )
             throw error
         }
+        guard owns(scan) else {
+            throw CancellationError()
+        }
+        // Always bump on completion, regardless of whether this run's reconciliation
+        // changed any row: completion is the proof-of-stability signal the import
+        // readiness gate depends on (plan 0095 D1/D2) — a plan built while the device
+        // was still enumerating must always be revalidated once enumeration proves
+        // stable, even if it turns out nothing changed.
+        bumpOccupancyRevision(for: scan.rootPath)
         await endDeviceCatalogEnumeration(scan: scan)
     }
 

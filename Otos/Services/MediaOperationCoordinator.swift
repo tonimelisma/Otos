@@ -724,6 +724,7 @@ actor MediaOperationCoordinator {
         var seen = Set<LibraryRootPath>()
         for source in removable {
             seen.insert(source.path)
+            let currentOccupancy = await store.occupancyRevision(for: source.path)
             if sourceSessions[source.path] == nil {
                 let attachmentGen = AttachmentGeneration(rawValue: nextAttachmentGeneration)
                 nextAttachmentGeneration &+= 1
@@ -757,10 +758,30 @@ actor MediaOperationCoordinator {
                     lastAttemptedBatch: nil
                 )
                 sourceSessions[source.path] = newSession
+                lastSeenOccupancy[source.path] = currentOccupancy
                 scheduleBuildIfNeeded(source.path)
             } else {
                 // Update root for existing session (availability may have changed)
                 sourceSessions[source.path]?.root = source
+                // A session's plan goes stale the moment the root it was built from
+                // gains new/changed rows — device enumeration landing after attach is
+                // exactly this (plan 0095 D1/D2): the session already exists (created
+                // from whatever rows were persisted at attach) and this occupancy
+                // bump is how it learns the live inventory superseded that snapshot.
+                // Reuses the same `lastSeenOccupancy` map `handlePlanningChange` keys
+                // staleness on, so both triggering paths (the occupancy-aware
+                // planning-change stream and this cheaper catalog-change refresh)
+                // agree on what "already seen" means.
+                if lastSeenOccupancy[source.path] != currentOccupancy {
+                    lastSeenOccupancy[source.path] = currentOccupancy
+                    sourceSessions[source.path]?.isDirty = true
+                    if case .executing = sourceSessions[source.path]?.phase {
+                        // Don't rebuild the executing source itself; it rebuilds
+                        // after execution settles, same as handlePlanningChange.
+                    } else {
+                        scheduleBuildIfNeeded(source.path)
+                    }
+                }
                 // Never touch the destination of a session that is actively
                 // executing: its ExecutionContext (claims, namespace lease)
                 // already committed to a specific destination, and rewriting
