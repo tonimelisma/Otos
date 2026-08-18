@@ -491,7 +491,11 @@ struct MediaOperationCoordinatorTests {
         // Move the last library ("Middle") to the front.
         try await fixture.store.moveLibrary(from: 2, to: 0)
 
-        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline, timeout: .seconds(15))
+        // moveLibrary's replan (unlike a plain setDestination) goes through a
+        // DB write and a full refreshSources cycle; under full-suite
+        // concurrent load this measured 16.6s against a 15s budget (2026-08-17
+        // verify.sh study), so the budget carries real margin over that.
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline, timeout: .seconds(30))
         let after = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
@@ -545,7 +549,11 @@ struct MediaOperationCoordinatorTests {
         // The explicitly chosen library ("Middle") goes away. The session
         // falls back to first-available ("Zebra").
         try await fixture.store.removeLibrary(path: fixture.libraries[2])
-        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: afterPick, timeout: .seconds(15))
+        // removeLibrary's replan goes through a DB write, filesystem-watcher
+        // teardown, and a full refreshSources cycle; under full-suite
+        // concurrent load this measured 16.9s against a 15s budget (2026-08-17
+        // verify.sh study), so the budget carries real margin over that.
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: afterPick, timeout: .seconds(30))
         let afterFallback = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )

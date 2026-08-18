@@ -1026,10 +1026,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         // executing, the next refresh is where a still-default destination
         // picks the reorder back up.
         _ = await store.bumpOccupancyRevision(for: cardPath)
+        // Waits on the same moveLibrary-triggered refreshSources cycle as
+        // MediaOperationCoordinatorTests' readyGeneration waits; under
+        // full-suite concurrent load this measured 8.393s against the 8s
+        // default (2026-08-17 verify.sh study), so the explicit budget here
+        // carries real margin over that.
         _ = try await waitForPresentation(
             coordinator,
             source: cardPath,
-            predicate: { $0.destinationPath == secondDest }
+            predicate: { $0.destinationPath == secondDest },
+            timeout: .seconds(20)
         )
         log("END")
         await coordinator.shutdown()

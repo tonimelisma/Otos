@@ -30,14 +30,19 @@ is_domain_noun_allowlisted() {
   return 1
 }
 check_domain_nouns() {
-  local root="$1" line abs rel
+  local root="$1" line abs rel rest content
   while IFS= read -r line; do
-    [[ -z "$line" ]] && continue; abs="${line%%:*}"; rel="${abs#"$root/"}"
-    if ! is_domain_noun_allowlisted "$rel"; then
+    [[ -z "$line" ]] && continue
+    abs="${line%%:*}"; rel="${abs#"$root/"}"
+    # Match against the matched string content only, not the whole
+    # path:line:content grep record — the repo's own checkout path (e.g. a
+    # worktree named after a branch like "fix/some-plan-thing") can otherwise
+    # contain one of these words and false-fail on unrelated files.
+    rest="${line#*:}"; content="${rest#*:}"
+    if ! is_domain_noun_allowlisted "$rel" && printf '%s\n' "$content" | grep -qiE "$DOMAIN_NOUNS"; then
       echo "FAIL: DES-035/DES-039 domain noun in user-facing string: $line" >&2; return 1
     fi
-  done < <(grep -RInE "Text\(\"[^\"]*\"" "$root/Otos/Views" --include='*.swift' \
-    | grep -iE "$DOMAIN_NOUNS" || true)
+  done < <(grep -RInE "Text\(\"[^\"]*\"" "$root/Otos/Views" --include='*.swift' || true)
 }
 
 check_root() {
