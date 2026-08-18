@@ -129,7 +129,7 @@ extension CatalogWindowViewModel {
                 contentTypeIdentifier: item.contentTypeIdentifier,
                 byteSize: item.byteSize,
                 createdAt: item.captureDate,
-                contentModifiedAt: item.captureDate
+                contentModifiedAt: item.modificationDate
             )
         }
     }

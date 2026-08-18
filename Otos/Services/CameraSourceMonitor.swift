@@ -10,6 +10,7 @@ nonisolated struct DeviceCameraCatalogItem: Hashable {
     let contentTypeIdentifier: String?
     let byteSize: Int64?
     let captureDate: Date?
+    let modificationDate: Date?
 }
 
 nonisolated struct DeviceCameraCompanionItem: Hashable {
@@ -61,6 +62,85 @@ nonisolated enum ImageCaptureCameraSourcePolicy {
             .replacingOccurrences(of: "-", with: "")
             .replacingOccurrences(of: "_", with: "")
         return normalized.contains("massstorage")
+    }
+}
+
+/// The single owner of "what date does this `ICCameraFile` have" (plan 0095 D3).
+/// Camera firmware populates the six date properties ImageCapture exposes
+/// inconsistently — some write only EXIF fields, some only filesystem fields —
+/// so each function tries all six in a fixed precedence and returns the first one
+/// that passes the epoch-zero guard. Every call site in this file (catalog
+/// listing, revalidation, companion inventory) goes through one of these two
+/// functions; none derives a date by any other chain.
+///
+/// The precedence logic takes the six raw dates rather than `ICCameraFile`
+/// directly: `ICCameraFile`'s properties are read-only and framework-populated
+/// (no public initializer), so a version over the raw values is what
+/// `CameraFileDateTests` can actually construct fixtures for. The
+/// `ICCameraFile` overloads below are the one-line adapters every real call
+/// site uses.
+nonisolated enum CameraFileDate {
+    /// When the file was captured: creation-first.
+    static func captureDate(
+        creationDate: Date?,
+        exifCreationDate: Date?,
+        fileCreationDate: Date?,
+        modificationDate: Date?,
+        fileModificationDate: Date?,
+        exifModificationDate: Date?
+    ) -> Date? {
+        validCameraDate(creationDate)
+            ?? validCameraDate(exifCreationDate)
+            ?? validCameraDate(fileCreationDate)
+            ?? validCameraDate(modificationDate)
+            ?? validCameraDate(fileModificationDate)
+            ?? validCameraDate(exifModificationDate)
+    }
+
+    /// When the file was last modified: modification-first.
+    static func modificationDate(
+        creationDate: Date?,
+        exifCreationDate: Date?,
+        fileCreationDate: Date?,
+        modificationDate: Date?,
+        fileModificationDate: Date?,
+        exifModificationDate: Date?
+    ) -> Date? {
+        validCameraDate(modificationDate)
+            ?? validCameraDate(fileModificationDate)
+            ?? validCameraDate(exifModificationDate)
+            ?? validCameraDate(creationDate)
+            ?? validCameraDate(exifCreationDate)
+            ?? validCameraDate(fileCreationDate)
+    }
+
+    static func captureDate(_ file: ICCameraFile) -> Date? {
+        captureDate(
+            creationDate: file.creationDate,
+            exifCreationDate: file.exifCreationDate,
+            fileCreationDate: file.fileCreationDate,
+            modificationDate: file.modificationDate,
+            fileModificationDate: file.fileModificationDate,
+            exifModificationDate: file.exifModificationDate
+        )
+    }
+
+    static func modificationDate(_ file: ICCameraFile) -> Date? {
+        modificationDate(
+            creationDate: file.creationDate,
+            exifCreationDate: file.exifCreationDate,
+            fileCreationDate: file.fileCreationDate,
+            modificationDate: file.modificationDate,
+            fileModificationDate: file.fileModificationDate,
+            exifModificationDate: file.exifModificationDate
+        )
+    }
+
+    private static func validCameraDate(_ date: Date?) -> Date? {
+        guard let date, abs(date.timeIntervalSince1970) >= 0.001 else {
+            return nil
+        }
+        return date
     }
 }
 
@@ -295,9 +375,7 @@ final class DeviceCameraSession: NSObject {
                     continue
                 }
                 let size = cameraFile.fileSize >= 0 ? Int64(cameraFile.fileSize) : nil
-                let modified = validCameraDate(cameraFile.modificationDate)
-                    ?? validCameraDate(cameraFile.fileModificationDate)
-                    ?? validCameraDate(cameraFile.exifModificationDate)
+                let modified = CameraFileDate.modificationDate(cameraFile)
                 companions.append(
                     DeviceCameraCompanionItem(
                         relativePath: relativePath,
@@ -406,12 +484,7 @@ final class DeviceCameraSession: NSObject {
             }
         }
         if let modifiedAt {
-            let live = validCameraDate(file.modificationDate)
-                ?? validCameraDate(file.fileModificationDate)
-                ?? validCameraDate(file.exifModificationDate)
-                ?? validCameraDate(file.creationDate)
-                ?? validCameraDate(file.exifCreationDate)
-                ?? validCameraDate(file.fileCreationDate)
+            let live = CameraFileDate.modificationDate(file)
             guard let live, abs(live.timeIntervalSince(modifiedAt)) < 1.0 else {
                 logRevalidateMiss(relativePath: relativePath, reason: "dateMismatch")
                 return false
@@ -617,12 +690,6 @@ final class DeviceCameraSession: NSObject {
         let relativePath = collisionIndex == 0
             ? baseRelativePath
             : baseRelativePath + "#\(collisionIndex + 1)"
-        let captureDate = validCameraDate(file.creationDate)
-            ?? validCameraDate(file.exifCreationDate)
-            ?? validCameraDate(file.fileCreationDate)
-            ?? validCameraDate(file.modificationDate)
-            ?? validCameraDate(file.fileModificationDate)
-            ?? validCameraDate(file.exifModificationDate)
         let contentType = URL(fileURLWithPath: name).pathExtension.isEmpty
             ? nil
             : UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)
@@ -634,7 +701,8 @@ final class DeviceCameraSession: NSObject {
             name: name,
             contentTypeIdentifier: contentType?.identifier,
             byteSize: Int64(file.fileSize),
-            captureDate: captureDate
+            captureDate: CameraFileDate.captureDate(file),
+            modificationDate: CameraFileDate.modificationDate(file)
         )
     }
 
@@ -663,13 +731,6 @@ final class DeviceCameraSession: NSObject {
             let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed?.isEmpty == false ? trimmed : nil
         }.first
-    }
-
-    private func validCameraDate(_ date: Date?) -> Date? {
-        guard let date, abs(date.timeIntervalSince1970) >= 0.001 else {
-            return nil
-        }
-        return date
     }
 
     private func itemsHashSeed(_ file: ICCameraFile) -> String {
