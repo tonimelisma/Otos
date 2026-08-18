@@ -13,6 +13,26 @@ by re-observing the filesystem; import-batch stamps are the first non-rebuildabl
 overlay fact, so schema changes migrate additively and future/unrecognized
 schemas refuse to open instead of erasing.
 
+## Targets
+
+```
+Otos.xcodeproj
+├── OtosXXH3      (static library)     — vendored C hashing, no Swift
+├── OtosKit       (framework)          — everything below (Models/Services/Stores/
+│                                         Support/Views/ViewModels); links OtosXXH3,
+│                                         GRDB, MediaMetadata; OtosApp is its one
+│                                         public type
+├── Otos          (app)                — main.swift + Assets.xcassets only; links
+│                                         and embeds OtosKit
+└── OtosTests     (unhosted bundle)    — links OtosKit directly, no TEST_HOST
+```
+
+No source or test file lives in a directory that names its target; `Otos/` and
+`OtosTests/` are unchanged on disk (ADR 0023). Target membership is Xcode
+project-file state, not filesystem layout — "where to make a change" below
+still answers in terms of what a type does, not which of these four targets
+compiles it.
+
 ## One-directional dataflow
 
 ```

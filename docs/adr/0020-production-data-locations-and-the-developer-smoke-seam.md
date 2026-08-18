@@ -112,7 +112,10 @@ alias.
 ## Defers
 
 - **Where overlay lives and when it is purged** — ADR 0008.
-- **Test-suite process isolation mechanics** beyond data locations. This ADR owns
-  *where* data lives, not whether the test bundle is hosted. Plan 0094 closes this
-  deferral; when it lands, its ADR owns the hosting arrangement and this entry
-  points there instead.
+- **Test-suite process isolation mechanics** beyond data locations — ADR 0023.
+  This ADR owns *where* data lives; ADR 0023 owns whether the test bundle is
+  hosted and how a `PreferencesDomain` value resolves to a concrete store.
+  `RunContext.isTestRun`, referenced above as the mechanism that kept a
+  test-host process from starting the product stack, no longer exists: the
+  test bundle unhosted by ADR 0023 can no longer launch the app at all, so
+  the guard it existed for is unreachable.
