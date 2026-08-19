@@ -213,7 +213,7 @@ nonisolated enum ImportBarPresentation {
         // A destination path with no resolved display name yet (e.g. a
         // `librariesByPath` snapshot that hasn't caught up) falls back to a
         // true generic term rather than an empty-string substitution that
-        // would build a broken sentence ("already in ") (plan 0095 D9).
+        // would build a broken sentence ("already in ").
         let destinationName = presentation.destinationDisplayName ?? "the library"
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
             if summary.skipCount == 0 {

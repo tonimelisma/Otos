@@ -51,15 +51,17 @@ optional "All Media" aggregate. Two problems motivated this decision:
   connected removable/camera source → the single fixed library → All Media. Applied
   once at startup after the first *loaded* state (at least one library or removable
   root), before any explicit user choice (`userHasChosenSource`). An empty pre-load
-  publication must not latch the default.
-- `selectionOnAttach(attached:)` — a newly-attached removable/camera source is
-  **always** selected (camera-import intent), even over a current selection.
-  "Newly attached" means the identity was not among previously *available*
-  removable sources, so a remembered card flipping unavailable → available still
-  auto-selects. Always jumping to a newly-available card deliberately re-selects
-  a card that flaps unavailable→available, accepting that it can interrupt a user
-  who has navigated elsewhere — chosen over tracking per-card "already visited"
-  state.
+  publication must not latch the default. This is the only automatic jump the app
+  makes; a card connected at launch (or already connected when the app starts) is
+  what satisfies the camera-import intent.
+- **Attach-time selection hijack is deliberately absent** (plan 0095 increment 11
+  removed `selectionOnAttach(attached:)`, unreferenced dead code by then): attaching
+  a card *after* the one-time startup default has already applied never moves the
+  user, even if they are looking at an unrelated library or All Media. Always
+  jumping to a newly-available card was tried and rejected — it interrupted a user
+  who had already navigated elsewhere for no benefit once the startup case is
+  covered, and a card that flaps unavailable → available mid-session would re-jump
+  the user repeatedly for a transient filesystem event they didn't cause.
 - `selectionOnSelectedSourceRemoved(...)` — if the selected source disappears, fall
   back to `defaultSelection` instead of leaving a dead selection.
 
@@ -93,8 +95,6 @@ failure a first-class, user-visible result instead of a swallowed error.
 ## Consequences
 
 - The sidebar never shows a stale selection or a still-mounted-but-hidden source.
-- A remembered card re-inserted at a new mount is remapped by the Store and jumped
-  to as a fresh attach.
 - "All Media" quietly disappears when a single library is the whole world.
 - Busy-eject detection depends on the OS error shape; the outcome mapping is a small
   heuristic that logs the underlying error for refinement.
@@ -102,7 +102,7 @@ failure a first-class, user-visible result instead of a swallowed error.
 ## References
 
 - Implemented in `Otos/Services/SidebarSelectionPolicy.swift`,
-  `Otos/ViewModels/CatalogWindowViewModelSidebarPolicy.swift`,
+  `Otos/ViewModels/CatalogWindowViewModel.swift`,
   `Otos/ViewModels/CatalogWindowViewModelMutation.swift`,
   `Otos/Services/CatalogWindowPolicy.swift`, `Otos/Views/SidebarView.swift`.
 - Tested by `OtosTests/SidebarSelectionPolicyTests.swift`,

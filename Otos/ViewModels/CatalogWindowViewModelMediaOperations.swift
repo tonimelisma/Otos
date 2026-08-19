@@ -158,7 +158,7 @@ extension CatalogWindowViewModel {
 
     /// Reads straight off the live presentation — the coordinator's own
     /// `SourceSession.preferences` — rather than a second ViewModel-owned
-    /// dictionary kept in sync by a per-frame refresh (plan 0095 D7).
+    /// dictionary kept in sync by a per-frame refresh.
     func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
         importPresentations.first { $0.sourcePath == source }?.sessionPreferences ?? importPreferences
     }
@@ -166,7 +166,7 @@ extension CatalogWindowViewModel {
     /// Writes only to the coordinator; the next `publish()` carrying the new
     /// value on `sessionPreferences` is the confirmation. No optimistic local
     /// write — that double-write is exactly what let a per-frame refresh
-    /// revert an in-flight toggle (plan 0095 D7).
+    /// revert an in-flight toggle.
     func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) {
         guard let coordinator = mediaOperationCoordinator else {
             return
@@ -235,10 +235,6 @@ extension CatalogWindowViewModel {
         }
     }
 
-    func readyImportPlan(for source: LibraryRootPath) async -> MediaOperationPlan? {
-        await mediaOperationCoordinator?.readyPlan(for: source)
-    }
-
     // MARK: - Library reorganization (ARC-051)
 
     private var selectedFixedLibraryPath: LibraryRootPath? {
@@ -269,8 +265,7 @@ extension CatalogWindowViewModel {
             guard let self else { return }
             switch outcome {
             case let .needsConfirmation(summary):
-                reorganizationSummaryText =
-                    "\(summary.relocateCount) relocate · \(summary.noOpCount) no-op · \(summary.blockedCount) blocked · \(summary.componentCount) components"
+                reorganizationSummaryText = ReorganizationSummaryPresentation.string(for: summary)
                 showsReorganizationConfirmation = true
             case let .blocked(reason), let .failed(reason):
                 reorganizationAlertMessage = reason

@@ -65,7 +65,7 @@ nonisolated enum ImageCaptureCameraSourcePolicy {
     }
 }
 
-/// The single owner of "what date does this `ICCameraFile` have" (plan 0095 D3).
+/// The single owner of "what date does this `ICCameraFile` have".
 /// Camera firmware populates the six date properties ImageCapture exposes
 /// inconsistently — some write only EXIF fields, some only filesystem fields —
 /// so each function tries all six in a fixed precedence and returns the first one
@@ -469,7 +469,7 @@ final class DeviceCameraSession: NSObject {
 
     /// Revalidates planned size/date against live `ICCameraFile` facts (ARC-049).
     /// Distinguishes "the session itself isn't ready" from "this specific file
-    /// is gone" (plan 0095 D8) — previously both collapsed into one `Bool`.
+    /// is gone" — previously both collapsed into one `Bool`.
     func revalidate(
         relativePath: MediaRelativePath,
         byteSize: Int64?,

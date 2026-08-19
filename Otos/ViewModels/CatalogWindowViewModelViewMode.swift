@@ -396,13 +396,6 @@ extension CatalogWindowViewModel {
         }
     }
 
-    func pauseLoupeVideo() {
-        if let state = loupeVideoState {
-            videoLoader.cleanup(state)
-        }
-        loupeVideoState = nil
-    }
-
     private func clearLoupeVideo() {
         if let state = loupeVideoState {
             videoLoader.cleanup(state)

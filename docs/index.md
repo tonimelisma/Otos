@@ -53,7 +53,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0021](adr/0021-concurrent-import-planning-and-destination-reservations.md) | Concurrent import planning, the cross-plan destination reservation ledger, and execution-scoped rebuild suppression. |
 | [0022](adr/0022-recoverable-media-deletion.md) | Recoverable Move to Trash: system Trash only, catalog-proven members, no permanent deletion. |
 | [0023](adr/0023-test-architecture.md) | Test architecture: an OtosKit framework, an unhosted `OtosTests` bundle, and an in-memory preference store. |
-| [0024](adr/0024-import-source-readiness-gate.md) | Import source readiness gate: withholding the Ready offer until a source's live scan/enumeration proves itself, not just its plan build completing. |
+| [0024](adr/0024-import-source-readiness-gate.md) | Import source readiness gate: withholding the Ready offer until a source's live scan/enumeration proves itself, not just its plan build completing. Also: the single `makePresentation` writer every published presentation funnels through. |
 
 ## Research
 
@@ -67,7 +67,7 @@ Non-authoritative: they record what we learned, not current behavior.
 
 ## Plans and roadmap
 
-- [plans/](plans/) — numbered work plans; completed plans are deleted. Active: 0095 (honest import — MTP correctness, one writer per published fact, app-wide design system).
+- [plans/](plans/) — numbered work plans; completed plans are deleted. None active.
 - [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
   guides work unless the user explicitly asks for roadmap input.
 - [templates/adr-template.md](templates/adr-template.md) — the ADR format.

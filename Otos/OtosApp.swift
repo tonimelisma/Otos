@@ -104,6 +104,12 @@ public struct OtosApp: App {
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(!catalogViewModel.canMoveTargetedMediaToTrash)
             }
+            CommandMenu("Library") {
+                Button("Reorganize Library…") {
+                    catalogViewModel.requestReorganizationConfirmation()
+                }
+                .disabled(!catalogViewModel.canRequestReorganization)
+            }
             // View commands belong in the *standard* View menu. `CommandMenu("View")`
             // creates a second top-level menu with the same title — measured 2026-08-09:
             // the menu bar read `Apple, Otos, Edit, View, Library, View, Window, Help`
@@ -112,15 +118,15 @@ public struct OtosApp: App {
                 Button("Grid") {
                     catalogViewModel.setViewMode(.grid)
                 }
-                .keyboardShortcut("1", modifiers: .command)
+                .keyboardShortcut(KeyEquivalent(BrowserViewMode.grid.keyboardShortcutDigit), modifiers: .command)
                 Button("Loupe") {
                     catalogViewModel.setViewMode(.loupe)
                 }
-                .keyboardShortcut("2", modifiers: .command)
+                .keyboardShortcut(KeyEquivalent(BrowserViewMode.loupe.keyboardShortcutDigit), modifiers: .command)
                 Button("Compare") {
                     catalogViewModel.setViewMode(.compare)
                 }
-                .keyboardShortcut("3", modifiers: .command)
+                .keyboardShortcut(KeyEquivalent(BrowserViewMode.compare.keyboardShortcutDigit), modifiers: .command)
                 Divider()
                 Button("Swap Compared Photos") {
                     catalogViewModel.swapComparedPhotos()

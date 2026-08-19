@@ -12,7 +12,7 @@ nonisolated enum MediaOperationMode: Equatable, Sendable {
 }
 
 /// Which fact changed between what a plan expected and what the live source
-/// reports (plan 0095 D8).
+/// reports.
 nonisolated enum ChangedFact: Equatable, Sendable {
     case size
     case date
@@ -23,7 +23,7 @@ nonisolated enum ChangedFact: Equatable, Sendable {
 /// (`MediaImportExecutor.sourceStillMatches`, `DeviceCameraSession.revalidate`)
 /// replaces the collapsed `Bool` each used to return, so a systemic cause
 /// (the source itself wasn't ready) can be told apart from an ordinary
-/// per-file one (plan 0095 D8).
+/// per-file one.
 nonisolated enum SourceValidation: Equatable, Sendable {
     case matches
     /// The device session or volume mount wasn't ready to answer at all —
@@ -151,8 +151,8 @@ nonisolated enum MediaOperationFailureReason: Equatable, Sendable {
     case outOfSpace
     /// Every attempted entry failed `SourceValidation` with the same
     /// non-per-file reason — the source itself wasn't ready, not any one
-    /// file (plan 0095 D8). Per the owner decision, the increment 4 readiness
-    /// gate should make this unreachable in practice; it exists so that if it
+    /// file. Per the owner decision, `ImportSourceReadiness` (ADR 0024)
+    /// should make this unreachable in practice; it exists so that if it
     /// ever happens, the bar says something true instead of "Done".
     case sourceNotReady
     case unexpected(detail: String)
@@ -186,13 +186,6 @@ nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
 
     var isSkipPreexisting: Bool {
         if case .skipPreexisting = disposition {
-            return true
-        }
-        return false
-    }
-
-    var isBlocked: Bool {
-        if case .blocked = disposition {
             return true
         }
         return false
@@ -306,8 +299,8 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// once set, not from execution start: `.executing` withholds it until
     /// the batch has at least one durably-published asset, so
     /// `followNewBatchesOnce` never navigates to a batch row with nothing in
-    /// it yet (plan 0095 step 7, owner decision — "move batch selection to
-    /// first-asset"). A terminal `.failed`/`.cancelled`/`.completed` state's
+    /// it yet (owner decision — "move batch selection to first-asset"). A
+    /// terminal `.failed`/`.cancelled`/`.completed` state's
     /// own fallback is unaffected by that gate — those keep the run's batch
     /// pinned and visible regardless of whether anything ever published, per
     /// `MediaOperationCoordinator`'s `currentBatchID(for:)`.
@@ -345,7 +338,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// deadline from, so an unrelated `publish()` re-emitting this same
     /// unchanged completion (another source's progress tick, say) cannot
     /// restart the countdown (`import-bar.md` "Done bar auto-dismisses after
-    /// ~6 s only on a fully clean run", plan 0095 D20). `nil` exactly when
+    /// ~6 s only on a fully clean run"). `nil` exactly when
     /// `isFullyClean`/`copiedJustNow` are.
     let settledAt: Date?
     /// This attachment's live session preferences, read directly off the
@@ -353,7 +346,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// second ViewModel-owned dictionary. `setSessionPreferences` writes only to
     /// the coordinator; the next `publish()` carrying the new value here is the
     /// confirmation — eliminates the two-owner race where a per-frame refresh
-    /// could revert an in-flight optimistic write (plan 0095 D7).
+    /// could revert an in-flight optimistic write.
     let sessionPreferences: ImportPreferences
     /// Items from that same settled execution that started but did not land —
     /// failed mid-copy, or skipped because an identical file already exists in

@@ -583,13 +583,27 @@ struct MediaOperationCoordinatorTests {
     /// never read back — every new attachment, including a reattach of the
     /// exact same card, unconditionally defaulted to `fixedAvailable.first`.
     /// A re-attached source now resumes at its remembered destination.
+    ///
+    /// Routes the reattach's build through `ControlledImportPlanBuilder`
+    /// rather than the live builder: an earlier live-build version of this
+    /// test measured `ReadyPlanTimeout` under full-suite parallel execution
+    /// at whatever budget it was given — 30s, 45s, 90s, 180s, always failing
+    /// right at the configured ceiling — while an isolated run of the same
+    /// test completed in ~2s (2026-08-19 study). That is resource
+    /// contention starving the live build under heavy concurrent load, not
+    /// a bug in the destination-memory logic under test; the controlled
+    /// builder makes the assertion deterministic instead of dependent on
+    /// live scheduling fairness, matching the pattern
+    /// `rapidSamePathReattachOldBuildCannotBecomeReady` already established
+    /// for this exact reattach shape.
     @Test func reattachedSourceGetsRememberedDestination() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:reattach-remembers"
         )
+        let builder = ControlledImportPlanBuilder()
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults, planBuilder: builder)
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[2], for: fixture.source)
@@ -601,6 +615,7 @@ struct MediaOperationCoordinatorTests {
         }
         try await Task.sleep(for: .milliseconds(100))
 
+        await builder.suspendNextBuild(for: fixture.source)
         try await fixture.store.attachRemovableVolume(
             mountURL: URL(fileURLWithPath: fixture.source.rawValue),
             identity: fixture.identity,
@@ -610,12 +625,9 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(fixture.store) { snap in
             snap.removableSources.contains { $0.path == fixture.source && !$0.isScanning }
         }
-        // A reattach re-runs the same real filesystem scan + plan-build cycle
-        // as `attachRemovableVolume` elsewhere in this file; under full-suite
-        // concurrent load that has measured past a 15s budget for other tests
-        // here (see e.g. `destinationFollowsUserReorderWhileAttached`), so
-        // this widens the same way.
-        _ = try await readyGeneration(coordinator, source: fixture.source, timeout: .seconds(30))
+        try await waitForPendingBuilder(builder, source: fixture.source, timeout: .seconds(20))
+        await builder.resumePendingBuild(for: fixture.source)
+        _ = try await readyGeneration(coordinator, source: fixture.source, timeout: .seconds(20))
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )

@@ -303,10 +303,10 @@ private struct AllImportsListView: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        // A real `List(selection:)`, not `Button`s inside a plain `List`
-        // (plan 0095 D23): Tab reaches the list, Up/Down move a genuine
-        // selection, and Return/click both fire `selectBatch` the same way
-        // (DES-080). There is no persistent selection to hold here — picking
+        // A real `List(selection:)`, not `Button`s inside a plain `List`:
+        // Tab reaches the list, Up/Down move a genuine selection, and
+        // Return/click both fire `selectBatch` the same way (DES-080).
+        // There is no persistent selection to hold here — picking
         // a row navigates away from `.allImports` entirely, replacing this
         // view — so the binding's getter always reads `nil`.
         List(selection: selectionBinding) {

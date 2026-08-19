@@ -93,14 +93,14 @@ actor MediaOperationCoordinator {
         /// auto-dismiss task computes its 6 s deadline from a stable anchor
         /// rather than from whenever it happened to observe a frame — an
         /// unrelated `publish()` re-emitting this same unchanged completion
-        /// must not restart the countdown (plan 0095 D20, "Done bar
+        /// must not restart the countdown (`import-bar.md` "Done bar
         /// auto-dismisses after ~6 s only on a fully clean run").
         let settledAt: Date
     }
 
     /// A settled `.completed` execution's outcome, stored on the session so
     /// `presentation(for:)` can read a real value instead of the zero-summary
-    /// literal `.completed` used to synthesize on every publish (plan 0095 D6).
+    /// literal `.completed` used to synthesize on every publish.
     private struct SettledOutcome {
         let summary: MediaOperationPlanTotals
         let skippedForeignCount: Int
@@ -131,14 +131,14 @@ actor MediaOperationCoordinator {
         /// The live execution's most recent progress, so a `publish()` that
         /// fires for an unrelated reason mid-execution (another source's
         /// catalog change, say) re-derives the real in-flight progress from
-        /// `presentation(for:)` instead of resetting the bar to zero
-        /// (plan 0095 D6). Set to a true starting value the moment `.executing`
+        /// `presentation(for:)` instead of resetting the bar to zero.
+        /// Set to a true starting value the moment `.executing`
         /// begins and overwritten by every subsequent progress callback; only
         /// meaningful while `phase` is `.executing`.
         var lastProgress: MediaOperationProgress?
         /// The most recent settled `.completed` execution's outcome. Set in the
-        /// same transaction as `phase = .completed` (plan 0095 D6); only
-        /// meaningful while `phase` is `.completed`.
+        /// same transaction as `phase = .completed`; only meaningful while
+        /// `phase` is `.completed`.
         var settledOutcome: SettledOutcome?
         var lastCompletion: AttachmentCompletion?
         /// The most recently minted batch for this attachment, set the moment
@@ -153,9 +153,9 @@ actor MediaOperationCoordinator {
         /// Whether `lastAttemptedBatch` has at least one durably-published
         /// asset yet, per `store.importBatchAssetCount`. Gates `.executing`'s
         /// own `batchID` exposure so `followNewBatchesOnce` never navigates
-        /// to a batch row before there is anything in it to show (plan 0095
-        /// step 7, owner decision: "move batch selection to first-asset").
-        /// Reset to `false` at the start of every new attempt in
+        /// to a batch row before there is anything in it to show (owner
+        /// decision: "move batch selection to first-asset"). Reset to
+        /// `false` at the start of every new attempt in
         /// `runExecution`. Terminal-state batch visibility
         /// (`.completed`/`.cancelled`/`.failed`) is unaffected — that fallback
         /// already has its own reason to stay eager (state G pinning).
@@ -507,7 +507,7 @@ actor MediaOperationCoordinator {
         // A true starting value (real totals, zero completed), overwritten by
         // the executor's first progress callback moments later — not a
         // fabricated zero, since it's what's actually true before any bytes
-        // have moved (plan 0095 D6).
+        // have moved.
         session.lastProgress = MediaOperationProgress(
             completedCount: 0,
             totalCount: summary.copyCount,
@@ -545,8 +545,8 @@ actor MediaOperationCoordinator {
         }
         // Stored on the session so any later `publish()` — including one fired
         // for an unrelated reason mid-execution — re-derives this same live
-        // value via `presentation(for:)` instead of resetting to zero
-        // (plan 0095 D6). `publish()` is the only yield to continuations.
+        // value via `presentation(for:)` instead of resetting to zero.
+        // `publish()` is the only yield to continuations.
         session.lastProgress = progress
         sourceSessions[source] = session
         publish()
@@ -585,8 +585,8 @@ actor MediaOperationCoordinator {
             )
             // Stored on the session so `presentation(for:)` reads the real
             // outcome instead of the zero-summary literal `.completed` used to
-            // synthesize on every publish (plan 0095 D6). `publish()` is the
-            // only yield to continuations.
+            // synthesize on every publish. `publish()` is the only yield to
+            // continuations.
             session.settledOutcome = SettledOutcome(
                 summary: summary,
                 skippedForeignCount: skippedForeignCount,
@@ -660,19 +660,6 @@ actor MediaOperationCoordinator {
                 }
             }
         }
-    }
-
-    /// Helper to retrieve plan from executing context before it was cleared.
-    private func sessionForAttachment(source: LibraryRootPath, attachment: AttachmentGeneration) -> ExecutionContext? {
-        guard let session = sourceSessions[source], session.attachmentGeneration == attachment else { return nil }
-        if case let .executing(ctx) = session.phase {
-            return ctx
-        }
-        return nil
-    }
-
-    private var planForExecution: MediaOperationPlan? {
-        nil
     }
 
     private func autoEjectIfRequested(_ root: LibraryRoot) async {
@@ -778,7 +765,7 @@ actor MediaOperationCoordinator {
     /// Confirms, for every still-executing session that hasn't proven itself
     /// yet, whether its batch now has at least one durably-published asset —
     /// the fact `currentBatchID` gates `.executing`'s own `batchID` exposure
-    /// on (plan 0095 step 7). Piggybacks on the catalog-change notification
+    /// on. Piggybacks on the catalog-change notification
     /// this coordinator already consumes for every attached source rather
     /// than adding a second, dedicated polling loop: an import's own
     /// publish/settle writes are themselves catalog changes, so this fires
@@ -875,7 +862,7 @@ actor MediaOperationCoordinator {
                 sourceSessions[source.path]?.root = source
                 // A session's plan goes stale the moment the root it was built from
                 // gains new/changed rows — device enumeration landing after attach is
-                // exactly this (plan 0095 D1/D2): the session already exists (created
+                // exactly this: the session already exists (created
                 // from whatever rows were persisted at attach) and this occupancy
                 // bump is how it learns the live inventory superseded that snapshot.
                 // Reuses the same `lastSeenOccupancy` map `handlePlanningChange` keys
@@ -1262,8 +1249,7 @@ actor MediaOperationCoordinator {
     /// `runExecution` sets `lastProgress` in the same transaction it sets
     /// `phase = .executing`, and `applyExecutionProgress` is the only other
     /// writer of either — so a `.executing` phase with no stored progress is
-    /// unreachable, not a case to paper over with a fabricated zero
-    /// (plan 0095 D6).
+    /// unreachable, not a case to paper over with a fabricated zero.
     private func executingState(for session: SourceSession) -> MediaOperationSourceState {
         guard let progress = session.lastProgress else {
             preconditionFailure("`.executing` phase always sets `lastProgress` in the same transaction (runExecution)")
@@ -1274,7 +1260,7 @@ actor MediaOperationCoordinator {
     /// `applyExecutionResult` sets `settledOutcome` in the same transaction it
     /// sets `phase = .completed`, and is the only writer of either — so a
     /// `.completed` phase with no stored outcome is unreachable, not a case to
-    /// paper over with a fabricated zero-summary literal (plan 0095 D6).
+    /// paper over with a fabricated zero-summary literal.
     private func completedState(for session: SourceSession) -> MediaOperationSourceState {
         guard let outcome = session.settledOutcome else {
             preconditionFailure("`.completed` phase always sets `settledOutcome` in the same transaction (applyExecutionResult)")
@@ -1288,7 +1274,7 @@ actor MediaOperationCoordinator {
     }
 
     /// A built, internally-`.ready` plan is only shown as state C once the
-    /// source itself proves its live inventory is trustworthy (plan 0095 D1):
+    /// source itself proves its live inventory is trustworthy (ADR 0024):
     /// a plan built the instant a device root became available — from
     /// whatever rows were already persisted at attach — must not be offered
     /// while enumeration is still filling in the real picture. Readiness alone
@@ -1335,8 +1321,8 @@ actor MediaOperationCoordinator {
     /// The `.executing` branch is gated and the terminal fallback is not: a
     /// long-running import must not surface `batchID` — and so pull
     /// `followNewBatchesOnce` into a batch row with nothing in it yet —
-    /// before its first asset actually lands (plan 0095 step 7, owner
-    /// decision), but a *failed* run still needs its batch pinned and visible
+    /// before its first asset actually lands (owner decision), but a
+    /// *failed* run still needs its batch pinned and visible
     /// on state G regardless of whether anything ever published, which is
     /// exactly what `lastAttemptedBatch`'s existing fallback already
     /// guarantees.

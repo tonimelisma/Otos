@@ -3,8 +3,8 @@ set -euo pipefail
 ROOT_DIR="${GUARD_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # DES-001/DES-020: no font-size or color literals anywhere in the app target
-# (plan 0095 D16 — the old Otos/Views-only scan left ContentView.swift and
-# OtosApp.swift, which sit directly under Otos/, invisible). Otos's own
+# (the old Otos/Views-only scan left ContentView.swift and OtosApp.swift,
+# which sit directly under Otos/, invisible). Otos's own
 # values live in exactly one allowlisted file, the DES-021/022 palette. The
 # one legitimate non-view use is raw Core Graphics bitmap fill (pixel color,
 # not SwiftUI view styling), allowlisted by exact path.
@@ -51,7 +51,7 @@ check_font_styles() {
 # vocabulary. Matches a literal in any position — not only inside
 # `Text("…")` — since a pure mapper (`ImportBarPresentation.swift`) returns
 # bare `String` values from switch expressions with no enclosing call syntax
-# at all (plan 0095 D16). Comment lines (`//…`) are skipped: they are prose,
+# at all. Comment lines (`//…`) are skipped: they are prose,
 # not user-facing strings, and doc comments legitimately reference the
 # forbidden words when explaining why they're forbidden.
 #
@@ -94,10 +94,10 @@ check_domain_nouns() {
   done < <(user_facing_string_roots "$root")
 }
 
-# D9: the import bar mapper never builds a user-facing number or string from
+# The import bar mapper never builds a user-facing number or string from
 # a lying `?? 0` / `?? ""` substitution for an unknown value — omit it
-# instead (plan 0095 D9, `ImportBarPresentation.swift` specifically, since
-# that is the one file every drawn state's strings must pass through).
+# instead. Scoped to `ImportBarPresentation.swift` specifically, since
+# that is the one file every drawn state's strings must pass through.
 LYING_DEFAULT_FILE="Otos/Views/ImportBarPresentation.swift"
 check_lying_defaults() {
   local root="$1" file="$root/$LYING_DEFAULT_FILE" line

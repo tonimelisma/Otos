@@ -1,11 +1,10 @@
-# ADR 0024: Import Source Readiness Gate
+# ADR 0024: Import Source Readiness Gate And Single Presentation Writer
 
 ## Status
 
 Accepted. Implemented in `Otos/Services/ImportSourceReadiness.swift` and
-`MediaOperationCoordinator` (`readyState(for:ctx:)`, `beginExecutionIfPossible`).
-Increment 6 (plan 0095) extends this ADR with the single presentation-writer
-rule referenced below; that section is not yet written.
+`MediaOperationCoordinator` (`readyState(for:ctx:)`, `beginExecutionIfPossible`,
+`presentation(for:)`, `makePresentation(session:state:cardStillExists:)`).
 
 ## Context
 
@@ -49,15 +48,24 @@ existed to gate the *offer* — the coordinator conflated "a plan was built" wit
 - Import plan namespace resolution and build ownership — ADR 0019.
 - Cross-plan destination reservation — ADR 0021.
 
-**Related, not owned here (increment 6):**
+**Also owns (increment 6):**
 
-- `MediaOperationCoordinator` currently has two presentation-construction
-  paths: `presentation(for:)` (the polled, always-correct derivation from
-  `session.phase`) and `markExecutionUnavailable`'s one-shot stream yield of
-  `.executionUnavailable`, which `presentation(for:)` cannot reproduce (it
-  re-derives `.failed` from the phase that call also sets). This ADR's
-  readiness gate does not touch that split; increment 6 is expected to
-  collapse it to one writer and will extend this document.
+- The single presentation-writer rule: every `MediaOperationSourcePresentation`
+  the coordinator ever yields is built by exactly one function,
+  `makePresentation(session:state:cardStillExists:)`. `presentation(for:)`
+  derives a `MediaOperationSourceState` purely from `session.phase` (the
+  session's own durable state) and hands it to `makePresentation`;
+  `markExecutionUnavailable`'s one-shot `.executionUnavailable` override
+  constructs its `MediaOperationSourceState` value directly and calls the
+  same `makePresentation`, rather than hand-assembling a second
+  `MediaOperationSourcePresentation` independently. No third call site
+  exists. What this closes: before increment 6, two independent
+  constructors could each answer "what does this source's card look like
+  right now" from a different, potentially-stale slice of state — the
+  concrete failure this plan traced was a `publish()` fired for an
+  unrelated reason (a sibling source's progress tick) resetting a
+  currently-executing source's own progress to a fabricated zero, because
+  that second path didn't carry the live value forward (plan 0095 D6).
 
 ## Decision
 
@@ -109,6 +117,32 @@ bump to reconcile two independently-sampled values, so an equality check
 between them can permanently disagree with no future event able to fix it.
 The dirty bit has no such failure mode — it is cleared by the same rebuild
 that would fire regardless.
+
+### Single presentation writer
+
+Every field on `MediaOperationSourcePresentation` — progress, `copiedJustNow`,
+`isFullyClean`, `settledAt`, session preferences, the destination display
+name — is read off `session` (or `session.lastCompletion`/`session.lastProgress`,
+themselves written exactly once per transition, in the same transaction as the
+`session.phase` change that makes them reachable) inside `makePresentation`,
+never re-derived or defaulted at the call site. A caller supplies only the
+`MediaOperationSourceState` for the frame it wants shown; it cannot supply a
+partial or synthesized value for any other field, because `makePresentation`
+does not accept one.
+
+**Known, accepted residual:** `.executionUnavailable` is not a real
+`session.phase` case — `markExecutionUnavailable` sets `session.phase` to a
+generic `.failed(reason: .unexpected(...))` for bookkeeping (so
+`scheduleBuildIfNeeded` won't try to rebuild this session) and separately
+yields the one-shot `.executionUnavailable` presentation directly to the
+stream. Nothing makes that override sticky: a later, unrelated `publish()`
+re-derives from `session.phase` via `presentation(for:)` and would show the
+generic `.failed` state instead. This is pre-existing behavior, unchanged by
+the single-writer fix — the fix closes the "two constructors disagree on a
+live value" failure mode, not this narrower "one-shot state isn't durable"
+one. Follow-up, not yet scheduled: make `.executionUnavailable` a real
+`SourceSession.phase` case so `presentation(for:)` can reproduce it on any
+later publish.
 
 ## Alternatives Considered
 
@@ -169,6 +203,10 @@ from a live batch stays hidden and Import stays refused while a device is
 still enumerating, then resolves once enumeration completes.
 `ImportBarPresentationTests.preparingWordingIsCameraForDeviceMTPAndCardForRemovableVolume`
 proves the mapper's camera/card wording split.
+`MediaOperationCoordinatorAdversarialTests.executingPresentationCarriesLiveProgressNotZero`
+proves the single-writer rule directly: a `publish()` fired for an unrelated
+reason during execution still reports the live in-flight progress rather than
+resetting to a fabricated zero-progress placeholder.
 
 ## Retirement Proof
 
@@ -178,14 +216,24 @@ mechanism performed this classification — there is nothing to remove.
 ## Living Documentation Impact
 
 - `docs/requirements.md` — ARC-047 updated to describe the readiness
-  precondition on `.ready`.
+  precondition on `.ready`; APP-029 describes the single-writer guarantee
+  for live progress.
+- `docs/architecture.md` — the `MediaOperationCoordinator` actor row and the
+  Import planning subsystem bullet cite both the readiness gate and the
+  single-writer rule.
 - `docs/index.md` — this ADR added to the table.
 
 ## Reversal Plan
 
-If the gate proves too conservative in practice (e.g. a source kind whose
-`.scanning` activity never reliably reaches `.idle`), the reversal is
-localized: delete the two `ImportSourceReadiness.evaluate` call sites and the
-`readyState` wrapper, restoring the unconditional `.ready(...)` construction.
-`ImportSourceReadiness` itself and its tests can stay dead code briefly or be
-deleted in the same change — nothing else depends on the type.
+**Readiness gate.** If the gate proves too conservative in practice (e.g. a
+source kind whose `.scanning` activity never reliably reaches `.idle`), the
+reversal is localized: delete the two `ImportSourceReadiness.evaluate` call
+sites and the `readyState` wrapper, restoring the unconditional `.ready(...)`
+construction. `ImportSourceReadiness` itself and its tests can stay dead code
+briefly or be deleted in the same change — nothing else depends on the type.
+
+**Single presentation writer.** Reversal is not anticipated — this is a
+consolidation onto the codebase's existing "one owner per fact" convention,
+not a new mechanism with its own failure mode to retreat from. Extending
+`makePresentation` to also cover `.executionUnavailable` as a durable
+`session.phase` case (the residual noted above) is additive, not a reversal.

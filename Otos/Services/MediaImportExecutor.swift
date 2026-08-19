@@ -58,7 +58,7 @@ actor MediaImportExecutor {
         let overlayReuse: OverlayReuseSummary
         /// Every failed entry's reason, in encounter order — lets `execute()`
         /// tell a systemic failure (every attempted entry failed the same
-        /// non-per-file way) from an ordinary per-file one (plan 0095 D8).
+        /// non-per-file way) from an ordinary per-file one.
         let failureReasons: [EntryFailure]
     }
 
@@ -72,7 +72,7 @@ actor MediaImportExecutor {
         /// Where an incomplete entry's `finalDestination` resolves — the
         /// identity `runPlanEntries` records for state F-incomplete's reveal,
         /// since the user selects it from the destination-keyed batch row,
-        /// not the source card (plan 0095 D12). `execute()` is the one place
+        /// not the source card. `execute()` is the one place
         /// that already proved `plan.mode` is `.import` and extracted this;
         /// re-deriving it here would just re-run an already-answered guard.
         let destinationRoot: LibraryRootPath
@@ -252,8 +252,8 @@ actor MediaImportExecutor {
         // Every attempted entry failing the same non-per-file way means the source
         // itself wasn't ready — a systemic cause, not per-file damage. Report it as
         // a run failure rather than the misleading "N of N files failed" shape of
-        // `.completed(failedCount:)` (plan 0095 D8). The increment 4 readiness gate
-        // should make this unreachable in normal operation; this is a backstop so a
+        // `.completed(failedCount:)`. `ImportSourceReadiness` (ADR 0024) should
+        // make this unreachable in normal operation; this is a backstop so a
         // gate miss still produces a true statement instead of "Done".
         let allFailedWithSourceNotReady = !copyEntries.isEmpty
             && entryTotals.publishedCount == 0
@@ -296,8 +296,8 @@ actor MediaImportExecutor {
 
     /// The identity state F-incomplete's "Show them" reveal must select: the
     /// user is on the batch row when they tap it, whose grid holds
-    /// destination-keyed rows, not the source card's (plan 0095 D12).
-    /// `entry.source.id` never matched anything there.
+    /// destination-keyed rows, not the source card's. `entry.source.id`
+    /// never matched anything there.
     private nonisolated func destinationAssetID(
         for entry: MediaOperationPlanEntry,
         context: EntryExecutionContext
@@ -408,8 +408,8 @@ actor MediaImportExecutor {
     /// Why one plan entry failed to copy. `.sourceNotReady` is the only
     /// systemic reason — `execute()` classifies a run as `.failed` rather than
     /// `.completed(failedCount:)` when every attempted entry failed with this
-    /// same reason (plan 0095 D8); every other case is inherently per-file
-    /// and never drives that classification.
+    /// same reason; every other case is inherently per-file and never
+    /// drives that classification.
     private enum EntryFailure: Equatable, Sendable {
         case sourceNotReady
         case sourceChanged(ChangedFact)

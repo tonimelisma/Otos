@@ -341,7 +341,9 @@ struct MediaTransferPlannerTests {
             snapshot: Self.snapshot(sourceMedia: [undated], policy: policy),
             namespace: Self.namespace()
         )
-        #expect(!plan.entries[0].isBlocked)
+        if case .blocked = plan.entries[0].disposition {
+            Issue.record("expected entry not to be blocked")
+        }
     }
 
     /// A directory standing where a candidate file would go is foreign occupancy that
@@ -399,7 +401,9 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries.count == 4)
         for entry in plan.entries {
             #expect(folders.contains(DestinationNamespace.folder(of: entry.finalDestination)))
-            #expect(!entry.isBlocked)
+            if case .blocked = entry.disposition {
+                Issue.record("expected entry not to be blocked")
+            }
         }
         #expect(Set(plan.entries.map(\.finalDestination)).count == 4)
     }
@@ -419,7 +423,10 @@ struct MediaTransferPlannerTests {
             namespace: DestinationNamespace(entries: [:], enumeratedFolders: [])
         )
 
-        #expect(plan.entries[0].isBlocked)
+        guard case .blocked = plan.entries[0].disposition else {
+            Issue.record("expected entry to be blocked")
+            return
+        }
         #expect(plan.totals.copyCount == 0)
     }
 

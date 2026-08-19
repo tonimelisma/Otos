@@ -57,7 +57,7 @@ struct ImportPlanFooter: View {
     /// own title/shortcut/tint. `drawn.primaryEnabled` used to be read by
     /// only 1 of 7 cases; the cancelling state (`primaryEnabled: false`)
     /// rendered a live button because nothing forced every case through one
-    /// owner (plan 0095 D11). A pure value type — not a rendered SwiftUI
+    /// owner. A pure value type — not a rendered SwiftUI
     /// view — is what closes the gap that let that ship green: the mapper
     /// was fully covered by tests, the renderer was not. `nonisolated`
     /// deliberately opts out of `ImportPlanFooter`'s inferred `@MainActor`
@@ -101,7 +101,7 @@ struct ImportPlanFooter: View {
     }
 
     var body: some View {
-        // `auto 1fr auto` (plan 0095 D14): *what* and *the act* size to their
+        // `auto 1fr auto`: *what* and *the act* size to their
         // own content; *choices* is the only zone that keeps
         // `.frame(maxWidth: .infinity)` and so is the only one that absorbs
         // the HStack's slack.
@@ -123,9 +123,9 @@ struct ImportPlanFooter: View {
     }
 
     /// One hairline, before the middle zone, only when it has content worth
-    /// separating from *what* — never before the act (plan 0095 D13: the
-    /// mockup draws at most one hairline per bar; this file drew two in
-    /// every state, including `.hidden`, where there is nothing to divide).
+    /// separating from *what* — never before the act. The mockup draws at
+    /// most one hairline per bar; this file used to draw two in every
+    /// state, including `.hidden`, where there is nothing to divide.
     private var showsMiddleHairline: Bool {
         switch drawn.middleZone {
         case .choices, .progress: true
@@ -254,7 +254,7 @@ struct ImportPlanFooter: View {
     /// `.disabled` control is not reliably surfaced by AppKit's disabled-
     /// control hover handling — DES-038 requires the explanation to actually
     /// reach the user, not merely to be attached to a control that may
-    /// swallow hover events (plan 0095 D24). `.help` is applied only when a
+    /// swallow hover events. `.help` is applied only when a
     /// reason exists, and only to a wrapping `ZStack` — a distinct, always-
     /// enabled hit-testable container — never to the disabled `Toggle` itself.
     @ViewBuilder
@@ -325,7 +325,7 @@ struct ImportPlanFooter: View {
                 }
                 .buttonStyle(.borderless)
             }
-            // One owner for every action's enabled state (plan 0095 D11):
+            // One owner for every action's enabled state:
             // `renderedPrimary.isEnabled` is applied here, not per-case — a
             // case that forgets `.disabled` used to render a live button
             // (the cancelling state, `primaryEnabled: false`).

@@ -908,10 +908,6 @@ extension MediaGridViewController {
         !visibleIDs.isEmpty && visibleIDs != lastDetailQueryIDs
     }
 
-    func contentForTile(_ id: MediaAssetID) -> TileContent? {
-        tileContents.content(for: id)
-    }
-
     func mergeTileDetails(_ details: [MediaAssetID: MediaTileDetail], reason: String) {
         guard !details.isEmpty else {
             return

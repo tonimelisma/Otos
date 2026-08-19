@@ -1,7 +1,7 @@
 import Foundation
 
 /// Whether an attached source's live inventory can be trusted enough to offer
-/// Import (plan 0095 D1). Pure function of `CatalogLibraryState`'s availability
+/// Import (ADR 0024). Pure function of `CatalogLibraryState`'s availability
 /// and activity — no coordinator or catalog state beyond what's already on the
 /// row, and fully unit-tested without a live device or filesystem.
 ///

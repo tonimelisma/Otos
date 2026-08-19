@@ -54,12 +54,6 @@ struct SidebarSelectionPolicyTests {
         #expect(selection == .allMedia)
     }
 
-    @Test func selectionOnAttachReturnsLibraryForRemovable() {
-        let card = removableSource(path: "/Volumes/CARD", identity: "volume:card")
-        #expect(SidebarSelectionPolicy.selectionOnAttach(attached: card) == .library(card.path))
-        #expect(SidebarSelectionPolicy.selectionOnAttach(attached: pictures) == nil)
-    }
-
     @Test func selectionOnSelectedSourceRemovedMatchesDefault() {
         let card = removableSource(path: "/Volumes/CARD", identity: "volume:card")
         let removed = SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(

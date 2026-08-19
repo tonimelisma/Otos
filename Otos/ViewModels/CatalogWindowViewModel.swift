@@ -168,7 +168,7 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var mediaOperationCoordinator: MediaOperationCoordinator?
     @ObservationIgnored var importPresentationTask: Task<Void, Never>?
     @ObservationIgnored var mediaOperationStartTask: Task<Void, Never>?
-    /// Owns the pending 6 s Done-bar dismissals (plan 0095 D20). Recomputed
+    /// Owns the pending 6 s Done-bar dismissals. Recomputed
     /// wholesale on every `applyImportPresentations` frame from the stable
     /// `settledAt` anchors already on the qualifying presentations, so
     /// cancelling and replacing this task on each frame never actually moves
@@ -199,9 +199,9 @@ final class CatalogWindowViewModel {
     /// coordinator publishes the batch ID as state and has no notion of
     /// "have we already followed it."
     var autoSelectedBatchIDs: Set<ImportBatchID> = []
-    /// Batch IDs whose Done bar has auto-dismissed (plan 0095 D20,
-    /// `import-bar.md` "Done bar auto-dismisses after ~6 s only on a fully
-    /// clean run"). Dismissal hides the bar without moving `sidebarSelection`
+    /// Batch IDs whose Done bar has auto-dismissed, per `import-bar.md`
+    /// "Done bar auto-dismisses after ~6 s only on a fully clean run".
+    /// Dismissal hides the bar without moving `sidebarSelection`
     /// — the batch stays selected ("the user is looking at exactly what they
     /// just imported"); `selectedImportPresentation` is what actually hides
     /// it. Permanent for the session once set, same tier as

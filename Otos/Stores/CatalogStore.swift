@@ -2036,7 +2036,7 @@ extension CatalogStore {
         }
         // Always bump on completion, regardless of whether this run's reconciliation
         // changed any row: completion is the proof-of-stability signal the import
-        // readiness gate depends on (plan 0095 D1/D2) — a plan built while the device
+        // readiness gate depends on (ADR 0024) — a plan built while the device
         // was still enumerating must always be revalidated once enumeration proves
         // stable, even if it turns out nothing changed.
         bumpOccupancyRevision(for: scan.rootPath)
