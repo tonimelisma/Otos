@@ -227,9 +227,13 @@ final class RemovableVolumeMonitor {
         ) else {
             return []
         }
+        // One session for this whole refresh, not one per candidate volume —
+        // there are typically 0-2 candidates per call.
+        let session = DASessionCreate(kCFAllocatorDefault)
         let attachments = urls.compactMap { url -> RemovableVolumeAttachment? in
             guard let values = try? url.resourceValues(forKeys: Set(keys)),
-                  values.volumeIsRemovable == true
+                  values.volumeIsRemovable == true,
+                  isPhysicalRemovableDevice(deviceModel: deviceModel(forVolumeAt: url, session: session))
             else {
                 return nil
             }
@@ -246,6 +250,44 @@ final class RemovableVolumeMonitor {
             .sorted { left, right in
                 left.identity.localizedStandardCompare(right.identity) == .orderedAscending
             }
+    }
+
+    /// Whether a `DiskArbitration` device-model fact proves a mounted volume
+    /// is real removable hardware rather than a disk image.
+    /// `URLResourceValues.volumeIsRemovable` alone cannot tell them apart —
+    /// measured (`docs/research/2026-08-19-removable-volume-qualification.md`):
+    /// both a read-write and a read-only mounted DMG report it `true` (plan
+    /// 0095 D10; production evidence held `/Volumes/Raycast` and
+    /// `/Volumes/BoltAI 2`, both app-installer DMGs, as permanent removable
+    /// sources). `kDADiskDescriptionDeviceModelKey` — not
+    /// `kDADiskDescriptionDeviceProtocolKey`, which reports the generic
+    /// `"Virtual Interface"` for a disk image at every level of its disk
+    /// object hierarchy and so cannot distinguish it from other virtual
+    /// transports — is the fact that actually distinguishes them:
+    /// `"Disk Image"` for any `hdiutil`-attached volume, the real hardware
+    /// model (or vendor string) for physical media. Fails closed — no model
+    /// at all is not proof of physical media, so it is rejected too, not
+    /// accepted by default.
+    nonisolated static func isPhysicalRemovableDevice(deviceModel: String?) -> Bool {
+        guard let deviceModel, !deviceModel.isEmpty else {
+            return false
+        }
+        return deviceModel != "Disk Image"
+    }
+
+    /// `kDADiskDescriptionDeviceModelKey` for the volume mounted at `url`, or
+    /// `nil` if `url` is not currently a mounted volume root or
+    /// `DiskArbitration` has no answer. The migration in
+    /// `CatalogStorePersistence.swift` that removes already-persisted
+    /// disk-image roots reuses this rather than re-deriving it.
+    nonisolated static func deviceModel(forVolumeAt url: URL, session: DASession?) -> String? {
+        guard let session,
+              let disk = DADiskCreateFromVolumePath(kCFAllocatorDefault, session, url as CFURL),
+              let description = DADiskCopyDescription(disk) as? [String: Any]
+        else {
+            return nil
+        }
+        return description[kDADiskDescriptionDeviceModelKey as String] as? String
     }
 }
 

@@ -387,6 +387,69 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(wall?.compact == 20_260_710_153_000)
         #expect(wall?.precision == "localWithOffset")
     }
+
+    /// Plan 0095 D10 backstop. A persisted removable-volume root whose path
+    /// is *currently* a mounted disk image is removed; one whose path isn't
+    /// currently mountable at all is left alone — the migration cannot prove
+    /// it a disk image, and the overlay-lifecycle rule treats an unresolvable
+    /// path as temporarily missing, not deleted (`docs/adr/0008-…`). Mounts a
+    /// real disk image rather than mocking `DiskArbitration`, since the fact
+    /// under test is what the system actually reports for one.
+    @Test func v16RemovesDiskImageRemovableRootsButPreservesUnmountedOnes() async throws {
+        let image = try MountedTestDiskImage.attach(named: "OtosV16MigrationTest")
+        defer { image.detach() }
+
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        try FileManager.default.createDirectory(
+            at: databaseURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let dbQueue = try DatabaseQueue(path: databaseURL.path(percentEncoded: false))
+        try CatalogStore.migrator.migrate(dbQueue)
+
+        let diskImagePath = try CatalogPath.normalizedDirectoryPath(for: image.mountURL).rawValue
+        let unmountedPath = "/Volumes/OtosNeverMounted-\(UUID().uuidString)"
+        try await dbQueue.writeWithoutTransaction { db in
+            try db.execute(
+                sql: "DELETE FROM grdb_migrations WHERE identifier = ?",
+                arguments: ["v16_remove_disk_image_removable_roots"]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO library_root (path, kind, device_identity, display_name)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [
+                    diskImagePath, LibraryRootKind.removableVolume.rawValue,
+                    "volume:disk-image-test", "OtosV16MigrationTest",
+                ]
+            )
+            try db.execute(
+                sql: """
+                INSERT INTO library_root (path, kind, device_identity, display_name)
+                VALUES (?, ?, ?, ?)
+                """,
+                arguments: [
+                    unmountedPath, LibraryRootKind.removableVolume.rawValue,
+                    "volume:unmounted-test", "NeverMounted",
+                ]
+            )
+        }
+
+        let store = CatalogStore(location: .databaseFile(databaseURL))
+        try await store.start(scansSavedLibraries: false)
+
+        let remainingPaths = try await dbQueue.read { db in
+            try Set(String.fetchAll(
+                db,
+                sql: "SELECT path FROM library_root WHERE kind = ?",
+                arguments: [LibraryRootKind.removableVolume.rawValue]
+            ))
+        }
+        #expect(!remainingPaths.contains(diskImagePath), "The disk image root must be removed")
+        #expect(remainingPaths.contains(unmountedPath), "An unmounted root must be left alone — it cannot be proven a disk image")
+    }
 }
 
 private extension CatalogStoreSchemaMigrationTests {

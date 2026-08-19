@@ -1,3 +1,4 @@
+import DiskArbitration
 import Foundation
 import GRDB
 
@@ -280,7 +281,52 @@ extension CatalogStore {
             try db.execute(sql: "ALTER TABLE library_root ADD COLUMN sort_index INTEGER NOT NULL DEFAULT 0")
             try backfillLibraryRootSortIndex(db)
         }
+        migrator.registerMigration("v16_remove_disk_image_removable_roots") { db in
+            try removeDiskImageRemovableRoots(db)
+        }
         return migrator
+    }
+
+    /// Plan 0095 D10 backstop. `RemovableVolumeMonitor.currentAttachments`
+    /// used to accept any mounted volume with `volumeIsRemovable == true`
+    /// alone, which a mounted disk image also satisfies — production
+    /// evidence held `/Volumes/Raycast` and `/Volumes/BoltAI 2`, both
+    /// app-installer DMGs, as permanent removable sources. The monitor now
+    /// excludes disk images at the source (`RemovableVolumeMonitor.
+    /// isPhysicalRemovableDevice`); this one-time pass removes rows that
+    /// already slipped through, keyed on the identical live
+    /// `DiskArbitration` predicate.
+    ///
+    /// Additive-safe by construction: a row is deleted only when its path is
+    /// *currently* mountable and `DiskArbitration` positively reports
+    /// `"Disk Image"` right now. A root whose volume is not currently
+    /// attached is left untouched — `deviceModel(forVolumeAt:session:)`
+    /// returns `nil` for both "not mounted" and "no answer," and this
+    /// migration only acts on the positive `"Disk Image"` case, never on
+    /// `nil` — matching the overlay-lifecycle rule that a temporarily-missing
+    /// original is never treated as deleted (`docs/adr/0008-…`). Originals on
+    /// disk are untouched either way; this removes only Otos's own catalog
+    /// rows, and `library_root.id`'s `ON DELETE CASCADE` foreign keys take
+    /// every row that referenced it (media assets, companions, choices) with it.
+    private static func removeDiskImageRemovableRoots(_ db: Database) throws {
+        let rows = try Row.fetchAll(
+            db,
+            sql: "SELECT id, path FROM library_root WHERE kind = ?",
+            arguments: [LibraryRootKind.removableVolume.rawValue]
+        )
+        guard !rows.isEmpty else {
+            return
+        }
+        let session = DASessionCreate(kCFAllocatorDefault)
+        for row in rows {
+            let id: Int64 = row["id"]
+            let path: String = row["path"]
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            guard RemovableVolumeMonitor.deviceModel(forVolumeAt: url, session: session) == "Disk Image" else {
+                continue
+            }
+            try db.execute(sql: "DELETE FROM library_root WHERE id = ?", arguments: [id])
+        }
     }
 
     /// Backfills `sort_index` in **today's displayed order** so upgrading does not
