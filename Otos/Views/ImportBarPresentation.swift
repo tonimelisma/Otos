@@ -210,7 +210,11 @@ nonisolated enum ImportBarPresentation {
         presentation: MediaOperationSourcePresentation,
         preferences: ImportPreferences
     ) -> ImportBarDrawnState {
-        let destinationName = presentation.destinationDisplayName ?? ""
+        // A destination path with no resolved display name yet (e.g. a
+        // `librariesByPath` snapshot that hasn't caught up) falls back to a
+        // true generic term rather than an empty-string substitution that
+        // would build a broken sentence ("already in ") (plan 0095 D9).
+        let destinationName = presentation.destinationDisplayName ?? "the library"
         if summary.copyCount == 0, summary.companionCopyCount == 0 {
             if summary.skipCount == 0 {
                 return ImportBarDrawnState(
@@ -264,7 +268,7 @@ nonisolated enum ImportBarPresentation {
         attentionItems: [MediaAttentionItem],
         presentation: MediaOperationSourcePresentation
     ) -> ImportBarDrawnState {
-        let destinationName = presentation.destinationDisplayName ?? ""
+        let destinationName = presentation.destinationDisplayName ?? "the library"
         let clause = attentionClause(items: attentionItems, destinationName: destinationName)
         return ImportBarDrawnState(
             kind: .needsAttention,
@@ -340,7 +344,7 @@ nonisolated enum ImportBarPresentation {
         if let remaining = remainingTimeClause(progress: progress) {
             secondary += " · \(remaining)"
         }
-        let destinationName = presentation.destinationDisplayName ?? ""
+        let destinationName = presentation.destinationDisplayName ?? "the library"
         var caption = "Into \(destinationName)"
         if preferences.autoEjectAfterImport {
             caption += " · the card ejects when it's done"
@@ -431,7 +435,7 @@ nonisolated enum ImportBarPresentation {
         presentation: MediaOperationSourcePresentation,
         preferences: ImportPreferences
     ) -> ImportBarDrawnState {
-        let destinationName = presentation.destinationDisplayName ?? ""
+        let destinationName = presentation.destinationDisplayName ?? "the library"
         // F, incomplete (some items couldn't be copied): its own copy and
         // badge regardless of whether the card is still attached — neither
         // eject nor erase decides anything further here, just go look
@@ -600,7 +604,7 @@ nonisolated enum ImportBarByteFormat {
     static func string(bytes: Int64) -> String {
         let megabytes = Double(bytes) / 1_000_000
         if megabytes < 1 {
-            let kilobytes = max(1, Int((Double(bytes) / 1000).rounded()))
+            let kilobytes = Int((Double(bytes) / 1000).rounded())
             return "\(kilobytes) KB"
         }
         if megabytes < 100 {

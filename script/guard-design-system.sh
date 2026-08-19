@@ -45,9 +45,23 @@ check_domain_nouns() {
   done < <(grep -RInE "Text\(\"[^\"]*\"" "$root/Otos/Views" --include='*.swift' || true)
 }
 
+# D9: the import bar mapper never builds a user-facing number or string from
+# a lying `?? 0` / `?? ""` substitution for an unknown value — omit it
+# instead (plan 0095 D9, `ImportBarPresentation.swift` specifically, since
+# that is the one file every drawn state's strings must pass through).
+LYING_DEFAULT_FILE="Otos/Views/ImportBarPresentation.swift"
+check_lying_defaults() {
+  local root="$1" file="$root/$LYING_DEFAULT_FILE" line
+  [[ -f "$file" ]] || return 0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "FAIL: D9 lying default (?? 0 / ?? \"\"): $line" >&2; return 1
+  done < <(grep -nE '\?\?\s*(0\b|"")' "$file" || true)
+}
+
 check_root() {
   local root="$1"
-  check_fonts_colors "$root" && check_domain_nouns "$root"
+  check_fonts_colors "$root" && check_domain_nouns "$root" && check_lying_defaults "$root"
 }
 
 self_test() {
@@ -62,6 +76,17 @@ self_test() {
 
   printf 'Text("The plan failed")\n' > "$d/Otos/Views/Bad.swift"
   if check_root "$d"; then echo "guard-design-system self-test failed (domain noun)" >&2; return 1; fi
+  rm -f "$d/Otos/Views/Bad.swift"
+
+  printf 'let x = presentation.name ?? ""\n' > "$d/Otos/Views/ImportBarPresentation.swift"
+  if check_root "$d"; then echo "guard-design-system self-test failed (lying empty-string default)" >&2; return 1; fi
+
+  printf 'let x = count ?? 0\n' > "$d/Otos/Views/ImportBarPresentation.swift"
+  if check_root "$d"; then echo "guard-design-system self-test failed (lying zero default)" >&2; return 1; fi
+
+  printf 'let x = count ?? 100\n' > "$d/Otos/Views/ImportBarPresentation.swift"
+  check_root "$d" || { echo "guard-design-system self-test failed (false positive on ?? 100)" >&2; return 1; }
+  rm -f "$d/Otos/Views/ImportBarPresentation.swift"
 
   printf 'Text("Import 3 Items").font(.body)\n' > "$d/Otos/Views/Bad.swift"
   check_root "$d"

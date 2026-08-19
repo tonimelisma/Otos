@@ -179,6 +179,18 @@ struct ImportBarPresentationTests {
         #expect(drawn.eraseConfirmationProvenClean)
     }
 
+    /// Plan 0095 D9: a destination path with no resolved display name yet
+    /// (`destinationDisplayName == nil` while `destinationPath` is still set)
+    /// used to substitute `""`, building a broken sentence ("already in ").
+    /// A true generic term is substituted instead.
+    @Test func readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly() {
+        let drawn = Self.map(Self.presentation(
+            destinationDisplayName: nil,
+            state: .ready(summary: Self.totals(skipCount: 181), generation: 1, skippedPackageCount: 0)
+        ))
+        #expect(drawn.secondaryLine == .plain("All 181 items are already in the library"))
+    }
+
     @Test func readyNothingNewWithEraseCheckedArmsErase() {
         var prefs = ImportPreferences.default
         prefs.deleteSourceAfterImport = true
@@ -327,6 +339,17 @@ struct ImportBarPresentationTests {
         #expect(text.hasSuffix("left"))
     }
 
+    /// Plan 0095 D9: same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
+    /// exercised at state E's own `destinationDisplayName ?? ""` site.
+    @Test func workingCaptionWithUnresolvedDestinationNameFallsBackHonestly() {
+        let progress = MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
+        let drawn = Self.map(Self.presentation(destinationDisplayName: nil, state: .executing(progress: progress)))
+        #expect(drawn.middleZone == .progress(
+            track: .determinate(completed: 1, total: 2),
+            caption: "Into the library"
+        ))
+    }
+
     @Test func workingCaptionNamesDestinationAndEjectPolicy() {
         var prefs = ImportPreferences.default
         prefs.autoEjectAfterImport = true
@@ -386,6 +409,17 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryAction == .ejectCard)
         #expect(drawn.showsSecondaryShowItemsButton)
         #expect(drawn.eraseConfirmationProvenClean)
+    }
+
+    /// Plan 0095 D9: same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
+    /// exercised at state F's own `destinationDisplayName ?? ""` site.
+    @Test func doneWithUnresolvedDestinationNameFallsBackHonestly() {
+        let drawn = Self.map(Self.presentation(
+            destinationDisplayName: nil,
+            state: .completed(summary: Self.totals(copyCount: 42, skipCount: 139), skippedForeignCount: 0, failedCount: 0),
+            copiedJustNow: 42
+        ))
+        #expect(drawn.secondaryLine == .plain("42 copied just now · 181 items in the library"))
     }
 
     // MARK: - F · Incomplete (row 11, mockup "F incomplete")
@@ -556,5 +590,20 @@ struct ImportBarPresentationTests {
         #expect(ImportBarByteFormat.string(bytes: 500_000_000) == "0.5 GB")
         #expect(ImportBarByteFormat.string(bytes: 4_200_000_000) == "4.2 GB")
         #expect(ImportBarByteFormat.string(bytes: 128_000_000_000) == "128 GB")
+    }
+
+    /// Plan 0095 D9: `max(1, …)` used to force `0 bytes` to render as `1 KB` —
+    /// a fabricated non-zero value for a genuinely-zero fact. `0` now renders
+    /// as `0 KB`, and every threshold the formatter switches units at is
+    /// pinned so a future edit can't reintroduce a silent off-by-one.
+    @Test func byteFormattingAtEveryUnitBoundaryIsHonest() {
+        #expect(ImportBarByteFormat.string(bytes: 0) == "0 KB")
+        #expect(ImportBarByteFormat.string(bytes: 1) == "0 KB")
+        #expect(ImportBarByteFormat.string(bytes: 999) == "1 KB")
+        #expect(ImportBarByteFormat.string(bytes: 1000) == "1 KB")
+        #expect(ImportBarByteFormat.string(bytes: 99_999_999) == "100 MB")
+        #expect(ImportBarByteFormat.string(bytes: 100_000_000) == "0.1 GB")
+        #expect(ImportBarByteFormat.string(bytes: 99_999_999_999) == "100.0 GB")
+        #expect(ImportBarByteFormat.string(bytes: 100_000_000_000) == "100 GB")
     }
 }
