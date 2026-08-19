@@ -19,7 +19,8 @@ struct ImportBarPresentationTests {
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
         incompleteItems: [MediaAssetID] = [],
-        sourceKind: LibraryRootKind = .removableVolume
+        sourceKind: LibraryRootKind = .removableVolume,
+        sessionPreferences: ImportPreferences = .default
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: source,
@@ -32,6 +33,7 @@ struct ImportBarPresentationTests {
             cardStillExists: cardStillExists,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
+            sessionPreferences: sessionPreferences,
             incompleteItems: incompleteItems
         )
     }

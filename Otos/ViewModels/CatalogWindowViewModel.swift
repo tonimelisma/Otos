@@ -180,10 +180,6 @@ final class CatalogWindowViewModel {
     /// `init`, not a property default, because its initial value depends on the
     /// injected `preferences`.
     var importPreferences: ImportPreferences
-    /// Per-source session ImportPreferences cache (Stage 7), seeded from
-    /// ImportPreferences and discarded on detach. Authoritative store is the
-    /// coordinator's `sessionPreferences`; this mirrors it for SwiftUI.
-    var sessionPreferencesBySource: [LibraryRootPath: ImportPreferences] = [:]
     /// Sources with a Cancel in flight, for the import bar's transient
     /// "Stopping…" variant (`import-bar.md` state E, cancelling). The
     /// coordinator has no state for this — it is UI-only, set the moment

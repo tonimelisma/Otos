@@ -799,6 +799,110 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// Plan 0095 D6: `presentation(for:)` used to synthesize a zero-progress
+    /// literal for `.executing` every time it was derived — real progress only
+    /// ever reached the one private splice-and-yield path inside
+    /// `applyExecutionProgress`, so any other re-derivation (a `publish()` for
+    /// an unrelated reason, or simply re-reading the current snapshot, as here)
+    /// showed zeros even after real progress had landed. `session.lastProgress`
+    /// is what that same shared derivation reads now, so `currentPresentations()`
+    /// — which exercises the identical `sortedPresentations()` path any
+    /// `publish()` uses — reflects the live value regardless of what triggered it.
+    @Test func executingPresentationCarriesLiveProgressNotZero() async throws {
+        log("START executingPresentationCarriesLiveProgressNotZero")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: "f.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:live-progress", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+
+        let liveProgress = MediaOperationProgress(
+            completedCount: 1, totalCount: 1, completedBytes: 512, totalBytes: 1024, elapsedMs: 250
+        )
+        await execControl.sendProgress(liveProgress, for: cardPath)
+
+        let observed = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
+            if case let .executing(progress) = pres.state, progress == liveProgress {
+                return true
+            }
+            return false
+        })
+        guard case let .executing(progress) = observed.state else {
+            Issue.record("Expected .executing, got \(observed.state)")
+            await coordinator.shutdown()
+            return
+        }
+        #expect(progress == liveProgress)
+
+        // The other half of D6: `.completed` must also carry the real settled
+        // outcome, not a zero-summary literal. `.completed` is transient by
+        // design — `applyExecutionResult` schedules the post-settlement
+        // rebuild synchronously right after publishing it, so a poll of
+        // `currentPresentations()` reliably observes the *next* state instead
+        // (the same reason other tests in this file assert on `copiedJustNow`,
+        // not `.state`, for a settled run). An actively-consumed stream
+        // subscription catches the frame instead of racing a fresh derivation
+        // against it. Non-zero `skippedForeignCount`/`failedCount` rule out a
+        // coincidental-zero pass.
+        let stream = await coordinator.presentationsStream()
+        await execControl.resumePending(
+            for: cardPath,
+            with: .completed(
+                publishedCount: 1,
+                hasBlockedEntries: false,
+                hasEntryFailures: true,
+                skippedForeignCount: 1,
+                failedCount: 1,
+                incompleteItems: []
+            )
+        )
+        let outcome = try await withTestTimeout("completed frame observed", timeout: .seconds(5)) {
+            () async throws -> (summary: MediaOperationPlanTotals, skippedForeignCount: Int, failedCount: Int) in
+            var iterator = stream.makeAsyncIterator()
+            while let values = await iterator.next() {
+                if let pres = values.first(where: { $0.sourcePath == cardPath }),
+                   case let .completed(summary, skippedForeignCount, failedCount, _) = pres.state
+                {
+                    return (summary, skippedForeignCount, failedCount)
+                }
+            }
+            throw AsyncTestTimeoutError.streamEnded("completed frame for \(cardPath.rawValue)")
+        }
+        await queueTask.value
+        #expect(outcome.summary.copyCount == 1)
+        #expect(outcome.skippedForeignCount == 1)
+        #expect(outcome.failedCount == 1)
+        log("END")
+        await coordinator.shutdown()
+    }
+
     /// `import-bar.md` state F ("card gone"): the batch row outlives the
     /// source session. A settled (not executing) attachment's final
     /// presentation must still be findable by `batchID` after its source

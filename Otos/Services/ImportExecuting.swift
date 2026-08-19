@@ -75,6 +75,15 @@ actor ControlledExecutionControl {
     private var pending: [LibraryRootPath: [CheckedContinuation<MediaImportExecutionResult, Never>]] = [:]
     private(set) var cancelled: Set<LibraryRootPath> = []
     private(set) var executed: [LibraryRootPath] = []
+    private var progressCallbacks: [LibraryRootPath: @Sendable (MediaOperationProgress) -> Void] = [:]
+
+    /// Delivers `progress` through the `onProgress` callback `execute()` was
+    /// called with for `source`, letting a test observe how the coordinator's
+    /// presentation reflects live progress mid-execution — before any
+    /// terminal result — without needing a real executor.
+    func sendProgress(_ progress: MediaOperationProgress, for source: LibraryRootPath) {
+        progressCallbacks[source]?(progress)
+    }
 
     func suspendNextExecution(for source: LibraryRootPath) {
         suspendNext[source, default: 0] += 1
@@ -147,6 +156,13 @@ actor ControlledExecutionControl {
         executed.append(source)
     }
 
+    fileprivate func registerProgressCallback(
+        for source: LibraryRootPath,
+        _ callback: @escaping @Sendable (MediaOperationProgress) -> Void
+    ) {
+        progressCallbacks[source] = callback
+    }
+
     private func resumeOnePendingWithCancellation(for source: LibraryRootPath) {
         guard var queue = pending[source], !queue.isEmpty else { return }
         let cont = queue.removeFirst()
@@ -210,6 +226,7 @@ actor ControlledImportExecutor: ImportExecuting {
             return .failed(reason: .unexpected(detail: "notAnImportPlan"))
         }
         await control.recordExecuted(for: source)
+        await control.registerProgressCallback(for: source, onProgress)
         let shouldSuspend = await control.takeSuspend(for: source)
         if shouldSuspend {
             return await control.suspendAndWait(for: source)

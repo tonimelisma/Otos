@@ -125,6 +125,7 @@ struct SidebarSelectionPolicyTests {
             cardStillExists: true,
             copiedJustNow: nil,
             isFullyClean: nil,
+            sessionPreferences: .default,
             incompleteItems: []
         )
     }

@@ -90,6 +90,16 @@ actor MediaOperationCoordinator {
         let incompleteItems: [MediaAssetID]
     }
 
+    /// A settled `.completed` execution's outcome, stored on the session so
+    /// `presentation(for:)` can read a real value instead of the zero-summary
+    /// literal `.completed` used to synthesize on every publish (plan 0095 D6).
+    private struct SettledOutcome {
+        let summary: MediaOperationPlanTotals
+        let skippedForeignCount: Int
+        let failedCount: Int
+        let incompleteItems: [MediaAssetID]
+    }
+
     private struct SourceSession {
         let attachmentGeneration: AttachmentGeneration
         var root: CatalogLibraryState
@@ -110,6 +120,18 @@ actor MediaOperationCoordinator {
         var nextBuildGeneration: BuildGeneration
         var attachStartedAt: ContinuousClock.Instant
         var attachToReadyMs: Int?
+        /// The live execution's most recent progress, so a `publish()` that
+        /// fires for an unrelated reason mid-execution (another source's
+        /// catalog change, say) re-derives the real in-flight progress from
+        /// `presentation(for:)` instead of resetting the bar to zero
+        /// (plan 0095 D6). Set to a true starting value the moment `.executing`
+        /// begins and overwritten by every subsequent progress callback; only
+        /// meaningful while `phase` is `.executing`.
+        var lastProgress: MediaOperationProgress?
+        /// The most recent settled `.completed` execution's outcome. Set in the
+        /// same transaction as `phase = .completed` (plan 0095 D6); only
+        /// meaningful while `phase` is `.completed`.
+        var settledOutcome: SettledOutcome?
         var lastCompletion: AttachmentCompletion?
         /// The most recently minted batch for this attachment, set the moment
         /// execution begins and left alone afterward. `lastCompletion` only
@@ -308,10 +330,6 @@ actor MediaOperationCoordinator {
         }
     }
 
-    func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
-        sourceSessions[source]?.preferences ?? ImportPreferencesStore.load(defaults: preferences)
-    }
-
     func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) async {
         guard var session = sourceSessions[source] else { return }
         session.preferences = prefs
@@ -464,6 +482,17 @@ actor MediaOperationCoordinator {
         session.phase = .executing(ctx)
         session.importRequested = false
         session.lastAttemptedBatch = batch
+        // A true starting value (real totals, zero completed), overwritten by
+        // the executor's first progress callback moments later — not a
+        // fabricated zero, since it's what's actually true before any bytes
+        // have moved (plan 0095 D6).
+        session.lastProgress = MediaOperationProgress(
+            completedCount: 0,
+            totalCount: summary.copyCount,
+            completedBytes: 0,
+            totalBytes: summary.copyBytes,
+            elapsedMs: 0
+        )
         sourceSessions[source] = session
         publish()
 
@@ -486,19 +515,19 @@ actor MediaOperationCoordinator {
     }
 
     private func applyExecutionProgress(source: LibraryRootPath, attachment: AttachmentGeneration, progress: MediaOperationProgress) {
-        guard let session = sourceSessions[source],
+        guard var session = sourceSessions[source],
               session.attachmentGeneration == attachment,
               case .executing = session.phase
         else {
             return
         }
-        // Progress is not stored on the session — published directly. The
-        // session's `.executing` phase (and its batch) is unchanged.
-        let progPresentation = makePresentation(session: session, state: .executing(progress: progress))
-        let values = sortedPresentations().map { $0.sourcePath == source ? progPresentation : $0 }
-        for continuation in continuations.values {
-            continuation.yield(values)
-        }
+        // Stored on the session so any later `publish()` — including one fired
+        // for an unrelated reason mid-execution — re-derives this same live
+        // value via `presentation(for:)` instead of resetting to zero
+        // (plan 0095 D6). `publish()` is the only yield to continuations.
+        session.lastProgress = progress
+        sourceSessions[source] = session
+        publish()
     }
 
     private func applyExecutionResult(
@@ -531,20 +560,18 @@ actor MediaOperationCoordinator {
                     && skippedForeignCount == 0 && summary.blockedCount == 0,
                 incompleteItems: incompleteItems
             )
-            sourceSessions[source] = session
-            let completedPresentation = makePresentation(
-                session: session,
-                state: .completed(
-                    summary: summary,
-                    skippedForeignCount: skippedForeignCount,
-                    failedCount: failedCount,
-                    incompleteItems: incompleteItems
-                )
+            // Stored on the session so `presentation(for:)` reads the real
+            // outcome instead of the zero-summary literal `.completed` used to
+            // synthesize on every publish (plan 0095 D6). `publish()` is the
+            // only yield to continuations.
+            session.settledOutcome = SettledOutcome(
+                summary: summary,
+                skippedForeignCount: skippedForeignCount,
+                failedCount: failedCount,
+                incompleteItems: incompleteItems
             )
-            let values = sortedPresentations().map { $0.sourcePath == source ? completedPresentation : $0 }
-            for continuation in continuations.values {
-                continuation.yield(values)
-            }
+            sourceSessions[source] = session
+            publish()
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
                 await autoEjectIfRequested(sourceRoot)
             }
@@ -762,6 +789,8 @@ actor MediaOperationCoordinator {
                     nextBuildGeneration: BuildGeneration(rawValue: 1),
                     attachStartedAt: ContinuousClock().now,
                     attachToReadyMs: nil,
+                    lastProgress: nil,
+                    settledOutcome: nil,
                     lastCompletion: nil,
                     lastAttemptedBatch: nil
                 )
@@ -1147,22 +1176,42 @@ actor MediaOperationCoordinator {
             session.importRequested ? .queuedForReadiness : .planning
         case let .ready(ctx):
             session.importRequested ? .queuedForReadiness : readyState(for: session, ctx: ctx)
-        case let .executing(ctx):
-            .executing(progress: MediaOperationProgress(
-                completedCount: 0,
-                totalCount: ctx.plan.totals.copyCount,
-                completedBytes: 0,
-                totalBytes: 0,
-                elapsedMs: 0
-            ))
+        case .executing:
+            executingState(for: session)
         case .completed:
-            // Completed is a transient terminal presentation; keep summary empty for now.
-            // The real completed presentation is published via execution result override.
-            .completed(summary: MediaOperationPlanTotals(copyCount: 0, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0))
+            completedState(for: session)
         case let .failed(reason, publishedCount):
             .failed(reason: reason, publishedCount: publishedCount)
         }
         return makePresentation(session: session, state: state)
+    }
+
+    /// `runExecution` sets `lastProgress` in the same transaction it sets
+    /// `phase = .executing`, and `applyExecutionProgress` is the only other
+    /// writer of either — so a `.executing` phase with no stored progress is
+    /// unreachable, not a case to paper over with a fabricated zero
+    /// (plan 0095 D6).
+    private func executingState(for session: SourceSession) -> MediaOperationSourceState {
+        guard let progress = session.lastProgress else {
+            preconditionFailure("`.executing` phase always sets `lastProgress` in the same transaction (runExecution)")
+        }
+        return .executing(progress: progress)
+    }
+
+    /// `applyExecutionResult` sets `settledOutcome` in the same transaction it
+    /// sets `phase = .completed`, and is the only writer of either — so a
+    /// `.completed` phase with no stored outcome is unreachable, not a case to
+    /// paper over with a fabricated zero-summary literal (plan 0095 D6).
+    private func completedState(for session: SourceSession) -> MediaOperationSourceState {
+        guard let outcome = session.settledOutcome else {
+            preconditionFailure("`.completed` phase always sets `settledOutcome` in the same transaction (applyExecutionResult)")
+        }
+        return .completed(
+            summary: outcome.summary,
+            skippedForeignCount: outcome.skippedForeignCount,
+            failedCount: outcome.failedCount,
+            incompleteItems: outcome.incompleteItems
+        )
     }
 
     /// A built, internally-`.ready` plan is only shown as state C once the
@@ -1231,6 +1280,7 @@ actor MediaOperationCoordinator {
             cardStillExists: cardStillExists ?? (session.root.availability == .available),
             copiedJustNow: session.lastCompletion?.publishedCount,
             isFullyClean: session.lastCompletion?.isFullyClean,
+            sessionPreferences: session.preferences,
             incompleteItems: session.lastCompletion?.incompleteItems ?? []
         )
     }

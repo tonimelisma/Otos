@@ -331,6 +331,13 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// already copied is lost").
     let copiedJustNow: Int?
     let isFullyClean: Bool?
+    /// This attachment's live session preferences, read directly off the
+    /// coordinator's own `SourceSession.preferences` rather than mirrored into a
+    /// second ViewModel-owned dictionary. `setSessionPreferences` writes only to
+    /// the coordinator; the next `publish()` carrying the new value here is the
+    /// confirmation — eliminates the two-owner race where a per-frame refresh
+    /// could revert an in-flight optimistic write (plan 0095 D7).
+    let sessionPreferences: ImportPreferences
     /// Items from that same settled execution that started but did not land —
     /// failed mid-copy, or skipped because an identical file already exists in
     /// a *different* library — so state F's incomplete variant can select and

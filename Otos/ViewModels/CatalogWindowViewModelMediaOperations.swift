@@ -82,7 +82,6 @@ extension CatalogWindowViewModel {
         followNewBatchesOnce(presentations)
         Task {
             await refreshRemovableDestinations()
-            await refreshSessionPreferences()
         }
     }
 
@@ -110,26 +109,18 @@ extension CatalogWindowViewModel {
         }
     }
 
-    func refreshSessionPreferences() async {
-        guard let coordinator = mediaOperationCoordinator else {
-            return
-        }
-        var cache: [LibraryRootPath: ImportPreferences] = [:]
-        for presentation in importPresentations {
-            let prefs = await coordinator.sessionPreferences(for: presentation.sourcePath)
-            cache[presentation.sourcePath] = prefs
-        }
-        await MainActor.run {
-            sessionPreferencesBySource = cache
-        }
-    }
-
+    /// Reads straight off the live presentation — the coordinator's own
+    /// `SourceSession.preferences` — rather than a second ViewModel-owned
+    /// dictionary kept in sync by a per-frame refresh (plan 0095 D7).
     func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
-        sessionPreferencesBySource[source] ?? importPreferences
+        importPresentations.first { $0.sourcePath == source }?.sessionPreferences ?? importPreferences
     }
 
+    /// Writes only to the coordinator; the next `publish()` carrying the new
+    /// value on `sessionPreferences` is the confirmation. No optimistic local
+    /// write — that double-write is exactly what let a per-frame refresh
+    /// revert an in-flight toggle (plan 0095 D7).
     func setSessionPreferences(_ prefs: ImportPreferences, for source: LibraryRootPath) {
-        sessionPreferencesBySource[source] = prefs
         guard let coordinator = mediaOperationCoordinator else {
             return
         }

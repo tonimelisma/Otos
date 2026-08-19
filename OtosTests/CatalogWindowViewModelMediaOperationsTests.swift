@@ -13,7 +13,10 @@ struct CatalogWindowViewModelMediaOperationsTests {
     private static let otherPath = LibraryRootPath(rawValue: "/Volumes/OTHER")
     private static let batchID = ImportBatchID(unixMilliseconds: 1_704_067_200_000)
 
-    private static func presentation(batchID: ImportBatchID?) -> MediaOperationSourcePresentation {
+    private static func presentation(
+        batchID: ImportBatchID?,
+        sessionPreferences: ImportPreferences = .default
+    ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: cardPath,
             sourceKind: .removableVolume,
@@ -25,6 +28,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
             cardStillExists: true,
             copiedJustNow: nil,
             isFullyClean: nil,
+            sessionPreferences: sessionPreferences,
             incompleteItems: []
         )
     }
@@ -130,6 +134,38 @@ struct CatalogWindowViewModelMediaOperationsTests {
         )
         model.applyState(bouncedState)
         #expect(model.sidebarSelection == .allMedia)
+    }
+
+    /// Plan 0095 D7: `sessionPreferences` used to live in a second
+    /// ViewModel-owned dictionary (`sessionPreferencesBySource`) that a
+    /// per-frame `Task` wholesale-replaced from the coordinator on every
+    /// presentation, racing an optimistic write from `setSessionPreferences`
+    /// and reverting an in-flight toggle. Now `sessionPreferences(for:)` reads
+    /// straight off the live presentation — there is no second dictionary left
+    /// to race, so an interleaved frame that still carries the old value (the
+    /// coordinator hasn't processed the toggle yet) cannot overwrite a
+    /// confirmation that already landed, and a frame carrying the toggled
+    /// value is reflected immediately once it does land.
+    @Test func sessionPreferencesToggleSurvivesAnInterleavedFrame() {
+        let model = makeModel()
+        model.applyImportPresentations([Self.presentation(batchID: nil)])
+        #expect(model.sessionPreferences(for: Self.cardPath) == .default)
+
+        // An interleaved frame with nothing to do with the toggle (e.g. a
+        // progress tick) still carries the coordinator's last-published,
+        // pre-toggle value.
+        model.applyImportPresentations([Self.presentation(batchID: nil)])
+        #expect(model.sessionPreferences(for: Self.cardPath) == .default)
+
+        // The coordinator's confirmation frame lands, carrying the toggled value.
+        var toggled = ImportPreferences.default
+        toggled.deleteSourceAfterImport = true
+        model.applyImportPresentations([Self.presentation(batchID: nil, sessionPreferences: toggled)])
+        #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
+
+        // A further interleaved frame after the toggle must not revert it.
+        model.applyImportPresentations([Self.presentation(batchID: nil, sessionPreferences: toggled)])
+        #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
     }
 
     private static func state(
