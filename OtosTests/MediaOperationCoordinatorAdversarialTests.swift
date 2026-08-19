@@ -711,12 +711,17 @@ struct MediaOperationCoordinatorAdversarialTests {
     }
 
     /// `import-bar.md` "Where the user is standing": the batch ID is carried as
-    /// state on the presentation, present from execution start onward, so a
-    /// consumer never needs to have observed the `.executing` frame itself —
-    /// only the current snapshot — to know which batch this attachment landed
-    /// in. `presentationsStream()`'s `.bufferingNewest(1)` can drop any number
-    /// of intermediate frames (trap #5); this proves the fact survives that by
-    /// construction rather than by having watched every frame.
+    /// state on the presentation, so a consumer never needs to have observed
+    /// the frame that first set it — only the current snapshot — to know
+    /// which batch this attachment landed in. `presentationsStream()`'s
+    /// `.bufferingNewest(1)` can drop any number of intermediate frames
+    /// (trap #5); this proves the fact survives that by construction rather
+    /// than by having watched every frame. `.executing`'s own `batchID` is
+    /// gated on a real published asset (plan 0095 step 7, owner decision:
+    /// "move batch selection to first-asset") — this controlled executor
+    /// never journals one, so `batchID` legitimately stays hidden throughout
+    /// `.executing` here; the durability claim is proven from settlement
+    /// onward instead.
     @Test func batchIDIsStateThatSurvivesADroppedIntermediateFrame() async throws {
         log("START batchIDIsStateThatSurvivesADroppedIntermediateFrame")
         let temp = try makeTempRoot()
@@ -752,17 +757,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitForPendingExecution(execControl, source: cardPath)
 
-        // The batch is minted eagerly at execution start — no completed result
-        // has been produced yet, and no frame has been consumed from the
-        // stream. This snapshot getter (not the stream) is deliberately the
-        // only thing read here.
+        // `.executing`'s own batchID is gated on a real published asset (plan
+        // 0095 step 7) — this controlled executor never journals one, so
+        // batchID legitimately stays nil throughout `.executing` here.
         let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         guard case .executing = executing.state else {
             Issue.record("Expected .executing, got \(executing.state)")
             await coordinator.shutdown()
             return
         }
-        let mintedBatch = try #require(executing.batchID, "batchID must be present from execution start")
+        #expect(executing.batchID == nil, "batchID must stay hidden until a real asset has published")
 
         // Resume straight to completion. Whatever progress frames the
         // executor's onProgress would have emitted are never observed by this
@@ -783,11 +787,12 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let deadline = ContinuousClock().now + Duration.seconds(5)
         var sawCompletion = false
+        var mintedBatch: ImportBatchID?
         while ContinuousClock().now < deadline {
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
                pres.copiedJustNow != nil
             {
-                #expect(pres.batchID == mintedBatch, "Batch ID must be the same value minted at execution start")
+                mintedBatch = try #require(pres.batchID, "batchID must be present once the run has settled")
                 #expect(pres.copiedJustNow == 1)
                 sawCompletion = true
                 break
@@ -795,6 +800,10 @@ struct MediaOperationCoordinatorAdversarialTests {
             try await Task.sleep(for: .milliseconds(20))
         }
         #expect(sawCompletion, "Expected lastCompletion to be recorded after the executor result settled")
+        // A second, independent snapshot read finds the same value without
+        // having observed the transition that set it — state, not an event.
+        let again = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        #expect(again.batchID == mintedBatch)
         log("END")
         await coordinator.shutdown()
     }
@@ -987,6 +996,9 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// `batchID` would go nil the instant `.executing` becomes `.failed` —
     /// right when the sidebar-follow feature and state G ("never
     /// auto-dismisses") most need it to stay identified by batch.
+    /// `lastAttemptedBatch`'s fallback is unaffected by plan 0095 step 7's
+    /// `.executing`-only gate (below): a failed run still needs its batch
+    /// pinned regardless of whether anything ever published.
     @Test func batchIDSurvivesAnImmediateFailureBeforeAnyCopy() async throws {
         log("START batchIDSurvivesAnImmediateFailureBeforeAnyCopy")
         let temp = try makeTempRoot()
@@ -1024,7 +1036,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitForPendingExecution(execControl, source: cardPath)
 
         let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
-        let mintedBatch = try #require(executing.batchID, "batchID must be present from execution start")
+        #expect(executing.batchID == nil, "batchID must stay hidden during .executing until a real asset has published")
 
         // A failure with nothing really wrong self-heals via the coordinator's
         // ordinary "rebuild after any terminal settlement" behavior — `.failed`
@@ -1044,7 +1056,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             }
             return false
         }
-        #expect(failed.batchID == mintedBatch, "The batch ID that failed must survive into the Failed presentation")
+        #expect(failed.batchID != nil, "The batch minted for this attempt must survive into the Failed presentation")
         log("END")
         await coordinator.shutdown()
     }

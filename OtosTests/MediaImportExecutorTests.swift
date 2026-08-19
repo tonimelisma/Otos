@@ -617,6 +617,88 @@ struct ImportExecutionProgressTests {
         #expect(hasEntryFailures)
     }
 
+    /// Plan 0095 D12: state F-incomplete's "Show them" reveal selects from
+    /// the batch row's destination-keyed grid, but `incompleteItems` used to
+    /// record `entry.source.id` — the source card's identity, which never
+    /// matches anything there, so the reveal selected nothing. A
+    /// `.skippedForeign` entry now records the destination identity — the
+    /// one thing actually sitting at that path for the reveal to select.
+    @Test func incompleteItemsCarryDestinationIdentityNotSourceIdentity() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+
+        let sourceURL = sourceRoot.appending(path: "a.jpg")
+        let modifiedAt = Date(timeIntervalSince1970: 100)
+        try Data(repeating: 0x01, count: 10).write(to: sourceURL)
+        try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: sourceURL.path)
+
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        let relative = MediaRelativePath(rawValue: "a.jpg")
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: sourcePath, relativePath: relative),
+            sourceURL: sourceURL,
+            relativePath: relative,
+            byteSize: 10,
+            contentModifiedAt: modifiedAt,
+            captureWallCompact: nil,
+            mediaKind: .image,
+            fileExtension: "jpg",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourcePath,
+            destinationRoot: destinationPath,
+            sourceOccupancyRevision: 1,
+            destinationOccupancyRevision: 1,
+            sourceMedia: [facts],
+            destinationOccupants: [:],
+            policy: policy,
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
+        #expect(plan.entries.count == 1)
+        guard case .copy = plan.entries[0].disposition else {
+            Issue.record("Expected a .copy disposition, got \(plan.entries[0].disposition)")
+            return
+        }
+        let finalDestination = plan.entries[0].finalDestination
+
+        // A foreign file lands at the computed destination path after
+        // planning — a race, or a stale plan — forcing copyEntry's existence
+        // check to skip it as foreign at execution time.
+        try Data(repeating: 0x02, count: 20).write(to: destinationRoot.appending(path: finalDestination.rawValue))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationRoot)
+        let result = await MediaImportExecutor(store: store).execute(
+            plan: plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:d12-destination-identity",
+            deleteSourceRequested: false
+        ) { _ in }
+
+        guard case let .completed(_, _, _, skippedForeignCount, _, incompleteItems) = result else {
+            Issue.record("Expected completed with a skipped-foreign entry, got \(result)")
+            return
+        }
+        #expect(skippedForeignCount == 1)
+        let expectedDestinationID = MediaAssetID(libraryRootPath: destinationPath, relativePath: finalDestination)
+        #expect(incompleteItems == [expectedDestinationID])
+        #expect(!incompleteItems.contains(plan.entries[0].source.id))
+    }
+
     @Test func zeroCopyPlanWithDeleteRequestedExecutesDeletion() async throws {
         let fixture = try await makeZeroCopyFixture()
         let result = await MediaImportExecutor(store: fixture.store).execute(

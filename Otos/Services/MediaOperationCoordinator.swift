@@ -142,6 +142,16 @@ actor MediaOperationCoordinator {
         /// visible on the batch row (`import-bar.md` state G, "never
         /// auto-dismisses").
         var lastAttemptedBatch: ImportBatchID?
+        /// Whether `lastAttemptedBatch` has at least one durably-published
+        /// asset yet, per `store.importBatchAssetCount`. Gates `.executing`'s
+        /// own `batchID` exposure so `followNewBatchesOnce` never navigates
+        /// to a batch row before there is anything in it to show (plan 0095
+        /// step 7, owner decision: "move batch selection to first-asset").
+        /// Reset to `false` at the start of every new attempt in
+        /// `runExecution`. Terminal-state batch visibility
+        /// (`.completed`/`.cancelled`/`.failed`) is unaffected — that fallback
+        /// already has its own reason to stay eager (state G pinning).
+        var batchAssetCountConfirmed = false
     }
 
     private var sourceSessions: [LibraryRootPath: SourceSession] = [:]
@@ -247,6 +257,7 @@ actor MediaOperationCoordinator {
             for await _ in catalogChanges {
                 guard let self else { return }
                 await handleCatalogChangeForMetadataGate()
+                await confirmExecutingBatchAssetCounts()
                 await refreshSources(reason: "catalogChange")
             }
         }
@@ -459,8 +470,10 @@ actor MediaOperationCoordinator {
         // Minted here, not read off `plan.mode` (a throwaway id re-minted on
         // every re-plan — trap #6) and not left to the executor to mint deep
         // inside `execute()`: the coordinator is the one place that must know
-        // it before execution starts, so it can publish it as state on every
-        // frame from here on (`import-bar.md` "Where the user is standing").
+        // it before execution starts, tracked as session state
+        // (`lastAttemptedBatch`) from here on (`import-bar.md` "Where the
+        // user is standing"). The presentation's own `batchID` field is not
+        // exposed this eagerly — see `currentBatchID(for:)`.
         let batch = ImportBatchID()
 
         // Keep execution task for cancellation/shutdown, but execution itself
@@ -482,6 +495,7 @@ actor MediaOperationCoordinator {
         session.phase = .executing(ctx)
         session.importRequested = false
         session.lastAttemptedBatch = batch
+        session.batchAssetCountConfirmed = false
         // A true starting value (real totals, zero completed), overwritten by
         // the executor's first progress callback moments later — not a
         // fabricated zero, since it's what's actually true before any bytes
@@ -749,6 +763,41 @@ actor MediaOperationCoordinator {
             scheduleBuildIfNeeded(source)
         }
         OtosLog.catalog.notice("op=import.coordinator phase=catalogChangeWake waitingCount=\(waitingSources.count, privacy: .public)")
+    }
+
+    /// Confirms, for every still-executing session that hasn't proven itself
+    /// yet, whether its batch now has at least one durably-published asset —
+    /// the fact `currentBatchID` gates `.executing`'s own `batchID` exposure
+    /// on (plan 0095 step 7). Piggybacks on the catalog-change notification
+    /// this coordinator already consumes for every attached source rather
+    /// than adding a second, dedicated polling loop: an import's own
+    /// publish/settle writes are themselves catalog changes, so this fires
+    /// promptly without inventing new machinery for it.
+    private func confirmExecutingBatchAssetCounts() async {
+        let candidates = sourceSessions.compactMap { source, session -> (LibraryRootPath, ImportBatchID)? in
+            guard case let .executing(ctx) = session.phase, !session.batchAssetCountConfirmed else {
+                return nil
+            }
+            return (source, ctx.batch)
+        }
+        guard !candidates.isEmpty else { return }
+        var didConfirm = false
+        for (source, batch) in candidates {
+            let count = await (try? store.importBatchAssetCount(batch)) ?? 0
+            guard count > 0,
+                  var session = sourceSessions[source],
+                  case let .executing(ctx) = session.phase,
+                  ctx.batch == batch
+            else {
+                continue
+            }
+            session.batchAssetCountConfirmed = true
+            sourceSessions[source] = session
+            didConfirm = true
+        }
+        if didConfirm {
+            publish()
+        }
     }
 
     private func refreshSources(reason: String) async {
@@ -1253,13 +1302,23 @@ actor MediaOperationCoordinator {
     }
 
     /// The batch this attachment is currently working on or last worked on:
-    /// the live execution's batch while executing, else the most recent
+    /// the live execution's batch while executing (once it has proven itself
+    /// non-empty — see `batchAssetCountConfirmed`), else the most recent
     /// *settled* execution's batch, else the most recent *attempted* one —
     /// covering a run that failed before ever settling — else `nil` before any
     /// execution has started (`import-bar.md` "Where the user is standing").
+    ///
+    /// The `.executing` branch is gated and the terminal fallback is not: a
+    /// long-running import must not surface `batchID` — and so pull
+    /// `followNewBatchesOnce` into a batch row with nothing in it yet —
+    /// before its first asset actually lands (plan 0095 step 7, owner
+    /// decision), but a *failed* run still needs its batch pinned and visible
+    /// on state G regardless of whether anything ever published, which is
+    /// exactly what `lastAttemptedBatch`'s existing fallback already
+    /// guarantees.
     private func currentBatchID(for session: SourceSession) -> ImportBatchID? {
         if case let .executing(ctx) = session.phase {
-            return ctx.batch
+            return session.batchAssetCountConfirmed ? ctx.batch : nil
         }
         return session.lastCompletion?.batch ?? session.lastAttemptedBatch
     }

@@ -46,12 +46,71 @@ struct ImportPlanFooter: View {
         )
     }
 
+    private var renderedPrimary: RenderedPrimary {
+        Self.renderedPrimary(for: drawn)
+    }
+
+    /// The primary button's fully-derived render intent: title, enabled
+    /// state, default-keyboard-shortcut eligibility, and destructive tint —
+    /// computed once here and consumed by every `primaryAction` case in
+    /// `primaryButton`, rather than each case independently re-deriving its
+    /// own title/shortcut/tint. `drawn.primaryEnabled` used to be read by
+    /// only 1 of 7 cases; the cancelling state (`primaryEnabled: false`)
+    /// rendered a live button because nothing forced every case through one
+    /// owner (plan 0095 D11). A pure value type — not a rendered SwiftUI
+    /// view — is what closes the gap that let that ship green: the mapper
+    /// was fully covered by tests, the renderer was not. `nonisolated`
+    /// deliberately opts out of `ImportPlanFooter`'s inferred `@MainActor`
+    /// isolation (a `View`'s default) — this is pure computation with no UI
+    /// state, and a test needs to call it off the main actor.
+    nonisolated struct RenderedPrimary: Equatable {
+        let title: String
+        let isEnabled: Bool
+        let isDefault: Bool
+        let isDestructive: Bool
+    }
+
+    nonisolated static func renderedPrimary(for drawn: ImportBarDrawnState) -> RenderedPrimary {
+        let title: String
+        var isDefault = true
+        var isDestructive = false
+        switch drawn.primaryAction {
+        case .importPending:
+            title = "Import"
+        case let .importItems(count):
+            title = "Import \(count) \(count == 1 ? "Item" : "Items")"
+        case .ejectCard:
+            title = "Eject Card"
+        case let .eraseItems(count):
+            title = "Erase \(count) \(count == 1 ? "Item" : "Items")"
+            isDestructive = true
+        case .showTheseItems:
+            title = "Show These Items"
+        case .cancel:
+            title = "Cancel"
+            isDefault = false
+        case .tryAgain:
+            title = "Try Again"
+        }
+        return RenderedPrimary(
+            title: title,
+            isEnabled: drawn.primaryEnabled,
+            isDefault: isDefault,
+            isDestructive: isDestructive
+        )
+    }
+
     var body: some View {
+        // `auto 1fr auto` (plan 0095 D14): *what* and *the act* size to their
+        // own content; *choices* is the only zone that keeps
+        // `.frame(maxWidth: .infinity)` and so is the only one that absorbs
+        // the HStack's slack.
         HStack(alignment: .top, spacing: 28) {
             whatZone
-            Divider().overlay(DesignPalette.hairline(for: colorScheme))
+            if showsMiddleHairline {
+                Divider().overlay(DesignPalette.hairline(for: colorScheme))
+            }
             choicesZone
-            Divider().overlay(DesignPalette.hairline(for: colorScheme))
             actZone
         }
         .frame(minHeight: Self.contentHeight, maxHeight: Self.contentHeight)
@@ -61,6 +120,17 @@ struct ImportPlanFooter: View {
         .animation(surfaceAnimation, value: drawn)
         .transition(surfaceTransition)
         .accessibilityElement(children: .contain)
+    }
+
+    /// One hairline, before the middle zone, only when it has content worth
+    /// separating from *what* — never before the act (plan 0095 D13: the
+    /// mockup draws at most one hairline per bar; this file drew two in
+    /// every state, including `.hidden`, where there is nothing to divide).
+    private var showsMiddleHairline: Bool {
+        switch drawn.middleZone {
+        case .choices, .progress: true
+        case .addLibraryButton, .hidden: false
+        }
     }
 
     // MARK: - What
@@ -91,7 +161,6 @@ struct ImportPlanFooter: View {
             .accessibilityLabel(drawn.primaryLine)
             secondaryLineView
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder
@@ -108,7 +177,7 @@ struct ImportPlanFooter: View {
         case let .attention(clause, revealLabel, itemIDs):
             HStack(spacing: 4) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption)
+                    .font(.footnote)
                     .foregroundStyle(.orange)
                 Text(clause)
                     .font(.subheadline)
@@ -145,10 +214,7 @@ struct ImportPlanFooter: View {
                     introLabel("Afterwards")
                     Toggle("Eject the card", isOn: ejectPreferenceBinding)
                         .toggleStyle(.checkbox)
-                    Toggle("Erase the card", isOn: erasePreferenceBinding)
-                        .toggleStyle(.checkbox)
-                        .disabled(!eraseEnabled)
-                        .help(eraseDisabledReason ?? "")
+                    eraseToggle(eraseEnabled: eraseEnabled, eraseDisabledReason: eraseDisabledReason)
                 }
             }
             .font(.body)
@@ -181,6 +247,27 @@ struct ImportPlanFooter: View {
             .font(.callout)
             .foregroundStyle(DesignPalette.l3(for: colorScheme))
             .frame(width: 66, alignment: .leading)
+    }
+
+    /// `.help(eraseDisabledReason ?? "")` used to attach an empty tooltip
+    /// even while the toggle was enabled, and attaching `.help` directly to a
+    /// `.disabled` control is not reliably surfaced by AppKit's disabled-
+    /// control hover handling — DES-038 requires the explanation to actually
+    /// reach the user, not merely to be attached to a control that may
+    /// swallow hover events (plan 0095 D24). `.help` is applied only when a
+    /// reason exists, and only to a wrapping `ZStack` — a distinct, always-
+    /// enabled hit-testable container — never to the disabled `Toggle` itself.
+    @ViewBuilder
+    private func eraseToggle(eraseEnabled: Bool, eraseDisabledReason: String?) -> some View {
+        let toggle = Toggle("Erase the card", isOn: erasePreferenceBinding)
+            .toggleStyle(.checkbox)
+            .disabled(!eraseEnabled)
+        if let eraseDisabledReason {
+            ZStack { toggle }
+                .help(eraseDisabledReason)
+        } else {
+            toggle
+        }
     }
 
     @ViewBuilder
@@ -238,40 +325,45 @@ struct ImportPlanFooter: View {
                 }
                 .buttonStyle(.borderless)
             }
+            // One owner for every action's enabled state (plan 0095 D11):
+            // `renderedPrimary.isEnabled` is applied here, not per-case — a
+            // case that forgets `.disabled` used to render a live button
+            // (the cancelling state, `primaryEnabled: false`).
             primaryButton
+                .disabled(!renderedPrimary.isEnabled)
         }
         .frame(minWidth: 140, alignment: .trailing)
     }
 
     @ViewBuilder
     private var primaryButton: some View {
+        let rendered = renderedPrimary
         switch drawn.primaryAction {
         case .importPending:
-            Button("Import") {}
-                .disabled(true)
+            Button(rendered.title) {}
                 .buttonStyle(.borderedProminent)
+                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
                 .frame(height: 30)
                 .accessibilityHint("Imports new items from the card")
-        case let .importItems(count):
-            Button("Import \(count) \(count == 1 ? "Item" : "Items")", action: queueImport)
-                .disabled(!drawn.primaryEnabled)
+        case .importItems:
+            Button(rendered.title, action: queueImport)
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
                 .frame(height: 30)
                 .accessibilityHint("Imports new items from the card")
         case .ejectCard:
-            Button("Eject Card", action: ejectCard)
+            Button(rendered.title, action: ejectCard)
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
                 .frame(height: 30)
                 .accessibilityHint("Ejects the card")
         case let .eraseItems(count):
-            Button("Erase \(count) \(count == 1 ? "Item" : "Items")") {
+            Button(rendered.title) {
                 showsEraseConfirmation = true
             }
             .buttonStyle(.borderedProminent)
-            .tint(.red)
-            .keyboardShortcut(.defaultAction)
+            .tint(rendered.isDestructive ? .red : nil)
+            .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
             .frame(height: 30)
             .accessibilityHint("Deletes items from the card")
             .confirmationDialog(
@@ -293,24 +385,24 @@ struct ImportPlanFooter: View {
                 }
             }
         case .showTheseItems:
-            Button("Show These Items") {
+            Button(rendered.title) {
                 showTheseItems?()
             }
             .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
             .frame(height: 30)
         case .cancel:
-            Button("Cancel", action: cancelImport)
+            Button(rendered.title, action: cancelImport)
                 .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.cancelAction)
+                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
                 .frame(height: 30)
                 .accessibilityHint("Stops the current import")
         case .tryAgain:
-            Button("Try Again") {
+            Button(rendered.title) {
                 retryPlanning?()
             }
             .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
             .frame(height: 30)
         }
     }

@@ -301,19 +301,28 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     let destinationDisplayName: String?
     let state: MediaOperationSourceState
     let attachToReadyMs: Int?
-    /// Present on every frame from execution start onward, as state rather than
-    /// an event `presentationsStream()`'s dropping buffer could lose
-    /// (`import-bar.md` "Where the user is standing").
+    /// State rather than an event `presentationsStream()`'s dropping buffer
+    /// could lose (`import-bar.md` "Where the user is standing"). Present
+    /// once set, not from execution start: `.executing` withholds it until
+    /// the batch has at least one durably-published asset, so
+    /// `followNewBatchesOnce` never navigates to a batch row with nothing in
+    /// it yet (plan 0095 step 7, owner decision — "move batch selection to
+    /// first-asset"). A terminal `.failed`/`.cancelled`/`.completed` state's
+    /// own fallback is unaffected by that gate — those keep the run's batch
+    /// pinned and visible regardless of whether anything ever published, per
+    /// `MediaOperationCoordinator`'s `currentBatchID(for:)`.
     let batchID: ImportBatchID?
     /// Whether this source is still attached and available, read fresh from the
     /// catalog rather than inferred from session existence — a fact about the
     /// world, not about where the user is standing (`import-bar.md` state F).
-    /// Always `true` today: the coordinator removes a session outright the
-    /// moment its source drops out of the catalog's available set, rather than
-    /// keeping it around long enough to be observed unavailable. Meaningfully
-    /// varying needs a later increment's batch-keyed presentation that outlives
-    /// the source session (see the comment on the detach path in
-    /// `refreshSources`); this field is where that increment plugs in.
+    /// `true` for every live source session (the coordinator removes a session
+    /// outright the moment its source drops out of the catalog's available
+    /// set, rather than keeping it around long enough to observe it
+    /// unavailable). `false` only on the detached-batch snapshot
+    /// `MediaOperationCoordinator` keeps under the batch's own identity after
+    /// its source session is gone (`refreshSources`'s detach path) — that
+    /// snapshot is what lets state F's "card gone" variant render from the
+    /// batch row once the removable row itself has disappeared.
     let cardStillExists: Bool
     /// Count copied by the most recent *settled* (completed or cancelled)
     /// execution in this attachment, and whether that run was fully clean (no

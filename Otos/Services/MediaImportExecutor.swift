@@ -69,6 +69,13 @@ actor MediaImportExecutor {
         let sourceDeviceIdentity: String?
         let allowSourceDeletion: Bool
         let namespaceLease: RootNamespaceMutationLease?
+        /// Where an incomplete entry's `finalDestination` resolves — the
+        /// identity `runPlanEntries` records for state F-incomplete's reveal,
+        /// since the user selects it from the destination-keyed batch row,
+        /// not the source card (plan 0095 D12). `execute()` is the one place
+        /// that already proved `plan.mode` is `.import` and extracted this;
+        /// re-deriving it here would just re-run an already-answered guard.
+        let destinationRoot: LibraryRootPath
     }
 
     init(
@@ -195,7 +202,8 @@ actor MediaImportExecutor {
             sourceKind: sourceKind,
             sourceDeviceIdentity: sourceDeviceIdentity,
             allowSourceDeletion: allowSourceDeletion,
-            namespaceLease: namespaceLease
+            namespaceLease: namespaceLease,
+            destinationRoot: destination
         )
         let entryTotals = await runPlanEntries(
             context: executionContext,
@@ -286,6 +294,17 @@ actor MediaImportExecutor {
         return Array(parents)
     }
 
+    /// The identity state F-incomplete's "Show them" reveal must select: the
+    /// user is on the batch row when they tap it, whose grid holds
+    /// destination-keyed rows, not the source card's (plan 0095 D12).
+    /// `entry.source.id` never matched anything there.
+    private nonisolated func destinationAssetID(
+        for entry: MediaOperationPlanEntry,
+        context: EntryExecutionContext
+    ) -> MediaAssetID {
+        MediaAssetID(libraryRootPath: context.destinationRoot, relativePath: entry.finalDestination)
+    }
+
     private func runPlanEntries(
         context: EntryExecutionContext,
         totalCount: Int,
@@ -346,12 +365,12 @@ actor MediaImportExecutor {
                     byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
                 case .skippedForeign:
                     skippedForeignCount += 1
-                    incompleteItems.append(copyEntries[result.index].source.id)
+                    incompleteItems.append(destinationAssetID(for: copyEntries[result.index], context: context))
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 case let .failed(failure):
                     failedCount += 1
                     failureReasons.append(failure)
-                    incompleteItems.append(copyEntries[result.index].source.id)
+                    incompleteItems.append(destinationAssetID(for: copyEntries[result.index], context: context))
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 }
                 onProgress(byteProgress.current())
