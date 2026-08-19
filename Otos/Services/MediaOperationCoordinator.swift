@@ -88,6 +88,14 @@ actor MediaOperationCoordinator {
         /// select and scroll them after the post-settlement re-plan
         /// (`import-bar.md` state F).
         let incompleteItems: [MediaAssetID]
+        /// The instant this run actually settled, published as state
+        /// (`MediaOperationSourcePresentation.settledAt`) so the ViewModel's
+        /// auto-dismiss task computes its 6 s deadline from a stable anchor
+        /// rather than from whenever it happened to observe a frame — an
+        /// unrelated `publish()` re-emitting this same unchanged completion
+        /// must not restart the countdown (plan 0095 D20, "Done bar
+        /// auto-dismisses after ~6 s only on a fully clean run").
+        let settledAt: Date
     }
 
     /// A settled `.completed` execution's outcome, stored on the session so
@@ -572,7 +580,8 @@ actor MediaOperationCoordinator {
                 publishedCount: publishedCount,
                 isFullyClean: !hasBlockedEntries && !hasEntryFailures
                     && skippedForeignCount == 0 && summary.blockedCount == 0,
-                incompleteItems: incompleteItems
+                incompleteItems: incompleteItems,
+                settledAt: Date()
             )
             // Stored on the session so `presentation(for:)` reads the real
             // outcome instead of the zero-summary literal `.completed` used to
@@ -601,7 +610,8 @@ actor MediaOperationCoordinator {
                 batch: context.batch,
                 publishedCount: publishedCount,
                 isFullyClean: false,
-                incompleteItems: []
+                incompleteItems: [],
+                settledAt: Date()
             )
             sourceSessions[source] = session
             publish()
@@ -813,11 +823,25 @@ actor MediaOperationCoordinator {
                 let attachmentGen = AttachmentGeneration(rawValue: nextAttachmentGeneration)
                 nextAttachmentGeneration &+= 1
                 let prefs = ImportPreferencesStore.load(defaults: preferences)
-                // A new attachment always defaults to the first available
-                // library in the user's own Settings → Libraries order. The
-                // per-source map below is write-only bookkeeping for Settings
-                // display; it does not feed this decision.
-                let destination = fixedAvailable.first?.path
+                // The destination is remembered per removable source (plan
+                // 0095 D19, owner decision — `import-bar.md` "Destination
+                // control"): a source seen before resumes wherever it last
+                // landed, explicit pick or default-tracked alike, both of
+                // which `destinationBySource` already records unconditionally
+                // (see `setDestination` and the reorder-tracking branch
+                // below). `isDestinationExplicit: true` is what makes the
+                // memory stick — without it, the very next reorder-tracking
+                // refresh would immediately overwrite it back to
+                // `fixedAvailable.first`, silently discarding the memory the
+                // moment it was restored. First sight of a source (no
+                // remembered value, or its library is gone) falls back to
+                // the first available library and stays a true default,
+                // tracking future reorders per the existing mechanic.
+                let remembered = destinationBySource[source.path]
+                let isRememberedValid = remembered.map { dest in
+                    fixedAvailable.contains { $0.path == dest }
+                } ?? false
+                let destination = isRememberedValid ? remembered : fixedAvailable.first?.path
                 if destinationBySource[source.path] != destination {
                     if let destination {
                         destinationBySource[source.path] = destination
@@ -830,7 +854,7 @@ actor MediaOperationCoordinator {
                     attachmentGeneration: attachmentGen,
                     root: source,
                     destination: destination,
-                    isDestinationExplicit: false,
+                    isDestinationExplicit: isRememberedValid,
                     preferences: prefs,
                     phase: .inventory,
                     isDirty: true,
@@ -1339,6 +1363,7 @@ actor MediaOperationCoordinator {
             cardStillExists: cardStillExists ?? (session.root.availability == .available),
             copiedJustNow: session.lastCompletion?.publishedCount,
             isFullyClean: session.lastCompletion?.isFullyClean,
+            settledAt: session.lastCompletion?.settledAt,
             sessionPreferences: session.preferences,
             incompleteItems: session.lastCompletion?.incompleteItems ?? []
         )

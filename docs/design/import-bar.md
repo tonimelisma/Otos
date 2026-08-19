@@ -48,24 +48,25 @@ Menu contents: available libraries, and nothing else — no `Choose…` placehol
 separator, no folder picker. Today's `Choose…` item is removed with the placeholder
 it represents.
 
-**The default destination is the first available library, always.** "First" is the
-first row under **Libraries** in the sidebar, in the user's own order (below). No
-remembered per-device destination, no last-used destination, no heuristics: the user
-can predict what `Copy into` says before the card finishes mounting, and can change
-the answer permanently by dragging a library to the top.
+**The destination is remembered per removable source, defaulting to the first
+available library on first sight of that source.** "First" is the first row under
+**Libraries** in the sidebar, in the user's own order (below). A source seen
+before — reattached, or re-inserted after ejection — resumes wherever it last
+landed, whether that was an explicit pop-up pick or a default still tracking the
+first library. Only a source Otos has never seen, or whose remembered library is no
+longer available, falls back to first-available and starts tracking it.
 
 Changing the pop-up applies to the attached session — the choice must survive from
-the moment it is made until that run finishes — and is not remembered across
-attachments. Re-inserting the card gives the first library again.
+the moment it is made until that run finishes, same as before — and now also
+survives detachment: re-inserting the same card resumes at that destination rather
+than resetting to the first library. A destination that is still a tracked default
+(never explicitly picked) keeps following reorders and reattachments alike; making
+an explicit pick is what makes the memory sticky against those.
 
-**This is a behavior change, and today's code contradicts it twice**
-(`MediaOperationCoordinator.swift:650-737`):
-
-- The current precedence is *this device's last destination → last used anywhere →
-  first available*, backed by `destinationByDeviceIdentity` and `lastUsedDestination`.
-  All of it is removed, along with the persisted device mapping it writes.
-- `fixedAvailable` is `store.currentLibraries()` filtered but **never sorted**, so
-  `fixedAvailable.first` is store order — neither the sidebar's order nor the user's.
+No device-identity heuristic and no last-used-anywhere heuristic: the remembered
+value is keyed on the removable source's own path (`destinationBySource` in
+`MediaOperationCoordinator.swift`), read back on every new attachment instead of
+being unconditionally overwritten with `fixedAvailable.first`.
 
 When no library is available to choose, see state **B**.
 
@@ -587,7 +588,7 @@ in `hig-validation.md`.
 | No-destination state | Vestigial — the first library auto-selects; kept only for the no-libraries-at-all case |
 | Erase consequence line | Dropped; the checkbox says it, and an erase-only run confirms with a counted alert |
 | Done | Not terminal, and not two states — one post-import state keyed on whether the card still exists, identical on the card row and the batch row. Attached: `Everything on this card is imported`, primary `Eject Card`. Gone: `42 items copied and verified`, auto-dismisses |
-| Destination menu | Libraries only, first one auto-selected, no placeholder item |
+| Destination menu | Libraries only, first available on first sight of a source and remembered per source thereafter, no placeholder item |
 | Preparing wording | `Checking the card…` + `112 of 181 items` |
 | Card erase | Sticky Settings preference, which is the default value of the bar's pre-flight checkbox |
 | Done bar | Auto-dismisses after ~6 s only on a fully clean run; otherwise persists |

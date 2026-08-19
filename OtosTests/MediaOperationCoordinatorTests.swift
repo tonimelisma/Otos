@@ -578,6 +578,51 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// Plan 0095 D19: the destination picked for a source used to be
+    /// remembered in `destinationBySource` (Settings displayed it) but was
+    /// never read back — every new attachment, including a reattach of the
+    /// exact same card, unconditionally defaulted to `fixedAvailable.first`.
+    /// A re-attached source now resumes at its remembered destination.
+    @Test func reattachedSourceGetsRememberedDestination() async throws {
+        let fixture = try await makeDestinationFixture(
+            libraryNames: ["Zebra", "Alpha", "Middle"],
+            identity: "volume:reattach-remembers"
+        )
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
+        await coordinator.start()
+        let baseline = try await readyGeneration(coordinator, source: fixture.source)
+        await coordinator.setDestination(fixture.libraries[2], for: fixture.source)
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline)
+
+        try await fixture.store.detachRemovableSource(identity: fixture.identity, reason: .ejected)
+        _ = try await waitForCatalogStoreState(fixture.store) { snap in
+            !snap.removableSources.contains { $0.path == fixture.source && $0.availability == .available }
+        }
+        try await Task.sleep(for: .milliseconds(100))
+
+        try await fixture.store.attachRemovableVolume(
+            mountURL: URL(fileURLWithPath: fixture.source.rawValue),
+            identity: fixture.identity,
+            displayName: "Card",
+            isEjectable: true
+        )
+        _ = try await waitForCatalogStoreState(fixture.store) { snap in
+            snap.removableSources.contains { $0.path == fixture.source && !$0.isScanning }
+        }
+        // A reattach re-runs the same real filesystem scan + plan-build cycle
+        // as `attachRemovableVolume` elsewhere in this file; under full-suite
+        // concurrent load that has measured past a 15s budget for other tests
+        // here (see e.g. `destinationFollowsUserReorderWhileAttached`), so
+        // this widens the same way.
+        _ = try await readyGeneration(coordinator, source: fixture.source, timeout: .seconds(30))
+        let presentation = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
+        )
+        #expect(presentation.destinationPath == fixture.libraries[2])
+        await coordinator.shutdown()
+    }
+
     private struct DestinationFixture {
         let store: CatalogStore
         let libraries: [LibraryRootPath]

@@ -24,6 +24,9 @@ extension CatalogWindowViewModel {
             }
             return importPresentations.first { $0.sourcePath == path }
         case let .importBatch(batchID):
+            guard !dismissedBatchIDs.contains(batchID) else {
+                return nil
+            }
             return importPresentations.first { $0.batchID == batchID }
         default:
             return nil
@@ -80,8 +83,52 @@ extension CatalogWindowViewModel {
             cancellingImportSources.formIntersection(stillExecuting)
         }
         followNewBatchesOnce(presentations)
+        scheduleAutoDismiss(for: presentations)
         Task {
             await refreshRemovableDestinations()
+        }
+    }
+
+    /// Plan 0095 D20: recomputes the full set of pending Done-bar dismissals
+    /// from this frame's presentations and replaces `autoDismissTask`
+    /// wholesale. Each deadline is `settledAt + 6s`, a fixed instant carried
+    /// on the presentation itself — cancelling and respawning the task here
+    /// on every frame never actually moves a deadline that was already
+    /// scheduled, since the next frame recomputes the identical instant from
+    /// the same `settledAt`. Only a batch whose qualifying condition stops
+    /// holding (re-attached, or not fully clean) drops out of `pending` and
+    /// stays un-dismissed.
+    private func scheduleAutoDismiss(for presentations: [MediaOperationSourcePresentation]) {
+        let pending = presentations
+            .compactMap { presentation -> (ImportBatchID, Date)? in
+                guard let batchID = presentation.batchID,
+                      presentation.isFullyClean == true,
+                      presentation.cardStillExists == false,
+                      let settledAt = presentation.settledAt,
+                      !dismissedBatchIDs.contains(batchID)
+                else {
+                    return nil
+                }
+                return (batchID, settledAt.addingTimeInterval(6))
+            }
+            .sorted { $0.1 < $1.1 }
+
+        autoDismissTask?.cancel()
+        guard !pending.isEmpty else {
+            autoDismissTask = nil
+            return
+        }
+        autoDismissTask = Task { [weak self] in
+            for (batchID, deadline) in pending {
+                let remaining = deadline.timeIntervalSinceNow
+                if remaining > 0 {
+                    try? await Task.sleep(for: .seconds(remaining))
+                }
+                guard !Task.isCancelled, let self else {
+                    return
+                }
+                dismissedBatchIDs.insert(batchID)
+            }
         }
     }
 

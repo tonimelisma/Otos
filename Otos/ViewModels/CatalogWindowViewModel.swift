@@ -168,6 +168,13 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var mediaOperationCoordinator: MediaOperationCoordinator?
     @ObservationIgnored var importPresentationTask: Task<Void, Never>?
     @ObservationIgnored var mediaOperationStartTask: Task<Void, Never>?
+    /// Owns the pending 6 s Done-bar dismissals (plan 0095 D20). Recomputed
+    /// wholesale on every `applyImportPresentations` frame from the stable
+    /// `settledAt` anchors already on the qualifying presentations, so
+    /// cancelling and replacing this task on each frame never actually moves
+    /// a deadline — only an unseen `settledAt` (a new settle) or a
+    /// newly-qualifying presentation changes what it's waiting for.
+    @ObservationIgnored var autoDismissTask: Task<Void, Never>?
 
     /// Per-source import plan summaries for the footer (scalar only; no full plan map).
     var importPresentations: [MediaOperationSourcePresentation] = []
@@ -192,6 +199,14 @@ final class CatalogWindowViewModel {
     /// coordinator publishes the batch ID as state and has no notion of
     /// "have we already followed it."
     var autoSelectedBatchIDs: Set<ImportBatchID> = []
+    /// Batch IDs whose Done bar has auto-dismissed (plan 0095 D20,
+    /// `import-bar.md` "Done bar auto-dismisses after ~6 s only on a fully
+    /// clean run"). Dismissal hides the bar without moving `sidebarSelection`
+    /// — the batch stays selected ("the user is looking at exactly what they
+    /// just imported"); `selectedImportPresentation` is what actually hides
+    /// it. Permanent for the session once set, same tier as
+    /// `autoSelectedBatchIDs`.
+    var dismissedBatchIDs: Set<ImportBatchID> = []
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
@@ -327,6 +342,7 @@ final class CatalogWindowViewModel {
         deviceStagingSweepTask?.cancel()
         importPresentationTask?.cancel()
         mediaOperationStartTask?.cancel()
+        autoDismissTask?.cancel()
         removableVolumeMonitor?.stop()
         cameraSourceMonitor?.stop()
         for task in deviceCatalogTasks.values {

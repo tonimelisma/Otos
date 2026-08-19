@@ -18,6 +18,7 @@ struct ImportBarPresentationTests {
         cardStillExists: Bool = true,
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
+        settledAt: Date? = nil,
         incompleteItems: [MediaAssetID] = [],
         sourceKind: LibraryRootKind = .removableVolume,
         sessionPreferences: ImportPreferences = .default
@@ -33,6 +34,7 @@ struct ImportBarPresentationTests {
             cardStillExists: cardStillExists,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
+            settledAt: settledAt,
             sessionPreferences: sessionPreferences,
             incompleteItems: incompleteItems
         )

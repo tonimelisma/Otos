@@ -340,6 +340,14 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// already copied is lost").
     let copiedJustNow: Int?
     let isFullyClean: Bool?
+    /// The instant that same settled execution actually landed — a stable
+    /// anchor for the ViewModel's auto-dismiss task to compute its 6 s
+    /// deadline from, so an unrelated `publish()` re-emitting this same
+    /// unchanged completion (another source's progress tick, say) cannot
+    /// restart the countdown (`import-bar.md` "Done bar auto-dismisses after
+    /// ~6 s only on a fully clean run", plan 0095 D20). `nil` exactly when
+    /// `isFullyClean`/`copiedJustNow` are.
+    let settledAt: Date?
     /// This attachment's live session preferences, read directly off the
     /// coordinator's own `SourceSession.preferences` rather than mirrored into a
     /// second ViewModel-owned dictionary. `setSessionPreferences` writes only to

@@ -15,6 +15,13 @@ struct CatalogWindowViewModelMediaOperationsTests {
 
     private static func presentation(
         batchID: ImportBatchID?,
+        state: MediaOperationSourceState = .executing(
+            progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
+        ),
+        cardStillExists: Bool = true,
+        copiedJustNow: Int? = nil,
+        isFullyClean: Bool? = nil,
+        settledAt: Date? = nil,
         sessionPreferences: ImportPreferences = .default
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
@@ -22,12 +29,13 @@ struct CatalogWindowViewModelMediaOperationsTests {
             sourceKind: .removableVolume,
             destinationPath: LibraryRootPath(rawValue: "/Users/example/Pictures"),
             destinationDisplayName: "Pictures",
-            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            state: state,
             attachToReadyMs: nil,
             batchID: batchID,
-            cardStillExists: true,
-            copiedJustNow: nil,
-            isFullyClean: nil,
+            cardStillExists: cardStillExists,
+            copiedJustNow: copiedJustNow,
+            isFullyClean: isFullyClean,
+            settledAt: settledAt,
             sessionPreferences: sessionPreferences,
             incompleteItems: []
         )
@@ -166,6 +174,57 @@ struct CatalogWindowViewModelMediaOperationsTests {
         // A further interleaved frame after the toggle must not revert it.
         model.applyImportPresentations([Self.presentation(batchID: nil, sessionPreferences: toggled)])
         #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
+    }
+
+    /// Plan 0095 D20: a run that finished with skips/failures must never
+    /// auto-dismiss (`import-bar.md` "Done bar auto-dismisses after ~6 s only
+    /// on a fully clean run; otherwise persists") — `isFullyClean == false`
+    /// must never schedule a dismissal, however long the card has been gone.
+    @Test func nonCleanSettleDoesNotAutoDismiss() {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([
+            Self.presentation(
+                batchID: Self.batchID,
+                state: .completed(
+                    summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 1, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+                ),
+                cardStillExists: false,
+                isFullyClean: false,
+                settledAt: Date()
+            ),
+        ])
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+        #expect(model.selectedImportPresentation != nil)
+    }
+
+    /// Plan 0095 D20, positive path: a fully clean run whose card is gone
+    /// dismisses the bar once its `settledAt + 6s` deadline passes, but
+    /// leaves the batch selected — "Batch stays selected; the user is
+    /// looking at exactly what they just imported" (`import-bar.md`, state
+    /// F row 8). `settledAt` is seeded already 10s in the past so the
+    /// deadline has already elapsed, avoiding a real 6s sleep in the test.
+    @Test func cleanSettleWithCardGoneAutoDismissesAfterDeadline() async throws {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([
+            Self.presentation(
+                batchID: Self.batchID,
+                state: .completed(
+                    summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+                ),
+                cardStillExists: false,
+                isFullyClean: true,
+                settledAt: Date().addingTimeInterval(-10)
+            ),
+        ])
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+        #expect(model.selectedImportPresentation != nil)
+
+        try await Task.sleep(for: .milliseconds(100))
+
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+        #expect(model.selectedImportPresentation == nil)
     }
 
     private static func state(
