@@ -300,24 +300,40 @@ struct ContentView: View {
 private struct AllImportsListView: View {
     let batches: [ImportBatchSummary]
     let selectBatch: (ImportBatchID) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        List {
+        // A real `List(selection:)`, not `Button`s inside a plain `List`
+        // (plan 0095 D23): Tab reaches the list, Up/Down move a genuine
+        // selection, and Return/click both fire `selectBatch` the same way
+        // (DES-080). There is no persistent selection to hold here — picking
+        // a row navigates away from `.allImports` entirely, replacing this
+        // view — so the binding's getter always reads `nil`.
+        List(selection: selectionBinding) {
             ForEach(batches, id: \.batchID) { batch in
-                Button {
-                    selectBatch(batch.batchID)
-                } label: {
-                    HStack {
-                        Text(ImportBatchFormatting.sidebarTitle(for: batch.batchID, among: batches))
-                        Spacer()
-                        Text("\(batch.assetCount) items")
-                            .foregroundStyle(.secondary)
-                    }
+                HStack {
+                    Text(ImportBatchFormatting.sidebarTitle(for: batch.batchID, among: batches))
+                        .foregroundStyle(DesignPalette.label(for: colorScheme))
+                    Spacer()
+                    Text("\(batch.assetCount) items")
+                        .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                        .monospacedDigit()
                 }
-                .buttonStyle(.plain)
+                .tag(batch.batchID)
             }
         }
         .navigationTitle("All Imports")
+    }
+
+    private var selectionBinding: Binding<ImportBatchID?> {
+        Binding(
+            get: { nil },
+            set: { newValue in
+                if let newValue {
+                    selectBatch(newValue)
+                }
+            }
+        )
     }
 }
 

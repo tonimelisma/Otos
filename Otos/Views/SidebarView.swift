@@ -13,6 +13,7 @@ struct SidebarView: View {
     let ejectingSourceIdentities: Set<String>
     let selectSidebar: @MainActor @Sendable (SidebarSelection) -> Void
     let ejectSource: @MainActor @Sendable (LibraryRoot) -> Void
+    @Environment(\.colorScheme) private var colorScheme
 
     init(
         showsAllMedia: Bool,
@@ -71,7 +72,7 @@ struct SidebarView: View {
                     if importBatches.count > 5 {
                         SidebarRow(systemImage: "list.bullet", title: "All Imports…") {
                             Text("\(importBatches.count)")
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(DesignPalette.l3(for: colorScheme))
                                 .monospacedDigit()
                         }
                         .tag(SidebarSelection.allImports)
@@ -95,6 +96,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(.hidden)
+        .background(DesignPalette.sidebar(for: colorScheme))
         .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 280)
     }
 
@@ -130,7 +133,7 @@ struct SidebarView: View {
                 .accessibilityLabel("Importing, \(completed) of \(total)")
         case .none, .indeterminate:
             Text("\(batch.assetCount)")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .monospacedDigit()
         }
     }
@@ -177,6 +180,7 @@ private struct SidebarRow<Trailing: View>: View {
     let systemImage: String
     let title: String
     @ViewBuilder var trailing: () -> Trailing
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(spacing: 8) {
@@ -184,6 +188,7 @@ private struct SidebarRow<Trailing: View>: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 20, alignment: .center)
             Text(title)
+                .foregroundStyle(DesignPalette.label(for: colorScheme))
                 .lineLimit(1)
             Spacer(minLength: 4)
             trailing()

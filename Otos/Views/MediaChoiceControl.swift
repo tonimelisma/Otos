@@ -21,6 +21,10 @@ struct MediaChoiceHoverRegion<Content: View>: View {
             .padding(12)
         }
         .onHover { isHovering = $0 }
+        // DES-068: the item carries the curation value once — not each of the
+        // three hover buttons, which would announce "Selected"/"Not selected"
+        // redundantly per button (plan 0095 D22).
+        .accessibilityValue((currentChoice ?? .default).accessibilityValue)
         .accessibilityAction(named: Text(MediaChoice.liked.accessibilityActionLabel)) {
             onChoice(.liked)
         }
@@ -57,7 +61,6 @@ struct MediaChoiceControl: View {
                 .buttonStyle(.borderless)
                 .help(choice.actionLabel)
                 .accessibilityLabel(choice.actionLabel)
-                .accessibilityValue(currentChoice == choice ? "Selected" : "Not selected")
             }
         }
         .padding(.horizontal, 2)

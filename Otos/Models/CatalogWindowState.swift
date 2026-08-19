@@ -18,8 +18,13 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
     case libraryChecking
     case libraryUnavailable
     case deviceEnumerating(String)
-    /// Catalog file was written by a newer or unrecognized Otos; nothing is loaded.
-    case catalogIncompatible(String)
+    /// Catalog file was written by a newer or unrecognized Otos; nothing is
+    /// loaded. Carries the typed compatibility result, not a pre-rendered
+    /// string — `message` below is the one place that decides its wording,
+    /// so a lower layer can't commit to user-facing prose before the mapper
+    /// ever sees it (plan 0095 D-16-adjacent, the same class of defect
+    /// `ImportBarPresentation.swift`'s honest-cause naming fixed for Failed).
+    case catalogIncompatible(CatalogSchemaCompatibility)
 
     var diagnosticDescription: String {
         switch self {

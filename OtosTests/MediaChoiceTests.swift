@@ -11,6 +11,16 @@ struct MediaChoiceTests {
         #expect(MediaChoice.disliked.actionLabel == "Dislike")
     }
 
+    /// DES-068: the item's single accessibility value, not a per-button
+    /// "Selected"/"Not selected" (plan 0095 D22). `MediaChoiceHoverRegion`
+    /// (Loupe/Compare) and `MediaAssetTilePresentation.accessibilityValue`
+    /// (Grid/filmstrip) both read this exact string off `MediaChoice`.
+    @Test func accessibilityValuesAreTheDES068Strings() {
+        #expect(MediaChoice.liked.accessibilityValue == "liked")
+        #expect(MediaChoice.notRated.accessibilityValue == "not rated")
+        #expect(MediaChoice.disliked.accessibilityValue == "disliked")
+    }
+
     @Test func choiceFilterUsesOrWithinCurationAndAndAcrossMediaGroups() {
         let jpeg = MediaFormatToken(rawValue: "JPEG")
         let likedOnly = MediaFilter(choices: [.liked])

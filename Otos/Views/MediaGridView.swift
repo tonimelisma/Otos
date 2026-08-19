@@ -27,6 +27,7 @@ struct MediaGridView: View {
     var identityRemapBatch: CatalogIdentityRemapBatch?
     var dismissedCameraBannerIdentities: Set<String> = []
     var onDismissCameraBanner: (CatalogDeviceConnectionBanner) -> Void = { _ in }
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,6 +37,7 @@ struct MediaGridView: View {
                         .foregroundStyle(.secondary)
                     Text(deviceConnectionBanner.message)
                         .font(.callout)
+                        .foregroundStyle(DesignPalette.label(for: colorScheme))
                         .lineLimit(2)
                     Spacer(minLength: 8)
                     Button {
@@ -48,7 +50,7 @@ struct MediaGridView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(.bar)
+                .background(DesignPalette.bar(for: colorScheme))
             }
 
             Group {
@@ -127,75 +129,4 @@ struct MediaGridView: View {
         emptyState: .noMedia,
         deviceConnectionBanner: nil
     )
-}
-
-private extension CatalogMediaEmptyState {
-    var title: String {
-        switch self {
-        case .noMedia:
-            "No Media"
-        case .noFilterMatches:
-            "No Matching Media"
-        case .checkingLibraries:
-            "Checking Libraries"
-        case .noAvailableMedia:
-            "No Available Media"
-        case .libraryChecking:
-            "Checking Library"
-        case .libraryUnavailable:
-            "Library Unavailable"
-        case .deviceEnumerating:
-            "Reading Items"
-        case .catalogIncompatible:
-            "Catalog Incompatible"
-        }
-    }
-
-    var message: String {
-        switch self {
-        case .noMedia:
-            "Add a library with media files to begin."
-        case .noFilterMatches:
-            "No media in this scope matches the active filters."
-        case .checkingLibraries:
-            "Otos is checking whether saved library folders are reachable."
-        case .noAvailableMedia:
-            "Cataloged media exists, but its libraries are not currently reachable."
-        case .libraryChecking:
-            "Otos is checking whether the selected library folder is reachable."
-        case .libraryUnavailable:
-            "The selected library folder is not currently reachable."
-        case let .deviceEnumerating(name):
-            """
-            Reading items from \(name). This can take several minutes on this connection. \
-            For faster browsing and import, insert the memory card directly or use the camera's Mass Storage USB mode.
-            """
-        case let .catalogIncompatible(detail):
-            detail
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .noMedia:
-            "photo.on.rectangle"
-        case .noFilterMatches:
-            "line.3.horizontal.decrease.circle"
-        case .checkingLibraries, .libraryChecking:
-            "externaldrive.badge.timemachine"
-        case .noAvailableMedia, .libraryUnavailable:
-            "externaldrive.badge.questionmark"
-        case .deviceEnumerating:
-            "camera.metering.matrix"
-        case .catalogIncompatible:
-            "exclamationmark.triangle"
-        }
-    }
-
-    var isProgressing: Bool {
-        if case .deviceEnumerating = self {
-            return true
-        }
-        return false
-    }
 }

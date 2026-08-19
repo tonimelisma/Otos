@@ -9,22 +9,6 @@ struct DesignPaletteTests {
         #expect(contrastRatio(DesignPalette.l3(for: .dark), over: DesignPalette.bar(for: .dark)).isApproximately(6.2))
     }
 
-    @Test func l4AgainstBarReproducesHigValidationRatios() {
-        let light = DesignPalette.l4(for: .light, increaseContrast: false)
-        let dark = DesignPalette.l4(for: .dark, increaseContrast: false)
-        #expect(contrastRatio(light, over: DesignPalette.bar(for: .light)).isApproximately(3.3))
-        #expect(contrastRatio(dark, over: DesignPalette.bar(for: .dark)).isApproximately(4.1))
-    }
-
-    @Test func l4UnderIncreaseContrastPromotesToL3Value() {
-        for colorScheme: ColorScheme in [.light, .dark] {
-            let promoted = DesignPalette.l4(for: colorScheme, increaseContrast: true)
-            let l3 = DesignPalette.l3(for: colorScheme)
-            #expect(contrastRatio(promoted, over: DesignPalette.bar(for: colorScheme))
-                .isApproximately(contrastRatio(l3, over: DesignPalette.bar(for: colorScheme)), tolerance: 0.01))
-        }
-    }
-
     @Test func labelClearsTextContrastMinimumAgainstBar() {
         #expect(contrastRatio(DesignPalette.label(for: .light), over: DesignPalette.bar(for: .light)) >= 4.5)
         #expect(contrastRatio(DesignPalette.label(for: .dark), over: DesignPalette.bar(for: .dark)) >= 4.5)

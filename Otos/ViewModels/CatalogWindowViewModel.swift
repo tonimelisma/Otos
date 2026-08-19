@@ -565,7 +565,7 @@ extension CatalogWindowViewModel {
         next.libraries = []
         next.removableSources = []
         next.mediaGrid = .empty
-        next.mediaEmptyState = .catalogIncompatible(problem.errorDescription)
+        next.mediaEmptyState = .catalogIncompatible(problem)
         applyState(next)
     }
 
@@ -579,7 +579,7 @@ extension CatalogWindowViewModel {
             nextState.libraries = []
             nextState.removableSources = []
             nextState.mediaGrid = .empty
-            nextState.mediaEmptyState = .catalogIncompatible(catalogCompatibilityProblem.errorDescription)
+            nextState.mediaEmptyState = .catalogIncompatible(catalogCompatibilityProblem)
         }
         let previousState = state
         applySidebarSelectionPolicy(previous: previousState, next: nextState)

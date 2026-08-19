@@ -27,19 +27,6 @@ nonisolated enum DesignPalette {
         base(for: colorScheme).opacity(0.60)
     }
 
-    /// L4: 45%, both appearances — 3.3:1 light / 4.1:1 dark against the bar
-    /// chrome. DES-084: under Increase Contrast, L4 is promoted to `l3`'s
-    /// value rather than kept at 45%, since 45% falls under the 4.5:1 text
-    /// floor `hig-validation.md` F-2 requires once a user has asked for more
-    /// contrast. `increaseContrast` defaults to the live accessibility
-    /// setting; callers pass it explicitly only to test the promotion rule.
-    static func l4(
-        for colorScheme: ColorScheme,
-        increaseContrast: Bool = prefersIncreaseContrast
-    ) -> Color {
-        increaseContrast ? l3(for: colorScheme) : base(for: colorScheme).opacity(0.45)
-    }
-
     // MARK: - DES-022 chrome
 
     static func content(for colorScheme: ColorScheme) -> Color {

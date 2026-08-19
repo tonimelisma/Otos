@@ -59,15 +59,20 @@ hard-coded point size.
 
 ## Visual hierarchy
 
-Four levels. Every user-facing string is assigned to one. Level is expressed by
+Three levels. Every user-facing string is assigned to one. Level is expressed by
 **size and color together** — never by size alone, and never by weight alone.
+**[deviation from an earlier draft: a fourth, "L4 ambient" level was retired —
+`DesignPalette.l4` had zero real callers and no current surface shows ambient
+metadata a user merely notices rather than reads (plan 0095 increment 11);
+inventing one to give L4 a caller would have been a feature this app doesn't
+have, not a design rule. Reintroduce a fourth level only alongside a real
+surface that needs it.]**
 
 | ID | Rule | Check |
 | --- | --- | --- |
 | DES-010 | **L1 primary** — `.title3` semibold, `.primary` color. The answer to "what is happening" or "what will happen". Exactly one per surface. | Given a surface, exactly one string is L1. If the single primary fact cannot be named, the surface is not designed yet. |
 | DES-011 | **L2 label** — `.body`, `.primary`. Things read to navigate or operate: row titles, control values, button titles. | — |
 | DES-012 | **L3 supporting** — `.subheadline`, `.secondary`. Qualifies L1 and is optional by definition: if it disappeared the surface would remain usable. Field labels sit here. | Given L3 is hidden, the surface still states what it does and what the action is. |
-| DES-013 | **L4 ambient** — `.footnote` at the 45% value (DES-021). Present for when the user goes looking. Shall never carry anything the user must notice, and shall never state policy or consequence. Anything the user may need to *read*, rather than merely notice the presence of, is L3 or above. | Given a policy or consequence string exists, it is not at L4. |
 | DES-014 | Adjacent levels shall differ in both size and color. Two items at the same level, side by side, shall be separated by space or a hairline — never by a size tweak. | — |
 | DES-015 | Proximity: a number and the control acting on it shall be within 8 pt, or the number shall be inside the control's title. | Given a count and its action button, measure the gap or read the title. |
 | DES-016 | Alignment: field labels within a group shall share a left edge and a fixed label-column width. No centered text in chrome. | Given a group of labelled controls, one vertical edge runs through all labels. |
@@ -165,4 +170,4 @@ tile, 6 small control, 7 push button, 9–11 window and card.
 | DES-082 | VoiceOver labels shall lead with what distinguishes the element — filename first on a tile — then kind, then state. | `Otos/Views/MediaAssetTilePresentation.swift` |
 | DES-085 | Grid and filmstrip expose Like item, Mark item as not rated, and Dislike item as VoiceOver custom actions on the item rather than three Tab stops per tile. Loupe and Compare expose the current item/pane through the same menu, shortcut, and custom-action owner. | Given Full Keyboard Access or VoiceOver, every curation state can be performed and its resulting value is announced once. |
 | DES-083 | A status surface shall announce its primary line as a live region on state change only, never on every tick of a counter. | Given an import, VoiceOver speaks three times, not forty. |
-| DES-084 | Under Increase Contrast, hairlines revert to system separator strength and L4 is promoted to secondary. Under Reduce Transparency, bar and sidebar become opaque at the DES-022 values. | — |
+| DES-084 | Under Increase Contrast, hairlines revert to system separator strength. Under Reduce Transparency, bar and sidebar become opaque at the DES-022 values. | — |

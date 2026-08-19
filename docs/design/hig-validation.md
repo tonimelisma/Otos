@@ -29,24 +29,30 @@ same way on a light window. But Otos's chrome is *lighter* than the system defau
 information — counts, remaining time — so it cannot be treated as decorative.
 
 **Correction:** L3 uses 60% black on light chrome and 60% white on dark (5.7:1 and
-6.2:1 against the bar chrome). L4 uses 45% (3.3:1 light, 4.1:1 dark against the bar
-chrome). The tertiary level is reserved for non-text elements — hairlines, disabled
-glyphs — where the 3:1 non-text rule applies and the drafted values pass.
+6.2:1 against the bar chrome). The tertiary level is reserved for non-text elements
+— hairlines, disabled glyphs — where the 3:1 non-text rule applies and the drafted
+values pass. (L4 originally used 45%, 3.3:1 light / 4.1:1 dark — see F-2, retired.)
 
 Re-measured 2026-08-13 against `DesignPalette`'s shipped values (`DesignPaletteTests`
 computes WCAG contrast from the actual resolved `Color`s, alpha-composited over the
 bar chrome) — the L3-dark and L4-dark figures above were revised from the original
 estimate (6.0:1, 4.4:1) to match.
 
-### F-2 — L4 was permitted to carry information it cannot legibly carry (applied)
+### F-2 — L4 was permitted to carry information it cannot legibly carry (applied, then retired)
 
 `DES-013` allowed `.footnote` at tertiary for "metadata that is looked up". At
 1.9:1 that text is not reliably readable by a low-vision user, which makes the
 level dishonest rather than quiet.
 
-**Correction:** L4 keeps its size but takes the 45% value from F-1, and DES-013
-now states that anything a user may need to *read* — as opposed to notice the
+**Correction (2026-08-13):** L4 kept its size but took the 45% value from F-1, and
+DES-013 stated that anything a user may need to *read* — as opposed to notice the
 presence of — is L3 or above.
+
+**Retired (plan 0095 increment 11):** `DesignPalette.l4` and DES-013 are deleted.
+No surface ever grew the ambient metadata (tile filename, loupe metadata) DES-013
+was drafted for, so the corrected value had zero real callers — an unused level
+carrying a legibility fix for content that doesn't exist. This finding stays for
+the record; the fix it describes no longer applies to a current rule.
 
 ### F-3 — Introductory label on the destination control is correct, and now justified (applied)
 
