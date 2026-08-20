@@ -268,7 +268,11 @@ nonisolated enum MediaChoice: String, Codable, CaseIterable, Hashable, Sendable 
     }
 
     var accessibilityValue: String {
-        rawValue == "notRated" ? "not rated" : rawValue
+        switch self {
+        case .liked: "liked"
+        case .notRated: "not rated"
+        case .disliked: "disliked"
+        }
     }
 
     var accessibilityActionLabel: String {

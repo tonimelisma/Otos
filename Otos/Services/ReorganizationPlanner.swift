@@ -12,7 +12,7 @@ nonisolated enum ReorganizationPlanner {
         snapshot: ReorganizationPlanningSnapshot,
         occupancy: [NamespaceOccupancyRequest: NamespaceOccupancyResult] = [:]
     ) -> ReorganizationPlanBuildOutcome {
-        if snapshot.media.contains(where: { !$0.hasUsableDate }) {
+        if snapshot.media.contains(where: { !$0.hasAnyDate }) {
             // Undatable media block individually; still build the rest.
         }
 
@@ -28,11 +28,11 @@ nonisolated enum ReorganizationPlanner {
         }
 
         for media in sortedMedia {
-            guard media.hasUsableDate else {
+            guard media.hasAnyDate else {
                 mediaDispositions[media.id] = .blocked(.noUsableDate)
                 continue
             }
-            let ideal = idealRelativePath(for: media, policy: snapshot.policy)
+            let ideal = idealRelativePath(for: media, snapshot: snapshot)
             let primaryID = "media:\(media.relativePath.rawValue)"
             members.append(
                 ReorganizationPhysicalMember(
@@ -332,16 +332,24 @@ nonisolated enum ReorganizationPlanner {
 
     private static func idealRelativePath(
         for media: PlanningFileFacts,
-        policy: ImportPolicy
+        snapshot: ReorganizationPlanningSnapshot
     ) -> MediaRelativePath {
-        let components = media.captureWallCompact.flatMap(CaptureWallClock.components(fromCompact:))
+        let policy = snapshot.policy
+        let components = ImportNaming.timestamp(
+            wallCompact: media.captureWallCompact,
+            fallbackModifiedAt: media.contentModifiedAt,
+            calendar: snapshot.calendar,
+            timeZone: snapshot.timeZone
+        )
         let folder: String
         switch policy.destinationFolderPolicy {
         case .yearMonth:
             if let components {
                 folder = String(format: "%04d/%02d", components.year, components.month)
             } else if let modified = media.contentModifiedAt {
-                let parts = Calendar.current.dateComponents([.year, .month], from: modified)
+                var calendar = snapshot.calendar
+                calendar.timeZone = snapshot.timeZone
+                let parts = calendar.dateComponents([.year, .month], from: modified)
                 folder = String(format: "%04d/%02d", parts.year ?? 0, parts.month ?? 0)
             } else {
                 folder = "undated"
@@ -349,15 +357,14 @@ nonisolated enum ReorganizationPlanner {
         case .none:
             folder = ""
         }
-        let stem: String
-        switch policy.destinationNamePolicy {
+        let stem: String = switch policy.destinationNamePolicy {
         case .original:
-            stem = URL(fileURLWithPath: media.relativePath.rawValue)
+            URL(fileURLWithPath: media.relativePath.rawValue)
                 .deletingPathExtension()
                 .lastPathComponent
         case .captureDateTime:
             if let components {
-                stem = String(
+                String(
                     format: "%04d%02d%02d_%02d%02d%02d",
                     components.year,
                     components.month,
@@ -366,14 +373,8 @@ nonisolated enum ReorganizationPlanner {
                     components.minute,
                     components.second
                 )
-            } else if let modified = media.contentModifiedAt {
-                let formatter = DateFormatter()
-                formatter.locale = Locale(identifier: "en_US_POSIX")
-                formatter.timeZone = TimeZone(secondsFromGMT: 0)
-                formatter.dateFormat = "yyyyMMdd_HHmmss"
-                stem = formatter.string(from: modified)
             } else {
-                stem = URL(fileURLWithPath: media.relativePath.rawValue)
+                URL(fileURLWithPath: media.relativePath.rawValue)
                     .deletingPathExtension()
                     .lastPathComponent
             }

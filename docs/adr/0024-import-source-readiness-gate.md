@@ -208,6 +208,13 @@ proves the single-writer rule directly: a `publish()` fired for an unrelated
 reason during execution still reports the live in-flight progress rather than
 resetting to a fabricated zero-progress placeholder.
 
+The single-writer boundary is structural: exactly two
+`continuation.yield` call sites remain in the coordinator, one for the initial
+replay and one inside `publish()`. The sticky `.executionUnavailable` phase is
+also published through that same path, so later unrelated refreshes cannot
+rewrite it as a transient failure. Settled naming readiness and enrichment-driven
+occupancy invalidation are specified in ADR 0026.
+
 ## Retirement Proof
 
 Additive to ADR 0019 and ADR 0021; nothing in either is retired. No prior

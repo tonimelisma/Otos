@@ -60,6 +60,7 @@ actor MediaImportExecutor {
         /// tell a systemic failure (every attempted entry failed the same
         /// non-per-file way) from an ordinary per-file one.
         let failureReasons: [EntryFailure]
+        let eraseOutcome: EraseOutcome
     }
 
     private struct EntryExecutionContext: Sendable {
@@ -263,6 +264,17 @@ actor MediaImportExecutor {
         if allFailedWithSourceNotReady {
             return .failed(reason: .sourceNotReady)
         }
+        if deleteSourceRequested {
+            return .completedWithErase(
+                publishedCount: entryTotals.publishedCount,
+                hasBlockedEntries: hasBlockedEntries,
+                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch || entryTotals.eraseOutcome.failedCount > 0,
+                skippedForeignCount: entryTotals.skippedForeignCount,
+                failedCount: entryTotals.failedCount,
+                incompleteItems: entryTotals.incompleteItems,
+                eraseOutcome: entryTotals.eraseOutcome
+            )
+        }
         return .completed(
             publishedCount: entryTotals.publishedCount,
             hasBlockedEntries: hasBlockedEntries,
@@ -381,18 +393,17 @@ actor MediaImportExecutor {
             }
         }
         if context.allowSourceDeletion {
-            for entry in context.plan.entries where entry.isSkipPreexisting {
-                if await deleteSourceIfRequested(
-                    entry: entry,
-                    plan: context.plan,
-                    sourceKind: context.sourceKind,
-                    sourceDeviceIdentity: context.sourceDeviceIdentity,
-                    batch: nil
-                ) == false {
-                    failedCount += 1
-                    failureReasons.append(.other)
-                }
-            }
+            let eraseOutcome = await eraseSourceFiles(context: context)
+            return EntryTotals(
+                publishedCount: publishedCount,
+                publishedBytes: publishedBytes,
+                failedCount: failedCount,
+                skippedForeignCount: skippedForeignCount,
+                incompleteItems: incompleteItems,
+                overlayReuse: overlayReuse,
+                failureReasons: failureReasons,
+                eraseOutcome: eraseOutcome
+            )
         }
         return EntryTotals(
             publishedCount: publishedCount,
@@ -401,8 +412,122 @@ actor MediaImportExecutor {
             skippedForeignCount: skippedForeignCount,
             incompleteItems: incompleteItems,
             overlayReuse: overlayReuse,
-            failureReasons: failureReasons
+            failureReasons: failureReasons,
+            eraseOutcome: EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
         )
+    }
+
+    private func eraseSourceFiles(context: EntryExecutionContext) async -> EraseOutcome {
+        guard case let .import(sourceRoot, _, _) = context.plan.mode else {
+            return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
+        }
+        let candidates = sourceDeletionCandidates(plan: context.plan, sourceRoot: sourceRoot)
+        OtosLog.mediaIO.notice(
+            "op=import.erase phase=start rootPath=\(sourceRoot.rawValue, privacy: .public) plannedCount=\(candidates.count, privacy: .public)"
+        )
+        var deleted = 0
+        var deletedBytes: Int64 = 0
+        var skipped = 0
+        var failed = 0
+        var logged = 0
+        for relativePath in candidates {
+            guard !cancelFlag.isCancelled else { break }
+            let result = await eraseSourceFile(
+                relativePath: relativePath,
+                sourceRoot: sourceRoot,
+                sourceKind: context.sourceKind,
+                sourceDeviceIdentity: context.sourceDeviceIdentity
+            )
+            switch result {
+            case let .deleted(bytes):
+                deleted += 1
+                deletedBytes += bytes
+                if logged < 20 {
+                    OtosLog.mediaIO.notice(
+                        "op=import.erase phase=deleted relativePath=\(relativePath.rawValue, privacy: .public) bytes=\(bytes, privacy: .public)"
+                    )
+                    logged += 1
+                }
+            case .skipped:
+                skipped += 1
+            case .failed:
+                failed += 1
+            }
+        }
+        let message = "op=import.erase phase=finish "
+            + "rootPath=\(sourceRoot.rawValue) "
+            + "deleted=\(deleted) "
+            + "skipped=\(skipped) "
+            + "failed=\(failed) "
+            + "bytesFreed=\(deletedBytes) "
+            + "logged=\(logged)"
+        OtosLog.mediaIO.notice("\(message, privacy: .public)")
+        return EraseOutcome(deletedCount: deleted, deletedBytes: deletedBytes, skippedCount: skipped, failedCount: failed)
+    }
+
+    private func sourceDeletionCandidates(
+        plan: MediaOperationPlan,
+        sourceRoot: LibraryRootPath
+    ) -> [MediaRelativePath] {
+        var paths = Set<MediaRelativePath>()
+        for entry in plan.entries {
+            switch entry.disposition {
+            case .copy, .skipPreexisting, .excluded:
+                paths.insert(entry.source.relativePath)
+                paths.formUnion(entry.source.companions.map(\.relativePath))
+            case .relocate, .noOp, .blocked:
+                break
+            }
+        }
+        if let enumerator = FileManager.default.enumerator(
+            at: sourceRoot.url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
+            options: []
+        ) {
+            for case let url as URL in enumerator {
+                guard let relative = CatalogPath.relativePath(rootPath: sourceRoot, fileURL: url) else { continue }
+                switch SourceFileClass.classify(relativePath: relative) {
+                case .usefulSidecar, .cruftSidecar, .sourceArtifact:
+                    paths.insert(relative)
+                case .media, .unknown:
+                    break
+                }
+            }
+        }
+        return paths.sorted { $0.rawValue < $1.rawValue }
+    }
+
+    private func eraseSourceFile(
+        relativePath: MediaRelativePath,
+        sourceRoot: LibraryRootPath,
+        sourceKind: LibraryRootKind,
+        sourceDeviceIdentity: String?
+    ) async -> SourceDeletionResult {
+        guard !relativePath.rawValue.split(separator: "/").contains("..") else { return .failed }
+        let root = sourceRoot.url.standardizedFileURL.path(percentEncoded: false)
+        let url = sourceRoot.url.appending(path: relativePath.rawValue).standardizedFileURL
+        guard url.path(percentEncoded: false).hasPrefix(root + "/") else { return .failed }
+        switch sourceKind {
+        case .removableVolume, .library:
+            guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return .skipped }
+            let bytes = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            do {
+                try FileManager.default.removeItem(at: url)
+                return .deleted(bytes: bytes)
+            } catch {
+                OtosLog.mediaIO.error(
+                    "op=import.erase phase=failed relativePath=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
+                return .failed
+            }
+        case .deviceMTP:
+            guard let sourceDeviceIdentity, let cameraImport,
+                  await cameraImport.canDelete(identity: sourceDeviceIdentity)
+            else { return .failed }
+            return await cameraImport.deleteItem(identity: sourceDeviceIdentity, relativePath: relativePath)
+                ? .deleted(bytes: 0)
+                : .failed
+        }
     }
 
     /// Why one plan entry failed to copy. `.sourceNotReady` is the only
@@ -431,6 +556,12 @@ actor MediaImportExecutor {
         case skippedForeign
         case cancelled
         case failed(EntryFailure)
+    }
+
+    private enum SourceDeletionResult: Sendable {
+        case deleted(bytes: Int64)
+        case skipped
+        case failed
     }
 
     private struct EntryResult: Sendable {
@@ -464,7 +595,10 @@ actor MediaImportExecutor {
                 modifiedAt: sourceModified
             )
         case .library:
-            return .sourceNotReady
+            guard let sourceModified else {
+                return .changed(.date)
+            }
+            return Self.fileValidation(url: sourceURL, byteSize: sourceByteSize, modifiedAt: sourceModified)
         }
     }
 
@@ -1502,6 +1636,13 @@ actor MediaImportExecutor {
     }
 }
 
+nonisolated struct EraseOutcome: Equatable, Sendable {
+    let deletedCount: Int
+    let deletedBytes: Int64
+    let skippedCount: Int
+    let failedCount: Int
+}
+
 nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
     case completed(
         publishedCount: Int,
@@ -1519,6 +1660,15 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
         failedCount: Int
     )
     case failed(reason: MediaOperationFailureReason)
+    case completedWithErase(
+        publishedCount: Int,
+        hasBlockedEntries: Bool,
+        hasEntryFailures: Bool,
+        skippedForeignCount: Int,
+        failedCount: Int,
+        incompleteItems: [MediaAssetID],
+        eraseOutcome: EraseOutcome
+    )
 }
 
 /// Thread-safe byte-progress accumulator for copy callbacks off the executor

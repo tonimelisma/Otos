@@ -64,7 +64,8 @@ nonisolated enum FilesystemNamespaceSemantics {
     /// `.absent`, and the planner blocks them instead of planning an overwrite.
     static func enumerateNamespace(
         root: LibraryRootPath,
-        folders: Set<String>
+        folders: Set<String>,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
     ) -> DestinationNamespace {
         var entries: [MediaRelativePath: NamespaceOccupancyResult] = [:]
         var enumerated: Set<String> = []
@@ -95,6 +96,10 @@ nonisolated enum FilesystemNamespaceSemantics {
             enumerated.insert(folder)
         }
 
-        return DestinationNamespace(entries: entries, enumeratedFolders: enumerated)
+        return DestinationNamespace(
+            entries: entries,
+            enumeratedFolders: enumerated,
+            capabilities: capabilities
+        )
     }
 }

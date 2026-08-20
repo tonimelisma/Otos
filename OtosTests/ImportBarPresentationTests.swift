@@ -20,6 +20,7 @@ struct ImportBarPresentationTests {
         isFullyClean: Bool? = nil,
         settledAt: Date? = nil,
         incompleteItems: [MediaAssetID] = [],
+        eraseOutcome: EraseOutcome? = nil,
         sourceKind: LibraryRootKind = .removableVolume,
         sessionPreferences: ImportPreferences = .default
     ) -> MediaOperationSourcePresentation {
@@ -36,7 +37,8 @@ struct ImportBarPresentationTests {
             isFullyClean: isFullyClean,
             settledAt: settledAt,
             sessionPreferences: sessionPreferences,
-            incompleteItems: incompleteItems
+            incompleteItems: incompleteItems,
+            eraseOutcome: eraseOutcome
         )
     }
 
@@ -98,8 +100,24 @@ struct ImportBarPresentationTests {
     @Test func queuedForReadinessIsAWithQueuedButtonStillDisabled() {
         let drawn = Self.map(Self.presentation(state: .queuedForReadiness))
         #expect(drawn.kind == .preparing)
-        #expect(drawn.primaryAction == .importPending)
+        #expect(drawn.primaryAction == .importQueued)
         #expect(drawn.primaryEnabled == false)
+    }
+
+    @Test func eraseOnlyCompletionReportsDeletedFilesAndDoesNotRevealBatchItems() {
+        let drawn = Self.map(Self.presentation(
+            state: .completed(summary: Self.totals(skipCount: 4)),
+            eraseOutcome: EraseOutcome(
+                deletedCount: 4,
+                deletedBytes: 400,
+                skippedCount: 0,
+                failedCount: 0
+            )
+        ))
+        #expect(drawn.primaryLine == "Card erased · 4 items deleted")
+        #expect(drawn.primaryBadge == .checkmark)
+        #expect(drawn.primaryAction == .ejectCard)
+        #expect(drawn.showsSecondaryShowItemsButton == false)
     }
 
     @Test func preparingWordingIsCameraForDeviceMTPAndCardForRemovableVolume() {
@@ -385,7 +403,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .working)
         #expect(drawn.primaryLine == "Stopping…")
         #expect(drawn.secondaryLine == .plain("Finishing the current item"))
-        #expect(drawn.middleZone == .progress(track: .determinate(completed: 12, total: 42), caption: nil))
+        #expect(drawn.middleZone == .progress(track: .determinate(completed: 19_000_000, total: 68_000_000), caption: nil))
         #expect(drawn.primaryAction == .cancel)
         #expect(drawn.primaryEnabled == false)
     }

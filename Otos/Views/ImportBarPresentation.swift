@@ -29,7 +29,7 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
 
     enum ProgressTrack: Equatable, Sendable {
         case indeterminate
-        case determinate(completed: Int, total: Int)
+        case determinate(completed: Int64, total: Int64)
     }
 
     /// The bar's middle column. Exactly one of these per state — `.hidden` is the
@@ -44,6 +44,7 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
 
     enum PrimaryAction: Equatable, Sendable {
         case importPending
+        case importQueued
         case importItems(count: Int)
         case ejectCard
         case eraseItems(count: Int)
@@ -103,7 +104,8 @@ nonisolated enum ImportBarPresentation {
                 failedCount: failedCount,
                 incompleteItems: incompleteItems,
                 presentation: presentation,
-                preferences: preferences
+                preferences: preferences,
+                eraseOutcome: presentation.eraseOutcome
             )
         default:
             break
@@ -158,7 +160,7 @@ nonisolated enum ImportBarPresentation {
         switch state {
         case let .waitingForMetadata(done, total):
             itemsLine = "\(done) of \(total) items"
-            track = .determinate(completed: done, total: total)
+            track = .determinate(completed: Int64(done), total: Int64(total))
         case .queuedForReadiness:
             itemsLine = nil
             track = .indeterminate
@@ -167,13 +169,16 @@ nonisolated enum ImportBarPresentation {
             track = .indeterminate
         }
         let primaryLine = sourceKind == .deviceMTP ? "Checking the camera…" : "Checking the card…"
+        let primaryAction: ImportBarDrawnState.PrimaryAction = state == .queuedForReadiness
+            ? .importQueued
+            : .importPending
         return ImportBarDrawnState(
             kind: .preparing,
             primaryLine: primaryLine,
             primaryBadge: .none,
             secondaryLine: itemsLine.map { ImportBarDrawnState.SecondaryLine.plain($0) } ?? .none,
             middleZone: .progress(track: track, caption: nil),
-            primaryAction: .importPending,
+            primaryAction: primaryAction,
             primaryEnabled: false,
             showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
@@ -331,7 +336,7 @@ nonisolated enum ImportBarPresentation {
                 primaryBadge: .none,
                 secondaryLine: .plain("Finishing the current item"),
                 middleZone: .progress(
-                    track: .determinate(completed: progress.completedCount, total: progress.totalCount),
+                    track: .determinate(completed: Int64(progress.completedBytes), total: max(progress.totalBytes, 1)),
                     caption: nil
                 ),
                 primaryAction: .cancel,
@@ -355,7 +360,7 @@ nonisolated enum ImportBarPresentation {
             primaryBadge: .none,
             secondaryLine: .plain(secondary),
             middleZone: .progress(
-                track: .determinate(completed: progress.completedCount, total: progress.totalCount),
+                track: .determinate(completed: progress.completedBytes, total: max(progress.totalBytes, 1)),
                 caption: caption
             ),
             primaryAction: .cancel,
@@ -391,8 +396,29 @@ nonisolated enum ImportBarPresentation {
         failedCount: Int,
         incompleteItems: [MediaAssetID],
         presentation: MediaOperationSourcePresentation,
-        preferences: ImportPreferences
+        preferences: ImportPreferences,
+        eraseOutcome: EraseOutcome?
     ) -> ImportBarDrawnState {
+        if let eraseOutcome, summary.copyCount == 0, summary.companionCopyCount == 0 {
+            let failed = eraseOutcome.failedCount + eraseOutcome.skippedCount
+            let itemWord = eraseOutcome.deletedCount == 1 ? "item" : "items"
+            let isComplete = failed == 0
+            return ImportBarDrawnState(
+                kind: .done,
+                primaryLine: isComplete
+                    ? "Card erased · \(eraseOutcome.deletedCount) \(itemWord) deleted"
+                    : "Card erase incomplete · \(eraseOutcome.deletedCount) \(itemWord) deleted",
+                primaryBadge: isComplete ? .checkmark : .attention,
+                secondaryLine: failed == 0
+                    ? .none
+                    : .plain("\(failed) \(failed == 1 ? "item" : "items") could not be deleted"),
+                middleZone: .hidden,
+                primaryAction: .ejectCard,
+                primaryEnabled: true,
+                showsSecondaryShowItemsButton: false,
+                eraseConfirmationProvenClean: false
+            )
+        }
         let isFullyClean = skippedForeignCount == 0 && failedCount == 0 && summary.blockedCount == 0
         let copiedCount = presentation.copiedJustNow ?? summary.copyCount
         let itemsInLibrary = summary.copyCount + summary.skipCount + summary.companionCopyCount

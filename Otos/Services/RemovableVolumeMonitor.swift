@@ -8,6 +8,27 @@ nonisolated struct RemovableVolumeAttachment: Equatable {
     let identity: String
     let displayName: String
     let isEjectable: Bool
+    let capabilities: VolumeNamespaceCapabilities
+    let deviceModel: String?
+    let volumeFormat: String?
+
+    init(
+        mountURL: URL,
+        identity: String,
+        displayName: String,
+        isEjectable: Bool,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        deviceModel: String? = nil,
+        volumeFormat: String? = nil
+    ) {
+        self.mountURL = mountURL
+        self.identity = identity
+        self.displayName = displayName
+        self.isEjectable = isEjectable
+        self.capabilities = capabilities
+        self.deviceModel = deviceModel
+        self.volumeFormat = volumeFormat
+    }
 }
 
 nonisolated struct RemovableVolumeDetachedDisk {
@@ -198,7 +219,10 @@ final class RemovableVolumeMonitor {
                 mountURL: attachment.mountURL,
                 identity: "\(attachment.identity)#path:\(mountPath)",
                 displayName: attachment.displayName,
-                isEjectable: attachment.isEjectable
+                isEjectable: attachment.isEjectable,
+                capabilities: attachment.capabilities,
+                deviceModel: attachment.deviceModel,
+                volumeFormat: attachment.volumeFormat
             )
         }
     }
@@ -220,6 +244,9 @@ final class RemovableVolumeMonitor {
             .volumeUUIDStringKey,
             .volumeIsRemovableKey,
             .volumeIsEjectableKey,
+            .volumeSupportsCaseSensitiveNamesKey,
+            .volumeSupportsCasePreservedNamesKey,
+            .volumeLocalizedFormatDescriptionKey,
         ]
         guard let urls = FileManager.default.mountedVolumeURLs(
             includingResourceValuesForKeys: keys,
@@ -243,7 +270,13 @@ final class RemovableVolumeMonitor {
                 mountURL: url,
                 identity: identity,
                 displayName: values.volumeName ?? url.lastPathComponent,
-                isEjectable: values.volumeIsEjectable == true
+                isEjectable: values.volumeIsEjectable == true,
+                capabilities: VolumeNamespaceCapabilities(
+                    isCaseSensitive: values.volumeSupportsCaseSensitiveNames ?? false,
+                    prefersDecomposedUnicode: true
+                ),
+                deviceModel: deviceModel(forVolumeAt: url, session: session),
+                volumeFormat: values.volumeLocalizedFormatDescription
             )
         }
         return disambiguatedAttachments(attachments)

@@ -94,3 +94,42 @@ nonisolated enum MediaEligibility {
         return MediaCompanionKind.recognize(fileExtension: ext) != nil
     }
 }
+
+/// Source-side disposition classification used only by explicit card erase.
+/// Unknown files remain untouched; classification is path/extension based and
+/// never reads file bytes.
+nonisolated enum SourceFileClass: Equatable, Sendable {
+    case media
+    case usefulSidecar
+    case cruftSidecar
+    case sourceArtifact(String)
+    case unknown
+
+    static func classify(relativePath: MediaRelativePath) -> SourceFileClass {
+        let components = relativePath.rawValue
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map { String($0).lowercased() }
+        guard let name = components.last else { return .unknown }
+        if name.hasPrefix("._") || components.contains(".trashes") || components.contains(where: { $0.hasPrefix(".trash-") || $0 == "$recycle.bin" }) {
+            return .sourceArtifact("cardTrash")
+        }
+        if components.contains("m4root"), components.contains("thmbnl") {
+            return .sourceArtifact("sonyThumbnailDirectory")
+        }
+        if components.count >= 2,
+           components[components.count - 2] == "clip",
+           components.contains("m4root"),
+           name.hasSuffix(".xml")
+        {
+            return .sourceArtifact("sonyClipXML")
+        }
+        switch URL(fileURLWithPath: name).pathExtension.lowercased() {
+        case "xmp", "srt": return .usefulSidecar
+        case "thm", "ctg", "aae", "lrf", "mpl", "cpi": return .cruftSidecar
+        default:
+            return MediaEligibility.isCatalogMedia(
+                contentTypeIdentifier: UTType(filenameExtension: URL(fileURLWithPath: name).pathExtension)?.identifier
+            ) ? .media : .unknown
+        }
+    }
+}

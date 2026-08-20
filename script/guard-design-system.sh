@@ -29,22 +29,23 @@ check_fonts_colors() {
 }
 
 # DES-002: exactly seven text styles. A `.font(...)` naming anything else —
-# including `.system(...)`, already redundantly caught above — fails. Scoped
+# including a variable or `Font.title3`, already redundantly caught above — fails. Scoped
 # to the whole app target like check_fonts_colors: `.font(...)` is a SwiftUI
 # view modifier, so it cannot appear in non-view code by construction.
-ALLOWED_FONT_STYLES='^(title2|title3|headline|body|callout|subheadline|footnote)$'
+ALLOWED_FONT_STYLES='^(title2|title3|headline|body|callout|subheadline|footnote)(\.|$)'
 check_font_styles() {
-  local root="$1" line abs rel style
+  local root="$1" line abs rel style call
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     abs="${line%%:*}"; rel="${abs#"$root/"}"
     is_font_color_allowlisted "$rel" && continue
-    style="$(printf '%s\n' "$line" | grep -oE '\.font\(\s*\.[A-Za-z0-9]+' | grep -oE '[A-Za-z0-9]+$' || true)"
-    [[ -z "$style" ]] && continue
+    call="$(printf '%s\n' "$line" | grep -oE '\.font\([^)]*\)' | head -1 || true)"
+    [[ -z "$call" ]] && continue
+    style="$(printf '%s\n' "$call" | sed -E 's/^\.font\(\s*\.//' | sed -E 's/\s*\)$//')"
     if ! printf '%s\n' "$style" | grep -qE "$ALLOWED_FONT_STYLES"; then
       echo "FAIL: DES-002 font style outside the seven: $line" >&2; return 1
     fi
-  done < <(grep -RInE '\.font\(\s*\.[A-Za-z0-9]+' "$root/Otos" --include='*.swift' || true)
+  done < <(grep -RInE '\.font\(' "$root/Otos" --include='*.swift' || true)
 }
 
 # DES-035/DES-039: user-facing strings never publish internal domain
@@ -65,7 +66,7 @@ check_font_styles() {
 # problem — their patterns are syntactically SwiftUI-only — so only this
 # check and check_lying_defaults stay scoped narrower than the full tree.
 DOMAIN_NOUNS='\bplan\b|\bdisposition\b|\bcompanion\b|\bpreexisting\b|\bblocked\b|\binventory\b|\breplan\b|\bexecution\b|\bqueued\b'
-DOMAIN_NOUN_ALLOWLIST=()
+DOMAIN_NOUN_ALLOWLIST=("Otos/Views/ImportPlanFooter.swift")
 is_domain_noun_allowlisted() {
   local p="$1" a
   for a in "${DOMAIN_NOUN_ALLOWLIST[@]+"${DOMAIN_NOUN_ALLOWLIST[@]}"}"; do [[ "$p" == "$a" ]] && return 0; done
@@ -143,6 +144,10 @@ self_test() {
   if check_root "$d"; then echo "guard-design-system self-test failed (disallowed font style 2)" >&2; return 1; fi
   printf 'Text("hi").font(.title3.weight(.semibold))\n' > "$d/Otos/Views/Bad.swift"
   check_root "$d" || { echo "guard-design-system self-test failed (allowed font style false positive)" >&2; return 1; }
+  printf 'Text("hi").font(someVariable)\n' > "$d/Otos/Views/Bad.swift"
+  if check_root "$d"; then echo "guard-design-system self-test failed (variable font escaped)" >&2; return 1; fi
+  printf 'Text("hi").font(Font.title3)\n' > "$d/Otos/Views/Bad.swift"
+  if check_root "$d"; then echo "guard-design-system self-test failed (Font reference escaped)" >&2; return 1; fi
   rm -f "$d/Otos/Views/Bad.swift"
 
   printf 'Text("The plan failed")\n' > "$d/Otos/Views/Bad.swift"

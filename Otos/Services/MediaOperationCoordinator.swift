@@ -47,13 +47,13 @@ actor MediaOperationCoordinator {
     private struct ReadyContext {
         let plan: MediaOperationPlan
         let skippedPackageCount: Int
-        let claims: Set<MediaRelativePath>
+        let claims: Set<FilesystemNameKey>
         let attentionItems: [MediaAttentionItem]
     }
 
     private struct ExecutionContext {
         let plan: MediaOperationPlan
-        let claims: Set<MediaRelativePath>
+        let claims: Set<FilesystemNameKey>
         let executor: any ImportExecuting
         let task: Task<Void, Never>
         let summary: MediaOperationPlanTotals
@@ -70,6 +70,7 @@ actor MediaOperationCoordinator {
         case ready(ReadyContext)
         case executing(ExecutionContext)
         case completed
+        case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64, attentionItems: [MediaAttentionItem])
         case failed(reason: MediaOperationFailureReason, publishedCount: Int)
     }
 
@@ -80,7 +81,7 @@ actor MediaOperationCoordinator {
     /// a new `AttachmentGeneration` (card ejected and re-inserted) — never by a
     /// later re-plan within the same attachment.
     private struct AttachmentCompletion {
-        let batch: ImportBatchID
+        let batch: ImportBatchID?
         let publishedCount: Int
         let isFullyClean: Bool
         /// Items that started this run but did not land, carried alongside the
@@ -88,6 +89,7 @@ actor MediaOperationCoordinator {
         /// select and scroll them after the post-settlement re-plan
         /// (`import-bar.md` state F).
         let incompleteItems: [MediaAssetID]
+        let eraseOutcome: EraseOutcome?
         /// The instant this run actually settled, published as state
         /// (`MediaOperationSourcePresentation.settledAt`) so the ViewModel's
         /// auto-dismiss task computes its 6 s deadline from a stable anchor
@@ -106,6 +108,7 @@ actor MediaOperationCoordinator {
         let skippedForeignCount: Int
         let failedCount: Int
         let incompleteItems: [MediaAssetID]
+        let eraseOutcome: EraseOutcome?
     }
 
     private struct SourceSession {
@@ -163,6 +166,7 @@ actor MediaOperationCoordinator {
     }
 
     private var sourceSessions: [LibraryRootPath: SourceSession] = [:]
+    private var lastPresentationLogAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     /// The last presentation a *settled* attachment showed, captured at the
     /// moment its source session is removed (card ejected or pulled once
     /// nothing is executing). The batch row outlives the source session
@@ -444,22 +448,13 @@ actor MediaOperationCoordinator {
         attentionItems: [MediaAttentionItem]
     ) {
         guard var session = sourceSessions[source] else { return }
-        // Bookkeeping so scheduleBuildIfNeeded won't rebuild this session; the
-        // presentation actually shown is the `.executionUnavailable` override
-        // published below, not this phase. Pre-existing risk, unchanged by
-        // this diff: any later unrelated `publish()` re-derives from
-        // `session.phase` via `presentation(for:)` and would show this
-        // `.failed` phase instead, since nothing here is sticky.
-        session.phase = .failed(reason: .unexpected(detail: "executionUnavailable"), publishedCount: 0)
-        sourceSessions[source] = session
-        let presentation = makePresentation(
-            session: session,
-            state: .executionUnavailable(summary: summary, generation: generation, attentionItems: attentionItems)
+        session.phase = .executionUnavailable(
+            summary: summary,
+            generation: generation,
+            attentionItems: attentionItems
         )
-        let values = sortedPresentations().map { $0.sourcePath == source ? presentation : $0 }
-        for continuation in continuations.values {
-            continuation.yield(values)
-        }
+        sourceSessions[source] = session
+        publish()
     }
 
     private func runExecution(source: LibraryRootPath, sourceState: CatalogLibraryState, readyContext: ReadyContext) async {
@@ -576,11 +571,12 @@ actor MediaOperationCoordinator {
             // "must join" list for the auto-dismiss gate names it explicitly
             // (`import-bar.md` "What the presentation must carry").
             session.lastCompletion = AttachmentCompletion(
-                batch: context.batch,
+                batch: summary.copyCount + summary.companionCopyCount > 0 ? context.batch : nil,
                 publishedCount: publishedCount,
                 isFullyClean: !hasBlockedEntries && !hasEntryFailures
                     && skippedForeignCount == 0 && summary.blockedCount == 0,
                 incompleteItems: incompleteItems,
+                eraseOutcome: nil,
                 settledAt: Date()
             )
             // Stored on the session so `presentation(for:)` reads the real
@@ -591,11 +587,44 @@ actor MediaOperationCoordinator {
                 summary: summary,
                 skippedForeignCount: skippedForeignCount,
                 failedCount: failedCount,
-                incompleteItems: incompleteItems
+                incompleteItems: incompleteItems,
+                eraseOutcome: nil
             )
+            if summary.copyCount + summary.companionCopyCount == 0 {
+                session.lastAttemptedBatch = nil
+            }
             sourceSessions[source] = session
             publish()
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
+                await autoEjectIfRequested(sourceRoot)
+            }
+        case let .completedWithErase(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems, eraseOutcome):
+            session.phase = .completed
+            session.lastCompletion = AttachmentCompletion(
+                batch: summary.copyCount + summary.companionCopyCount > 0 ? context.batch : nil,
+                publishedCount: publishedCount,
+                isFullyClean: !hasBlockedEntries && !hasEntryFailures
+                    && skippedForeignCount == 0 && summary.blockedCount == 0
+                    && eraseOutcome.failedCount == 0,
+                incompleteItems: incompleteItems,
+                eraseOutcome: eraseOutcome,
+                settledAt: Date()
+            )
+            session.settledOutcome = SettledOutcome(
+                summary: summary,
+                skippedForeignCount: skippedForeignCount,
+                failedCount: failedCount,
+                incompleteItems: incompleteItems,
+                eraseOutcome: eraseOutcome
+            )
+            if summary.copyCount + summary.companionCopyCount == 0 {
+                session.lastAttemptedBatch = nil
+            }
+            sourceSessions[source] = session
+            publish()
+            if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures,
+               summary.blockedCount == 0, eraseOutcome.failedCount == 0
+            {
                 await autoEjectIfRequested(sourceRoot)
             }
         case let .cancelled(publishedCount, _, _, _, _):
@@ -611,6 +640,7 @@ actor MediaOperationCoordinator {
                 publishedCount: publishedCount,
                 isFullyClean: false,
                 incompleteItems: [],
+                eraseOutcome: nil,
                 settledAt: Date()
             )
             sourceSessions[source] = session
@@ -972,8 +1002,8 @@ actor MediaOperationCoordinator {
                 // misleading one. Doing this right needs the cancel-vs-detach
                 // race disentangled from an ordinary user Cancel, which this
                 // snapshot does not attempt — follow-up work, not this one.
-                if !isExecutingNewImport, let completion = session.lastCompletion {
-                    detachedBatchPresentations[completion.batch] = makePresentation(
+                if !isExecutingNewImport, let completion = session.lastCompletion, let batch = completion.batch {
+                    detachedBatchPresentations[batch] = makePresentation(
                         session: session,
                         state: .completed(
                             summary: MediaOperationPlanTotals(
@@ -1056,9 +1086,15 @@ actor MediaOperationCoordinator {
         }
     }
 
-    private nonisolated static func logPlanFinished(source: LibraryRootPath, sourceCount: Int, result: ImportPlanBuildResult) {
+    private nonisolated static func logPlanFinished(
+        source: LibraryRootPath,
+        sourceCount: Int,
+        namingMtimeCount: Int,
+        namingSettledCount: Int,
+        result: ImportPlanBuildResult
+    ) {
         // swiftlint:disable:next line_length
-        OtosLog.catalog.noticeOperation("import.plan", phase: "finish", fields: ["rootPath": source.rawValue, "sourceCount": "\(sourceCount)", "folders": "\(result.namespace.folderCount)", "namespaceEntries": "\(result.namespace.entryCount)", "enumerateMs": "\(result.enumerateMs)", "planMs": "\(result.planMs)", "copyCount": "\(result.plan.totals.copyCount)", "skipCount": "\(result.plan.totals.skipCount)", "blockedCount": "\(result.plan.totals.blockedCount)"])
+        OtosLog.catalog.noticeOperation("import.plan", phase: "finish", fields: ["rootPath": source.rawValue, "sourceCount": "\(sourceCount)", "folders": "\(result.namespace.folderCount)", "namespaceEntries": "\(result.namespace.entryCount)", "enumerateMs": "\(result.enumerateMs)", "planMs": "\(result.planMs)", "copyCount": "\(result.plan.totals.copyCount)", "skipCount": "\(result.plan.totals.skipCount)", "excludedCount": "\(result.plan.totals.excludedCount)", "blockedCount": "\(result.plan.totals.blockedCount)", "namingMtimeCount": "\(namingMtimeCount)", "namingSettledCount": "\(namingSettledCount)"])
     }
 
     private func buildPlan(source: LibraryRootPath, destination: LibraryRootPath, generation: UInt64, attachment: AttachmentGeneration) async throws {
@@ -1111,10 +1147,21 @@ actor MediaOperationCoordinator {
         OtosLog.catalog.noticeOperation("import.plan", phase: "start", fields: ["rootPath": source.rawValue, "destinationPath": destination.rawValue, "sourceCount": "\(snapshot.sourceMedia.count)", "destinationOccupants": "\(snapshot.destinationOccupants.count)"])
         let seededClaims = ledgerClaims(for: destination, excluding: source)
         let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
-        let build = await planBuilder.build(snapshot: snapshot, additionalReserved: seededClaims)
+        let build = await planBuilder.build(
+            snapshot: snapshot,
+            additionalReserved: Set(seededClaims.map { MediaRelativePath(rawValue: $0.rawValue) })
+        )
         OtosSignpost.performance.endInterval("ImportPlanBuild", signpost)
         let plan = build.plan
-        Self.logPlanFinished(source: source, sourceCount: snapshot.sourceMedia.count, result: build)
+        Self.logPlanFinished(
+            source: source,
+            sourceCount: snapshot.sourceMedia.count,
+            namingMtimeCount: snapshot.sourceMedia.filter {
+                $0.isNamingFactSettled && $0.captureWallCompact == nil && $0.hasAnyDate
+            }.count,
+            namingSettledCount: snapshot.sourceMedia.filter(\.isNamingFactSettled).count,
+            result: build
+        )
         guard let current = sourceSessions[source],
               current.attachmentGeneration == attachment,
               case let .building(currentCtx) = current.phase,
@@ -1139,7 +1186,7 @@ actor MediaOperationCoordinator {
             scheduleBuildIfNeeded(source)
             return
         }
-        let newClaims = planClaims(from: plan)
+        let newClaims = planClaims(from: plan, capabilities: snapshot.destinationCapabilities)
         let currentLedger = ledgerClaims(for: destination, excluding: source)
         if !newClaims.isDisjoint(with: currentLedger) {
             // swiftlint:disable:next line_length
@@ -1179,14 +1226,14 @@ actor MediaOperationCoordinator {
 
     // swiftlint:disable:next line_length
     private func shouldWaitForMetadata(source: LibraryRootPath, snapshot: ImportPlanningSnapshot, attachment: AttachmentGeneration, generation: UInt64) async -> Bool {
-        let missingDates = snapshot.sourceMedia.filter { !$0.hasUsableDate }.count
+        let filesWithNoDateAtAll = snapshot.sourceMedia.filter { !$0.hasAnyDate }.count
         let total = snapshot.sourceMedia.count
-        let enriched = total - missingDates
+        let settled = snapshot.sourceMedia.filter(\.isNamingFactSettled).count
         let libraries = await store.currentLibraries()
         let sourceKind = libraries.first(where: { $0.path == source })?.root.kind
         guard sourceKind != .deviceMTP,
               MediaTransferPlanner.needsDate(policy: snapshot.policy),
-              snapshot.sourceMedia.contains(where: { $0.captureWallCompact == nil && $0.contentModifiedAt == nil })
+              snapshot.sourceMedia.contains(where: { !$0.isNamingFactSettled })
         else {
             return false
         }
@@ -1196,14 +1243,20 @@ actor MediaOperationCoordinator {
         else {
             return false
         }
-        session.phase = .waitingForMetadata(done: enriched, total: max(total, 1))
+        let message = "op=import.readiness phase=waitingForMetadata "
+            + "rootPath=\(source.rawValue) "
+            + "settled=\(settled) "
+            + "total=\(total) "
+            + "filesWithNoDateAtAll=\(filesWithNoDateAtAll)"
+        OtosLog.catalog.notice("\(message, privacy: .public)")
+        session.phase = .waitingForMetadata(done: settled, total: max(total, 1))
         sourceSessions[source] = session
         publish()
         return true
     }
 
-    private func ledgerClaims(for destination: LibraryRootPath, excluding excludedSource: LibraryRootPath? = nil) -> Set<MediaRelativePath> {
-        var result: Set<MediaRelativePath> = []
+    private func ledgerClaims(for destination: LibraryRootPath, excluding excludedSource: LibraryRootPath? = nil) -> Set<FilesystemNameKey> {
+        var result: Set<FilesystemNameKey> = []
         for (source, session) in sourceSessions where session.destination == destination && source != excludedSource {
             switch session.phase {
             case let .ready(ctx): result.formUnion(ctx.claims)
@@ -1214,13 +1267,16 @@ actor MediaOperationCoordinator {
         return result
     }
 
-    private func planClaims(from plan: MediaOperationPlan) -> Set<MediaRelativePath> {
-        var claims: Set<MediaRelativePath> = []
+    private func planClaims(
+        from plan: MediaOperationPlan,
+        capabilities: VolumeNamespaceCapabilities
+    ) -> Set<FilesystemNameKey> {
+        var claims: Set<FilesystemNameKey> = []
         for entry in plan.entries {
             guard case .copy = entry.disposition else { continue }
-            claims.insert(entry.finalDestination)
+            claims.insert(FilesystemNamespaceSemantics.nameKey(relativePath: entry.finalDestination, capabilities: capabilities))
             for dest in entry.companionDestinations.values {
-                claims.insert(dest)
+                claims.insert(FilesystemNamespaceSemantics.nameKey(relativePath: dest, capabilities: capabilities))
             }
         }
         return claims
@@ -1240,6 +1296,8 @@ actor MediaOperationCoordinator {
             executingState(for: session)
         case .completed:
             completedState(for: session)
+        case let .executionUnavailable(summary, generation, attentionItems):
+            .executionUnavailable(summary: summary, generation: generation, attentionItems: attentionItems)
         case let .failed(reason, publishedCount):
             .failed(reason: reason, publishedCount: publishedCount)
         }
@@ -1351,7 +1409,8 @@ actor MediaOperationCoordinator {
             isFullyClean: session.lastCompletion?.isFullyClean,
             settledAt: session.lastCompletion?.settledAt,
             sessionPreferences: session.preferences,
-            incompleteItems: session.lastCompletion?.incompleteItems ?? []
+            incompleteItems: session.lastCompletion?.incompleteItems ?? [],
+            eraseOutcome: session.lastCompletion?.eraseOutcome
         )
     }
 
@@ -1365,6 +1424,24 @@ actor MediaOperationCoordinator {
 
     private func publish() {
         let values = sortedPresentations()
+        let now = ContinuousClock().now
+        for presentation in values {
+            let shouldLog = lastPresentationLogAt[presentation.sourcePath].map {
+                $0.duration(to: now) >= .milliseconds(250)
+            } ?? true
+            guard shouldLog else { continue }
+            lastPresentationLogAt[presentation.sourcePath] = now
+            let progress: MediaOperationProgress? = if case let .executing(value) = presentation.state {
+                value
+            } else {
+                nil
+            }
+            let batchID = presentation.batchID.map { String(describing: $0) } ?? "none"
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=import.presentation phase=publish sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) state=\(String(describing: presentation.state), privacy: .public) completedCount=\(progress?.completedCount ?? 0, privacy: .public) totalCount=\(progress?.totalCount ?? 0, privacy: .public) completedBytes=\(progress?.completedBytes ?? 0, privacy: .public) batchID=\(batchID, privacy: .public)"
+            )
+        }
         for continuation in continuations.values {
             continuation.yield(values)
         }

@@ -325,7 +325,10 @@ private extension CatalogWindowViewModel {
                 mountURL: attachment.mountURL,
                 identity: attachment.identity,
                 displayName: attachment.displayName,
-                isEjectable: attachment.isEjectable
+                isEjectable: attachment.isEjectable,
+                capabilities: attachment.capabilities,
+                deviceModel: attachment.deviceModel,
+                volumeFormat: attachment.volumeFormat
             )
         } catch {
             await recordMutationError(

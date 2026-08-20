@@ -530,12 +530,12 @@ anyone else — that list is a navigation surface, not a place to watch work fro
 | Current string | Replacement |
 | --- | --- |
 | `Inventory…`, `Planning…`, `Waiting for metadata (12/139)`, `Source changed — replanning…` | `Checking the card…` + L3 `12 of 139 items` |
-| `Import queued — finishing metadata…` | `Checking the card…`, button in its queued disabled form |
+| `Import queued — finishing metadata…` | `Checking the card…`, disabled `Import queued` button |
 | `Importing 12/139` | `Importing 12 of 139` + L3 `19 MB of 68 MB · about 40 seconds left` |
 | `12 copy · 4 preexisting · 3 companion · 1 blocked · 521 MB · 2 skipped packages` | `12 new items · 521 MB` + L3 `4 already in Summer Photos` (attention count moves to state D) |
 | `Cleanup/eject withheld while blocked or skipped-package attention remains` | Nothing — the erase checkbox disables with a tooltip (DES-038) |
 | `Sidecars on · Delete source after import · Auto-eject off` | Nothing — the inline checkboxes state their own condition |
-| `Import queued (execution lands in a later update)` | Never shipped (DES-039) |
+| `Import queued (execution lands in a later update)` | The disabled `Import queued` button acknowledges the request (DES-039) |
 | `Import complete — nothing new` | `Nothing new on this card` |
 | `Nothing can be imported yet · 3 need attention` | State D wording above |
 | `Destination` | `Copy into` |
@@ -595,4 +595,4 @@ in `hig-validation.md`.
 | Tile shape | Aspect-shaped, uncropped, as today (DES-060A) |
 | Day headers | Yes, pinned while scrolling (DES-069) |
 | Chrome | Sidebar `#FAFAFB`, bar `#FBFBFC`, hairlines 8% (DES-022, DES-023) |
-| L3 / L4 text colour | 60% / 45%, raised from the system values for contrast (`hig-validation.md` F-1) |
+| L3 text colour | 60%, raised from the system value for contrast (`hig-validation.md` F-1) |

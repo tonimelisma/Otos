@@ -38,7 +38,8 @@ nonisolated struct LiveImportPlanBuilder: ImportPlanBuilding {
         let enumerateStart = clock.now
         let namespace = FilesystemNamespaceSemantics.enumerateNamespace(
             root: snapshot.destinationRoot,
-            folders: MediaTransferPlanner.destinationFolders(for: snapshot)
+            folders: MediaTransferPlanner.destinationFolders(for: snapshot),
+            capabilities: snapshot.destinationCapabilities
         )
         let planStart = clock.now
         OtosLog.catalog.noticeOperation(

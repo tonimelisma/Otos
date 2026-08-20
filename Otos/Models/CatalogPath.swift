@@ -40,7 +40,10 @@ nonisolated enum CatalogPath {
     }
 
     static func relativePath(rootPath: LibraryRootPath, fileURL: URL) -> MediaRelativePath? {
-        let filePath = fileURL.standardizedFileURL.resolvingSymlinksInPath().path(percentEncoded: false)
+        // The root path was resolved once at registration. Resolving every file
+        // again can rewrite `/private` to `/` and break this prefix comparison;
+        // standardization is sufficient for scanner-relative identity.
+        let filePath = fileURL.standardizedFileURL.path(percentEncoded: false)
         let prefix = rootPath.rawValue + "/"
         guard filePath.hasPrefix(prefix) else {
             return nil

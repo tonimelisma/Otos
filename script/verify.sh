@@ -27,7 +27,7 @@ run_static_gates() {
   for guard_script in \
     guard-unsandboxed.sh guard-single-main-window.sh guard-view-passivity.sh \
     guard-no-audio.sh guard-no-writes-into-media.sh guard-smoke-run-busy.sh \
-    guard-design-system.sh; do
+    guard-design-system.sh guard-presentation-yield.sh; do
     "$ROOT_DIR/script/$guard_script"
     "$ROOT_DIR/script/$guard_script" self-test
   done

@@ -74,6 +74,23 @@ extension CatalogWindowViewModel {
     }
 
     func applyImportPresentations(_ presentations: [MediaOperationSourcePresentation]) {
+        let now = ContinuousClock().now
+        for presentation in presentations {
+            let shouldLog = lastImportPresentationLogAt[presentation.sourcePath].map {
+                $0.duration(to: now) >= .milliseconds(250)
+            } ?? true
+            guard shouldLog else { continue }
+            lastImportPresentationLogAt[presentation.sourcePath] = now
+            let drawn = ImportBarPresentation.map(
+                presentation: presentation,
+                preferences: presentation.sessionPreferences,
+                sourceDisplayName: presentation.sourcePath.displayName
+            )
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=import.presentation phase=apply sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) drawnKind=\(String(describing: drawn.kind), privacy: .public) primaryAction=\(String(describing: drawn.primaryAction), privacy: .public) primaryEnabled=\(drawn.primaryEnabled, privacy: .public)"
+            )
+        }
         importPresentations = presentations
         if !cancellingImportSources.isEmpty {
             let stillExecuting = Set(presentations.compactMap { presentation -> LibraryRootPath? in
@@ -128,6 +145,9 @@ extension CatalogWindowViewModel {
                     return
                 }
                 dismissedBatchIDs.insert(batchID)
+                if dismissedBatchIDs.count > 512, let oldest = dismissedBatchIDs.first {
+                    dismissedBatchIDs.remove(oldest)
+                }
             }
         }
     }

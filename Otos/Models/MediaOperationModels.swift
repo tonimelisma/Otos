@@ -59,6 +59,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let byteSize: Int64?
     let contentModifiedAt: Date?
     let captureWallCompact: Int64?
+    let isNamingFactSettled: Bool
     let mediaKind: MediaKind?
     let contentTypeIdentifier: String?
     let fileExtension: String
@@ -71,6 +72,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         byteSize: Int64?,
         contentModifiedAt: Date?,
         captureWallCompact: Int64?,
+        isNamingFactSettled: Bool = true,
         mediaKind: MediaKind?,
         fileExtension: String,
         companions: [MediaCompanion],
@@ -82,6 +84,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.byteSize = byteSize
         self.contentModifiedAt = contentModifiedAt
         self.captureWallCompact = captureWallCompact
+        self.isNamingFactSettled = isNamingFactSettled
         self.mediaKind = mediaKind
         self.contentTypeIdentifier = contentTypeIdentifier
         self.fileExtension = fileExtension
@@ -89,7 +92,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     }
 
     /// Best planning date: embedded capture wall when present, else source mtime.
-    var hasUsableDate: Bool {
+    var hasAnyDate: Bool {
         captureWallCompact != nil || contentModifiedAt != nil
     }
 }
@@ -126,7 +129,13 @@ nonisolated enum MediaOperationDisposition: Equatable, Sendable {
     case skipPreexisting(destination: MediaRelativePath)
     case relocate(destination: MediaRelativePath)
     case noOp
+    case excluded(ExclusionReason)
     case blocked(MediaOperationBlockReason)
+}
+
+nonisolated enum ExclusionReason: Equatable, Sendable {
+    case empty
+    case cruft(SourceFileClass)
 }
 
 nonisolated enum MediaOperationBlockReason: Equatable, Sendable {
@@ -210,6 +219,27 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
     var blockedCount: Int
     var companionCopyCount: Int
     var copyBytes: Int64
+    var excludedCount: Int
+
+    init(
+        copyCount: Int,
+        skipCount: Int,
+        blockedCount: Int,
+        companionCopyCount: Int,
+        copyBytes: Int64,
+        excludedCount: Int = 0
+    ) {
+        self.copyCount = copyCount
+        self.skipCount = skipCount
+        self.blockedCount = blockedCount
+        self.companionCopyCount = companionCopyCount
+        self.copyBytes = copyBytes
+        self.excludedCount = excludedCount
+    }
+
+    var eraseCount: Int {
+        skipCount + excludedCount + copyCount
+    }
 }
 
 nonisolated struct MediaOperationPlan: Equatable, Sendable {
@@ -357,6 +387,39 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// own reason and are not included here. Persists across the
     /// post-settlement re-plan alongside `copiedJustNow`/`isFullyClean`.
     let incompleteItems: [MediaAssetID]
+    let eraseOutcome: EraseOutcome?
+
+    init(
+        sourcePath: LibraryRootPath,
+        sourceKind: LibraryRootKind,
+        destinationPath: LibraryRootPath?,
+        destinationDisplayName: String?,
+        state: MediaOperationSourceState,
+        attachToReadyMs: Int?,
+        batchID: ImportBatchID?,
+        cardStillExists: Bool,
+        copiedJustNow: Int?,
+        isFullyClean: Bool?,
+        settledAt: Date?,
+        sessionPreferences: ImportPreferences,
+        incompleteItems: [MediaAssetID],
+        eraseOutcome: EraseOutcome? = nil
+    ) {
+        self.sourcePath = sourcePath
+        self.sourceKind = sourceKind
+        self.destinationPath = destinationPath
+        self.destinationDisplayName = destinationDisplayName
+        self.state = state
+        self.attachToReadyMs = attachToReadyMs
+        self.batchID = batchID
+        self.cardStillExists = cardStillExists
+        self.copiedJustNow = copiedJustNow
+        self.isFullyClean = isFullyClean
+        self.settledAt = settledAt
+        self.sessionPreferences = sessionPreferences
+        self.incompleteItems = incompleteItems
+        self.eraseOutcome = eraseOutcome
+    }
 
     var id: String {
         sourcePath.rawValue
@@ -389,9 +452,40 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let destinationOccupancyRevision: UInt64
     let sourceMedia: [PlanningFileFacts]
     let destinationOccupants: [MediaRelativePath: DestinationOccupantFacts]
+    let destinationOccupantKeys: Set<FilesystemNameKey>
     let policy: ImportPolicy
     let calendar: Calendar
     let timeZone: TimeZone
+    let destinationCapabilities: VolumeNamespaceCapabilities
+
+    init(
+        generation: UInt64,
+        sourceRoot: LibraryRootPath,
+        destinationRoot: LibraryRootPath,
+        sourceOccupancyRevision: UInt64,
+        destinationOccupancyRevision: UInt64,
+        sourceMedia: [PlanningFileFacts],
+        destinationOccupants: [MediaRelativePath: DestinationOccupantFacts],
+        policy: ImportPolicy,
+        calendar: Calendar,
+        timeZone: TimeZone,
+        destinationCapabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
+    ) {
+        self.generation = generation
+        self.sourceRoot = sourceRoot
+        self.destinationRoot = destinationRoot
+        self.sourceOccupancyRevision = sourceOccupancyRevision
+        self.destinationOccupancyRevision = destinationOccupancyRevision
+        self.sourceMedia = sourceMedia
+        self.destinationOccupants = destinationOccupants
+        destinationOccupantKeys = Set(destinationOccupants.keys.map {
+            FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: destinationCapabilities)
+        })
+        self.policy = policy
+        self.calendar = calendar
+        self.timeZone = timeZone
+        self.destinationCapabilities = destinationCapabilities
+    }
 }
 
 /// Complete live occupancy for the destination folders an import plan can touch.
@@ -406,15 +500,28 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
 /// returns `nil` for a path whose folder was never enumerated, so a caller can
 /// never silently mistake ignorance for a free name.
 nonisolated struct DestinationNamespace: Equatable, Sendable {
-    private let entries: [MediaRelativePath: NamespaceOccupancyResult]
+    private struct Entry: Equatable, Sendable {
+        let path: MediaRelativePath
+        let result: NamespaceOccupancyResult
+    }
+
+    private let entries: [FilesystemNameKey: Entry]
     private let enumeratedFolders: Set<String>
+    let capabilities: VolumeNamespaceCapabilities
 
     init(
         entries: [MediaRelativePath: NamespaceOccupancyResult],
-        enumeratedFolders: Set<String>
+        enumeratedFolders: Set<String>,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
     ) {
-        self.entries = entries
+        self.entries = Dictionary(uniqueKeysWithValues: entries.map { path, result in
+            (
+                FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: capabilities),
+                Entry(path: path, result: result)
+            )
+        })
         self.enumeratedFolders = enumeratedFolders
+        self.capabilities = capabilities
     }
 
     static let empty = DestinationNamespace(entries: [:], enumeratedFolders: [])
@@ -429,8 +536,9 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
 
     /// Live occupancy of one candidate, or `nil` when its folder was not enumerated.
     func occupancy(of relativePath: MediaRelativePath) -> NamespaceOccupancyResult? {
-        if let entry = entries[relativePath] {
-            return entry
+        let key = FilesystemNamespaceSemantics.nameKey(relativePath: relativePath, capabilities: capabilities)
+        if let entry = entries[key] {
+            return entry.result
         }
         guard enumeratedFolders.contains(Self.folder(of: relativePath)) else {
             return nil

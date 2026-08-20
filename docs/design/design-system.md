@@ -27,7 +27,9 @@ rule below and a principle here disagree, the principle wins and the rule is a b
 
 - **Show the outcome, not the machine.** The user reads results and consequences.
   Internal vocabulary — plan, disposition, inventory, replan, companion, execution,
-  queued — never reaches a label, even when it is the most accurate word available.
+  queued — never reaches a progress label, even when it is the most accurate word
+  available. The one explicit disabled action acknowledgement `Import queued` is
+  allowed because it tells the user their intent was accepted while work is held.
 - **One fact, one owner.** Any piece of state renders in exactly one place at a
   time. A second rendering is permitted only when the first is off-screen, and it
   is then smaller and quieter: an indicator, not a report.
@@ -61,12 +63,11 @@ hard-coded point size.
 
 Three levels. Every user-facing string is assigned to one. Level is expressed by
 **size and color together** — never by size alone, and never by weight alone.
-**[deviation from an earlier draft: a fourth, "L4 ambient" level was retired —
-`DesignPalette.l4` had zero real callers and no current surface shows ambient
+**[deviation from an earlier draft: an ambient level was retired —
+`DesignPalette` had zero real callers for it and no current surface shows ambient
 metadata a user merely notices rather than reads (plan 0095 increment 11);
-inventing one to give L4 a caller would have been a feature this app doesn't
-have, not a design rule. Reintroduce a fourth level only alongside a real
-surface that needs it.]**
+inventing a caller for the unused level would have been a feature this app
+doesn't have, not a design rule.]**
 
 | ID | Rule | Check |
 | --- | --- | --- |
@@ -87,7 +88,7 @@ view code. Both appearances are first-class; every surface is reviewed in both.
 | ID | Rule | Check |
 | --- | --- | --- |
 | DES-020 | View code shall name colors semantically — the platform's own (`.primary`, `Color.accentColor`, system materials) or one of Otos's named app-level semantic colors. No literal hex, RGB, or opacity-on-a-color value shall appear in a view. Otos defines its own values in exactly two places, both marked deviations: the text values of DES-021 and the chrome values of DES-022. Those definitions live in one palette type, `Otos/Views/DesignPalette.swift`, carry both appearances, and are the only place a literal is written — `guard-design-system.sh` allowlists only that file. | Given a view is inspected, no color literal exists and every non-platform color resolves to a named palette member. |
-| DES-021 | Text colors shall be: label 85% (L1, L2); 60% black light / 60% white dark (L3); 45% light / 45% dark (L4) **[deviation: the system secondary and tertiary label values measure 3.9:1 and 1.9:1 on Otos's lighter chrome and fail the text minimum — see `hig-validation.md` F-1]**. The `.tertiary` semantic value is reserved for non-text elements, where the 3:1 non-text minimum applies. | Accessibility Inspector on L3 and L4 in both appearances. |
+| DES-021 | Text colors shall be: label 85% (L1, L2); 60% black light / 60% white dark (L3) **[deviation: the system secondary label values measure 3.9:1 on Otos's lighter chrome and fail the text minimum — see `hig-validation.md` F-1]**. The `.tertiary` semantic value is reserved for non-text elements, where the 3:1 non-text minimum applies. | Accessibility Inspector on L1, L2, and L3 in both appearances. |
 | DES-022 | Surface order shall be, light: content `#FFFFFF`, sidebar `#FAFAFB`, bar `#FBFBFC` **[deviation: lighter than the default window gray — the app's content is photographs, and a mid-gray chrome competes with them for the eye]**; dark: content `#1C1C1E`, sidebar `#242426`, bar `#2A2A2C` (bar brighter than content, per platform elevation order). | Given both appearances, chrome is distinguishable from content by value alone with no border needed. |
 | DES-023 | Separators shall be hairlines at 8% black / 10% white **[deviation: system separator is ~13% — at the reduced chrome contrast of DES-022 a 13% line reads as a drawn rule rather than a seam]**. Under Increase Contrast they revert to the system separator strength. | — |
 | DES-024 | The accent color shall be the user's system accent, used only for: selection, the single prominent button, focus rings, determinate progress. It shall never be a decorative tint nor a fill larger than a control. | Given a surface, every accent-colored pixel is selected, actionable, or progress. |
@@ -95,7 +96,7 @@ view code. Both appearances are first-class; every surface is reviewed in both.
 | DES-026 | Orange shall mean needs attention with nothing lost — unreadable files, unavailable library, skipped items — and shall always be paired with a way to look at the thing. | Given an orange indicator, an adjacent control reveals the affected items. |
 | DES-027 | Red shall be reserved for destruction: erasing a card, removing a library. Per HIG, a destructive action the user deliberately chose is not styled red; red is for the one they might hit by accident. | — |
 | DES-027A | A destructive per-run option shall be presented as a control on the surface that performs the action, pre-set from its durable Settings preference **[owner decision, 2026-08-13: card erase keeps its sticky Settings preference, and that preference is the default value of the pre-flight checkbox in the bar]**. Changing it in the bar applies to this run only. The checkbox's own title is the statement of consequence; it shall not be restated as prose. Where the destructive action runs *alone* — no copies, only deletion — it shall confirm with an alert stating the exact count, with verb titles (DES-036). | Given an erase-only run, an alert names the number of items to be deleted; given an ordinary import with erase checked, no extra prose appears. |
-| DES-028 | Contrast shall be at least 4.5:1 for L1, L2 and L3 — all Otos text is below the 18 pt / 14 pt-bold large-text threshold, so the relaxed 3:1 large-text allowance never applies — and at least 3:1 for L4 and for non-text elements that carry meaning. Both appearances are measured, not assumed. Measured values are recorded in `hig-validation.md`. | Accessibility Inspector, light and dark, on every text level of the surface. |
+| DES-028 | Contrast shall be at least 4.5:1 for L1, L2 and L3 — all Otos text is below the 18 pt / 14 pt-bold large-text threshold, so the relaxed 3:1 large-text allowance never applies — and at least 3:1 for non-text elements that carry meaning. Both appearances are measured, not assumed. Measured values are recorded in `hig-validation.md`. | Accessibility Inspector, light and dark, on every text level of the surface. |
 | DES-029 | No information shall be carried by color alone. The attention badge carries a glyph, completion carries a checkmark, selection carries a border as well as a tint. | Given a grayscale screenshot, every state remains distinguishable. |
 
 ## Status and copy

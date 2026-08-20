@@ -13,11 +13,14 @@ nonisolated enum MediaOperationGateway {
         companionsByPrimary: [String: [MediaCompanion]],
         db: Database
     ) throws -> [PlanningFileFacts] {
-        try Row.fetchAll(
+        let settledPredicate = EnrichmentLeaseGateway.metadataStalenessSQLPredicate()
+        return try Row.fetchAll(
             db,
             sql: """
             SELECT relative_path, kind, content_type_identifier, byte_size,
-                   content_modified_at_unix, capture_wall_compact
+                   content_modified_at_unix, capture_wall_compact,
+                   enriched_source_size, enriched_source_mtime,
+                   NOT (\(settledPredicate)) AS naming_settled
             FROM media_asset
             WHERE library_root_id = ?
             ORDER BY relative_path COLLATE NOCASE, relative_path
@@ -35,6 +38,7 @@ nonisolated enum MediaOperationGateway {
                 byteSize: row["byte_size"],
                 contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:)),
                 captureWallCompact: row["capture_wall_compact"],
+                isNamingFactSettled: ((row["naming_settled"] as Int?) ?? 0) != 0,
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
                 companions: companionsByPrimary[relative.rawValue] ?? [],

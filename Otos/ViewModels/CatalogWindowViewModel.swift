@@ -53,6 +53,7 @@ final class CatalogWindowViewModel {
     private(set) var isFilterPresented = false
     private(set) var ejectingSourceIdentities: Set<String> = []
     var ejectAlertMessage: String?
+    var lastImportPresentationLogAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
     var state: CatalogWindowState = .empty
     /// User-adjustable grid density (spec 0048), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish

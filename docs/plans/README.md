@@ -1,6 +1,7 @@
 # Active Plans
 
-- [0096 — Path Equality, Settled Naming, And Honest Progress](0096-path-equality-and-settled-naming.md)
+No active plans. Completed plans are removed after their implementation,
+documentation, verification, and merge closure.
 
   Thirteen increments closing the defect class behind a 2026-08-19 production run
   that imported the same 23 videos twice under different filenames: path

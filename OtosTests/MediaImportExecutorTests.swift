@@ -709,10 +709,11 @@ struct ImportExecutionProgressTests {
             deleteSourceRequested: true
         ) { _ in }
 
-        guard case .completed = result else {
+        guard case let .completedWithErase(_, _, _, _, _, _, eraseOutcome) = result else {
             Issue.record("Expected zero-copy deletion to complete, got \(result)")
             return
         }
+        #expect(eraseOutcome.deletedCount == 1)
         #expect(!FileManager.default.fileExists(atPath: fixture.sourceFile.path))
         #expect(try await fixture.store.activeImportOperations().isEmpty)
     }

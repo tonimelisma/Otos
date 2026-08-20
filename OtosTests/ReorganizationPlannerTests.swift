@@ -28,6 +28,20 @@ struct FilesystemNameKeyTests {
         )
         #expect(upper != lower)
     }
+
+    @Test func unicodeNormalizationFollowsVolumePreference() {
+        let composed = MediaRelativePath(rawValue: "café.jpg")
+        let decomposed = MediaRelativePath(rawValue: "cafe\u{301}.jpg")
+        #expect(
+            FilesystemNamespaceSemantics.nameKey(
+                relativePath: composed,
+                capabilities: .caseInsensitiveAPFS
+            ) == FilesystemNamespaceSemantics.nameKey(
+                relativePath: decomposed,
+                capabilities: .caseInsensitiveAPFS
+            )
+        )
+    }
 }
 
 struct ReorganizationPlannerTests {

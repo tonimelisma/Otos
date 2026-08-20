@@ -77,6 +77,8 @@ struct ImportPlanFooter: View {
         switch drawn.primaryAction {
         case .importPending:
             title = "Import"
+        case .importQueued:
+            title = "Import Queued"
         case let .importItems(count):
             title = "Import \(count) \(count == 1 ? "Item" : "Items")"
         case .ejectCard:
@@ -117,7 +119,7 @@ struct ImportPlanFooter: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(DesignPalette.bar(for: colorScheme))
-        .animation(surfaceAnimation, value: drawn)
+        .animation(surfaceAnimation, value: drawn.kind)
         .transition(surfaceTransition)
         .accessibilityElement(children: .contain)
     }
@@ -279,6 +281,7 @@ struct ImportPlanFooter: View {
         case let .determinate(completed, total):
             ProgressView(value: Double(completed), total: Double(max(total, 1)))
                 .progressViewStyle(.linear)
+                .animation(reduceMotion ? .linear(duration: 0.1) : .linear(duration: 0.2), value: completed)
         }
     }
 
@@ -339,71 +342,63 @@ struct ImportPlanFooter: View {
     private var primaryButton: some View {
         let rendered = renderedPrimary
         switch drawn.primaryAction {
-        case .importPending:
-            Button(rendered.title) {}
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
+        case .importPending, .importQueued:
+            Text(rendered.title)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
                 .frame(height: 30)
-                .accessibilityHint("Imports new items from the card")
+                .accessibilityLabel(rendered.title)
+                .accessibilityAddTraits(.isStaticText)
         case .importItems:
-            Button(rendered.title, action: queueImport)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
-                .frame(height: 30)
-                .accessibilityHint("Imports new items from the card")
+            styledPrimary(Button(rendered.title, action: queueImport), hint: "Imports new items from the card")
         case .ejectCard:
-            Button(rendered.title, action: ejectCard)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
-                .frame(height: 30)
-                .accessibilityHint("Ejects the card")
+            styledPrimary(Button(rendered.title, action: ejectCard), hint: "Ejects the card")
         case let .eraseItems(count):
-            Button(rendered.title) {
+            styledPrimary(Button(rendered.title) {
                 showsEraseConfirmation = true
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(rendered.isDestructive ? .red : nil)
-            .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
-            .frame(height: 30)
-            .accessibilityHint("Deletes items from the card")
-            .confirmationDialog(
-                "Erase \(sourceDisplayName)?",
-                isPresented: $showsEraseConfirmation,
-                titleVisibility: .visible
-            ) {
-                Button("Erase", role: .destructive, action: queueImport)
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                if drawn.eraseConfirmationProvenClean {
-                    let destinationName = presentation.destinationDisplayName ?? "your library"
-                    Text(
-                        "\(count) \(count == 1 ? "item" : "items") will be deleted from the card. " +
-                            "All of them are already in \(destinationName)."
-                    )
-                } else {
-                    Text("\(count) \(count == 1 ? "item" : "items") will be deleted from the card.")
+            }.tint(rendered.isDestructive ? .red : nil), hint: "Deletes items from the card")
+                .confirmationDialog(
+                    "Erase \(sourceDisplayName)?",
+                    isPresented: $showsEraseConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Erase", role: .destructive, action: queueImport)
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    if drawn.eraseConfirmationProvenClean {
+                        let destinationName = presentation.destinationDisplayName ?? "your library"
+                        Text(
+                            "\(count) \(count == 1 ? "item" : "items") will be deleted from the card. " +
+                                "All of them are already in \(destinationName)."
+                        )
+                    } else {
+                        Text("\(count) \(count == 1 ? "item" : "items") will be deleted from the card.")
+                    }
                 }
-            }
         case .showTheseItems:
-            Button(rendered.title) {
+            styledPrimary(Button(rendered.title) {
                 showTheseItems?()
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
-            .frame(height: 30)
+            })
         case .cancel:
-            Button(rendered.title, action: cancelImport)
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
-                .frame(height: 30)
-                .accessibilityHint("Stops the current import")
+            styledPrimary(Button(rendered.title, action: cancelImport), hint: "Stops the current import")
         case .tryAgain:
-            Button(rendered.title) {
+            styledPrimary(Button(rendered.title) {
                 retryPlanning?()
-            }
+            })
+        }
+    }
+
+    private func styledPrimary(_ content: some View, hint: String? = nil) -> some View {
+        let styled = content
             .buttonStyle(.borderedProminent)
-            .keyboardShortcut(rendered.isDefault ? .defaultAction : .cancelAction)
+            .keyboardShortcut(renderedPrimary.isDefault ? .defaultAction : .cancelAction)
             .frame(height: 30)
+        return Group {
+            if let hint {
+                styled.accessibilityHint(hint)
+            } else {
+                styled
+            }
         }
     }
 

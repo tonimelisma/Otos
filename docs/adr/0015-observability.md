@@ -75,3 +75,9 @@ consumes them; use a log line instead.
   logs those fields at `.debug` (live-stream only, not durable — see above), and
   slow queries (`queryMs > 50`) also at `.notice` (durable). See
   `docs/research/2026-07-10-grdb-reader-pool-qos.md`.
+- Import naming decisions, presentation frames, enrichment-to-plan invalidation,
+  and the explicit card-erase path are durable structured diagnostics. Naming
+  logs identify wall-clock versus settled filesystem-mtime decisions; presentation
+  logs identify the state and byte progress applied to the bar; erase logs report
+  actual deleted, skipped, failed, and freed-byte totals rather than planned
+  counts.

@@ -91,6 +91,90 @@ struct MediaTransferPlannerTests {
         #expect(plan.entries[0].disposition == .skipPreexisting(destination: relative))
     }
 
+    @Test func caseInsensitiveDestinationDoesNotPlanCaseOnlyCopy() {
+        let source = Self.facts(name: "IMG_1.JPG")
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = Self.snapshot(
+            sourceMedia: [source],
+            destinationOccupants: [
+                MediaRelativePath(rawValue: "img_1.jpg"): DestinationOccupantFacts(
+                    relativePath: MediaRelativePath(rawValue: "img_1.jpg"),
+                    byteSize: 10,
+                    contentModifiedAt: source.contentModifiedAt
+                ),
+            ],
+            policy: policy
+        )
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: Self.namespace([
+                MediaRelativePath(rawValue: "img_1.jpg"): .regularFile(
+                    byteSize: 10,
+                    contentModifiedAt: source.contentModifiedAt
+                ),
+            ])
+        )
+        #expect(plan.entries[0].disposition == .skipPreexisting(destination: source.relativePath))
+    }
+
+    @Test func caseSensitiveDestinationAllowsCaseOnlyCopy() {
+        let source = Self.facts(name: "IMG_1.JPG")
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = Self.snapshot(
+            sourceMedia: [source],
+            destinationOccupants: [
+                MediaRelativePath(rawValue: "img_1.jpg"): DestinationOccupantFacts(
+                    relativePath: MediaRelativePath(rawValue: "img_1.jpg"),
+                    byteSize: 10,
+                    contentModifiedAt: source.contentModifiedAt
+                ),
+            ],
+            policy: policy
+        )
+        let caseSensitive = ImportPlanningSnapshot(
+            generation: snapshot.generation,
+            sourceRoot: snapshot.sourceRoot,
+            destinationRoot: snapshot.destinationRoot,
+            sourceOccupancyRevision: snapshot.sourceOccupancyRevision,
+            destinationOccupancyRevision: snapshot.destinationOccupancyRevision,
+            sourceMedia: snapshot.sourceMedia,
+            destinationOccupants: snapshot.destinationOccupants,
+            policy: snapshot.policy,
+            calendar: snapshot.calendar,
+            timeZone: snapshot.timeZone,
+            destinationCapabilities: .caseSensitiveAPFS
+        )
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: caseSensitive,
+            namespace: DestinationNamespace(
+                entries: [
+                    MediaRelativePath(rawValue: "img_1.jpg"): .regularFile(
+                        byteSize: 10,
+                        contentModifiedAt: source.contentModifiedAt
+                    ),
+                ],
+                enumeratedFolders: [""],
+                capabilities: .caseSensitiveAPFS
+            )
+        )
+        #expect(plan.entries[0].disposition == .copy(destination: source.relativePath))
+    }
+
+    @Test func zeroByteMediaIsExcludedFromCopyAndNaming() {
+        let source = Self.facts(name: "empty.jpg", byteSize: 0)
+        let plan = MediaTransferPlanner.planImport(
+            snapshot: Self.snapshot(sourceMedia: [source], policy: ImportPolicy.from(.default)),
+            namespace: Self.namespace()
+        )
+        #expect(plan.entries[0].disposition == .excluded(.empty))
+        #expect(plan.totals.copyCount == 0)
+        #expect(plan.totals.excludedCount == 1)
+    }
+
     /// Exercises `buildImportPlan`, the entry point production actually calls,
     /// against a real destination directory rather than a hand-fed namespace.
     /// `planImport` is the pure pass over an already-read namespace; a live-mismatch

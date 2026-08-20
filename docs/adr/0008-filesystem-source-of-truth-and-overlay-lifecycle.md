@@ -340,6 +340,10 @@ and never overrides live filesystem truth.
   ADR 0009 deliberately spends that cost for complete enrichment coverage, up to
   eager full-library materialization by the enrichment owner; the scanner itself
   still materializes nothing.
+- Path equality follows the volume that owns a root: `FilesystemNameKey` applies
+  probed case and Unicode-normalization capabilities while the catalog preserves
+  the physical spelling. A remount that respells a path is therefore an update
+  to the same overlay row, not proven deletion; this is detailed in ADR 0025.
 
 ## Retirement Proof
 

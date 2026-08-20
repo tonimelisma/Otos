@@ -72,7 +72,7 @@ private struct ImportSettingsView: View {
         Form {
             Section {
                 Toggle(
-                    "Import sidecar files (.xmp / .srt)",
+                    "Copy sidecars into the library",
                     isOn: binding(\.importSidecarFiles)
                 )
                 Toggle(

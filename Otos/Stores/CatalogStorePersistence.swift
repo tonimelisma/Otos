@@ -1,6 +1,7 @@
 import DiskArbitration
 import Foundation
 import GRDB
+import OSLog
 
 /// Persistence guide
 ///
@@ -284,6 +285,12 @@ extension CatalogStore {
         migrator.registerMigration("v16_remove_disk_image_removable_roots") { db in
             try removeDiskImageRemovableRoots(db)
         }
+        migrator.registerMigration("v17_namespace_capabilities_and_path_keys") { db in
+            try addNamespaceCapabilityColumns(db)
+            try removeRecordedDiskImageRemovableRoots(db)
+            try addRelativePathKeyColumns(db)
+            try backfillRelativePathKeys(db)
+        }
         return migrator
     }
 
@@ -327,6 +334,19 @@ extension CatalogStore {
             }
             try db.execute(sql: "DELETE FROM library_root WHERE id = ?", arguments: [id])
         }
+    }
+
+    /// v17 closes the v16 gap for roots that were detached when the earlier
+    /// migration ran. The persisted device model is authoritative when known;
+    /// unknown legacy roots remain untouched.
+    private static func removeRecordedDiskImageRemovableRoots(_ db: Database) throws {
+        try db.execute(
+            sql: """
+            DELETE FROM library_root
+            WHERE kind = ? AND device_model = ?
+            """,
+            arguments: [LibraryRootKind.removableVolume.rawValue, "Disk Image"]
+        )
     }
 
     /// Backfills `sort_index` in **today's displayed order** so upgrading does not
@@ -520,6 +540,7 @@ extension CatalogStore {
             CREATE TABLE media_companion (
                 library_root_id INTEGER NOT NULL,
                 relative_path TEXT NOT NULL,
+                relative_path_key TEXT NOT NULL DEFAULT '',
                 primary_relative_path TEXT,
                 kind TEXT NOT NULL,
                 byte_size INTEGER,
@@ -589,7 +610,8 @@ extension CatalogStore {
         let roots = try Row.fetchAll(
             db,
             sql: """
-            SELECT id, path, kind, device_identity, display_name, last_seen_at, sort_index
+            SELECT id, path, kind, device_identity, display_name, last_seen_at, sort_index,
+                   case_sensitive_names, prefers_decomposed_unicode, device_model
             FROM library_root
             ORDER BY sort_index, path COLLATE NOCASE, path
             """
@@ -603,7 +625,12 @@ extension CatalogStore {
                 deviceIdentity: row["device_identity"],
                 displayName: row["display_name"],
                 lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:)),
-                sortIndex: row["sort_index"]
+                sortIndex: row["sort_index"],
+                capabilities: VolumeNamespaceCapabilities(
+                    isCaseSensitive: (row["case_sensitive_names"] as Int?) == 1,
+                    prefersDecomposedUnicode: (row["prefers_decomposed_unicode"] as Int?) != 0
+                ),
+                deviceModel: row["device_model"]
             )
         }
         let assetCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM media_asset") ?? 0
@@ -626,13 +653,18 @@ extension CatalogStore {
         displayName: String? = nil,
         lastSeenAt: Date? = nil,
         sortIndex: Int64? = nil,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        deviceModel: String? = nil,
         db: Database
     ) throws -> StoredRoot {
         let resolvedSortIndex = try sortIndex ?? nextLibraryRootSortIndex(db: db)
         try db.execute(
             sql: """
-            INSERT INTO library_root (path, kind, device_identity, display_name, last_seen_at, sort_index)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO library_root (
+                path, kind, device_identity, display_name, last_seen_at, sort_index,
+                case_sensitive_names, prefers_decomposed_unicode, device_model
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 path.rawValue,
@@ -641,6 +673,9 @@ extension CatalogStore {
                 displayName,
                 lastSeenAt?.timeIntervalSince1970,
                 resolvedSortIndex,
+                capabilities.isCaseSensitive ? 1 : 0,
+                capabilities.prefersDecomposedUnicode ? 1 : 0,
+                deviceModel,
             ]
         )
         return StoredRoot(
@@ -650,7 +685,9 @@ extension CatalogStore {
             deviceIdentity: deviceIdentity,
             displayName: displayName,
             lastSeenAt: lastSeenAt,
-            sortIndex: resolvedSortIndex
+            sortIndex: resolvedSortIndex,
+            capabilities: capabilities,
+            deviceModel: deviceModel
         )
     }
 
@@ -721,18 +758,24 @@ extension CatalogStore {
         path: LibraryRootPath,
         displayName: String?,
         lastSeenAt: Date?,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        deviceModel: String? = nil,
         db: Database
     ) throws {
         try db.execute(
             sql: """
             UPDATE library_root
-            SET path = ?, display_name = ?, last_seen_at = ?
+            SET path = ?, display_name = ?, last_seen_at = ?,
+                case_sensitive_names = ?, prefers_decomposed_unicode = ?, device_model = ?
             WHERE id = ?
             """,
             arguments: [
                 path.rawValue,
                 displayName,
                 lastSeenAt?.timeIntervalSince1970,
+                capabilities.isCaseSensitive ? 1 : 0,
+                capabilities.prefersDecomposedUnicode ? 1 : 0,
+                deviceModel,
                 rootRowID,
             ]
         )
@@ -962,13 +1005,13 @@ extension CatalogStore {
         libraryRootID: Int64,
         underSubtree: MediaRelativePath? = nil,
         db: Database
-    ) throws -> [(relativePath: MediaRelativePath, thumbnailPath: String?)] {
+    ) throws -> [(relativePath: MediaRelativePath, thumbnailPath: String?, hadEnrichment: Bool)] {
         let rows: [Row] = if let underSubtree {
             // Component-safe: `a/b` matches itself and `a/b/...`, never `a/b2`.
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path
+                SELECT relative_path, thumbnail_path, enriched_source_size, enriched_source_mtime
                 FROM media_asset
                 WHERE library_root_id = ?
                   AND (relative_path = ? OR relative_path LIKE ? ESCAPE '\\')
@@ -983,7 +1026,7 @@ extension CatalogStore {
             try Row.fetchAll(
                 db,
                 sql: """
-                SELECT relative_path, thumbnail_path
+                SELECT relative_path, thumbnail_path, enriched_source_size, enriched_source_mtime
                 FROM media_asset
                 WHERE library_root_id = ?
                 """,
@@ -994,7 +1037,9 @@ extension CatalogStore {
             let thumbnailPath: String? = row["thumbnail_path"]
             return (
                 relativePath: MediaRelativePath(rawValue: row["relative_path"]),
-                thumbnailPath: thumbnailPath
+                thumbnailPath: thumbnailPath,
+                hadEnrichment: (row["enriched_source_size"] as Int64?) != nil
+                    || (row["enriched_source_mtime"] as Int64?) != nil
             )
         }
     }
@@ -1129,19 +1174,41 @@ extension CatalogStore {
     static func upsertCompanion(
         _ companion: MediaCompanion,
         libraryRootID: Int64,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
         db: Database
     ) throws -> Bool {
+        let pathKey = FilesystemNamespaceSemantics.nameKey(
+            relativePath: companion.relativePath,
+            capabilities: capabilities
+        ).rawValue
+        if let existingPath: String = try String.fetchOne(
+            db,
+            sql: "SELECT relative_path FROM media_companion WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1",
+            arguments: [libraryRootID, pathKey, companion.relativePath.rawValue]
+        ) {
+            try db.execute(
+                sql: "UPDATE media_companion SET relative_path = ?, relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [companion.relativePath.rawValue, pathKey, libraryRootID, existingPath]
+            )
+            let message = "op=catalog.scan.reconcile phase=respellCompanion "
+                + "rootID=\(libraryRootID) "
+                + "from=\(existingPath) "
+                + "to=\(companion.relativePath.rawValue)"
+            OtosLog.catalog.notice("\(message, privacy: .public)")
+            return true
+        }
         try db.execute(
             sql: """
             INSERT INTO media_companion (
                 library_root_id,
                 relative_path,
+                relative_path_key,
                 primary_relative_path,
                 kind,
                 byte_size,
                 content_modified_at
             )
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
                 primary_relative_path = excluded.primary_relative_path,
                 kind = excluded.kind,
@@ -1156,6 +1223,7 @@ extension CatalogStore {
             arguments: [
                 libraryRootID,
                 companion.relativePath.rawValue,
+                pathKey,
                 companion.primaryRelativePath?.rawValue,
                 companion.kind.rawValue,
                 companion.byteSize,
@@ -1187,6 +1255,7 @@ extension CatalogStore {
     static func repairCompanionsInDirectory(
         of relativePath: MediaRelativePath,
         libraryRootID: Int64,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
         db: Database
     ) throws -> Bool {
         let directoryKey = MediaCompanionPairing.directoryKey(of: relativePath)
@@ -1206,7 +1275,7 @@ extension CatalogStore {
         let paired = MediaCompanionPairing.pair(companions: companions, primaries: primaries)
         var changed = false
         for companion in paired {
-            if try upsertCompanion(companion, libraryRootID: libraryRootID, db: db) {
+            if try upsertCompanion(companion, libraryRootID: libraryRootID, capabilities: capabilities, db: db) {
                 changed = true
             }
         }
@@ -1216,6 +1285,7 @@ extension CatalogStore {
     static func applyScannedCompanions(
         _ companions: [ScannedCompanionFile],
         libraryRootID: Int64,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
         db: Database
     ) throws -> Int {
         var changedCount = 0
@@ -1233,7 +1303,7 @@ extension CatalogStore {
                 primaries: primaries
             )
             for companion in paired {
-                if try upsertCompanion(companion, libraryRootID: libraryRootID, db: db) {
+                if try upsertCompanion(companion, libraryRootID: libraryRootID, capabilities: capabilities, db: db) {
                     changedCount += 1
                 }
             }
@@ -1244,6 +1314,7 @@ extension CatalogStore {
     static func reconcileMissingCompanions(
         libraryRootID: Int64,
         observedPaths: Set<MediaRelativePath>,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
         underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> Int {
@@ -1252,7 +1323,13 @@ extension CatalogStore {
             underSubtree: underSubtree,
             db: db
         )
-        let missing = existing.subtracting(observedPaths)
+        let existingKeys = Dictionary(uniqueKeysWithValues: existing.map {
+            (FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities), $0)
+        })
+        let observedKeys = Set(observedPaths.map {
+            FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities)
+        })
+        let missing = existingKeys.filter { !observedKeys.contains($0.key) }.map(\.value)
         var deleted = 0
         for path in missing {
             if try deleteCompanionRow(rootRowID: libraryRootID, relativePath: path, db: db) {
@@ -1266,8 +1343,29 @@ extension CatalogStore {
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
         libraryRootID: Int64,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
         db: Database
     ) throws -> Bool {
+        let pathKey = FilesystemNamespaceSemantics.nameKey(
+            relativePath: file.relativePath,
+            capabilities: capabilities
+        ).rawValue
+        if let existingPath: String = try String.fetchOne(
+            db,
+            sql: "SELECT relative_path FROM media_asset WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1",
+            arguments: [libraryRootID, pathKey, file.relativePath.rawValue]
+        ) {
+            try db.execute(
+                sql: "UPDATE media_asset SET relative_path = ?, relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [file.relativePath.rawValue, pathKey, libraryRootID, existingPath]
+            )
+            let message = "op=catalog.scan.reconcile phase=respell "
+                + "rootPath=\(libraryRootPath.rawValue) "
+                + "from=\(existingPath) "
+                + "to=\(file.relativePath.rawValue)"
+            OtosLog.catalog.notice("\(message, privacy: .public)")
+            return true
+        }
         // The compound key makes a scan idempotent: observing the same relative
         // path refreshes its current filesystem facts instead of creating scan
         // history or a second asset identity.
@@ -1276,6 +1374,7 @@ extension CatalogStore {
             INSERT INTO media_asset (
                 library_root_id,
                 relative_path,
+                relative_path_key,
                 sort_key,
                 name_sort_key,
                 name,
@@ -1286,7 +1385,7 @@ extension CatalogStore {
                 created_at_unix,
                 content_modified_at_unix
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(library_root_id, relative_path) DO UPDATE SET
                 sort_key = excluded.sort_key,
                 name_sort_key = excluded.name_sort_key,
@@ -1312,7 +1411,8 @@ extension CatalogStore {
             arguments: scannedFileUpsertArguments(
                 file,
                 libraryRootPath: libraryRootPath,
-                libraryRootID: libraryRootID
+                libraryRootID: libraryRootID,
+                pathKey: pathKey
             )
         )
         return db.changesCount > 0
@@ -1360,6 +1460,128 @@ private nonisolated func addImportProvenanceColumns(_ db: Database) throws {
     }
     if !columns.contains("import_destination_modified_at_epoch") {
         try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN import_destination_modified_at_epoch DOUBLE")
+    }
+}
+
+private nonisolated func addNamespaceCapabilityColumns(_ db: Database) throws {
+    let columns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('library_root')"))
+    if !columns.contains("case_sensitive_names") {
+        try db.execute(sql: "ALTER TABLE library_root ADD COLUMN case_sensitive_names INTEGER")
+    }
+    if !columns.contains("prefers_decomposed_unicode") {
+        try db.execute(sql: "ALTER TABLE library_root ADD COLUMN prefers_decomposed_unicode INTEGER")
+    }
+    if !columns.contains("device_model") {
+        try db.execute(sql: "ALTER TABLE library_root ADD COLUMN device_model TEXT")
+    }
+}
+
+private nonisolated func addRelativePathKeyColumns(_ db: Database) throws {
+    let mediaColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_asset')"))
+    if !mediaColumns.contains("relative_path_key") {
+        try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN relative_path_key TEXT NOT NULL DEFAULT ''")
+    }
+    let companionColumns = try Set(String.fetchAll(db, sql: "SELECT name FROM pragma_table_xinfo('media_companion')"))
+    if !companionColumns.isEmpty, !companionColumns.contains("relative_path_key") {
+        try db.execute(sql: "ALTER TABLE media_companion ADD COLUMN relative_path_key TEXT NOT NULL DEFAULT ''")
+    }
+    try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_media_asset_relative_path_key ON media_asset(library_root_id, relative_path_key)")
+    if !companionColumns.isEmpty {
+        try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_media_companion_relative_path_key ON media_companion(library_root_id, relative_path_key)")
+    }
+}
+
+private nonisolated func backfillRelativePathKeys(_ db: Database) throws {
+    let roots = try Row.fetchAll(
+        db,
+        sql: "SELECT id, case_sensitive_names, prefers_decomposed_unicode FROM library_root"
+    )
+    for root in roots {
+        let rootID: Int64 = root["id"]
+        let capabilities = VolumeNamespaceCapabilities(
+            isCaseSensitive: (root["case_sensitive_names"] as Int?) == 1,
+            prefersDecomposedUnicode: (root["prefers_decomposed_unicode"] as Int?) != 0
+        )
+        let assets = try Row.fetchAll(
+            db,
+            sql: """
+            SELECT relative_path, relative_path_key, import_batch_unix_ms,
+                   enriched_source_size, enriched_source_mtime, thumbnail_path
+            FROM media_asset
+            WHERE library_root_id = ?
+            """,
+            arguments: [rootID]
+        )
+        var owners: [String: Row] = [:]
+        for row in assets {
+            let path: String = row["relative_path"]
+            let key = FilesystemNamespaceSemantics.nameKey(
+                relativePath: MediaRelativePath(rawValue: path),
+                capabilities: capabilities
+            ).rawValue
+            if let existing = owners[key] {
+                let existingImported: Int64? = existing["import_batch_unix_ms"]
+                let currentImported: Int64? = row["import_batch_unix_ms"]
+                let existingEnriched: Bool = existing["enriched_source_size"] != nil && existing["enriched_source_mtime"] != nil
+                let currentEnriched: Bool = row["enriched_source_size"] != nil && row["enriched_source_mtime"] != nil
+                let keepCurrent = (currentImported != nil && existingImported == nil)
+                    || (currentImported == existingImported && currentEnriched && !existingEnriched)
+                    || (currentImported == existingImported && currentEnriched == existingEnriched && path < (existing["relative_path"] as String))
+                let keeper = keepCurrent ? row : existing
+                let loser = keepCurrent ? existing : row
+                let keeperPath: String = keeper["relative_path"]
+                let loserPath: String = loser["relative_path"]
+                try db.execute(sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?", arguments: [rootID, loserPath])
+                owners[key] = keeper
+                let message = "op=catalog.schema phase=mergePathCollision "
+                    + "rootID=\(rootID) "
+                    + "kept=\(keeperPath) "
+                    + "deleted=\(loserPath)"
+                OtosLog.persistence.notice("\(message, privacy: .public)")
+            } else {
+                owners[key] = row
+            }
+            try db.execute(
+                sql: "UPDATE media_asset SET relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [key, rootID, path]
+            )
+        }
+        let companions = try Row.fetchAll(
+            db,
+            sql: "SELECT relative_path, relative_path_key FROM media_companion WHERE library_root_id = ?",
+            arguments: [rootID]
+        )
+        var companionOwners: [String: String] = [:]
+        for companion in companions {
+            let path: String = companion["relative_path"]
+            let key = FilesystemNamespaceSemantics.nameKey(
+                relativePath: MediaRelativePath(rawValue: path),
+                capabilities: capabilities
+            ).rawValue
+            if let existingPath = companionOwners[key], existingPath != path {
+                let keep = min(existingPath, path)
+                let drop = max(existingPath, path)
+                try db.execute(
+                    sql: "DELETE FROM media_companion WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [rootID, drop]
+                )
+                companionOwners[key] = keep
+                let message = "op=catalog.schema phase=mergeCompanionPathCollision "
+                    + "rootID=\(rootID) "
+                    + "kept=\(keep) "
+                    + "deleted=\(drop)"
+                OtosLog.persistence.notice("\(message, privacy: .public)")
+                if path == drop {
+                    continue
+                }
+            } else {
+                companionOwners[key] = path
+            }
+            try db.execute(
+                sql: "UPDATE media_companion SET relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                arguments: [key, rootID, path]
+            )
+        }
     }
 }
 
@@ -1450,6 +1672,7 @@ private nonisolated func mediaAssetTableSQL() -> String {
     CREATE TABLE media_asset (
         library_root_id INTEGER NOT NULL REFERENCES library_root(id) ON DELETE CASCADE,
         relative_path TEXT NOT NULL,
+        relative_path_key TEXT NOT NULL DEFAULT '',
         sort_key TEXT NOT NULL,
         name_sort_key TEXT NOT NULL,
         name TEXT,
@@ -1616,6 +1839,7 @@ private nonisolated func requiredCurrentMediaAssetColumns() -> Set<String> {
     [
         "library_root_id",
         "relative_path",
+        "relative_path_key",
         "sort_key",
         "name_sort_key",
         "name",
@@ -1654,6 +1878,9 @@ private nonisolated func requiredCurrentLibraryRootColumns() -> Set<String> {
         "device_identity",
         "display_name",
         "last_seen_at",
+        "case_sensitive_names",
+        "prefers_decomposed_unicode",
+        "device_model",
     ]
 }
 
@@ -1668,11 +1895,13 @@ private nonisolated func requiredCurrentMetadataColumns() -> Set<String> {
 private nonisolated func scannedFileUpsertArguments(
     _ file: ScannedMediaFile,
     libraryRootPath: LibraryRootPath,
-    libraryRootID: Int64
+    libraryRootID: Int64,
+    pathKey: String
 ) -> StatementArguments {
     let values: [(any DatabaseValueConvertible)?] = [
         libraryRootID,
         file.relativePath.rawValue,
+        pathKey,
         MediaSortKey.make(libraryRootPath: libraryRootPath, relativePath: file.relativePath),
         MediaSortKey.naturalKey(file.name ?? URL(fileURLWithPath: file.relativePath.rawValue).lastPathComponent),
         file.name,

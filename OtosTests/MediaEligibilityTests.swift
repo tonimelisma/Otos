@@ -40,4 +40,12 @@ struct MediaEligibilityTests {
         #expect(MediaEligibility.isRecognizedCompanion(relativePath: MediaRelativePath(rawValue: "a.xmp")))
         #expect(!MediaEligibility.isRecognizedCompanion(relativePath: MediaRelativePath(rawValue: "a.lrc")))
     }
+
+    @Test func sourceEraseClassificationIsCaseInsensitiveAndLeavesUnknownUntouched() {
+        #expect(SourceFileClass.classify(relativePath: MediaRelativePath(rawValue: "PRIVATE/M4ROOT/THMBNL/a.jpg")) == .sourceArtifact("sonyThumbnailDirectory"))
+        #expect(SourceFileClass.classify(relativePath: MediaRelativePath(rawValue: "private/m4root/clip/C1.XML")) == .sourceArtifact("sonyClipXML"))
+        #expect(SourceFileClass.classify(relativePath: MediaRelativePath(rawValue: "A.XMP")) == .usefulSidecar)
+        #expect(SourceFileClass.classify(relativePath: MediaRelativePath(rawValue: "DCIM/A.AAE")) == .cruftSidecar)
+        #expect(SourceFileClass.classify(relativePath: MediaRelativePath(rawValue: "notes.txt")) == .unknown)
+    }
 }

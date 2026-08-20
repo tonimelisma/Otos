@@ -129,6 +129,9 @@ Adjacent decisions requiring separate ADRs or specs:
 
 - The schema stays small and direct: one root table with source metadata instead of
   parallel volume/camera tables.
+- Removable roots also persist the probed case-sensitivity and Unicode-normalization
+  capabilities, plus the observed device model and volume format, so path equality
+  and disk-image filtering remain tied to the source's actual namespace.
 - All Media keeps its meaning as the fixed user library collection.
 - Overlay persists across expected disconnects without inventing durable asset
   IDs, fingerprints, sidecars, or import copies.

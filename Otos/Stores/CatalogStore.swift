@@ -83,6 +83,8 @@ actor CatalogStore {
         let displayName: String?
         let lastSeenAt: Date?
         let sortIndex: Int64
+        let capabilities: VolumeNamespaceCapabilities
+        let deviceModel: String?
     }
 
     struct ThumbnailPathMigration {
@@ -110,6 +112,9 @@ actor CatalogStore {
         let isEjectable: Bool
         let activity: CatalogLibraryActivity
         let enqueuesScan: Bool
+        let capabilities: VolumeNamespaceCapabilities
+        let deviceModel: String?
+        let volumeFormat: String?
 
         func root(lastSeenAt: Date) -> LibraryRoot {
             LibraryRoot(
@@ -129,6 +134,7 @@ actor CatalogStore {
         /// A batch that changed none of these is detail-only: the projection can skip
         /// the full order query and re-sort (ADR 0011).
         var structureChanged = false
+        var namingChangedRoots: Set<LibraryRootPath> = []
         var promotionFailed = false
         var discardedThumbnails: [GeneratedThumbnail] = []
         var supersededThumbnailPaths: Set<String> = []
@@ -167,12 +173,14 @@ actor CatalogStore {
         let bestCaptureUnix: Double?
         let bestKind: String?
         let bestFormat: String?
+        let captureWallCompact: Int64?
         let thumbnailPath: String?
 
         init(row: Row) {
             bestCaptureUnix = row["best_capture_unix"]
             bestKind = row["best_kind"]
             bestFormat = row["best_format"]
+            captureWallCompact = row["capture_wall_compact"]
             thumbnailPath = row["thumbnail_path"]
         }
     }
@@ -341,7 +349,7 @@ extension CatalogStore {
     /// planning change — and wakes the import coordinator with the advanced
     /// `occupancyRevision` so it replans.
     @discardableResult
-    func bumpOccupancyRevision(for path: LibraryRootPath) -> UInt64? {
+    func bumpOccupancyRevision(for path: LibraryRootPath, reason: String = "catalogChange") -> UInt64? {
         guard var state = roots[path] else {
             return nil
         }
@@ -351,7 +359,7 @@ extension CatalogStore {
         emitPlanningChange(rootPath: path, occupancyRevision: state.occupancyRevision)
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.occupancyRevision phase=bump rootPath=\(path.rawValue, privacy: .public) occupancyRevision=\(state.occupancyRevision, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
+            "op=catalog.occupancyRevision phase=bump rootPath=\(path.rawValue, privacy: .public) reason=\(reason, privacy: .public) occupancyRevision=\(state.occupancyRevision, privacy: .public) planRevision=\(state.planRevision, privacy: .public)"
         )
         return state.occupancyRevision
     }
@@ -460,7 +468,10 @@ extension CatalogStore {
             destinationOccupants: destinationOccupants,
             policy: policy,
             calendar: calendar,
-            timeZone: timeZone
+            timeZone: timeZone,
+            destinationCapabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(
+                rootURL: destination.url
+            )
         )
     }
 
@@ -1297,6 +1308,9 @@ extension CatalogStore {
         await recordEnrichmentBatchWrite(resultsCount: results.count, writeOutcome: writeOutcome)
         await recordWALDiagnostics(reason: "enrichmentBatch")
         if writeOutcome.appliedCount > 0 {
+            for rootPath in writeOutcome.namingChangedRoots {
+                bumpOccupancyRevision(for: rootPath, reason: "enrichmentNaming")
+            }
             // An enrichment batch that changed no effective ordering/scope column is a
             // detail-only change: the projection refreshes visible detail but skips the
             // full order re-query (ADR 0011). Any `best_capture`/`best_kind`/
@@ -1316,7 +1330,7 @@ extension CatalogStore {
     ) async {
         OtosLog.metadata.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) discardedThumbnails=\(writeOutcome.discardedThumbnails.count, privacy: .public) supersededThumbnails=\(writeOutcome.supersededThumbnailPaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
+            "op=catalog.enrichment.batch phase=finish attempted=\(resultsCount, privacy: .public) count=\(writeOutcome.appliedCount, privacy: .public) namingChanged=\(writeOutcome.namingChangedRoots.count, privacy: .public) rootPaths=\(writeOutcome.namingChangedRoots.map(\.rawValue).sorted().joined(separator: ","), privacy: .public) discardedThumbnails=\(writeOutcome.discardedThumbnails.count, privacy: .public) supersededThumbnails=\(writeOutcome.supersededThumbnailPaths.count, privacy: .public) promotionFailed=\(writeOutcome.promotionFailed, privacy: .public) waitMs=\(writeOutcome.waitMs, privacy: .public) execMs=\(writeOutcome.execMs, privacy: .public) writeMs=\(writeOutcome.waitMs + writeOutcome.execMs, privacy: .public)"
         )
     }
 
@@ -1386,7 +1400,7 @@ extension CatalogStore {
             }
         }
         let overlayColumnsSQL = """
-        SELECT best_capture_unix, best_kind, best_format, thumbnail_path
+        SELECT best_capture_unix, best_kind, best_format, capture_wall_compact, thumbnail_path
         FROM media_asset
         WHERE library_root_id = ? AND relative_path = ?
         """
@@ -1415,6 +1429,9 @@ extension CatalogStore {
            || old.bestFormat != newRow.bestFormat
         {
             outcome.structureChanged = true
+        }
+        if oldRow?.captureWallCompact != newRow?.captureWallCompact {
+            outcome.namingChangedRoots.insert(result.id.libraryRootPath)
         }
         outcome.replaceThumbnail(oldPath: oldRow?.thumbnailPath, newPath: result.thumbnailPath)
         outcome.appliedCount += 1
@@ -1649,11 +1666,19 @@ extension CatalogStore {
             try validateNoOverlap(attachment.path, ignoring: existingState.rowID)
             try await dbQueue.write { db in
                 try db.execute(
-                    sql: "UPDATE library_root SET device_identity = ?, display_name = ?, last_seen_at = ? WHERE id = ?",
+                    sql: """
+                    UPDATE library_root
+                    SET device_identity = ?, display_name = ?, last_seen_at = ?,
+                        case_sensitive_names = ?, prefers_decomposed_unicode = ?, device_model = ?
+                    WHERE id = ?
+                    """,
                     arguments: [
                         attachment.identity,
                         attachment.displayName,
                         lastSeenAt.timeIntervalSince1970,
+                        attachment.capabilities.isCaseSensitive ? 1 : 0,
+                        attachment.capabilities.prefersDecomposedUnicode ? 1 : 0,
+                        attachment.deviceModel,
                         existingState.rowID,
                     ]
                 )
@@ -1691,6 +1716,8 @@ extension CatalogStore {
                 path: attachment.path,
                 displayName: attachment.displayName,
                 lastSeenAt: lastSeenAt,
+                capabilities: attachment.capabilities,
+                deviceModel: attachment.deviceModel,
                 db: db
             )
         }
@@ -1715,6 +1742,8 @@ extension CatalogStore {
                 deviceIdentity: attachment.identity,
                 displayName: attachment.displayName,
                 lastSeenAt: lastSeenAt,
+                capabilities: attachment.capabilities,
+                deviceModel: attachment.deviceModel,
                 db: db
             )
         }
@@ -1725,7 +1754,8 @@ extension CatalogStore {
             sortIndex: storedRoot.sortIndex,
             availability: .unknown,
             activity: .idle,
-            isEjectable: false
+            isEjectable: false,
+            capabilities: storedRoot.capabilities
         ))
     }
 
@@ -1736,6 +1766,7 @@ extension CatalogStore {
         state.availability = .available
         state.activity = attachment.activity
         state.isEjectable = attachment.isEjectable
+        state.capabilities = attachment.capabilities
         upsert(state)
         if attachment.kind == .removableVolume {
             filesystemWatcher.addRoot(attachment.path)
@@ -1748,7 +1779,7 @@ extension CatalogStore {
         )
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public)"
+            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) caseSensitive=\(attachment.capabilities.isCaseSensitive, privacy: .public) prefersDecomposedUnicode=\(attachment.capabilities.prefersDecomposedUnicode, privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
         )
         notifyCatalogChanged()
         if attachment.enqueuesScan {
@@ -1771,6 +1802,7 @@ extension CatalogStore {
             availability: previous?.availability ?? .unknown,
             activity: previous?.activity ?? .idle,
             isEjectable: previous?.isEjectable ?? false,
+            capabilities: previous?.capabilities ?? .caseInsensitiveAPFS,
             skippedPackageCount: previous?.skippedPackageCount ?? 0,
             planRevision: (previous?.planRevision ?? 0) &+ 1,
             occupancyRevision: (previous?.occupancyRevision ?? 0) &+ 1
@@ -1794,7 +1826,11 @@ extension CatalogStore {
             )
         }
         let storedRoot = try await dbQueue.write { db in
-            try Self.insertLibraryRoot(path: path, db: db)
+            try Self.insertLibraryRoot(
+                path: path,
+                capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: path.url),
+                db: db
+            )
         }
 
         let root = libraryRoot(from: storedRoot)
@@ -1804,12 +1840,15 @@ extension CatalogStore {
             sortIndex: storedRoot.sortIndex,
             availability: .available,
             activity: .idle,
-            isEjectable: false
+            isEjectable: false,
+            capabilities: storedRoot.capabilities
         ))
         OtosLog.catalog.info("Library root added path=\(root.path.rawValue, privacy: .public)")
-        OtosLog.catalog.notice(
-            "op=\(operation, privacy: .public) phase=finish rootPath=\(root.path.rawValue, privacy: .public)"
-        )
+        let message = "op=\(operation) phase=finish "
+            + "rootPath=\(root.path.rawValue) "
+            + "caseSensitive=\(storedRoot.capabilities.isCaseSensitive) "
+            + "prefersDecomposedUnicode=\(storedRoot.capabilities.prefersDecomposedUnicode)"
+        OtosLog.catalog.notice("\(message, privacy: .public)")
         notifyCatalogChanged()
         filesystemWatcher.addRoot(root.path)
         enqueueScans([root.path])
@@ -1819,7 +1858,10 @@ extension CatalogStore {
         mountURL: URL,
         identity: String,
         displayName: String,
-        isEjectable: Bool
+        isEjectable: Bool,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        deviceModel: String? = nil,
+        volumeFormat: String? = nil
     ) async throws {
         let path = try CatalogPath.normalizedExistingDirectoryPath(for: mountURL)
         try await ensureStartedForMutation()
@@ -1830,7 +1872,10 @@ extension CatalogStore {
             displayName: displayName,
             isEjectable: isEjectable,
             activity: .idle,
-            enqueuesScan: true
+            enqueuesScan: true,
+            capabilities: capabilities,
+            deviceModel: deviceModel,
+            volumeFormat: volumeFormat
         ))
     }
 
@@ -1850,7 +1895,10 @@ extension CatalogStore {
             displayName: displayName,
             isEjectable: false,
             activity: .enumerating,
-            enqueuesScan: false
+            enqueuesScan: false,
+            capabilities: .caseInsensitiveAPFS,
+            deviceModel: nil,
+            volumeFormat: nil
         ))
         return path
     }
@@ -1962,6 +2010,7 @@ extension CatalogStore {
             throw CancellationError()
         }
         let dbQueue = try database()
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
         let timedChangedCount = try await timedWrite(dbQueue) { db in
             var count = 0
             for file in batch {
@@ -1969,6 +2018,7 @@ extension CatalogStore {
                     file,
                     libraryRootPath: scan.rootPath,
                     libraryRootID: scan.rootRowID,
+                    capabilities: scanCapabilities,
                     db: db
                 )
                 if changed {
@@ -2011,16 +2061,23 @@ extension CatalogStore {
                 observedPaths: observedPaths
             )
             let dbQueue = try database()
+            let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
             _ = try await timedWrite(dbQueue) { db in
                 var changed = 0
                 for companion in companions {
-                    if try Self.upsertCompanion(companion, libraryRootID: scan.rootRowID, db: db) {
+                    if try Self.upsertCompanion(
+                        companion,
+                        libraryRootID: scan.rootRowID,
+                        capabilities: scanCapabilities,
+                        db: db
+                    ) {
                         changed += 1
                     }
                 }
                 changed += try Self.reconcileMissingCompanions(
                     libraryRootID: scan.rootRowID,
                     observedPaths: Set(companions.map(\.relativePath)),
+                    capabilities: scanCapabilities,
                     db: db
                 )
                 return changed
@@ -2301,7 +2358,8 @@ private extension CatalogStore {
                 sortIndex: storedRoot.sortIndex,
                 availability: root.kind == .library ? .unknown : .unavailable,
                 activity: .idle,
-                isEjectable: false
+                isEjectable: false,
+                capabilities: storedRoot.capabilities
             ))
         }
     }
@@ -2353,7 +2411,9 @@ private extension CatalogStore {
                 deviceIdentity: storedRoot.deviceIdentity,
                 displayName: storedRoot.displayName,
                 lastSeenAt: storedRoot.lastSeenAt,
-                sortIndex: storedRoot.sortIndex
+                sortIndex: storedRoot.sortIndex,
+                capabilities: storedRoot.capabilities,
+                deviceModel: storedRoot.deviceModel
             )
         } catch {
             await recordRootNormalizationFailure(storedRoot, normalizedPath: normalizedPath, error: error)
@@ -2576,6 +2636,7 @@ private extension CatalogStore {
         }
 
         let dbQueue = try database()
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
         let state = OtosSignpost.persistence.beginInterval("CatalogScanBatchWrite")
         let timedChangedCount = try await timedWrite(dbQueue) { db in
             var count = 0
@@ -2584,6 +2645,7 @@ private extension CatalogStore {
                     file,
                     libraryRootPath: scan.rootPath,
                     libraryRootID: scan.rootRowID,
+                    capabilities: scanCapabilities,
                     db: db
                 )
                 if changed {
@@ -2743,16 +2805,19 @@ private extension CatalogStore {
             }
         }
         let dbQueue = try database()
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
         let timed = try await timedWrite(dbQueue) { db in
             let upserted = try Self.applyScannedCompanions(
                 companions,
                 libraryRootID: scan.rootRowID,
+                capabilities: scanCapabilities,
                 db: db
             )
             let deleted = if reconcileMissing {
                 try Self.reconcileMissingCompanions(
                     libraryRootID: scan.rootRowID,
                     observedPaths: Set(companions.map(\.relativePath)),
+                    capabilities: scanCapabilities,
                     underSubtree: underSubtree,
                     db: db
                 )
@@ -2781,6 +2846,7 @@ private extension CatalogStore {
         guard scanCanDelete(scan) else {
             return 0
         }
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
         let dbQueue = try database()
         let existingRows = try await dbQueue.read { db in
             try Self.fetchExistingAssetRows(
@@ -2795,7 +2861,14 @@ private extension CatalogStore {
         guard scanCanDelete(scan) else {
             return 0
         }
-        let missingRows = existingRows.filter { !observedPaths.contains($0.relativePath) }
+        let observedKeys = Set(observedPaths.map {
+            FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: scanCapabilities)
+        })
+        let missingRows = existingRows.filter {
+            !observedKeys.contains(
+                FilesystemNamespaceSemantics.nameKey(relativePath: $0.relativePath, capabilities: scanCapabilities)
+            )
+        }
         guard !missingRows.isEmpty else {
             return 0
         }
@@ -2806,6 +2879,18 @@ private extension CatalogStore {
         // removed, so overlay is purged with the item (ADR 0008): the catalog rows and
         // thumbnail file all go together on proven deletion.
         let purgedThumbnails: [String] = missingRows.compactMap(\.thumbnailPath)
+        let loggedRows = Array(missingRows.prefix(20))
+        for row in loggedRows {
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=catalog.scan.reconcile phase=delete rootPath=\(scan.rootPath.rawValue, privacy: .public) relativePath=\(row.relativePath.rawValue, privacy: .public) hadThumbnail=\(row.thumbnailPath != nil, privacy: .public) hadEnrichment=\(row.hadEnrichment, privacy: .public)"
+            )
+        }
+        let message = "op=catalog.scan.reconcile phase=deleteSummary "
+            + "rootPath=\(scan.rootPath.rawValue) "
+            + "count=\(missingRows.count) "
+            + "logged=\(loggedRows.count)"
+        OtosLog.catalog.notice("\(message, privacy: .public)")
         let state = OtosSignpost.persistence.beginInterval("CatalogScanReconcile")
         defer { OtosSignpost.persistence.endInterval("CatalogScanReconcile", state) }
 
@@ -3553,6 +3638,7 @@ private extension CatalogStore {
         }
 
         do {
+            let rootCapabilities = roots[root]?.capabilities ?? .caseInsensitiveAPFS
             return try await dbQueue.write { db in
                 switch observed {
                 case let .media(scannedFile):
@@ -3567,11 +3653,13 @@ private extension CatalogStore {
                         scannedFile,
                         libraryRootPath: root,
                         libraryRootID: rootRowID,
+                        capabilities: rootCapabilities,
                         db: db
                     )
                     let pairingChanged = try Self.repairCompanionsInDirectory(
                         of: scannedFile.relativePath,
                         libraryRootID: rootRowID,
+                        capabilities: rootCapabilities,
                         db: db
                     )
                     return mediaChanged || pairingChanged
@@ -3594,7 +3682,7 @@ private extension CatalogStore {
                     )
                     var companionChanged = false
                     for item in paired {
-                        if try Self.upsertCompanion(item, libraryRootID: rootRowID, db: db) {
+                        if try Self.upsertCompanion(item, libraryRootID: rootRowID, capabilities: rootCapabilities, db: db) {
                             companionChanged = true
                         }
                     }
@@ -3616,6 +3704,8 @@ private extension CatalogStore {
             deletionTarget = try await dbQueue.read { db in
                 try Self.catalogedFileDeletionTarget(relativePath: relativePath, rootRowID: rootRowID, db: db)
             }
+            let capabilities = roots.values.first(where: { $0.rowID == rootRowID })?.capabilities
+                ?? .caseInsensitiveAPFS
             let deleted = try await dbQueue.write { db -> Bool in
                 var changed = false
                 if try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
@@ -3627,6 +3717,7 @@ private extension CatalogStore {
                 if try Self.repairCompanionsInDirectory(
                     of: relativePath,
                     libraryRootID: rootRowID,
+                    capabilities: capabilities,
                     db: db
                 ) {
                     changed = true

@@ -71,9 +71,7 @@ struct SidebarView: View {
                     }
                     if importBatches.count > 5 {
                         SidebarRow(systemImage: "list.bullet", title: "All Imports…") {
-                            Text("\(importBatches.count)")
-                                .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                                .monospacedDigit()
+                            EmptyView()
                         }
                         .tag(SidebarSelection.allImports)
                     }

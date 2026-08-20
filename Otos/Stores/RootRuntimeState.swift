@@ -18,6 +18,9 @@ nonisolated struct RootRuntimeState: Equatable {
     /// in `CatalogStore.activity(for:)` and is not written here.
     var activity: CatalogLibraryActivity
     var isEjectable: Bool
+    /// Probed comparison rules for this root's filesystem namespace. Unknown or
+    /// detached roots use the shared conservative fallback.
+    var capabilities: VolumeNamespaceCapabilities
     /// Package directories skipped by the last completed scan (AVCHD and similar).
     /// Surfaced as import-footer attention by the coordinator (ARC-047);
     /// inventory-only here.
@@ -52,6 +55,7 @@ nonisolated struct RootRuntimeState: Equatable {
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
+        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
         skippedPackageCount: Int = 0,
         planRevision: UInt64 = 0,
         occupancyRevision: UInt64 = 0,
@@ -63,6 +67,7 @@ nonisolated struct RootRuntimeState: Equatable {
         self.availability = availability
         self.activity = activity
         self.isEjectable = isEjectable
+        self.capabilities = capabilities
         self.skippedPackageCount = skippedPackageCount
         self.planRevision = planRevision
         self.occupancyRevision = occupancyRevision
