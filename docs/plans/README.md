@@ -1,6 +1,16 @@
 # Active Plans
 
-None active.
+- [0096 — Path Equality, Settled Naming, And Honest Progress](0096-path-equality-and-settled-naming.md)
+
+  Twelve increments closing the defect class behind a 2026-08-19 production run
+  that imported the same 23 videos twice under different filenames: path
+  identity that is case-sensitive on a case-insensitive volume, an import plan
+  named from enrichment facts that were still settling, enrichment that never
+  invalidates that plan, and a progress indicator animated by an underdamped
+  spring. Also carries the adjacent debt found while investigating — two
+  planners naming the same file two ways, an unfolded destination namespace, the
+  one surviving yield path outside `publish()`, and the design-registry and
+  sidebar items listed as D8–D19.
 
 Plans 0085–0095 are complete and were removed when the implementation, structural
 guards, behavioral proofs, and verification closure landed. 0092 (import screen

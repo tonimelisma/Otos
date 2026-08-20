@@ -64,10 +64,13 @@ Non-authoritative: they record what we learned, not current behavior.
 - [research/catalog-storage-and-query-models.md](research/catalog-storage-and-query-models.md)
 - [research/toolbar-sort-filter-architecture.md](research/toolbar-sort-filter-architecture.md)
 - [research/removable-volume-and-camera-sources.md](research/removable-volume-and-camera-sources.md)
+- [research/2026-08-19-zero-byte-media-handling.md](research/2026-08-19-zero-byte-media-handling.md)
 
 ## Plans and roadmap
 
-- [plans/](plans/) — numbered work plans; completed plans are deleted. None active.
+- [plans/](plans/) — numbered work plans; completed plans are deleted. Active:
+  [0096](plans/0096-path-equality-and-settled-naming.md) (path equality, settled
+  naming facts, honest progress).
 - [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
   guides work unless the user explicitly asks for roadmap input.
 - [templates/adr-template.md](templates/adr-template.md) — the ADR format.
