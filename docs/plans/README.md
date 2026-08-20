@@ -2,7 +2,7 @@
 
 - [0096 — Path Equality, Settled Naming, And Honest Progress](0096-path-equality-and-settled-naming.md)
 
-  Twelve increments closing the defect class behind a 2026-08-19 production run
+  Thirteen increments closing the defect class behind a 2026-08-19 production run
   that imported the same 23 videos twice under different filenames: path
   identity that is case-sensitive on a case-insensitive volume, an import plan
   named from enrichment facts that were still settling, enrichment that never
@@ -10,7 +10,12 @@
   spring. Also carries the adjacent debt found while investigating — two
   planners naming the same file two ways, an unfolded destination namespace, the
   one surviving yield path outside `publish()`, and the design-registry and
-  sidebar items listed as D8–D19.
+  sidebar items listed as D8–D19. Increment 12 adds the erase path (D20–D26):
+  an erase-only run has no outcome state, mints an empty batch, offers a reveal
+  that reveals nothing, counts deletion failures as copy failures, leaves
+  sidecars and card debris behind, and produces no log line at all for the one
+  irreversible operation in the app. All seven owner decisions were resolved
+  2026-08-19; nothing in the plan is blocked.
 
 Plans 0085–0095 are complete and were removed when the implementation, structural
 guards, behavioral proofs, and verification closure landed. 0092 (import screen

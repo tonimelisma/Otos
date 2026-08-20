@@ -220,6 +220,13 @@ sliding in, Done dismissing), not for a progress stream.
 | D17 | `docs/design/design-system.md` retired L4 in its hierarchy section ("Three levels", line 62) but DES-021 (line 90) still normatively specifies "45% light / 45% dark (L4)" with the check "Accessibility Inspector on L3 and **L4**", and DES-028 (line 98) still requires "at least 3:1 for L4". `hig-validation.md:121` and `import-bar.md:598` also still reference it. `DesignPalette.l4` is gone from code, so the authoritative registry mandates a level the app cannot express. | same |
 | D18 | `CatalogPath.relativePath` calls `resolvingSymlinksInPath()` on every scanned file URL (`Otos/Models/CatalogPath.swift:43`). Measured: it does not fold case on APFS, so it is not D1's cause — but it **does** rewrite a leading `/private` prefix (measured: `/private/tmp/…` → `/tmp/…`). A library root under `/private` would produce relative paths that do not match the root prefix. Latent, unexercised, and cheap to make explicit. | probe recorded in increment 2's research doc |
 | D19 | Zero-byte files are catalogued as media and stay in the grid forever. `MediaEligibility.isCatalogMedia` classifies on `UTType` alone and never reads `byte_size` (`Otos/Services/MediaEligibility.swift:25`, whose doc comment states the split deliberately: "Decodability and enrichment unsupported outcomes are separate"). The tile is honest — `thumbnailUnavailable` is true and it draws `photo.slash` (`MediaAssetTilePresentation.swift:186`) — but the item occupies the grid permanently with no statement of *why* and no action. Measured: 5 such rows, 3 of them OneDrive conflict artifacts (`…-<host>-safeBackup-0001.heif/.arw`, 0 bytes, sitting beside intact originals). A 0-byte file on a card is also planned as a copy today, since `hasAnyDate` is true from its mtime. See owner decision Q4. | `select relative_path, byte_size from media_asset where byte_size = 0`; `op=preview.decode phase=fail … decodeMs=1` |
+| D20 | **An erase-only run has no outcome state at all.** `import-bar.md:304` and `:455` specify L1 `Card erased · 181 items deleted`, primary `Eject Card`, and "Selection does not move". No such branch exists in `ImportBarPresentation.done` — every branch there is a copy-run branch. Observed 2026-08-19 22:52: an erase of 265 files rendered ✓ `0 items copied and verified` with a green checkmark and a primary button reading `Show These Items` (`ImportBarPresentation.swift:462`). | `import.plan copyCount=0 skipCount=265`; `mediaOperation.batch start bytes=0 files=0`; user-reported screen |
+| D21 | **An erase-only run mints an `ImportBatchID` it will never fill, and the selection follows it.** `runExecution` creates `let batch = ImportBatchID()` unconditionally (`MediaOperationCoordinator.swift:485`) even with zero copy entries; the terminal `currentBatchID` fallback publishes it and `followNewBatchesOnce` navigates to it. Contradicts `import-bar.md:455`. Plan 0095 increment 8 gated this for `.executing` only. | `catalog.projection.window … sidebarSelection=importBatch:1787205148920` at 22:52:29.997, then `resolvedSidebarSelection` falling back |
+| D22 | **`Show These Items` on that state reveals nothing.** `select count(*) from media_asset where import_batch_unix_ms = 1787205148920` → **0**. Plan 0095's D12 shape surviving in the branch increment 8 did not touch. | same |
+| D23 | **The one irreversible operation in Otos is completely uninstrumented.** `deleteSource` calls `FileManager.removeItem` (`MediaImportExecutor.swift:1375`) and logs **only on failure** — no start, no per-file, no count, no summary. Grepping a 30-minute capture spanning an erase of 265 files for any delete/trash/erase op returns **nothing**. It is not possible to prove from the logs that the user's files were deleted. `phase=verified skippedPreexisting=265` reports the *plan's* skip count, not what was removed. | `logs/capture-20260820T055352Z-p1218-prod.log` |
+| D24 | **A skipped deletion reports success.** `deleteSourceIfRequested` returns `true` when `byteSize` or `contentModifiedAt` is nil (`MediaImportExecutor.swift:1309-1315`) — the file stays on the card and is counted as erased. Once D20's `N items deleted` string exists it will be wrong; today nothing counts at all. | same |
+| D25 | **A deletion failure is counted as a copy failure.** `failedCount += 1; failureReasons.append(.other)` inside the deletion loop (`MediaImportExecutor.swift:392`) feeds the *copy* failure count, so an erase failure makes the bar describe a copy problem that did not occur. `EntryTotals` has `publishedCount`/`publishedBytes`/`failedCount` and no notion of deletion at all — the erase path is grafted onto the copy path's accounting, which is the shared root cause of D22, D24 and D25. | same |
+| D26 | **Erase leaves the card dirty.** The erase set is `entry.isSkipPreexisting` (`MediaImportExecutor.swift:384`) — a copy-side fact. `deleteSourceIfRequested` deletes only `entry.source.sourceURL`, never `entry.companionDestinations`, so a sidecar Otos just copied is left on the card. Non-media files are excluded at scan and never erased; this card logged `catalog.scan.skippedNonMedia count=2`. After "Erase 265 Items" the card still held those files. See owner decisions Q5/Q7 and `docs/research/2026-08-19-source-file-disposition-prior-art.md`. | `op=catalog.scan.skippedNonMedia phase=skip rootPath=/Volumes/4152150790 count=2` |
 
 ### Damage already on disk
 
@@ -263,21 +270,44 @@ duplicates and remove D5's ability to create `+7h` ones itself.
 
 ---
 
-## Owner decisions needed before increments 7 and 12
+## Owner decisions — resolved 2026-08-19
 
-| # | Question | Options | Recommendation |
-| --- | --- | --- | --- |
-| Q1 | **What does the state-E progress bar measure?** `import-bar.md:249` says "determinate bar exposing real value and total" without saying which. Today it is the item count, which on a 23-video card freezes for 15 s at a time while the byte line under it climbs. | (a) items, as today; (b) bytes, matching the L3 line; (c) both, two indicators | **(b) bytes.** HIG asks a determinate indicator to move steadily; bytes do and items do not. L1 keeps `Importing 12 of 42`, so the item count is still stated. Changes `import-bar.md`. |
-| Q2 | **Should Otos recognize an existing destination file as the same content under a different name?** 248 extra copies already exist and Otos cannot see them: the plan's skip decision is name-based, and `mediaOperation.batch phase=overlayReuse misses=removableSourceNotHashed:224` shows removable sources are not hashed at plan time. | (a) out of scope; (b) hash the destination and skip content matches; (c) detect and report only, no automatic action | **(a) for this plan.** Content-addressed dedup is a product capability with its own cost model (hashing 6,500 destination files) and its own failure modes. It needs its own plan and its own ADR. This plan makes new duplicates impossible; it does not clean up old ones. |
-| Q4 | **What should Otos do with a zero-byte file?** (D19) Researched in `docs/research/2026-08-19-zero-byte-media-handling.md`. | (a) catalog it, as today, silently; (b) exclude it at scan time; (c) catalog it, give the tile a stated reason, and refuse to import it | **(c).** Measured: Spotlight types it (`kMDItemKind = "HEIF Image"`) with no pixel dimensions, `exiftool` lists it, Image I/O returns a source with `count = 0` and status `kCGImageStatusUnexpectedEOF`, `sips` refuses it. Every tool lists it and none hides it. Lightroom Classic's rule is the closest analogue and is split by moment: **refuse at import** ("could not be read"), **retain and badge once catalogued**. Otos already does the classify-and-flag half correctly; the missing piece is the import refusal — a zero-byte source is planned as an ordinary copy today because `hasAnyDate` is true from its mtime. **This reverses this plan's first recommendation of (b)**, which contradicted both filesystem-is-truth and every tool measured. |
-| Q3 | **Should the 248 existing duplicates be repaired?** Increment 1 ships a detector for the self-contradiction case (filename disagrees with `capture_wall_compact`), which finds Otos-created duplicates with no new product surface. | (a) leave them; (b) report them in a diagnostic; (c) build a repair flow | Defer until the detector has run and the true count is known. Not planned here. |
+All decisions this plan waited on have been answered in a live session. Nothing
+below is an assumption; each row records what was decided and why.
 
-Increments 1–6 and 9–12 do not depend on any of these. **Increment 7 is blocked
-on Q1** and **increment 11 step 7 is blocked on Q4**; neither may start until
-answered. Q2 and Q3 are recorded so the decision is made on evidence, and nothing
-in this plan waits on them.
+| # | Question | Decision |
+| --- | --- | --- |
+| Q1 | What does the **State E · Working** progress bar measure? | **Bytes.** The bar is the *visual* indicator and bytes move steadily; the item count is already stated in L1 (`Importing 12 of 42`) and the byte figure in L3 (`19 MB of 68 MB`), so the two lines already carry both facts and nothing is lost. **State A · Preparing keeps items** — during the card scan no byte total exists yet. The **batch row's 32 pt indicator** is a visual progress bar and follows the same rule as State E. Changes `import-bar.md:249` and `:577` to say which quantity, which they currently leave ambiguous. |
+| Q2 | Should Otos recognize an existing destination file as the same content under a different name? | **Out of scope for this plan.** 889 pre-existing library rows were named by an earlier tool from the mtime in UTC and Otos cannot see them, but content-addressed dedup means hashing ~6,500 destination files at plan time — its own cost model, its own failure modes, its own ADR. This plan makes *new* duplicates impossible. |
+| Q3 | Should the 248 existing duplicate copies be repaired? | **Deferred.** Increment 1 ships a read-only detector; decide on a real post-fix number. |
+| Q4 | What should Otos do with a zero-byte file? | **Not imported, but deleted with the media.** It gets a new plan disposition (see Q5) and is included in the erase set. **No bar copy is required** — the owner explicitly does not want these named in the import bar. Note this is *not* the `.blocked` disposition: blocked entries are attention items, and attention items set `eraseEnabled: false` (`ImportBarPresentation.swift:279`), so a card holding a zero-byte file could never be erased — the opposite of the decision. Researched in `docs/research/2026-08-19-zero-byte-media-handling.md`. |
+| Q5 | What is the **erase set**? Today it is `entry.isSkipPreexisting` only (`MediaImportExecutor.swift:384`) — a copy-side fact used as a card-side one, so sidecar originals and card debris survive every erase. | **The full model below**, adapted from `gomediaimport` prior art and deliberately simpler than it. Researched in `docs/research/2026-08-19-source-file-disposition-prior-art.md`. |
+| Q6 | Should erase use permanent deletion or the card's Trash? | **Permanent (`removeItem`), and now owned by an ADR.** The recoverability guarantee is the verified library copy that `eraseConfirmationProvenClean` already proves — not a `.Trashes` folder, which would not free the space the user is erasing to reclaim. One exception the ADR must state rather than leave implicit: a zero-byte file is *not* in the library, so its deletion is unrecoverable — of zero bytes, so nothing is lost. |
+| Q7 | How configurable is any of this? | **Exactly one setting: "Copy sidecars into the library."** It governs *copying* only. No per-extension action table — `gomediaimport` is a CLI where a config file is the only surface; Otos can change a default in a release. Cruft deletion is never configurable and happens only as part of an explicit Erase. |
 
----
+### The erase model (Q4, Q5, Q7)
+
+| Class on the card | Copied to library | Deleted on Erase |
+| --- | --- | --- |
+| Media | yes | yes |
+| Media already in the library | no | yes |
+| Zero-byte media (new `excluded` disposition) | no | yes |
+| Useful sidecars `.xmp` / `.srt` | **only if "Copy sidecars" is on** | yes, either way |
+| Cruft sidecars `.thm .ctg .aae .lrf .mpl .cpi` | no | yes |
+| Source artifacts (Sony `M4ROOT/THMBNL`, `M4ROOT/CLIP/*.xml`, `._*`, card trash) | no | yes |
+| Unknown non-media | no | **no** |
+
+If the sidecar setting is off, `.xmp`/`.srt` are simply reclassified as cruft —
+not copied, still deleted. ARC-045 already names the source-artifact set
+verbatim, as **ignore paths**; this turns an existing ignore set into an erase
+set rather than inventing one.
+
+**Assumption stated, not decided:** an orphan `.xmp` with no matching media file
+on the card follows the same rule as a parented one. This matches
+`gomediaimport`, which gives orphan sidecars a destination and copies them. If
+orphans should be left alone instead, that is a one-line change to the
+classifier.
+
 
 ## Constraints
 
@@ -399,8 +429,18 @@ facts were not logged. (D1–D4, and every later increment's verification.)
 
    **The script must be read-only** — no `UPDATE`, no `DELETE`, no schema change
    — and CI's script-inventory check should assert that.
-7. Record in `docs/adr/0015-observability.md` that the presentation stream and
-   the naming decision are now instrumented paths.
+7. **The erase path.** `deleteSource` (`MediaImportExecutor.swift:1362`) is the
+   only irreversible operation in Otos and logs only on failure (D23). Add
+   `op=import.erase phase=start rootPath=… plannedCount=…`, one
+   `phase=deleted relativePath=… bytes=…` per file capped at 20, and
+   `phase=finish rootPath=… deleted=… skipped=… failed=… bytesFreed=…`. The
+   summary must count what was **actually removed**, not the plan's
+   `skipCount` — the existing `phase=verified skippedPreexisting=265` reports
+   the latter and is what made a 265-file deletion unprovable. `gomediaimport`
+   reports exactly this (per-file when verbose, plus a count and total bytes
+   freed); Otos should not report less about the same act.
+8. Record in `docs/adr/0015-observability.md` that the presentation stream, the
+   naming decision, and the erase path are now instrumented.
 
 **Verify.** `script/verify.sh`. Then: attach the card, import, eject, re-insert,
 and confirm from `script/logs.sh capture --last 15m` alone — without a catalog
@@ -660,9 +700,7 @@ re-enriched after a plan was built.
 
 ### Increment 7 · The bar moves once, forward, and smoothly
 
-**Blocked on owner decision Q1.** Do not start until it is answered.
-
-**Goal.** Eliminate D4.
+**Goal.** Eliminate D4. Q1 is answered: the bar measures **bytes**.
 
 **Steps.**
 
@@ -673,10 +711,14 @@ re-enriched after a plan was built.
    the progress indicator gets `.animation(.linear(duration: 0.2), value:)` on its
    own fraction, or no implicit animation at all. **`dampingFraction: 0.85`
    overshoots by construction and must never drive a progress indicator.**
-2. Implement Q1's answer in `ImportBarPresentation.working`
-   (`ImportBarPresentation.swift:321-366`) and update `import-bar.md:249` and
-   `:577` to state explicitly which quantity the determinate bar exposes — the
-   spec is currently ambiguous and that ambiguity is what let this ship.
+2. `ImportBarPresentation.working` (`ImportBarPresentation.swift:321-366`)
+   returns `.determinate(completed: progress.completedBytes, total:
+   progress.totalBytes)`. L1 keeps `Importing 12 of 42` and L3 keeps
+   `19 MB of 68 MB`, so both facts stay stated — only the *visual* bar changes.
+   The batch row's 32 pt indicator follows the same rule. **State A · Preparing
+   keeps items**: during the card scan there is no byte total. Update
+   `import-bar.md:249` and `:577` to name the quantity, since the spec's
+   ambiguity is what let this ship.
 3. `remainingTimeClause` (`ImportBarPresentation.swift:371`) is re-checked against
    an 8-worker large-file run: with clips of wildly different sizes the estimate
    swings. If it is not stable enough to be honest (DES-032), widen its minimum
@@ -813,25 +855,15 @@ confirm no removable row appears; unmount it; confirm the root does not persist.
    Prefer removing the need for it: an ID is only ever inserted for a batch whose
    card is gone and whose run was fully clean, so it can be dropped once that
    batch leaves `importBatches`. If that is not sound, cap it and say why.
-6. **D19, blocked on Q4.** On the recommended answer (c), this is two changes and
-   `MediaEligibility` is not touched at all:
-   - **Import refusal.** `MediaTransferPlanner` blocks a source entry whose
-     `byteSize` is 0 with a new `MediaOperationBlockedReason` case, so it joins
-     the plan's existing attention items rather than being copied. `.blocked(…)`
-     already exists and already surfaces (`MediaTransferPlanner.swift:206`,
-     `import-bar.md` state D). Its clause must name the fact plainly — the file
-     is empty — not "unsupported", which is a different condition.
-   - **A readable reason on the tile.** `thumbnailUnavailable` already selects
-     `photo.slash`, so the glyph is right; what is missing is the *why*. The
-     loupe and the tile's accessibility label should state that the file is
-     empty, distinct from a file whose format could not be decoded.
-     `MediaTileDetail` already carries `byteSize`, so this derives from facts the
-     surface has. Cite the `DES-*` rules for the string's level.
-
-   Do **not** widen either change to "anything that failed to decode": a corrupt
-   40 MB RAW is real damage the user needs to see, and a zero-byte file is not.
-   The research doc records that distinction and why Lightroom draws it the same
-   way.
+6. **D19.** Q4 is answered: a zero-byte file is **not imported and not named in
+   the bar**, and it is deleted with the media. That is a plan-disposition
+   change, not a `MediaEligibility` change — the file stays catalogued and its
+   tile keeps the `photo.slash` glyph it already draws correctly. The
+   disposition and the erase set both land in increment 12; this increment
+   carries only the tile's accessibility label, so a VoiceOver user learns the
+   file is empty rather than that it merely failed. Do **not** widen it to
+   "anything that failed to decode": a corrupt 40 MB RAW is real damage the
+   user needs to see.
 7. **D17.** Finish the L4 retirement. `design-system.md:90` (DES-021) and `:98`
    (DES-028) still normatively define and check an L4 that the hierarchy section
    at `:62` says does not exist, and `hig-validation.md:121` and
@@ -848,7 +880,82 @@ split this increment if any one step grows.
 
 ---
 
-### Increment 12 · Doc closure
+### Increment 12 · One typed erase, and a card that is actually erased
+
+**Goal.** Eliminate D20–D26. Implements owner decisions Q4, Q5, Q6 and Q7 and
+`import-bar.md`'s erase-only state, which has been specified since the screen was
+designed and never built.
+
+**Why this is one increment and not six.** D22, D24 and D25 share a root cause:
+the erase path is grafted onto the copy path's accounting. `EntryTotals` carries
+`publishedCount`, `publishedBytes` and `failedCount` and has no notion of
+deletion, so the deletion loop borrows `failedCount`, the outcome borrows
+`.completed(publishedCount:)`, and the mapper has only copy-run branches to fall
+into. Fixing them separately would mean three patches around the same wrong
+boundary.
+
+**Steps.**
+
+1. **Classify every file on the card, once.** A `nonisolated enum
+   SourceFileClass` beside `MediaEligibility` answers, for one relative path:
+   `media`, `usefulSidecar` (`.xmp` / `.srt`), `cruftSidecar`
+   (`.thm .ctg .aae .lrf .mpl .cpi`), `sourceArtifact(kind)` (Sony
+   `M4ROOT/THMBNL`, `M4ROOT/CLIP/*.xml`, `._*`, card trash roots — the set
+   ARC-045 already enumerates as ignore paths), or `unknown`. Match path
+   components **case-insensitively** and spell both `M4ROOT/…` and
+   `PRIVATE/M4ROOT/…`, exactly as `gomediaimport`'s `isSonyThumbnailDir` /
+   `isSonyClipXML` do — the same volume respelling behind D1.
+2. **`MediaOperationDisposition` gains `.excluded(ExclusionReason)`** —
+   not copied, still part of the erase set, and explicitly **not** `.blocked`,
+   which would make it an attention item and disable Erase forever
+   (`ImportBarPresentation.swift:279`). Reasons: `.empty` (zero bytes, Q4) and
+   `.cruft(SourceFileClass)`. It contributes no bar copy (owner decision Q4).
+3. **One preference: "Copy sidecars into the library."** Added to
+   `ImportPreferences` beside the existing import policy keys and edited from
+   the Settings Import pane. When off, `usefulSidecar` classifies as
+   `.excluded(.cruft(…))`. This is the **only** configuration in the model —
+   no per-extension table (Q7).
+4. **A typed erase outcome.** `EntryTotals` gains `deletedCount`,
+   `deletedBytes`, `deletionFailedCount`; the deletion loop stops incrementing
+   `failedCount` (D25). `MediaImportExecutionResult.completed` carries an
+   `EraseOutcome?`. `deleteSourceIfRequested`'s silent-success path
+   (`:1309-1315`) returns a distinct `.skipped(reason:)` instead of `true`
+   (D24), and **companion sources are deleted with their primary** (D26).
+5. **The erase set** is every entry whose disposition is `.copy` (published),
+   `.skipPreexisting`, or `.excluded`, plus the source artifacts enumerated in
+   step 1. `unknown` is never touched. Deletion is **path-validated against the
+   source root before every `removeItem`**, mirroring
+   `gomediaimport`'s `validateSourceCleanupTarget`, so a misfiring matcher
+   cannot reach outside the card.
+6. **No batch for a run that copies nothing.** `runExecution` mints an
+   `ImportBatchID` only when the plan has at least one `.copy` entry (D21).
+   `import-bar.md:455`'s "Selection does not move" then holds by construction
+   rather than by a downstream guard.
+7. **The erase-only Done state**, per `import-bar.md:304`: L1
+   `Card erased · N items deleted` with the checkmark badge, primary
+   `Eject Card`, **no `Show These Items`** (D20, D22). `N` is the typed
+   `deletedCount` from step 4 — the number actually removed, never the plan's
+   `skipCount`.
+
+**Verify.** `script/verify.sh` plus:
+- `SourceFileClassTests` over every class, both `M4ROOT` spellings, and mixed
+  case.
+- An executor test asserting the erase set includes companions, cruft sidecars
+  and artifacts, and excludes `unknown`.
+- An executor test asserting a path outside the source root is refused.
+- A coordinator test asserting a zero-copy plan mints no batch.
+- A mapper test asserting the erase-only state renders `Card erased · N items
+  deleted` with primary `Eject Card` and no reveal.
+- Runtime: import a card, then erase it, and confirm from
+  `op=import.erase phase=finish` alone that `deleted` equals what was on the
+  card and that a follow-up scan of the still-mounted card observes only
+  `unknown` files. Design checks per CLAUDE.md §Code Review (C).
+
+**Rollback.** Revert. The preference key is additive; no schema change.
+
+---
+
+### Increment 13 · Doc closure
 
 **Goal.** Leave the documentation as current truth.
 
@@ -866,6 +973,15 @@ split this increment if any one step grows.
 3. Amend `docs/adr/0008-…`: identity is still the path; **path equality is the
    volume's own equality**. State explicitly that a respell is not a deletion.
 4. Amend `docs/adr/0024-…` per increment 9 step 4.
+4b. New ADR: **the erase set and permanent source deletion.** It must state the
+   boundary against ADR 0022 explicitly — ADR 0022 rejects `removeItem` for the
+   Move to Trash command and excludes device roots, and card erase is the one
+   other place Otos destroys user files, currently owned by no ADR. Record the
+   owner's rationale: the recoverability guarantee is the verified library copy
+   that `eraseConfirmationProvenClean` already proves, and a Trash on the card
+   would not free the space the user is erasing to reclaim. State the one
+   exception rather than leaving it implicit: a zero-byte file is not in the
+   library, so its deletion is unrecoverable — of zero bytes.
 5. `docs/architecture.md`: the name-key owner and its three callers, and the
    enrichment→occupancy→replan edge, in the where-to-change table.
 6. `docs/requirements.md`: ARC-033 (overlay survives a respell), ARC-047 (the
@@ -897,6 +1013,7 @@ baseline in the PR.
 | 9 | ADR 0024 | The rule is one yield path, not one constructor |
 | 10 | ADR 0013 | The device model is stored, so a detached disk-image root is still provable |
 | 11 | `design-system.md`, `hig-validation.md`, APP row for sidebar accessories | L4 fully retired; the sidebar's only non-item count removed |
+| 12 | new ADR, ARC-045, ARC-047, `import-bar.md` | The erase set and the permanent-deletion boundary: what a card erase removes, why it is `removeItem` and not `trashItem`, and the one "Copy sidecars" preference. ARC-045's device-artifact **ignore** paths become an **erase** set. `import-bar.md`'s erase-only Done state stops being unimplemented |
 
 ---
 
@@ -916,6 +1033,9 @@ baseline in the PR.
   100 ms threshold, and is the second such observation on this operation (plan
   0095 recorded `stallMs=109` on 2026-08-16). It is real, it is unrelated to
   import correctness, and it wants its own measurement-first plan.
+- **No content-hash-based erase safety.** Erase deletes what the *plan* proved
+  is in the library by name and `(size, mtime)`; it does not re-hash the
+  destination first. That is owner decision Q2's territory.
 - **No `CatalogStore` decomposition.** Increment 2 touches it in three places; it
   is still 4,190 lines and its boundaries are still worth revisiting, but doing
   both at once would make every regression ambiguous.

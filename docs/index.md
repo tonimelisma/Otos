@@ -65,6 +65,7 @@ Non-authoritative: they record what we learned, not current behavior.
 - [research/toolbar-sort-filter-architecture.md](research/toolbar-sort-filter-architecture.md)
 - [research/removable-volume-and-camera-sources.md](research/removable-volume-and-camera-sources.md)
 - [research/2026-08-19-zero-byte-media-handling.md](research/2026-08-19-zero-byte-media-handling.md)
+- [research/2026-08-19-source-file-disposition-prior-art.md](research/2026-08-19-source-file-disposition-prior-art.md)
 
 ## Plans and roadmap
 
