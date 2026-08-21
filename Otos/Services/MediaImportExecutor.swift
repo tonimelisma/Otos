@@ -66,6 +66,7 @@ actor MediaImportExecutor {
     private struct EntryExecutionContext: Sendable {
         let plan: MediaOperationPlan
         let batch: ImportBatchID
+        let runID: String
         let sourceKind: LibraryRootKind
         let sourceDeviceIdentity: String?
         let allowSourceDeletion: Bool
@@ -150,6 +151,7 @@ actor MediaImportExecutor {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
+        runID: String = UUID().uuidString,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         cancelFlag.reset()
@@ -193,6 +195,7 @@ actor MediaImportExecutor {
         let batchSignpost = OtosSignpost.mediaIO.beginInterval("MediaImportBatch")
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "start", fields: [
             "batch": "\(batch.unixMilliseconds)",
+            "run": runID,
             "bytes": "\(totalBytes)",
             "files": "\(copyEntries.count)",
             "workers": "\(Self.workerCount)",
@@ -200,6 +203,7 @@ actor MediaImportExecutor {
         let executionContext = EntryExecutionContext(
             plan: plan,
             batch: batch,
+            runID: runID,
             sourceKind: sourceKind,
             sourceDeviceIdentity: sourceDeviceIdentity,
             allowSourceDeletion: allowSourceDeletion,
@@ -219,22 +223,23 @@ actor MediaImportExecutor {
         let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=mediaOperation.batch phase=verified batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
+            "op=mediaOperation.batch phase=verified run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
         )
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=mediaOperation.batch phase=overlayReuse batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
+            "op=mediaOperation.batch phase=overlayReuse run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
         )
         if batchIntegrityMismatch {
             OtosLog.catalog.fault(
                 // swiftlint:disable:next line_length
-                "op=mediaOperation.batch phase=integrityMismatch batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
+                "op=mediaOperation.batch phase=integrityMismatch run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
             )
         }
         OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
         let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
             "batch": "\(batch.unixMilliseconds)",
+            "run": runID,
             "bytes": "\(entryTotals.publishedBytes)",
             "elapsedMs": "\(elapsedMs)",
             "files": "\(copyEntries.count)",
@@ -328,6 +333,7 @@ actor MediaImportExecutor {
         var failedCount = 0
         var skippedForeignCount = 0
         var incompleteItems: [MediaAssetID] = []
+        var publishedEntries: [MediaOperationPlanEntry] = []
         var overlayReuse = OverlayReuseSummary()
         var failureReasons: [EntryFailure] = []
         let copyEntries = context.plan.entries.filter {
@@ -369,6 +375,7 @@ actor MediaImportExecutor {
                 switch result.outcome {
                 case let .published(reuseResult):
                     publishedCount += 1
+                    publishedEntries.append(copyEntries[result.index])
                     publishedBytes += result.byteSize
                     overlayReuse.record(reuseResult)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: result.byteSize)
@@ -393,7 +400,7 @@ actor MediaImportExecutor {
             }
         }
         if context.allowSourceDeletion {
-            let eraseOutcome = await eraseSourceFiles(context: context)
+            let eraseOutcome = await eraseSourceFiles(context: context, publishedEntries: publishedEntries)
             return EntryTotals(
                 publishedCount: publishedCount,
                 publishedBytes: publishedBytes,
@@ -417,13 +424,20 @@ actor MediaImportExecutor {
         )
     }
 
-    private func eraseSourceFiles(context: EntryExecutionContext) async -> EraseOutcome {
+    private func eraseSourceFiles(
+        context: EntryExecutionContext,
+        publishedEntries: [MediaOperationPlanEntry]
+    ) async -> EraseOutcome {
         guard case let .import(sourceRoot, _, _) = context.plan.mode else {
             return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
         }
-        let candidates = sourceDeletionCandidates(plan: context.plan, sourceRoot: sourceRoot)
+        let candidates = sourceDeletionCandidates(
+            plan: context.plan,
+            publishedEntries: publishedEntries,
+            sourceRoot: sourceRoot
+        )
         OtosLog.mediaIO.notice(
-            "op=import.erase phase=start rootPath=\(sourceRoot.rawValue, privacy: .public) plannedCount=\(candidates.count, privacy: .public)"
+            "op=import.erase phase=start run=\(context.runID, privacy: .public) rootPath=\(sourceRoot.rawValue, privacy: .public) plannedCount=\(candidates.count, privacy: .public)"
         )
         var deleted = 0
         var deletedBytes: Int64 = 0
@@ -436,7 +450,8 @@ actor MediaImportExecutor {
                 relativePath: relativePath,
                 sourceRoot: sourceRoot,
                 sourceKind: context.sourceKind,
-                sourceDeviceIdentity: context.sourceDeviceIdentity
+                sourceDeviceIdentity: context.sourceDeviceIdentity,
+                runID: context.runID
             )
             switch result {
             case let .deleted(bytes):
@@ -444,7 +459,7 @@ actor MediaImportExecutor {
                 deletedBytes += bytes
                 if logged < 20 {
                     OtosLog.mediaIO.notice(
-                        "op=import.erase phase=deleted relativePath=\(relativePath.rawValue, privacy: .public) bytes=\(bytes, privacy: .public)"
+                        "op=import.erase phase=deleted run=\(context.runID, privacy: .public) relativePath=\(relativePath.rawValue, privacy: .public) bytes=\(bytes, privacy: .public)"
                     )
                     logged += 1
                 }
@@ -455,7 +470,9 @@ actor MediaImportExecutor {
             }
         }
         let message = "op=import.erase phase=finish "
+            + "run=\(context.runID) "
             + "rootPath=\(sourceRoot.rawValue) "
+            + "manifestCount=\(candidates.count) "
             + "deleted=\(deleted) "
             + "skipped=\(skipped) "
             + "failed=\(failed) "
@@ -467,15 +484,20 @@ actor MediaImportExecutor {
 
     private func sourceDeletionCandidates(
         plan: MediaOperationPlan,
+        publishedEntries: [MediaOperationPlanEntry],
         sourceRoot: LibraryRootPath
     ) -> [MediaRelativePath] {
         var paths = Set<MediaRelativePath>()
+        for entry in publishedEntries {
+            paths.insert(entry.source.relativePath)
+            paths.formUnion(entry.source.companions.map(\.relativePath))
+        }
         for entry in plan.entries {
             switch entry.disposition {
-            case .copy, .skipPreexisting, .excluded:
+            case .skipPreexisting, .excluded:
                 paths.insert(entry.source.relativePath)
                 paths.formUnion(entry.source.companions.map(\.relativePath))
-            case .relocate, .noOp, .blocked:
+            case .copy, .relocate, .noOp, .blocked:
                 break
             }
         }
@@ -501,12 +523,14 @@ actor MediaImportExecutor {
         relativePath: MediaRelativePath,
         sourceRoot: LibraryRootPath,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?
+        sourceDeviceIdentity: String?,
+        runID: String
     ) async -> SourceDeletionResult {
         guard !relativePath.rawValue.split(separator: "/").contains("..") else { return .failed }
-        let root = sourceRoot.url.standardizedFileURL.path(percentEncoded: false)
         let url = sourceRoot.url.appending(path: relativePath.rawValue).standardizedFileURL
-        guard url.path(percentEncoded: false).hasPrefix(root + "/") else { return .failed }
+        guard CatalogPath.relativePathIfContained(rootPath: sourceRoot, fileURL: url) == relativePath else {
+            return .failed
+        }
         switch sourceKind {
         case .removableVolume, .library:
             guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return .skipped }
@@ -516,7 +540,7 @@ actor MediaImportExecutor {
                 return .deleted(bytes: bytes)
             } catch {
                 OtosLog.mediaIO.error(
-                    "op=import.erase phase=failed relativePath=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                    "op=import.erase phase=failed run=\(runID, privacy: .public) relativePath=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
                 )
                 return .failed
             }

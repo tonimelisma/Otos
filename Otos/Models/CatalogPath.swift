@@ -44,11 +44,22 @@ nonisolated enum CatalogPath {
         // again can rewrite `/private` to `/` and break this prefix comparison;
         // standardization is sufficient for scanner-relative identity.
         let filePath = fileURL.standardizedFileURL.path(percentEncoded: false)
-        let prefix = rootPath.rawValue + "/"
+        var normalizedRoot = rootPath.rawValue
+        while normalizedRoot.count > 1, normalizedRoot.hasSuffix("/") {
+            normalizedRoot.removeLast()
+        }
+        let prefix = normalizedRoot + "/"
         guard filePath.hasPrefix(prefix) else {
             return nil
         }
         return MediaRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
+    }
+
+    /// Returns the root-relative identity only when the standardized URL is
+    /// contained by the normalized root. Callers use this for destructive
+    /// operations so containment and relative-path derivation cannot drift.
+    static func relativePathIfContained(rootPath: LibraryRootPath, fileURL: URL) -> MediaRelativePath? {
+        relativePath(rootPath: rootPath, fileURL: fileURL)
     }
 
     /// Maps an absolute filesystem event path to the saved root that owns it.

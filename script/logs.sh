@@ -3,15 +3,16 @@ set -euo pipefail
 
 APP_NAME="Otos"
 SUBSYSTEM="net.melisma.Otos"
+LOG_PROCESS="${OTOS_LOG_PROCESS:-$APP_NAME}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
 
 usage() {
   cat <<'EOF'
 Usage:
-  script/logs.sh stream [Category]
-  script/logs.sh show --last <duration> [Category]
-  script/logs.sh capture --last <duration> [Category]
+  script/logs.sh stream [Category] [--process <name>]
+  script/logs.sh show --last <duration> [Category] [--process <name>]
+  script/logs.sh capture --last <duration> [Category] [--process <name>]
 
 stream   Live unified log + signpost capture (tee'd under logs/).
 show     Post-hoc `log show` as ndjson (default --info --debug) for agent jq.
@@ -21,6 +22,8 @@ capture  Snapshot the unified log for a past window into logs/, without
          you need to keep.
 
 Category is an optional OtosLog category (App, UI, Catalog, …).
+The process defaults to Otos; use --process xctest (or OTOS_LOG_PROCESS)
+to inspect test-emitted diagnostics.
 Duration examples: 5m, 1h, 30s.
 EOF
 }
@@ -29,14 +32,39 @@ predicate_for() {
   local category="${1:-}"
   if [[ -n "$category" ]]; then
     printf 'process == "%s" AND subsystem == "%s" AND category == "%s"' \
-      "$APP_NAME" "$SUBSYSTEM" "$category"
+      "$LOG_PROCESS" "$SUBSYSTEM" "$category"
   else
-    printf 'process == "%s" AND subsystem == "%s"' "$APP_NAME" "$SUBSYSTEM"
+    printf 'process == "%s" AND subsystem == "%s"' "$LOG_PROCESS" "$SUBSYSTEM"
   fi
 }
 
+parse_process_and_category() {
+  PARSED_CATEGORY=""
+  LOG_PROCESS="${OTOS_LOG_PROCESS:-$APP_NAME}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --process)
+        shift
+        LOG_PROCESS="${1:-}"
+        [[ -n "$LOG_PROCESS" ]] || { echo "Missing --process name" >&2; exit 2; }
+        shift
+        ;;
+      -*)
+        echo "Unknown option: $1" >&2
+        usage
+        exit 2
+        ;;
+      *)
+        PARSED_CATEGORY="$1"
+        shift
+        ;;
+    esac
+  done
+}
+
 cmd_stream() {
-  local category="${1:-}"
+  parse_process_and_category "$@"
+  local category="$PARSED_CATEGORY"
   local predicate
   predicate="$(predicate_for "$category")"
   local output_file
@@ -55,12 +83,19 @@ parse_last_and_category() {
   # [Category]` style args shared by `show` and `capture`.
   PARSED_LAST=""
   PARSED_CATEGORY=""
+  LOG_PROCESS="${OTOS_LOG_PROCESS:-$APP_NAME}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --last)
         shift
         PARSED_LAST="${1:-}"
         [[ -n "$PARSED_LAST" ]] || { echo "Missing --last duration" >&2; exit 2; }
+        shift
+        ;;
+      --process)
+        shift
+        LOG_PROCESS="${1:-}"
+        [[ -n "$LOG_PROCESS" ]] || { echo "Missing --process name" >&2; exit 2; }
         shift
         ;;
       -*)

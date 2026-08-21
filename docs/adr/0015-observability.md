@@ -81,3 +81,12 @@ consumes them; use a log line instead.
   logs identify the state and byte progress applied to the bar; erase logs report
   actual deleted, skipped, failed, and freed-byte totals rather than planned
   counts.
+- A source import session mints one `run=` identifier when planning begins. The
+  identifier is carried through plan, readiness, batch, erase, and presentation
+  boundaries so a single run can be reconstructed without treating `batch=` as a
+  substitute; `script/logs.sh` accepts `--process` because test-host diagnostics
+  are emitted by `xctest`, not `Otos`.
+- `script/synthetic-card.sh` creates and destroys scoped ExFAT and case-sensitive
+  APFS image-backed removable volumes for agent-owned import and erase checks.
+  Its measurements and the detach/re-attach procedure live in
+  `docs/research/2026-08-21-synthetic-removable-volume.md`.

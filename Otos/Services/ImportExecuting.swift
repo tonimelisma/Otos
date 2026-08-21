@@ -15,6 +15,7 @@ nonisolated protocol ImportExecuting: Sendable {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
+        runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult
     func cancel() async
@@ -44,6 +45,7 @@ actor LiveImportExecutor: ImportExecuting {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
+        runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         let executor = MediaImportExecutor(
@@ -59,6 +61,7 @@ actor LiveImportExecutor: ImportExecuting {
             sourceKind: sourceKind,
             sourceDeviceIdentity: sourceDeviceIdentity,
             deleteSourceRequested: deleteSourceRequested,
+            runID: runID,
             onProgress: onProgress
         )
     }
@@ -220,6 +223,7 @@ actor ControlledImportExecutor: ImportExecuting {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
+        runID: String,
         onProgress: @Sendable @escaping (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         guard case let .import(source, _, _) = plan.mode else {
@@ -238,6 +242,7 @@ actor ControlledImportExecutor: ImportExecuting {
                 sourceKind: sourceKind,
                 sourceDeviceIdentity: sourceDeviceIdentity,
                 deleteSourceRequested: deleteSourceRequested,
+                runID: runID,
                 onProgress: onProgress
             )
         }
