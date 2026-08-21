@@ -739,11 +739,79 @@ struct ImportExecutionProgressTests {
         #expect(try await fixture.store.activeImportOperations().isEmpty)
     }
 
+    @Test func failedCopySourceSurvivesEraseSweep() async throws {
+        let fixture = try await makeZeroCopyFixture()
+        try FileManager.default.removeItem(at: fixture.destinationFile)
+        let original = try #require(fixture.plan.entries.first)
+        let staleFacts = PlanningFileFacts(
+            id: original.source.id,
+            sourceURL: original.source.sourceURL,
+            relativePath: original.source.relativePath,
+            byteSize: 11,
+            contentModifiedAt: original.source.contentModifiedAt,
+            captureWallCompact: original.source.captureWallCompact,
+            namingFactState: original.source.namingFactState,
+            mediaKind: original.source.mediaKind,
+            fileExtension: original.source.fileExtension,
+            companions: original.source.companions,
+            contentTypeIdentifier: original.source.contentTypeIdentifier
+        )
+        let entry = MediaOperationPlanEntry(
+            source: staleFacts,
+            idealDestination: original.idealDestination,
+            finalDestination: original.finalDestination,
+            companionDestinations: original.companionDestinations,
+            disposition: .copy(destination: original.finalDestination)
+        )
+        let plan = MediaOperationPlan(
+            generation: fixture.plan.generation,
+            mode: fixture.plan.mode,
+            sourceOccupancyRevision: fixture.plan.sourceOccupancyRevision,
+            destinationOccupancyRevision: fixture.plan.destinationOccupancyRevision,
+            policy: fixture.plan.policy,
+            entries: [entry],
+            totals: MediaOperationPlanTotals(
+                copyCount: 1,
+                skipCount: 0,
+                blockedCount: 0,
+                companionCopyCount: 0,
+                copyBytes: 11
+            )
+        )
+
+        let result = await MediaImportExecutor(store: fixture.store).execute(
+            plan: plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:failed-copy-survival",
+            deleteSourceRequested: true
+        ) { _ in }
+
+        guard case let .completedWithErase(_, _, _, _, failedCount, _, eraseOutcome) = result else {
+            Issue.record("Expected a completed erase result, got \(result)")
+            return
+        }
+        #expect(failedCount == 1)
+        #expect(eraseOutcome.deletedCount == 0)
+        #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
+    }
+
+    @Test func containmentHelperAcceptsDirectoryURLSlashAndNormalizedRoot() throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = try CatalogPath.normalizedDirectoryPath(for: temp)
+        let inside = root.url.appending(path: "same.jpg")
+        let outside = temp.deletingLastPathComponent().appending(path: "same.jpg")
+        #expect(CatalogPath.relativePathIfContained(rootPath: root, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
+        #expect(CatalogPath.relativePathIfContained(rootPath: LibraryRootPath(rawValue: root.rawValue + "/"), fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
+        #expect(CatalogPath.relativePathIfContained(rootPath: root, fileURL: outside) == nil)
+    }
+
     private struct ZeroCopyFixture {
         let store: CatalogStore
         let plan: MediaOperationPlan
         let sourceRoot: URL
         let sourceFile: URL
+        let destinationFile: URL
     }
 
     private func makeZeroCopyFixture() async throws -> ZeroCopyFixture {
@@ -794,7 +862,14 @@ struct ImportExecutionProgressTests {
         #expect(plan.entries.first?.isSkipPreexisting == true)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
-        return ZeroCopyFixture(store: store, plan: plan, sourceRoot: sourceRoot, sourceFile: sourceFile)
+        try await store.addLibrary(url: destinationRoot)
+        return ZeroCopyFixture(
+            store: store,
+            plan: plan,
+            sourceRoot: sourceRoot,
+            sourceFile: sourceFile,
+            destinationFile: destinationFile
+        )
     }
 
     private func waitForReadyPlan(

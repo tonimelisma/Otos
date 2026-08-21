@@ -13,6 +13,43 @@ nonisolated enum ImportOverlayReuseMiss: String, Equatable, Sendable {
     case detachedSource
 }
 
+extension CatalogStore {
+    nonisolated static func insertActiveSourceErase(_ operation: ActiveSourceEraseOperation, db: Database) throws {
+        try db.execute(sql: """
+        INSERT OR REPLACE INTO active_source_erase
+            (operation_key, source_kind, source_device_identity, source_root_path,
+             source_relative_path, source_byte_size, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, arguments: [
+            operation.key,
+            operation.sourceKind.rawValue,
+            operation.sourceDeviceIdentity,
+            operation.sourceRootPath.rawValue,
+            operation.sourceRelativePath.rawValue,
+            operation.sourceByteSize,
+            operation.updatedAt.timeIntervalSince1970,
+        ])
+    }
+
+    nonisolated static func deleteActiveSourceErase(key: String, db: Database) throws {
+        try db.execute(sql: "DELETE FROM active_source_erase WHERE operation_key = ?", arguments: [key])
+    }
+
+    nonisolated static func fetchAllActiveSourceErases(db: Database) throws -> [ActiveSourceEraseOperation] {
+        try Row.fetchAll(db, sql: "SELECT * FROM active_source_erase ORDER BY operation_key").map { row in
+            ActiveSourceEraseOperation(
+                key: row["operation_key"],
+                sourceKind: LibraryRootKind(rawValue: row["source_kind"]) ?? .removableVolume,
+                sourceDeviceIdentity: row["source_device_identity"],
+                sourceRootPath: LibraryRootPath(rawValue: row["source_root_path"]),
+                sourceRelativePath: MediaRelativePath(rawValue: row["source_relative_path"]),
+                sourceByteSize: row["source_byte_size"],
+                updatedAt: Date(timeIntervalSince1970: row["updated_at"])
+            )
+        }
+    }
+}
+
 nonisolated struct ImportOverlayReuseResult: Equatable, Sendable {
     let metadataCloned: Bool
     let thumbnailCopied: Bool

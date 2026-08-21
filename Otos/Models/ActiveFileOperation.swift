@@ -42,3 +42,13 @@ nonisolated struct ActiveFileOperation: Equatable, Sendable {
     let deleteSourceRequested: Bool
     var updatedAt: Date
 }
+
+nonisolated struct ActiveSourceEraseOperation: Equatable, Sendable {
+    let key: String
+    let sourceKind: LibraryRootKind
+    let sourceDeviceIdentity: String?
+    let sourceRootPath: LibraryRootPath
+    let sourceRelativePath: MediaRelativePath
+    let sourceByteSize: Int64?
+    var updatedAt: Date
+}

@@ -174,7 +174,7 @@ nonisolated enum MediaAssetTilePresentation {
                 }
             }
         }
-        let emptySuffix = detail.enrichedSourceSize == 0 ? ", empty file" : ""
+        let emptySuffix = detail.byteSize == 0 ? ", empty file" : ""
         return "\(base)\(emptySuffix), \(detail.mediaChoice.accessibilityValue)"
     }
 

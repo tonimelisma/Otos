@@ -3,6 +3,56 @@ import OSLog
 import Synchronization
 import UniformTypeIdentifiers
 
+/// Sole owner of destructive source deletion. Import execution and journal
+/// recovery may request deletion, but they cannot implement a second delete
+/// path. Library roots are intentionally read-only.
+nonisolated enum SourceEraser {
+    static func delete(
+        kind: LibraryRootKind,
+        identity: String?,
+        relativePath: MediaRelativePath,
+        filesystemURL: URL,
+        cameraImport: CameraImportAccess?
+    ) async -> Bool {
+        switch kind {
+        case .library:
+            OtosLog.mediaIO.notice(
+                "op=source.erase phase=blocked reason=libraryReadOnly path=\(relativePath.rawValue, privacy: .public)"
+            )
+            return false
+        case .removableVolume:
+            guard FileManager.default.fileExists(atPath: filesystemURL.path(percentEncoded: false)) else {
+                return true
+            }
+            do {
+                try FileManager.default.removeItem(at: filesystemURL)
+                return true
+            } catch {
+                OtosLog.mediaIO.error(
+                    "op=source.erase phase=failed path=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                )
+                return false
+            }
+        case .deviceMTP:
+            guard let identity, let cameraImport,
+                  await cameraImport.canDelete(identity: identity)
+            else {
+                OtosLog.mediaIO.notice(
+                    "op=source.erase phase=blocked reason=providerUnsupported path=\(relativePath.rawValue, privacy: .public)"
+                )
+                return false
+            }
+            let deleted = await cameraImport.deleteItem(identity: identity, relativePath: relativePath)
+            if !deleted {
+                OtosLog.mediaIO.error(
+                    "op=source.erase phase=failed provider=mtp path=\(relativePath.rawValue, privacy: .public)"
+                )
+            }
+            return deleted
+        }
+    }
+}
+
 /// Filesystem import executor (ARC-048).
 ///
 /// Runs bounded copy lanes for one ready plan: journal → copyfile/camera staging →
@@ -66,10 +116,12 @@ actor MediaImportExecutor {
     private struct EntryExecutionContext: Sendable {
         let plan: MediaOperationPlan
         let batch: ImportBatchID
+        let runID: String
         let sourceKind: LibraryRootKind
         let sourceDeviceIdentity: String?
         let allowSourceDeletion: Bool
         let namespaceLease: RootNamespaceMutationLease?
+        let sourceNamespaceLease: RootNamespaceMutationLease?
         /// Where an incomplete entry's `finalDestination` resolves — the
         /// identity `runPlanEntries` records for state F-incomplete's reveal,
         /// since the user selects it from the destination-keyed batch row,
@@ -103,6 +155,10 @@ actor MediaImportExecutor {
             let operations = try await store.activeImportOperations()
             for operation in operations {
                 await recover(operation)
+            }
+            let eraseOperations = try await store.activeSourceEraseOperations()
+            for operation in eraseOperations {
+                await recoverSourceErase(operation)
             }
         } catch {
             OtosLog.catalog.error(
@@ -150,6 +206,7 @@ actor MediaImportExecutor {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
+        runID: String = UUID().uuidString,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         cancelFlag.reset()
@@ -189,10 +246,26 @@ actor MediaImportExecutor {
             }
             namespaceLease = lease
         }
+        let sourceNamespaceLease: RootNamespaceMutationLease?
+        if allowSourceDeletion,
+           case let .import(sourceRoot, _, _) = plan.mode
+        {
+            guard let lease = await store.acquireNamespaceMutationLease(
+                for: sourceRoot,
+                owner: .sourceErase
+            ) else {
+                if let namespaceLease { _ = await store.releaseNamespaceMutationLease(namespaceLease) }
+                return .failed(reason: .sourceRemoved)
+            }
+            sourceNamespaceLease = lease
+        } else {
+            sourceNamespaceLease = nil
+        }
         let started = ContinuousClock().now
         let batchSignpost = OtosSignpost.mediaIO.beginInterval("MediaImportBatch")
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "start", fields: [
             "batch": "\(batch.unixMilliseconds)",
+            "run": runID,
             "bytes": "\(totalBytes)",
             "files": "\(copyEntries.count)",
             "workers": "\(Self.workerCount)",
@@ -200,10 +273,12 @@ actor MediaImportExecutor {
         let executionContext = EntryExecutionContext(
             plan: plan,
             batch: batch,
+            runID: runID,
             sourceKind: sourceKind,
             sourceDeviceIdentity: sourceDeviceIdentity,
             allowSourceDeletion: allowSourceDeletion,
             namespaceLease: namespaceLease,
+            sourceNamespaceLease: sourceNamespaceLease,
             destinationRoot: destination
         )
         let entryTotals = await runPlanEntries(
@@ -215,26 +290,30 @@ actor MediaImportExecutor {
         if let namespaceLease {
             _ = await store.releaseNamespaceMutationLease(namespaceLease)
         }
+        if let sourceNamespaceLease {
+            _ = await store.releaseNamespaceMutationLease(sourceNamespaceLease)
+        }
         let storedBatchCount = await (try? store.importBatchAssetCount(batch)) ?? -1
         let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=mediaOperation.batch phase=verified batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
+            "op=mediaOperation.batch phase=verified run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
         )
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=mediaOperation.batch phase=overlayReuse batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
+            "op=mediaOperation.batch phase=overlayReuse run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
         )
         if batchIntegrityMismatch {
             OtosLog.catalog.fault(
                 // swiftlint:disable:next line_length
-                "op=mediaOperation.batch phase=integrityMismatch batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
+                "op=mediaOperation.batch phase=integrityMismatch run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
             )
         }
         OtosSignpost.mediaIO.endInterval("MediaImportBatch", batchSignpost)
         let elapsedMs = max(DiagnosticsTiming.milliseconds(from: started, to: .now), 1)
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "finish", fields: [
             "batch": "\(batch.unixMilliseconds)",
+            "run": runID,
             "bytes": "\(entryTotals.publishedBytes)",
             "elapsedMs": "\(elapsedMs)",
             "files": "\(copyEntries.count)",
@@ -328,6 +407,7 @@ actor MediaImportExecutor {
         var failedCount = 0
         var skippedForeignCount = 0
         var incompleteItems: [MediaAssetID] = []
+        var publishedEntries: [MediaOperationPlanEntry] = []
         var overlayReuse = OverlayReuseSummary()
         var failureReasons: [EntryFailure] = []
         let copyEntries = context.plan.entries.filter {
@@ -369,6 +449,7 @@ actor MediaImportExecutor {
                 switch result.outcome {
                 case let .published(reuseResult):
                     publishedCount += 1
+                    publishedEntries.append(copyEntries[result.index])
                     publishedBytes += result.byteSize
                     overlayReuse.record(reuseResult)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: result.byteSize)
@@ -393,7 +474,7 @@ actor MediaImportExecutor {
             }
         }
         if context.allowSourceDeletion {
-            let eraseOutcome = await eraseSourceFiles(context: context)
+            let eraseOutcome = await eraseSourceFiles(context: context, publishedEntries: publishedEntries)
             return EntryTotals(
                 publishedCount: publishedCount,
                 publishedBytes: publishedBytes,
@@ -417,26 +498,53 @@ actor MediaImportExecutor {
         )
     }
 
-    private func eraseSourceFiles(context: EntryExecutionContext) async -> EraseOutcome {
+    private func eraseSourceFiles(
+        context: EntryExecutionContext,
+        publishedEntries: [MediaOperationPlanEntry]
+    ) async -> EraseOutcome {
+        guard let sourceNamespaceLease = context.sourceNamespaceLease,
+              await store.ownsNamespaceMutationLease(sourceNamespaceLease)
+        else {
+            OtosLog.mediaIO.error(
+                "op=import.erase phase=blocked run=\(context.runID, privacy: .public) reason=sourceLeaseUnavailable"
+            )
+            return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 1)
+        }
         guard case let .import(sourceRoot, _, _) = context.plan.mode else {
             return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
         }
-        let candidates = sourceDeletionCandidates(plan: context.plan, sourceRoot: sourceRoot)
+        let candidates = sourceDeletionCandidates(plan: context.plan, publishedEntries: publishedEntries)
         OtosLog.mediaIO.notice(
-            "op=import.erase phase=start rootPath=\(sourceRoot.rawValue, privacy: .public) plannedCount=\(candidates.count, privacy: .public)"
+            "op=import.erase phase=start run=\(context.runID, privacy: .public) rootPath=\(sourceRoot.rawValue, privacy: .public) plannedCount=\(candidates.count, privacy: .public)"
         )
         var deleted = 0
         var deletedBytes: Int64 = 0
         var skipped = 0
         var failed = 0
         var logged = 0
-        for relativePath in candidates {
+        for candidate in candidates {
             guard !cancelFlag.isCancelled else { break }
+            let journal = ActiveSourceEraseOperation(
+                key: UUID().uuidString,
+                sourceKind: context.sourceKind,
+                sourceDeviceIdentity: context.sourceDeviceIdentity,
+                sourceRootPath: sourceRoot,
+                sourceRelativePath: candidate.relativePath,
+                sourceByteSize: candidate.byteSize,
+                updatedAt: Date()
+            )
+            do {
+                try await store.beginSourceEraseOperation(journal)
+            } catch {
+                failed += 1
+                continue
+            }
             let result = await eraseSourceFile(
-                relativePath: relativePath,
+                candidate: candidate,
                 sourceRoot: sourceRoot,
                 sourceKind: context.sourceKind,
-                sourceDeviceIdentity: context.sourceDeviceIdentity
+                sourceDeviceIdentity: context.sourceDeviceIdentity,
+                runID: context.runID
             )
             switch result {
             case let .deleted(bytes):
@@ -444,18 +552,22 @@ actor MediaImportExecutor {
                 deletedBytes += bytes
                 if logged < 20 {
                     OtosLog.mediaIO.notice(
-                        "op=import.erase phase=deleted relativePath=\(relativePath.rawValue, privacy: .public) bytes=\(bytes, privacy: .public)"
+                        "op=import.erase phase=deleted run=\(context.runID, privacy: .public) relativePath=\(candidate.relativePath.rawValue, privacy: .public) bytes=\(bytes, privacy: .public)"
                     )
                     logged += 1
                 }
+                try? await store.completeSourceEraseOperation(key: journal.key)
             case .skipped:
                 skipped += 1
+                try? await store.completeSourceEraseOperation(key: journal.key)
             case .failed:
                 failed += 1
             }
         }
         let message = "op=import.erase phase=finish "
+            + "run=\(context.runID) "
             + "rootPath=\(sourceRoot.rawValue) "
+            + "manifestCount=\(context.plan.eraseManifest.count) "
             + "deleted=\(deleted) "
             + "skipped=\(skipped) "
             + "failed=\(failed) "
@@ -465,48 +577,59 @@ actor MediaImportExecutor {
         return EraseOutcome(deletedCount: deleted, deletedBytes: deletedBytes, skippedCount: skipped, failedCount: failed)
     }
 
+    private func recoverSourceErase(_ operation: ActiveSourceEraseOperation) async {
+        guard let lease = await store.acquireNamespaceMutationLease(
+            for: operation.sourceRootPath,
+            owner: .sourceErase
+        ) else { return }
+        defer { Task { _ = await store.releaseNamespaceMutationLease(lease) } }
+        let url = operation.sourceRootPath.url.appending(path: operation.sourceRelativePath.rawValue).standardizedFileURL
+        guard CatalogPath.relativePathIfContained(rootPath: operation.sourceRootPath, fileURL: url) == operation.sourceRelativePath else {
+            return
+        }
+        guard await SourceEraser.delete(
+            kind: operation.sourceKind,
+            identity: operation.sourceDeviceIdentity,
+            relativePath: operation.sourceRelativePath,
+            filesystemURL: url,
+            cameraImport: cameraImport
+        ) else { return }
+        try? await store.completeSourceEraseOperation(key: operation.key)
+    }
+
     private func sourceDeletionCandidates(
         plan: MediaOperationPlan,
-        sourceRoot: LibraryRootPath
-    ) -> [MediaRelativePath] {
-        var paths = Set<MediaRelativePath>()
-        for entry in plan.entries {
+        publishedEntries: [MediaOperationPlanEntry]
+    ) -> [EraseManifestEntry] {
+        let publishedPaths = Set(publishedEntries.flatMap { entry in
+            [entry.source.relativePath] + entry.source.companions.map(\.relativePath)
+        })
+        let retainedPaths = Set(plan.entries.compactMap { entry -> MediaRelativePath? in
             switch entry.disposition {
-            case .copy, .skipPreexisting, .excluded:
-                paths.insert(entry.source.relativePath)
-                paths.formUnion(entry.source.companions.map(\.relativePath))
-            case .relocate, .noOp, .blocked:
-                break
+            case .skipPreexisting, .excluded:
+                return entry.source.relativePath
+            case .copy, .relocate, .noOp, .blocked:
+                return nil
             }
+        })
+        return plan.eraseManifest.entries.filter {
+            publishedPaths.contains($0.relativePath) || retainedPaths.contains($0.relativePath)
         }
-        if let enumerator = FileManager.default.enumerator(
-            at: sourceRoot.url,
-            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
-            options: []
-        ) {
-            for case let url as URL in enumerator {
-                guard let relative = CatalogPath.relativePath(rootPath: sourceRoot, fileURL: url) else { continue }
-                switch SourceFileClass.classify(relativePath: relative) {
-                case .usefulSidecar, .cruftSidecar, .sourceArtifact:
-                    paths.insert(relative)
-                case .media, .unknown:
-                    break
-                }
-            }
-        }
-        return paths.sorted { $0.rawValue < $1.rawValue }
     }
 
     private func eraseSourceFile(
-        relativePath: MediaRelativePath,
+        candidate: EraseManifestEntry,
         sourceRoot: LibraryRootPath,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?
+        sourceDeviceIdentity: String?,
+        runID: String
     ) async -> SourceDeletionResult {
+        let relativePath = candidate.relativePath
         guard !relativePath.rawValue.split(separator: "/").contains("..") else { return .failed }
-        let root = sourceRoot.url.standardizedFileURL.path(percentEncoded: false)
         let url = sourceRoot.url.appending(path: relativePath.rawValue).standardizedFileURL
-        guard url.path(percentEncoded: false).hasPrefix(root + "/") else { return .failed }
+        guard CatalogPath.relativePathIfContained(rootPath: sourceRoot, fileURL: url) == relativePath else {
+            return .failed
+        }
         switch sourceKind {
         case .removableVolume, .library:
             guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return .skipped }
@@ -516,7 +639,7 @@ actor MediaImportExecutor {
                 return .deleted(bytes: bytes)
             } catch {
                 OtosLog.mediaIO.error(
-                    "op=import.erase phase=failed relativePath=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
+                    "op=import.erase phase=failed run=\(runID, privacy: .public) relativePath=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
                 )
                 return .failed
             }
@@ -1128,7 +1251,7 @@ actor MediaImportExecutor {
             guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
                 return .failed(.other)
             }
-            guard await Self.deleteSource(
+            guard await SourceEraser.delete(
                 kind: request.sourceKind,
                 identity: request.sourceDeviceIdentity,
                 relativePath: request.sourceRelativePath,
@@ -1235,7 +1358,7 @@ actor MediaImportExecutor {
         case .sourceDeletionPending:
             let sourceURL = operation.sourceRootPath.url
                 .appendingPathComponent(operation.sourceRelativePath.rawValue)
-            guard await Self.deleteSource(
+            guard await SourceEraser.delete(
                 kind: operation.sourceKind,
                 identity: operation.sourceDeviceIdentity,
                 relativePath: operation.sourceRelativePath,
@@ -1397,7 +1520,7 @@ actor MediaImportExecutor {
             if operation.deleteSourceRequested {
                 let sourceURL = operation.sourceRootPath.url
                     .appendingPathComponent(operation.sourceRelativePath.rawValue)
-                guard await Self.deleteSource(
+                guard await SourceEraser.delete(
                     kind: operation.sourceKind,
                     identity: operation.sourceDeviceIdentity,
                     relativePath: operation.sourceRelativePath,
@@ -1473,7 +1596,7 @@ actor MediaImportExecutor {
             )
             return false
         }
-        guard await Self.deleteSource(
+        guard await SourceEraser.delete(
             kind: sourceKind,
             identity: sourceDeviceIdentity,
             relativePath: entry.source.relativePath,
@@ -1490,48 +1613,6 @@ actor MediaImportExecutor {
                 "op=mediaOperation.journal phase=sourceDeletionCompletionFailed error=\(String(describing: error), privacy: .public)"
             )
             return false
-        }
-    }
-
-    private nonisolated static func deleteSource(
-        kind: LibraryRootKind,
-        identity: String?,
-        relativePath: MediaRelativePath,
-        filesystemURL: URL,
-        cameraImport: CameraImportAccess?
-    ) async -> Bool {
-        switch kind {
-        case .removableVolume, .library:
-            guard FileManager.default.fileExists(atPath: filesystemURL.path) else {
-                return true
-            }
-            do {
-                try FileManager.default.removeItem(at: filesystemURL)
-                return true
-            } catch {
-                OtosLog.catalog.error(
-                    "op=mediaOperation.sourceDelete phase=failed path=\(filesystemURL.path, privacy: .public)"
-                )
-                return false
-            }
-        case .deviceMTP:
-            guard let identity, let cameraImport else {
-                return false
-            }
-            guard await cameraImport.canDelete(identity: identity) else {
-                OtosLog.catalog.notice(
-                    "op=mediaOperation.sourceDelete phase=unsupported identity=\(identity, privacy: .public)"
-                )
-                return false
-            }
-            let ok = await cameraImport.deleteItem(identity: identity, relativePath: relativePath)
-            if !ok {
-                OtosLog.catalog.error(
-                    // swiftlint:disable:next line_length
-                    "op=mediaOperation.sourceDelete phase=failed identity=\(identity, privacy: .public) path=\(relativePath.rawValue, privacy: .public)"
-                )
-            }
-            return ok
         }
     }
 

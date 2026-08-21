@@ -203,6 +203,7 @@ final class TileContentStore {
                 moved.content.detail = MediaTileDetail(
                     libraryRootPath: remap.newID.libraryRootPath,
                     relativePath: remap.newID.relativePath,
+                    byteSize: moved.content.detail.byteSize,
                     thumbnailPath: moved.content.detail.thumbnailPath,
                     bestKind: moved.content.detail.bestKind,
                     durationSeconds: moved.content.detail.durationSeconds,

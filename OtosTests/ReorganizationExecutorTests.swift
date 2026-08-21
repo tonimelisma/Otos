@@ -312,6 +312,8 @@ struct ReorganizationSettlementTests {
                 generation: 1,
                 rootRevision: 1,
                 policy: ImportPolicy.from(prefs),
+                calendar: .current,
+                timeZone: .current,
                 media: [],
                 knownForeignOccupants: []
             ),

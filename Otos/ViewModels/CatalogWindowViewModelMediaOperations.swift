@@ -116,6 +116,8 @@ extension CatalogWindowViewModel {
     /// holding (re-attached, or not fully clean) drops out of `pending` and
     /// stays un-dismissed.
     private func scheduleAutoDismiss(for presentations: [MediaOperationSourcePresentation]) {
+        let liveBatchIDs = Set(presentations.compactMap(\.batchID))
+        dismissedBatchIDs.formIntersection(liveBatchIDs)
         let pending = presentations
             .compactMap { presentation -> (ImportBatchID, Date)? in
                 guard let batchID = presentation.batchID,
@@ -145,9 +147,6 @@ extension CatalogWindowViewModel {
                     return
                 }
                 dismissedBatchIDs.insert(batchID)
-                if dismissedBatchIDs.count > 512, let oldest = dismissedBatchIDs.first {
-                    dismissedBatchIDs.remove(oldest)
-                }
             }
         }
     }

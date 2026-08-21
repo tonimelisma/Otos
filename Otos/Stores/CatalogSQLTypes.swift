@@ -51,6 +51,7 @@ nonisolated struct ReusableEnrichmentOverlay: Equatable, Sendable {
 nonisolated struct StoredTileDetail {
     let libraryRootID: Int64
     let relativePath: MediaRelativePath
+    let byteSize: Int64?
     var thumbnailPath: String?
     var bestKind: MediaKind?
     var durationSeconds: Double?

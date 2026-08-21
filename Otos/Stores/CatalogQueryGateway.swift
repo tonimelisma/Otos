@@ -192,7 +192,7 @@ nonisolated enum CatalogQueryGateway {
             let rows = try Row.fetchAll(
                 db,
                 sql: """
-                SELECT library_root_id, relative_path,
+                SELECT library_root_id, relative_path, byte_size,
                        enriched_source_size, enriched_source_mtime, thumbnail_path,
                        duration_seconds, best_kind, media_choice
                 FROM media_asset
@@ -450,6 +450,7 @@ private nonisolated func storedTileDetail(from row: Row) -> StoredTileDetail {
     return StoredTileDetail(
         libraryRootID: row["library_root_id"],
         relativePath: MediaRelativePath(rawValue: row["relative_path"]),
+        byteSize: row["byte_size"],
         thumbnailPath: row["thumbnail_path"],
         bestKind: bestKindRaw.flatMap(MediaKind.init(rawValue:)),
         durationSeconds: row["duration_seconds"],
