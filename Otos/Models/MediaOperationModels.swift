@@ -106,12 +106,6 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.companions = companions
     }
 
-    /// Compatibility-shaped query for planning code: terminal naming facts are
-    /// intentionally ready even though they are not enrichment-complete.
-    var isNamingFactSettled: Bool {
-        namingFactState != .pending
-    }
-
     /// Best planning date: embedded capture wall when present, else source mtime.
     var hasAnyDate: Bool {
         captureWallCompact != nil || contentModifiedAt != nil
@@ -302,7 +296,6 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
     var companionCopyCount: Int
     var copyBytes: Int64
     var excludedCount: Int
-    var eraseCount: Int
 
     init(
         copyCount: Int,
@@ -310,8 +303,7 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         blockedCount: Int,
         companionCopyCount: Int,
         copyBytes: Int64,
-        excludedCount: Int = 0,
-        eraseCount: Int = 0
+        excludedCount: Int = 0
     ) {
         self.copyCount = copyCount
         self.skipCount = skipCount
@@ -319,7 +311,6 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         self.companionCopyCount = companionCopyCount
         self.copyBytes = copyBytes
         self.excludedCount = excludedCount
-        self.eraseCount = eraseCount
     }
 }
 

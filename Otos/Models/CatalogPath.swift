@@ -55,13 +55,6 @@ nonisolated enum CatalogPath {
         return MediaRelativePath(rawValue: String(filePath.dropFirst(prefix.count)))
     }
 
-    /// Returns the root-relative identity only when the standardized URL is
-    /// contained by the normalized root. Callers use this for destructive
-    /// operations so containment and relative-path derivation cannot drift.
-    static func relativePathIfContained(rootPath: LibraryRootPath, fileURL: URL) -> MediaRelativePath? {
-        relativePath(rootPath: rootPath, fileURL: fileURL)
-    }
-
     /// Maps an absolute filesystem event path to the saved root that owns it.
     static func owningRoot(for eventPath: String, among roots: some Sequence<LibraryRootPath>) -> LibraryRootPath? {
         var match: LibraryRootPath?

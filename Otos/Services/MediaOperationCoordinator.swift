@@ -1172,9 +1172,9 @@ actor MediaOperationCoordinator {
             runID: runID,
             sourceCount: snapshot.sourceMedia.count,
             namingMtimeCount: snapshot.sourceMedia.filter {
-                $0.isNamingFactSettled && $0.captureWallCompact == nil && $0.hasAnyDate
+                $0.namingFactState != .pending && $0.captureWallCompact == nil && $0.hasAnyDate
             }.count,
-            namingSettledCount: snapshot.sourceMedia.filter(\.isNamingFactSettled).count,
+            namingSettledCount: snapshot.sourceMedia.count { $0.namingFactState != .pending },
             result: build
         )
         guard let current = sourceSessions[source],
@@ -1243,12 +1243,12 @@ actor MediaOperationCoordinator {
     private func shouldWaitForMetadata(source: LibraryRootPath, snapshot: ImportPlanningSnapshot, attachment: AttachmentGeneration, generation: UInt64, runID: String) async -> Bool {
         let filesWithNoDateAtAll = snapshot.sourceMedia.filter { !$0.hasAnyDate }.count
         let total = snapshot.sourceMedia.count
-        let settled = snapshot.sourceMedia.filter(\.isNamingFactSettled).count
+        let settled = snapshot.sourceMedia.count { $0.namingFactState != .pending }
         let libraries = await store.currentLibraries()
         let sourceKind = libraries.first(where: { $0.path == source })?.root.kind
         guard sourceKind != .deviceMTP,
               MediaTransferPlanner.needsDate(policy: snapshot.policy),
-              snapshot.sourceMedia.contains(where: { !$0.isNamingFactSettled })
+              snapshot.sourceMedia.contains(where: { $0.namingFactState == .pending })
         else {
             return false
         }

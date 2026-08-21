@@ -93,7 +93,7 @@ nonisolated enum MediaTransferPlanner {
             policy: snapshot.policy,
             entries: entries,
             eraseManifest: eraseManifest,
-            totals: totals(from: entries, eraseCount: eraseManifest.count)
+            totals: totals(from: entries)
         )
     }
 
@@ -526,15 +526,14 @@ private nonisolated extension MediaTransferPlanner {
         }
     }
 
-    static func totals(from entries: [MediaOperationPlanEntry], eraseCount: Int = 0) -> MediaOperationPlanTotals {
+    static func totals(from entries: [MediaOperationPlanEntry]) -> MediaOperationPlanTotals {
         var totals = MediaOperationPlanTotals(
             copyCount: 0,
             skipCount: 0,
             blockedCount: 0,
             companionCopyCount: 0,
             copyBytes: 0,
-            excludedCount: 0,
-            eraseCount: eraseCount
+            excludedCount: 0
         )
         for entry in entries {
             switch entry.disposition {
