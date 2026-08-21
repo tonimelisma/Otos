@@ -177,7 +177,7 @@ Two collision policies then disagree about the same fact:
   same question, so it does not trap: it deletes one of the two rows and purges its
   overlay, which is exactly the ADR 0008 breach plan 0096 existed to remove.
 
-### D7 · Two equality laws for one concept
+### D7 · One equality law, stated in two ways, currently masked
 
 `MediaRelativePath.==` (`Otos/Models/CatalogModels.swift:129`) short-circuits on an
 FNV-1a hash of the raw UTF-8 before it ever compares the strings, so it is **byte**
@@ -192,12 +192,28 @@ FNV-1a(utf8) equal            : false
 => FilesystemNameKey ==       : true    ← canonical
 ```
 
-`MediaRelativePath`'s own comment calls the fingerprint "Cheap Hashable only — not
-identity", which is not what the code does: it is the deciding term in `==`.
+**This is a latent inconsistency, not a live defect, and the distinction decides
+the fix.** `nameKey` normalizes *both sides* of every comparison before comparing
+(`FilesystemNamespaceSemantics+NameKey.swift:38`), so the two operands are already
+identical bytes by the time either law is applied, and the two laws agree on every
+input the system actually produces. Nothing observable is wrong today.
 
-Normalization is a storage property, not an equality rule, and it should be removed
-at the boundary rather than carried through the system. Measured on exFAT — the
-filesystem of an actual SD card:
+That matters because the two obvious "fixes" both pay a real cost for no current
+defect. Normalizing `relative_path` at construction would migrate a persisted
+identity column. Making `MediaRelativePath.==` canonical would mean normalizing
+inside the fingerprint, and `precomposedStringWithCanonicalMapping` allocates —
+that fingerprint is the diffable-datasource identity for the grid
+(`CatalogModels.swift:144`), so it would add an allocation per asset per structural
+apply on the one path with a hard responsiveness budget (ADR 0006, the 100 ms rule).
+
+**Byte equality is the correct law**, because ADR 0008 says identity is the
+filesystem path and the filesystem's bytes are that path. `FilesystemNameKey` is the
+outlier, and it is one by accident: it inherited canonical equality from synthesized
+`String` conformance rather than by decision. Increment 2 makes it byte-wise to
+match, keeps the normalization inside `nameKey` where it is applied symmetrically,
+and migrates nothing.
+
+Supporting measurement, on exFAT — the filesystem of an actual SD card:
 
 ```
 exFAT: writing café.jpg as NFC then as NFD yields ONE file, stored decomposed
@@ -205,9 +221,10 @@ exFAT: writing café.jpg as NFC then as NFD yields ONE file, stored decomposed
   FileManager.enumerator / contentsOfDirectory → 1 entry
 ```
 
-macOS normalizes on write for exFAT, so NFC/NFD twins do not coexist on a card, and
-`prefersDecomposedUnicode` has never been measured on any volume — it is hardcoded
-`true` in both places that construct it.
+macOS normalizes on write for exFAT, so NFC/NFD twins cannot coexist on a card, and
+both sides of any comparison come from the same volume. `prefersDecomposedUnicode`
+has still never been measured on any volume — it is hardcoded `true` in both places
+that construct it, which increment 2 records rather than perpetuates.
 
 ### D8 · The settled-naming gate has no terminal state
 
@@ -259,19 +276,20 @@ self-sustaining replan loop for as long as a card stays attached.
 
 ---
 
-## Owner decisions — needed before the increments they gate
+## Owner decisions — none outstanding
 
-Each row records a question this plan will not answer on its own. Increment 3 step 5
-and increment 1 step 4 are explicitly blocked on Q1 and Q2.
+This plan opened with four questions for the owner. On 2026-08-21 all four were
+withdrawn after the discovery that should have preceded them. **Nothing in this
+plan is blocked, and no increment waits on an answer.** They are recorded here
+with what closed them, because a question that turns out to have been answerable
+from the code is worth not asking twice.
 
-| # | Question | Why it is not the agent's call | Blocks |
-| --- | --- | --- | --- |
-| Q1 | **Does erase prove the library copy by content?** The executor already hashes the exact bytes it wrote (`ContentHasher`, `MediaImportExecutor.swift:866`) and `proveFinalOwnership` (`:1320`) already trusts that digest at recovery, so proving a `.copy` costs nothing. A `.skipPreexisting` is different: `isContentHashRequired` is `kind != .removableVolume` (`CatalogModels.swift:219`), so a card is deliberately never hashed in place, and proving one would mean reading that file's bytes off the card. The alternative is today's name + size + mtime match (`MediaTransferPlanner.catalogDecision`, `:454`). | A real cost against a real risk on the one irreversible operation in the app. Reading N files off a card before deleting them is a product decision, not a refactor. | increment 3 step 5 |
-| Q2 | **How does a test register a synthetic card?** A disk image is a real removable volume with a real mount point, real eject/re-attach, and a choosable case-sensitivity — measured for this plan (see increment 1). But plan 0096 increment 10 deliberately deletes `removableVolume` roots whose `device_model` is `Disk Image` (`CatalogStorePersistence.swift:343`), which is right for the product and forecloses the cheapest harness. Options: an explicit test-only registration entry point; or a marker that distinguishes a harness volume from a mounted DMG in the sidebar. | The product rule and the harness need are both correct and they collide. Which one bends is the owner's call. | increment 1 step 4 |
-| Q3 | **What does the bar say when a naming fact can never settle?** D8 needs a terminal state. Reaching it means either proceeding silently from the filesystem mtime, or saying something. Any new string is product copy. | `docs/design/design-system.md` DES-035/DES-039 govern user-facing copy; inventing a string is inventing a requirement. | increment 5 step 3 |
-| Q4 | **Do we normalize `relative_path` at the boundary?** D7's cleanest resolution is to normalize once where paths are constructed, after which byte equality and canonical equality agree everywhere including SQLite. That changes what future scans store in `relative_path`, so it is a data decision with a migration, not only a code change. | It rewrites a persisted identity column. | increment 2 step 5 |
-
----
+| # | Question as asked | What actually closed it |
+| --- | --- | --- |
+| Q1 | Should erase prove the library copy by content, rather than by the plan's name + size + mtime match? | **Already decided, and reopening it was a mistake.** Plan 0096's Q6, answered by the owner on 2026-08-19, set the standard: erase is permanent and its safety guarantee is the verified library copy that `eraseConfirmationProvenClean` already proves. `import-bar.md:298` states when that claim may be made — every item a skip, nothing blocked, nothing skipped as foreign. The implementation matches. The only residue is a documentation gap: ADR 0026 records the *permanence* decision and the containment check ("validating every path under the source root") but never states the *identity* standard. That is one sentence in increment 7, not a decision. |
+| Q2 | How should a test register a synthetic card, given that plan 0096 increment 10 deletes disk-image removable roots? | **No conflict exists.** Tests already register removable roots through the same owner intent the monitor uses — `store.attachRemovableVolume(...)` at `OtosTests/CatalogStoreRemovableSourceTests.swift:10`, `CatalogStoreEnrichmentTests.swift:554`, `CatalogStoreEnrichmentClaimTests.swift:117`. `attachRemovableVolume` takes `deviceModel: String? = nil` (`CatalogStore.swift:1863`), and the migration only removes roots whose recorded `device_model` is `"Disk Image"`, so a harness that does not record that string is never touched. No product-rule change and no test-only entry point. |
+| Q3 | What should the bar say when a naming fact can never settle? | **Nothing.** Otos already falls back to the filesystem modification date for a file with no embedded capture date; a row that can never enrich reaches the same place. Inventing copy for it would add a user-facing string nobody asked for, and the obvious home for it — an attention item — sets `eraseEnabled: false` (`ImportBarPresentation.swift:279`), which is the same deadlock plan 0096 hit with zero-byte files and had to introduce `.excluded` to escape. Increment 5 proceeds from the mtime and logs the transition. |
+| Q4 | Should `relative_path` be normalized at the boundary so every comparison surface agrees? | **No — and the premise was overstated.** See D7: `nameKey` normalizes both operands before comparing, so the two equality laws already agree on every input the system produces. Both candidate fixes pay for a defect that does not exist — normalizing the column migrates a persisted identity, and normalizing inside the fingerprint adds an allocation per asset per structural apply on the grid's hot path. Byte equality is the correct law under ADR 0008; increment 2 makes `FilesystemNameKey` byte-wise to match and migrates nothing. |
 
 ## Constraints
 
@@ -300,7 +318,7 @@ One namespace owner:
         └── erase containment                           (increment 1, then folded in by 2)
 
 One equality law:
-  MediaRelativePath == FilesystemNameKey == SQLite TEXT =        (increment 2, gated on Q4)
+  byte equality everywhere: MediaRelativePath, FilesystemNameKey, SQLite  (increment 2)
 
 One erase truth:
   EraseManifest, built from execution outcomes
@@ -347,9 +365,18 @@ test process, and a card the agent can attach without hardware.
    `op=import.plan` through `op=import.readiness`, `op=mediaOperation.batch`,
    `op=import.erase` and `op=import.presentation`. Today an erase-only run has no
    batch by design, so nothing stitches a run together; `batch=` is not a substitute.
-4. **A card the agent can attach.** Q2 gates the mechanism. The measurements are
-   done and recorded in `docs/research/2026-08-21-synthetic-removable-volume.md`
-   (write it in this increment):
+4. **A card the agent can attach.** Use the entry point tests already use —
+   `CatalogStore.attachRemovableVolume(...)`, the same owner intent
+   `RemovableVolumeMonitor` calls (`OtosTests/CatalogStoreRemovableSourceTests.swift:10`,
+   `CatalogStoreEnrichmentTests.swift:554`, `CatalogStoreEnrichmentClaimTests.swift:117`).
+   A plain directory is enough for scan, plan and erase coverage. A disk image is
+   needed only for the two things a directory cannot do: vary case-sensitivity, and
+   eject and re-attach for real. `deviceModel` is `String? = nil`
+   (`CatalogStore.swift:1863`) and the disk-image migration only removes roots whose
+   recorded model is `"Disk Image"`, so a harness that does not record it is never
+   touched and plan 0096 increment 10's product rule is untouched. Measurements are
+   recorded in `docs/research/2026-08-21-synthetic-removable-volume.md` (write it in
+   this increment):
 
    ```
    hdiutil create -size 32m -fs "ExFAT" -volname OTOSPROBE probe.dmg
@@ -419,13 +446,15 @@ saying whose rules apply, and impossible to obtain those rules by guessing.
    (`CatalogStorePersistence.swift:629`). An unprobed, currently-detached root is
    *unknown*, and an unknown root does not reconcile deletions — a wrong guess here
    purges the overlay of live files (D6, ADR 0008).
-5. **One equality law** (Q4 gates the boundary-normalization half). Remove the
-   fingerprint short-circuit from `MediaRelativePath.==` (`CatalogModels.swift:129`)
-   so it compares strings, keeping the fingerprint for `hash(into:)` only where it
-   is consistent with that equality; or normalize at construction and keep the
-   fingerprint. Either way `MediaRelativePath`, `FilesystemNameKey` and SQLite agree
-   afterwards, and the `decomposedStringWithCanonicalMapping` step inside `nameKey`
-   is deleted as redundant rather than left as an unmeasured constant.
+5. **One equality law, byte-wise.** Give `FilesystemNameKey` an explicit byte-wise
+   `Equatable`/`Hashable` instead of the synthesized `String` conformance it
+   inherited by accident, so it matches `MediaRelativePath` and SQLite. Do **not**
+   normalize `relative_path` at construction and do **not** normalize inside the
+   fingerprint: D7 records why both cost more than the latent inconsistency they
+   would remove. Keep the normalization inside `nameKey`, where it is applied to
+   both operands, and add the comment saying that is why it is safe — and that
+   `prefersDecomposedUnicode` is still an unmeasured constant hardcoded `true` by
+   both of its constructors.
 6. **Collisions get a policy, not a trap.** Replace both
    `Dictionary(uniqueKeysWithValues:)` sites (`MediaOperationModels.swift:517`,
    `CatalogStorePersistence.swift:1326`) with a build that returns a typed collision
@@ -486,13 +515,15 @@ all read, so the number the user confirms is the number that gets deleted.
 4. The Done state reports the executed manifest, and `import-bar.md`'s erase rows
    stop being aspirational: the same number appears in the alert and in
    `Card erased · N items deleted`.
-5. **`ErasureProof` records how each item earned its place** (Q1 gates the strength):
-   `.publishedThisRun(XXH3Digest128)` for a copy the executor hashed itself
-   (`MediaImportExecutor.swift:866`), `.preexisting(...)` for a
-   `.skipPreexisting` match, `.empty` for a zero-byte file, `.cruft(SourceFileClass)`
-   for card debris. Whatever Q1 decides, the proof is *recorded per item* rather
-   than implied by the disposition, so the log line for a deletion states why it was
-   allowed.
+5. **`ErasureProof` records how each item earned its place — it does not change the
+   standard.** Plan 0096's Q6 already set that standard on 2026-08-19 and this plan
+   does not reopen it: the guarantee is the verified library copy
+   `eraseConfirmationProvenClean` proves, and no source file is read to hash it.
+   The proof is *recorded per item* rather than implied by the disposition, so a
+   deletion's log line states why it was allowed:
+   `.publishedThisRun(XXH3Digest128)` for a copy the executor already hashed
+   (`MediaImportExecutor.swift:866`), `.preexisting` for a `.skipPreexisting` match,
+   `.empty` for a zero-byte file, `.cruft(SourceFileClass)` for card debris.
 6. **Wire the preference that was named but never built.** Plan 0096 increment 12
    step 3 specified that when "Copy sidecars into the library" is off, a
    `usefulSidecar` reclassifies as `.excluded(.cruft(…))`. Only the Settings label
@@ -576,7 +607,11 @@ the loss structurally impossible to repeat.
    gateway defaults pessimistic, and every existing test constructs the optimistic
    one — which is why the gate has no coverage.
 3. A source whose row can never settle reaches Ready and names from the filesystem
-   mtime. What the bar says while that is true is Q3.
+   mtime, and says nothing about it. That is deliberate: the mtime fallback is
+   already the designed behavior for a file with no embedded capture date, and the
+   obvious place to surface the difference — an attention item — sets
+   `eraseEnabled: false` (`ImportBarPresentation.swift:279`), which is the deadlock
+   plan 0096 escaped by inventing `.excluded`. Log the transition; add no copy.
 4. **Coalesce the replan (D9).** Debounce destination-driven rebuilds in
    `handlePlanningChange` (`MediaOperationCoordinator.swift:760`) rather than
    dropping bumps in the store, and attach the measurement plan 0096 required: the
@@ -647,12 +682,21 @@ increment carries.
 
 1. Rewrite `docs/adr/0025-volume-aware-path-equality.md` around `RootNamespace`:
    the owner is the *root's rules*, not a free function, and capabilities are never
-   defaulted. Record the measured facts — that `prefersDecomposedUnicode` was never
-   probed, that exFAT normalizes on write, and that Swift `String` equality is
-   canonical while `MediaRelativePath` was byte-wise.
+   defaulted. Record the measured facts and the rejected alternatives — that
+   `prefersDecomposedUnicode` was never probed, that exFAT normalizes on write, that
+   byte equality is the law because ADR 0008 makes the filesystem's bytes the
+   identity, and that normalizing the `relative_path` column or the fingerprint was
+   rejected for cost against a defect that `nameKey`'s symmetric normalization
+   already masks (D7).
 2. Rewrite `docs/adr/0026-settled-naming-and-card-erase.md` around the manifest and
-   `SourceEraser`: what a card erase removes, what proves each item, why it holds
-   the *source* root's lease, and why it is journaled per item.
+   `SourceEraser`: what a card erase removes, why it holds the *source* root's lease,
+   and why it is journaled per item. **Close the gap the ADR shipped with**: it
+   records the permanence decision and the containment check ("validating every path
+   under the source root") but never states the *identity* standard that lets a file
+   be deleted. Write down what plan 0096's Q6 decided on 2026-08-19 — the guarantee
+   is the verified library copy `eraseConfirmationProvenClean` proves, per
+   `import-bar.md:298`, and no source file is read to hash it — so the standard stops
+   living only in a deleted plan's decision table.
 3. Amend `docs/adr/0015-observability.md` with the `run=` correlation ID and the
    synthetic-card harness.
 4. `docs/architecture.md`: `RootNamespace` and its callers, and `SourceEraser` as the
@@ -678,15 +722,15 @@ increment carries.
 | 4 | ADR 0026, ARC-055, ARC-045 | Source deletion has one owner, holds the source root's lease, and is journaled per item |
 | 5 | ADR 0009 or ADR 0026, ARC-057 | The readiness gate terminates; enrichment-driven replans are coalesced and measured |
 | 6 | `docs/requirements.md`, `design-system.md`, `import-bar.md` | A cited test must cover its row's named files; the guard allowlist is string-level |
+| 7 | ADR 0026 | The erase's identity standard is stated in the ADR rather than only in plan 0096's decision table |
 
 ---
 
 ## What this plan does not do
 
-- **No content-addressed deduplication.** Plan 0096's Q2 deferred it and this plan
-  does not reopen it. Q1 asks only whether the files a user is about to *delete*
-  are proven, which is a bounded set on an explicit action — not a library-wide
-  hashing pass.
+- **No content-addressed deduplication, and no change to what proves an erase.**
+  Plan 0096's Q2 deferred dedup and its Q6 set the erase standard; this plan
+  reopens neither. No source file is read in order to delete it.
 - **No `CatalogStore` decomposition.** Increment 2 touches it in nine places; it is
   4,295 lines and its boundaries are still worth revisiting, but doing both at once
   would make every regression ambiguous.
@@ -696,4 +740,4 @@ increment carries.
   observed against a camera. The synthetic card in increment 1 is a volume, not an
   MTP device, and does not close that gap.
 - **No change to what a mounted disk image means to the product.** Plan 0096
-  increment 10's rule stands unless Q2 says otherwise.
+  increment 10's rule stands, and the increment 1 harness does not need it to bend.

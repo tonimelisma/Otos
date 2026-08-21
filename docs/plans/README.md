@@ -16,11 +16,12 @@ verification, and merge closure.
   are never defaulted (one comparison function today has four disagreeing sources
   for its input, and 25 call sites that default it), one path equality law
   (`MediaRelativePath` compares bytes while `FilesystemNameKey` compares
-  canonically), an erase manifest that is the same number in the confirmation
-  alert and the completion line, and a single owner permitted to delete from a
-  source root while holding its lease and journaling each item. Four owner
-  decisions are recorded rather than assumed; increment 1 step 4 and increment 3
-  step 5 are explicitly blocked on two of them.
+  canonically, though `nameKey`'s symmetric normalization masks it today), an
+  erase manifest that is the same number in the confirmation alert and the
+  completion line, and a single owner permitted to delete from a source root while
+  holding its lease and journaling each item. Nothing is blocked: the four
+  questions the plan opened with were withdrawn on 2026-08-21 after the discovery
+  that should have preceded them, and the table records what closed each one.
 
 Plans 0085–0096 are complete and were removed when the implementation, structural
 guards, behavioral proofs, and verification closure landed. 0092 (import screen
