@@ -218,7 +218,9 @@ nonisolated struct EraseManifestEntry: Equatable, Sendable, Identifiable {
     let byteSize: Int64?
     let fileClass: SourceFileClass
 
-    var id: String { relativePath.rawValue }
+    var id: String {
+        relativePath.rawValue
+    }
 }
 
 /// The immutable, planner-owned set of source paths that may be erased after
@@ -226,7 +228,9 @@ nonisolated struct EraseManifestEntry: Equatable, Sendable, Identifiable {
 nonisolated struct EraseManifest: Equatable, Sendable {
     let entries: [EraseManifestEntry]
 
-    var count: Int { entries.count }
+    var count: Int {
+        entries.count
+    }
 
     static func from(
         planEntries: [MediaOperationPlanEntry],
@@ -234,7 +238,7 @@ nonisolated struct EraseManifest: Equatable, Sendable {
     ) -> Self {
         var byPath: [MediaRelativePath: EraseManifestEntry] = [:]
         for entry in planEntries {
-            let eligible: Bool = switch entry.disposition {
+            let eligible = switch entry.disposition {
             case .copy, .skipPreexisting, .excluded: true
             case .relocate, .noOp, .blocked: false
             }
@@ -254,7 +258,7 @@ nonisolated struct EraseManifest: Equatable, Sendable {
         }
         for fact in sourceMedia {
             let fileClass = SourceFileClass.classify(relativePath: fact.relativePath)
-            let eligible: Bool = switch fileClass {
+            let eligible = switch fileClass {
             case .usefulSidecar, .cruftSidecar, .sourceArtifact: true
             case .media, .unknown: false
             }

@@ -1345,8 +1345,11 @@ extension CatalogStore {
         var ambiguousKeys = Set<FilesystemNameKey>()
         for path in existing {
             let key = FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: capabilities)
-            if existingKeys[key] != nil { ambiguousKeys.insert(key) }
-            else { existingKeys[key] = path }
+            if existingKeys[key] != nil {
+                ambiguousKeys.insert(key)
+            } else {
+                existingKeys[key] = path
+            }
         }
         let observedKeys = Set(observedPaths.map {
             FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities)

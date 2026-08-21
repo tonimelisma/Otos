@@ -18,6 +18,24 @@ check_root() {
     fi
   done <<< "$documents"
 
+  # docs/index.md is the one document whose job is to point at other documents,
+  # so its relative links are checked even though prose elsewhere is exempt: a
+  # dead link there is a navigation defect, not retained planning history. PR 292
+  # deleted the then-active plan and left the index pointing at it, and this gate
+  # reported clean because it scanned only source.
+  local link target
+  if [[ -f "$root/docs/index.md" ]]; then
+    while IFS= read -r link; do
+      [[ -z "$link" ]] && continue
+      target="${link%%#*}"
+      [[ -z "$target" ]] && continue
+      if [[ ! -e "$root/docs/$target" ]]; then
+        echo "documentation citation check failed: docs/index.md links missing docs/$target" >&2
+        status=1
+      fi
+    done <<< "$(grep -oE '\]\([A-Za-z0-9._/-]+\)' "$root/docs/index.md" | sed -E 's/^\]\((.*)\)$/\1/' | sort -u)"
+  fi
+
   plans="$(grep -rhoE 'plan [0-9]{4}' "$root/Otos" "$root/script" 2>/dev/null | sed -E 's/.*plan ([0-9]{4}).*/\1/' | sort -u || true)"
   while IFS= read -r plan; do
     [[ -z "$plan" ]] && continue
@@ -46,6 +64,12 @@ self-test)
   fi
   printf '%s\n' '/// docs/requirements.md' > "$temp_dir/Otos/Bad.swift"
   touch "$temp_dir/docs/requirements.md"
+  printf '%s\n' '- [gone](plans/9999-gone.md)' > "$temp_dir/docs/index.md"
+  if check_root "$temp_dir"; then
+    echo "check-doc-citations self-test failed: seeded dead index link passed" >&2
+    exit 1
+  fi
+  printf '%s\n' '- [requirements](requirements.md)' > "$temp_dir/docs/index.md"
   check_root "$temp_dir"
   echo "check-doc-citations self-test: clean oracle"
   ;;
