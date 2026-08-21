@@ -294,6 +294,17 @@ extension CatalogStore {
         migrator.registerMigration("v18_source_erase_journal") { db in
             try createActiveSourceEraseTable(db)
         }
+        // Unicode normalization was never a per-volume fact: every production
+        // caller passed the same value, and modelling it per volume let one path
+        // produce two comparison keys. See
+        // `docs/research/2026-08-21-volume-normalization-is-not-a-capability.md`.
+        migrator.registerMigration("v19_drop_unicode_normalization_capability") { db in
+            let columns = try Row.fetchAll(db, sql: "PRAGMA table_info(library_root)")
+                .compactMap { $0["name"] as String? }
+            if columns.contains("prefers_decomposed_unicode") {
+                try db.execute(sql: "ALTER TABLE library_root DROP COLUMN prefers_decomposed_unicode")
+            }
+        }
         return migrator
     }
 
@@ -628,7 +639,7 @@ extension CatalogStore {
             db,
             sql: """
             SELECT id, path, kind, device_identity, display_name, last_seen_at, sort_index,
-                   case_sensitive_names, prefers_decomposed_unicode, device_model
+                   case_sensitive_names, device_model
             FROM library_root
             ORDER BY sort_index, path COLLATE NOCASE, path
             """
@@ -643,11 +654,12 @@ extension CatalogStore {
                 displayName: row["display_name"],
                 lastSeenAt: lastSeenUnix.map(Date.init(timeIntervalSince1970:)),
                 sortIndex: row["sort_index"],
-                capabilities: VolumeNamespaceCapabilities(
-                    isCaseSensitive: (row["case_sensitive_names"] as Int?) == 1,
-                    prefersDecomposedUnicode: (row["prefers_decomposed_unicode"] as Int?) == 1,
-                    isKnown: row["case_sensitive_names"] != nil && row["prefers_decomposed_unicode"] != nil
-                ),
+                // NULL means never probed. `isKnown` and the stored value are one
+                // fact, written and read together, so an unprobed root cannot
+                // read back as a confidently case-insensitive one.
+                capabilities: (row["case_sensitive_names"] as Int?).map {
+                    VolumeNamespaceCapabilities(isCaseSensitive: $0 == 1, isKnown: true)
+                } ?? .unknown,
                 deviceModel: row["device_model"]
             )
         }
@@ -680,9 +692,9 @@ extension CatalogStore {
             sql: """
             INSERT INTO library_root (
                 path, kind, device_identity, display_name, last_seen_at, sort_index,
-                case_sensitive_names, prefers_decomposed_unicode, device_model
+                case_sensitive_names, device_model
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             arguments: [
                 path.rawValue,
@@ -691,8 +703,7 @@ extension CatalogStore {
                 displayName,
                 lastSeenAt?.timeIntervalSince1970,
                 resolvedSortIndex,
-                capabilities.isCaseSensitive ? 1 : 0,
-                capabilities.prefersDecomposedUnicode ? 1 : 0,
+                capabilities.storedCaseSensitiveColumn,
                 deviceModel,
             ]
         )
@@ -784,15 +795,14 @@ extension CatalogStore {
             sql: """
             UPDATE library_root
             SET path = ?, display_name = ?, last_seen_at = ?,
-                case_sensitive_names = ?, prefers_decomposed_unicode = ?, device_model = ?
+                case_sensitive_names = ?, device_model = ?
             WHERE id = ?
             """,
             arguments: [
                 path.rawValue,
                 displayName,
                 lastSeenAt?.timeIntervalSince1970,
-                capabilities.isCaseSensitive ? 1 : 0,
-                capabilities.prefersDecomposedUnicode ? 1 : 0,
+                capabilities.storedCaseSensitiveColumn,
                 deviceModel,
                 rootRowID,
             ]
@@ -1521,17 +1531,12 @@ private nonisolated func addRelativePathKeyColumns(_ db: Database) throws {
 private nonisolated func backfillRelativePathKeys(_ db: Database) throws {
     let roots = try Row.fetchAll(
         db,
-        sql: "SELECT id, case_sensitive_names, prefers_decomposed_unicode FROM library_root"
+        sql: "SELECT id, case_sensitive_names FROM library_root"
     )
     for root in roots {
         let rootID: Int64 = root["id"]
-        guard root["case_sensitive_names"] != nil,
-              root["prefers_decomposed_unicode"] != nil
-        else { continue }
-        let capabilities = VolumeNamespaceCapabilities(
-            isCaseSensitive: (root["case_sensitive_names"] as Int?) == 1,
-            prefersDecomposedUnicode: (root["prefers_decomposed_unicode"] as Int?) != 0
-        )
+        guard let caseSensitive = root["case_sensitive_names"] as Int? else { continue }
+        let capabilities = VolumeNamespaceCapabilities(isCaseSensitive: caseSensitive == 1, isKnown: true)
         let assets = try Row.fetchAll(
             db,
             sql: """
@@ -1909,7 +1914,6 @@ private nonisolated func requiredCurrentLibraryRootColumns() -> Set<String> {
         "display_name",
         "last_seen_at",
         "case_sensitive_names",
-        "prefers_decomposed_unicode",
         "device_model",
     ]
 }
