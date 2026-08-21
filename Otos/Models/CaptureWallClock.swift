@@ -14,11 +14,11 @@ import MediaMetadata
 /// components verbatim without zone math.
 nonisolated enum CaptureWallClock {
     /// Role precedence for naming (ENR-012).
-    static let namingRolePrecedence = [
-        "original",
-        "digitized",
-        "quickTimeCreation",
-        "quickTimeContentCreate",
+    static let namingRolePrecedence: [CaptureTimestampRole] = [
+        .original,
+        .digitized,
+        .quickTimeCreation,
+        .quickTimeContentCreate,
     ]
 
     struct Selection: Equatable, Sendable {
@@ -39,7 +39,7 @@ nonisolated enum CaptureWallClock {
     static func select(from records: [CaptureTimestampRecord]) -> Selection? {
         let byRole = Dictionary(grouping: records, by: \.role)
         for role in namingRolePrecedence {
-            guard let candidates = byRole[role] else {
+            guard let candidates = byRole[role.rawValue] else {
                 continue
             }
             if let local = candidates.first(where: isLocalAuthority),
@@ -54,11 +54,11 @@ nonisolated enum CaptureWallClock {
     /// Selects from live MediaMetadata timestamps using `captureLocalComponents`
     /// so absolute UTC wall clocks are structurally unusable for naming.
     static func select(from timestamps: CaptureTimestamps) -> Selection? {
-        let ordered: [(String, CaptureTime?)] = [
-            ("original", timestamps.original),
-            ("digitized", timestamps.digitized),
-            ("quickTimeCreation", timestamps.quickTimeCreation),
-            ("quickTimeContentCreate", timestamps.quickTimeContentCreate),
+        let ordered: [(CaptureTimestampRole, CaptureTime?)] = [
+            (.original, timestamps.original),
+            (.digitized, timestamps.digitized),
+            (.quickTimeCreation, timestamps.quickTimeCreation),
+            (.quickTimeContentCreate, timestamps.quickTimeContentCreate),
         ]
         for (role, time) in ordered {
             guard let time, let local = time.captureLocalComponents else {

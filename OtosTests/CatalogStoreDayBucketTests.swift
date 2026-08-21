@@ -28,8 +28,7 @@ struct CatalogStoreDayBucketTests {
             let asset = try #require(try await store.mediaAssets(for: [id])[id])
             let enrichment = EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(),
-                timestampFacts: EnrichmentTimestampFacts(original: date),
+                metadata: .absoluteCapture(instant: date),
                 thumbnailPath: "\(id.relativePath.rawValue)-thumb.jpg",
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) },

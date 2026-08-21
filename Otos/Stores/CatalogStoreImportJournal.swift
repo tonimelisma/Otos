@@ -214,8 +214,6 @@ extension CatalogStore {
             db,
             sql: """
             SELECT m.byte_size, m.content_modified_at_unix,
-                   m.ts_original_unix, m.ts_quicktime_creation_unix,
-                   m.ts_digitized_unix, m.ts_gps_unix,
                    m.enriched_kind, m.enriched_format, m.duration_seconds,
                    m.enriched_source_size, m.enriched_source_mtime,
                    m.content_hash_xxh3_128, m.content_hash_source_size,
@@ -235,19 +233,11 @@ extension CatalogStore {
             return nil
         }
         let modified: Double? = row["content_modified_at_unix"]
-        let original: Double? = row["ts_original_unix"]
-        let quickTime: Double? = row["ts_quicktime_creation_unix"]
-        let digitized: Double? = row["ts_digitized_unix"]
-        let gps: Double? = row["ts_gps_unix"]
         let enrichedKindRaw: String? = row["enriched_kind"]
         let enrichedFormatRaw: String? = row["enriched_format"]
         let contentHashData: Data? = row["content_hash_xxh3_128"]
         return ReusableEnrichmentOverlay(
             metadata: metadata,
-            originalTimestamp: original.map(Date.init(timeIntervalSince1970:)),
-            quickTimeCreationTimestamp: quickTime.map(Date.init(timeIntervalSince1970:)),
-            digitizedTimestamp: digitized.map(Date.init(timeIntervalSince1970:)),
-            gpsTimestamp: gps.map(Date.init(timeIntervalSince1970:)),
             enrichedKind: enrichedKindRaw.flatMap(MediaKind.init(rawValue:)),
             enrichedFormat: enrichedFormatRaw.map(MediaFormatToken.init(rawValue:)),
             durationSeconds: row["duration_seconds"],

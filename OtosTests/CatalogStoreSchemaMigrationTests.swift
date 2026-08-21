@@ -372,9 +372,6 @@ struct CatalogStoreSchemaMigrationTests {
             EnrichmentResult(
                 id: id,
                 metadata: metadata,
-                timestampFacts: EnrichmentTimestampFacts(
-                    original: Date(timeIntervalSince1970: 1_720_000_000)
-                ),
                 thumbnailPath: nil,
                 sourceSize: 4,
                 sourceMTimeSeconds: Int(scanned.testAssets[0].contentModifiedAt?.timeIntervalSince1970 ?? 0),

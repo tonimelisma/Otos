@@ -222,7 +222,6 @@ struct MediaOperationCoordinatorTests {
                     ),
                 ]
             ),
-            timestampFacts: EnrichmentTimestampFacts(original: captureDate),
             enrichedKind: nil,
             enrichedFormat: nil,
             thumbnailPath: nil,

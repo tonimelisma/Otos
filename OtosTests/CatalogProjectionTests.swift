@@ -234,8 +234,7 @@ struct CatalogProjectionTests {
         let outcome = await fixture.store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: fixture.id,
-                metadata: AssetMetadata(cameraModel: "Cam"),
-                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
+                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "Cam"),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: sourceMTime,

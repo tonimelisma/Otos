@@ -74,10 +74,10 @@ struct ImportPlanningNamingFactsTests {
         let applied = await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: MediaAssetID(libraryRootPath: cardPath, relativePath: relative),
-                // `capture_wall_compact` — the authoritative naming fact — is
-                // derived by `CaptureWallClock.select(from:)` over
-                // `metadata.timestamps`, not from `timestampFacts`, which only
-                // populate the individual `ts_*_unix` columns.
+                // `metadata.timestamps` is the one stored timestamp truth; both
+                // `capture_wall_compact` (via `CaptureWallClock`) and the
+                // `ts_*_unix` ordering columns (via `BestCaptureInstants`) are
+                // derived from it where they are written.
                 metadata: AssetMetadata(timestamps: [
                     CaptureTimestampRecord(
                         role: "original",
@@ -92,7 +92,6 @@ struct ImportPlanningNamingFactsTests {
                         second: 0
                     ),
                 ]),
-                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: nil,
                 sourceSize: 10,
                 sourceMTimeSeconds: nil,
