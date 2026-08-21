@@ -55,7 +55,7 @@ nonisolated struct RootRuntimeState: Equatable {
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         skippedPackageCount: Int = 0,
         planRevision: UInt64 = 0,
         occupancyRevision: UInt64 = 0,

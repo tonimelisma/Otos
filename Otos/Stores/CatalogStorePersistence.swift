@@ -671,7 +671,7 @@ extension CatalogStore {
         displayName: String? = nil,
         lastSeenAt: Date? = nil,
         sortIndex: Int64? = nil,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         deviceModel: String? = nil,
         db: Database
     ) throws -> StoredRoot {
@@ -776,7 +776,7 @@ extension CatalogStore {
         path: LibraryRootPath,
         displayName: String?,
         lastSeenAt: Date?,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         deviceModel: String? = nil,
         db: Database
     ) throws {
@@ -1192,7 +1192,7 @@ extension CatalogStore {
     static func upsertCompanion(
         _ companion: MediaCompanion,
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         db: Database
     ) throws -> Bool {
         let pathKey = FilesystemNamespaceSemantics.nameKey(
@@ -1273,7 +1273,7 @@ extension CatalogStore {
     static func repairCompanionsInDirectory(
         of relativePath: MediaRelativePath,
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         db: Database
     ) throws -> Bool {
         let directoryKey = MediaCompanionPairing.directoryKey(of: relativePath)
@@ -1303,7 +1303,7 @@ extension CatalogStore {
     static func applyScannedCompanions(
         _ companions: [ScannedCompanionFile],
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         db: Database
     ) throws -> Int {
         var changedCount = 0
@@ -1332,7 +1332,7 @@ extension CatalogStore {
     static func reconcileMissingCompanions(
         libraryRootID: Int64,
         observedPaths: Set<MediaRelativePath>,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         underSubtree: MediaRelativePath? = nil,
         db: Database
     ) throws -> Int {
@@ -1367,7 +1367,7 @@ extension CatalogStore {
         _ file: ScannedMediaFile,
         libraryRootPath: LibraryRootPath,
         libraryRootID: Int64,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         db: Database
     ) throws -> Bool {
         let pathKey = FilesystemNamespaceSemantics.nameKey(

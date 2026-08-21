@@ -67,6 +67,10 @@ nonisolated struct RootNamespace: Equatable, Sendable {
         FilesystemNamespaceSemantics.nameKey(relativePath: relativePath, capabilities: capabilities)
     }
 
+    var isKnown: Bool { capabilities.isKnown }
+
+    var permitsDestructiveReconciliation: Bool { capabilities.isKnown }
+
     func contains(_ url: URL) -> MediaRelativePath? {
         CatalogPath.relativePathIfContained(rootPath: root, fileURL: url)
     }

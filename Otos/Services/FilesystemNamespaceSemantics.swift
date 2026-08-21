@@ -65,7 +65,7 @@ nonisolated enum FilesystemNamespaceSemantics {
     static func enumerateNamespace(
         root: LibraryRootPath,
         folders: Set<String>,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
+        capabilities: VolumeNamespaceCapabilities = .unknown
     ) -> DestinationNamespace {
         var entries: [MediaRelativePath: NamespaceOccupancyResult] = [:]
         var enumerated: Set<String> = []

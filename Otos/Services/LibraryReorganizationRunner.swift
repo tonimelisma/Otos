@@ -156,7 +156,7 @@ actor LibraryReorganizationRunner {
                 snapshot: ReorganizationPlanningSnapshot(
                     libraryRoot: plan.libraryRoot,
                     volumeIdentifier: "run",
-                    capabilities: .caseInsensitiveAPFS,
+                    capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: plan.libraryRoot.url),
                     generation: plan.generation,
                     rootRevision: plan.rootRevision,
                     policy: plan.policy,

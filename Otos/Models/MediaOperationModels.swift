@@ -558,7 +558,7 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         policy: ImportPolicy,
         calendar: Calendar,
         timeZone: TimeZone,
-        destinationCapabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
+        destinationCapabilities: VolumeNamespaceCapabilities = .unknown
     ) {
         self.generation = generation
         self.sourceRoot = sourceRoot
@@ -601,7 +601,7 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
     init(
         entries: [MediaRelativePath: NamespaceOccupancyResult],
         enumeratedFolders: Set<String>,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
+        capabilities: VolumeNamespaceCapabilities = .unknown
     ) {
         var keyed: [FilesystemNameKey: Entry] = [:]
         for (path, result) in entries {

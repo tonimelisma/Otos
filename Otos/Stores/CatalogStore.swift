@@ -1802,7 +1802,7 @@ extension CatalogStore {
             availability: previous?.availability ?? .unknown,
             activity: previous?.activity ?? .idle,
             isEjectable: previous?.isEjectable ?? false,
-            capabilities: previous?.capabilities ?? .caseInsensitiveAPFS,
+            capabilities: previous?.capabilities ?? .unknown,
             skippedPackageCount: previous?.skippedPackageCount ?? 0,
             planRevision: (previous?.planRevision ?? 0) &+ 1,
             occupancyRevision: (previous?.occupancyRevision ?? 0) &+ 1
@@ -1859,7 +1859,7 @@ extension CatalogStore {
         identity: String,
         displayName: String,
         isEjectable: Bool,
-        capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS,
+        capabilities: VolumeNamespaceCapabilities = .unknown,
         deviceModel: String? = nil,
         volumeFormat: String? = nil
     ) async throws {
@@ -1896,7 +1896,7 @@ extension CatalogStore {
             isEjectable: false,
             activity: .enumerating,
             enqueuesScan: false,
-            capabilities: .caseInsensitiveAPFS,
+            capabilities: .unknown,
             deviceModel: nil,
             volumeFormat: nil
         ))
@@ -2010,7 +2010,7 @@ extension CatalogStore {
             throw CancellationError()
         }
         let dbQueue = try database()
-        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let timedChangedCount = try await timedWrite(dbQueue) { db in
             var count = 0
             for file in batch {
@@ -2061,7 +2061,7 @@ extension CatalogStore {
                 observedPaths: observedPaths
             )
             let dbQueue = try database()
-            let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
+            let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
             _ = try await timedWrite(dbQueue) { db in
                 var changed = 0
                 for companion in companions {
@@ -2637,7 +2637,7 @@ private extension CatalogStore {
         }
 
         let dbQueue = try database()
-        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let state = OtosSignpost.persistence.beginInterval("CatalogScanBatchWrite")
         let timedChangedCount = try await timedWrite(dbQueue) { db in
             var count = 0
@@ -2806,7 +2806,7 @@ private extension CatalogStore {
             }
         }
         let dbQueue = try database()
-        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let timed = try await timedWrite(dbQueue) { db in
             let upserted = try Self.applyScannedCompanions(
                 companions,
@@ -2847,7 +2847,7 @@ private extension CatalogStore {
         guard scanCanDelete(scan) else {
             return 0
         }
-        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .caseInsensitiveAPFS
+        let scanCapabilities = roots[scan.rootPath]?.capabilities ?? .unknown
         let dbQueue = try database()
         let existingRows = try await dbQueue.read { db in
             try Self.fetchExistingAssetRows(
@@ -3639,7 +3639,7 @@ private extension CatalogStore {
         }
 
         do {
-            let rootCapabilities = roots[root]?.capabilities ?? .caseInsensitiveAPFS
+            let rootCapabilities = roots[root]?.capabilities ?? .unknown
             return try await dbQueue.write { db in
                 switch observed {
                 case let .media(scannedFile):
@@ -3706,7 +3706,7 @@ private extension CatalogStore {
                 try Self.catalogedFileDeletionTarget(relativePath: relativePath, rootRowID: rootRowID, db: db)
             }
             let capabilities = roots.values.first(where: { $0.rowID == rootRowID })?.capabilities
-                ?? .caseInsensitiveAPFS
+                ?? .unknown
             let deleted = try await dbQueue.write { db -> Bool in
                 var changed = false
                 if try Self.deleteAssetRow(rootRowID: rootRowID, relativePath: relativePath, db: db) {
