@@ -72,7 +72,7 @@ Non-authoritative: they record what we learned, not current behavior.
 ## Plans and roadmap
 
 - [plans/](plans/) — numbered work plans; completed plans are deleted. Active:
-  [0097 — One Namespace Owner, And The Erase Manifest](plans/0097-one-namespace-owner-and-the-erase-manifest.md).
+  [0098 — Verification Integrity, And Typing The Lease](plans/0098-verification-integrity-and-lease-typing.md).
 - [product/roadmap.md](product/roadmap.md) — a non-authoritative idea pile that never
   guides work unless the user explicitly asks for roadmap input.
 - [templates/adr-template.md](templates/adr-template.md) — the ADR format.

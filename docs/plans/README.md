@@ -3,8 +3,14 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-No active plans. Plan 0097 was implemented, verified, merged in PR 291, and
-removed after documentation closure.
+Plan 0098 (verification integrity, naming facts, and typing the namespace lease)
+is active. It opens against a red `main`: `script/verify.sh` exits 1 on
+`script/lint.sh`, and `script/test.sh` reports five failures. The parent commit
+`40261bf` fails four of the same five, so the red predates plan 0097. Increments
+1-4 are the fix that greens `main`.
+
+Plan 0097 was implemented, verified, merged in PR 291, and removed after
+documentation closure.
 
 Plans 0085–0096 are complete and were removed when the implementation, structural
 guards, behavioral proofs, and verification closure landed. 0092 (import screen
