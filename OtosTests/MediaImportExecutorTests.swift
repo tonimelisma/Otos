@@ -750,7 +750,7 @@ struct ImportExecutionProgressTests {
             byteSize: 11,
             contentModifiedAt: original.source.contentModifiedAt,
             captureWallCompact: original.source.captureWallCompact,
-            isNamingFactSettled: original.source.isNamingFactSettled,
+            namingFactState: original.source.namingFactState,
             mediaKind: original.source.mediaKind,
             fileExtension: original.source.fileExtension,
             companions: original.source.companions,

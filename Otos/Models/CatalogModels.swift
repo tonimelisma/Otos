@@ -451,9 +451,9 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
+        self.byteSize = byteSize
         self.name = name
         self.contentTypeIdentifier = contentTypeIdentifier
-        self.byteSize = byteSize
         self.createdAt = createdAt
         self.contentModifiedAt = contentModifiedAt
         self.thumbnailPath = thumbnailPath
@@ -519,6 +519,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
 nonisolated struct MediaTileDetail: Identifiable, Hashable {
     let libraryRootPath: LibraryRootPath
     let relativePath: MediaRelativePath
+    let byteSize: Int64?
     let thumbnailPath: String?
     let bestKind: MediaKind?
     let durationSeconds: Double?
@@ -529,6 +530,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     init(
         libraryRootPath: LibraryRootPath,
         relativePath: MediaRelativePath,
+        byteSize: Int64? = nil,
         thumbnailPath: String? = nil,
         bestKind: MediaKind? = nil,
         durationSeconds: Double? = nil,
@@ -538,6 +540,7 @@ nonisolated struct MediaTileDetail: Identifiable, Hashable {
     ) {
         self.libraryRootPath = libraryRootPath
         self.relativePath = relativePath
+        self.byteSize = byteSize
         self.thumbnailPath = thumbnailPath
         self.bestKind = bestKind
         self.durationSeconds = durationSeconds

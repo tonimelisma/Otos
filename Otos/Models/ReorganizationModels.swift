@@ -12,8 +12,8 @@ nonisolated struct ReorganizationPlanningSnapshot: Equatable, Sendable {
     let generation: UInt64
     let rootRevision: UInt64
     let policy: ImportPolicy
-    let calendar: Calendar = .current
-    let timeZone: TimeZone = .current
+    let calendar: Calendar
+    let timeZone: TimeZone
     let media: [PlanningFileFacts]
     /// Relative paths known to be stationary foreign occupants (from prior probes).
     let knownForeignOccupants: Set<MediaRelativePath>

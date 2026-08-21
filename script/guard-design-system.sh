@@ -66,10 +66,12 @@ check_font_styles() {
 # problem — their patterns are syntactically SwiftUI-only — so only this
 # check and check_lying_defaults stay scoped narrower than the full tree.
 DOMAIN_NOUNS='\bplan\b|\bdisposition\b|\bcompanion\b|\bpreexisting\b|\bblocked\b|\binventory\b|\breplan\b|\bexecution\b|\bqueued\b'
-DOMAIN_NOUN_ALLOWLIST=("Otos/Views/ImportPlanFooter.swift")
-is_domain_noun_allowlisted() {
-  local p="$1" a
-  for a in "${DOMAIN_NOUN_ALLOWLIST[@]+"${DOMAIN_NOUN_ALLOWLIST[@]}"}"; do [[ "$p" == "$a" ]] && return 0; done
+DOMAIN_NOUN_STRING_ALLOWLIST=("Import queued")
+is_domain_noun_string_allowlisted() {
+  local content="$1" a
+  for a in "${DOMAIN_NOUN_STRING_ALLOWLIST[@]+"${DOMAIN_NOUN_STRING_ALLOWLIST[@]}"}"; do
+    [[ "$content" == *"\"$a\""* ]] && return 0
+  done
   return 1
 }
 user_facing_string_roots() {
@@ -82,12 +84,12 @@ check_domain_nouns() {
   while IFS= read -r file; do
     [[ -z "$file" ]] && continue
     local rel="${file#"$root/"}"
-    is_domain_noun_allowlisted "$rel" && continue
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
       content="${line#*:}"
       trimmed="${content#"${content%%[![:space:]]*}"}"
       [[ "$trimmed" == //* ]] && continue
+      is_domain_noun_string_allowlisted "$content" && continue
       if printf '%s\n' "$content" | grep -qE '"[^"]*"' && printf '%s\n' "$content" | grep -qiE "$DOMAIN_NOUNS"; then
         echo "FAIL: DES-035/DES-039 domain noun in user-facing string: $rel:$line" >&2; return 1
       fi

@@ -78,7 +78,7 @@ struct ImportPlanFooter: View {
         case .importPending:
             title = "Import"
         case .importQueued:
-            title = "Import Queued"
+            title = "Import queued"
         case let .importItems(count):
             title = "Import \(count) \(count == 1 ? "Item" : "Items")"
         case .ejectCard:

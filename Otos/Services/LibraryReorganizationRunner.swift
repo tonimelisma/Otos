@@ -160,6 +160,8 @@ actor LibraryReorganizationRunner {
                     generation: plan.generation,
                     rootRevision: plan.rootRevision,
                     policy: plan.policy,
+                    calendar: .current,
+                    timeZone: .current,
                     media: [],
                     knownForeignOccupants: []
                 ),
@@ -267,6 +269,8 @@ actor LibraryReorganizationRunner {
             generation: 1,
             rootRevision: revision,
             policy: policy,
+            calendar: .current,
+            timeZone: .current,
             media: media,
             knownForeignOccupants: []
         )

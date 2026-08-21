@@ -291,6 +291,9 @@ extension CatalogStore {
             try addRelativePathKeyColumns(db)
             try backfillRelativePathKeys(db)
         }
+        migrator.registerMigration("v18_source_erase_journal") { db in
+            try createActiveSourceEraseTable(db)
+        }
         return migrator
     }
 
@@ -534,6 +537,20 @@ extension CatalogStore {
         )
     }
 
+    static func createActiveSourceEraseTable(_ db: Database) throws {
+        try db.execute(sql: """
+        CREATE TABLE active_source_erase (
+            operation_key TEXT PRIMARY KEY NOT NULL,
+            source_kind TEXT NOT NULL,
+            source_device_identity TEXT,
+            source_root_path TEXT NOT NULL,
+            source_relative_path TEXT NOT NULL,
+            source_byte_size INTEGER,
+            updated_at DOUBLE NOT NULL
+        )
+        """)
+    }
+
     static func createMediaCompanionTable(_ db: Database) throws {
         try db.execute(
             sql: """
@@ -628,7 +645,8 @@ extension CatalogStore {
                 sortIndex: row["sort_index"],
                 capabilities: VolumeNamespaceCapabilities(
                     isCaseSensitive: (row["case_sensitive_names"] as Int?) == 1,
-                    prefersDecomposedUnicode: (row["prefers_decomposed_unicode"] as Int?) != 0
+                    prefersDecomposedUnicode: (row["prefers_decomposed_unicode"] as Int?) == 1,
+                    isKnown: row["case_sensitive_names"] != nil && row["prefers_decomposed_unicode"] != nil
                 ),
                 deviceModel: row["device_model"]
             )
@@ -1323,13 +1341,19 @@ extension CatalogStore {
             underSubtree: underSubtree,
             db: db
         )
-        let existingKeys = Dictionary(uniqueKeysWithValues: existing.map {
-            (FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities), $0)
-        })
+        var existingKeys: [FilesystemNameKey: MediaRelativePath] = [:]
+        var ambiguousKeys = Set<FilesystemNameKey>()
+        for path in existing {
+            let key = FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: capabilities)
+            if existingKeys[key] != nil { ambiguousKeys.insert(key) }
+            else { existingKeys[key] = path }
+        }
         let observedKeys = Set(observedPaths.map {
             FilesystemNamespaceSemantics.nameKey(relativePath: $0, capabilities: capabilities)
         })
-        let missing = existingKeys.filter { !observedKeys.contains($0.key) }.map(\.value)
+        let missing = existingKeys
+            .filter { !ambiguousKeys.contains($0.key) && !observedKeys.contains($0.key) }
+            .map(\.value)
         var deleted = 0
         for path in missing {
             if try deleteCompanionRow(rootRowID: libraryRootID, relativePath: path, db: db) {
@@ -1498,6 +1522,9 @@ private nonisolated func backfillRelativePathKeys(_ db: Database) throws {
     )
     for root in roots {
         let rootID: Int64 = root["id"]
+        guard root["case_sensitive_names"] != nil,
+              root["prefers_decomposed_unicode"] != nil
+        else { continue }
         let capabilities = VolumeNamespaceCapabilities(
             isCaseSensitive: (root["case_sensitive_names"] as Int?) == 1,
             prefersDecomposedUnicode: (root["prefers_decomposed_unicode"] as Int?) != 0

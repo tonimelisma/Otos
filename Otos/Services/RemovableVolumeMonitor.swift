@@ -271,10 +271,7 @@ final class RemovableVolumeMonitor {
                 identity: identity,
                 displayName: values.volumeName ?? url.lastPathComponent,
                 isEjectable: values.volumeIsEjectable == true,
-                capabilities: VolumeNamespaceCapabilities(
-                    isCaseSensitive: values.volumeSupportsCaseSensitiveNames ?? false,
-                    prefersDecomposedUnicode: true
-                ),
+                capabilities: FilesystemNamespaceSemantics.probeVolumeCapabilities(rootURL: url),
                 deviceModel: deviceModel(forVolumeAt: url, session: session),
                 volumeFormat: values.volumeLocalizedFormatDescription
             )

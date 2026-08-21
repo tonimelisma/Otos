@@ -2499,6 +2499,7 @@ private extension CatalogStore {
         MediaTileDetail(
             libraryRootPath: rootPath,
             relativePath: storedDetail.relativePath,
+            byteSize: storedDetail.byteSize,
             thumbnailPath: storedDetail.thumbnailPath,
             bestKind: storedDetail.bestKind,
             durationSeconds: storedDetail.durationSeconds,
@@ -3849,6 +3850,27 @@ extension CatalogStore {
         let dbWriter = try database()
         return try await dbWriter.read { db in
             try Self.fetchAllActiveFileOperations(db: db)
+        }
+    }
+
+    func activeSourceEraseOperations() async throws -> [ActiveSourceEraseOperation] {
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            try Self.fetchAllActiveSourceErases(db: db)
+        }
+    }
+
+    func beginSourceEraseOperation(_ operation: ActiveSourceEraseOperation) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.insertActiveSourceErase(operation, db: db)
+        }
+    }
+
+    func completeSourceEraseOperation(key: String) async throws {
+        let dbWriter = try database()
+        try Self.writeWithJournalDurability(dbWriter) { db in
+            try Self.deleteActiveSourceErase(key: key, db: db)
         }
     }
 

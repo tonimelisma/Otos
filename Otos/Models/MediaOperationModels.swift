@@ -52,6 +52,12 @@ nonisolated struct ImportPolicy: Equatable, Sendable {
     }
 }
 
+nonisolated enum NamingFactState: Equatable, Sendable {
+    case pending
+    case settled
+    case terminal
+}
+
 nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let id: MediaAssetID
     let sourceURL: URL
@@ -59,7 +65,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let byteSize: Int64?
     let contentModifiedAt: Date?
     let captureWallCompact: Int64?
-    let isNamingFactSettled: Bool
+    let namingFactState: NamingFactState
     let mediaKind: MediaKind?
     let contentTypeIdentifier: String?
     let fileExtension: String
@@ -72,7 +78,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         byteSize: Int64?,
         contentModifiedAt: Date?,
         captureWallCompact: Int64?,
-        isNamingFactSettled: Bool = true,
+        namingFactState: NamingFactState = .settled,
         mediaKind: MediaKind?,
         fileExtension: String,
         companions: [MediaCompanion],
@@ -84,11 +90,17 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.byteSize = byteSize
         self.contentModifiedAt = contentModifiedAt
         self.captureWallCompact = captureWallCompact
-        self.isNamingFactSettled = isNamingFactSettled
+        self.namingFactState = namingFactState
         self.mediaKind = mediaKind
         self.contentTypeIdentifier = contentTypeIdentifier
         self.fileExtension = fileExtension
         self.companions = companions
+    }
+
+    /// Compatibility-shaped query for planning code: terminal naming facts are
+    /// intentionally ready even though they are not enrichment-complete.
+    var isNamingFactSettled: Bool {
+        namingFactState != .pending
     }
 
     /// Best planning date: embedded capture wall when present, else source mtime.
@@ -201,6 +213,63 @@ nonisolated struct MediaOperationPlanEntry: Equatable, Sendable {
     }
 }
 
+nonisolated struct EraseManifestEntry: Equatable, Sendable, Identifiable {
+    let relativePath: MediaRelativePath
+    let byteSize: Int64?
+    let fileClass: SourceFileClass
+
+    var id: String { relativePath.rawValue }
+}
+
+/// The immutable, planner-owned set of source paths that may be erased after
+/// execution. Execution never walks the source volume looking for extra files.
+nonisolated struct EraseManifest: Equatable, Sendable {
+    let entries: [EraseManifestEntry]
+
+    var count: Int { entries.count }
+
+    static func from(
+        planEntries: [MediaOperationPlanEntry],
+        sourceMedia: [PlanningFileFacts] = []
+    ) -> Self {
+        var byPath: [MediaRelativePath: EraseManifestEntry] = [:]
+        for entry in planEntries {
+            let eligible: Bool = switch entry.disposition {
+            case .copy, .skipPreexisting, .excluded: true
+            case .relocate, .noOp, .blocked: false
+            }
+            guard eligible else { continue }
+            byPath[entry.source.relativePath] = EraseManifestEntry(
+                relativePath: entry.source.relativePath,
+                byteSize: entry.source.byteSize,
+                fileClass: .classify(relativePath: entry.source.relativePath)
+            )
+            for companion in entry.source.companions {
+                byPath[companion.relativePath] = EraseManifestEntry(
+                    relativePath: companion.relativePath,
+                    byteSize: companion.byteSize,
+                    fileClass: .classify(relativePath: companion.relativePath)
+                )
+            }
+        }
+        for fact in sourceMedia {
+            let fileClass = SourceFileClass.classify(relativePath: fact.relativePath)
+            let eligible: Bool = switch fileClass {
+            case .usefulSidecar, .cruftSidecar, .sourceArtifact: true
+            case .media, .unknown: false
+            }
+            guard eligible, byPath[fact.relativePath] == nil
+            else { continue }
+            byPath[fact.relativePath] = EraseManifestEntry(
+                relativePath: fact.relativePath,
+                byteSize: fact.byteSize,
+                fileClass: fileClass
+            )
+        }
+        return EraseManifest(entries: byPath.values.sorted { $0.relativePath.rawValue < $1.relativePath.rawValue })
+    }
+}
+
 nonisolated func throughputMBps(bytes: Int64, elapsedMs: Int) -> String {
     let megabytes = Double(bytes) / 1_000_000
     return String(format: "%.2f", megabytes / (Double(max(elapsedMs, 1)) / 1000))
@@ -220,6 +289,7 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
     var companionCopyCount: Int
     var copyBytes: Int64
     var excludedCount: Int
+    var eraseCount: Int
 
     init(
         copyCount: Int,
@@ -227,7 +297,8 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         blockedCount: Int,
         companionCopyCount: Int,
         copyBytes: Int64,
-        excludedCount: Int = 0
+        excludedCount: Int = 0,
+        eraseCount: Int = 0
     ) {
         self.copyCount = copyCount
         self.skipCount = skipCount
@@ -235,10 +306,7 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
         self.companionCopyCount = companionCopyCount
         self.copyBytes = copyBytes
         self.excludedCount = excludedCount
-    }
-
-    var eraseCount: Int {
-        skipCount + excludedCount + copyCount
+        self.eraseCount = eraseCount
     }
 }
 
@@ -249,7 +317,28 @@ nonisolated struct MediaOperationPlan: Equatable, Sendable {
     let destinationOccupancyRevision: UInt64
     let policy: ImportPolicy
     let entries: [MediaOperationPlanEntry]
+    let eraseManifest: EraseManifest
     let totals: MediaOperationPlanTotals
+
+    init(
+        generation: UInt64,
+        mode: MediaOperationMode,
+        sourceOccupancyRevision: UInt64,
+        destinationOccupancyRevision: UInt64,
+        policy: ImportPolicy,
+        entries: [MediaOperationPlanEntry],
+        eraseManifest: EraseManifest? = nil,
+        totals: MediaOperationPlanTotals
+    ) {
+        self.generation = generation
+        self.mode = mode
+        self.sourceOccupancyRevision = sourceOccupancyRevision
+        self.destinationOccupancyRevision = destinationOccupancyRevision
+        self.policy = policy
+        self.entries = entries
+        self.eraseManifest = eraseManifest ?? EraseManifest.from(planEntries: entries)
+        self.totals = totals
+    }
 
     /// Blocked entries' identities and reasons, for state D's "Show them"
     /// (`import-bar.md` state D). `totals.blockedCount` is a count only; this is
@@ -514,12 +603,16 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
         enumeratedFolders: Set<String>,
         capabilities: VolumeNamespaceCapabilities = .caseInsensitiveAPFS
     ) {
-        self.entries = Dictionary(uniqueKeysWithValues: entries.map { path, result in
-            (
-                FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: capabilities),
-                Entry(path: path, result: result)
-            )
-        })
+        var keyed: [FilesystemNameKey: Entry] = [:]
+        for (path, result) in entries {
+            let key = FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: capabilities)
+            if keyed[key] != nil {
+                keyed[key] = Entry(path: path, result: .foreign(kind: .other))
+            } else {
+                keyed[key] = Entry(path: path, result: result)
+            }
+        }
+        self.entries = keyed
         self.enumeratedFolders = enumeratedFolders
         self.capabilities = capabilities
     }

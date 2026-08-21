@@ -31,6 +31,18 @@ nonisolated enum MediaOperationGateway {
             let modified: Double? = row["content_modified_at_unix"]
             let kindRaw: String? = row["kind"]
             let ext = URL(fileURLWithPath: relative.rawValue).pathExtension
+            let namingFactState: NamingFactState
+            if ((row["naming_settled"] as Int?) ?? 0) != 0 {
+                namingFactState = .settled
+            } else if modified != nil, (row["capture_wall_compact"] as Int64?) == nil {
+                // A durable filesystem mtime is the terminal fallback when no
+                // embedded naming fact exists. Enrichment may still add overlay
+                // later; planning does not deadlock on a fact that cannot improve
+                // this name.
+                namingFactState = .terminal
+            } else {
+                namingFactState = .pending
+            }
             return PlanningFileFacts(
                 id: MediaAssetID(libraryRootPath: sourceRoot, relativePath: relative),
                 sourceURL: sourceRoot.url.appending(path: relative.rawValue, directoryHint: .notDirectory),
@@ -38,7 +50,7 @@ nonisolated enum MediaOperationGateway {
                 byteSize: row["byte_size"],
                 contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:)),
                 captureWallCompact: row["capture_wall_compact"],
-                isNamingFactSettled: ((row["naming_settled"] as Int?) ?? 0) != 0,
+                namingFactState: namingFactState,
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
                 companions: companionsByPrimary[relative.rawValue] ?? [],

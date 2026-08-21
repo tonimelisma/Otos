@@ -25,3 +25,13 @@ Move to Trash remains recoverable system Trash for catalog-proven library
 members, while card Erase is explicitly requested to reclaim card space. The
 zero-byte exception is unrecoverable only in the vacuous sense that zero bytes
 were present.
+
+The plan also owns an immutable `EraseManifest`. It contains only paths classified
+as media, useful sidecars, recognized cruft, or recognized source artifacts; unknown
+files are never added. A copy path enters the execution candidate set only after
+that entry publishes, while preexisting and excluded entries enter from their plan
+dispositions. Execution does not enumerate the source volume. `SourceEraser` is the
+sole destructive source owner, and source deletion requires its root namespace
+lease; a fixed library root is rejected as read-only. Namespace-key collisions are
+represented as foreign/ambiguous occupancy and never trap or authorize row
+deletion. Persisted capability columns remain unknown until both facts are known.

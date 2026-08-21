@@ -6,11 +6,34 @@ import Foundation
 /// the probed volume capabilities. Ambiguous comparisons block before mutation.
 nonisolated struct FilesystemNameKey: Hashable, Sendable {
     let rawValue: String
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.rawValue.utf8.elementsEqual(rhs.rawValue.utf8)
+    }
+
+    func hash(into hasher: inout Hasher) {
+        for byte in rawValue.utf8 {
+            hasher.combine(byte)
+        }
+    }
 }
 
 nonisolated struct VolumeNamespaceCapabilities: Equatable, Sendable {
-    var isCaseSensitive: Bool
-    var prefersDecomposedUnicode: Bool
+    let isCaseSensitive: Bool
+    let prefersDecomposedUnicode: Bool
+    let isKnown: Bool
+
+    init(isCaseSensitive: Bool, prefersDecomposedUnicode: Bool, isKnown: Bool = true) {
+        self.isCaseSensitive = isCaseSensitive
+        self.prefersDecomposedUnicode = prefersDecomposedUnicode
+        self.isKnown = isKnown
+    }
+
+    static let unknown = VolumeNamespaceCapabilities(
+        isCaseSensitive: false,
+        prefersDecomposedUnicode: true,
+        isKnown: false
+    )
 
     static let caseInsensitiveAPFS = VolumeNamespaceCapabilities(
         isCaseSensitive: false,
@@ -28,8 +51,29 @@ nonisolated struct PlannedNamespacePath: Equatable, Sendable {
     let volumeIdentifier: String
 }
 
+/// The one owner of a root's filesystem namespace rules. Callers must carry this
+/// value from root registration or probing; comparison capabilities are never
+/// guessed at the operation call site.
+nonisolated struct RootNamespace: Equatable, Sendable {
+    let root: LibraryRootPath
+    private let capabilities: VolumeNamespaceCapabilities
+
+    init(root: LibraryRootPath, capabilities: VolumeNamespaceCapabilities) {
+        self.root = root
+        self.capabilities = capabilities
+    }
+
+    func key(_ relativePath: MediaRelativePath) -> FilesystemNameKey {
+        FilesystemNamespaceSemantics.nameKey(relativePath: relativePath, capabilities: capabilities)
+    }
+
+    func contains(_ url: URL) -> MediaRelativePath? {
+        CatalogPath.relativePathIfContained(rootPath: root, fileURL: url)
+    }
+}
+
 extension FilesystemNamespaceSemantics {
-    /// Builds a lookup key for the given relative path under volume capabilities.
+    /// Builds a lookup key for the given relative path under known volume capabilities.
     nonisolated static func nameKey(
         relativePath: MediaRelativePath,
         capabilities: VolumeNamespaceCapabilities

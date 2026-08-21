@@ -88,6 +88,7 @@ nonisolated struct CatalogIdentityRemapBatch: Equatable, Sendable {
 
 nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
     case importPublication
+    case sourceErase
     case reorganization
     case mediaTrash
 }

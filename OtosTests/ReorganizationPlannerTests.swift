@@ -80,6 +80,8 @@ struct ReorganizationPlannerTests {
             generation: 1,
             rootRevision: 1,
             policy: policy(),
+            calendar: .current,
+            timeZone: .current,
             media: media,
             knownForeignOccupants: []
         )
@@ -151,6 +153,8 @@ struct ReorganizationPlannerTests {
             generation: 1,
             rootRevision: 1,
             policy: ImportPolicy.from(prefs),
+            calendar: .current,
+            timeZone: .current,
             media: [item],
             knownForeignOccupants: []
         )
@@ -183,6 +187,8 @@ struct ReorganizationPlannerTests {
             generation: 1,
             rootRevision: 1,
             policy: ImportPolicy.from(prefs),
+            calendar: .current,
+            timeZone: .current,
             media: [item],
             knownForeignOccupants: []
         )
@@ -353,6 +359,8 @@ struct ReorganizationPlannerTests {
             generation: 1,
             rootRevision: 1,
             policy: ImportPolicy.from(prefs),
+            calendar: .current,
+            timeZone: .current,
             media: [item],
             knownForeignOccupants: []
         )
