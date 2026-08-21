@@ -1613,28 +1613,31 @@ struct MediaOperationCoordinatorAdversarialTests {
             Issue.record("Import completed while the device was still enumerating")
         }
 
-        // Enumeration finishes: readiness flips .ready and the deferred
-        // request is retried. This coordinator has no camera import access
-        // wired in, so `isExecutableSource` then fails and execution stops at
-        // `markExecutionUnavailable` rather than actually copying — reaching
-        // that failure reason at all proves the request made it past the
-        // readiness gate, which is what this test verifies. (The one-shot
-        // `.executionUnavailable` presentation `markExecutionUnavailable`
-        // yields isn't observable by polling `currentPresentations()` — it
-        // only reaches subscribers of the live stream; polling re-derives
-        // from `session.phase`, which the same call sets to
-        // `.failed(.unexpected("executionUnavailable"))`.)
+        // Enumeration finishes: readiness flips .ready and the deferred request is
+        // retried. This coordinator has no camera import access wired in, so
+        // `isExecutableSource` fails and `markExecutionUnavailable` stops the run
+        // rather than copying. Reaching that state at all is what this test
+        // verifies — it proves the request made it past the readiness gate.
+        //
+        // The state is the typed `.executionUnavailable`, not
+        // `.failed(.unexpected("executionUnavailable"))`. `.unexpected(detail:)`
+        // is documented as the one case whose detail is for the log and never the
+        // bar, so routing a known, named condition through it would publish an
+        // internal string as a user-facing fact.
         try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
         let resolved = try await waitForPresentation(coordinator, source: rootPath, predicate: { pres in
-            if case .failed = pres.state {
+            if case .executionUnavailable = pres.state {
                 return true
             }
             return false
         })
-        if case let .failed(reason, _) = resolved.state {
-            #expect(reason == .unexpected(detail: "executionUnavailable"))
+        if case let .executionUnavailable(summary, _, attentionItems) = resolved.state {
+            // The plan that could not execute is still the one the gate admitted:
+            // the single enumerated file, with nothing needing attention.
+            #expect(summary.copyCount == 1)
+            #expect(attentionItems.isEmpty)
         } else {
-            Issue.record("Expected a failed state once readiness resolved")
+            Issue.record("Expected executionUnavailable once readiness resolved, got \(resolved.state)")
         }
         log("END")
         log("END")
