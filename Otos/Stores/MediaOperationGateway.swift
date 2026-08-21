@@ -31,13 +31,23 @@ nonisolated enum MediaOperationGateway {
             let modified: Double? = row["content_modified_at_unix"]
             let kindRaw: String? = row["kind"]
             let ext = URL(fileURLWithPath: relative.rawValue).pathExtension
+            // `naming_settled` is `NOT metadataStalenessSQLPredicate()`, which answers
+            // "should enrichment run again for these file facts?". The naming question
+            // is a different one — "do we know enough to name this file?" — and must not
+            // borrow that answer wholesale. They diverge on a state the domain admits
+            // (`PlanningFileFacts.hasAnyDate` models it): an asset with no
+            // `content_modified_at_unix` can never satisfy the staleness predicate's
+            // `enriched_source_mtime` comparison, so it stays "stale" forever even after
+            // enrichment has supplied its capture wall. Deriving `.pending` from that
+            // held such a source in `.waitingForMetadata` permanently.
+            let captureWall: Int64? = row["capture_wall_compact"]
             let namingFactState: NamingFactState = if ((row["naming_settled"] as Int?) ?? 0) != 0 {
                 .settled
-            } else if modified != nil, (row["capture_wall_compact"] as Int64?) == nil {
-                // A durable filesystem mtime is the terminal fallback when no
-                // embedded naming fact exists. Enrichment may still add overlay
-                // later; planning does not deadlock on a fact that cannot improve
-                // this name.
+            } else if captureWall != nil || modified != nil {
+                // Terminal, not settled: enrichment is still free to add overlay, but
+                // nothing it can add improves this *name*. A known capture wall is the
+                // naming fact itself; a durable filesystem mtime is the fallback when
+                // no embedded fact exists. Planning proceeds on either.
                 .terminal
             } else {
                 .pending
@@ -48,7 +58,7 @@ nonisolated enum MediaOperationGateway {
                 relativePath: relative,
                 byteSize: row["byte_size"],
                 contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:)),
-                captureWallCompact: row["capture_wall_compact"],
+                captureWallCompact: captureWall,
                 namingFactState: namingFactState,
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
