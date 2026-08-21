@@ -1,24 +1,28 @@
 # Active Plans
 
-No active plans. Completed plans are removed after their implementation,
-documentation, verification, and merge closure.
+Completed plans are removed after their implementation, documentation,
+verification, and merge closure.
 
-  Thirteen increments closing the defect class behind a 2026-08-19 production run
-  that imported the same 23 videos twice under different filenames: path
-  identity that is case-sensitive on a case-insensitive volume, an import plan
-  named from enrichment facts that were still settling, enrichment that never
-  invalidates that plan, and a progress indicator animated by an underdamped
-  spring. Also carries the adjacent debt found while investigating — two
-  planners naming the same file two ways, an unfolded destination namespace, the
-  one surviving yield path outside `publish()`, and the design-registry and
-  sidebar items listed as D8–D19. Increment 12 adds the erase path (D20–D26):
-  an erase-only run has no outcome state, mints an empty batch, offers a reveal
-  that reveals nothing, counts deletion failures as copy failures, leaves
-  sidecars and card debris behind, and produces no log line at all for the one
-  irreversible operation in the app. All seven owner decisions were resolved
-  2026-08-19; nothing in the plan is blocked.
+- [0097 — One Namespace Owner, And The Erase Manifest](0097-one-namespace-owner-and-the-erase-manifest.md)
 
-Plans 0085–0095 are complete and were removed when the implementation, structural
+  Seven increments finishing what plan 0096 designed but did not verify. 0096
+  landed as a single commit rather than its thirteen planned PRs, and `main` is
+  red on the one test its own APP-032 row cites. Increment 1 greens it: card
+  erase currently deletes nothing on every root — a containment guard compares a
+  path against a root string that already ends in `/` — and the erase set is
+  built from plan dispositions rather than execution outcomes, so fixing the
+  guard alone would delete the sources of copies that failed. The rest gives the
+  three defect classes one owner each: namespace rules that belong to a root and
+  are never defaulted (one comparison function today has four disagreeing sources
+  for its input, and 25 call sites that default it), one path equality law
+  (`MediaRelativePath` compares bytes while `FilesystemNameKey` compares
+  canonically), an erase manifest that is the same number in the confirmation
+  alert and the completion line, and a single owner permitted to delete from a
+  source root while holding its lease and journaling each item. Four owner
+  decisions are recorded rather than assumed; increment 1 step 4 and increment 3
+  step 5 are explicitly blocked on two of them.
+
+Plans 0085–0096 are complete and were removed when the implementation, structural
 guards, behavioral proofs, and verification closure landed. 0092 (import screen
 redesign and design-system adoption) and its spun-off 0093 (grid day headers,
 DES-069/APP-030) are both fully landed. 0094 (the OtosKit framework, the unhosted
@@ -26,5 +30,7 @@ test bundle, and the in-memory `PreferenceStore`) is fully landed — see ADR 00
 and `docs/research/2026-08-16-unhosted-test-bundle-capability.md` for the decision
 and its evidence. 0095 (honest import — MTP correctness, one writer per published
 fact, app-wide design system) is fully landed across twelve increments; ADR 0024
-(readiness gate and single presentation writer) and the design-system rows it
-touched carry its architectural decisions forward.
+(readiness gate and single presentation writer) carries its architectural
+decisions forward. 0096 (path equality, settled naming, honest progress) landed
+its implementation in `40261bf` and its decisions in ADR 0025 and ADR 0026; plan
+0097 carries the integration debt it left behind.
