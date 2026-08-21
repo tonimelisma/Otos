@@ -1669,15 +1669,14 @@ extension CatalogStore {
                     sql: """
                     UPDATE library_root
                     SET device_identity = ?, display_name = ?, last_seen_at = ?,
-                        case_sensitive_names = ?, prefers_decomposed_unicode = ?, device_model = ?
+                        case_sensitive_names = ?, device_model = ?
                     WHERE id = ?
                     """,
                     arguments: [
                         attachment.identity,
                         attachment.displayName,
                         lastSeenAt.timeIntervalSince1970,
-                        attachment.capabilities.isCaseSensitive ? 1 : 0,
-                        attachment.capabilities.prefersDecomposedUnicode ? 1 : 0,
+                        attachment.capabilities.storedCaseSensitiveColumn,
                         attachment.deviceModel,
                         existingState.rowID,
                     ]
@@ -1779,7 +1778,7 @@ extension CatalogStore {
         )
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
-            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) caseSensitive=\(attachment.capabilities.isCaseSensitive, privacy: .public) prefersDecomposedUnicode=\(attachment.capabilities.prefersDecomposedUnicode, privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
+            "op=catalog.removable.attach phase=finish kind=\(attachment.kind.rawValue, privacy: .public) identity=\(attachment.identity, privacy: .public) rootPath=\(attachment.path.rawValue, privacy: .public) displayName=\(attachment.displayName, privacy: .public) caseSensitive=\(attachment.capabilities.isCaseSensitive, privacy: .public) capabilitiesKnown=\(attachment.capabilities.isKnown, privacy: .public) deviceModel=\(attachment.deviceModel ?? "unknown", privacy: .public) volumeFormat=\(attachment.volumeFormat ?? "unknown", privacy: .public)"
         )
         notifyCatalogChanged()
         if attachment.enqueuesScan {
@@ -1847,7 +1846,7 @@ extension CatalogStore {
         let message = "op=\(operation) phase=finish "
             + "rootPath=\(root.path.rawValue) "
             + "caseSensitive=\(storedRoot.capabilities.isCaseSensitive) "
-            + "prefersDecomposedUnicode=\(storedRoot.capabilities.prefersDecomposedUnicode)"
+            + "capabilitiesKnown=\(storedRoot.capabilities.isKnown)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
         notifyCatalogChanged()
         filesystemWatcher.addRoot(root.path)
