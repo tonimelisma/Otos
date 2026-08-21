@@ -121,7 +121,6 @@ actor MediaImportExecutor {
         let sourceDeviceIdentity: String?
         let allowSourceDeletion: Bool
         let namespaceLease: RootNamespaceMutationLease?
-        let sourceNamespaceLease: RootNamespaceMutationLease?
         /// Where an incomplete entry's `finalDestination` resolves — the
         /// identity `runPlanEntries` records for state F-incomplete's reveal,
         /// since the user selects it from the destination-keyed batch row,
@@ -157,9 +156,7 @@ actor MediaImportExecutor {
                 await recover(operation)
             }
             let eraseOperations = try await store.activeSourceEraseOperations()
-            for operation in eraseOperations {
-                await recoverSourceErase(operation)
-            }
+            await recoverSourceErases(eraseOperations)
         } catch {
             OtosLog.catalog.error(
                 "op=mediaOperation.recover phase=failed error=\(String(describing: error), privacy: .public)"
@@ -238,31 +235,27 @@ actor MediaImportExecutor {
         if copyEntries.isEmpty {
             namespaceLease = nil
         } else {
-            guard let lease = await store.acquireNamespaceMutationLease(
+            switch await store.acquireNamespaceMutationLease(
                 for: destination,
                 owner: .importPublication
-            ) else {
+            ) {
+            case let .acquired(lease):
+                namespaceLease = lease
+            case .rootNotRegistered:
                 return .failed(reason: .destinationUnavailable)
+            case let .busy(owner):
+                // The library *is* available; another namespace mutation owns it.
+                // Saying "isn't available" would be false, and the bar has no
+                // vocabulary for "busy" — `.unexpected`'s detail is for the log
+                // only (`MediaOperationModels.swift`), which is exactly right here.
+                return .failed(reason: .unexpected(detail: "destinationNamespaceBusy:\(owner.rawValue)"))
             }
-            namespaceLease = lease
         }
-        let sourceNamespaceLease: RootNamespaceMutationLease?
-        if allowSourceDeletion,
-           case let .import(sourceRoot, _, _) = plan.mode
-        {
-            guard let lease = await store.acquireNamespaceMutationLease(
-                for: sourceRoot,
-                owner: .sourceErase
-            ) else {
-                if let namespaceLease {
-                    _ = await store.releaseNamespaceMutationLease(namespaceLease)
-                }
-                return .failed(reason: .sourceRemoved)
-            }
-            sourceNamespaceLease = lease
-        } else {
-            sourceNamespaceLease = nil
-        }
+        // The erase lease is deliberately *not* taken here. It is only needed by
+        // `eraseSourceFiles`, which runs after every copy completes; holding it
+        // across a full card's copy suppressed the source root's filesystem
+        // reconcile and scan scheduling for the whole batch, and a momentarily
+        // busy source aborted the import before a single byte moved.
         let started = ContinuousClock().now
         let batchSignpost = OtosSignpost.mediaIO.beginInterval("MediaImportBatch")
         OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "start", fields: [
@@ -280,7 +273,6 @@ actor MediaImportExecutor {
             sourceDeviceIdentity: sourceDeviceIdentity,
             allowSourceDeletion: allowSourceDeletion,
             namespaceLease: namespaceLease,
-            sourceNamespaceLease: sourceNamespaceLease,
             destinationRoot: destination
         )
         let entryTotals = await runPlanEntries(
@@ -291,9 +283,6 @@ actor MediaImportExecutor {
         )
         if let namespaceLease {
             _ = await store.releaseNamespaceMutationLease(namespaceLease)
-        }
-        if let sourceNamespaceLease {
-            _ = await store.releaseNamespaceMutationLease(sourceNamespaceLease)
         }
         let storedBatchCount = await (try? store.importBatchAssetCount(batch)) ?? -1
         let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
@@ -504,18 +493,48 @@ actor MediaImportExecutor {
         context: EntryExecutionContext,
         publishedEntries: [MediaOperationPlanEntry]
     ) async -> EraseOutcome {
-        guard let sourceNamespaceLease = context.sourceNamespaceLease,
-              await store.ownsNamespaceMutationLease(sourceNamespaceLease)
-        else {
-            OtosLog.mediaIO.error(
-                "op=import.erase phase=blocked run=\(context.runID, privacy: .public) reason=sourceLeaseUnavailable"
-            )
-            return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 1)
-        }
         guard case let .import(sourceRoot, _, _) = context.plan.mode else {
             return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
         }
         let candidates = sourceDeletionCandidates(plan: context.plan, publishedEntries: publishedEntries)
+        // Acquired here, not in `execute()`: the copy phase has already finished,
+        // so this holds the source root's namespace for the erase sweep only. A
+        // denial leaves every candidate un-erased and is reported as an incomplete
+        // erase — the copies stand, and `import-bar.md` already specifies that
+        // state. It must never fail the import, and must never claim the card is
+        // gone when another owner merely holds the lease.
+        let sourceNamespaceLease: RootNamespaceMutationLease
+        switch await store.acquireNamespaceMutationLease(for: sourceRoot, owner: .sourceErase) {
+        case let .acquired(lease):
+            sourceNamespaceLease = lease
+        case let .busy(owner):
+            OtosLog.mediaIO.errorOperation("import.erase", phase: "blocked", fields: [
+                "run": context.runID,
+                "reason": "namespaceBusy",
+                "heldBy": owner.rawValue,
+                "rootPath": sourceRoot.rawValue,
+                "unerasedCount": "\(candidates.count)",
+            ])
+            return EraseOutcome(
+                deletedCount: 0,
+                deletedBytes: 0,
+                skippedCount: 0,
+                failedCount: candidates.count
+            )
+        case .rootNotRegistered:
+            OtosLog.mediaIO.errorOperation("import.erase", phase: "blocked", fields: [
+                "run": context.runID,
+                "reason": "rootNotRegistered",
+                "rootPath": sourceRoot.rawValue,
+                "unerasedCount": "\(candidates.count)",
+            ])
+            return EraseOutcome(
+                deletedCount: 0,
+                deletedBytes: 0,
+                skippedCount: 0,
+                failedCount: candidates.count
+            )
+        }
         OtosLog.mediaIO.noticeOperation("import.erase", phase: "start", fields: [
             "run": context.runID,
             "rootPath": sourceRoot.rawValue,
@@ -580,17 +599,68 @@ actor MediaImportExecutor {
             + "bytesFreed=\(deletedBytes) "
             + "logged=\(logged)"
         OtosLog.mediaIO.notice("\(message, privacy: .public)")
+        _ = await store.releaseNamespaceMutationLease(sourceNamespaceLease)
         return EraseOutcome(deletedCount: deleted, deletedBytes: deletedBytes, skippedCount: skipped, failedCount: failed)
     }
 
+    /// One lease per source root for the whole sweep.
+    ///
+    /// Acquiring per entry and releasing from a detached `Task` inside a `defer`
+    /// raced the next iteration's acquire — `defer` only *enqueues* the release —
+    /// so every entry after the first could bail on an unsatisfiable acquire with
+    /// no log at all, leaving journal rows and files the user asked to reclaim.
+    /// It also left the lease held past the sweep, which an ordinary import then
+    /// saw as a busy source namespace.
+    private func recoverSourceErases(_ operations: [ActiveSourceEraseOperation]) async {
+        let byRoot = Dictionary(grouping: operations, by: \.sourceRootPath)
+        for (root, rootOperations) in byRoot.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+            let lease: RootNamespaceMutationLease
+            switch await store.acquireNamespaceMutationLease(for: root, owner: .sourceErase) {
+            case let .acquired(acquired):
+                lease = acquired
+            case let .busy(owner):
+                // Retained, not dropped: the journal rows survive for the next
+                // launch's sweep.
+                OtosLog.mediaIO.noticeOperation("import.erase.recover", phase: "deferred", fields: [
+                    "reason": "namespaceBusy",
+                    "heldBy": owner.rawValue,
+                    "rootPath": root.rawValue,
+                    "pendingCount": "\(rootOperations.count)",
+                ])
+                continue
+            case .rootNotRegistered:
+                OtosLog.mediaIO.noticeOperation("import.erase.recover", phase: "deferred", fields: [
+                    "reason": "rootNotRegistered",
+                    "rootPath": root.rawValue,
+                    "pendingCount": "\(rootOperations.count)",
+                ])
+                continue
+            }
+            for operation in rootOperations {
+                await recoverSourceErase(operation)
+            }
+            _ = await store.releaseNamespaceMutationLease(lease)
+        }
+    }
+
+    /// The caller holds `operation.sourceRootPath`'s namespace lease.
     private func recoverSourceErase(_ operation: ActiveSourceEraseOperation) async {
-        guard let lease = await store.acquireNamespaceMutationLease(
-            for: operation.sourceRootPath,
-            owner: .sourceErase
-        ) else { return }
-        defer { Task { _ = await store.releaseNamespaceMutationLease(lease) } }
-        let url = operation.sourceRootPath.url.appending(path: operation.sourceRelativePath.rawValue).standardizedFileURL
-        guard CatalogPath.relativePathIfContained(rootPath: operation.sourceRootPath, fileURL: url) == operation.sourceRelativePath else {
+        let url = operation.sourceRootPath.url
+            .appending(path: operation.sourceRelativePath.rawValue)
+            .standardizedFileURL
+        let contained = CatalogPath.relativePathIfContained(
+            rootPath: operation.sourceRootPath,
+            fileURL: url
+        )
+        guard contained == operation.sourceRelativePath else {
+            // Unreachable through `eraseSourceFiles`, which validates containment
+            // before journaling. A row that fails it can never be acted on, so it
+            // is surfaced rather than retried in silence, and retained rather than
+            // deleted on a fact this code could not prove.
+            OtosLog.mediaIO.fault(
+                // swiftlint:disable:next line_length
+                "op=import.erase.recover phase=uncontained rootPath=\(operation.sourceRootPath.rawValue, privacy: .public) relativePath=\(operation.sourceRelativePath.rawValue, privacy: .public)"
+            )
             return
         }
         guard await SourceEraser.delete(
@@ -1305,13 +1375,25 @@ actor MediaImportExecutor {
     }
 
     private func recover(_ operation: ActiveFileOperation) async {
-        guard let lease = await store.acquireNamespaceMutationLease(
+        let lease: RootNamespaceMutationLease
+        switch await store.acquireNamespaceMutationLease(
             for: operation.destinationRootPath,
             owner: .importPublication
-        ) else {
-            OtosLog.catalog.notice(
-                "op=mediaOperation.recover phase=blocked reason=namespaceLeaseUnavailable"
-            )
+        ) {
+        case let .acquired(acquired):
+            lease = acquired
+        case let .busy(owner):
+            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "blocked", fields: [
+                "reason": "namespaceBusy",
+                "heldBy": owner.rawValue,
+                "rootPath": operation.destinationRootPath.rawValue,
+            ])
+            return
+        case .rootNotRegistered:
+            OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "blocked", fields: [
+                "reason": "rootNotRegistered",
+                "rootPath": operation.destinationRootPath.rawValue,
+            ])
             return
         }
         let staging = operation.stagingPath.map { URL(fileURLWithPath: $0) }

@@ -4094,9 +4094,23 @@ extension CatalogStore {
     func acquireNamespaceMutationLease(
         for rootPath: LibraryRootPath,
         owner: RootNamespaceMutationOwner
-    ) -> RootNamespaceMutationLease? {
-        guard roots[rootPath] != nil, namespaceMutationLeases[rootPath] == nil else {
-            return nil
+    ) -> RootNamespaceLeaseAcquisition {
+        guard roots[rootPath] != nil else {
+            OtosLog.catalog.noticeOperation("namespaceMutation.lease", phase: "denied", fields: [
+                "reason": "rootNotRegistered",
+                "rootPath": rootPath.rawValue,
+                "owner": owner.rawValue,
+            ])
+            return .rootNotRegistered
+        }
+        if let current = namespaceMutationLeases[rootPath] {
+            OtosLog.catalog.noticeOperation("namespaceMutation.lease", phase: "denied", fields: [
+                "reason": "busy",
+                "rootPath": rootPath.rawValue,
+                "owner": owner.rawValue,
+                "heldBy": current.owner.rawValue,
+            ])
+            return .busy(owner: current.owner)
         }
         nextNamespaceMutationLeaseGeneration &+= 1
         let lease = RootNamespaceMutationLease(
@@ -4112,7 +4126,7 @@ extension CatalogStore {
             owner=\(owner.rawValue, privacy: .public) generation=\(lease.generation, privacy: .public)
             """
         )
-        return lease
+        return .acquired(lease)
     }
 
     func ownsNamespaceMutationLease(_ lease: RootNamespaceMutationLease) -> Bool {

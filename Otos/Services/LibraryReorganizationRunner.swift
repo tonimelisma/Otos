@@ -111,8 +111,14 @@ actor LibraryReorganizationRunner {
     // Component loop + lease/settlement is intentionally cohesive.
     // swiftlint:disable:next function_body_length
     func run(libraryRoot: LibraryRootPath) async -> Outcome {
-        guard let lease = await store.acquireNamespaceMutationLease(for: libraryRoot, owner: .reorganization) else {
-            return .failed(reason: "leaseUnavailable")
+        let lease: RootNamespaceMutationLease
+        switch await store.acquireNamespaceMutationLease(for: libraryRoot, owner: .reorganization) {
+        case let .acquired(acquired):
+            lease = acquired
+        case let .busy(owner):
+            return .failed(reason: "leaseBusy:\(owner.rawValue)")
+        case .rootNotRegistered:
+            return .failed(reason: "rootNotRegistered")
         }
 
         let built = await buildReadyPlan(libraryRoot: libraryRoot)

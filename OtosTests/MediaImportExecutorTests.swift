@@ -796,6 +796,76 @@ struct ImportExecutionProgressTests {
         #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
     }
 
+    @Test func busySourceNamespaceLeavesTheCopyStandingAndReportsAnIncompleteErase() async throws {
+        let fixture = try await makeZeroCopyFixture()
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: fixture.sourceRoot)
+        // Another namespace owner holds the card for the whole run. Before this
+        // increment the executor took this lease in `execute()` and turned a
+        // denial into `.failed(reason: .sourceRemoved)` — "The card was removed" —
+        // aborting the import before a single byte moved.
+        guard case .acquired = await fixture.store.acquireNamespaceMutationLease(
+            for: sourcePath,
+            owner: .mediaTrash
+        ) else {
+            Issue.record("Expected to hold the source namespace for this test")
+            return
+        }
+
+        let result = await MediaImportExecutor(store: fixture.store).execute(
+            plan: fixture.plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:busy-source-namespace",
+            deleteSourceRequested: true
+        ) { _ in }
+
+        guard case let .completedWithErase(_, _, _, _, _, _, eraseOutcome) = result else {
+            Issue.record("A busy source namespace must not fail the import, got \(result)")
+            return
+        }
+        // The erase is reported incomplete, which is the state `import-bar.md`
+        // already specifies; nothing on the card is touched.
+        #expect(eraseOutcome.deletedCount == 0)
+        #expect(eraseOutcome.failedCount > 0)
+        #expect(FileManager.default.fileExists(atPath: fixture.sourceFile.path))
+    }
+
+    @Test func everyJournaledEraseForOneRootRecoversInOneSweep() async throws {
+        let fixture = try await makeZeroCopyFixture()
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: fixture.sourceRoot)
+
+        // Several entries for the *same* root: the shape that made per-entry
+        // lease acquisition race its own detached release, so only the first
+        // entry recovered and the rest returned unlogged.
+        var relatives: [MediaRelativePath] = []
+        for index in 0 ..< 5 {
+            let relative = MediaRelativePath(rawValue: "orphan-\(index).jpg")
+            relatives.append(relative)
+            let url = fixture.sourceRoot.appending(path: relative.rawValue)
+            try Data(repeating: 0x37, count: 4).write(to: url)
+            try await fixture.store.beginSourceEraseOperation(
+                ActiveSourceEraseOperation(
+                    key: UUID().uuidString,
+                    sourceKind: .removableVolume,
+                    sourceDeviceIdentity: "volume:zero-copy-fixture",
+                    sourceRootPath: sourcePath,
+                    sourceRelativePath: relative,
+                    sourceByteSize: 4,
+                    updatedAt: Date()
+                )
+            )
+        }
+        #expect(try await fixture.store.activeSourceEraseOperations().count == 5)
+
+        await MediaImportExecutor(store: fixture.store).recoverJournal()
+
+        for relative in relatives {
+            let url = fixture.sourceRoot.appending(path: relative.rawValue)
+            #expect(!FileManager.default.fileExists(atPath: url.path(percentEncoded: false)))
+        }
+        #expect(try await fixture.store.activeSourceEraseOperations().isEmpty)
+    }
+
     @Test func containmentHelperAcceptsDirectoryURLSlashAndNormalizedRoot() throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = try CatalogPath.normalizedDirectoryPath(for: temp)
@@ -864,6 +934,17 @@ struct ImportExecutionProgressTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
+        // The card is attached, not merely a path on disk. `MediaOperationCoordinator`
+        // only ever executes an import for a source it read out of
+        // `store.currentLibraries()`, so an unattached source root is not a
+        // configuration production can reach — and erase, which takes that root's
+        // namespace lease, is correctly refused for a root the catalog does not own.
+        try await store.attachRemovableVolume(
+            mountURL: sourceRoot,
+            identity: "volume:zero-copy-fixture",
+            displayName: "Card",
+            isEjectable: true
+        )
         return ZeroCopyFixture(
             store: store,
             plan: plan,

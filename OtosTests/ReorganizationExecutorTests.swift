@@ -141,7 +141,7 @@ struct ReorganizationLeaseTests {
         try await store.start(scansSavedLibraries: false)
         try await store.ensureLibrary(url: root)
         let rootPath = LibraryRootPath(rawValue: root.path)
-        guard let lease = await store.acquireNamespaceMutationLease(for: rootPath, owner: .reorganization) else {
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(for: rootPath, owner: .reorganization) else {
             Issue.record("expected lease")
             return
         }
