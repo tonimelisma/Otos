@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# The one required local check: requirements authority + static gates + build + test.
+#
+# Every stage runs to completion and reports independently. An earlier stage must
+# never *hide* a later one: before 2026-08-21 the static gates were `wait`ed under
+# `set -e`, so a SwiftFormat wrap-the-if nit aborted the script before
+# `script/test.sh` ever ran, and the exit code could not distinguish a formatting
+# miss from five failing tests. Two PRs merged green on that reading.
+set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+failed_stages=()
+
+record() {
+  local name="$1" status="$2"
+  if [[ "$status" != "0" ]]; then
+    failed_stages+=("$name")
+  fi
+}
+
 "$ROOT_DIR/script/requirements-authority-check.sh"
+record "requirements-authority-check" "$?"
 
 # self-test costs as much as the real run (~15.5s) with identical output
 # every time; only worth paying again when the checker itself might have
@@ -18,28 +35,65 @@ if base_ref="$(git -C "$ROOT_DIR" rev-parse --verify origin/main 2>/dev/null)"; 
 fi
 if [[ "$authority_check_changed" == "1" ]]; then
   "$ROOT_DIR/script/requirements-authority-check.sh" self-test
+  record "requirements-authority-check#self-test" "$?"
 fi
 
+# Each guard's `self-test` proves it can detect a seeded violation, so it
+# *deliberately* prints its own `FAIL:` line against a bad oracle. Emitting that
+# leaves ~8 expected `FAIL:` lines in the log for a reader to tell apart from a
+# real one. Capture it and replay it only when the self-test itself fails.
+run_guard_self_test() {
+  local script="$1" output status
+  output="$("$script" self-test 2>&1)"
+  status=$?
+  if [[ "$status" != "0" ]]; then
+    printf '%s\n' "$output" >&2
+  else
+    printf '%s\n' "$output" | grep -v '^FAIL:' || true
+  fi
+  return "$status"
+}
+
 # Guards, lint, and doc-citations share nothing with xcodebuild - run them
-# while build-for-testing compiles instead of after it.
+# while build-for-testing compiles instead of after it. The subshell's exit
+# status is collected below rather than aborting the script.
 run_static_gates() {
-  "$ROOT_DIR/script/check-no-unchecked-sendable.sh"
+  local status=0
+  "$ROOT_DIR/script/check-no-unchecked-sendable.sh" || status=1
   for guard_script in \
     guard-unsandboxed.sh guard-single-main-window.sh guard-view-passivity.sh \
     guard-no-audio.sh guard-no-writes-into-media.sh guard-smoke-run-busy.sh \
     guard-design-system.sh guard-presentation-yield.sh; do
-    "$ROOT_DIR/script/$guard_script"
-    "$ROOT_DIR/script/$guard_script" self-test
+    "$ROOT_DIR/script/$guard_script" || status=1
+    run_guard_self_test "$ROOT_DIR/script/$guard_script" || status=1
   done
-  "$ROOT_DIR/script/check-doc-citations.sh"
-  "$ROOT_DIR/script/lint.sh"
+  "$ROOT_DIR/script/check-doc-citations.sh" || status=1
+  "$ROOT_DIR/script/lint.sh" || status=1
+  return "$status"
 }
 
 run_static_gates &
 static_gates_pid=$!
 
 "$ROOT_DIR/script/build.sh"
+build_status=$?
+record "build" "$build_status"
 
 wait "$static_gates_pid"
+record "static-gates" "$?"
 
-"$ROOT_DIR/script/test.sh"
+# test-without-building has nothing to run against if the build failed; skipping
+# it is reported as its own stage rather than passing silently.
+if [[ "$build_status" == "0" ]]; then
+  "$ROOT_DIR/script/test.sh"
+  record "test" "$?"
+else
+  echo "verify: skipping script/test.sh because script/build.sh failed" >&2
+  failed_stages+=("test(skipped:build-failed)")
+fi
+
+if [[ "${#failed_stages[@]}" -gt 0 ]]; then
+  echo "verify: FAILED stages: ${failed_stages[*]}" >&2
+  exit 1
+fi
+echo "verify: all stages passed"

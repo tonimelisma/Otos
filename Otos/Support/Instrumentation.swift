@@ -2,7 +2,13 @@ import Foundation
 import OSLog
 
 nonisolated enum OtosLog {
-    static let subsystem = Bundle.main.bundleIdentifier ?? "net.melisma.Otos"
+    /// A constant, never `Bundle.main.bundleIdentifier`. OtosKit is loaded by the
+    /// app *and* by the unhosted test bundle (ADR 0023), whose `Bundle.main` is
+    /// the `xctest` tool — deriving the subsystem from the host process filed
+    /// every test-run log line under `com.apple.dt.xctest.tool`, where
+    /// `script/logs.sh`'s subsystem predicate could never find it. The subsystem
+    /// identifies this code, not whatever process loaded it.
+    static let subsystem = "net.melisma.Otos"
 
     static let app = Logger(subsystem: subsystem, category: Category.app.rawValue)
     static let ui = Logger(subsystem: subsystem, category: Category.ui.rawValue)

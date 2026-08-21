@@ -802,7 +802,8 @@ struct ImportExecutionProgressTests {
         let inside = root.url.appending(path: "same.jpg")
         let outside = temp.deletingLastPathComponent().appending(path: "same.jpg")
         #expect(CatalogPath.relativePathIfContained(rootPath: root, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
-        #expect(CatalogPath.relativePathIfContained(rootPath: LibraryRootPath(rawValue: root.rawValue + "/"), fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
+        let trailingSlashRoot = LibraryRootPath(rawValue: root.rawValue + "/")
+        #expect(CatalogPath.relativePathIfContained(rootPath: trailingSlashRoot, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
         #expect(CatalogPath.relativePathIfContained(rootPath: root, fileURL: outside) == nil)
     }
 

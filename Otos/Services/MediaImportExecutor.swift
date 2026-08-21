@@ -254,7 +254,9 @@ actor MediaImportExecutor {
                 for: sourceRoot,
                 owner: .sourceErase
             ) else {
-                if let namespaceLease { _ = await store.releaseNamespaceMutationLease(namespaceLease) }
+                if let namespaceLease {
+                    _ = await store.releaseNamespaceMutationLease(namespaceLease)
+                }
                 return .failed(reason: .sourceRemoved)
             }
             sourceNamespaceLease = lease
@@ -514,9 +516,11 @@ actor MediaImportExecutor {
             return EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
         }
         let candidates = sourceDeletionCandidates(plan: context.plan, publishedEntries: publishedEntries)
-        OtosLog.mediaIO.notice(
-            "op=import.erase phase=start run=\(context.runID, privacy: .public) rootPath=\(sourceRoot.rawValue, privacy: .public) plannedCount=\(candidates.count, privacy: .public)"
-        )
+        OtosLog.mediaIO.noticeOperation("import.erase", phase: "start", fields: [
+            "run": context.runID,
+            "rootPath": sourceRoot.rawValue,
+            "plannedCount": "\(candidates.count)",
+        ])
         var deleted = 0
         var deletedBytes: Int64 = 0
         var skipped = 0
@@ -551,9 +555,11 @@ actor MediaImportExecutor {
                 deleted += 1
                 deletedBytes += bytes
                 if logged < 20 {
-                    OtosLog.mediaIO.notice(
-                        "op=import.erase phase=deleted run=\(context.runID, privacy: .public) relativePath=\(candidate.relativePath.rawValue, privacy: .public) bytes=\(bytes, privacy: .public)"
-                    )
+                    OtosLog.mediaIO.noticeOperation("import.erase", phase: "deleted", fields: [
+                        "run": context.runID,
+                        "relativePath": candidate.relativePath.rawValue,
+                        "bytes": "\(bytes)",
+                    ])
                     logged += 1
                 }
                 try? await store.completeSourceEraseOperation(key: journal.key)
@@ -638,9 +644,11 @@ actor MediaImportExecutor {
                 try FileManager.default.removeItem(at: url)
                 return .deleted(bytes: bytes)
             } catch {
-                OtosLog.mediaIO.error(
-                    "op=import.erase phase=failed run=\(runID, privacy: .public) relativePath=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
-                )
+                OtosLog.mediaIO.errorOperation("import.erase", phase: "failed", fields: [
+                    "run": runID,
+                    "relativePath": relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
                 return .failed
             }
         case .deviceMTP:
