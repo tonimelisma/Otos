@@ -35,3 +35,24 @@ sole destructive source owner, and source deletion requires its root namespace
 lease; a fixed library root is rejected as read-only. Namespace-key collisions are
 represented as foreign/ambiguous occupancy and never trap or authorize row
 deletion. Persisted capability columns remain unknown until both facts are known.
+
+A naming fact is settled by its own question, not by the enrichment staleness
+predicate. That predicate answers whether enrichment should run again for the
+current file facts; planning asks whether the file can be named. They diverge on
+a state the domain models: an asset with no filesystem mtime can never satisfy the
+predicate's `enriched_source_mtime` comparison, so it reads stale forever — and
+borrowing that answer held such a source in metadata-waiting permanently, even
+after enrichment had supplied its capture wall. A known capture wall is terminal,
+as is a durable mtime; only a row with neither is pending.
+
+Source deletion has exactly one implementation. `SourceEraser` is it, every
+caller routes through it, and it refuses fixed library roots. The previous
+arrangement documented that ownership while a second `FileManager.removeItem`
+sat in the erase sweep applying the opposite policy to library roots.
+
+The erase sweep takes the source root's namespace lease for the sweep alone,
+after the copy phase, and a denial reports an incomplete erase. Taking it before
+the copy suppressed the source root's reconcile and scan scheduling for the whole
+batch, and turned a momentarily busy namespace into a failed import announced to
+the user as "The card was removed" — the lease acquisition could not distinguish
+a busy root from an absent one. It now returns a typed result that can.

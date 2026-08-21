@@ -3,11 +3,15 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+No active plans.
+
 Plan 0098 (verification integrity, naming facts, and typing the namespace lease)
-is active. It opens against a red `main`: `script/verify.sh` exits 1 on
-`script/lint.sh`, and `script/test.sh` reports five failures. The parent commit
-`40261bf` fails four of the same five, so the red predates plan 0097. Increments
-1-4 are the fix that greens `main`.
+is complete across seven increments and was removed at closure. It opened against
+a `main` that had been red since at least `40261bf` with five failing tests, and
+green was restored in increment 4. Its decisions live in ADR 0015 (constant log
+subsystem, no gate hides another), ADR 0025 (normalization is not a per-volume
+capability), and ADR 0026 (naming facts answer the naming question; one source
+delete owner; the erase lease is scoped to the erase sweep).
 
 Plan 0097 was implemented, verified, merged in PR 291, and removed after
 documentation closure.

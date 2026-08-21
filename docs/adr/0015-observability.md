@@ -90,3 +90,17 @@ consumes them; use a log line instead.
   APFS image-backed removable volumes for agent-owned import and erase checks.
   Its measurements and the detach/re-attach procedure live in
   `docs/research/2026-08-21-synthetic-removable-volume.md`.
+- The `OtosLog` subsystem is the constant `net.melisma.Otos`, never
+  `Bundle.main.bundleIdentifier`. OtosKit is loaded by the app *and* by the
+  unhosted test bundle (ADR 0023), whose `Bundle.main` is the `xctest` tool, so
+  deriving it filed every test-run log line under `com.apple.dt.xctest.tool`
+  where `script/logs.sh`'s subsystem predicate could never match it. The
+  subsystem identifies this code, not the process that loaded it. A test run is
+  readable with `script/logs.sh show --last <duration> --process xctest`, which
+  is how the naming-fact and readiness defects in plan 0098 were diagnosed.
+- `script/verify.sh` runs every stage to completion and reports which failed. No
+  stage may hide another: the static gates once aborted the script under `set -e`
+  before the test suite ran, so a formatting nit and five failing tests were
+  indistinguishable at the exit code. Guard self-tests print an expected `FAIL:`
+  against a seeded bad oracle; that output is suppressed unless the self-test
+  itself fails, so every `FAIL:` in a verify log is real.
