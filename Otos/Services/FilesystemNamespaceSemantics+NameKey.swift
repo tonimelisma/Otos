@@ -7,6 +7,13 @@ import Foundation
 nonisolated struct FilesystemNameKey: Hashable, Sendable {
     let rawValue: String
 
+    /// Byte-exact, deliberately. Swift's `String ==` is Unicode
+    /// *canonical-equivalence* based, so a precomposed and a decomposed spelling
+    /// of the same name compare equal for free — which would silently do the
+    /// normalization work this key exists to do explicitly, and hide it from
+    /// `nameKey`. Comparing UTF-8 bytes forces every caller through `nameKey`'s
+    /// normalization, so two keys are equal only when the same rules produced
+    /// them. Do not "simplify" these back to the synthesized conformance.
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.rawValue.utf8.elementsEqual(rhs.rawValue.utf8)
     }

@@ -6,49 +6,77 @@ import UniformTypeIdentifiers
 /// Sole owner of destructive source deletion. Import execution and journal
 /// recovery may request deletion, but they cannot implement a second delete
 /// path. Library roots are intentionally read-only.
+/// What one erase attempt did. `deleted` and `alreadyGone` both mean the file is
+/// no longer on the source, which is the only thing a journal needs to settle.
+nonisolated enum SourceEraseOutcome: Equatable, Sendable {
+    case deleted(bytes: Int64)
+    /// Not present. The outcome the caller wanted is already true.
+    case alreadyGone
+    /// This root kind or provider does not permit deletion at all.
+    case refused
+    /// Present and permitted, and the delete did not succeed.
+    case failed
+
+    /// Whether the source no longer holds the file.
+    var isSettled: Bool {
+        switch self {
+        case .deleted, .alreadyGone: true
+        case .refused, .failed: false
+        }
+    }
+}
+
+/// The sole owner of destructive source deletion, in fact and not only in a
+/// comment: import execution, the erase sweep, and journal recovery all route
+/// here, and none of them implements a second delete. Library roots are
+/// read-only, so there is exactly one place that decides it.
 nonisolated enum SourceEraser {
-    static func delete(
+    static func erase(
         kind: LibraryRootKind,
         identity: String?,
         relativePath: MediaRelativePath,
         filesystemURL: URL,
         cameraImport: CameraImportAccess?
-    ) async -> Bool {
+    ) async -> SourceEraseOutcome {
         switch kind {
         case .library:
             OtosLog.mediaIO.notice(
-                "op=source.erase phase=blocked reason=libraryReadOnly path=\(relativePath.rawValue, privacy: .public)"
+                "op=source.erase phase=refused reason=libraryReadOnly path=\(relativePath.rawValue, privacy: .public)"
             )
-            return false
+            return .refused
         case .removableVolume:
             guard FileManager.default.fileExists(atPath: filesystemURL.path(percentEncoded: false)) else {
-                return true
+                return .alreadyGone
             }
+            let bytes = Int64((try? filesystemURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
             do {
                 try FileManager.default.removeItem(at: filesystemURL)
-                return true
+                return .deleted(bytes: bytes)
             } catch {
-                OtosLog.mediaIO.error(
-                    "op=source.erase phase=failed path=\(relativePath.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
-                )
-                return false
+                OtosLog.mediaIO.errorOperation("source.erase", phase: "failed", fields: [
+                    "path": relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
+                return .failed
             }
         case .deviceMTP:
             guard let identity, let cameraImport,
                   await cameraImport.canDelete(identity: identity)
             else {
                 OtosLog.mediaIO.notice(
-                    "op=source.erase phase=blocked reason=providerUnsupported path=\(relativePath.rawValue, privacy: .public)"
+                    "op=source.erase phase=refused reason=providerUnsupported path=\(relativePath.rawValue, privacy: .public)"
                 )
-                return false
+                return .refused
             }
-            let deleted = await cameraImport.deleteItem(identity: identity, relativePath: relativePath)
-            if !deleted {
-                OtosLog.mediaIO.error(
-                    "op=source.erase phase=failed provider=mtp path=\(relativePath.rawValue, privacy: .public)"
-                )
+            guard await cameraImport.deleteItem(identity: identity, relativePath: relativePath) else {
+                OtosLog.mediaIO.errorOperation("source.erase", phase: "failed", fields: [
+                    "provider": "mtp",
+                    "path": relativePath.rawValue,
+                ])
+                return .failed
             }
-            return deleted
+            // The provider reports success, not a byte count.
+            return .deleted(bytes: 0)
         }
     }
 }
@@ -203,7 +231,7 @@ actor MediaImportExecutor {
         sourceKind: LibraryRootKind,
         sourceDeviceIdentity: String?,
         deleteSourceRequested: Bool,
-        runID: String = UUID().uuidString,
+        runID: String,
         onProgress: @escaping @Sendable (MediaOperationProgress) -> Void
     ) async -> MediaImportExecutionResult {
         cancelFlag.reset()
@@ -566,8 +594,7 @@ actor MediaImportExecutor {
                 candidate: candidate,
                 sourceRoot: sourceRoot,
                 sourceKind: context.sourceKind,
-                sourceDeviceIdentity: context.sourceDeviceIdentity,
-                runID: context.runID
+                sourceDeviceIdentity: context.sourceDeviceIdentity
             )
             switch result {
             case let .deleted(bytes):
@@ -582,10 +609,10 @@ actor MediaImportExecutor {
                     logged += 1
                 }
                 try? await store.completeSourceEraseOperation(key: journal.key)
-            case .skipped:
+            case .alreadyGone:
                 skipped += 1
                 try? await store.completeSourceEraseOperation(key: journal.key)
-            case .failed:
+            case .refused, .failed:
                 failed += 1
             }
         }
@@ -648,7 +675,7 @@ actor MediaImportExecutor {
         let url = operation.sourceRootPath.url
             .appending(path: operation.sourceRelativePath.rawValue)
             .standardizedFileURL
-        let contained = CatalogPath.relativePathIfContained(
+        let contained = CatalogPath.relativePath(
             rootPath: operation.sourceRootPath,
             fileURL: url
         )
@@ -663,13 +690,13 @@ actor MediaImportExecutor {
             )
             return
         }
-        guard await SourceEraser.delete(
+        guard await SourceEraser.erase(
             kind: operation.sourceKind,
             identity: operation.sourceDeviceIdentity,
             relativePath: operation.sourceRelativePath,
             filesystemURL: url,
             cameraImport: cameraImport
-        ) else { return }
+        ).isSettled else { return }
         try? await store.completeSourceEraseOperation(key: operation.key)
     }
 
@@ -693,42 +720,29 @@ actor MediaImportExecutor {
         }
     }
 
+    /// Validates containment, then delegates. There is no second delete here:
+    /// this once carried its own `FileManager.removeItem` for `.removableVolume`
+    /// *and* `.library`, which contradicted `SourceEraser`'s own read-only rule
+    /// for library roots.
     private func eraseSourceFile(
         candidate: EraseManifestEntry,
         sourceRoot: LibraryRootPath,
         sourceKind: LibraryRootKind,
-        sourceDeviceIdentity: String?,
-        runID: String
-    ) async -> SourceDeletionResult {
+        sourceDeviceIdentity: String?
+    ) async -> SourceEraseOutcome {
         let relativePath = candidate.relativePath
         guard !relativePath.rawValue.split(separator: "/").contains("..") else { return .failed }
         let url = sourceRoot.url.appending(path: relativePath.rawValue).standardizedFileURL
-        guard CatalogPath.relativePathIfContained(rootPath: sourceRoot, fileURL: url) == relativePath else {
+        guard CatalogPath.relativePath(rootPath: sourceRoot, fileURL: url) == relativePath else {
             return .failed
         }
-        switch sourceKind {
-        case .removableVolume, .library:
-            guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return .skipped }
-            let bytes = Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
-            do {
-                try FileManager.default.removeItem(at: url)
-                return .deleted(bytes: bytes)
-            } catch {
-                OtosLog.mediaIO.errorOperation("import.erase", phase: "failed", fields: [
-                    "run": runID,
-                    "relativePath": relativePath.rawValue,
-                    "error": String(describing: error),
-                ])
-                return .failed
-            }
-        case .deviceMTP:
-            guard let sourceDeviceIdentity, let cameraImport,
-                  await cameraImport.canDelete(identity: sourceDeviceIdentity)
-            else { return .failed }
-            return await cameraImport.deleteItem(identity: sourceDeviceIdentity, relativePath: relativePath)
-                ? .deleted(bytes: 0)
-                : .failed
-        }
+        return await SourceEraser.erase(
+            kind: sourceKind,
+            identity: sourceDeviceIdentity,
+            relativePath: relativePath,
+            filesystemURL: url,
+            cameraImport: cameraImport
+        )
     }
 
     /// Why one plan entry failed to copy. `.sourceNotReady` is the only
@@ -757,12 +771,6 @@ actor MediaImportExecutor {
         case skippedForeign
         case cancelled
         case failed(EntryFailure)
-    }
-
-    private enum SourceDeletionResult: Sendable {
-        case deleted(bytes: Int64)
-        case skipped
-        case failed
     }
 
     private struct EntryResult: Sendable {
@@ -1329,13 +1337,13 @@ actor MediaImportExecutor {
             guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
                 return .failed(.other)
             }
-            guard await SourceEraser.delete(
+            guard await SourceEraser.erase(
                 kind: request.sourceKind,
                 identity: request.sourceDeviceIdentity,
                 relativePath: request.sourceRelativePath,
                 filesystemURL: request.sourceURL,
                 cameraImport: request.cameraImport
-            ) else {
+            ).isSettled else {
                 return .failed(.other)
             }
             do {
@@ -1448,13 +1456,13 @@ actor MediaImportExecutor {
         case .sourceDeletionPending:
             let sourceURL = operation.sourceRootPath.url
                 .appendingPathComponent(operation.sourceRelativePath.rawValue)
-            guard await SourceEraser.delete(
+            guard await SourceEraser.erase(
                 kind: operation.sourceKind,
                 identity: operation.sourceDeviceIdentity,
                 relativePath: operation.sourceRelativePath,
                 filesystemURL: sourceURL,
                 cameraImport: cameraImport
-            ) else {
+            ).isSettled else {
                 _ = await store.releaseNamespaceMutationLease(lease)
                 return
             }
@@ -1610,13 +1618,13 @@ actor MediaImportExecutor {
             if operation.deleteSourceRequested {
                 let sourceURL = operation.sourceRootPath.url
                     .appendingPathComponent(operation.sourceRelativePath.rawValue)
-                guard await SourceEraser.delete(
+                guard await SourceEraser.erase(
                     kind: operation.sourceKind,
                     identity: operation.sourceDeviceIdentity,
                     relativePath: operation.sourceRelativePath,
                     filesystemURL: sourceURL,
                     cameraImport: cameraImport
-                ) else {
+                ).isSettled else {
                     return
                 }
                 try await store.completeImportOperation(key: operation.operationKey)
@@ -1686,13 +1694,13 @@ actor MediaImportExecutor {
             )
             return false
         }
-        guard await SourceEraser.delete(
+        guard await SourceEraser.erase(
             kind: sourceKind,
             identity: sourceDeviceIdentity,
             relativePath: entry.source.relativePath,
             filesystemURL: entry.source.sourceURL,
             cameraImport: cameraImport
-        ) else {
+        ).isSettled else {
             return false
         }
         do {

@@ -444,7 +444,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:byte-progress",
-            deleteSourceRequested: false
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
         ) { progress in
             collector.record(progress)
         }
@@ -529,7 +530,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .deviceMTP,
             sourceDeviceIdentity: "camera:serial",
-            deleteSourceRequested: false
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case let .failed(reason) = result else {
@@ -605,7 +607,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:mixed-failure",
-            deleteSourceRequested: false
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case let .completed(publishedCount, _, hasEntryFailures, _, failedCount, _) = result else {
@@ -686,7 +689,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:d12-destination-identity",
-            deleteSourceRequested: false
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case let .completed(_, _, _, skippedForeignCount, _, incompleteItems) = result else {
@@ -706,7 +710,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:zero-copy-delete",
-            deleteSourceRequested: true
+            deleteSourceRequested: true,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case let .completedWithErase(_, _, _, _, _, _, eraseOutcome) = result else {
@@ -726,7 +731,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:zero-copy-no-delete",
-            deleteSourceRequested: false
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case .completed = result else {
@@ -784,7 +790,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:failed-copy-survival",
-            deleteSourceRequested: true
+            deleteSourceRequested: true,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case let .completedWithErase(_, _, _, _, failedCount, _, eraseOutcome) = result else {
@@ -816,7 +823,8 @@ struct ImportExecutionProgressTests {
             batch: ImportBatchID(),
             sourceKind: .removableVolume,
             sourceDeviceIdentity: "volume:busy-source-namespace",
-            deleteSourceRequested: true
+            deleteSourceRequested: true,
+            runID: UUID().uuidString
         ) { _ in }
 
         guard case let .completedWithErase(_, _, _, _, _, _, eraseOutcome) = result else {
@@ -871,10 +879,10 @@ struct ImportExecutionProgressTests {
         let root = try CatalogPath.normalizedDirectoryPath(for: temp)
         let inside = root.url.appending(path: "same.jpg")
         let outside = temp.deletingLastPathComponent().appending(path: "same.jpg")
-        #expect(CatalogPath.relativePathIfContained(rootPath: root, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
+        #expect(CatalogPath.relativePath(rootPath: root, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
         let trailingSlashRoot = LibraryRootPath(rawValue: root.rawValue + "/")
-        #expect(CatalogPath.relativePathIfContained(rootPath: trailingSlashRoot, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
-        #expect(CatalogPath.relativePathIfContained(rootPath: root, fileURL: outside) == nil)
+        #expect(CatalogPath.relativePath(rootPath: trailingSlashRoot, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
+        #expect(CatalogPath.relativePath(rootPath: root, fileURL: outside) == nil)
     }
 
     private struct ZeroCopyFixture {
