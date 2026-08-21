@@ -52,9 +52,18 @@ nonisolated struct ImportPolicy: Equatable, Sendable {
     }
 }
 
+/// How much the catalog knows about the fact an import plan names a file by.
+/// Distinct from enrichment staleness, which asks whether enrichment should run
+/// again — a file can be permanently "stale" (no mtime to compare against) while
+/// its naming fact is fully known. `MediaOperationGateway` derives this.
 nonisolated enum NamingFactState: Equatable, Sendable {
+    /// No date of any kind yet. Planning waits (`import-bar.md` state A).
     case pending
+    /// Enrichment is current for these exact file facts; nothing is outstanding.
     case settled
+    /// Not enrichment-complete, but the naming fact cannot improve: either the
+    /// capture wall is already known, or a durable filesystem mtime is the only
+    /// fallback there will ever be. Planning proceeds.
     case terminal
 }
 
