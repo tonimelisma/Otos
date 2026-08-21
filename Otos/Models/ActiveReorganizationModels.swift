@@ -93,6 +93,22 @@ nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
     case mediaTrash
 }
 
+/// The outcome of asking for a root's namespace lease.
+///
+/// Deliberately not `Optional`. A `nil` return collapsed two facts a caller must
+/// tell apart — "another owner holds this root" and "there is no such root" — and
+/// `MediaImportExecutor` reported the first as the second, failing an entire
+/// import with "The card was removed" while the card sat in the reader. Callers
+/// switch on this so that mistake cannot be written again.
+nonisolated enum RootNamespaceLeaseAcquisition: Equatable, Sendable {
+    case acquired(RootNamespaceMutationLease)
+    /// A different namespace mutation owns this root right now. Transient: the
+    /// root is present and the work is usually retryable.
+    case busy(owner: RootNamespaceMutationOwner)
+    /// No such root in the catalog. Not transient for this operation.
+    case rootNotRegistered
+}
+
 nonisolated struct RootNamespaceMutationLease: Equatable, Sendable {
     let libraryRootPath: LibraryRootPath
     let generation: UInt64

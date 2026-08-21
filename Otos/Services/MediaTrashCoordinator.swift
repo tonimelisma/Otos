@@ -24,7 +24,7 @@ actor MediaTrashCoordinator {
     func moveToTrash(_ items: [MediaTrashItem]) async -> MediaTrashBatchResult {
         var leases: [LibraryRootPath: RootNamespaceMutationLease] = [:]
         for item in items where item.root.kind != .deviceMTP && leases[item.root.path] == nil {
-            if let lease = await store.acquireNamespaceMutationLease(
+            if case let .acquired(lease) = await store.acquireNamespaceMutationLease(
                 for: item.root.path,
                 owner: .mediaTrash
             ) {
@@ -40,7 +40,7 @@ actor MediaTrashCoordinator {
     func moveToTrash(for ids: [MediaAssetID]) async throws -> MediaTrashBatchResult {
         var leases: [LibraryRootPath: RootNamespaceMutationLease] = [:]
         for rootPath in Set(ids.map(\.libraryRootPath)).sorted(by: { $0.rawValue < $1.rawValue }) {
-            guard let lease = await store.acquireNamespaceMutationLease(
+            guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
                 for: rootPath,
                 owner: .mediaTrash
             ) else {
