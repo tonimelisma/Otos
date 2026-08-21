@@ -102,15 +102,6 @@ nonisolated struct GeneratedThumbnail: Equatable {
 /// Timestamp role facts promoted from the metadata JSON into hot generated-column
 /// inputs. These are facts, not the current ranking winner; SQLite derives the
 /// displayed/sorted best date from them plus filesystem dates.
-nonisolated struct EnrichmentTimestampFacts: Equatable {
-    var original: Date?
-    var quickTimeCreation: Date?
-    var digitized: Date?
-    var gps: Date?
-
-    static let empty = EnrichmentTimestampFacts()
-}
-
 /// The result of enriching one asset, applied to the catalog as part of a batch. The
 /// enricher records the `(sourceSize, sourceMTimeSeconds)` it read at the start of the
 /// work; the store stamps those so a file changed mid-enrichment is detected as stale.
@@ -119,7 +110,6 @@ nonisolated struct EnrichmentTimestampFacts: Equatable {
 nonisolated struct EnrichmentResult: Equatable {
     let id: MediaAssetID
     let metadata: AssetMetadata
-    let timestampFacts: EnrichmentTimestampFacts
     let enrichedKind: MediaKind?
     let enrichedFormat: MediaFormatToken?
     let thumbnailPath: String?
@@ -134,7 +124,6 @@ nonisolated struct EnrichmentResult: Equatable {
     init(
         id: MediaAssetID,
         metadata: AssetMetadata,
-        timestampFacts: EnrichmentTimestampFacts = .empty,
         enrichedKind: MediaKind? = nil,
         enrichedFormat: MediaFormatToken? = nil,
         thumbnailPath: String?,
@@ -145,7 +134,6 @@ nonisolated struct EnrichmentResult: Equatable {
     ) {
         self.id = id
         self.metadata = metadata
-        self.timestampFacts = timestampFacts
         self.enrichedKind = enrichedKind
         self.enrichedFormat = enrichedFormat
         self.thumbnailPath = generatedThumbnail?.finalRelativePath ?? thumbnailPath

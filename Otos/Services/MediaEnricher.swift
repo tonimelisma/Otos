@@ -173,7 +173,6 @@ nonisolated struct MediaEnricher {
             EnrichmentResult(
                 id: id,
                 metadata: metadata,
-                timestampFacts: Self.timestampFacts(result.timestamps),
                 enrichedKind: Self.normalizedKind(result.format),
                 enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
                 thumbnailPath: nil,
@@ -234,18 +233,6 @@ nonisolated struct MediaEnricher {
         }
     }
 
-    /// Promotes the timestamp roles that participate in the current best-date
-    /// generated column. Roles without a usable UTC instant remain nil here while
-    /// their raw components stay preserved in metadata JSON.
-    static func timestampFacts(_ timestamps: CaptureTimestamps) -> EnrichmentTimestampFacts {
-        EnrichmentTimestampFacts(
-            original: timestamps.original?.instant,
-            quickTimeCreation: timestamps.quickTimeCreation?.instant,
-            digitized: timestamps.digitized?.instant,
-            gps: timestamps.gps?.instant
-        )
-    }
-
     static func normalizedKind(_ format: MediaFormat) -> MediaKind? {
         let kind = UTType(filenameExtension: format.fileExtension)
             .flatMap(MediaKind.classify)
@@ -285,11 +272,11 @@ nonisolated struct MediaEnricher {
 
     private static func mapTimestamps(_ timestamps: CaptureTimestamps) -> [CaptureTimestampRecord] {
         var records: [CaptureTimestampRecord] = []
-        func add(_ time: CaptureTime?, _ role: String) {
+        func add(_ time: CaptureTime?, _ role: CaptureTimestampRole) {
             guard let time else { return }
             records.append(
                 CaptureTimestampRecord(
-                    role: role,
+                    role: role.rawValue,
                     instant: time.instant,
                     utcOffsetSeconds: time.utcOffsetSeconds,
                     precision: time.precision.rawValue,
@@ -302,18 +289,18 @@ nonisolated struct MediaEnricher {
                 )
             )
         }
-        add(timestamps.original, "original")
-        add(timestamps.digitized, "digitized")
-        add(timestamps.tiffDateTime, "tiffDateTime")
-        add(timestamps.gps, "gps")
-        add(timestamps.quickTimeCreation, "quickTimeCreation")
-        add(timestamps.quickTimeLocation, "quickTimeLocation")
-        add(timestamps.quickTimeContentCreate, "quickTimeContentCreate")
-        add(timestamps.containerCreation, "containerCreation")
+        add(timestamps.original, .original)
+        add(timestamps.digitized, .digitized)
+        add(timestamps.tiffDateTime, .tiffDateTime)
+        add(timestamps.gps, .gps)
+        add(timestamps.quickTimeCreation, .quickTimeCreation)
+        add(timestamps.quickTimeLocation, .quickTimeLocation)
+        add(timestamps.quickTimeContentCreate, .quickTimeContentCreate)
+        add(timestamps.containerCreation, .containerCreation)
         // MED-004: Otos is image/video only. ID3 (MP3) and WAVE/BWF are audio-only
         // containers Otos never catalogs, so their timestamp roles are not persisted.
         // RIFF is kept: it also carries AVI, which is a cataloged video format.
-        add(timestamps.riffRecording, "riffRecording")
+        add(timestamps.riffRecording, .riffRecording)
         return records
     }
 

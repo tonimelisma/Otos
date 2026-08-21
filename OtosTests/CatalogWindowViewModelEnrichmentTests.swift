@@ -144,8 +144,7 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg"
         .complete(
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(),
-                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
+                metadata: .absoluteCapture(instant: captureDate),
                 thumbnailPath: thumbnailPath,
                 sourceSize: size,
                 sourceMTimeSeconds: mtime,

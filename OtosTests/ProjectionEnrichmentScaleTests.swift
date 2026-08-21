@@ -40,8 +40,7 @@ struct ProjectionEnrichmentScaleTests {
     private func detailEnrichment(for asset: MediaAsset) -> EnrichmentResult {
         EnrichmentResult(
             id: asset.id,
-            metadata: AssetMetadata(),
-            timestampFacts: EnrichmentTimestampFacts(original: asset.bestCaptureDate),
+            metadata: .absoluteCapture(instant: asset.bestCaptureDate),
             enrichedKind: asset.bestKind,
             enrichedFormat: asset.bestFormat,
             thumbnailPath: nil,
@@ -118,10 +117,7 @@ struct ProjectionEnrichmentScaleTests {
         _ = try await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: reorderAsset.id,
-                metadata: AssetMetadata(),
-                timestampFacts: EnrichmentTimestampFacts(
-                    original: Self.baseDate.addingTimeInterval(1_000_000)
-                ),
+                metadata: .absoluteCapture(instant: Self.baseDate.addingTimeInterval(1_000_000)),
                 enrichedKind: reorderAsset.bestKind,
                 enrichedFormat: reorderAsset.bestFormat,
                 thumbnailPath: nil,

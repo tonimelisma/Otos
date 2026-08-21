@@ -887,7 +887,9 @@ extension CatalogStore {
     /// the row's existing digest — if any was recorded before the source's
     /// root kind or facts changed — must survive, not be clobbered to NULL.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
+        // Both date projections derive from the one stored truth, here at the write.
         let captureWall = CaptureWallClock.select(from: result.metadata.timestamps)
+        let instants = BestCaptureInstants.from(result.metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
@@ -911,10 +913,10 @@ extension CatalogStore {
             """,
             arguments: [
                 result.thumbnailPath,
-                result.timestampFacts.original?.timeIntervalSince1970,
-                result.timestampFacts.quickTimeCreation?.timeIntervalSince1970,
-                result.timestampFacts.digitized?.timeIntervalSince1970,
-                result.timestampFacts.gps?.timeIntervalSince1970,
+                instants.original?.timeIntervalSince1970,
+                instants.quickTimeCreation?.timeIntervalSince1970,
+                instants.digitized?.timeIntervalSince1970,
+                instants.gps?.timeIntervalSince1970,
                 result.enrichedKind?.rawValue,
                 result.enrichedFormat?.rawValue,
                 result.metadata.durationSeconds,
@@ -948,6 +950,7 @@ extension CatalogStore {
         db: Database
     ) throws {
         let captureWall = CaptureWallClock.select(from: overlay.metadata.timestamps)
+        let instants = BestCaptureInstants.from(overlay.metadata.timestamps)
         try db.execute(
             sql: """
             UPDATE media_asset SET
@@ -970,10 +973,10 @@ extension CatalogStore {
             """,
             arguments: [
                 thumbnailPath,
-                overlay.originalTimestamp?.timeIntervalSince1970,
-                overlay.quickTimeCreationTimestamp?.timeIntervalSince1970,
-                overlay.digitizedTimestamp?.timeIntervalSince1970,
-                overlay.gpsTimestamp?.timeIntervalSince1970,
+                instants.original?.timeIntervalSince1970,
+                instants.quickTimeCreation?.timeIntervalSince1970,
+                instants.digitized?.timeIntervalSince1970,
+                instants.gps?.timeIntervalSince1970,
                 overlay.enrichedKind?.rawValue,
                 overlay.enrichedFormat?.rawValue,
                 overlay.durationSeconds,

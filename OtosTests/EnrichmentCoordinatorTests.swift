@@ -178,8 +178,7 @@ struct EnrichmentCoordinatorTests {
             return .complete(
                 EnrichmentResult(
                     id: id,
-                    metadata: AssetMetadata(cameraModel: "Cam"),
-                    timestampFacts: EnrichmentTimestampFacts(original: captureDate),
+                    metadata: AssetMetadata(timestamps: [.absolute(instant: captureDate)], cameraModel: "Cam"),
                     thumbnailPath: "t.jpg",
                     sourceSize: size,
                     sourceMTimeSeconds: mtime,

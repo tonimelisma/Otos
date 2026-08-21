@@ -134,8 +134,7 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(cameraModel: "Cam", durationSeconds: 42.5),
-                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
+                metadata: AssetMetadata(timestamps: [.absolute(instant: captureDate)], cameraModel: "Cam", durationSeconds: 42.5),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -189,12 +188,12 @@ struct CatalogStoreEnrichmentTests {
             EnrichmentResult(
                 id: id,
                 metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: captureDate)],
                     cameraModel: "Cam",
                     pixelWidth: 4000,
                     pixelHeight: 3000,
                     durationSeconds: 187.25
                 ),
-                timestampFacts: EnrichmentTimestampFacts(original: captureDate),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: scannedSize,
                 sourceMTimeSeconds: scannedMTime,
@@ -291,8 +290,7 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(cameraModel: "OldCam"),
-                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
+                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "OldCam"),
                 thumbnailPath: "old.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -354,8 +352,7 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(),
-                timestampFacts: EnrichmentTimestampFacts(original: Date(timeIntervalSince1970: 700)),
+                metadata: .absoluteCapture(instant: Date(timeIntervalSince1970: 700)),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -395,6 +392,105 @@ struct CatalogStoreEnrichmentTests {
         }
         let afterSecond = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(afterSecond.bestCaptureDate == Date(timeIntervalSince1970: 500))
+    }
+
+    /// Overlay reuse clones the source's *stored* timestamp truth, and both date
+    /// projections are rebuilt from it at the destination. Before the
+    /// deduplication the destination's `ts_*_unix` values were copied from the
+    /// source's own `ts_*_unix` columns while its capture wall was derived from
+    /// `metadata_extra_json`; now both derive from the JSON, so this proves the
+    /// sortable instant survives that change and still agrees with the wall.
+    @Test func reusedOverlayClonesBothDateProjectionsFromStoredTimestamps() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let source = temp.appending(path: "Source", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: source, withIntermediateDirectories: true)
+        let sourceFile = source.appending(path: "IMG_1.JPG")
+        try Data("camera".utf8).write(to: sourceFile)
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: source)
+
+        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        // A library-kind source, because a removable one is never hashed and so
+        // short-circuits to `.removableSourceNotHashed` before reuse is considered.
+        try await store.addLibrary(url: source)
+        try await store.addLibrary(url: destination)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 1 }
+
+        let sourceID = MediaAssetID(libraryRootPath: sourcePath, relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"))
+        let scanned = try await catalogStoreTestState(store)
+        let scannedAsset = try #require(scanned.testAssets.first { $0.id == sourceID })
+        let scannedSize = try #require(scannedAsset.byteSize)
+        let scannedMTime = MediaAsset.mtimeSeconds(scannedAsset.contentModifiedAt)
+        let scannedModifiedAt = try #require(scannedAsset.contentModifiedAt)
+        guard case let .complete(digest) = ContentHasher().hashMaterializedFile(at: sourceFile) else {
+            Issue.record("expected a source digest")
+            return
+        }
+
+        // A local-authority record: one value that feeds the sortable instant and
+        // the naming wall clock alike. No thumbnail, so reuse takes the direct path.
+        let captureDate = Date(timeIntervalSince1970: 1_767_279_600)
+        #expect(await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: sourceID,
+                metadata: .localCapture(instant: captureDate),
+                thumbnailPath: nil,
+                sourceSize: scannedSize,
+                sourceMTimeSeconds: scannedMTime,
+                contentHash: digest
+            ),
+        ]) == .applied(count: 1))
+
+        let sourceWall = try await store.captureWall(for: sourceID)
+        #expect(sourceWall != nil)
+
+        let batch = ImportBatchID()
+        let operation = ActiveFileOperation(
+            operationKey: .make(),
+            mode: "import",
+            sourceKind: .library,
+            sourceDeviceIdentity: nil,
+            sourceRootPath: sourcePath,
+            sourceRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+            destinationRootPath: destinationPath,
+            destinationRelativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
+            stagingPath: nil,
+            contentHash: digest,
+            importBatchUnixMs: batch.unixMilliseconds,
+            sourceByteSize: scannedSize,
+            sourceModifiedAt: scannedModifiedAt,
+            destinationModifiedAt: scannedModifiedAt,
+            phase: .readyToPublish,
+            deleteSourceRequested: false,
+            updatedAt: Date()
+        )
+        try await store.beginImportOperation(operation)
+
+        let result = try await store.settleImportedAsset(
+            operation: operation,
+            byteSize: scannedSize,
+            contentModifiedAt: scannedModifiedAt,
+            batch: batch,
+            companions: []
+        )
+        #expect(result.metadataCloned)
+        #expect(result.miss == nil)
+
+        let destinationID = MediaAssetID(
+            libraryRootPath: destinationPath,
+            relativePath: MediaRelativePath(rawValue: "IMG_1.JPG")
+        )
+        let settled = try await catalogStoreTestState(store)
+        let destinationAsset = try #require(settled.testAssets.first { $0.id == destinationID })
+        // The ordering column, rebuilt from the cloned records.
+        #expect(destinationAsset.bestCaptureDate == captureDate)
+        // The naming column, rebuilt from the same records — the two agree because
+        // there is only one thing left for them to disagree about.
+        #expect(try await store.captureWall(for: destinationID) == sourceWall)
     }
 
     @Test func provenDeletionPurgesThumbnailFile() async throws {

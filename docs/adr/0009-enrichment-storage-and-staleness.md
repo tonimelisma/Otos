@@ -542,6 +542,38 @@ path for pre-user enrichment schema changes.
 - `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here, in
   spec 0022, and in requirements).
 
+## Capture Timestamps: One Stored Truth, Two Projections
+
+`AssetMetadata.timestamps` — the `CaptureTimestampRecord` array persisted in
+`metadata_extra_json` — is the single stored capture-timestamp truth. Every date
+column is a *projection* of it, derived where it is written:
+
+- `CaptureWallClock.select(from:)` → `capture_wall_compact` / `capture_wall_precision`,
+  the naming fact (ENR-012). Selects local-authority records only.
+- `BestCaptureInstants.from(_:)` → `ts_original_unix`, `ts_quicktime_creation_unix`,
+  `ts_digitized_unix`, `ts_gps_unix`, which the `best_capture_unix` generated
+  column coalesces for ordering (ENR-003).
+
+`EnrichmentResult` previously carried a second copy of those four instants as
+`EnrichmentTimestampFacts`, and `ReusableEnrichmentOverlay` carried them again
+alongside the same records. Production could not diverge — both halves derived
+from one upstream `CaptureTimestamps` — but nothing *kept* them in agreement, and
+any constructed value was free to contradict itself. Fixtures did: one asserted
+best-date ordering from an absolute fact while its records said the asset had no
+timestamps at all, and another paired a record with `instant: nil` against a fact
+claiming a specific instant. Both states are unreachable through the enricher.
+
+Roles are named by `CaptureTimestampRole`, shared by the producer and both
+projections. `CaptureTimestampRecord.role` stays a `String` so persisted JSON can
+decode a role this build does not know rather than failing.
+
+Import overlay reuse clones the records and re-derives both projections at the
+destination, rather than copying the source row's already-projected columns.
+`fetchReusableEnrichmentOverlay` already required `metadata_extra_json` to be
+present, and ENR-012's own migration already backfills the capture wall from that
+JSON, so deriving the ordering columns from the same place is the existing
+storage contract rather than a new dependency.
+
 ## Reversal Plan
 
 If metadata must become resident (a cross-asset metadata feature ships), add a
