@@ -31,7 +31,7 @@ struct VideoPreviewLoaderTests {
             materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
         )
         let imageDetail = detail(kind: .image)
-        let result = await loader.play(id: id("v.mp4"), detail: imageDetail)
+        let result = await loader.preparePlayer(id: id("v.mp4"), detail: imageDetail)
         #expect(result == nil)
     }
 
@@ -41,7 +41,7 @@ struct VideoPreviewLoaderTests {
             materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
-        let state = await loader.play(id: id("a.mp4"), detail: videoDetail)
+        let state = await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail)
         #expect(state != nil)
         #expect(state?.id.relativePath.rawValue == "a.mp4")
     }
@@ -67,7 +67,7 @@ struct VideoPreviewLoaderTests {
             materializationRequester: requester
         )
         let videoDetail = detail(kind: .video)
-        let state = await loader.play(id: id("b.mp4"), detail: videoDetail)
+        let state = await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail)
         #expect(state != nil)
         #expect(counter.value == 1)
     }
@@ -81,7 +81,7 @@ struct VideoPreviewLoaderTests {
             materializationRequester: requester
         )
         let videoDetail = detail(kind: .video)
-        let state = await loader.play(id: id("c.mp4"), detail: videoDetail)
+        let state = await loader.preparePlayer(id: id("c.mp4"), detail: videoDetail)
         #expect(state == nil)
     }
 
@@ -91,13 +91,13 @@ struct VideoPreviewLoaderTests {
             materializationRequester: ClosureMaterializationRequester { _ in .cancelled }
         )
         let videoDetail = detail(kind: .video)
-        let first = await loader.play(id: id("a.mp4"), detail: videoDetail)
+        let first = await loader.preparePlayer(id: id("a.mp4"), detail: videoDetail)
         #expect(first != nil)
         if let first {
             loader.cleanup(first)
         }
         // Second play after cleanup should succeed with new id
-        let second = await loader.play(id: id("b.mp4"), detail: videoDetail)
+        let second = await loader.preparePlayer(id: id("b.mp4"), detail: videoDetail)
         #expect(second?.id.relativePath.rawValue == "b.mp4")
     }
 }

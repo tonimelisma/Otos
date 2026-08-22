@@ -75,9 +75,11 @@ struct LoupeView: View {
                             thumbnailDirectory: thumbnailDirectory,
                             detailReader: detailReader
                         )
-                        // Click-to-play affordance for video: centered play glyph.
-                        // Poster-first — keep thumbnail until isReadyForDisplay.
-                        if shouldShowPlayAffordance(for: id) {
+                        // Poster-first — keep the thumbnail until the player is ready.
+                        // Retry affordance only: a video prepares itself on focus, so
+                        // this glyph appears when preparation produced no player, and
+                        // never beside the progress indicator that occupies its place.
+                        if !isDownloading, shouldShowPlayAffordance(for: id) {
                             Image(systemName: "play.circle.fill")
                                 .resizable()
                                 .frame(width: 60, height: 60)
@@ -96,13 +98,13 @@ struct LoupeView: View {
                 case .empty:
                     ContentUnavailableView("No Selection", systemImage: "photo")
                 }
+                // Centered, where the play glyph sits (DES-086): the wait belongs on
+                // the media the user is waiting for, not in a corner of the window.
                 if isDownloading {
                     ProgressView()
-                        .controlSize(.small)
-                        .padding(8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .padding(16)
+                        .controlSize(.large)
+                        .shadow(radius: 8)
+                        .allowsHitTesting(false)
                 }
             }
             .contentShape(Rectangle())

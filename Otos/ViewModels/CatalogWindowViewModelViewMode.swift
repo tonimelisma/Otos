@@ -35,6 +35,12 @@ extension CatalogWindowViewModel {
             let details = await reader.details(for: [id])
             guard let self, focusedAssetID == id else { return }
             focusedAssetKind = details[id]?.bestKind
+            // Opening a video prepares it, exactly as opening an image decodes it: no
+            // click stands between the user and a playable asset. Kind is only known
+            // here, so this is the one place that can start it.
+            if focusedAssetKind == .video, viewMode == .loupe {
+                prepareLoupeVideo(id: id, startPlaying: false)
+            }
         }
     }
 
@@ -273,6 +279,8 @@ extension CatalogWindowViewModel {
         // ViewModel's `loupeVideoState`; loader is stateless factory.
         if loupeVideoState?.id != focusedAssetID || viewMode != .loupe {
             if let stale = loupeVideoState {
+                loupeVideoPrepareTask?.cancel()
+                loupeVideoPrepareTask = nil
                 videoLoader.cleanup(stale)
             }
             loupeVideoState = nil
@@ -362,41 +370,63 @@ extension CatalogWindowViewModel {
         paneRequestTasks.removeAll()
     }
 
-    // MARK: - Loupe video (click-to-play, loupe only)
+    // MARK: - Loupe video (prepared on focus, loupe only)
 
-    func playLoupeVideo(id: MediaAssetID) {
-        guard viewMode == .loupe, focusedAssetID == id else { return }
+    /// The one implementation path for "make the focused video playable". `setFocus`
+    /// calls it with `startPlaying: false` the moment the focused asset's kind resolves
+    /// to video, so a video materializes by being opened, exactly like an image. The
+    /// poster's play glyph — which appears only when preparation produced no player —
+    /// calls the same function with `startPlaying: true`.
+    ///
+    /// This path deliberately does not touch `downloadingSlots`. The pane-preview
+    /// request for the same asset is already awaiting the same materialization and is
+    /// the single owner of the pane's progress indicator; a second writer could clear
+    /// the spinner while the other fetch was still running.
+    func prepareLoupeVideo(id: MediaAssetID, startPlaying: Bool) {
+        guard viewMode == .loupe, focusedAssetID == id, loupeVideoState?.id != id else {
+            return
+        }
         let detailReader = tileDetailReader
         let loader = videoLoader
-        downloadingSlots.insert(.loupe)
-        Task { @MainActor [weak self] in
-            // One exit point for the slot: every `return` below unwinds through it.
-            // The previous shape removed the slot on two of four paths, leaving a
-            // permanent spinner after clicking a still image.
-            defer { self?.downloadingSlots.remove(.loupe) }
+        loupeVideoPrepareTask?.cancel()
+        loupeVideoPrepareTask = Task { @MainActor [weak self] in
             guard let self else { return }
             let detail = await detailReader.details(for: [id])[id]
-            guard detail?.bestKind == .video else { return }
-            guard let state = await loader.play(id: id, detail: detail) else {
+            guard !Task.isCancelled, detail?.bestKind == .video else { return }
+            guard let state = await loader.preparePlayer(id: id, detail: detail) else {
                 OtosLog.ui.notice(
                     "op=loupe.video phase=unavailable id=\(id.relativePath.rawValue, privacy: .public)"
                 )
                 return
             }
-            guard focusedAssetID == id, viewMode == .loupe else {
+            // Revalidate after every await: focus may have moved while bytes arrived.
+            guard !Task.isCancelled, focusedAssetID == id, viewMode == .loupe else {
                 loader.cleanup(state)
                 return
             }
-            loupeVideoState = state
-            state.player.play()
-            var playing = state
-            playing.isPlaying = true
-            loupeVideoState = playing
-            OtosLog.ui.notice("op=loupe.video phase=play id=\(id.relativePath.rawValue, privacy: .public)")
+            var prepared = state
+            if startPlaying {
+                state.player.play()
+                prepared.isPlaying = true
+            }
+            loupeVideoState = prepared
+            OtosLog.ui.notice(
+                """
+                op=loupe.video phase=\(startPlaying ? "play" : "ready", privacy: .public) \
+                id=\(id.relativePath.rawValue, privacy: .public)
+                """
+            )
         }
     }
 
+    /// Explicit play intent from the poster's play glyph — same path, playing.
+    func playLoupeVideo(id: MediaAssetID) {
+        prepareLoupeVideo(id: id, startPlaying: true)
+    }
+
     private func clearLoupeVideo() {
+        loupeVideoPrepareTask?.cancel()
+        loupeVideoPrepareTask = nil
         if let state = loupeVideoState {
             videoLoader.cleanup(state)
         }

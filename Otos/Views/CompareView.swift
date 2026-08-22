@@ -99,13 +99,12 @@ struct CompareView: View {
                     ContentUnavailableView("No Photo", systemImage: "photo")
                         .foregroundStyle(.secondary)
                 }
+                // Centered like the loupe pane (DES-086) — one pane idiom for waiting.
                 if isDownloading {
                     ProgressView()
-                        .controlSize(.small)
-                        .padding(8)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                        .padding(12)
+                        .controlSize(.large)
+                        .shadow(radius: 8)
+                        .allowsHitTesting(false)
                 }
             }
             .contentShape(Rectangle())

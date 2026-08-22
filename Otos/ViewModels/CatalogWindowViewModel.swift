@@ -238,6 +238,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let previewLoader: any PreviewLoading
     @ObservationIgnored let videoLoader: VideoPreviewLoader
     var loupeVideoState: LoupeVideoState?
+    /// The one in-flight loupe video preparation (materialize + build player). Named so
+    /// a focus move can cancel the previous asset's preparation before starting another.
+    @ObservationIgnored var loupeVideoPrepareTask: Task<Void, Never>?
 
     init(
         catalogStore: CatalogStore,
