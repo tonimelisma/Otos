@@ -229,6 +229,18 @@ struct GridSelectionTests {
         #expect(after.base == live)
     }
 
+    @Test func reconcilingSelectionMovesTheAnchorForASingleItemKeyboardMove() {
+        // An unmodified arrow key lands here as a live selection of exactly one item.
+        // The anchor is also the "active item" loupe entry focuses, so it must follow
+        // the arrow — otherwise Return opens loupe on the previously clicked tile.
+        let before = GridSelection(selection: [itemC], anchor: itemC, base: [itemC])
+        let after = before.reconcilingSelection([itemD])
+
+        #expect(after.selection == [itemD])
+        #expect(after.anchor == itemD)
+        #expect(after.base == [itemD])
+    }
+
     @Test func reconcilingSelectionIsNoOpWhenLiveMatchesModel() {
         let before = GridSelection(selection: [itemC, itemD], anchor: itemC, base: [itemC])
         let after = before.reconcilingSelection([itemC, itemD])

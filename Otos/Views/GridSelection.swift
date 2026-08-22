@@ -89,14 +89,24 @@ nonisolated struct GridSelection: Equatable {
     /// `selectionIndexPaths` directly and bypasses the model. When the live selection
     /// differs from the model's, `base` becomes the live set so a later ⇧-click unions
     /// against the keyboard result (⌘A + ⇧-click keeps everything) instead of a stale
-    /// pre-keyboard base. Anchor is unchanged. This is the only place the model adopts a
-    /// value read from `selectionIndexPaths` — and it is a one-way adoption into the
-    /// `selection`/`base` fields, never an input to a gesture computation.
+    /// pre-keyboard base.
+    ///
+    /// The anchor is both the ⇧-range pivot and the "active item" loupe entry focuses
+    /// (`BrowserModePolicy.loupeEntryFocus`), so an unmodified arrow move — which lands
+    /// here as a live selection of exactly one item — must move it, exactly as a plain
+    /// click does; otherwise Return opens loupe on the previously clicked item instead of
+    /// the arrow-navigated one. A range-extending keyboard gesture (⇧-arrows, ⌘A) leaves
+    /// a live set of more than one item and keeps the pivot where it was.
+    ///
+    /// This is the only place the model adopts a value read from `selectionIndexPaths` —
+    /// and it is a one-way adoption into the `selection`/`anchor`/`base` fields, never an
+    /// input to a gesture computation.
     func reconcilingSelection(_ liveSelection: Set<MediaAssetID>) -> GridSelection {
         if liveSelection == selection {
             return self
         }
-        return GridSelection(selection: liveSelection, anchor: anchor, base: liveSelection)
+        let movedAnchor = liveSelection.count == 1 ? liveSelection.first : anchor
+        return GridSelection(selection: liveSelection, anchor: movedAnchor, base: liveSelection)
     }
 
     /// Structural-apply survivor prune (same descriptor): drop identities that left the
