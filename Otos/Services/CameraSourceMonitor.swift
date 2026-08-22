@@ -249,22 +249,51 @@ final class CameraSourceMonitor: NSObject {
     }
 }
 
-extension CameraSourceMonitor: @preconcurrency ICDeviceBrowserDelegate {
-    func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
+/// ImageCaptureCore delegate boundary
+///
+/// ImageCaptureCore calls delegate methods on queues it chooses. Its headers promise
+/// that "unless otherwise noted, all delegate callbacks will occur on the main thread"
+/// (`ICDevice.h`), but `cameraDevice(_:didReceivePTPEvent:)` is delivered on the
+/// framework's own `ICDeviceOperationQueue` — which killed the app in
+/// `_dispatch_assert_queue_fail` when a camera attached.
+///
+/// A `@preconcurrency` conformance on a `@MainActor` type asserts isolation this app
+/// does not control: it does not move a callback to the main actor, it inserts a runtime
+/// executor check that traps at method entry when the framework disagrees — so even an
+/// empty method crashes. Both delegate conformances here are therefore plain, and every
+/// delegate method is `nonisolated`. That is a type-level fix rather than a per-method
+/// patch: the compiler now rejects any delegate method that claims main-actor isolation,
+/// so a callback added later cannot re-open this defect class, and each one must state
+/// its hop to the owner.
+///
+/// The framework's Objective-C objects cross that hop under the file's
+/// `@preconcurrency import ImageCaptureCore`, which is what that import is for — no
+/// unchecked `Sendable` conformance is introduced (ARC-042).
+///
+/// Hops are independent tasks and may land in any order. Every piece of owner state they
+/// touch is a sticky one-way latch (`sessionOpenResult`, `terminalFailure`,
+/// `isCatalogReady`) or a monotonic counter (`didAddItemCount`), so no interleaving of
+/// deliveries changes the outcome a caller observes.
+extension CameraSourceMonitor: ICDeviceBrowserDelegate {
+    nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didAdd device: ICDevice, moreComing: Bool) {
         guard let camera = device as? ICCameraDevice else {
             return
         }
-        attach(camera)
+        Task { @MainActor [weak self] in
+            self?.attach(camera)
+        }
     }
 
-    func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
+    nonisolated func deviceBrowser(_ browser: ICDeviceBrowser, didRemove device: ICDevice, moreGoing: Bool) {
         guard let camera = device as? ICCameraDevice else {
             return
         }
-        detach(camera)
+        Task { @MainActor [weak self] in
+            self?.detach(camera)
+        }
     }
 
-    func deviceBrowserDidEnumerateLocalDevices(_ browser: ICDeviceBrowser) {
+    nonisolated func deviceBrowserDidEnumerateLocalDevices(_ browser: ICDeviceBrowser) {
         OtosLog.fileAccess.debug("ImageCapture camera browser finished local enumeration")
     }
 }
@@ -649,7 +678,43 @@ final class DeviceCameraSession: NSObject {
         }
     }
 
-    private func markCatalogReady() {
+    /// Main-actor side of `device(_:didOpenSessionWithError:)`. Sticky: the first
+    /// outcome latches, so a reordered delivery cannot downgrade a session that already
+    /// opened, and `terminalFailure` (set by a close) still wins in `wait(for:)`.
+    fileprivate func applySessionOpenOutcome(frameworkErrorDescription: String?) {
+        if let frameworkErrorDescription {
+            sessionOpenResult = .failure(DeviceCameraSessionError.disconnected)
+            resolveWaiters(condition: .open, result: .failure(DeviceCameraSessionError.disconnected))
+            OtosLog.fileAccess.errorOperation("camera.session", phase: "openFailed", fields: [
+                "identity": identity,
+                "error": frameworkErrorDescription,
+            ])
+        } else {
+            sessionOpenResult = .success(())
+            resolveWaiters(condition: .open, result: .success(()))
+            OtosLog.fileAccess.noticeOperation("camera.session", phase: "open", fields: [
+                "identity": identity,
+            ])
+        }
+    }
+
+    /// Main-actor side of `device(_:didCloseSessionWithError:)` and `didRemove(_:)`.
+    /// Both mean the same thing to every caller — the session is gone — so they share
+    /// one owner intent instead of two paths that must stay in step.
+    fileprivate func applySessionClosed() {
+        failAllWaiters(DeviceCameraSessionError.disconnected)
+        OtosLog.fileAccess.noticeOperation("camera.session", phase: "close", fields: [
+            "identity": identity,
+        ])
+    }
+
+    /// Main-actor side of the two `didAdd` callbacks; monotonic, so hop order is
+    /// irrelevant to `waitForCatalogStability`.
+    fileprivate func countAddedItems(_ count: Int) {
+        didAddItemCount += count
+    }
+
+    fileprivate func markCatalogReady() {
         isCatalogReady = true
         resolveWaiters(condition: .catalogReady, result: .success(()))
     }
@@ -762,76 +827,80 @@ final class DeviceCameraSession: NSObject {
     }
 }
 
-extension DeviceCameraSession: @preconcurrency ICCameraDeviceDelegate {
-    func deviceDidBecomeReady(_ device: ICDevice) {}
+extension DeviceCameraSession: ICCameraDeviceDelegate {
+    nonisolated func deviceDidBecomeReady(_ device: ICDevice) {}
 
-    func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
-        if let error {
-            sessionOpenResult = .failure(error)
-            resolveWaiters(condition: .open, result: .failure(error))
-            OtosLog.fileAccess.errorOperation("camera.session", phase: "openFailed", fields: [
-                "identity": identity,
-                "error": String(describing: error),
-            ])
-        } else {
-            sessionOpenResult = .success(())
-            resolveWaiters(condition: .open, result: .success(()))
-            OtosLog.fileAccess.noticeOperation("camera.session", phase: "open", fields: [
-                "identity": identity,
-            ])
+    nonisolated func device(_ device: ICDevice, didOpenSessionWithError error: (any Error)?) {
+        // The framework error is reduced to a Sendable value at the boundary rather
+        // than carried inward: callers of this session only ever see its own typed
+        // failures, and the framework's description survives in the log line below.
+        let description = error.map { String(describing: $0) }
+        Task { @MainActor [weak self] in
+            self?.applySessionOpenOutcome(frameworkErrorDescription: description)
         }
     }
 
-    func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
-        failAllWaiters(error ?? DeviceCameraSessionError.disconnected)
-        OtosLog.fileAccess.noticeOperation("camera.session", phase: "close", fields: [
-            "identity": identity,
-        ])
+    nonisolated func device(_ device: ICDevice, didCloseSessionWithError error: (any Error)?) {
+        Task { @MainActor [weak self] in
+            self?.applySessionClosed()
+        }
     }
 
-    func device(_ device: ICDevice, didReceiveStatusInformation status: [ICDeviceStatus: Any]) {}
+    nonisolated func device(_ device: ICDevice, didReceiveStatusInformation status: [ICDeviceStatus: Any]) {}
 
-    func device(_ device: ICDevice, didEncounterError error: (any Error)?) {}
+    nonisolated func device(_ device: ICDevice, didEncounterError error: (any Error)?) {}
 
-    func didRemove(_ device: ICDevice) {
-        failAllWaiters(DeviceCameraSessionError.disconnected)
+    nonisolated func didRemove(_ device: ICDevice) {
+        Task { @MainActor [weak self] in
+            self?.applySessionClosed()
+        }
     }
 
-    func cameraDevice(_ camera: ICCameraDevice, didAdd item: ICCameraItem) {
-        didAddItemCount += 1
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didAdd item: ICCameraItem) {
+        Task { @MainActor [weak self] in
+            self?.countAddedItems(1)
+        }
     }
 
-    func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
-        didAddItemCount += items.count
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didAdd items: [ICCameraItem]) {
+        let count = items.count
+        Task { @MainActor [weak self] in
+            self?.countAddedItems(count)
+        }
     }
 
-    func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRemove items: [ICCameraItem]) {}
 
-    func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didRenameItems items: [ICCameraItem]) {}
 
-    func cameraDevice(
+    nonisolated func cameraDevice(
         _ camera: ICCameraDevice,
         didReceiveThumbnail thumbnail: CGImage?,
         for item: ICCameraItem,
         error: (any Error)?
     ) {}
 
-    func cameraDevice(
+    nonisolated func cameraDevice(
         _ camera: ICCameraDevice,
         didReceiveMetadata metadata: [AnyHashable: Any]?,
         for item: ICCameraItem,
         error: (any Error)?
     ) {}
 
-    func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
+    nonisolated func cameraDeviceDidChangeCapability(_ camera: ICCameraDevice) {}
 
-    func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
+    /// Delivered on the framework's own `ICDeviceOperationQueue`, not the main thread —
+    /// the callback whose main-actor assertion trapped the process. Otos consumes no PTP
+    /// events, so it stays empty; it must stay `nonisolated`.
+    nonisolated func cameraDevice(_ camera: ICCameraDevice, didReceivePTPEvent eventData: Data) {}
 
-    func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
+    nonisolated func cameraDeviceDidRemoveAccessRestriction(_ device: ICDevice) {}
 
-    func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
+    nonisolated func cameraDeviceDidEnableAccessRestriction(_ device: ICDevice) {}
 
-    func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
-        markCatalogReady()
+    nonisolated func deviceDidBecomeReady(withCompleteContentCatalog device: ICCameraDevice) {
+        Task { @MainActor [weak self] in
+            self?.markCatalogReady()
+        }
     }
 }
