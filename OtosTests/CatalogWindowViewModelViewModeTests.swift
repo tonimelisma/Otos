@@ -192,6 +192,24 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
     }
 
+    @Test func returnOpensLoupeOnTheArrowNavigatedItem() {
+        // Click a tile, then arrow away: native AppKit keyboard nav rewrites
+        // selectionIndexPaths and reconciles upward as a single-item live selection.
+        // Return (openLoupe(id: nil)) must focus where the arrows landed, not the
+        // clicked tile — the double-click path already passes the id explicitly.
+        let fake = FakePreviewLoader()
+        let model = makeViewModeModel(loader: fake)
+        let ids = makeViewModeIDs(count: 4)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
+
+        _ = model.reconcileNativeSelection([ids[2]])
+        model.openLoupe(id: nil)
+
+        #expect(model.focusedAssetID == ids[2])
+        #expect(model.gridSelection.selection == [ids[2]])
+    }
+
     @Test func compareDoesNotRetargetLoupeFocus() {
         let fake = FakePreviewLoader()
         let model = makeViewModeModel(loader: fake)
