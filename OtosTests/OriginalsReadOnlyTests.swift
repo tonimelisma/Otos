@@ -189,7 +189,7 @@ struct OriginalsReadOnlyTests {
                 MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
             }
         )
-        if let state = await loader.play(id: id, detail: detail) {
+        if let state = await loader.preparePlayer(id: id, detail: detail) {
             loader.cleanup(state)
         }
         try assertUnchanged(before, root: root)

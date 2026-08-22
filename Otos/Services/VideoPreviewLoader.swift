@@ -8,7 +8,8 @@ import OSLog
 /// that gates on `FileMaterialization.status` immediately before any byte-backed
 /// `AVPlayerItem` init, deliberately materializes dataless originals through the
 /// shared `MaterializationCoordinator` at interactive priority when the user has
-/// clicked to play, and returns a `LoupeVideoState` holding the player.
+/// opened the asset in loupe, and returns a `LoupeVideoState` holding a paused
+/// player.
 ///
 /// Why `@MainActor` and stateless: `AVPlayer`/`AVPlayerItem` are `@MainActor`
 /// in the macOS 27 SDK — a video player is a UI object like `AVPlayerView`.
@@ -32,11 +33,12 @@ final class VideoPreviewLoader {
     }
 
     /// Gates on live `SF_DATALESS`, materializes at interactive priority if
-    /// dataless, re-checks before `AVPlayerItem` init, then creates the player.
+    /// dataless, re-checks before `AVPlayerItem` init, then creates the player —
+    /// paused. Starting playback is the caller's intent, not this factory's.
     /// Returns `nil` for `providerUnavailable`/`timedOut`/`unknown` and for
     /// non-video kinds — caller keeps the poster thumbnail. Suspends at the
     /// materialization await without blocking the main thread.
-    func play(id: MediaAssetID, detail: MediaTileDetail?) async -> LoupeVideoState? {
+    func preparePlayer(id: MediaAssetID, detail: MediaTileDetail?) async -> LoupeVideoState? {
         guard detail?.bestKind == .video else {
             return nil
         }
