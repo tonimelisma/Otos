@@ -164,7 +164,7 @@ one of those seven.
 
 | # | Internal state / condition | User-facing state | Own UI spec? |
 | --- | --- | --- | --- |
-| 1 | `inventory`, `planning`, `waitingForMetadata`, `needsReplan` | **A · Preparing** | ✅ |
+| 1 | `inventory`, `planning`, `waitingForMetadata` — **only before this attachment has ever produced a plan** | **A · Preparing** | ✅ |
 | 2 | `session.destination == nil` — reachable only when no library is available to choose | **B · No destination** | ✅ actionable, so distinct |
 | 3 | `ready` with new items | **C · Ready** | ✅ |
 | 4 | `ready`, `copyCount == 0`, `skipCount > 0` | C, nothing-new variant | folds into C |
@@ -184,6 +184,16 @@ one of those seven.
 So: **seven bar states to draw** — A, B, C (+2 variants), D, E (+1), F (+1), G.
 
 ### A · Preparing
+
+**A means Otos cannot yet describe what is on this card.** That is true before any
+plan has been proved, and again whenever naming facts are pending — enrichment has
+not read some file, so its count is not knowable. It is *not* true of a re-plan: a
+rebuild over an already-proven set keeps showing the plan it is replacing (state C)
+until the newer one lands, because the old answer stays true until the new one
+arrives. Drawing A on every rebuild reported internal churn
+as though it were the user's problem — the exact failure DES-035 names — and on an
+enriching cloud destination it did so about once a second, each cycle ending in the
+identical count.
 
 L1 `Checking the card…` · L3 `112 of 181 items`. Middle: a **determinate** bar
 driven by that same count — HIG prefers determinate wherever a real total exists,

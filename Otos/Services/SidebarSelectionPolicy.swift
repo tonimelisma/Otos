@@ -94,7 +94,7 @@ nonisolated enum SidebarSelectionPolicy {
         return switch presentation.state {
         case let .waitingForMetadata(done, total):
             .determinate(completed: done, total: total)
-        case .inventory, .planning, .queuedForReadiness, .needsReplan:
+        case .inventory, .planning, .queuedForReadiness:
             .indeterminate
         default:
             .none

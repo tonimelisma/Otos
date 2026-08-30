@@ -422,6 +422,69 @@ struct MediaOperationCoordinatorTests {
     /// discarded the ready plan and rebuilt it — ~480 ms of enumerate+plan roughly
     /// once a second, for as long as the library kept enriching, each rebuild
     /// producing the identical answer.
+    /// State A means "no plan has ever existed for this attachment", not "a newer
+    /// plan is on its way". Before plan 0099 a rebuild overwrote `phase` with
+    /// `.building`, destroying the `ReadyContext` the user was looking at, so the bar
+    /// fell back to "Checking the card…" on every re-plan — once a second, for as long
+    /// as anything kept invalidating, each cycle ending in the identical count.
+    @Test func aRebuildKeepsShowingThePlanItIsReplacing() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:hold-last-plan",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        await coordinator.start()
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+        await coordinator.setDestination(fixedPath, for: cardPath)
+        let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        // Force a real rebuild and sample the presentation while it is in flight.
+        // Whatever the coordinator is doing internally, what the user is shown must
+        // never regress from a proven plan to "we know nothing".
+        _ = await store.bumpNamespaceRevision(for: cardPath)
+        var sawNonReady = false
+        let deadline = ContinuousClock().now + .seconds(3)
+        while ContinuousClock().now < deadline {
+            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
+                switch presentation.state {
+                case .ready, .executionUnavailable:
+                    break
+                default:
+                    sawNonReady = true
+                }
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!sawNonReady, "the bar fell back to a non-ready state during a rebuild")
+
+        let settled = try await settledReadyGeneration(coordinator, source: cardPath)
+        #expect(settled >= baseline)
+        await coordinator.shutdown()
+    }
+
     @Test func destinationNamingChurnDoesNotDisturbReadyPlan() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)

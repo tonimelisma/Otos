@@ -145,6 +145,19 @@ actor MediaOperationCoordinator {
         /// same transaction as `phase = .completed`; only meaningful while
         /// `phase` is `.completed`.
         var settledOutcome: SettledOutcome?
+        /// The most recent plan this attachment actually proved, kept across the
+        /// rebuilds that follow it. A re-plan overwrites `phase` with `.building`, so
+        /// without this the plan the user is looking at is destroyed the moment a
+        /// newer one is scheduled and the bar falls back to state A — reporting
+        /// "Checking the card…" as though nothing were known, once a second for as
+        /// long as anything kept invalidating (plan 0099 D3). State A means *no plan
+        /// has ever existed for this attachment*; a refresh is not a first check.
+        ///
+        /// Written in the same transaction as `phase = .ready`, like
+        /// `lastCompletion`/`lastProgress`, and cleared by nothing — a new
+        /// `AttachmentGeneration` builds a fresh `SourceSession`, which is what makes
+        /// ejecting and re-inserting a card forget the old plan.
+        var lastReadyContext: ReadyContext?
         var lastCompletion: AttachmentCompletion?
         /// The most recently minted batch for this attachment, set the moment
         /// execution begins and left alone afterward. `lastCompletion` only
@@ -1255,6 +1268,7 @@ actor MediaOperationCoordinator {
         )
         var updated = current
         updated.phase = .ready(readyCtx)
+        updated.lastReadyContext = readyCtx
         updated.isDirty = false
         if updated.attachToReadyMs == nil {
             let elapsed = updated.attachStartedAt.duration(to: ContinuousClock().now)
@@ -1355,14 +1369,49 @@ actor MediaOperationCoordinator {
         return claims
     }
 
+    /// The plan this attachment last proved, if it still passes the same guards a
+    /// live `.ready` plan does. Returns nil when nothing has been proved yet — which
+    /// is the one case that legitimately draws state A.
+    ///
+    /// Used only where a *newer plan over the same proven set* is being built. It is
+    /// never used while naming facts are pending: a held plan cannot describe rows
+    /// enrichment has not read yet.
+    private func heldPlanState(for session: SourceSession) -> MediaOperationSourceState? {
+        guard let held = session.lastReadyContext else {
+            return nil
+        }
+        let state = readyState(for: session, ctx: held)
+        // `readyState` answers `.inventory` when the source is not ready to be
+        // offered; that is a refusal, not a plan, so fall through to the real phase.
+        if case .inventory = state {
+            return nil
+        }
+        return state
+    }
+
     private func presentation(for session: SourceSession) -> MediaOperationSourcePresentation {
+        // A rebuild in flight is not a reason to unshow what this attachment already
+        // proved. `.inventory`, `.waitingForMetadata` and `.building` all mean "a
+        // newer plan is coming"; if an older one is still true enough to have been
+        // published, keep showing it until the newer one lands. Routed back through
+        // `readyState` rather than reconstructing the state, so the readiness gate
+        // and the `!isDirty` empty-card proof still apply — a session mid-rebuild is
+        // dirty, so it can never use a held plan to claim "This card is empty".
         let state: MediaOperationSourceState = switch session.phase {
         case .inventory:
-            session.importRequested ? .queuedForReadiness : .inventory
+            session.importRequested ? .queuedForReadiness : heldPlanState(for: session) ?? .inventory
+        // Deliberately *not* held across `.waitingForMetadata`. `.building` and
+        // `.inventory` re-derive a plan over a set whose naming facts are already
+        // proven, so the old answer stays true until the new one lands. Waiting for
+        // metadata is the opposite: rows are pending precisely because enrichment has
+        // not read them, and they may not be in the held plan at all — showing its
+        // count would under-report, and an empty held plan would report "nothing to
+        // copy" about files it never saw. A is correct here, and its determinate
+        // progress is the honest thing to draw.
         case let .waitingForMetadata(done, total):
             session.importRequested ? .queuedForReadiness : .waitingForMetadata(done: done, total: total)
         case .building:
-            session.importRequested ? .queuedForReadiness : .planning
+            session.importRequested ? .queuedForReadiness : heldPlanState(for: session) ?? .planning
         case let .ready(ctx):
             session.importRequested ? .queuedForReadiness : readyState(for: session, ctx: ctx)
         case .executing:

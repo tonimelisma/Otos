@@ -400,7 +400,6 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
     )
     case queuedForReadiness
     case executing(progress: MediaOperationProgress)
-    case needsReplan
     case completed(
         summary: MediaOperationPlanTotals,
         skippedForeignCount: Int = 0,

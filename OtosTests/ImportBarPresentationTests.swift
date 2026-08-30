@@ -92,9 +92,8 @@ struct ImportBarPresentationTests {
         #expect(drawn.middleZone == .progress(track: .determinate(completed: 112, total: 181), caption: nil))
     }
 
-    @Test func preparingFoldsPlanningAndNeedsReplanIntoA() {
+    @Test func preparingFoldsPlanningIntoA() {
         #expect(Self.map(Self.presentation(state: .planning)).kind == .preparing)
-        #expect(Self.map(Self.presentation(state: .needsReplan)).kind == .preparing)
     }
 
     @Test func queuedForReadinessIsAWithQueuedButtonStillDisabled() {
