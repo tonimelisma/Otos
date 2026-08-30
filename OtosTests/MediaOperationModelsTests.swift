@@ -36,8 +36,9 @@ struct MediaOperationModelsTests {
         MediaOperationPlan(
             generation: 1,
             mode: .import(source: source, destination: destination, batch: ImportBatchID()),
-            sourceOccupancyRevision: 1,
-            destinationOccupancyRevision: 1,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
             policy: ImportPolicy(
                 destinationFolderPolicy: .none,
                 destinationNamePolicy: .original,

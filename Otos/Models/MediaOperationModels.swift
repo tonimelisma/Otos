@@ -317,8 +317,9 @@ nonisolated struct MediaOperationPlanTotals: Equatable, Sendable {
 nonisolated struct MediaOperationPlan: Equatable, Sendable {
     let generation: UInt64
     let mode: MediaOperationMode
-    let sourceOccupancyRevision: UInt64
-    let destinationOccupancyRevision: UInt64
+    let sourceNamespaceRevision: UInt64
+    let sourceNamingRevision: UInt64
+    let destinationNamespaceRevision: UInt64
     let policy: ImportPolicy
     let entries: [MediaOperationPlanEntry]
     let eraseManifest: EraseManifest
@@ -327,8 +328,9 @@ nonisolated struct MediaOperationPlan: Equatable, Sendable {
     init(
         generation: UInt64,
         mode: MediaOperationMode,
-        sourceOccupancyRevision: UInt64,
-        destinationOccupancyRevision: UInt64,
+        sourceNamespaceRevision: UInt64,
+        sourceNamingRevision: UInt64,
+        destinationNamespaceRevision: UInt64,
         policy: ImportPolicy,
         entries: [MediaOperationPlanEntry],
         eraseManifest: EraseManifest? = nil,
@@ -336,8 +338,9 @@ nonisolated struct MediaOperationPlan: Equatable, Sendable {
     ) {
         self.generation = generation
         self.mode = mode
-        self.sourceOccupancyRevision = sourceOccupancyRevision
-        self.destinationOccupancyRevision = destinationOccupancyRevision
+        self.sourceNamespaceRevision = sourceNamespaceRevision
+        self.sourceNamingRevision = sourceNamingRevision
+        self.destinationNamespaceRevision = destinationNamespaceRevision
         self.policy = policy
         self.entries = entries
         self.eraseManifest = eraseManifest ?? EraseManifest.from(planEntries: entries)
@@ -355,13 +358,33 @@ nonisolated struct MediaOperationPlan: Equatable, Sendable {
     }
 }
 
+/// The pair of revisions an import plan's staleness is judged against, sampled
+/// together so the two halves cannot be read across a suspension.
+nonisolated struct RootPlanningRevisions: Equatable, Sendable {
+    let namespaceRevision: UInt64
+    let namingRevision: UInt64
+}
+
 /// Import-planning wake published on the Store's planning-change stream. Carries
-/// the root's current `occupancyRevision` so the import coordinator can cheaply
-/// distinguish a real occupancy change from `planRevision`-only churn (no-op
-/// rescans, event deferrals) and skip a needless replan.
+/// both of the root's planning revisions so the import coordinator can decide, per
+/// role, whether this wake invalidates anything:
+///
+/// - `namespaceRevision` — which paths the root occupies. Invalidates a plan that
+///   reads this root as **source or destination**.
+/// - `namingRevision` — what Otos would call this root's assets. Invalidates a plan
+///   that reads this root as **source only**; enriching an asset already in the
+///   destination renames nothing on disk (ARC-046).
+///
+/// A wake with both unchanged is `planRevision`-only churn (no-op rescans, event
+/// deferrals) and is a cheap no-op.
 nonisolated struct RootPlanningChange: Equatable, Sendable {
     let rootPath: LibraryRootPath
-    let occupancyRevision: UInt64
+    let namespaceRevision: UInt64
+    let namingRevision: UInt64
+
+    var revisions: RootPlanningRevisions {
+        RootPlanningRevisions(namespaceRevision: namespaceRevision, namingRevision: namingRevision)
+    }
 }
 
 /// Per-source import lifecycle published to the footer (ARC-047).
@@ -541,8 +564,9 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
     let generation: UInt64
     let sourceRoot: LibraryRootPath
     let destinationRoot: LibraryRootPath
-    let sourceOccupancyRevision: UInt64
-    let destinationOccupancyRevision: UInt64
+    let sourceNamespaceRevision: UInt64
+    let sourceNamingRevision: UInt64
+    let destinationNamespaceRevision: UInt64
     let sourceMedia: [PlanningFileFacts]
     let destinationOccupants: [MediaRelativePath: DestinationOccupantFacts]
     let destinationOccupantKeys: Set<FilesystemNameKey>
@@ -555,8 +579,9 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         generation: UInt64,
         sourceRoot: LibraryRootPath,
         destinationRoot: LibraryRootPath,
-        sourceOccupancyRevision: UInt64,
-        destinationOccupancyRevision: UInt64,
+        sourceNamespaceRevision: UInt64,
+        sourceNamingRevision: UInt64,
+        destinationNamespaceRevision: UInt64,
         sourceMedia: [PlanningFileFacts],
         destinationOccupants: [MediaRelativePath: DestinationOccupantFacts],
         policy: ImportPolicy,
@@ -567,8 +592,9 @@ nonisolated struct ImportPlanningSnapshot: Equatable, Sendable {
         self.generation = generation
         self.sourceRoot = sourceRoot
         self.destinationRoot = destinationRoot
-        self.sourceOccupancyRevision = sourceOccupancyRevision
-        self.destinationOccupancyRevision = destinationOccupancyRevision
+        self.sourceNamespaceRevision = sourceNamespaceRevision
+        self.sourceNamingRevision = sourceNamingRevision
+        self.destinationNamespaceRevision = destinationNamespaceRevision
         self.sourceMedia = sourceMedia
         self.destinationOccupants = destinationOccupants
         destinationOccupantKeys = Set(destinationOccupants.keys.map {

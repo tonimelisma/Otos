@@ -88,8 +88,9 @@ nonisolated enum MediaTransferPlanner {
                 destination: snapshot.destinationRoot,
                 batch: ImportBatchID()
             ),
-            sourceOccupancyRevision: snapshot.sourceOccupancyRevision,
-            destinationOccupancyRevision: snapshot.destinationOccupancyRevision,
+            sourceNamespaceRevision: snapshot.sourceNamespaceRevision,
+            sourceNamingRevision: snapshot.sourceNamingRevision,
+            destinationNamespaceRevision: snapshot.destinationNamespaceRevision,
             policy: snapshot.policy,
             entries: entries,
             eraseManifest: eraseManifest,

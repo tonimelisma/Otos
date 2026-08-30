@@ -23,7 +23,7 @@ struct CatalogStoreDeviceInventoryTests {
         var iterator = changes.makeAsyncIterator()
 
         let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
-        let occupancyBeforeBatch = await store.occupancyRevision(for: rootPath)
+        let occupancyBeforeBatch = await store.namespaceRevision(for: rootPath)
         try await store.recordDeviceCatalogBatch([
             ScannedMediaFile(
                 relativePath: MediaRelativePath(rawValue: "DCIM/IMG_0001.JPG"),
@@ -37,9 +37,9 @@ struct CatalogStoreDeviceInventoryTests {
 
         let change = await iterator.next()
         #expect(change?.rootPath == rootPath)
-        let occupancyAfterBatch = await store.occupancyRevision(for: rootPath)
+        let occupancyAfterBatch = await store.namespaceRevision(for: rootPath)
         #expect(occupancyAfterBatch != occupancyBeforeBatch)
-        #expect(change?.occupancyRevision == occupancyAfterBatch)
+        #expect(change?.namespaceRevision == occupancyAfterBatch)
     }
 
     @Test func completionAlwaysEmitsPlanningChangeEvenWithoutRowChanges() async throws {
@@ -56,7 +56,7 @@ struct CatalogStoreDeviceInventoryTests {
         let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
         // No batch recorded — an enumeration that observed nothing new still
         // must prove itself stable to whoever built a plan before it finished.
-        let occupancyBeforeCompletion = await store.occupancyRevision(for: rootPath)
+        let occupancyBeforeCompletion = await store.namespaceRevision(for: rootPath)
 
         let changes = await store.planningChangeNotifications()
         var iterator = changes.makeAsyncIterator()
@@ -64,8 +64,8 @@ struct CatalogStoreDeviceInventoryTests {
 
         let change = await iterator.next()
         #expect(change?.rootPath == rootPath)
-        let occupancyAfterCompletion = await store.occupancyRevision(for: rootPath)
+        let occupancyAfterCompletion = await store.namespaceRevision(for: rootPath)
         #expect(occupancyAfterCompletion != occupancyBeforeCompletion)
-        #expect(change?.occupancyRevision == occupancyAfterCompletion)
+        #expect(change?.namespaceRevision == occupancyAfterCompletion)
     }
 }

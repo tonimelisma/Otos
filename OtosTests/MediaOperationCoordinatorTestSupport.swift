@@ -92,8 +92,9 @@ actor ControlledImportPlanBuilder {
         let dummyPlan = MediaOperationPlan(
             generation: entry.snapshot.generation,
             mode: .import(source: entry.snapshot.sourceRoot, destination: entry.snapshot.destinationRoot, batch: ImportBatchID()),
-            sourceOccupancyRevision: entry.snapshot.sourceOccupancyRevision,
-            destinationOccupancyRevision: entry.snapshot.destinationOccupancyRevision,
+            sourceNamespaceRevision: entry.snapshot.sourceNamespaceRevision,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: entry.snapshot.destinationNamespaceRevision,
             policy: entry.snapshot.policy,
             entries: [],
             totals: MediaOperationPlanTotals(copyCount: 0, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)

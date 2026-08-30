@@ -199,7 +199,7 @@ actor MediaOperationCoordinator {
     /// Settings display (includes unavailable sources). Mirrors `session.destination`
     /// while attached but is never cleared on detach.
     private var destinationBySource: [LibraryRootPath: LibraryRootPath] = [:]
-    private var lastSeenOccupancy: [LibraryRootPath: UInt64] = [:]
+    private var lastSeenRevisions: [LibraryRootPath: RootPlanningRevisions] = [:]
 
     private var continuations: [UUID: AsyncStream<[MediaOperationSourcePresentation]>.Continuation] = [:]
     private var isStarted = false
@@ -739,14 +739,25 @@ actor MediaOperationCoordinator {
         OtosLog.catalog.notice("op=import.retry phase=requested rootPath=\(source.rawValue, privacy: .public)")
     }
 
+    /// Applies a planning wake per role (ARC-046). A root's **namespace** revision
+    /// invalidates every session reading it as source or destination; its **naming**
+    /// revision invalidates only sessions reading it as *source*, because enriching an
+    /// asset already in the destination renames nothing on disk and
+    /// `fetchDestinationOccupants` never reads a capture wall. A wake that moves
+    /// neither is `planRevision`-only churn and does no work.
     private func handlePlanningChange(_ change: RootPlanningChange) async {
         // swiftlint:disable:next line_length
-        OtosLog.catalog.noticeOperation("import.coordinator", phase: "receive", fields: ["rootPath": change.rootPath.rawValue, "occupancyRevision": "\(change.occupancyRevision)"])
-        let occupancyChanged = lastSeenOccupancy[change.rootPath] != change.occupancyRevision
-        lastSeenOccupancy[change.rootPath] = change.occupancyRevision
-        if occupancyChanged {
+        OtosLog.catalog.noticeOperation("import.coordinator", phase: "receive", fields: ["rootPath": change.rootPath.rawValue, "namespaceRevision": "\(change.namespaceRevision)", "namingRevision": "\(change.namingRevision)"])
+        let previous = lastSeenRevisions[change.rootPath]
+        let namespaceChanged = previous?.namespaceRevision != change.namespaceRevision
+        let namingChanged = previous?.namingRevision != change.namingRevision
+        lastSeenRevisions[change.rootPath] = change.revisions
+        if namespaceChanged || namingChanged {
             let libraries = await store.currentLibraries()
             let removable = libraries.filter { $0.root.kind != .library }
+            // Source role: the plan reads this root's inventory *and* its capture
+            // walls (the date/time name is derived from them), so either revision
+            // invalidates it.
             if removable.contains(where: { $0.path == change.rootPath }) {
                 if var sess = sourceSessions[change.rootPath], case .executing = sess.phase {
                     // Don't rebuild executing source itself; it will rebuild after execution.
@@ -758,30 +769,41 @@ actor MediaOperationCoordinator {
                     scheduleBuildIfNeeded(change.rootPath)
                 }
             }
-            // Destination-driven rebuilds
-            let executingDestinations = Set(sourceSessions.values.compactMap { sess -> LibraryRootPath? in
-                if case .executing = sess.phase {
-                    return sess.destination
-                }
-                return nil
-            })
-            let isDestinationUnderExecution = executingDestinations.contains(change.rootPath)
-            for (source, _) in sourceSessions where sourceSessions[source]?.destination == change.rootPath {
-                guard var sess = sourceSessions[source] else { continue }
-                sess.isDirty = true
-                sourceSessions[source] = sess
-                if isDestinationUnderExecution {
-                    // swiftlint:disable:next line_length
-                    OtosLog.catalog.notice("op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(change.rootPath.rawValue, privacy: .public)")
-                    continue
-                }
-                if case .executing = sess.phase {
-                    continue
-                }
-                scheduleBuildIfNeeded(source)
+            // Destination role: only a namespace change matters. An enrichment
+            // naming write here moved no file, so every plan copying into this root
+            // is still exactly as valid as it was — replanning on it is what
+            // livelocked planning against an enriching cloud library (ARC-046).
+            if namespaceChanged {
+                rebuildSessionsTargeting(destination: change.rootPath)
             }
         }
         await refreshSources(reason: "planningChange")
+    }
+
+    /// The destination half of `handlePlanningChange`: every session copying *into*
+    /// `destination` is stale because the names it can claim there just changed.
+    private func rebuildSessionsTargeting(destination: LibraryRootPath) {
+        let executingDestinations = Set(sourceSessions.values.compactMap { sess -> LibraryRootPath? in
+            if case .executing = sess.phase {
+                return sess.destination
+            }
+            return nil
+        })
+        let isDestinationUnderExecution = executingDestinations.contains(destination)
+        for (source, _) in sourceSessions where sourceSessions[source]?.destination == destination {
+            guard var sess = sourceSessions[source] else { continue }
+            sess.isDirty = true
+            sourceSessions[source] = sess
+            if isDestinationUnderExecution {
+                // swiftlint:disable:next line_length
+                OtosLog.catalog.notice("op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)")
+                continue
+            }
+            if case .executing = sess.phase {
+                continue
+            }
+            scheduleBuildIfNeeded(source)
+        }
     }
 
     private func handleCatalogChangeForMetadataGate() async {
@@ -844,7 +866,7 @@ actor MediaOperationCoordinator {
         var seen = Set<LibraryRootPath>()
         for source in removable {
             seen.insert(source.path)
-            let currentOccupancy = await store.occupancyRevision(for: source.path)
+            let currentRevisions = await store.planningRevisions(for: source.path)
             if sourceSessions[source.path] == nil {
                 let attachmentGen = AttachmentGeneration(rawValue: nextAttachmentGeneration)
                 nextAttachmentGeneration &+= 1
@@ -895,22 +917,23 @@ actor MediaOperationCoordinator {
                     activeRunID: nil
                 )
                 sourceSessions[source.path] = newSession
-                lastSeenOccupancy[source.path] = currentOccupancy
+                lastSeenRevisions[source.path] = currentRevisions
                 scheduleBuildIfNeeded(source.path)
             } else {
                 // Update root for existing session (availability may have changed)
                 sourceSessions[source.path]?.root = source
                 // A session's plan goes stale the moment the root it was built from
                 // gains new/changed rows — device enumeration landing after attach is
-                // exactly this: the session already exists (created
-                // from whatever rows were persisted at attach) and this occupancy
-                // bump is how it learns the live inventory superseded that snapshot.
-                // Reuses the same `lastSeenOccupancy` map `handlePlanningChange` keys
-                // staleness on, so both triggering paths (the occupancy-aware
-                // planning-change stream and this cheaper catalog-change refresh)
-                // agree on what "already seen" means.
-                if lastSeenOccupancy[source.path] != currentOccupancy {
-                    lastSeenOccupancy[source.path] = currentOccupancy
+                // exactly this: the session already exists (created from whatever rows
+                // were persisted at attach) and this revision bump is how it learns
+                // the live inventory superseded that snapshot. This root is the
+                // session's *source*, so either revision counts.
+                // Reuses the same `lastSeenRevisions` map `handlePlanningChange` keys
+                // staleness on, so both triggering paths (the revision-aware planning
+                // -change stream and this cheaper catalog-change refresh) agree on
+                // what "already seen" means.
+                if lastSeenRevisions[source.path] != currentRevisions {
+                    lastSeenRevisions[source.path] = currentRevisions
                     sourceSessions[source.path]?.isDirty = true
                     if case .executing = sourceSessions[source.path]?.phase {
                         // Don't rebuild the executing source itself; it rebuilds
@@ -1031,7 +1054,7 @@ actor MediaOperationCoordinator {
             }
             sourceSessions.removeValue(forKey: path)
             // Keep destinationBySource for Settings; clear transient occupancy.
-            lastSeenOccupancy.removeValue(forKey: path)
+            lastSeenRevisions.removeValue(forKey: path)
         }
         publish()
         OtosLog.catalog.noticeOperation("import.coordinator", phase: "refresh", fields: ["reason": reason, "sourceCount": "\(removable.count)"])
@@ -1186,13 +1209,17 @@ actor MediaOperationCoordinator {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=staleAfterBuild source=\(source.rawValue, privacy: .public)")
             return
         }
-        let sourceOccupancy = await store.occupancyRevision(for: source)
-        let destinationOccupancy = await store.occupancyRevision(for: destination)
-        guard sourceOccupancy == snapshot.sourceOccupancyRevision,
-              destinationOccupancy == snapshot.destinationOccupancyRevision
+        // Revalidate per role, matching `handlePlanningChange`: the source's
+        // namespace *and* naming, the destination's namespace only. Each pair is
+        // sampled in one actor hop so the halves cannot straddle a suspension.
+        let sourceRevisions = await store.planningRevisions(for: source)
+        let destinationNamespace = await store.namespaceRevision(for: destination)
+        guard sourceRevisions?.namespaceRevision == snapshot.sourceNamespaceRevision,
+              sourceRevisions?.namingRevision == snapshot.sourceNamingRevision,
+              destinationNamespace == snapshot.destinationNamespaceRevision
         else {
             // swiftlint:disable:next line_length
-            OtosLog.catalog.noticeOperation("import.plan", phase: "stale", fields: ["rootPath": source.rawValue, "sourceOccupancy": "\(sourceOccupancy.map(String.init) ?? "none")", "snapshotSourceOccupancy": "\(snapshot.sourceOccupancyRevision)", "destinationOccupancy": "\(destinationOccupancy.map(String.init) ?? "none")", "snapshotDestinationOccupancy": "\(snapshot.destinationOccupancyRevision)", "run": runID])
+            OtosLog.catalog.noticeOperation("import.plan", phase: "stale", fields: ["rootPath": source.rawValue, "sourceNamespace": "\(sourceRevisions?.namespaceRevision.description ?? "none")", "snapshotSourceNamespace": "\(snapshot.sourceNamespaceRevision)", "sourceNaming": "\(sourceRevisions?.namingRevision.description ?? "none")", "snapshotSourceNaming": "\(snapshot.sourceNamingRevision)", "destinationNamespace": "\(destinationNamespace.map(String.init) ?? "none")", "snapshotDestinationNamespace": "\(snapshot.destinationNamespaceRevision)", "run": runID])
             var updated = current
             updated.isDirty = true
             updated.phase = .inventory
@@ -1359,8 +1386,8 @@ actor MediaOperationCoordinator {
     /// signal the coordinator has already received — otherwise a genuinely-
     /// populated source could flash "This card is empty" for one frame.
     ///
-    /// This checks the dirty bit rather than comparing `lastSeenOccupancy`
-    /// against `ctx.plan.sourceOccupancyRevision` directly: a source whose
+    /// This checks the dirty bit rather than comparing `lastSeenRevisions`
+    /// against `ctx.plan.sourceNamespaceRevision` directly: a source whose
     /// inventory never changes again after settling (an empty card that never
     /// gains a file) never earns another occupancy bump to reconcile the two
     /// independently-sampled values, so an equality check between them can
