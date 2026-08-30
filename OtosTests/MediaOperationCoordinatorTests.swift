@@ -912,16 +912,42 @@ struct MediaOperationCoordinatorTests {
         greaterThan minimum: UInt64? = nil,
         timeout: Duration = .seconds(15)
     ) async throws -> UInt64 {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            if let generation = await currentReadyGeneration(coordinator, source: source),
-               minimum.map({ generation > $0 }) ?? true
-            {
-                return generation
-            }
-            try await Task.sleep(for: .milliseconds(25))
+        // Event-driven, not polled. The previous 25 ms poll loop measured a
+        // *wall-clock* deadline while doing 40 wakeups a second per waiting test — so
+        // under load the deadline expired on wall time even when the coordinator was
+        // progressing, and the polling was itself part of the load. Awaiting the
+        // coordinator's own publication stream wakes exactly when a presentation is
+        // published; the timeout survives only to stop a genuine hang from waiting
+        // forever.
+        if let generation = await currentReadyGeneration(coordinator, source: source),
+           minimum.map({ generation > $0 }) ?? true
+        {
+            return generation
         }
-        throw ReadyPlanTimeout()
+        let stream = await coordinator.presentationsStream()
+        return try await withThrowingTaskGroup(of: UInt64.self) { group in
+            group.addTask {
+                for await presentations in stream {
+                    guard let presentation = presentations.first(where: { $0.sourcePath == source }),
+                          case let .ready(_, generation, _, _) = presentation.state,
+                          minimum.map({ generation > $0 }) ?? true
+                    else {
+                        continue
+                    }
+                    return generation
+                }
+                throw ReadyPlanTimeout()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw ReadyPlanTimeout()
+            }
+            guard let generation = try await group.next() else {
+                throw ReadyPlanTimeout()
+            }
+            group.cancelAll()
+            return generation
+        }
     }
 
     /// Wait until the source's ready generation stops changing for `settleFor`,
