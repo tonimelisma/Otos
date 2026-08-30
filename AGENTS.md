@@ -223,6 +223,38 @@ test). Read logs with `script/logs.sh stream [Category]` (live) or
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
+### Supervising long checks
+
+`script/verify.sh` takes roughly 4 minutes to build plus 3 to run the suite. Run
+the seconds-long gates first — `swiftformat --lint .` and `script/lint.sh` — so a
+formatting nit never costs a full build-and-test cycle.
+
+**A long check is watched, not awaited.** Waiting on process completion alone does
+not work: a hung process never completes, so it never reports, and the wait is
+unbounded. Background the check and **check on it every 60 seconds** with
+`ps -eo pid,etime,command | grep -E 'verify|xcodebuild'`, comparing elapsed time
+against the durations above and confirming the test log is still gaining lines.
+Note that `etime` is `[[DD-]hh:]mm:ss` — `09:40:13` is nine *hours*, not nine
+minutes; misreading it as nine minutes once cost a nine-hour stall.
+
+A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
+`sample <xctest pid>` for the parked thread, and diff the log's test-name list
+against a complete run's to find which tests never reported. Do not paper over a
+hang with a kill-timeout in shared tooling — a wall-clock limit destroys a
+legitimately slow run, and it hides the bug instead of surfacing it. **A suite that
+hangs has a defect; fix the defect.** Plan 0099 traced one to long-lived tasks that
+held their owner weakly but never exited when that upgrade failed, so each test left
+an immortal loop holding a whole `CatalogStore` alive.
+
+Kill the **tree**, never the parent alone — killing `verify.sh` leaves its `test.sh`
+and `xcodebuild` children orphaned (`PPID 1`), and an orphan competing against the
+same `build/DerivedData` is itself a cause of the deadlock above. Confirm with `ps`
+that nothing survives before starting the next run.
+
+Verification evidence must come from the run that measured the **final** tree. A
+green run followed by any edit — including a refactor or a comment — no longer
+proves anything; re-run and say which run the evidence is from.
+
 ## Documentation
 
 Documentation is organized around **current truth**, not increments. Each kind has
