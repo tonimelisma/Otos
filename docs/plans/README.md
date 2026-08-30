@@ -3,7 +3,8 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-No active plans.
+Plan 0099 (honest import naming and plan stability) is open — see
+`0099-honest-import-naming-and-plan-stability.md`.
 
 Plan 0098 (verification integrity, naming facts, and typing the namespace lease)
 is complete across seven increments and was removed at closure. It opened against
