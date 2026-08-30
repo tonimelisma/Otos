@@ -216,6 +216,20 @@ private nonisolated extension MediaTransferPlanner {
                 namespace: namespace
             )
         }
+        // Bytes that cannot be opened cannot be copied, whatever the naming policy.
+        // Blocking surfaces the file in state D instead of letting it be silently
+        // skipped or silently retried forever (ARC-057).
+        if bundle.members.contains(where: \.isSourceUnreadable) {
+            return bundle.members.map { member in
+                MediaOperationPlanEntry(
+                    source: member,
+                    idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
+                    finalDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
+                    companionDestinations: [:],
+                    disposition: .blocked(.sourceUnreadable)
+                )
+            }
+        }
         if needsDate(policy: snapshot.policy),
            bundle.members.contains(where: { !$0.hasAnyDate })
         {

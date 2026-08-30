@@ -150,7 +150,7 @@ actor MediaOperationCoordinator {
         /// without this the plan the user is looking at is destroyed the moment a
         /// newer one is scheduled and the bar falls back to state A — reporting
         /// "Checking the card…" as though nothing were known, once a second for as
-        /// long as anything kept invalidating (plan 0099 D3). State A means *no plan
+        /// long as anything kept invalidating (ARC-047). State A means *no plan
         /// has ever existed for this attachment*; a refresh is not a first check.
         ///
         /// Written in the same transaction as `phase = .ready`, like
@@ -1211,7 +1211,7 @@ actor MediaOperationCoordinator {
             // enrichment looked and found no embedded capture wall. Under the naming
             // gate this is a count of *proven* fallbacks; before the gate it silently
             // counted unproven guesses, and it read 730-of-730 on the run that
-            // duplicated 23 videos without anything acting on it (plan 0099 S3).
+            // duplicated 23 videos without anything acting on it (ARC-057).
             namingMtimeCount: snapshot.sourceMedia.filter {
                 $0.namingFactState != .pending && $0.captureWallCompact == nil && $0.hasAnyDate
             }.count,
@@ -1299,9 +1299,12 @@ actor MediaOperationCoordinator {
         // end-of-recording for video, the same duration-sized error that duplicated
         // 23 videos off a card. Excluding `.deviceMTP` here meant a camera import was
         // offered against exactly the fabricated names the gate exists to prevent
-        // (plan 0099 D5).
+        // (ARC-057).
+        // A row whose bytes cannot be read is never going to become non-pending, and
+        // it cannot be copied either — so it must not hold the offer open. The planner
+        // blocks it and state D shows it (ARC-057).
         guard MediaTransferPlanner.needsDate(policy: snapshot.policy),
-              snapshot.sourceMedia.contains(where: { $0.namingFactState == .pending })
+              snapshot.sourceMedia.contains(where: { $0.namingFactState == .pending && !$0.isSourceUnreadable })
         else {
             return false
         }
@@ -1324,7 +1327,9 @@ actor MediaOperationCoordinator {
         // changing `capture_wall_compact`, so `namingRevision` stays put while the
         // gate's answer flips.
         let liveMedia = await store.planningMedia(for: source) ?? []
-        if !liveMedia.isEmpty, !liveMedia.contains(where: { $0.namingFactState == .pending }) {
+        if !liveMedia.isEmpty,
+           !liveMedia.contains(where: { $0.namingFactState == .pending && !$0.isSourceUnreadable })
+        {
             OtosLog.catalog.notice(
                 // swiftlint:disable:next line_length
                 "op=import.readiness phase=namingSettledDuringBuild run=\(runID, privacy: .public) rootPath=\(source.rawValue, privacy: .public) total=\(liveMedia.count, privacy: .public)"

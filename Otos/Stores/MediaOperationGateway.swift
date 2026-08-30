@@ -11,6 +11,7 @@ nonisolated enum MediaOperationGateway {
         libraryRootID: Int64,
         sourceRoot: LibraryRootPath,
         companionsByPrimary: [String: [MediaCompanion]],
+        unreadableSourceIDs: Set<MediaAssetID> = [],
         db: Database
     ) throws -> [PlanningFileFacts] {
         let settledPredicate = EnrichmentLeaseGateway.metadataStalenessSQLPredicate()
@@ -65,8 +66,9 @@ nonisolated enum MediaOperationGateway {
                 // apart by its own duration.
                 .pending
             }
+            let assetID = MediaAssetID(libraryRootPath: sourceRoot, relativePath: relative)
             return PlanningFileFacts(
-                id: MediaAssetID(libraryRootPath: sourceRoot, relativePath: relative),
+                id: assetID,
                 sourceURL: sourceRoot.url.appending(path: relative.rawValue, directoryHint: .notDirectory),
                 relativePath: relative,
                 byteSize: row["byte_size"],
@@ -74,6 +76,7 @@ nonisolated enum MediaOperationGateway {
                 captureWallCompact: captureWall,
                 captureWallPrecision: row["capture_wall_precision"],
                 namingFactState: namingFactState,
+                isSourceUnreadable: unreadableSourceIDs.contains(assetID),
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
                 companions: companionsByPrimary[relative.rawValue] ?? [],

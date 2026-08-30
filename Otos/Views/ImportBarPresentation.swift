@@ -297,12 +297,14 @@ nonisolated enum ImportBarPresentation {
     private enum AttentionCauseKind: Equatable {
         case noUsableDate
         case filesystemObservationUnavailable
+        case sourceUnreadable
     }
 
     private static func causeKind(_ reason: MediaOperationBlockReason) -> AttentionCauseKind {
         switch reason {
         case .noUsableDate: .noUsableDate
         case .filesystemObservationUnavailable: .filesystemObservationUnavailable
+        case .sourceUnreadable: .sourceUnreadable
         }
     }
 
@@ -318,6 +320,10 @@ nonisolated enum ImportBarPresentation {
         case .filesystemObservationUnavailable:
             let noun = count == 1 ? "name" : "names"
             return "Otos couldn't check \(count) \(noun) in \(destinationName)"
+        case .sourceUnreadable:
+            // Names what the user can act on — the file will not copy either — without
+            // the internal vocabulary DES-035 forbids.
+            return count == 1 ? "1 item couldn't be read" : "\(count) items couldn't be read"
         }
     }
 

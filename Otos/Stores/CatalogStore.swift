@@ -235,6 +235,7 @@ actor CatalogStore {
     private var filesystemDirty: [LibraryRootPath: FilesystemDirtyAccumulator] = [:]
     /// Last successful completed full-root reconciliation per root. Launch/add
     /// scans count; used only for the long-running-session integrity sweep.
+    private var unreadableSourceIDs: Set<MediaAssetID> = []
     private var lastSuccessfulFullRootScanAt: [LibraryRootPath: Date] = [:]
     private var integrityScanTask: Task<Void, Never>?
     private var knownMaterializationSuppression = KnownMaterializationSuppressionState()
@@ -318,6 +319,22 @@ extension CatalogStore {
 
     func planRevision(for rootPath: LibraryRootPath) -> UInt64? {
         roots[rootPath]?.planRevision
+    }
+
+    /// Assets whose bytes enrichment could not open. Process-local by design: a fresh
+    /// attachment re-scans and re-evaluates every row, so this fact lives exactly as
+    /// long as the observation that produced it. On a removable volume nothing about
+    /// it is transient — the bytes are local, so a failure to open them is a failing
+    /// card or a file that vanished, not a condition to wait out (ARC-057).
+    func markSourceUnreadable(_ id: MediaAssetID) {
+        guard unreadableSourceIDs.insert(id).inserted else {
+            return
+        }
+        OtosLog.metadata.notice(
+            // swiftlint:disable:next line_length
+            "op=enrichment.sourceUnreadable phase=record rootPath=\(id.libraryRootPath.rawValue, privacy: .public) relativePath=\(id.relativePath.rawValue, privacy: .public)"
+        )
+        bumpNamingRevision(for: id.libraryRootPath, reason: "sourceUnreadable")
     }
 
     func namespaceRevision(for rootPath: LibraryRootPath) -> UInt64? {
@@ -439,11 +456,14 @@ extension CatalogStore {
             let companionsByPrimary = Dictionary(grouping: companions) {
                 $0.primaryRelativePath?.rawValue ?? ""
             }
+            let unreadable = unreadableSourceIDs
+            let rowID = state.rowID
             return try await dbWriter.read { db in
                 try MediaOperationGateway.fetchPlanningSourceMedia(
-                    libraryRootID: state.rowID,
+                    libraryRootID: rowID,
                     sourceRoot: rootPath,
                     companionsByPrimary: companionsByPrimary,
+                    unreadableSourceIDs: unreadable,
                     db: db
                 )
             }
@@ -478,11 +498,13 @@ extension CatalogStore {
         let companionsByPrimary = Dictionary(grouping: companions) {
             $0.primaryRelativePath?.rawValue ?? ""
         }
+        let unreadable = unreadableSourceIDs
         let sourceMedia = try await dbWriter.read { db in
             try MediaOperationGateway.fetchPlanningSourceMedia(
                 libraryRootID: sourceRowID,
                 sourceRoot: source,
                 companionsByPrimary: companionsByPrimary,
+                unreadableSourceIDs: unreadable,
                 db: db
             )
         }

@@ -233,6 +233,11 @@ Action: `Import 42 Items` — count and scope in the title (DES-036).
 
 ### D · Ready, needs attention
 
+Causes currently drawn here: items with no usable date, destination names Otos could
+not check, and items whose bytes could not be read — the last of which cannot be
+copied either, so blocking and showing it is the only honest outcome; retrying it
+forever would hide a failing card behind a bar that never settles.
+
 L1 `39 new items · 61 MB` · L3 ⚠ `3 items have no date · Show them`. The orange
 badge carries a glyph, never colour alone (DES-029). `Show them` selects and scrolls
 the affected tiles in the grid — the grid is the plan view; there is no modal list
