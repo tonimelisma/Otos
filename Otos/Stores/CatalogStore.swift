@@ -321,11 +321,16 @@ extension CatalogStore {
         roots[rootPath]?.planRevision
     }
 
-    /// Assets whose bytes enrichment could not open. Process-local by design: a fresh
-    /// attachment re-scans and re-evaluates every row, so this fact lives exactly as
-    /// long as the observation that produced it. On a removable volume nothing about
-    /// it is transient — the bytes are local, so a failure to open them is a failing
-    /// card or a file that vanished, not a condition to wait out (ARC-057).
+    /// Assets whose bytes enrichment could not open. Process-local by design, and
+    /// discarded for a root the moment that root detaches — so re-inserting a card
+    /// re-evaluates every file rather than inheriting a verdict from the attachment
+    /// that observed it. Without that boundary a single unreadable file would stay
+    /// blocked for the lifetime of the process, even once it read cleanly again, and
+    /// the set would grow without bound.
+    ///
+    /// On a removable volume nothing about the condition is transient — the bytes are
+    /// local, so a failure to open them is a failing card or a file that vanished, not
+    /// something to wait out (ARC-057).
     func markSourceUnreadable(_ id: MediaAssetID) {
         guard unreadableSourceIDs.insert(id).inserted else {
             return
@@ -335,6 +340,28 @@ extension CatalogStore {
             "op=enrichment.sourceUnreadable phase=record rootPath=\(id.libraryRootPath.rawValue, privacy: .public) relativePath=\(id.relativePath.rawValue, privacy: .public)"
         )
         bumpNamingRevision(for: id.libraryRootPath, reason: "sourceUnreadable")
+    }
+
+    /// Drops every unreadable verdict recorded under `rootPath`. Called where a root
+    /// stops being attached, so the next attachment starts from observation rather
+    /// than from memory.
+    func forgetUnreadableSources(under rootPath: LibraryRootPath) {
+        let before = unreadableSourceIDs.count
+        unreadableSourceIDs = unreadableSourceIDs.filter { $0.libraryRootPath != rootPath }
+        let dropped = before - unreadableSourceIDs.count
+        guard dropped > 0 else {
+            return
+        }
+        OtosLog.metadata.notice(
+            // swiftlint:disable:next line_length
+            "op=enrichment.sourceUnreadable phase=forget rootPath=\(rootPath.rawValue, privacy: .public) dropped=\(dropped, privacy: .public)"
+        )
+    }
+
+    /// Test-only read of the unreadable verdict set, so its lifecycle can be asserted
+    /// without exposing the storage.
+    func testIsSourceUnreadable(_ id: MediaAssetID) -> Bool {
+        unreadableSourceIDs.contains(id)
     }
 
     func namespaceRevision(for rootPath: LibraryRootPath) -> UInt64? {
@@ -1982,6 +2009,7 @@ extension CatalogStore {
             upsert(state)
         }
         await releaseEnrichmentClaimsForRoot(rootRowID)
+        forgetUnreadableSources(under: root.path)
         setAvailability(.unavailable, for: root.path)
         if root.kind == .deviceMTP {
             deleteDeviceStagingIfNeeded(root)
@@ -2014,6 +2042,7 @@ extension CatalogStore {
             upsert(state)
         }
         await releaseEnrichmentClaimsForRoot(rootRowID)
+        forgetUnreadableSources(under: root.path)
         OtosLog.catalog.notice(
             // swiftlint:disable:next line_length
             "op=catalog.removable.quiesce phase=finish identity=\(identity, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public) kind=\(root.kind.rawValue, privacy: .public)"
