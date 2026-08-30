@@ -79,6 +79,10 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     /// mtime — see `ImportDestinationDate`.
     let captureWallPrecision: String?
     let namingFactState: NamingFactState
+    /// The source bytes could not be opened when enrichment tried. Such a file cannot
+    /// be enriched *or* copied, so it must neither hold the naming gate open nor be
+    /// silently skipped — the planner blocks it and the bar shows it (ARC-057).
+    let isSourceUnreadable: Bool
     let mediaKind: MediaKind?
     let contentTypeIdentifier: String?
     let fileExtension: String
@@ -93,6 +97,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         captureWallCompact: Int64?,
         captureWallPrecision: String? = nil,
         namingFactState: NamingFactState = .settled,
+        isSourceUnreadable: Bool = false,
         mediaKind: MediaKind?,
         fileExtension: String,
         companions: [MediaCompanion],
@@ -106,6 +111,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.captureWallCompact = captureWallCompact
         self.captureWallPrecision = captureWallPrecision
         self.namingFactState = namingFactState
+        self.isSourceUnreadable = isSourceUnreadable
         self.mediaKind = mediaKind
         self.contentTypeIdentifier = contentTypeIdentifier
         self.fileExtension = fileExtension
@@ -162,6 +168,11 @@ nonisolated enum ExclusionReason: Equatable, Sendable {
 nonisolated enum MediaOperationBlockReason: Equatable, Sendable {
     case noUsableDate
     case filesystemObservationUnavailable(destination: MediaRelativePath, detail: String)
+    /// The source file's bytes could not be opened, so enrichment could not read it
+    /// and a copy could not read it either. On a card this is a failing card or a
+    /// file that vanished — never a transient condition worth waiting out, since a
+    /// removable volume's bytes are local (ARC-057).
+    case sourceUnreadable
 }
 
 /// One blocked plan entry the user can act on via "Show them" (state D). Carries

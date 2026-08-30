@@ -3,8 +3,26 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0099 (honest import naming and plan stability) is open — see
-`0099-honest-import-naming-and-plan-stability.md`.
+No active plans.
+
+Plan 0099 (honest import naming and plan stability) is complete across six
+increments and was removed at closure. It opened from a card whose import bar
+oscillated between "730 new items" and "Checking the card…", and found a
+duplicate-creating defect already proven in the catalog: 23 hash-identical video
+pairs, both copies written by Otos, in two import batches five minutes apart, each
+pair named apart by exactly that video's duration. Its decisions live in ARC-046
+(planning revisions split by role — namespace for both roles, naming for the source
+only), ARC-057 and ADR 0026 (a naming fact is offered only once enrichment has
+*looked*; a durable mtime is a proven fallback, never an assumed one), ARC-047 (a
+refresh is not a first check — a published plan survives the rebuild replacing it),
+ENR-011 (every offered device seed is staged, none discarded), and ENR-012 (a video
+with no embedded date derives its wall from mtime less duration, which names the
+file but never stamps it).
+
+Its supervision findings live in `AGENTS.md` ("Supervising long checks") and in
+`script/check.sh` plus `script/hooks/guard-long-checks.sh`, added after a verify run
+deadlocked and ran 9 h 40 m unnoticed — the cause being long-lived tasks that held
+their owner weakly but never exited when that upgrade failed.
 
 Plan 0098 (verification integrity, naming facts, and typing the namespace lease)
 is complete across seven increments and was removed at closure. It opened against

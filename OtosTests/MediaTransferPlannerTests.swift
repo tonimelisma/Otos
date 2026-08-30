@@ -537,6 +537,52 @@ struct MediaTransferPlannerTests {
             destination: MediaRelativePath(rawValue: "2026/01/20260101_120000.jpeg")
         ))
     }
+
+    /// A file whose bytes could not be opened cannot be copied, so it must be blocked
+    /// rather than silently skipped — and it must not hold the naming gate open, since
+    /// nothing about it is transient on a removable volume (plan 0099 D9).
+    @Test func unreadableSourceIsBlockedNotSilentlySkipped() {
+        let root = LibraryRootPath(rawValue: "/Volumes/Card")
+        let relative = MediaRelativePath(rawValue: "IMG_0001.JPG")
+        let facts = PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: root, relativePath: relative),
+            sourceURL: root.url.appending(path: relative.rawValue, directoryHint: .notDirectory),
+            relativePath: relative,
+            byteSize: 100,
+            contentModifiedAt: Date(timeIntervalSince1970: 1000),
+            captureWallCompact: 20_260_426_145_735,
+            namingFactState: .terminal,
+            isSourceUnreadable: true,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: root,
+            destinationRoot: LibraryRootPath(rawValue: "/Pictures"),
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
+            sourceMedia: [facts],
+            destinationOccupants: [:],
+            policy: ImportPolicy(
+                destinationFolderPolicy: .yearMonth,
+                destinationNamePolicy: .captureDateTime,
+                importSidecarFiles: false,
+                deleteSourceAfterImport: false,
+                autoEjectAfterImport: false
+            ),
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let plan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: .empty)
+        let entry = plan.entries.first
+        #expect(entry?.disposition == .blocked(.sourceUnreadable))
+        #expect(plan.totals.copyCount == 0)
+        #expect(plan.totals.skipCount == 0, "an unreadable file must not read as already imported")
+    }
 }
 
 struct FilesystemReconcilerScanRaceTests {

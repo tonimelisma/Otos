@@ -51,7 +51,7 @@ nonisolated struct RootRuntimeState: Equatable {
     /// `relative_path`, `byte_size`, and `content_modified_at_unix` — never a capture
     /// wall. Keying destination staleness on naming is what livelocked planning
     /// against an enriching cloud library (ARC-046; fixed once in pull request 111,
-    /// then regressed by `40261bf` and fixed again in plan 0099).
+    /// then regressed by `40261bf` and fixed again later).
     ///
     /// Every namespace or naming bump also advances `planRevision` — both are
     /// planning changes for reorganization, which legitimately depends on capture

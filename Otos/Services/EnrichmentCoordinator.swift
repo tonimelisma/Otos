@@ -180,7 +180,7 @@ actor EnrichmentCoordinator {
     /// file fails `lstat`, so readiness routing answers `.unknown` and retries
     /// readiness rather than creating a demand. A camera with more than ~16 items
     /// therefore never fully staged, and so never fully enriched — contradicting
-    /// ENR-011's eager-staging intent (plan 0099 D4). The overflow now waits here and
+    /// ENR-011's eager-staging intent (ENR-011). The overflow now waits here and
     /// is admitted as capacity frees.
     var pendingDeviceSeeds: [DeviceStagingSeed] = []
     var nextClaimSequence: UInt64 = 0

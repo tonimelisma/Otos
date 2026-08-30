@@ -45,9 +45,17 @@ extension EnrichmentCoordinator {
                 fields: fields
             )
         case .transient:
+            // `.transient` means the byte source could not be opened. The metadata
+            // package's `shouldRetry` is a generic contract, honest for a network byte
+            // source and meaningless for a local one: on a removable volume the bytes
+            // are local, so this is a failing card or a file that vanished. Silently
+            // clearing the claim re-queued it immediately — an unbounded spin, and
+            // under the naming gate it would hold the offer open forever. Record it
+            // instead: the planner blocks the entry and the bar shows it (ARC-057).
             await recordVisibleThumbnailLifecycle(phase: "transient", id: id)
             readyClaims[id] = nil
             await releaseClaimIfOwned(record, id: id)
+            await store.markSourceUnreadable(id)
         }
         signal()
     }
@@ -140,7 +148,7 @@ extension EnrichmentCoordinator {
         // this condition would otherwise be an indefinite, unexplained wait, and
         // importing would not free the space anyway (staging is separate from the
         // library copy). Name it in the log so the cause is legible rather than
-        // inferred from a bar that never advances (plan 0099, increment 4).
+        // inferred from a bar that never advances (ENR-011).
         if outcome == .insufficientLocalSpace, work.isDeviceStaging {
             let queuedSeeds = pendingDeviceSeeds.count
             OtosLog.fileAccess.notice(
@@ -151,7 +159,7 @@ extension EnrichmentCoordinator {
         // A completed download frees an outstanding slot, which is the only moment a
         // queued device seed can be admitted. Without this the queue would fill once
         // and never drain, leaving a camera past the outstanding limit permanently
-        // unstaged — the defect the queue exists to fix (plan 0099 D4).
+        // unstaged — the defect the queue exists to fix (ENR-011).
         admitPendingDeviceSeeds()
         await recordVisibleThumbnailLifecycle(
             phase: materialized ? "materialized" : "materializationFailed",

@@ -134,7 +134,7 @@ extension CatalogWindowViewModel {
                 // prefers the modification dates — which for video is when recording
                 // *stopped*, misnaming every clip by its own length. `captureDate`
                 // answers the question naming actually asks; the modification date is
-                // the fallback of last resort (plan 0099 D6).
+                // the fallback of last resort (ARC-057).
                 contentModifiedAt: item.captureDate ?? item.modificationDate
             )
         }

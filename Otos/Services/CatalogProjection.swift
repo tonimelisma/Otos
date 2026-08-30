@@ -147,7 +147,7 @@ private extension CatalogProjection {
         // `removeContinuation` cancels these, but only when the last stream consumer
         // tears down — which is not guaranteed to happen before the owner deallocates.
         // Hundreds of such orphans accumulating in one process is what deadlocked the
-        // test suite mid-run (plan 0099).
+        // test suite mid-run.
         changeTask = Task { [weak self, changes] in
             guard let changes else {
                 return

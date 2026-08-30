@@ -33,7 +33,7 @@ nonisolated enum CaptureWallClock {
     /// embedded candidate exists — 100% of two roots' videos in one production
     /// catalog, whose names were otherwise wrong by each clip's own length. It is a
     /// distinct precision, not a silent substitution, so a derived wall is
-    /// self-identifying wherever it is read (plan 0099 D7/O7).
+    /// self-identifying wherever it is read (ENR-012).
     static let derivedFromDurationPrecision = "derivedFromDuration"
 
     /// The capture wall for a video with no embedded local-authority timestamp,
