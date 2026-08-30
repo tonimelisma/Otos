@@ -138,7 +138,21 @@ extension EnrichmentCoordinator {
                 await releaseMaterializationClaimIfOwned(id)
                 if materialized {
                     retryLedger[id] = nil
-                } else if !work.isDeviceStaging {
+                } else if work.isDeviceStaging {
+                    // Device staging has exhausted its attempts, so these bytes are not
+                    // obtainable: the camera denied access, the cable went, the item is
+                    // gone. That is the same situation as a source whose bytes cannot
+                    // be opened, and it needs the same answer — because the naming gate
+                    // withholds a camera's plan until every item is enriched, and an
+                    // item that can never be staged can never be enriched. Without
+                    // this the bar sits in "Checking the camera…" indefinitely with no
+                    // stated cause (ARC-057).
+                    //
+                    // Observed on a Sony ILCE-6700 whose 875 items all failed staging
+                    // with NSCocoaErrorDomain 257: enumeration succeeded, staging did
+                    // not, and nothing said so.
+                    await store.markSourceUnreadable(id)
+                } else {
                     await recordRetryLedgerFailure(for: work)
                 }
             }
