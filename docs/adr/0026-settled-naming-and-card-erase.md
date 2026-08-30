@@ -6,12 +6,12 @@
 ## Decision
 
 Import date/time naming is owned by ImportNaming. A source plan is offered only
-after every naming fact has reached the existing enrichment predicate's settled
-state; enrichment that changes capture_wall_compact advances the import
-root's naming revision, which re-plans every session reading that root as its
-source. It does not advance the namespace revision, so a plan copying *into* an
-enriching root is untouched (ARC-046). A settled row with no embedded wall
-clock may use its filesystem modification date. No date is fabricated.
+after every naming fact is **proven**; enrichment that changes capture_wall_compact
+advances the import root's naming revision, which re-plans every session reading
+that root as its source. It does not advance the namespace revision, so a plan
+copying *into* an enriching root is untouched (ARC-046). A row with no embedded
+wall clock may use its filesystem modification date **once enrichment has read the
+file and established that no embedded date exists**. No date is fabricated.
 
 An explicit card Erase uses one typed source disposition set. It removes copied
 media, preexisting media, useful sidecars, recognized cruft, and recognized
@@ -44,8 +44,29 @@ current file facts; planning asks whether the file can be named. They diverge on
 a state the domain models: an asset with no filesystem mtime can never satisfy the
 predicate's `enriched_source_mtime` comparison, so it reads stale forever — and
 borrowing that answer held such a source in metadata-waiting permanently, even
-after enrichment had supplied its capture wall. A known capture wall is terminal,
-as is a durable mtime; only a row with neither is pending.
+after enrichment had supplied its capture wall. A known capture wall is therefore
+terminal whatever else is outstanding.
+
+**Amended by plan 0099.** This ADR originally also called a durable mtime terminal
+*before enrichment had read the file*, and that half was wrong. On an unread row
+"no capture wall" means "not yet looked at", not "none exists", so naming from the
+mtime asserts a fact Otos has not established. For video the assertion is provably
+wrong by the clip's own length — a video's mtime is when recording *stopped* — and
+because the destination name is also the dedupe key, a later plan computes a
+different name, finds nothing at that path, and copies again. The catalog carries
+the proof: 23 hash-identical video pairs in one library, both copies written by
+Otos, in two import batches five minutes apart, each pair's two names separated by
+exactly that video's duration.
+
+A row is terminal once a capture wall is stored, or once enrichment has looked and
+found none — `enriched_source_size`/`enriched_source_mtime` present, which the
+overlay write sets unconditionally on every completion path, so the distinction
+needs no new column. The permanent-wait failure this ADR originally fixed stays
+fixed: the gate keys on "has enrichment looked", never on the staleness predicate.
+Removable volumes make the wait bounded — their bytes are always local, so
+enrichment is guaranteed to complete, and only a genuine I/O read failure is
+non-terminal. A build that decides to wait revalidates against live rows first,
+because a batch landing mid-build is not replayed by the catalog-change wake.
 
 Source deletion has exactly one implementation. `SourceEraser` is it, every
 caller routes through it, and it refuses fixed library roots. The previous

@@ -108,7 +108,18 @@ struct ImportPlanningNamingFactsTests {
         #expect(afterEnrichment.namingFactState == .terminal)
     }
 
-    @Test func aDurableMtimeIsTerminalBeforeEnrichmentRuns() async throws {
+    /// Inverted by plan 0099 (D1). It previously asserted `.terminal`, encoding the
+    /// defect in its own name: a durable mtime was treated as a naming fact *before*
+    /// enrichment had read the file. But "no capture wall" on an unread row means "we
+    /// have not looked", not "there is none" — and naming from mtime there fabricates
+    /// a fact. For video the fabrication is provably wrong by the clip's duration
+    /// (mtime is when recording *stopped*), and since the destination name is also the
+    /// dedupe key, the next plan looks at a different path, finds nothing, and copies
+    /// again. That is how 23 videos were imported twice five minutes apart.
+    ///
+    /// A durable mtime becomes an honest fallback the moment enrichment has looked and
+    /// found no embedded wall — proven absence, not assumed. That is the next test.
+    @Test func aDurableMtimeIsPendingUntilEnrichmentHasLooked() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -159,7 +170,37 @@ struct ImportPlanningNamingFactsTests {
             try await Task.sleep(for: .milliseconds(25))
         }
         let facts = try #require(scanned)
-        #expect(facts.namingFactState == .terminal)
+        #expect(facts.namingFactState == .pending)
         #expect(facts.captureWallCompact == nil)
+        // The mtime is right there and unchanged — what is missing is not a date but
+        // the proof that no *better* date exists.
+        #expect(facts.hasAnyDate)
+
+        // Enrichment reads the file and finds no embedded capture wall. Absence is now
+        // proven, so the filesystem mtime becomes an honest fallback and planning
+        // proceeds — without this the gate would never open for a file that genuinely
+        // carries no metadata (the permanent-wait failure ADR 0026 exists to prevent).
+        let applied = await store.applyEnrichmentBatch([
+            EnrichmentResult(
+                id: MediaAssetID(libraryRootPath: cardPath, relativePath: relative),
+                metadata: AssetMetadata(),
+                thumbnailPath: nil,
+                sourceSize: 10,
+                sourceMTimeSeconds: 1000,
+                contentHash: nil
+            ),
+        ])
+        #expect(applied == .applied(count: 1))
+
+        let afterEnrichment = try #require(
+            try await store.importPlanningSnapshot(
+                source: cardPath,
+                destination: destinationPath,
+                policy: policy,
+                generation: 2
+            )?.sourceMedia.first
+        )
+        #expect(afterEnrichment.captureWallCompact == nil)
+        #expect(afterEnrichment.namingFactState != .pending)
     }
 }

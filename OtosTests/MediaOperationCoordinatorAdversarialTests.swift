@@ -1184,6 +1184,14 @@ struct MediaOperationCoordinatorAdversarialTests {
                 && snap.removableSources.allSatisfy { !$0.isScanning }
         }
 
+        // Plan 0099: Ready requires proven naming facts; stand in for the enrichment
+
+        // coordinator these tests do not run.
+
+        await markEnrichmentLookedAtEveryRow(store, root: cardAPath)
+
+        await markEnrichmentLookedAtEveryRow(store, root: cardBPath)
+
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardAPath)
@@ -1238,6 +1246,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
+        // Plan 0099: Ready requires proven naming facts; stand in for the enrichment
+        // coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
         await coordinator.start()

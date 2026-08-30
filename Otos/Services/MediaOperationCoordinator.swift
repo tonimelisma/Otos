@@ -1194,6 +1194,11 @@ actor MediaOperationCoordinator {
             source: source,
             runID: runID,
             sourceCount: snapshot.sourceMedia.count,
+            // Rows whose destination name comes from the filesystem mtime because
+            // enrichment looked and found no embedded capture wall. Under the naming
+            // gate this is a count of *proven* fallbacks; before the gate it silently
+            // counted unproven guesses, and it read 730-of-730 on the run that
+            // duplicated 23 videos without anything acting on it (plan 0099 S3).
             namingMtimeCount: snapshot.sourceMedia.filter {
                 $0.namingFactState != .pending && $0.captureWallCompact == nil && $0.hasAnyDate
             }.count,
@@ -1270,6 +1275,8 @@ actor MediaOperationCoordinator {
     private func shouldWaitForMetadata(source: LibraryRootPath, snapshot: ImportPlanningSnapshot, attachment: AttachmentGeneration, generation: UInt64, runID: String) async -> Bool {
         let filesWithNoDateAtAll = snapshot.sourceMedia.filter { !$0.hasAnyDate }.count
         let total = snapshot.sourceMedia.count
+        // "Looked at", not "has some date": the honest denominator for state A's
+        // determinate progress is how many source rows enrichment has actually read.
         let settled = snapshot.sourceMedia.count { $0.namingFactState != .pending }
         let libraries = await store.currentLibraries()
         let sourceKind = libraries.first(where: { $0.path == source })?.root.kind
@@ -1284,6 +1291,30 @@ actor MediaOperationCoordinator {
               case let .building(ctx) = session.phase, ctx.generation.rawValue == generation
         else {
             return false
+        }
+        // Revalidate the fact this decision rests on, against live rows rather than the
+        // snapshot. The snapshot was read before an await, so an enrichment batch may
+        // have landed since — and the catalog-change wake that revives a
+        // `.waitingForMetadata` session fires only for sessions *already* parked, so a
+        // batch landing mid-build is not replayed. Parking on a stale snapshot would
+        // then wait for a wake that never comes, and the last batch of a card's
+        // enrichment has nothing behind it to rescue the session.
+        //
+        // The revision pair cannot answer this: a batch that reads a file and finds no
+        // embedded capture wall moves the row from `.pending` to `.terminal` without
+        // changing `capture_wall_compact`, so `namingRevision` stays put while the
+        // gate's answer flips.
+        let liveMedia = await store.planningMedia(for: source) ?? []
+        if !liveMedia.isEmpty, !liveMedia.contains(where: { $0.namingFactState == .pending }) {
+            OtosLog.catalog.notice(
+                // swiftlint:disable:next line_length
+                "op=import.readiness phase=namingSettledDuringBuild run=\(runID, privacy: .public) rootPath=\(source.rawValue, privacy: .public) total=\(liveMedia.count, privacy: .public)"
+            )
+            session.isDirty = true
+            session.phase = .inventory
+            sourceSessions[source] = session
+            scheduleBuildIfNeeded(source)
+            return true
         }
         let message = "op=import.readiness phase=waitingForMetadata run=\(runID) "
             + "rootPath=\(source.rawValue) "
