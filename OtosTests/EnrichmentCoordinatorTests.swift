@@ -612,6 +612,43 @@ struct EnrichmentCoordinatorTests {
         #expect(await coordinator.testRetryLedgerEntry(for: id) == nil)
     }
 
+    /// A camera attach offers every catalog item at once, while only
+    /// `globalOutstandingLimit` may be outstanding. `stageDevice` used to take
+    /// `seeds.prefix(available)` and discard the rest, and nothing could recover
+    /// them: the catalog flow runs once per attach, and an unstaged device file
+    /// fails `lstat`, so readiness routing answers `.unknown` and retries readiness
+    /// rather than creating a demand. A camera with more items than the limit
+    /// therefore never fully staged, and so never fully enriched — while ENR-011
+    /// says every connected-source item is staged (plan 0099 D4).
+    @Test func stageDeviceQueuesEverySeedPastTheOutstandingLimit() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/BigCamera")
+        let limit = EnrichmentMaterializationHandoffPolicy.production().globalOutstandingLimit
+        let total = limit * 3
+        let seeds = (0 ..< total).map { index in
+            deviceStagingSeed(
+                rootPath: rootPath,
+                relativePath: "IMG_\(index).jpg",
+                captureDate: TimeInterval(index),
+                isVideo: false
+            )
+        }
+
+        await coordinator.stageDevice(seeds)
+
+        let snapshot = await coordinator.workStateSnapshot()
+        // Nothing is discarded: everything offered is either an outstanding demand or
+        // still queued for one.
+        #expect(snapshot.materializationPending + snapshot.materializationInFlight + snapshot.deviceSeedsQueued == total)
+        #expect(snapshot.deviceSeedsQueued > 0, "a camera larger than the limit must leave seeds queued, not dropped")
+        await coordinator.shutdown()
+    }
+
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),

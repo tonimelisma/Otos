@@ -129,7 +129,13 @@ extension CatalogWindowViewModel {
                 contentTypeIdentifier: item.contentTypeIdentifier,
                 byteSize: item.byteSize,
                 createdAt: item.captureDate,
-                contentModifiedAt: item.modificationDate
+                // Creation-first, not modification-first. `contentModifiedAt` is what
+                // import naming falls back to, and `CameraFileDate.modificationDate`
+                // prefers the modification dates — which for video is when recording
+                // *stopped*, misnaming every clip by its own length. `captureDate`
+                // answers the question naming actually asks; the modification date is
+                // the fallback of last resort (plan 0099 D6).
+                contentModifiedAt: item.captureDate ?? item.modificationDate
             )
         }
     }

@@ -45,6 +45,10 @@ actor EnrichmentCoordinator {
         let pendingApply: Int
         let materializationPending: Int
         let materializationInFlight: Int
+        /// Device seeds offered but not yet admitted as demands. Non-zero means a
+        /// camera is larger than the outstanding limit and the rest are waiting their
+        /// turn — which is the state that used to be a silent discard.
+        let deviceSeedsQueued: Int
 
         var claimed: Int {
             readyQueued + enriching
@@ -167,6 +171,18 @@ actor EnrichmentCoordinator {
     var materializationClaimIDs: Set<MediaAssetID> = []
     var pendingApplyClaimIDs: Set<MediaAssetID> = []
     var deviceRootPaths: Set<LibraryRootPath> = []
+    /// Device seeds offered but not yet admitted as materialization demands.
+    ///
+    /// A camera attach offers *every* catalog item at once, while only
+    /// `globalOutstandingLimit` (16) may be outstanding. `stageDevice` used to take
+    /// `seeds.prefix(available)` and drop the rest on the floor, and nothing could
+    /// recover them: the catalog flow runs once per attach, and an unstaged device
+    /// file fails `lstat`, so readiness routing answers `.unknown` and retries
+    /// readiness rather than creating a demand. A camera with more than ~16 items
+    /// therefore never fully staged, and so never fully enriched — contradicting
+    /// ENR-011's eager-staging intent (plan 0099 D4). The overflow now waits here and
+    /// is admitted as capacity frees.
+    var pendingDeviceSeeds: [DeviceStagingSeed] = []
     var nextClaimSequence: UInt64 = 0
     var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]
     var pendingApply: [EnrichmentResult] = []
@@ -304,6 +320,7 @@ extension EnrichmentCoordinator {
         retryLedger.removeAll()
         readinessRetryNotBefore.removeAll()
         pendingApply.removeAll()
+        pendingDeviceSeeds.removeAll()
         diagnosedThumbnailLifecycleIDs.removeAll()
         freshly.removeAll()
         signalContinuation.finish()
@@ -321,13 +338,35 @@ extension EnrichmentCoordinator {
         // Device staging has no Store enrichment claim. It is an independent
         // materialization demand and therefore cannot consume ready capacity.
         deviceRootPaths.formUnion(seeds.map(\.id.libraryRootPath))
-        let available = max(handoffPolicy.globalOutstandingLimit - materializationDemands.count, 0)
-        for seed in seeds.prefix(available) {
-            guard !FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) else {
+        pendingDeviceSeeds.append(contentsOf: seeds)
+        admitPendingDeviceSeeds()
+        signal()
+    }
+
+    /// Moves as many queued device seeds into materialization demands as capacity
+    /// allows, keeping the remainder queued. Called on every seed offer and whenever a
+    /// download completes, so the queue drains instead of being truncated once.
+    func admitPendingDeviceSeeds() {
+        guard !pendingDeviceSeeds.isEmpty else {
+            return
+        }
+        let offered = pendingDeviceSeeds.count
+        var admitted = 0
+        var remaining: [DeviceStagingSeed] = []
+        remaining.reserveCapacity(pendingDeviceSeeds.count)
+        for seed in pendingDeviceSeeds {
+            // Already staged, or already demanded: settled either way, not overflow.
+            if FileManager.default.fileExists(atPath: seed.id.fileURL.path(percentEncoded: false)) {
                 continue
             }
-            guard materializationDemands[seed.id] == nil else { continue }
-            let work = DownloadWork(
+            if materializationDemands[seed.id] != nil {
+                continue
+            }
+            guard materializationDemands.count < handoffPolicy.globalOutstandingLimit else {
+                remaining.append(seed)
+                continue
+            }
+            materializationDemands[seed.id] = DownloadWork(
                 id: seed.id,
                 url: seed.id.fileURL,
                 sourceSize: seed.sourceSize,
@@ -335,9 +374,15 @@ extension EnrichmentCoordinator {
                 isVideo: seed.isVideo,
                 isDeviceStaging: true
             )
-            materializationDemands[seed.id] = work
+            admitted += 1
         }
-        signal()
+        pendingDeviceSeeds = remaining
+        let queued = pendingDeviceSeeds.count
+        let outstanding = materializationDemands.count
+        OtosLog.metadata.notice(
+            // swiftlint:disable:next line_length
+            "op=enrichment.stageDevice phase=admit offered=\(offered, privacy: .public) admitted=\(admitted, privacy: .public) queued=\(queued, privacy: .public) outstanding=\(outstanding, privacy: .public)"
+        )
     }
 
     /// Waits until no enrichment/download work remains under `rootPath`, or until
@@ -385,7 +430,8 @@ extension EnrichmentCoordinator {
             enriching: enriching,
             pendingApply: pendingApply.count,
             materializationPending: max(materializationDemands.count - materializingIDs.count, 0),
-            materializationInFlight: materializingIDs.count
+            materializationInFlight: materializingIDs.count,
+            deviceSeedsQueued: pendingDeviceSeeds.count
         )
     }
 }
