@@ -43,12 +43,18 @@ struct CatalogWindowViewModelTests {
         model = nil
 
         try await waitForCondition { weakModel == nil }
+
+        // Shut the store down *before* quiescing. `shutdown()` legitimately emits a
+        // final change, which marks the still-alive projection dirty and earns one
+        // more build; quiescing first and then asserting stability across shutdown
+        // raced that build against a 40 ms quiet window on a 10 ms cadence, and failed
+        // intermittently. The invariant worth pinning is that work *ends* — once the
+        // model is released and the store is down, builds stop and stay stopped.
+        await store.shutdown()
         let buildCountAfterTermination = try await waitForBuildsToQuiesce(
             buildProbe,
             quietDuration: .milliseconds(40)
         )
-
-        await store.shutdown()
         try await waitForNoAdditionalBuilds(buildProbe, duration: .milliseconds(40))
         #expect(await buildProbe.buildCount == buildCountAfterTermination)
     }

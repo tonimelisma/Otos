@@ -138,12 +138,25 @@ private extension CatalogProjection {
         }
 
         let cadence = cadence
+        // Both loops wait indefinitely, so they hold their owner weakly — and both
+        // must *end* when that upgrade fails, not merely skip a beat. A `while
+        // !Task.isCancelled` loop whose body is `await self?.…` keeps running after
+        // the projection is gone: it does nothing on each pass, but it never exits,
+        // and its closure holds `store` strongly, so the whole `CatalogStore` (its
+        // database, watchers and scan tasks) is kept alive by a loop with no owner.
+        // `removeContinuation` cancels these, but only when the last stream consumer
+        // tears down — which is not guaranteed to happen before the owner deallocates.
+        // Hundreds of such orphans accumulating in one process is what deadlocked the
+        // test suite mid-run (plan 0099).
         changeTask = Task { [weak self, changes] in
             guard let changes else {
                 return
             }
             for await change in changes {
-                await self?.storeDidChange(change)
+                guard let self else {
+                    return
+                }
+                await storeDidChange(change)
             }
         }
 
@@ -154,7 +167,10 @@ private extension CatalogProjection {
                 } catch {
                     return
                 }
-                await self?.publishIfDirty(store: store)
+                guard let self else {
+                    return
+                }
+                await publishIfDirty(store: store)
             }
         }
     }

@@ -3,6 +3,47 @@ import Foundation
 import Testing
 
 struct CatalogProjectionLifecycleTests {
+    /// A projection's publication loop must end when the projection does, not merely
+    /// skip a beat. Both long-lived loops hold their owner weakly across an indefinite
+    /// wait; before plan 0099 neither *exited* when that upgrade failed, so a released
+    /// projection left a `while !Task.isCancelled` loop running forever — doing nothing
+    /// each pass, but holding `store` strongly through its closure and so keeping the
+    /// whole `CatalogStore` alive. One orphan per projection accumulated across a test
+    /// run until the process deadlocked mid-suite.
+    ///
+    /// Proven by ownership, not by timing: the store is held weakly here, so if the
+    /// loop still retained it the reference could not go nil.
+    @Test func releasingAProjectionEndsItsLoopsAndReleasesTheStore() async throws {
+        let temp = try makeProjectionLifecycleTemporaryDirectory()
+        let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+
+        weak var weakStore: CatalogStore?
+        do {
+            let scanner = CatalogScanner { _, _, _ in .empty }
+            let store = CatalogStore(location: .inMemory, scanner: scanner)
+            weakStore = store
+            let projection = CatalogProjection(cadence: .milliseconds(10))
+            let stream = await projection.states(store: store, initialDescriptor: .default)
+            let recordingTask = Task {
+                for await _ in stream {}
+            }
+            // Let the publication loop take at least one turn, so it is genuinely
+            // running and not merely scheduled.
+            try await Task.sleep(for: .milliseconds(60))
+            recordingTask.cancel()
+            _ = projection
+        }
+
+        // The loops wake on their cadence; after their next pass each must observe a
+        // nil owner and return, dropping the store with them.
+        let deadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < deadline, weakStore != nil {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        #expect(weakStore == nil, "a released projection kept its CatalogStore alive")
+    }
+
     @Test func coalescedRemoveAndSamePathReaddResetsSelection() async throws {
         let temp = try makeProjectionLifecycleTemporaryDirectory()
         let rootURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
