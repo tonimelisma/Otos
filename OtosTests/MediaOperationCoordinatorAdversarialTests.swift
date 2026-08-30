@@ -1531,6 +1531,10 @@ struct MediaOperationCoordinatorAdversarialTests {
             ),
         ], scan: scan)
         try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
+        // Plan 0099 increment 4: a camera is gated on proven naming facts exactly like
+        // a card, and its bytes are staged locally so enrichment can supply them.
+        // Nothing runs enrichment in this test, so stand in for it.
+        await markEnrichmentLookedAtEveryRow(store, root: rootPath)
 
         // Without the D2 fix, the coordinator would sit forever on the stale
         // empty plan from before device inventory landed.
@@ -1589,6 +1593,11 @@ struct MediaOperationCoordinatorAdversarialTests {
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
         ], scan: scan)
+        // Plan 0099 increment 4: a camera is gated on proven naming facts like a card.
+        // This test's subject is the *readiness* gate (ADR 0024) — that a plan built
+        // from an unstable inventory is withheld — so satisfy the earlier naming gate
+        // and let the readiness gate be what withholds it.
+        await markEnrichmentLookedAtEveryRow(store, root: rootPath)
 
         // The internal plan now has the item (proves it built while still
         // enumerating) but the bar must hold state A the entire time —

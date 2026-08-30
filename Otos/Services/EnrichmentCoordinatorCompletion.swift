@@ -135,6 +135,24 @@ extension EnrichmentCoordinator {
                 }
             }
         }
+        // Staging that cannot proceed for disk reasons retries every 60 s forever, and
+        // the naming gate now holds a camera import until every item is enriched — so
+        // this condition would otherwise be an indefinite, unexplained wait, and
+        // importing would not free the space anyway (staging is separate from the
+        // library copy). Name it in the log so the cause is legible rather than
+        // inferred from a bar that never advances (plan 0099, increment 4).
+        if outcome == .insufficientLocalSpace, work.isDeviceStaging {
+            let queuedSeeds = pendingDeviceSeeds.count
+            OtosLog.fileAccess.notice(
+                // swiftlint:disable:next line_length
+                "op=enrichment.stageDevice phase=blocked reason=insufficientLocalSpace rootPath=\(id.libraryRootPath.rawValue, privacy: .public) queued=\(queuedSeeds, privacy: .public)"
+            )
+        }
+        // A completed download frees an outstanding slot, which is the only moment a
+        // queued device seed can be admitted. Without this the queue would fill once
+        // and never drain, leaving a camera past the outstanding limit permanently
+        // unstaged — the defect the queue exists to fix (plan 0099 D4).
+        admitPendingDeviceSeeds()
         await recordVisibleThumbnailLifecycle(
             phase: materialized ? "materialized" : "materializationFailed",
             id: id,

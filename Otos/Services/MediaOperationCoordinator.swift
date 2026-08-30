@@ -1292,10 +1292,15 @@ actor MediaOperationCoordinator {
         // "Looked at", not "has some date": the honest denominator for state A's
         // determinate progress is how many source rows enrichment has actually read.
         let settled = snapshot.sourceMedia.count { $0.namingFactState != .pending }
-        let libraries = await store.currentLibraries()
-        let sourceKind = libraries.first(where: { $0.path == source })?.root.kind
-        guard sourceKind != .deviceMTP,
-              MediaTransferPlanner.needsDate(policy: snapshot.policy),
+        // A camera is gated exactly like a card. Its bytes are staged locally so they
+        // can be enriched, and enrichment of staged bytes is what produces a capture
+        // wall — `ICCameraFile`'s own dates are absolute instants, so they cannot
+        // yield a local wall clock, and its modification-first precedence is
+        // end-of-recording for video, the same duration-sized error that duplicated
+        // 23 videos off a card. Excluding `.deviceMTP` here meant a camera import was
+        // offered against exactly the fabricated names the gate exists to prevent
+        // (plan 0099 D5).
+        guard MediaTransferPlanner.needsDate(policy: snapshot.policy),
               snapshot.sourceMedia.contains(where: { $0.namingFactState == .pending })
         else {
             return false
