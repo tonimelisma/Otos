@@ -541,6 +541,28 @@ struct MediaTransferPlannerTests {
     /// A file whose bytes could not be opened cannot be copied, so it must be blocked
     /// rather than silently skipped — and it must not hold the naming gate open, since
     /// nothing about it is transient on a removable volume (plan 0099 D9).
+    /// The verdict must not outlive the attachment that produced it. Without a detach
+    /// boundary a single unreadable file stays blocked for the life of the process —
+    /// through eject and re-insert, and even once it reads cleanly again — and the set
+    /// grows without bound. Re-inserting a card re-evaluates from observation.
+    @Test func anUnreadableVerdictIsForgottenWhenTheRootDetaches() async {
+        let store = CatalogStore(location: .inMemory)
+        let root = LibraryRootPath(rawValue: "/Volumes/Card")
+        let id = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "IMG_0001.JPG"))
+        let other = LibraryRootPath(rawValue: "/Volumes/Other")
+        let otherID = MediaAssetID(libraryRootPath: other, relativePath: MediaRelativePath(rawValue: "IMG_0002.JPG"))
+
+        await store.markSourceUnreadable(id)
+        await store.markSourceUnreadable(otherID)
+        #expect(await store.testIsSourceUnreadable(id))
+        #expect(await store.testIsSourceUnreadable(otherID))
+
+        await store.forgetUnreadableSources(under: root)
+
+        #expect(await !(store.testIsSourceUnreadable(id)), "the verdict outlived its attachment")
+        #expect(await store.testIsSourceUnreadable(otherID), "another root's verdicts must be untouched")
+    }
+
     @Test func unreadableSourceIsBlockedNotSilentlySkipped() {
         let root = LibraryRootPath(rawValue: "/Volumes/Card")
         let relative = MediaRelativePath(rawValue: "IMG_0001.JPG")
