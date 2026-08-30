@@ -217,25 +217,34 @@ like, the requirement row says it is implemented and points at the test.
 ## Toolchain
 
 Use full Xcode (not Command Line Tools). Install tools with `brew bundle`. The
-required local check is `script/verify.sh` (requirements-authority + lint + build +
-test). Read logs with `script/logs.sh stream [Category]` (live) or
+required local check is **`script/check.sh`** — the single entry point, run with
+`run_in_background: true`. It runs the seconds-long gates first, then the full
+verification (requirements-authority + lint + build + test), and prints a heartbeat
+every 60 s carrying elapsed time and the running test count. Do not invoke
+`script/verify.sh`, `script/test.sh` or `script/build.sh` directly:
+`script/hooks/guard-long-checks.sh` denies it, because those skip the gates and
+emit no heartbeat, which is how a hung run is mistaken for a slow one. Read logs with `script/logs.sh stream [Category]` (live) or
 `script/logs.sh show --last 10m` (post-hoc ndjson); profile with
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
 ### Supervising long checks
 
-`script/verify.sh` takes roughly 4 minutes to build plus 3 to run the suite. Run
-the seconds-long gates first — `swiftformat --lint .` and `script/lint.sh` — so a
-formatting nit never costs a full build-and-test cycle.
+`script/check.sh` takes roughly 4 minutes to build plus 3 to run the suite. It runs
+the seconds-long gates itself, first, so a formatting nit never costs a full
+build-and-test cycle — you do not have to remember to.
 
 **A long check is watched, not awaited.** Waiting on process completion alone does
 not work: a hung process never completes, so it never reports, and the wait is
-unbounded. Background the check and **check on it every 60 seconds** with
-`ps -eo pid,etime,command | grep -E 'verify|xcodebuild'`, comparing elapsed time
-against the durations above and confirming the test log is still gaining lines.
-Note that `etime` is `[[DD-]hh:]mm:ss` — `09:40:13` is nine *hours*, not nine
-minutes; misreading it as nine minutes once cost a nine-hour stall.
+unbounded. **Check on it every 60 seconds** by reading the tail of the log:
+
+    op=check.heartbeat elapsed=MM:SS stage=<stage> tests=<count>
+
+`tests=` climbing is healthy. `tests=` unchanged three heartbeats running is hung.
+No heartbeat at all means the script itself died — read the tail. Reading one file
+answers it; `ps -eo pid,etime,command` is the fallback, and note `etime` is
+`[[DD-]hh:]mm:ss` — `09:40:13` is nine *hours*, not nine minutes. Misreading it
+that way once cost a nine-hour stall.
 
 A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
 `sample <xctest pid>` for the parked thread, and diff the log's test-name list
@@ -319,13 +328,13 @@ for confirmation before relying on them.
   applicable). Do not bypass with a parallel patch or hide a thread.
 - Remote CI is a fast gate (checkout sanity, workflow YAML, text hygiene, script
   inventory, macOS lint); it does not run Xcode 27 build/test until a runner exists.
-  Xcode 27 build/test proof is local `script/verify.sh` evidence. CI may be waived
+  Xcode 27 build/test proof is local `script/check.sh` evidence. CI may be waived
   only when GitHub reports a billing/quota blocker (paste the evidence); never for
   failures, syntax errors, missing tools, or flakiness.
 - **Doc-only increments** (the diff touches only documentation — `docs/`,
   `AGENTS.md`, and similar prose; no source, tests, scripts, or config) use a
   lightweight path: skip the last-five-PRs review-comment sweep, skip
-  `script/verify.sh` build/test (run `script/ci-text-hygiene.sh check` and
+  `script/check.sh` build/test (run `script/ci-text-hygiene.sh check` and
   `script/requirements-authority-check.sh` locally instead), and integrate
   quickly — branch, PR, merge to remote `main`, remove the worktree/branch, and
   send the DoD report. The DoD report notes the doc-only scope; everything else
@@ -348,7 +357,7 @@ after-DoD note, and complete the increment anyway.
 The final DoD report is **posted on the PR and sent to the user in full** — the same
 complete report, not a summary with a link. It uses green/red status emoji with
 plain-language text and answers: what was done; what was not; design decisions;
-requirement/ADR/doc changes; verification (Xcode version + `script/verify.sh`
+requirement/ADR/doc changes; verification (Xcode version + `script/check.sh`
 result); remote CI status (with exact waiver evidence if any); instrumentation/
 profiling evidence; code smells observed/addressed/accepted; media-originals and
 diagnostics review; outstanding review comments claimed and how each was fixed;
