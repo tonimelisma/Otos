@@ -432,6 +432,9 @@ struct ImportExecutionProgressTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
+        // Plan 0099: Ready requires proven naming facts; stand in for the enrichment
+        // coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: source)
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()

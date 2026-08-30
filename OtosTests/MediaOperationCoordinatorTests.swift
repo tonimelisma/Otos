@@ -34,6 +34,9 @@ struct MediaOperationCoordinatorTests {
             preferencesDomain: tempDefaults
         )
         await coordinator.start()
+        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // enrichment coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: source)
         await coordinator.setDestination(destination, for: source)
         _ = try await readyGeneration(coordinator, source: source)
 
@@ -77,6 +80,9 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
+        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // enrichment coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: source)
         await coordinator.setDestination(destination, for: source)
         _ = try await readyGeneration(coordinator, source: source)
 
@@ -124,6 +130,17 @@ struct MediaOperationCoordinatorTests {
             isEjectable: true
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        // Plan 0099: Ready requires proven naming facts. Waiting for the card's own
+        // scan in the *store* and standing in for the enrichment coordinator does not
+        // defeat this test's point — the coordinator still discovers the source and
+        // reaches Ready through the planning-change stream alone, with no
+        // `setDestination`/`queueImport` intent.
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         // Wider timeout (plan 0095 increment 4): this test's whole point is
         // that `.ready` arrives via the planning-change stream alone, with no
         // precondition wait possible without defeating that — so it carries
@@ -282,6 +299,12 @@ struct MediaOperationCoordinatorTests {
         )
         await coordinator.start()
 
+        // Plan 0099: Ready requires proven naming facts; stand in for the
+
+        // enrichment coordinator these tests do not run.
+
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+
         await coordinator.setDestination(fixedPath, for: cardPath)
         _ = try await readyGeneration(coordinator, source: cardPath)
         await coordinator.queueImport(for: cardPath)
@@ -348,6 +371,9 @@ struct MediaOperationCoordinatorTests {
             preferencesDomain: tempDefaults
         )
         await coordinator.start()
+        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // enrichment coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
 
         // The real bug's destination changes occupancy while scanning, which primes
@@ -426,6 +452,9 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
+        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // enrichment coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
         // An unseen root's first wake is conservatively treated as a possible change
         // (the coordinator has no recorded revisions to compare against), same as
@@ -493,6 +522,9 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
+        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // enrichment coordinator these tests do not run.
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
         let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
 
@@ -793,6 +825,10 @@ struct MediaOperationCoordinatorTests {
         }
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let libraries = try libraryURLs.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
+        // Plan 0099 increment 2: Ready also requires every source row's naming fact to
+        // be proven — enrichment must have read the file. Production's enrichment
+        // coordinator does that for an attached card; this store has none.
+        await markEnrichmentLookedAtEveryRow(store, root: source)
         return DestinationFixture(store: store, libraries: libraries, source: source, identity: identity)
     }
 

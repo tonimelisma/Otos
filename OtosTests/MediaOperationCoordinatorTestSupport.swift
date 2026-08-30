@@ -203,3 +203,32 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
         }
     }
 }
+
+/// Marks every media row under `root` as one enrichment has *looked at*, the
+/// precondition plan 0099's naming gate puts on offering a plan (ARC-057).
+///
+/// In production `EnrichmentCoordinator` reads every file on an attached card before
+/// the bar offers Import — a removable volume's bytes are always local, so that read
+/// is guaranteed to complete. These tests construct `CatalogStore` directly with no
+/// enrichment coordinator, so without this their rows stay `.pending` forever and the
+/// source never reaches Ready.
+///
+/// Each result carries the row's own size and mtime and no timestamps: the "enrichment
+/// looked and found no embedded capture wall" outcome, which makes the filesystem mtime
+/// a *proven* fallback rather than an assumed one.
+func markEnrichmentLookedAtEveryRow(_ store: CatalogStore, root: LibraryRootPath) async {
+    guard let media = await store.planningMedia(for: root), !media.isEmpty else {
+        return
+    }
+    let results = media.map { facts in
+        EnrichmentResult(
+            id: facts.id,
+            metadata: AssetMetadata(),
+            thumbnailPath: nil,
+            sourceSize: facts.byteSize ?? 0,
+            sourceMTimeSeconds: facts.contentModifiedAt.map { Int($0.timeIntervalSince1970.rounded(.down)) },
+            contentHash: nil
+        )
+    }
+    _ = await store.applyEnrichmentBatch(results)
+}
