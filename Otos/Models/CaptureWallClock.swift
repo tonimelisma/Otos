@@ -26,6 +26,60 @@ nonisolated enum CaptureWallClock {
         let precision: String
     }
 
+    /// Precision marking a wall clock Otos *derived* rather than read from the file.
+    ///
+    /// A video's filesystem mtime is when recording stopped, so `mtime − duration` is
+    /// its capture instant. This is the last resort for video when no local-authority
+    /// embedded candidate exists — 100% of two roots' videos in one production
+    /// catalog, whose names were otherwise wrong by each clip's own length. It is a
+    /// distinct precision, not a silent substitution, so a derived wall is
+    /// self-identifying wherever it is read (plan 0099 D7/O7).
+    static let derivedFromDurationPrecision = "derivedFromDuration"
+
+    /// The capture wall for a video with no embedded local-authority timestamp,
+    /// derived from when recording stopped less how long it ran.
+    ///
+    /// Returns nil unless every input is present and the arithmetic lands on a real
+    /// wall clock — a fabricated date is worse than none, and the planner already
+    /// blocks an entry it cannot name.
+    static func derivedFromDuration(
+        modifiedAt: Date?,
+        durationSeconds: Double?,
+        calendar: Calendar = .current,
+        timeZone: TimeZone = .current
+    ) -> Selection? {
+        guard let modifiedAt,
+              let durationSeconds,
+              durationSeconds > 0,
+              durationSeconds.isFinite
+        else {
+            return nil
+        }
+        let captured = modifiedAt.addingTimeInterval(-durationSeconds)
+        var local = calendar
+        local.timeZone = timeZone
+        let parts = local.dateComponents([.year, .month, .day, .hour, .minute, .second], from: captured)
+        guard let year = parts.year,
+              let month = parts.month,
+              let day = parts.day,
+              let hour = parts.hour,
+              let minute = parts.minute,
+              let second = parts.second
+        else {
+            return nil
+        }
+        let compact = Int64(year) * 10_000_000_000
+            + Int64(month) * 100_000_000
+            + Int64(day) * 1_000_000
+            + Int64(hour) * 10000
+            + Int64(minute) * 100
+            + Int64(second)
+        guard components(fromCompact: compact) != nil else {
+            return nil
+        }
+        return Selection(compact: compact, precision: derivedFromDurationPrecision)
+    }
+
     struct Components: Equatable, Sendable {
         let year: Int
         let month: Int

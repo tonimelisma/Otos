@@ -18,7 +18,7 @@ nonisolated enum MediaOperationGateway {
             db,
             sql: """
             SELECT relative_path, kind, content_type_identifier, byte_size,
-                   content_modified_at_unix, capture_wall_compact,
+                   content_modified_at_unix, capture_wall_compact, capture_wall_precision,
                    enriched_source_size, enriched_source_mtime,
                    NOT (\(settledPredicate)) AS naming_settled,
                    (enriched_source_size IS NOT NULL
@@ -72,6 +72,7 @@ nonisolated enum MediaOperationGateway {
                 byteSize: row["byte_size"],
                 contentModifiedAt: modified.map(Date.init(timeIntervalSince1970:)),
                 captureWallCompact: captureWall,
+                captureWallPrecision: row["capture_wall_precision"],
                 namingFactState: namingFactState,
                 mediaKind: kindRaw.flatMap(MediaKind.init(rawValue:)),
                 fileExtension: ext,
