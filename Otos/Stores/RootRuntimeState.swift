@@ -28,17 +28,35 @@ nonisolated struct RootRuntimeState: Equatable {
     /// Monotonic general planning revision. Bumped whenever reorganization planning
     /// inputs may have changed, including no-op rescans and event deferrals. Reorg
     /// planning polls this. Import planning does NOT key staleness on it — it churns
-    /// under cloud-sync/enrichment materialization noise that never changes import
-    /// occupancy. See `occupancyRevision`.
+    /// under cloud-sync/enrichment materialization noise that never changes what an
+    /// import reads. See `namespaceRevision` and `namingRevision`.
     var planRevision: UInt64
-    /// Monotonic import-occupancy revision. Bumped only when the root's occupied
-    /// media namespace actually changes: a media asset added, removed, renamed, or
-    /// resized; a companion inventory change; an import/reorg settlement; or a
-    /// discovered foreign occupant. Enrichment overlay writes and identical rescans
-    /// never bump it. Import-plan staleness keys on this so planning settles while a
-    /// large cloud destination keeps enriching. Every `occupancyRevision` bump also
-    /// advances `planRevision` (an occupancy change is a superset planning change).
-    var occupancyRevision: UInt64
+    /// Monotonic namespace revision: which paths this root occupies. Bumped only when
+    /// the occupied media namespace actually changes — a media asset added, removed,
+    /// renamed, or resized; a companion inventory change; an import/reorg settlement;
+    /// or a discovered foreign occupant. Enrichment overlay writes and identical
+    /// rescans never bump it.
+    ///
+    /// An import plan reads this for **both** its source and its destination: the
+    /// destination's occupied names decide collisions, and the source's inventory
+    /// decides what there is to copy.
+    var namespaceRevision: UInt64
+    /// Monotonic naming revision: what Otos would *call* this root's assets. Bumped
+    /// when an enrichment write changes an asset's `capture_wall_compact`, which is
+    /// the fact date/time import naming is derived from.
+    ///
+    /// An import plan reads this for its **source only**. Enriching an asset already
+    /// in the destination cannot change the plan: Otos never writes into media
+    /// folders, so no file is renamed, and `fetchDestinationOccupants` reads only
+    /// `relative_path`, `byte_size`, and `content_modified_at_unix` — never a capture
+    /// wall. Keying destination staleness on naming is what livelocked planning
+    /// against an enriching cloud library (ARC-046; fixed once in pull request 111,
+    /// then regressed by `40261bf` and fixed again in plan 0099).
+    ///
+    /// Every namespace or naming bump also advances `planRevision` — both are
+    /// planning changes for reorganization, which legitimately depends on capture
+    /// dates and polls `planRevision` directly.
+    var namingRevision: UInt64
     /// Process-local proof generation for destructive full-scan reconciliation. Any
     /// independent namespace mutation advances this value and retains typed dirty
     /// work, so an older observation may upsert facts but cannot delete rows.
@@ -58,7 +76,8 @@ nonisolated struct RootRuntimeState: Equatable {
         capabilities: VolumeNamespaceCapabilities = .unknown,
         skippedPackageCount: Int = 0,
         planRevision: UInt64 = 0,
-        occupancyRevision: UInt64 = 0,
+        namespaceRevision: UInt64 = 0,
+        namingRevision: UInt64 = 0,
         namespaceMutationEpoch: UInt64 = 0
     ) {
         self.root = root
@@ -70,7 +89,8 @@ nonisolated struct RootRuntimeState: Equatable {
         self.capabilities = capabilities
         self.skippedPackageCount = skippedPackageCount
         self.planRevision = planRevision
-        self.occupancyRevision = occupancyRevision
+        self.namespaceRevision = namespaceRevision
+        self.namingRevision = namingRevision
         self.namespaceMutationEpoch = namespaceMutationEpoch
     }
 }

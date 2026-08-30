@@ -40,7 +40,7 @@ struct MediaOperationCoordinatorTests {
         async let first: Void = coordinator.queueImport(for: source)
         try await Task.sleep(for: .milliseconds(20))
         async let second: Void = coordinator.queueImport(for: source)
-        _ = await store.bumpOccupancyRevision(for: destination)
+        _ = await store.bumpNamespaceRevision(for: destination)
         _ = await (first, second)
 
         let batches = try await store.importBatches()
@@ -376,12 +376,128 @@ struct MediaOperationCoordinatorTests {
         #expect(churnGeneration == baseline)
 
         // A real occupancy change still forces a replan.
-        _ = await store.bumpOccupancyRevision(for: cardPath)
+        _ = await store.bumpNamespaceRevision(for: cardPath)
         let replanned = try await readyGeneration(
             coordinator,
             source: cardPath,
             greaterThan: baseline
         )
+        #expect(replanned > baseline)
+        await coordinator.shutdown()
+    }
+
+    /// ARC-046's enrichment clause, which had no test and regressed in `40261bf`:
+    /// "enrichment overlay writes ... never advance it, so planning settles while a
+    /// large cloud destination keeps enriching."
+    ///
+    /// Enriching an asset already in the *destination* renames nothing on disk, and
+    /// `fetchDestinationOccupants` never reads a capture wall, so a naming write
+    /// there cannot change what the plan copies or where. Before plan 0099 this
+    /// discarded the ready plan and rebuilt it — ~480 ms of enumerate+plan roughly
+    /// once a second, for as long as the library kept enriching, each rebuild
+    /// producing the identical answer.
+    @Test func destinationNamingChurnDoesNotDisturbReadyPlan() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:naming-churn-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        await coordinator.start()
+        await coordinator.setDestination(fixedPath, for: cardPath)
+        // An unseen root's first wake is conservatively treated as a possible change
+        // (the coordinator has no recorded revisions to compare against), same as
+        // `noOpPlanRevisionChurnDoesNotDisturbReadyPlan`. Prime past it, then settle,
+        // so the baseline measures steady state.
+        _ = await store.bumpPlanRevision(for: fixedPath)
+        let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        // The destination library enriching in the background: capture walls change,
+        // no file moves.
+        for _ in 0 ..< 8 {
+            _ = await store.bumpNamingRevision(for: fixedPath)
+        }
+        _ = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        let afterChurn = try #require(
+            await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+        )
+        guard case let .ready(_, churnGeneration, _, _) = afterChurn.state else {
+            Issue.record("Expected .ready after destination naming churn, got \(afterChurn.state)")
+            await coordinator.shutdown()
+            return
+        }
+        #expect(churnGeneration == baseline)
+
+        // The destination's *namespace* changing is a real invalidation and still replans.
+        _ = await store.bumpNamespaceRevision(for: fixedPath)
+        let replanned = try await readyGeneration(coordinator, source: cardPath, greaterThan: baseline)
+        #expect(replanned > baseline)
+        await coordinator.shutdown()
+    }
+
+    /// The other half of the role split: the *source's* capture walls are what the
+    /// date/time destination name is derived from, so a naming write there must
+    /// replan. Without this edge a card planned from filesystem mtime would keep
+    /// those names after enrichment supplied the real capture wall — which is how
+    /// 23 videos were imported twice five minutes apart (plan 0099 §1.1).
+    @Test func sourceNamingChangeReplansBecauseItRenamesTheCopy() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:source-naming-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        await coordinator.start()
+        await coordinator.setDestination(fixedPath, for: cardPath)
+        let baseline = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        _ = await store.bumpNamingRevision(for: cardPath)
+        let replanned = try await readyGeneration(coordinator, source: cardPath, greaterThan: baseline)
         #expect(replanned > baseline)
         await coordinator.shutdown()
     }

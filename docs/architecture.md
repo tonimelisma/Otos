@@ -156,12 +156,19 @@ everything expensive happens on an actor off the main thread.
   read answers `nil`, and its candidates block rather than reading as free space.
   A selected regular-file candidate is preexisting
   only when live size and the shared expected destination mtime match. Store tracks
-  two per-root revisions: `planRevision` (general, reorg-polled, bumps on
-  no-op rescans too) and `occupancyRevision` (advances only on real media-namespace
-  changes). Import-plan staleness and the `RootPlanningChange` stream key on
-  `occupancyRevision`, so enrichment/no-op-rescan churn on a cloud destination does
-  not livelock planning. Store builds `ImportPlanningSnapshot` from filesystem
-  facts and live occupancy; planner decisions do not read hashes, provenance, or
+  three per-root revisions: `planRevision` (general, bumps on no-op rescans too),
+  `namespaceRevision` (which paths the root occupies — real media-namespace changes
+  only), and `namingRevision` (what Otos would call the root's assets — an
+  enrichment write that changes `capture_wall_compact`). The two consumers read them
+  differently and by different mechanisms: reorganization **pulls** `planRevision`
+  on demand (`LibraryReorganizationRunner`), while import planning is **pushed** the
+  `RootPlanningChange` stream — whose only subscriber is `MediaOperationCoordinator`
+  — and applies it *by role*. A root's namespace invalidates a plan reading it as
+  source or destination; its naming invalidates a plan reading it as source only,
+  because the source capture wall names the copy while a destination's overlay
+  renames nothing on disk. That role split is why enrichment churn on a cloud
+  destination does not livelock planning (ARC-046). Store builds
+  `ImportPlanningSnapshot` from filesystem facts and live revisions; planner decisions do not read hashes, provenance, or
   catalog membership. `MediaOperationCoordinator` greedily plans attached removable sources and
   applies volume-aware `FilesystemNameKey` equality to every destination namespace
   and reservation claim, publishes scalar footer presentation through the one `makePresentation` writer

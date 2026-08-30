@@ -75,7 +75,7 @@ are attributable without a side experiment.
 
 `knownForeignOccupants` is removed from the import path. `CatalogStore` declared a
 `knownForeignOccupantsByRoot` dictionary that nothing ever wrote: `recordForeignOccupant`
-marks the path dirty and bumps `occupancyRevision`, which replans. Enumeration then
+marks the path dirty and bumps `namespaceRevision`, which replans. Enumeration then
 observes the foreign occupant directly, so the field carried no fact the live read
 does not already provide.
 

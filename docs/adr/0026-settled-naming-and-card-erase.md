@@ -8,7 +8,9 @@
 Import date/time naming is owned by ImportNaming. A source plan is offered only
 after every naming fact has reached the existing enrichment predicate's settled
 state; enrichment that changes capture_wall_compact advances the import
-occupancy revision and causes a re-plan. A settled row with no embedded wall
+root's naming revision, which re-plans every session reading that root as its
+source. It does not advance the namespace revision, so a plan copying *into* an
+enriching root is untouched (ARC-046). A settled row with no embedded wall
 clock may use its filesystem modification date. No date is fabricated.
 
 An explicit card Erase uses one typed source disposition set. It removes copied

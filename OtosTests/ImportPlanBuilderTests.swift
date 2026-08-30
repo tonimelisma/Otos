@@ -39,8 +39,9 @@ struct ImportPlanBuilderTests {
             generation: 1,
             sourceRoot: sourceRoot,
             destinationRoot: dest,
-            sourceOccupancyRevision: 1,
-            destinationOccupancyRevision: 1,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
             sourceMedia: sourceMedia,
             destinationOccupants: occupants,
             // swiftlint:disable:next line_length
@@ -75,10 +76,44 @@ struct ImportPlanBuilderTests {
         let mediaA = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceA, relativePath: MediaRelativePath(rawValue: "A1.JPG")), sourceURL: sourceA.url.appending(path: "A1.JPG"), relativePath: MediaRelativePath(rawValue: "A1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_101_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
         // swiftlint:disable:next line_length
         let mediaB = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceB, relativePath: MediaRelativePath(rawValue: "B1.JPG")), sourceURL: sourceB.url.appending(path: "B1.JPG"), relativePath: MediaRelativePath(rawValue: "B1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_102_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
-        // swiftlint:disable:next line_length
-        let snapA = ImportPlanningSnapshot(generation: 1, sourceRoot: sourceA, destinationRoot: dest, sourceOccupancyRevision: 1, destinationOccupancyRevision: 1, sourceMedia: mediaA, destinationOccupants: [:], policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false), calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0) ?? .current)
-        // swiftlint:disable:next line_length
-        let snapB = ImportPlanningSnapshot(generation: 1, sourceRoot: sourceB, destinationRoot: dest, sourceOccupancyRevision: 1, destinationOccupancyRevision: 1, sourceMedia: mediaB, destinationOccupants: [:], policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false), calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0) ?? .current)
+        let snapA = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourceA,
+            destinationRoot: dest,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
+            sourceMedia: mediaA,
+            destinationOccupants: [:],
+            policy: ImportPolicy(
+                destinationFolderPolicy: .yearMonth,
+                destinationNamePolicy: .captureDateTime,
+                importSidecarFiles: false,
+                deleteSourceAfterImport: false,
+                autoEjectAfterImport: false
+            ),
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let snapB = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourceB,
+            destinationRoot: dest,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
+            sourceMedia: mediaB,
+            destinationOccupants: [:],
+            policy: ImportPolicy(
+                destinationFolderPolicy: .yearMonth,
+                destinationNamePolicy: .captureDateTime,
+                importSidecarFiles: false,
+                deleteSourceAfterImport: false,
+                autoEjectAfterImport: false
+            ),
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
 
         let controlled = ControlledImportPlanBuilder()
         await controlled.suspendNextBuild(for: sourceA)
@@ -109,8 +144,25 @@ struct ImportPlanBuilderTests {
         let dest = Self.destRoot
         // swiftlint:disable:next line_length
         let media = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: source, relativePath: MediaRelativePath(rawValue: "C1.JPG")), sourceURL: source.url.appending(path: "C1.JPG"), relativePath: MediaRelativePath(rawValue: "C1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_101_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
-        // swiftlint:disable:next line_length
-        let snap = ImportPlanningSnapshot(generation: 1, sourceRoot: source, destinationRoot: dest, sourceOccupancyRevision: 1, destinationOccupancyRevision: 1, sourceMedia: media, destinationOccupants: [:], policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false), calendar: Calendar(identifier: .gregorian), timeZone: TimeZone(secondsFromGMT: 0) ?? .current)
+        let snap = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: source,
+            destinationRoot: dest,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
+            sourceMedia: media,
+            destinationOccupants: [:],
+            policy: ImportPolicy(
+                destinationFolderPolicy: .yearMonth,
+                destinationNamePolicy: .captureDateTime,
+                importSidecarFiles: false,
+                deleteSourceAfterImport: false,
+                autoEjectAfterImport: false
+            ),
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
         let controlled = ControlledImportPlanBuilder()
         await controlled.suspendNextBuild(for: source)
 

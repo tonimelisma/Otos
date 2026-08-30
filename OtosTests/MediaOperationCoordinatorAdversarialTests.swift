@@ -1141,7 +1141,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // real settlement would. Simulate that wake directly: once no longer
         // executing, the next refresh is where a still-default destination
         // picks the reorder back up.
-        _ = await store.bumpOccupancyRevision(for: cardPath)
+        _ = await store.bumpNamespaceRevision(for: cardPath)
         // Waits on the same moveLibrary-triggered refreshSources cycle as
         // MediaOperationCoordinatorTests' readyGeneration waits; under
         // full-suite concurrent load this measured 8.393s against the 8s

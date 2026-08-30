@@ -160,7 +160,7 @@ instead of a static plan.
 
 ### B. Compare live occupancy against the plan's snapshot occupancy directly
 
-Pros: no new coordinator concept: `store.occupancyRevision(for:)` is already
+Pros: no new coordinator concept: `store.planningRevisions(for:)` is already
 read elsewhere.
 
 Cons: for a source whose occupancy stops changing after it settles, this
