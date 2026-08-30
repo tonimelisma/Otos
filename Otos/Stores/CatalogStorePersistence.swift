@@ -888,7 +888,22 @@ extension CatalogStore {
     /// root kind or facts changed — must survive, not be clobbered to NULL.
     static func writeEnrichmentOverlay(_ result: EnrichmentResult, libraryRootID: Int64, db: Database) throws {
         // Both date projections derive from the one stored truth, here at the write.
-        let captureWall = CaptureWallClock.select(from: result.metadata.timestamps)
+        //
+        // A video with no local-authority embedded timestamp falls back to its
+        // filesystem mtime — which for video is when recording *stopped*, so the name
+        // is wrong by the clip's own length. Where the duration is known, derive the
+        // capture instant instead and store it as the wall, marked with its own
+        // precision so it stays self-identifying. Deriving here rather than at naming
+        // time keeps `capture_wall_compact` the single stored truth.
+        let embeddedWall = CaptureWallClock.select(from: result.metadata.timestamps)
+        let captureWall = embeddedWall ?? (
+            result.enrichedKind == .video
+                ? CaptureWallClock.derivedFromDuration(
+                    modifiedAt: result.sourceMTimeSeconds.map { Date(timeIntervalSince1970: TimeInterval($0)) },
+                    durationSeconds: result.metadata.durationSeconds
+                )
+                : nil
+        )
         let instants = BestCaptureInstants.from(result.metadata.timestamps)
         try db.execute(
             sql: """

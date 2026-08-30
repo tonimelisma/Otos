@@ -74,6 +74,10 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
     let byteSize: Int64?
     let contentModifiedAt: Date?
     let captureWallCompact: Int64?
+    /// How `captureWallCompact` was established. A wall Otos *derived* (a video's
+    /// mtime less its duration) names the file but must not stamp the destination
+    /// mtime — see `ImportDestinationDate`.
+    let captureWallPrecision: String?
     let namingFactState: NamingFactState
     let mediaKind: MediaKind?
     let contentTypeIdentifier: String?
@@ -87,6 +91,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         byteSize: Int64?,
         contentModifiedAt: Date?,
         captureWallCompact: Int64?,
+        captureWallPrecision: String? = nil,
         namingFactState: NamingFactState = .settled,
         mediaKind: MediaKind?,
         fileExtension: String,
@@ -99,6 +104,7 @@ nonisolated struct PlanningFileFacts: Equatable, Sendable, Identifiable {
         self.byteSize = byteSize
         self.contentModifiedAt = contentModifiedAt
         self.captureWallCompact = captureWallCompact
+        self.captureWallPrecision = captureWallPrecision
         self.namingFactState = namingFactState
         self.mediaKind = mediaKind
         self.contentTypeIdentifier = contentTypeIdentifier
