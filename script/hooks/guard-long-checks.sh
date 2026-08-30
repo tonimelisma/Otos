@@ -32,8 +32,13 @@ except Exception:
 print(str((d.get("tool_input") or {}).get("run_in_background", False)).lower())
 ')"
 
+# Match only the *invocation* part of the command. A heredoc body is text — a PR
+# description or commit message that documents these scripts is not a run of them,
+# and matching it denied a `gh pr create` whose body explained script/check.sh.
+invocation_text="${full_command%%<<*}"
+
 is_run_of() {
-  printf '%s' "$full_command" | grep -qE "(^|[;&|[:space:]])(\./)?script/$1( |$|[;&|>])"
+  printf '%s' "$invocation_text" | grep -qE "(^|[;&|[:space:]])(\./)?script/$1( |$|[;&|>])"
 }
 
 # Reading about the scripts is fine; running the wrong one is not.
@@ -61,7 +66,7 @@ MSG
   exit 2
 fi
 
-if printf '%s' "$full_command" | grep -qE 'script/check\.sh'; then
+if is_run_of "check.sh"; then
   if [[ "$background" != "true" ]]; then
     cat >&2 <<'MSG'
 Denied: script/check.sh must run with run_in_background: true.
@@ -73,7 +78,7 @@ its log every 60 seconds.
 MSG
     exit 2
   fi
-  if printf '%s' "$full_command" | grep -qE '>[[:space:]]*/tmp/'; then
+  if printf '%s' "$invocation_text" | grep -qE '>[[:space:]]*/tmp/'; then
     cat >&2 <<'MSG'
 Denied: write the log to the session scratchpad, not /tmp.
 
