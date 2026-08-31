@@ -908,6 +908,55 @@ deadlines, concurrency caps, thread policy, chunk sizing, and every naming decis
 | **New — D1b session cap** | Concurrent import of N camera entries issues at most one ICC operation at a time against one device session, with the other workers waiting rather than queueing inside ImageCaptureCore |
 | **New — D1 capability gate** | A session whose first 12-byte probe short-reads, errors, returns empty data, or yields a family inconsistent with the extension is marked not-range-capable and stages instead; the decision is logged once per attach with its reason |
 
+## Status (2026-08-31)
+
+Landed on `main` in PR #320, each increment verified by `script/check.sh` (837 tests):
+
+- **B2, B1** — the readiness-retry spin and state-change scheduler logging.
+- **E1, D1b** — device concurrency of one, in admission *and* at the device session.
+- **A1–A6** — staging has one owner, per-instance trees, release on settlement, a quit
+  that finishes with a visible clearing state, an off-main launch sweep, dead code gone,
+  and the colliding "staging" name split.
+- **C1, C2, B3, B4** — the bar's track reports the stage it is in; `publish()` and the
+  apply log record changes rather than timer samples. DES-031 updated to match.
+- **Package** — `MediaMetadata` 0.4.1 released with R1–R11, and Otos pinned to it.
+
+**Not started: D1**, the Otos half of the range-driven read, and with it D2, C3, and E2's
+deadline. Its package half is done and released.
+
+### D1 is blocked on one design decision
+
+The plan already flagged that no execution context exists for a blocking parse. Building
+it surfaced the sharper form of that problem, and it needs an owner decision rather than a
+guess:
+
+- The package's read API is **synchronous** and may block for the duration of a transport
+  read (0101 R4).
+- `ICCameraFile` is **not `Sendable`**, and `DeviceCameraSession` is `@MainActor`.
+- Otos forbids `@unchecked Sendable` and `nonisolated(unsafe)` outright, enforced by
+  `script/check-no-unchecked-sendable.sh` (ARC-042).
+
+So a parse running on a dedicated thread cannot reach `ICCameraFile` without either an
+escape the repo bans, or blocking that thread on main-actor work — which during an import,
+with the main actor busy drawing the grid, is a plausible deadlock rather than a
+theoretical one. The three ways out, in increasing cost:
+
+1. **Run the parse on the main actor's thread via a serial queue owned by the session.**
+   Cheapest, and wrong: it puts 100–300 ms of blocking I/O per file on the main thread,
+   which the repo's 100 ms hang budget forbids outright.
+2. **Give `DeviceCameraSession` a `nonisolated` ranged-read** that owns its own serial
+   queue and an `ICCameraFile` map reachable without the main actor. Moves the isolation
+   boundary rather than crossing it, and is the smallest change that is actually correct —
+   but it means the session stops being uniformly `@MainActor`, which APP-018 currently
+   requires for every ImageCaptureCore callback.
+3. **Make the package's read API `async`** (0101 R4 option (a), deferred there). The
+   cleanest contract by far, and it removes the blocking-thread question entirely, at the
+   cost of an invasive change to a package whose other consumers read local files where
+   sync is correct.
+
+Option 2 is the recommendation, with the APP-018 amendment stated explicitly. It is not
+taken here because it changes a rule written after a crash, and that is the owner's call.
+
 ## Sequencing
 
 1. **B2 then B1** — the retry-map spin first, since it *causes* the flood, then the

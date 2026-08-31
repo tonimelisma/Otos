@@ -16,7 +16,7 @@ verification, and merge closure.
   `github.com/tonimelisma/MediaMetadata` and filed there as issues. Otos plans against a
   released tag, never against a promise; the package never learns Otos exists.
 
-0100 step 5 depends on 0101 shipping; everything else in 0100 is independent of it.
+0101 shipped as `MediaMetadata` 0.4.1 and Otos is pinned to it. Everything in 0100 except D1 (and D2, C3, E2's deadline, which follow it) landed in PR #320; D1 is blocked on one design decision, recorded in the plan's Status section.
 
 ## Closed
 
