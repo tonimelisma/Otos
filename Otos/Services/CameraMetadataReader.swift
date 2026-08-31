@@ -31,6 +31,13 @@ nonisolated enum CameraMetadataReader {
 
     /// Chunk size for the read-through cache wrapped around a camera source.
     ///
+    /// Still worth wrapping even though `MediaMetadata` 0.5.0 coalesces internally: its
+    /// buffer is sized for a parse's working set, this one for a transport where a miss
+    /// costs a ~40 ms round trip rather than a page fault. The package's `transportReadCount`
+    /// is what shows whether this layer is earning its place — logged per asset in
+    /// `MediaEnricher`, so a vendor whose containers defeat it is visible rather than
+    /// inferred.
+    ///
     /// Measured, not guessed. A parse touches one region for stills — ~44 KB for ARW, ~101 KB
     /// for HEIF — and three for MP4, while issuing up to 168 individual reads inside them.
     /// Uncached at 42.6 ms median latency that is ~5.9 s per HEIF file, which is no faster
