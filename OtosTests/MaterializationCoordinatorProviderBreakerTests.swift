@@ -121,8 +121,8 @@ struct MaterializationCoordinatorProviderBreakerTests {
     @Test func breakerIsPerRoot() async {
         // providerUnavailable on root A must not block root B.
         let callsByRoot = Mutex<[String: Int]>([:])
-        let coordinator = makeCoordinator { url in
-            let path = url.path
+        let coordinator = makeCoordinator { request in
+            let path = request.id.fileURL.path
             callsByRoot.withLock { $0[path, default: 0] += 1 }
             // All files on A fail, files on B succeed.
             if path.contains("RootA") {

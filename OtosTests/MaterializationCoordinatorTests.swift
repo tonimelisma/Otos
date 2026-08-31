@@ -8,7 +8,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) }
+            executor: { await executor.run($0.id.fileURL) }
         )
         let shared = request("shared.jpg", priority: .background)
         let first = Task { await coordinator.materialize(shared) }
@@ -33,7 +33,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy
         )
         let firstActive = Task { await coordinator.materialize(request("active-1.jpg", priority: .device)) }
@@ -75,7 +75,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) }
+            executor: { await executor.run($0.id.fileURL) }
         )
         let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
         try await executor.waitForStarts(1)
@@ -96,7 +96,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy
         )
         let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
@@ -138,7 +138,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy
         )
         let active = Task { await coordinator.materialize(request("active.jpg", priority: .device)) }
@@ -164,7 +164,7 @@ struct MaterializationCoordinatorTests {
         let diagnostics = AdmissionDiagnosticRecorder()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy,
             diagnosticSink: { diagnostics.record($0) }
         )
@@ -187,7 +187,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy
         )
         let background = Task {
@@ -226,7 +226,7 @@ struct MaterializationCoordinatorTests {
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy
         )
         let first = Task { await coordinator.materialize(request("first.jpg", priority: .device)) }
@@ -266,7 +266,7 @@ struct MaterializationCoordinatorTests {
         let diagnostics = AdmissionDiagnosticRecorder()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
-            executor: { await executor.run($0) },
+            executor: { await executor.run($0.id.fileURL) },
             policy: policy,
             diagnosticSink: { diagnostics.record($0) }
         )

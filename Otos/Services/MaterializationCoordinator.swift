@@ -60,7 +60,11 @@ actor MaterializationCoordinator: MaterializationRequesting {
         let backgroundByRoot: [LibraryRootPath: Int]
     }
 
-    typealias Executor = @Sendable (URL) async -> MaterializationResult
+    /// Takes the whole `Request`, not a bare URL: which provider can serve an asset
+    /// is a typed fact about its root, and narrowing to a path forced the executor to
+    /// re-derive it by string-matching — which silently sent every camera file to the
+    /// cloud provider for the life of the MTP code (APP-018).
+    typealias Executor = @Sendable (Request) async -> MaterializationResult
     typealias DiagnosticSink = @Sendable (AdmissionSnapshot?) -> Void
 
     private struct Waiter {
@@ -486,7 +490,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 return
             }
             await store.beginKnownMaterialization(for: request.id)
-            let result = await executor(request.id.fileURL)
+            let result = await executor(request)
             await store.endKnownMaterialization(for: request.id, success: result.isMaterialized)
             await self?.finishOperation(
                 request.id,
@@ -632,8 +636,12 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 )
                 wake()
             }
-        case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable:
+        case .requestFailed, .timedOut, .insufficientLocalSpace, .cancelled, .statusUnavailable,
+             .deviceUnavailable:
             // Inconclusive / slow / cancelled: neither opens nor closes the breaker.
+            // `deviceUnavailable` belongs here rather than with the failures: an
+            // absent camera says nothing about a *provider's* health, and letting it
+            // open the breaker would suppress a root for a reason unrelated to it.
             break
         }
     }

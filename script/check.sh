@@ -50,6 +50,13 @@ Each heartbeat line reads:
                                  find which tests never reported.
   • no heartbeat at all        → the script itself died; read the tail.
 
+A deadlock detector runs inside this script. It watches CPU *consumed* by the test
+host: a blocked process burns none while its wall clock advances, a slow one burns
+plenty. Only when CPU has not moved for OTOS_CHECK_STALL_SECONDS (default 420) does
+it sample the parked threads, name the last test to report, kill its children and
+exit non-zero. A quiet log is never enough — one long test can log nothing while
+working, and killing on silence is a timeout, not detection.
+
 Normal total is about 7 minutes: ~4 to build, ~3 for ~810 tests.
 Verification evidence counts ONLY from a run that measured the final tree —
 edit anything, even a comment, and this result no longer proves it.
@@ -82,6 +89,34 @@ VERIFY_LOG="$(mktemp)"
 "$ROOT_DIR/script/verify.sh" > "$VERIFY_LOG" 2>&1 &
 verify_pid=$!
 
+# Deadlock detection, not a timeout. The distinction matters: a log going quiet is
+# not evidence of a hang — one long test can log nothing for minutes while working
+# perfectly — so killing on "no output for N seconds" is a kill timeout with better
+# marketing, and it destroys exactly the slow-but-healthy runs it must not touch.
+#
+# The signal that actually separates the two is CPU: a blocked process consumes no
+# CPU time while its wall clock keeps advancing. A slow one burns CPU throughout.
+# So this compares consumed CPU across samples and only acts when it has genuinely
+# stopped, then samples the parked threads to say *what* it is blocked on.
+STALL_SECONDS="${OTOS_CHECK_STALL_SECONDS:-420}"
+last_cpu_change_at="$(date +%s)"
+last_cpu=""
+
+# Total CPU seconds consumed by the test host and its children.
+consumed_cpu() {
+  local total=0 t
+  for t in $(pgrep -f "Xcode/Agents/xctest" 2>/dev/null) $(pgrep -f "xcodebuild" 2>/dev/null); do
+    # ps TIME is [[dd-]hh:]mm:ss — reduce to seconds.
+    local raw
+    raw="$(ps -o time= -p "$t" 2>/dev/null | tr -d ' ')"
+    [[ -z "$raw" ]] && continue
+    local secs
+    secs="$(awk -F'[:-]' '{ s=0; for (i=1; i<=NF; i++) s = s*60 + $i; print s }' <<<"$raw")"
+    total=$(( total + secs ))
+  done
+  echo "$total"
+}
+
 started_at="$(date +%s)"
 while kill -0 "$verify_pid" 2>/dev/null; do
   sleep "$HEARTBEAT_SECONDS"
@@ -101,6 +136,31 @@ while kill -0 "$verify_pid" 2>/dev/null; do
   fi
   printf 'op=check.heartbeat elapsed=%02d:%02d stage=%s tests=%s\n' \
     $((elapsed / 60)) $((elapsed % 60)) "$stage" "$tests"
+
+  # Consumed CPU is the liveness signal. Unchanged CPU across the whole window means
+  # every worker is parked — a deadlock. Rising CPU with a quiet log is a slow test,
+  # which must be left alone.
+  cpu="$(consumed_cpu)"
+  if [[ "$cpu" != "$last_cpu" ]]; then
+    last_cpu="$cpu"
+    last_cpu_change_at="$(date +%s)"
+  elif [[ $(( $(date +%s) - last_cpu_change_at )) -ge "$STALL_SECONDS" ]]; then
+    echo "op=check.stall phase=detected elapsed=$((elapsed / 60))m stage=$stage tests=$tests cpuSeconds=$cpu blockedFor=$(( ($(date +%s) - last_cpu_change_at) / 60 ))m" >&2
+    xctest_pid="$(pgrep -f 'Xcode/Agents/xctest' | head -1)"
+    if [[ -n "$xctest_pid" ]]; then
+      echo "--- parked thread of xctest $xctest_pid ---" >&2
+      sample "$xctest_pid" 2 -mayDie 2>/dev/null | grep -m 25 -E "Otos|XCTWaiter|semaphore|Mutex|dispatch" >&2 || true
+    fi
+    if [[ -n "$newest_test_log" ]]; then
+      echo "--- last test to report ---" >&2
+      grep -E "passed on|failed on" "$newest_test_log" 2>/dev/null | tail -1 >&2 || true
+    fi
+    echo "check: DEADLOCKED — consumed no CPU for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2
+    cleanup_children
+    cat "$VERIFY_LOG" 2>/dev/null
+    rm -f "$VERIFY_LOG"
+    exit 1
+  fi
 done
 
 wait "$verify_pid"
