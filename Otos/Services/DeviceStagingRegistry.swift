@@ -20,9 +20,13 @@ final class DeviceStagingRegistry {
         sessionsByIdentity[session.identity] = session
     }
 
+    /// Drops the live session but **keeps** the staged bytes. They were already
+    /// transferred off the camera, so discarding them on eject would re-download the
+    /// whole device on the next attach — tens of gigabytes for a full card. Staging
+    /// lives for the session and is cleared at app close, with a startup sweep as the
+    /// crash-safe backstop (APP-018, owner decision 2026-08-30).
     func unregister(identity: String) {
         sessionsByIdentity.removeValue(forKey: identity)
-        deleteStaging(identity: identity)
     }
 
     func materialize(_ url: URL) async -> MaterializationResult? {
@@ -52,13 +56,11 @@ final class DeviceStagingRegistry {
                 elapsedMs: DiagnosticsTiming.milliseconds(since: start)
             )
         } catch {
-            OtosLog.fileAccess.error(
-                """
-                Device staging download failed identity=\(route.session.identity, privacy: .public) \
-                relativePath=\(route.relativePath.rawValue, privacy: .public) \
-                error=\(String(describing: error), privacy: .public)
-                """
-            )
+            var fields = ErrorDiagnostics.fields(for: error)
+            fields["identity"] = route.session.identity
+            fields["relativePath"] = route.relativePath.rawValue
+            fields["stagingRoot"] = route.session.stagingRootURL.path(percentEncoded: false)
+            OtosLog.fileAccess.errorOperation("camera.staging", phase: "failed", fields: fields)
             return MaterializationResult(
                 outcome: .requestFailed,
                 rerequestCount: 0,
@@ -72,19 +74,51 @@ final class DeviceStagingRegistry {
         let relativePath: MediaRelativePath
     }
 
+    /// The path of `url` relative to `root`, or nil when it does not live under it.
+    /// Pure and static so the prefix rule can be tested without a camera session —
+    /// the rule that silently broke all MTP staging was never covered by one.
+    nonisolated static func stagingRelativePath(of url: URL, under root: URL) -> String? {
+        let path = url.standardizedFileURL.path(percentEncoded: false)
+        var rootPath = root.standardizedFileURL.path(percentEncoded: false)
+        while rootPath.hasSuffix("/") {
+            rootPath.removeLast()
+        }
+        guard path.hasPrefix(rootPath + "/") else {
+            return nil
+        }
+        return String(path.dropFirst(rootPath.count + 1))
+    }
+
     private func route(for url: URL) -> Route? {
         let path = url.standardizedFileURL.path(percentEncoded: false)
         let matches = sessionsByIdentity.values.compactMap { session -> (DeviceCameraSession, String)? in
-            let root = session.stagingRootURL.standardizedFileURL.path(percentEncoded: false)
-            guard path.hasPrefix(root + "/") else {
+            // `stagingRootURL` is a directory URL, so its path already ends in "/".
+            // Appending another produced a "…/root//" prefix that no requested path
+            // could ever match, so every camera file fell through to the *cloud*
+            // materialization path and failed there as a permission error on a path
+            // that does not exist — which is what MTP staging silently did.
+            guard let relative = Self.stagingRelativePath(of: url, under: session.stagingRootURL) else {
                 return nil
             }
-            return (session, String(path.dropFirst(root.count + 1)))
+            return (session, relative)
         }
         guard let match = matches.max(by: { left, right in
             left.0.stagingRootURL.path(percentEncoded: false).count
                 < right.0.stagingRootURL.path(percentEncoded: false).count
         }) else {
+            // No registered session owns this path, so the caller falls through to the
+            // *cloud* materialization path and asks the File Provider to download a
+            // camera file — which fails as a permission error on a path that does not
+            // exist, saying nothing about the real cause. Report the mismatch itself:
+            // the path asked for, and every root actually registered.
+            OtosLog.fileAccess.errorOperation("camera.staging", phase: "noRoute", fields: [
+                "requestedPath": path,
+                "registeredRoots": sessionsByIdentity.values
+                    .map { $0.stagingRootURL.standardizedFileURL.path(percentEncoded: false) }
+                    .sorted()
+                    .joined(separator: ","),
+                "registeredCount": "\(sessionsByIdentity.count)",
+            ])
             return nil
         }
         return Route(session: match.0, relativePath: MediaRelativePath(rawValue: match.1))
@@ -112,6 +146,13 @@ final class DeviceStagingRegistry {
             return true
         }
         return available >= freeSpaceFloorBytes
+    }
+
+    /// Removes every staged byte. Called at app close; anything still on disk after
+    /// that belongs to a session that is over.
+    nonisolated static func discardAllStaging(at root: URL = deviceStagingRootURL()) {
+        try? FileManager.default.removeItem(at: root)
+        OtosLog.fileAccess.notice("op=camera.staging phase=discardAll root=\(root.path(percentEncoded: false), privacy: .public)")
     }
 
     static func sweepAbsentDeviceStaging(exceptIdentities: Set<String> = []) async {

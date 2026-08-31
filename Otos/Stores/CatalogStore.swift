@@ -2011,9 +2011,9 @@ extension CatalogStore {
         await releaseEnrichmentClaimsForRoot(rootRowID)
         forgetUnreadableSources(under: root.path)
         setAvailability(.unavailable, for: root.path)
-        if root.kind == .deviceMTP {
-            deleteDeviceStagingIfNeeded(root)
-        }
+        // Detach keeps the staged bytes: they are already off the camera, and
+        // discarding them here re-downloads the whole device on the next attach.
+        // They are cleared at app close instead (APP-018).
         OtosLog.catalog.info(
             """
             Removable source detached identity=\(identity, privacy: .public) \

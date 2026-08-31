@@ -1,3 +1,9 @@
+/* Adding a NEW source file to this directory breaks resolution of this module —
+   the Swift side stops finding otos_xxh3_*, even though the map below is explicit
+   and the Swift files already here compile fine. Put new Swift in another
+   directory, or extend an existing file, rather than adding one beside the module
+   map. Observed 2026-08-30 while adding an instrumentation helper. */
+
 #ifndef OTOS_XXH3_H
 #define OTOS_XXH3_H
 

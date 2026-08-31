@@ -47,9 +47,15 @@ extension CatalogWindowViewModel {
         monitor.start()
     }
 
+    /// Staging now survives a camera eject, so anything on disk at launch belongs to a
+    /// session that has ended — a clean quit should already have cleared it, and a
+    /// crash will not have. Discarding all of it here is the backstop that keeps the
+    /// cache from growing across crashes, and it must happen before monitoring starts
+    /// so a camera attaching immediately cannot race the sweep that would delete its
+    /// fresh bytes (APP-018, owner decision 2026-08-30).
     func startDeviceStagingSweepThenCameraMonitoring() {
         deviceStagingSweepTask = Task { [weak self] in
-            await DeviceStagingRegistry.sweepAbsentDeviceStaging()
+            DeviceStagingRegistry.discardAllStaging()
             guard !Task.isCancelled else {
                 return
             }
