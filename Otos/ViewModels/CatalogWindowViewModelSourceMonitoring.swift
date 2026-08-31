@@ -47,15 +47,23 @@ extension CatalogWindowViewModel {
         monitor.start()
     }
 
-    /// Staging now survives a camera eject, so anything on disk at launch belongs to a
-    /// session that has ended — a clean quit should already have cleared it, and a
-    /// crash will not have. Discarding all of it here is the backstop that keeps the
-    /// cache from growing across crashes, and it must happen before monitoring starts
-    /// so a camera attaching immediately cannot race the sweep that would delete its
-    /// fresh bytes (APP-018, owner decision 2026-08-30).
+    /// Staging survives a camera eject, so anything on disk at launch belongs to a session
+    /// that has ended — a clean quit should already have cleared its own tree, and a crash
+    /// will not have. Sweeping every *other* instance's tree here is the backstop that keeps
+    /// the cache from growing across crashes, and it must happen before monitoring starts so
+    /// a camera attaching immediately cannot race it (APP-018, owner decision 2026-08-30).
+    ///
+    /// `Task.detached` rather than `Task`: this type is `@MainActor`, so a plain `Task`
+    /// inherits that isolation and would run a recursive delete of potentially tens of
+    /// gigabytes on the main thread. The `await MainActor.run` that followed it was a no-op
+    /// hop, and evidence the author believed the work was already off-main.
+    ///
+    /// The sweep never touches this instance's own tree, so it cannot delete bytes a camera
+    /// attaching right now is writing — and it cannot delete a second running instance's
+    /// in-flight staging either, which the previous whole-directory delete could.
     func startDeviceStagingSweepThenCameraMonitoring() {
-        deviceStagingSweepTask = Task { [weak self] in
-            DeviceStagingRegistry.discardAllStaging()
+        deviceStagingSweepTask = Task.detached(priority: .utility) { [weak self] in
+            DeviceStagingLocation.sweepForeignInstanceStaging()
             guard !Task.isCancelled else {
                 return
             }

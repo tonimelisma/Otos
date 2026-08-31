@@ -343,7 +343,7 @@ final class DeviceCameraSession: NSObject {
         self.identity = identity
         self.displayName = displayName
         self.device = device
-        stagingRootURL = Self.stagingRootURL(identity: identity)
+        stagingRootURL = DeviceStagingLocation.sessionRootURL(identity: identity)
         super.init()
         device.delegate = self
     }
@@ -909,24 +909,6 @@ final class DeviceCameraSession: NSObject {
 
     private func itemsHashSeed(_ file: ICCameraFile) -> String {
         String(UInt(bitPattern: Unmanaged.passUnretained(file).toOpaque()))
-    }
-
-    private static func stagingRootURL(identity: String) -> URL {
-        let caches = (try? FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? FileManager.default.temporaryDirectory
-        let root = caches
-            .appending(path: "net.melisma.Otos", directoryHint: .isDirectory)
-            .appending(path: "DeviceStaging", directoryHint: .isDirectory)
-            .appending(path: CameraSourceMonitor.sanitize(identity), directoryHint: .isDirectory)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var mutableRoot = root
-        try? mutableRoot.setResourceValues(values)
-        return root
     }
 }
 

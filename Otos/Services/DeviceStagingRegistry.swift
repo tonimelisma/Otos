@@ -148,55 +148,6 @@ final class DeviceStagingRegistry {
         return available >= freeSpaceFloorBytes
     }
 
-    /// Removes every staged byte. Called at app close; anything still on disk after
-    /// that belongs to a session that is over.
-    nonisolated static func discardAllStaging(at root: URL = deviceStagingRootURL()) {
-        try? FileManager.default.removeItem(at: root)
-        OtosLog.fileAccess.notice("op=camera.staging phase=discardAll root=\(root.path(percentEncoded: false), privacy: .public)")
-    }
-
-    static func sweepAbsentDeviceStaging(exceptIdentities: Set<String> = []) async {
-        await Task.detached(priority: .utility) {
-            sweepAbsentDeviceStagingSynchronously(exceptIdentities: exceptIdentities)
-        }.value
-    }
-
-    private nonisolated static func sweepAbsentDeviceStagingSynchronously(exceptIdentities: Set<String>) {
-        let root = Self.deviceStagingRootURL()
-        let skippedNames = Set(exceptIdentities.map(CameraSourceMonitor.sanitize))
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey]
-        ) else {
-            return
-        }
-        for url in contents {
-            let identity = url.lastPathComponent
-            guard !skippedNames.contains(identity) else {
-                continue
-            }
-            try? FileManager.default.removeItem(at: url)
-        }
-    }
-
-    private func deleteStaging(identity: String) {
-        let url = Self.deviceStagingRootURL()
-            .appending(path: CameraSourceMonitor.sanitize(identity), directoryHint: .isDirectory)
-        try? FileManager.default.removeItem(at: url)
-    }
-
-    private nonisolated static func deviceStagingRootURL() -> URL {
-        let caches = (try? FileManager.default.url(
-            for: .cachesDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )) ?? FileManager.default.temporaryDirectory
-        return caches
-            .appending(path: "net.melisma.Otos", directoryHint: .isDirectory)
-            .appending(path: "DeviceStaging", directoryHint: .isDirectory)
-    }
-
     // MARK: - Import gateway (ARC-049)
 
     /// Builds a Sendable import gateway over the live session map.
@@ -211,12 +162,12 @@ final class DeviceStagingRegistry {
                     ) ?? .sourceNotReady
                 }
             },
-            ensureBytes: { [weak self] identity, relativePath, enrichmentURL, importStagingURL in
+            ensureBytes: { [weak self] identity, relativePath, enrichmentURL, destinationTempURL in
                 await self?.ensureImportBytes(
                     identity: identity,
                     relativePath: relativePath,
                     enrichmentURL: enrichmentURL,
-                    importStagingURL: importStagingURL
+                    destinationTempURL: destinationTempURL
                 ) ?? .failed("cameraRegistryGone")
             },
             deleteItem: { [weak self] identity, relativePath in
@@ -240,13 +191,13 @@ final class DeviceStagingRegistry {
         identity: String,
         relativePath: MediaRelativePath,
         enrichmentURL: URL,
-        importStagingURL: URL
+        destinationTempURL: URL
     ) async -> CameraByteOutcome {
         guard let session = sessionsByIdentity[identity] else {
             return .failed("cameraSessionMissing")
         }
         try? FileManager.default.createDirectory(
-            at: importStagingURL.deletingLastPathComponent(),
+            at: destinationTempURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
         if FileManager.default.fileExists(atPath: enrichmentURL.path),
@@ -256,7 +207,7 @@ final class DeviceStagingRegistry {
            Int64(size) == Int64(file.fileSize)
         {
             let source = enrichmentURL
-            let destination = importStagingURL
+            let destination = destinationTempURL
             let outcome = await withCheckedContinuation {
                 (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
                 Task.detached {
@@ -283,7 +234,7 @@ final class DeviceStagingRegistry {
             }
         }
         do {
-            try await session.download(relativePath: relativePath, to: importStagingURL)
+            try await session.download(relativePath: relativePath, to: destinationTempURL)
             return .completed
         } catch {
             return .failed(String(describing: error))
@@ -333,9 +284,9 @@ nonisolated struct CameraImportAccess: Sendable {
         identity: String,
         relativePath: MediaRelativePath,
         enrichmentURL: URL,
-        importStagingURL: URL
+        destinationTempURL: URL
     ) async -> CameraByteOutcome {
-        await ensureBytes(identity, relativePath, enrichmentURL, importStagingURL)
+        await ensureBytes(identity, relativePath, enrichmentURL, destinationTempURL)
     }
 
     func deleteItem(identity: String, relativePath: MediaRelativePath) async -> Bool {

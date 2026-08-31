@@ -66,27 +66,115 @@ struct DeviceStagingRegistryTests {
         )
     }
 
-    /// The launch backstop. Staging now survives an eject, so anything on disk at
-    /// launch belongs to a session that ended — a clean quit already cleared it, and a
+    /// The launch backstop. Staging survives an eject, so anything on disk at launch
+    /// belongs to a session that ended — a clean quit already cleared its own tree, and a
     /// crash did not. Without this the cache grows across crashes without bound.
     ///
-    /// Sweeps an injected temporary root, never the live one: the first version of
-    /// this test called the no-argument overload and deleted the real staged camera
-    /// data out of the user's cache when the suite ran.
-    @Test func discardAllStagingRemovesEverythingAPreviousSessionLeft() throws {
-        let root = try makeCatalogStoreTemporaryDirectory().appending(
+    /// Sweeps an injected container, never the live one: the first version of this test
+    /// called a no-argument overload and deleted the real staged camera data out of the
+    /// user's cache when the suite ran. Every destructive entry point here takes the
+    /// container for that reason.
+    @Test func theLaunchSweepRemovesTreesLeftByEndedSessions() throws {
+        let container = try makeCatalogStoreTemporaryDirectory().appending(
             path: "DeviceStaging",
             directoryHint: .isDirectory
         )
-        let stale = root.appending(path: "camera-old-session/2020-01-01", directoryHint: .isDirectory)
+        let stale = container.appending(path: "old-instance/camera-1/2020-01-01", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: stale, withIntermediateDirectories: true)
         let file = stale.appending(path: "STALE.ARW", directoryHint: .notDirectory)
         try Data(repeating: 1, count: 512).write(to: file)
-        #expect(FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
 
-        DeviceStagingRegistry.discardAllStaging(at: root)
+        DeviceStagingLocation.sweepForeignInstanceStaging(inContainer: container)
 
         #expect(!FileManager.default.fileExists(atPath: file.path(percentEncoded: false)))
-        #expect(!FileManager.default.fileExists(atPath: root.path(percentEncoded: false)))
+    }
+
+    /// A4. The previous sweep deleted the whole container, so a second running instance
+    /// lost the card it was mid-transfer on. Two instances ran on this machine on
+    /// 2026-08-30 and the second would have destroyed the first's staging.
+    @Test func theLaunchSweepLeavesThisInstancesOwnTreeAlone() throws {
+        let container = try makeCatalogStoreTemporaryDirectory().appending(
+            path: "DeviceStaging",
+            directoryHint: .isDirectory
+        )
+        let mine = DeviceStagingLocation.instanceRootURL(inContainer: container)
+            .appending(path: "camera-live", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+        let inFlight = mine.appending(path: "DSC00001.ARW", directoryHint: .notDirectory)
+        try Data(repeating: 9, count: 256).write(to: inFlight)
+
+        let foreign = container.appending(path: "some-other-instance", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: foreign, withIntermediateDirectories: true)
+
+        DeviceStagingLocation.sweepForeignInstanceStaging(inContainer: container)
+
+        #expect(
+            FileManager.default.fileExists(atPath: inFlight.path(percentEncoded: false)),
+            "the sweep must never delete bytes this instance is still transferring"
+        )
+        #expect(!FileManager.default.fileExists(atPath: foreign.path(percentEncoded: false)))
+    }
+
+    /// A2. Quit clears this instance's tree — owner decision 2026-08-30 — and only this
+    /// instance's.
+    @Test func quitDiscardsThisInstancesStagingAndNothingElse() throws {
+        let container = try makeCatalogStoreTemporaryDirectory().appending(
+            path: "DeviceStaging",
+            directoryHint: .isDirectory
+        )
+        let mine = DeviceStagingLocation.instanceRootURL(inContainer: container)
+            .appending(path: "camera-1", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: mine, withIntermediateDirectories: true)
+        try Data(repeating: 3, count: 128).write(to: mine.appending(path: "A.ARW", directoryHint: .notDirectory))
+
+        let peer = container.appending(path: "peer-instance/camera-2", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: peer, withIntermediateDirectories: true)
+        let peerFile = peer.appending(path: "B.ARW", directoryHint: .notDirectory)
+        try Data(repeating: 4, count: 128).write(to: peerFile)
+
+        #expect(DeviceStagingLocation.hasStagedBytes(inContainer: container))
+        DeviceStagingLocation.discardInstanceStaging(inContainer: container)
+
+        #expect(!DeviceStagingLocation.hasStagedBytes(inContainer: container))
+        #expect(
+            FileManager.default.fileExists(atPath: peerFile.path(percentEncoded: false)),
+            "quit clears our own cache, not a peer instance's"
+        )
+    }
+
+    /// Quit defers termination and shows a clearing window; doing that when nothing is
+    /// staged would add a flash and a delay to every quit, and most sessions never attach
+    /// a camera at all.
+    @Test func aSessionThatStagedNothingHasNothingToClear() throws {
+        let container = try makeCatalogStoreTemporaryDirectory().appending(
+            path: "DeviceStaging",
+            directoryHint: .isDirectory
+        )
+        #expect(!DeviceStagingLocation.hasStagedBytes(inContainer: container))
+    }
+
+    /// A1's guard. The release intent takes a path, and a path wrong by one component
+    /// would be a delete inside the user's own media — which Otos never does. Containment
+    /// is proven, not assumed.
+    @Test func onlyPathsInsideThisInstancesStagingCountAsReleasable() throws {
+        let container = try makeCatalogStoreTemporaryDirectory().appending(
+            path: "DeviceStaging",
+            directoryHint: .isDirectory
+        )
+        let inside = DeviceStagingLocation.instanceRootURL(inContainer: container)
+            .appending(path: "camera-1/DSC00001.ARW", directoryHint: .notDirectory)
+        #expect(DeviceStagingLocation.isInsideInstanceStaging(inside, inContainer: container))
+
+        let userMedia = URL(fileURLWithPath: "/Users/someone/Pictures/DSC00001.ARW")
+        #expect(!DeviceStagingLocation.isInsideInstanceStaging(userMedia, inContainer: container))
+
+        let peer = container.appending(path: "peer-instance/camera-1/DSC.ARW", directoryHint: .notDirectory)
+        #expect(!DeviceStagingLocation.isInsideInstanceStaging(peer, inContainer: container))
+
+        // A sibling directory whose name merely starts with the instance id must not match.
+        let neighbour = container
+            .appending(path: DeviceStagingLocation.instanceID + "-other", directoryHint: .isDirectory)
+            .appending(path: "DSC.ARW", directoryHint: .notDirectory)
+        #expect(!DeviceStagingLocation.isInsideInstanceStaging(neighbour, inContainer: container))
     }
 }

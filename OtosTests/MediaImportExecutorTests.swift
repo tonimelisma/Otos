@@ -385,7 +385,7 @@ struct CameraImportAccessTests {
             identity: "cam-1",
             relativePath: MediaRelativePath(rawValue: "IMG_1.JPG"),
             enrichmentURL: enrichment,
-            importStagingURL: staging
+            destinationTempURL: staging
         )
         #expect(result == .completed)
         #expect(try Data(contentsOf: staging) == Data([0x01, 0x02]))

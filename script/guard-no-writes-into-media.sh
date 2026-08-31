@@ -6,6 +6,8 @@ ALLOWLIST=(
   "Otos/Services/MediaImportExecutor.swift" "Otos/Services/ReorganizationExecutor.swift"
   # These writers target Otos-owned thumbnails, staging, device imports, or provider materialization.
   "Otos/Services/ThumbnailStore.swift" "Otos/Services/DeviceStagingRegistry.swift"
+  # Owns the device-staging cache layout, so every path it deletes it also constructs.
+  "Otos/Services/DeviceStagingLocation.swift"
   "Otos/Services/CopyfileTransfer.swift" "Otos/Services/ExclusivePublication.swift"
   "Otos/Services/CameraSourceMonitor.swift" "Otos/Services/FileMaterialization.swift"
   "Otos/Stores/CatalogStore.swift" "Otos/Stores/CatalogStorePersistence.swift"
