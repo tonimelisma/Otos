@@ -287,11 +287,22 @@ final class CatalogWindowViewModel {
         self.deviceStagingRegistry = deviceStagingRegistry
         let materializationCoordinator = MaterializationCoordinator(
             store: catalogStore,
-            executor: { url in
-                if let result = await deviceStagingRegistry.materialize(url) {
-                    return result
+            // Dispatch on what the root *is*, not on what its path looks like. The
+            // previous form asked the device registry to recognise a camera file by
+            // string-prefixing the URL, and fell through to the *cloud* provider when
+            // that missed — so a one-character prefix bug sent every camera file to
+            // iCloud, which refused it as a permission error on a path that did not
+            // exist. A device root is never servable by the cloud provider, and a
+            // device root with no live session is a state, not a fallback (APP-018).
+            executor: { [weak catalogStore] request in
+                let kind = await catalogStore?.rootKind(for: request.id.libraryRootPath)
+                guard kind == .deviceMTP else {
+                    return await FileMaterialization.materialize(request.id.fileURL)
                 }
-                return await FileMaterialization.materialize(url)
+                guard let result = await deviceStagingRegistry.materialize(request.id.fileURL) else {
+                    return MaterializationResult(outcome: .deviceUnavailable, rerequestCount: 0, elapsedMs: 0)
+                }
+                return result
             }
         )
         self.materializationCoordinator = materializationCoordinator

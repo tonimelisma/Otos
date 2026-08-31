@@ -380,7 +380,7 @@ struct EnrichmentCoordinatorTests {
         let executor = HeldMaterializationExecutor()
         let materializer = MaterializationCoordinator(
             store: store,
-            executor: { await executor.run($0) }
+            executor: { await executor.run($0.id.fileURL) }
         )
         let coordinator = EnrichmentCoordinator(
             store: store,
@@ -679,7 +679,7 @@ struct EnrichmentCoordinatorTests {
     @Test func ejectDrainIgnoresPureInteractivePreviewTraffic() async throws {
         let store = CatalogStore(location: .inMemory)
         let executor = HeldMaterializationExecutor()
-        let materializer = MaterializationCoordinator(store: store, executor: { await executor.run($0) })
+        let materializer = MaterializationCoordinator(store: store, executor: { await executor.run($0.id.fileURL) })
         await materializer.start()
 
         let rootPath = LibraryRootPath(rawValue: "/library")

@@ -236,7 +236,11 @@ build-and-test cycle — you do not have to remember to.
 
 **A long check is watched, not awaited.** Waiting on process completion alone does
 not work: a hung process never completes, so it never reports, and the wait is
-unbounded. **Check on it every 60 seconds** by reading the tail of the log:
+unbounded. **Arm a `Monitor` that emits a line every 60 seconds**, and stop it in
+the same action that reads its result — an unstopped watcher is the single most
+repeated mistake in this repo's history, with waiters found running for hours.
+`check.sh` also detects its own deadlock (below), so a hang reports itself even if
+no watcher was armed. Read the tail of the log:
 
     op=check.heartbeat elapsed=MM:SS stage=<stage> tests=<count>
 

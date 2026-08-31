@@ -559,6 +559,12 @@ extension CatalogStore {
         )
     }
 
+    /// The kind of a known root, so a caller can dispatch on what a root *is* rather
+    /// than infer it from its path. Returns nil for a path this store does not know.
+    func rootKind(for rootPath: LibraryRootPath) -> LibraryRootKind? {
+        roots[rootPath]?.root.kind
+    }
+
     func currentLibraries() -> [CatalogLibraryState] {
         roots.values
             .map { catalogLibraryState(from: $0) }

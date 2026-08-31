@@ -407,12 +407,18 @@ nonisolated enum MaterializationOutcome: Equatable {
     case cancelled
     /// The file's status could not be read (for example it disappeared).
     case statusUnavailable
+    /// The asset belongs to a device root with no live camera session, so its bytes
+    /// are not obtainable until the device is reconnected. A real, expected state —
+    /// not a provider failure, and never a reason to ask a *cloud* provider for a
+    /// camera file (APP-018).
+    case deviceUnavailable
 
     var isMaterialized: Bool {
         switch self {
         case .alreadyMaterialized, .materialized:
             true
-        case .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace, .cancelled, .statusUnavailable:
+        case .requestFailed, .timedOut, .providerUnavailable, .insufficientLocalSpace, .cancelled,
+             .statusUnavailable, .deviceUnavailable:
             false
         }
     }
@@ -435,6 +441,8 @@ nonisolated enum MaterializationOutcome: Equatable {
             "cancelled"
         case .statusUnavailable:
             "statusUnavailable"
+        case .deviceUnavailable:
+            "deviceUnavailable"
         }
     }
 }
