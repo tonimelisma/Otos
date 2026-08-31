@@ -6,6 +6,38 @@ import OSLog
 /// Store remains durable backlog truth. Ready/enriching claims, materialization demands,
 /// and pending apply results are separate process-local state sets because their
 /// capacities answer different resource questions.
+/// The scheduler-route levels B1 logs on change.
+///
+/// Equatable is the whole contract: two passes that describe the same scheduler state
+/// produce one line and a suppressed count, not two lines. Kept as a value rather than a
+/// formatted string so "did this change" is a typed comparison instead of string equality
+/// over a rendered log line.
+nonisolated struct SchedulerRouteFacts: Equatable, Sendable {
+    let claimed: Int
+    let readyQueued: Int
+    let enriching: Int
+    let materializationPending: Int
+    let materializationInFlight: Int
+    let pendingApply: Int
+    let dispatched: Int
+    let limit: Int
+    let deferred: Int
+
+    var logFields: [String: String] {
+        [
+            "claimed": "\(claimed)",
+            "readyQueued": "\(readyQueued)",
+            "enriching": "\(enriching)",
+            "materializationPending": "\(materializationPending)",
+            "materializationInFlight": "\(materializationInFlight)",
+            "pendingApply": "\(pendingApply)",
+            "dispatched": "\(dispatched)",
+            "limit": "\(limit)",
+            "deferred": "\(deferred)",
+        ]
+    }
+}
+
 extension EnrichmentCoordinator {
     private static let maxReadinessRoutingPasses = 4
 
@@ -115,13 +147,36 @@ extension EnrichmentCoordinator {
         }
     }
 
+    /// Wakes the coordinator when the earliest deferred readiness probe comes due.
+    ///
+    /// Past-deadline entries are dropped first, and that prune is the whole point. An
+    /// entry is set when a row reads `.unknown` and cleared when that row is re-examined,
+    /// so an entry whose deadline has passed means the row was never reached — and it
+    /// never will be by waiting, because nothing happens at a deadline that is already
+    /// behind us. Left in the map such an entry makes `min()` a past date, `delay`
+    /// computes to zero, and the loop becomes sleep(0) -> signal -> pass -> schedule ->
+    /// sleep(0) forever.
+    ///
+    /// Device staging guarantees the condition rather than merely allowing it: while a
+    /// camera is staging, `materializationDemands` sits saturated at the outstanding
+    /// limit, so every pass takes the early exit in `makeWork` before reaching most rows.
+    /// This spun the scheduler for the whole of the 2026-08-30 session, produced the log
+    /// flood that lost ~836 download events, and showed up as main-thread stalls in
+    /// `reconfigureVisibleItems`.
+    ///
+    /// A minimum-delay floor would hide this instead of fixing it: the zero delay is a
+    /// symptom of state that should have been removed, not of a cadence that is too fast.
+    /// Scheduling nothing when the map empties is safe because readiness is not the only
+    /// wake source — a completed download admits queued seeds and signals directly.
     private func scheduleReadinessRetrySignal() {
         readinessRetryTask?.cancel()
+        let now = Date()
+        readinessRetryNotBefore = readinessRetryNotBefore.filter { $0.value > now }
         guard let nextRetry = readinessRetryNotBefore.values.min() else {
             readinessRetryTask = nil
             return
         }
-        let delay = max(nextRetry.timeIntervalSinceNow, 0)
+        let delay = max(nextRetry.timeIntervalSince(now), 0)
         readinessRetryTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) } catch { return }
             await self?.signal()
@@ -499,27 +554,38 @@ extension EnrichmentCoordinator {
         }
     }
 
+    /// Emits the scheduler-route line only when the facts change, carrying how many
+    /// identical passes were collapsed into it (B1).
+    ///
+    /// Every field here is a level, not an event: "how much work is claimed, queued,
+    /// enriching, materializing, pending". Re-emitting an unchanged level teaches the
+    /// reader nothing and costs a line, and at the rate a spinning scheduler produces
+    /// them it costs *other* messages too — the unified log drops under load, which is
+    /// how a fully working download pipeline read as dead for 40 minutes. A transition
+    /// is always logged, including the transition to all-zero, so the quiet state is
+    /// visible rather than merely inferred from silence.
     private func logClaimBatch(claimedCount: Int, dispatchedCount: Int, limit: Int, deferredCount: Int) {
-        let queuedCount = queuedEnrichmentCount
-        let activeEnrichingCount = enrichingCount
         let materializationInFlightCount = materializingIDs.count
-        let materializationPendingCount = materializationDemands.count - materializationInFlightCount
-        let pendingApplyCount = pendingApply.count
-        OtosLog.metadata.noticeOperation(
-            "catalog.enrichment.scheduler",
-            phase: "route",
-            fields: [
-                "claimed": "\(claimedCount)",
-                "readyQueued": "\(queuedCount)",
-                "enriching": "\(activeEnrichingCount)",
-                "materializationPending": "\(max(materializationPendingCount, 0))",
-                "materializationInFlight": "\(materializationInFlightCount)",
-                "pendingApply": "\(pendingApplyCount)",
-                "dispatched": "\(dispatchedCount)",
-                "limit": "\(limit)",
-                "deferred": "\(deferredCount)",
-            ]
+        let facts = SchedulerRouteFacts(
+            claimed: claimedCount,
+            readyQueued: queuedEnrichmentCount,
+            enriching: enrichingCount,
+            materializationPending: max(materializationDemands.count - materializationInFlightCount, 0),
+            materializationInFlight: materializationInFlightCount,
+            pendingApply: pendingApply.count,
+            dispatched: dispatchedCount,
+            limit: limit,
+            deferred: deferredCount
         )
+        guard facts != lastSchedulerRoute else {
+            suppressedSchedulerRoutes += 1
+            return
+        }
+        var fields = facts.logFields
+        fields["suppressedPasses"] = "\(suppressedSchedulerRoutes)"
+        lastSchedulerRoute = facts
+        suppressedSchedulerRoutes = 0
+        OtosLog.metadata.noticeOperation("catalog.enrichment.scheduler", phase: "route", fields: fields)
     }
 
     private func recordCandidateQueryFailure(_ error: any Error) async {

@@ -30,6 +30,11 @@ struct MaterializationCoordinatorTests {
     @Test func queuedBackgroundRequestIsPromotedWithoutDuplicateTransfer() async throws {
         var policy = MaterializationAdmissionPolicy.production
         policy.globalConcurrency = 2
+        // Two device transfers run concurrently here only to occupy both slots; this
+        // test's subject is background promotion, not device concurrency. Production caps
+        // devices at one because ImageCaptureCore serialises them, so state the higher cap
+        // explicitly rather than let the subject depend on the production value.
+        policy.deviceConcurrency = 2
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),
@@ -69,6 +74,68 @@ struct MaterializationCoordinatorTests {
         )
         #expect(await executor.startedNames().count == 4)
         await coordinator.shutdown()
+    }
+
+    /// E1. ImageCaptureCore funnels every request through one serial
+    /// `ICDeviceCommandQueue`, so a second concurrent device transfer is not parallelism —
+    /// it queues inside a framework Otos cannot observe, time, or cancel. The 2026-08-30
+    /// session ran sixteen at once and measured 0.9-8.5 MB/s against 37-40 MB/s
+    /// single-stream.
+    @Test func onlyOneDeviceTransferRunsAtATime() async throws {
+        let executor = ControlledMaterializationExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0.id.fileURL) }
+        )
+        let first = Task { await coordinator.materialize(request("first.arw", priority: .device)) }
+        try await executor.waitForStarts(1)
+        let second = Task { await coordinator.materialize(request("second.arw", priority: .device)) }
+        try await Task.sleep(for: .milliseconds(30))
+
+        #expect(
+            await executor.startedNames() == ["first.arw"],
+            "a second device transfer must wait in Otos's queue, not inside ImageCaptureCore"
+        )
+
+        await executor.releaseNext()
+        try await executor.waitForStarts(2)
+        #expect(await executor.startedNames() == ["first.arw", "second.arw"])
+        await executor.releaseNext()
+        _ = await (first.value, second.value)
+        await coordinator.shutdown()
+    }
+
+    /// The device cap is a transport limit, not a global one. Cloud and local
+    /// materialization are genuinely concurrent and were never the finding, so lowering
+    /// the global cap would have been the wrong fix.
+    @Test func deviceCapDoesNotThrottleOtherTransports() async throws {
+        let executor = ControlledMaterializationExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0.id.fileURL) }
+        )
+        let device = Task { await coordinator.materialize(request("card.arw", priority: .device)) }
+        try await executor.waitForStarts(1)
+        let cloud = Task { await coordinator.materialize(request("cloud.jpg", priority: .interactive)) }
+        try await executor.waitForStarts(2)
+
+        #expect(await executor.startedNames().sorted() == ["card.arw", "cloud.jpg"])
+
+        await executor.releaseNext()
+        await executor.releaseNext()
+        _ = await (device.value, cloud.value)
+        await coordinator.shutdown()
+    }
+
+    /// The rejection is named, so a stalled camera is attributable in the admission log
+    /// rather than looking like generic global-concurrency pressure.
+    @Test func aSecondDeviceRequestIsRejectedAsDeviceConcurrency() {
+        let policy = MaterializationAdmissionPolicy.production
+        let inFlight = MaterializationAdmissionPolicy.Snapshot(
+            count: 1, bytes: 0, largeVideoCount: 0, deviceCount: 1, backgroundByRoot: [:]
+        )
+        #expect(policy.rejection(for: request("next.arw", priority: .device), inFlight: inFlight) == .deviceConcurrency)
+        #expect(policy.rejection(for: request("next.jpg", priority: .interactive), inFlight: inFlight) == nil)
     }
 
     @Test func backgroundIsLimitedToOneTransferPerRoot() async throws {
@@ -223,6 +290,9 @@ struct MaterializationCoordinatorTests {
     @Test func cancelledQueuedPromotionRestoresBackgroundAdmission() async throws {
         var policy = MaterializationAdmissionPolicy.production
         policy.globalConcurrency = 2
+        // As above: two occupied slots are the fixture, not the subject (which is
+        // restoring background admission after a queued promotion is cancelled).
+        policy.deviceConcurrency = 2
         let executor = ControlledMaterializationExecutor()
         let coordinator = MaterializationCoordinator(
             store: CatalogStore(location: .inMemory),

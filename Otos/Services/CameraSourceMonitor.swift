@@ -322,6 +322,22 @@ final class DeviceCameraSession: NSObject {
     private var didAddItemCount = 0
     private var filesByRelativePath: [MediaRelativePath: ICCameraFile] = [:]
     private var isClosed = false
+    /// FIFO gate over every byte-moving request to this device.
+    ///
+    /// ImageCaptureCore serialises on one `ICDeviceCommandQueue` regardless of how many
+    /// requests are outstanding — a process sample during the 2026-08-30 session found the
+    /// app inside `requestDownloadWithOptions` for 1,465 of 1,481 samples. Extra
+    /// concurrent requests therefore buy no parallelism; they queue somewhere Otos cannot
+    /// see, time, or cancel, and they measurably cost throughput (0.9-8.5 MB/s observed
+    /// under a 16-way window against 37-40 MB/s single-stream).
+    ///
+    /// The gate lives on the session rather than in `MaterializationAdmissionPolicy`
+    /// because the policy only sees enrichment traffic. `MediaImportExecutor` runs eight
+    /// copy workers that call `download` directly, so import bypasses the policy entirely
+    /// — and once planning stops staging the card up front, import becomes the *only*
+    /// path that moves bytes. A cap that lives anywhere else would not cover it.
+    private var transferInFlight = false
+    private var transferWaiters: [(id: UUID, continuation: CheckedContinuation<Void, Error>)] = []
 
     init(identity: String, displayName: String, device: ICCameraDevice) {
         self.identity = identity
@@ -465,10 +481,45 @@ final class DeviceCameraSession: NSObject {
         continuation.resume(returning: ())
     }
 
+    /// Takes the device's single transfer slot, waiting in FIFO order for it.
+    ///
+    /// Throwing rather than plain suspension so `close()` can release queued callers with
+    /// `.disconnected` instead of stranding them: a detached camera must fail its waiters,
+    /// not hang the import that is waiting on them.
+    private func acquireTransferSlot() async throws {
+        if isClosed {
+            throw DeviceCameraSessionError.disconnected
+        }
+        guard transferInFlight else {
+            transferInFlight = true
+            return
+        }
+        let id = UUID()
+        try await withCheckedThrowingContinuation { continuation in
+            transferWaiters.append((id: id, continuation: continuation))
+        }
+    }
+
+    /// Hands the slot to the next waiter, or marks the device idle.
+    ///
+    /// Never clears `transferInFlight` while a waiter exists: the slot passes directly
+    /// from one holder to the next, so no third caller can slip in between and make two
+    /// transfers concurrent.
+    private func releaseTransferSlot() {
+        guard !transferWaiters.isEmpty else {
+            transferInFlight = false
+            return
+        }
+        let next = transferWaiters.removeFirst()
+        next.continuation.resume()
+    }
+
     func download(relativePath: MediaRelativePath, to destinationURL: URL) async throws {
         guard let file = filesByRelativePath[relativePath] else {
             throw DeviceCameraSessionError.itemUnavailable(relativePath.rawValue)
         }
+        try await acquireTransferSlot()
+        defer { releaseTransferSlot() }
         let started = ContinuousClock().now
         OtosLog.fileAccess.noticeOperation("camera.download", phase: "start", fields: [
             "relativePath": relativePath.rawValue,
@@ -717,6 +768,15 @@ final class DeviceCameraSession: NSObject {
         let currentWaiters = waiters
         waiters.removeAll()
         for waiter in currentWaiters.values {
+            waiter.continuation.resume(throwing: error)
+        }
+        // Transfer waiters are failed on the same path. A queued caller is parked on a
+        // slot that will never be handed over once the device is gone, so leaving them
+        // suspended would hang whatever is awaiting them — an import, most likely.
+        let currentTransferWaiters = transferWaiters
+        transferWaiters.removeAll()
+        transferInFlight = false
+        for waiter in currentTransferWaiters {
             waiter.continuation.resume(throwing: error)
         }
     }

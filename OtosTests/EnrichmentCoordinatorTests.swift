@@ -649,6 +649,126 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// B2. `readinessRetryNotBefore` had no coverage at all — the existing `retryLedger`
+    /// tests cover the *failure* ledger, a different mechanism — which is why a scheduler
+    /// that woke itself at zero delay shipped and ran for a whole 45-minute camera session.
+    ///
+    /// A deadline is set when a row reads `.unknown` and cleared when that row is
+    /// re-examined. An entry whose deadline has passed therefore means the row was never
+    /// reached, and waiting cannot change that. Left in the map it makes the scheduled
+    /// delay zero forever.
+    @Test func aPassDropsReadinessDeadlinesThatHaveAlreadyElapsed() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Camera"),
+            relativePath: MediaRelativePath(rawValue: "stale.arw")
+        )
+        await coordinator.testSeedReadinessRetry(id: id, notBefore: Date(timeIntervalSinceNow: -30))
+
+        _ = await coordinator.dequeueEnrichmentWork()
+
+        let deadlines = await coordinator.testReadinessRetryDeadlines()
+        #expect(
+            deadlines.allSatisfy { $0 > Date() },
+            "an elapsed deadline must not survive a pass: min() would be in the past and the wake delay zero"
+        )
+        await coordinator.shutdown()
+    }
+
+    /// B2, at the trigger that actually produced the spin. While a camera stages,
+    /// `materializationDemands` sits saturated at the outstanding limit, so every pass
+    /// takes the early exit before reaching most rows — which is what guarantees a
+    /// deferred row is never re-examined and its deadline goes stale.
+    @Test func saturatedMaterializationDemandCannotLeaveAZeroDelayWake() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/BigCamera")
+        let limit = EnrichmentMaterializationHandoffPolicy.production().globalOutstandingLimit
+        for index in 0 ..< limit {
+            let id = MediaAssetID(
+                libraryRootPath: rootPath,
+                relativePath: MediaRelativePath(rawValue: "saturate_\(index).arw")
+            )
+            await coordinator.testSeedMaterialization(
+                EnrichmentCoordinator.DownloadWork(
+                    id: id, url: id.fileURL, sourceSize: 100, captureDate: nil,
+                    isVideo: false, isDeviceStaging: true
+                ),
+                inFlight: true
+            )
+        }
+        let deferred = MediaAssetID(
+            libraryRootPath: rootPath,
+            relativePath: MediaRelativePath(rawValue: "never_reached.arw")
+        )
+        await coordinator.testSeedReadinessRetry(id: deferred, notBefore: Date(timeIntervalSinceNow: -5))
+
+        _ = await coordinator.dequeueEnrichmentWork()
+
+        let deadlines = await coordinator.testReadinessRetryDeadlines()
+        #expect(
+            deadlines.allSatisfy { $0 > Date() },
+            "a pass that exits early on saturated demand must still leave no elapsed deadline behind"
+        )
+        await coordinator.shutdown()
+    }
+
+    /// The prune must remove only what is dead. A deferral that has not come due yet is
+    /// live state — dropping it would re-probe a row the coordinator deliberately parked.
+    @Test func aPassKeepsReadinessDeadlinesThatHaveNotComeDue() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Camera"),
+            relativePath: MediaRelativePath(rawValue: "parked.arw")
+        )
+        let deadline = Date(timeIntervalSinceNow: 600)
+        await coordinator.testSeedReadinessRetry(id: id, notBefore: deadline)
+
+        _ = await coordinator.dequeueEnrichmentWork()
+
+        #expect(await coordinator.testReadinessRetryDeadlines() == [deadline])
+        await coordinator.shutdown()
+    }
+
+    /// B1. The scheduler-route line was unconditional, so a spinning scheduler emitted
+    /// hundreds of identical `dispatched=0` lines per second and the unified log dropped
+    /// other messages under the volume — which is how a working download pipeline read as
+    /// dead. Identical passes must collapse into a suppressed count.
+    @Test func identicalSchedulerPassesCollapseIntoASuppressedCount() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+
+        _ = await coordinator.dequeueEnrichmentWork()
+        #expect(await coordinator.testSuppressedSchedulerRoutes() == 0, "the first pass is a transition and is emitted")
+
+        _ = await coordinator.dequeueEnrichmentWork()
+        _ = await coordinator.dequeueEnrichmentWork()
+        #expect(
+            await coordinator.testSuppressedSchedulerRoutes() == 2,
+            "unchanged passes must be counted, not emitted"
+        )
+
+        await coordinator.shutdown()
+    }
+
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
