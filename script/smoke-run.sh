@@ -44,7 +44,7 @@ SETTLE_SECONDS="${OTOS_SMOKE_SETTLE_SECONDS:-10}"
 SCROLL_CYCLES="${OTOS_SMOKE_SCROLL_CYCLES:-6}"
 SCROLL_DELTA="${OTOS_SMOKE_SCROLL_DELTA:-900}"
 SCROLL_PAUSE="${OTOS_SMOKE_SCROLL_PAUSE:-0.25}"
-LOG_PID=""
+LOG_STREAM_PID=""
 LOG_FILE=""
 QUIT_ON_EXIT=0
 # The PID this run's own launch produced — the only PID `quit_app`'s fallback
@@ -108,9 +108,9 @@ quit_app() {
 # `is_import_active` is kept as a compatibility alias; new code calls
 # `has_active_operational_work`.
 cleanup() {
-  if [[ -n "$LOG_PID" ]]; then
-    kill "$LOG_PID" >/dev/null 2>&1 || true
-    wait "$LOG_PID" >/dev/null 2>&1 || true
+  if [[ -n "$LOG_STREAM_PID" ]]; then
+    kill "$LOG_STREAM_PID" >/dev/null 2>&1 || true
+    wait "$LOG_STREAM_PID" >/dev/null 2>&1 || true
   fi
   if [[ "$QUIT_ON_EXIT" == 1 ]]; then
     local active_root
@@ -124,17 +124,38 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# `pgrep -x | head -n 1` yields the *lowest* PID — the oldest instance — which is
+# the opposite of "the PID this run launched" whenever another Otos is alive. APP_PID
+# would then name a process this run did not start, and `cleanup` would kill it:
+# precisely the hazard `quit_app` refuses `pkill` to avoid. Selecting by absence from
+# the pre-launch snapshot makes APP_PID mean what its declaration says.
 wait_for_app_pid() {
-  local app_pid=""
+  local before="${1:-}"
+  local candidate
   for _ in $(seq 1 50); do
-    app_pid="$(pgrep -x "$APP_NAME" | head -n 1 || true)"
-    if [[ -n "$app_pid" ]]; then
-      echo "$app_pid"
-      return
-    fi
+    while read -r candidate; do
+      [[ -n "$candidate" ]] || continue
+      if ! grep -qx "$candidate" <<<"$before"; then
+        echo "$candidate"
+        return
+      fi
+    done < <(pgrep -x "$APP_NAME" || true)
     sleep 0.1
   done
-  echo "Timed out waiting for $APP_NAME to launch" >&2
+  echo "Timed out waiting for a newly launched $APP_NAME" >&2
+  exit 1
+}
+
+# One system log and one app name: with a second instance alive the stream predicate
+# cannot attribute a line to a run, `osascript ... to quit` does not say which instance
+# it quits, and cleanup would target a process this run did not launch. Refusing here
+# is what lets the rest of the run treat the process-name predicate as exact.
+refuse_if_app_already_running() {
+  local existing
+  existing="$(pgrep -x "$APP_NAME" || true)"
+  [[ -n "$existing" ]] || return 0
+  echo "Cannot start smoke run: $APP_NAME is already running (pid $(tr "\n" " " <<<"$existing" | sed "s/ $//"))." >&2
+  echo "Quit it first. Its log lines are indistinguishable from this run's, and cleanup must never terminate an app this run did not launch." >&2
   exit 1
 }
 
@@ -147,14 +168,16 @@ start_log_capture() {
     --signpost \
     --predicate "process == \"$APP_NAME\" AND subsystem == \"$SUBSYSTEM\"" \
     > "$LOG_FILE" 2>&1 &
-  LOG_PID="$!"
+  LOG_STREAM_PID="$!"
   echo "$LOG_FILE"
 }
 
 run_selected_launch() {
   export OTOS_SMOKE_SELECT_ROOT="$SMOKE_ROOT"
+  local before
+  before="$(pgrep -x "$APP_NAME" || true)"
   "$ROOT_DIR/script/build_and_run.sh" --verify >&2
-  APP_PID="$(wait_for_app_pid)"
+  APP_PID="$(wait_for_app_pid "$before")"
   echo "$APP_PID"
 }
 
@@ -266,11 +289,11 @@ run_jank() {
     echo "Work was started during the smoke run; not quitting to avoid termination (ARC-002A)." >&2
     QUIT_ON_EXIT=0
     echo "smoke log: $LOG_FILE"
-    echo "Post-hoc logs: script/logs.sh show --last 10m"
+    echo "Post-hoc logs: script/logs.sh show --last 10m --pid $app_pid"
     exit 1
   fi
   echo "smoke log: $LOG_FILE"
-  echo "Post-hoc logs: script/logs.sh show --last 10m"
+  echo "Post-hoc logs: script/logs.sh show --last 10m --pid $app_pid"
 }
 
 if [[ "$MODE" != "--jank" && "$MODE" != "jank" && "$MODE" != "--verify" && "$MODE" != "verify" ]]; then
@@ -294,6 +317,9 @@ if [[ ! -d "$SMOKE_ROOT" ]]; then
   exit 1
 fi
 SMOKE_ROOT="$(cd "$SMOKE_ROOT" && pwd -P)"
+
+# Both modes launch and later quit the app, so both need an unambiguous instance.
+refuse_if_app_already_running
 
 case "$MODE" in
   --verify|verify)
