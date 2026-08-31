@@ -53,7 +53,9 @@ final class CatalogWindowViewModel {
     private(set) var isFilterPresented = false
     private(set) var ejectingSourceIdentities: Set<String> = []
     var ejectAlertMessage: String?
-    var lastImportPresentationLogAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
+    /// Last drawn signature per source, so the apply log records what changed on screen
+    /// rather than a timer's sample of it (B4).
+    var lastDrawnSignature: [LibraryRootPath: String] = [:]
     var state: CatalogWindowState = .empty
     /// User-adjustable grid density (spec 0048), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish

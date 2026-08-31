@@ -73,23 +73,47 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Applies drawn state, and logs what was actually drawn when it changes.
+    ///
+    /// The log recorded `drawnKind` alone. Both Preparing frames draw kind `.preparing`, so
+    /// the number the user was looking at — and whether the track was determinate — never
+    /// reached the log at all. When the count blanked for a fraction of every second, the
+    /// evidence for it existed only on screen. Recording the drawn line and track is what
+    /// makes that diagnosable without a camera attached.
+    ///
+    /// On change rather than on a 250 ms timer, for the same reason as `publish()`: a state
+    /// that alternates faster than the timer is invisible to it.
     func applyImportPresentations(_ presentations: [MediaOperationSourcePresentation]) {
-        let now = ContinuousClock().now
         for presentation in presentations {
-            let shouldLog = lastImportPresentationLogAt[presentation.sourcePath].map {
-                $0.duration(to: now) >= .milliseconds(250)
-            } ?? true
-            guard shouldLog else { continue }
-            lastImportPresentationLogAt[presentation.sourcePath] = now
             let drawn = ImportBarPresentation.map(
                 presentation: presentation,
                 preferences: presentation.sessionPreferences,
                 sourceDisplayName: presentation.sourcePath.displayName
             )
-            OtosLog.catalog.notice(
-                // swiftlint:disable:next line_length
-                "op=import.presentation phase=apply sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) drawnKind=\(String(describing: drawn.kind), privacy: .public) primaryAction=\(String(describing: drawn.primaryAction), privacy: .public) primaryEnabled=\(drawn.primaryEnabled, privacy: .public)"
-            )
+            let track = if case let .progress(trackValue, _) = drawn.middleZone {
+                switch trackValue {
+                case .indeterminate: "indeterminate"
+                case let .determinate(completed, total): "determinate:\(completed)/\(total)"
+                }
+            } else {
+                "none"
+            }
+            let secondary: String = if case let .plain(text) = drawn.secondaryLine {
+                text
+            } else {
+                String(describing: drawn.secondaryLine)
+            }
+            let signature = "\(drawn.kind)|\(secondary)|\(track)|\(drawn.primaryAction)|\(drawn.primaryEnabled)"
+            guard lastDrawnSignature[presentation.sourcePath] != signature else { continue }
+            lastDrawnSignature[presentation.sourcePath] = signature
+            OtosLog.catalog.noticeOperation("import.presentation", phase: "apply", fields: [
+                "sourcePath": presentation.sourcePath.rawValue,
+                "drawnKind": String(describing: drawn.kind),
+                "secondaryLine": secondary,
+                "track": track,
+                "primaryAction": String(describing: drawn.primaryAction),
+                "primaryEnabled": "\(drawn.primaryEnabled)",
+            ])
         }
         importPresentations = presentations
         if !cancellingImportSources.isEmpty {
