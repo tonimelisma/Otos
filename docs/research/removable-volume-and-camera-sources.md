@@ -754,6 +754,74 @@ The real figure is **263 s** — still roughly 10x better than the ~45 minutes a
 but the extrapolation was optimistic by ~2.8x, because it assumed reads pipeline better than
 ImageCaptureCore's serial queue allows. Quote 263 s, not 93 s.
 
+### Instrumented run (2026-08-31): what the ranged-read path actually costs
+
+Measured by instrumenting the shipping code rather than a side POC — an ad-hoc
+ImageCaptureCore binary has no TCC grant, and instrumenting the real path cannot drift from
+it. Two new fields carry the answers: `transportWaitMs` (time blocked on the camera) beside
+`elapsedMs`, and `previews`/`previewSizes` (what the container declares).
+
+**Per-read cost is 3–6x the figure the design assumed.**
+
+| Format | transport reads/file | ms per read | bytes read/file |
+| --- | --- | --- | --- |
+| ARW | 3.0 | ~141 ms | 1.3 KB |
+| HIF | 1.0 | ~147 ms | 1.4 KB |
+| MP4 | 4.0 | ~265 ms | 11.4 KB |
+
+The plan projected per-card time from the 42.6 ms latency measured for **512-byte** reads.
+Real 128 KB reads cost 141–265 ms. That, not scheduling overhead, is why a card takes ~263 s
+rather than the projected ~93 s: transport across 991 items is ~330 s of the wall clock, and
+the run is transport-bound in aggregate.
+
+Two consequences worth keeping:
+
+- **Per-file `elapsedMs` is not per-file cost.** It measures from task start, including the
+  wait for the serial parse queue, so it reads ~2,900 ms against a transport wait of ~424 ms.
+  Compare `transportWaitMs`, not `elapsedMs`, when judging whether chunk sizing could help.
+- **Reads per file are already near the floor** for stills — HIF is 1.0. Tuning chunk size
+  has little headroom there; the wins are in *not making reads at all*.
+
+**The embedded-preview path shipped and produced nothing.** Every camera tile still carried
+ImageCaptureCore's 160×120 thumb. The instrumentation found the cause in one run: the package
+finds two previews in a Sony ARW (IFD0 and IFD1) and **both report no dimensions** —
+`-1x-1@tiff.ifd0,-1x-1@tiff.ifd1`. In IFD0 the width/height tags describe the *main* image,
+and this body omits them where previews live. The consumer filtered on
+`(pixelWidth ?? 0) >= 256`, so nil became 0 and every preview was discarded.
+
+Selection is now by byte length, and whether a preview is an improvement is decided after
+decoding, where dimensions are real. Verified: 20 of 20 enriched ARW files carry a 256×171
+thumbnail where all previously carried 160×120. HIF and MP4 keep the provisional thumb
+correctly — the package reads previews from TIFF only, and those containers declare none.
+
+**Verifying a preview cost a round trip, and should not have.** Reading two bytes at the
+declared offset to confirm a JPEG marker cost two extra reads per RAW file, each landing
+outside every cache, ~141 ms apiece — about 130 s across this card — to prove something the
+consumer establishes for free by decoding. Removed in package 0.6.0. The principle: a library
+must not spend a round trip to validate a claim its consumer validates as a side effect of
+using it.
+
+### Open: per-instance staging paths change asset identity every launch
+
+Found while verifying the above, and it is a design problem rather than a bug to patch
+quickly.
+
+Staging roots became per process instance — `DeviceStaging/<instance-uuid>/<identity>/` — so
+that the launch sweep could delete what an ended session left without destroying a second
+running instance's in-flight transfer. That works. But asset identity **is** the filesystem
+path (ADR 0008), so a camera item's identity now changes on every launch, and every overlay
+keyed to it is re-created: catalog rows, and thumbnails, whose deterministic names hash the
+root path. Observed: 9,997 thumbnail files against 9,304 catalog rows, and a camera item's
+thumbnail not surviving a restart.
+
+This conflicts with the overlay-lifecycle invariant that overlay is kept as long as the item
+exists. The instance segment solves a real problem — a sweep must not delete a live peer's
+staging — but it should not be part of the identity. Candidate directions, none yet
+evaluated: keep the root at `DeviceStaging/<identity>/` and record ownership *inside* it (a
+lock or marker file the sweep checks), or sweep by process liveness rather than by name.
+Deciding this needs an owner's call on how much the app should care about a second instance
+at all.
+
 ### Still open after this round
 
 - Removable-volumes TCC prompt behavior for the real app bundle (signed,
