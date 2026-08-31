@@ -7,21 +7,14 @@ SUBSYSTEM="net.melisma.Otos"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# This used to `pkill -x "$APP_NAME"` so that the PID lookup below could not be
+# ambiguous — resolving the question by destroying the alternative, including a
+# session the user was running. Refuse instead.
+otos_refuse_if_running "$APP_NAME"
+
+BEFORE_PIDS="$(otos_running_pids "$APP_NAME")"
 "$ROOT_DIR/script/build_and_run.sh" run
-
-for _ in $(seq 1 50); do
-  APP_PID="$(pgrep -x "$APP_NAME" | head -n 1 || true)"
-  if [[ -n "$APP_PID" ]]; then
-    break
-  fi
-  sleep 0.1
-done
-
-if [[ -z "${APP_PID:-}" ]]; then
-  echo "Timed out waiting for $APP_NAME to launch" >&2
-  exit 1
-fi
+APP_PID="$(otos_newly_launched_pid "$APP_NAME" "$BEFORE_PIDS")"
 
 OUTPUT_FILE="$(otos_log_file "$ROOT_DIR" run prod "$APP_PID")"
 echo "Capturing unified logs for pid=$APP_PID to $OUTPUT_FILE"

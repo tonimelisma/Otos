@@ -52,12 +52,24 @@ predicate_for() {
   printf '%s' "$predicate"
 }
 
-parse_process_and_category() {
+# One parser for every subcommand. `show`/`capture` and `stream` previously had two
+# near-identical argument loops, so a flag added to one simply did not exist in the
+# other: `--pid` reached only `stream`, both post-hoc readers answered it with a
+# usage message, and `capture` kept naming its file after the capturing shell. One
+# parser makes that divergence unrepresentable.
+parse_log_args() {
+  PARSED_LAST=""
   PARSED_CATEGORY=""
   LOG_PROCESS="${OTOS_LOG_PROCESS:-$APP_NAME}"
   LOG_PID="${OTOS_LOG_PID:-}"
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --last)
+        shift
+        PARSED_LAST="${1:-}"
+        [[ -n "$PARSED_LAST" ]] || { echo "Missing --last duration" >&2; exit 2; }
+        shift
+        ;;
       --pid)
         shift
         LOG_PID="${1:-}"
@@ -84,7 +96,8 @@ parse_process_and_category() {
 }
 
 cmd_stream() {
-  parse_process_and_category "$@"
+  parse_log_args "$@"
+  [[ -z "$PARSED_LAST" ]] || { echo "stream is live; --last belongs to show/capture" >&2; exit 2; }
   local category="$PARSED_CATEGORY"
   local predicate
   predicate="$(predicate_for "$category")"
@@ -99,44 +112,9 @@ cmd_stream() {
     | tee "$output_file"
 }
 
-parse_last_and_category() {
-  # Sets globals PARSED_LAST and PARSED_CATEGORY from `--last <duration>
-  # [Category]` style args shared by `show` and `capture`.
-  PARSED_LAST=""
-  PARSED_CATEGORY=""
-  LOG_PROCESS="${OTOS_LOG_PROCESS:-$APP_NAME}"
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --last)
-        shift
-        PARSED_LAST="${1:-}"
-        [[ -n "$PARSED_LAST" ]] || { echo "Missing --last duration" >&2; exit 2; }
-        shift
-        ;;
-      --process)
-        shift
-        LOG_PROCESS="${1:-}"
-        [[ -n "$LOG_PROCESS" ]] || { echo "Missing --process name" >&2; exit 2; }
-        shift
-        ;;
-      -*)
-        echo "Unknown option: $1" >&2
-        usage
-        exit 2
-        ;;
-      *)
-        PARSED_CATEGORY="$1"
-        shift
-        ;;
-    esac
-  done
-  if [[ -z "$PARSED_LAST" ]]; then
-    PARSED_LAST="10m"
-  fi
-}
-
 cmd_show() {
-  parse_last_and_category "$@"
+  parse_log_args "$@"
+  PARSED_LAST="${PARSED_LAST:-10m}"
   local predicate
   predicate="$(predicate_for "$PARSED_CATEGORY")"
   /usr/bin/log show \
@@ -148,7 +126,8 @@ cmd_show() {
 }
 
 cmd_capture() {
-  parse_last_and_category "$@"
+  parse_log_args "$@"
+  PARSED_LAST="${PARSED_LAST:-10m}"
   local predicate
   predicate="$(predicate_for "$PARSED_CATEGORY")"
   local output_file

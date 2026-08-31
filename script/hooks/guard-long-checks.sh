@@ -10,44 +10,101 @@
 # script/test.sh's own tee meant the redirect captured a single header line and any
 # pass count read from it was meaningless. A hook runs in the harness, outside the
 # agent's judgement, so those stop being available moves.
+#
+# What counts as "running" one is decided by *command position*, not by substring.
+# Substring matching needed an allowlist of reader commands to stay usable, and an
+# allowlist is only ever as complete as the last time someone remembered to extend
+# it: it listed cat and grep but not sed, so `sed -n '100,165p' script/check.sh`
+# — reading this very file — was denied as if it were a run. A path that is an
+# argument to another program is never an invocation of it; a path in first
+# position, after any env assignments and wrappers, always is.
 set -uo pipefail
 
 payload="$(cat)"
 
-full_command="$(printf '%s' "$payload" | /usr/bin/python3 -c '
-import json, sys
+decision="$(printf '%s' "$payload" | /usr/bin/python3 -c '
+import json, shlex, sys
+
 try:
     d = json.load(sys.stdin)
 except Exception:
-    print(""); raise SystemExit
-print(((d.get("tool_input") or {}).get("command") or "").replace("\n", " "))
+    print("allow"); raise SystemExit
+
+ti = d.get("tool_input") or {}
+command = (ti.get("command") or "")
+background = str(ti.get("run_in_background", False)).lower() == "true"
+
+# A heredoc body is text, not commands. A PR description or commit message that
+# documents these scripts is not a run of them, and matching it once denied a
+# `gh pr create` whose body explained script/check.sh.
+invocation = command.split("<<", 1)[0]
+
+GUARDED = {"verify.sh", "test.sh", "build.sh", "check.sh"}
+# Wrappers that delegate to their first non-flag argument, so the guarded script
+# is still the thing being run.
+WRAPPERS = {"nohup", "bash", "sh", "zsh", "env", "time", "exec", "command",
+            "caffeinate", "sudo", "stdbuf"}
+
+def segments(text):
+    out, buf, i = [], "", 0
+    while i < len(text):
+        two = text[i:i + 2]
+        if two in ("&&", "||"):
+            out.append(buf); buf = ""; i += 2; continue
+        if text[i] in ";|&\n":
+            out.append(buf); buf = ""; i += 1; continue
+        buf += text[i]; i += 1
+    out.append(buf)
+    return out
+
+def invoked_script(segment):
+    try:
+        tokens = shlex.split(segment)
+    except ValueError:
+        tokens = segment.split()
+    while tokens:
+        head = tokens[0]
+        # Leading environment assignments, then wrappers and their flags.
+        if "=" in head and not head.startswith("/") and " " not in head.split("=")[0]:
+            tokens = tokens[1:]; continue
+        base = head.rsplit("/", 1)[-1]
+        if base in WRAPPERS:
+            tokens = tokens[1:]
+            while tokens and tokens[0].startswith("-"):
+                tokens = tokens[1:]
+            continue
+        break
+    if not tokens:
+        return None
+    head = tokens[0]
+    # Only this repo scripts/ directory is guarded; an unrelated test.sh is not.
+    if "script/" not in head:
+        return None
+    base = head.rsplit("/", 1)[-1]
+    return base if base in GUARDED else None
+
+invoked = set()
+for segment in segments(invocation):
+    name = invoked_script(segment)
+    if name:
+        invoked.add(name)
+
+if invoked & {"verify.sh", "test.sh", "build.sh"}:
+    print("wrong-entry-point")
+elif "check.sh" in invoked:
+    if not background:
+        print("foreground")
+    elif __import__("re").search(r">\s*/tmp/", invocation):
+        print("tmp-log")
+    else:
+        print("allow")
+else:
+    print("allow")
 ')"
 
-background="$(printf '%s' "$payload" | /usr/bin/python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    print("false"); raise SystemExit
-print(str((d.get("tool_input") or {}).get("run_in_background", False)).lower())
-')"
-
-# Match only the *invocation* part of the command. A heredoc body is text — a PR
-# description or commit message that documents these scripts is not a run of them,
-# and matching it denied a `gh pr create` whose body explained script/check.sh.
-invocation_text="${full_command%%<<*}"
-
-is_run_of() {
-  printf '%s' "$invocation_text" | grep -qE "(^|[;&|[:space:]])(\./)?script/$1( |$|[;&|>])"
-}
-
-# Reading about the scripts is fine; running the wrong one is not.
-case "$full_command" in
-  *grep*|*"git diff"*|*"git log"*|*"cat script/"*|*"bash -n"*|*chmod*) exit 0 ;;
-esac
-
-if is_run_of "verify.sh" || is_run_of "test.sh" || is_run_of "build.sh"; then
-  cat >&2 <<'MSG'
+case "$decision" in
+  wrong-entry-point)
+    cat >&2 <<'MSG'
 Denied: run script/check.sh instead.
 
 script/check.sh is the single entry point. It runs the seconds-long gates first so
@@ -63,11 +120,9 @@ Running verify.sh / test.sh / build.sh directly loses that:
 then read the tail of its log every 60 s. tests= climbing is healthy; tests=
 unchanged three times running is hung — sample the xctest pid, do not wait it out.
 MSG
-  exit 2
-fi
-
-if is_run_of "check.sh"; then
-  if [[ "$background" != "true" ]]; then
+    exit 2
+    ;;
+  foreground)
     cat >&2 <<'MSG'
 Denied: script/check.sh must run with run_in_background: true.
 
@@ -77,8 +132,8 @@ process never sends. Re-issue with run_in_background: true, then read the tail o
 its log every 60 seconds.
 MSG
     exit 2
-  fi
-  if printf '%s' "$invocation_text" | grep -qE '>[[:space:]]*/tmp/'; then
+    ;;
+  tmp-log)
     cat >&2 <<'MSG'
 Denied: write the log to the session scratchpad, not /tmp.
 
@@ -86,6 +141,6 @@ Your environment names a scratchpad directory; use it so the log is still there
 when you read the result.
 MSG
     exit 2
-  fi
-fi
+    ;;
+esac
 exit 0
