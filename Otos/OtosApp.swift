@@ -9,8 +9,20 @@ import AppKit
 import OSLog
 import SwiftUI
 
+/// Clears device staging when the app quits. Staged camera bytes live for the
+/// session — kept across an eject so re-attaching does not re-download the device —
+/// so app close is where they are released. A crash skips this, which is why launch
+/// sweeps as well (APP-018).
+private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
+    func applicationWillTerminate(_ notification: Notification) {
+        DeviceStagingRegistry.discardAllStaging()
+    }
+}
+
 public struct OtosApp: App {
     public init() {}
+
+    @NSApplicationDelegateAdaptor(OtosAppLifecycle.self) private var lifecycle
 
     /// The one place in the app that names the production catalog location and
     /// UserDefaults.standard — every other type takes both as required

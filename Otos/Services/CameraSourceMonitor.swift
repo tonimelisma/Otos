@@ -426,9 +426,13 @@ final class DeviceCameraSession: NSObject {
             return nil
         }
         return try await withCheckedThrowingContinuation { continuation in
+            // Same boundary as the download completion and the delegate methods: the
+            // framework chooses the queue, so the closure must claim no isolation.
+            // This one has not trapped only because thumbnails happen to arrive on the
+            // main thread today — which is the assumption APP-018 exists to forbid.
             file.requestThumbnailData(options: [
                 ICCameraItemThumbnailOption.imageSourceThumbnailMaxPixelSize: maxPixelSize,
-            ]) { data, error in
+            ]) { @Sendable data, error in
                 if let error {
                     continuation.resume(throwing: error)
                 } else {
@@ -436,6 +440,29 @@ final class DeviceCameraSession: NSObject {
                 }
             }
         }
+    }
+
+    /// Completes one ImageCaptureCore download from whatever queue the framework
+    /// chose. Deliberately `nonisolated`: claiming this type's actor here inserts an
+    /// executor assertion that traps instead of hopping (see the delegate boundary
+    /// note above — same defect class, reached through the completion block rather
+    /// than a delegate method).
+    nonisolated static func settleDownload(
+        savedFilename: String?,
+        error: Error?,
+        destinationURL: URL,
+        continuation: CheckedContinuation<Void, Error>
+    ) {
+        if let error {
+            continuation.resume(throwing: error)
+            return
+        }
+        if let savedFilename, savedFilename != destinationURL.lastPathComponent {
+            let savedURL = destinationURL.deletingLastPathComponent().appending(path: savedFilename)
+            try? FileManager.default.removeItem(at: destinationURL)
+            try? FileManager.default.moveItem(at: savedURL, to: destinationURL)
+        }
+        continuation.resume(returning: ())
     }
 
     func download(relativePath: MediaRelativePath, to destinationURL: URL) async throws {
@@ -460,27 +487,40 @@ final class DeviceCameraSession: NSObject {
             .sidecarFiles: false,
         ]
         do {
+            // The completion block is the same boundary as the delegate methods above:
+            // ImageCaptureCore invokes it on a queue of its own choosing, so a closure
+            // that inherits this type's `@MainActor` isolation does not get hopped to
+            // the main actor — it gets a runtime executor check that traps. That is
+            // exactly how it died: `_dispatch_assert_queue_fail` under
+            // `swift_task_checkIsolatedSwift`, from inside this closure.
+            //
+            // `Self.settleDownload` is `nonisolated` and takes only Sendable values, so
+            // the closure claims no isolation it does not have. The work it does — one
+            // rename — is pure filesystem and needs none.
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                file.requestDownload(options: downloadOptions) { savedFilename, error in
-                    if let error {
-                        continuation.resume(throwing: error)
-                        return
-                    }
-                    if let savedFilename,
-                       savedFilename != destinationURL.lastPathComponent
-                    { // swiftlint:disable:this opening_brace
-                        let savedURL = destinationURL.deletingLastPathComponent().appending(path: savedFilename)
-                        try? FileManager.default.removeItem(at: destinationURL)
-                        try? FileManager.default.moveItem(at: savedURL, to: destinationURL)
-                    }
-                    continuation.resume(returning: ())
+                let destination = destinationURL
+                file.requestDownload(options: downloadOptions) { @Sendable savedFilename, error in
+                    Self.settleDownload(
+                        savedFilename: savedFilename,
+                        error: error,
+                        destinationURL: destination,
+                        continuation: continuation
+                    )
                 }
             }
         } catch {
-            OtosLog.fileAccess.errorOperation("camera.download", phase: "failed", fields: [
-                "relativePath": relativePath.rawValue,
-                "error": String(describing: error),
-            ])
+            // Report the destination alongside the error: ICDownloadOption's
+            // `downloadsDirectoryURL` must be a *writable* directory, so a refusal
+            // here is about where the file is being put at least as often as it is
+            // about the camera, and the two are indistinguishable without both paths.
+            var fields = ErrorDiagnostics.fields(for: error)
+            fields["relativePath"] = relativePath.rawValue
+            fields["downloadsDirectory"] = destinationURL.deletingLastPathComponent().path(percentEncoded: false)
+            fields["saveAsFilename"] = destinationURL.lastPathComponent
+            fields["destinationWritable"] = FileManager.default.isWritableFile(
+                atPath: destinationURL.deletingLastPathComponent().path(percentEncoded: false)
+            ) ? "true" : "false"
+            OtosLog.fileAccess.errorOperation("camera.download", phase: "failed", fields: fields)
             throw error
         }
         let elapsedMs = DiagnosticsTiming.milliseconds(from: started, to: .now)
@@ -546,10 +586,13 @@ final class DeviceCameraSession: NSObject {
             return false
         }
         return await withCheckedContinuation { continuation in
+            // Same boundary again. Semantics unchanged — this path still deletes only
+            // what an explicit, user-requested erase asked for; only the isolation
+            // claim is removed.
             _ = device.requestDeleteFiles(
                 [file],
-                deleteFailed: { _ in },
-                completion: { _, error in
+                deleteFailed: { @Sendable _ in },
+                completion: { @Sendable _, error in
                     continuation.resume(returning: error == nil)
                 }
             )

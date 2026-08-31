@@ -97,3 +97,40 @@ extension Logger {
         debug("op=\(operation, privacy: .public) phase=\(phase, privacy: .public) \(pairs, privacy: .public)")
     }
 }
+
+/// Decomposes an error into greppable fields for the log.
+///
+/// `String(describing:)` renders an `NSError` as prose and drops its `userInfo`,
+/// so a `NSCocoaErrorDomain` 257 arrives as "you don't have permission to view it"
+/// with no indication of *which* path was refused. `NSFilePath` and
+/// `NSUnderlyingError` are exactly the fields needed to tell a denied destination
+/// from a denied source, and their absence turned one real failure into an
+/// afternoon of inference.
+nonisolated enum ErrorDiagnostics {
+    static func fields(for error: Error, prefix: String = "error") -> [String: String] {
+        let nsError = error as NSError
+        var out: [String: String] = [
+            prefix: nsError.domain,
+            "\(prefix)Code": "\(nsError.code)",
+            "\(prefix)Description": nsError.localizedDescription,
+        ]
+        if let path = nsError.userInfo[NSFilePathErrorKey] as? String {
+            out["\(prefix)Path"] = path
+        }
+        if let url = nsError.userInfo[NSURLErrorKey] as? URL {
+            out["\(prefix)URL"] = url.path(percentEncoded: false)
+        }
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            out["\(prefix)UnderlyingDomain"] = underlying.domain
+            out["\(prefix)UnderlyingCode"] = "\(underlying.code)"
+            out["\(prefix)UnderlyingDescription"] = underlying.localizedDescription
+            if let path = underlying.userInfo[NSFilePathErrorKey] as? String {
+                out["\(prefix)UnderlyingPath"] = path
+            }
+        }
+        if let reason = nsError.localizedFailureReason {
+            out["\(prefix)Reason"] = reason
+        }
+        return out
+    }
+}

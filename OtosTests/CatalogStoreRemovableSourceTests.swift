@@ -63,7 +63,7 @@ struct CatalogStoreRemovableSourceTests {
         #expect(remounted.testAssets.map(\.relativePath.rawValue) == ["fixed.jpg"])
     }
 
-    @Test func mtpCatalogRowsAreScopedToCameraAndStagingIsRemovedOnDetach() async throws {
+    @Test func mtpCatalogRowsAreScopedToCameraAndStagingSurvivesDetach() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let stagingRoot = temp.appending(path: "DeviceStaging/Camera", directoryHint: .isDirectory)
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -117,7 +117,12 @@ struct CatalogStoreRemovableSourceTests {
             snapshot.removableSources.first?.availability == .unavailable
         }
         #expect(detached.removableSources.first?.path == rootPath)
-        #expect(!FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
+        // Staged bytes survive an eject. They are already off the camera, so
+        // discarding them here would re-download the whole device on the next
+        // attach — tens of gigabytes for a full card. They are released at app close,
+        // with a launch sweep as the crash-safe backstop (APP-018, owner decision
+        // 2026-08-30, reversing the previous "only while connected" rule).
+        #expect(FileManager.default.fileExists(atPath: stagingRoot.path(percentEncoded: false)))
         #expect(try await store.catalogedAssetCount(for: .library(rootPath)) == 1)
     }
 
