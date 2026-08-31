@@ -124,39 +124,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# `pgrep -x | head -n 1` yields the *lowest* PID — the oldest instance — which is
-# the opposite of "the PID this run launched" whenever another Otos is alive. APP_PID
-# would then name a process this run did not start, and `cleanup` would kill it:
-# precisely the hazard `quit_app` refuses `pkill` to avoid. Selecting by absence from
-# the pre-launch snapshot makes APP_PID mean what its declaration says.
+# Instance identity lives in script/lib/run-context.sh — one owner for the whole
+# repo. The refusal is what makes this run's process-name log predicate exact: the
+# stream must start before the launch, so it cannot filter on a PID that does not
+# exist yet.
 wait_for_app_pid() {
-  local before="${1:-}"
-  local candidate
-  for _ in $(seq 1 50); do
-    while read -r candidate; do
-      [[ -n "$candidate" ]] || continue
-      if ! grep -qx "$candidate" <<<"$before"; then
-        echo "$candidate"
-        return
-      fi
-    done < <(pgrep -x "$APP_NAME" || true)
-    sleep 0.1
-  done
-  echo "Timed out waiting for a newly launched $APP_NAME" >&2
-  exit 1
+  otos_newly_launched_pid "$APP_NAME" "${1:-}"
 }
 
-# One system log and one app name: with a second instance alive the stream predicate
-# cannot attribute a line to a run, `osascript ... to quit` does not say which instance
-# it quits, and cleanup would target a process this run did not launch. Refusing here
-# is what lets the rest of the run treat the process-name predicate as exact.
 refuse_if_app_already_running() {
-  local existing
-  existing="$(pgrep -x "$APP_NAME" || true)"
-  [[ -n "$existing" ]] || return 0
-  echo "Cannot start smoke run: $APP_NAME is already running (pid $(tr "\n" " " <<<"$existing" | sed "s/ $//"))." >&2
-  echo "Quit it first. Its log lines are indistinguishable from this run's, and cleanup must never terminate an app this run did not launch." >&2
-  exit 1
+  otos_refuse_if_running "$APP_NAME"
 }
 
 start_log_capture() {

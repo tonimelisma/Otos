@@ -103,18 +103,28 @@ last_cpu_change_at="$(date +%s)"
 last_cpu=""
 
 # Total CPU seconds consumed by the test host and its children.
+# macOS `ps -o time=` prints [[dd-]hh:]mm:ss.cc — a *fractional* field. Bash
+# arithmetic is integer-only, so summing it in the shell failed on every sample
+# ("10.09: syntax error"), left this returning a constant, and turned the liveness
+# check into a 420 s kill timer that would fire on a healthy run: the precise
+# failure mode measuring CPU exists to avoid. The whole sum stays in awk.
 consumed_cpu() {
-  local total=0 t
-  for t in $(pgrep -f "Xcode/Agents/xctest" 2>/dev/null) $(pgrep -f "xcodebuild" 2>/dev/null); do
-    # ps TIME is [[dd-]hh:]mm:ss — reduce to seconds.
-    local raw
-    raw="$(ps -o time= -p "$t" 2>/dev/null | tr -d ' ')"
-    [[ -z "$raw" ]] && continue
-    local secs
-    secs="$(awk -F'[:-]' '{ s=0; for (i=1; i<=NF; i++) s = s*60 + $i; print s }' <<<"$raw")"
-    total=$(( total + secs ))
-  done
-  echo "$total"
+  local pids
+  pids="$( { pgrep -f "Xcode/Agents/xctest"; pgrep -f "xcodebuild"; } 2>/dev/null | tr '\n' ' ')"
+  if [[ -z "${pids// /}" ]]; then
+    echo 0
+    return
+  fi
+  # shellcheck disable=SC2086
+  # The day field is days, not another sexagesimal digit: splitting on [:-] alone
+  # would score `2-03:04:05` as 2*60 rather than 2*86400.
+  ps -o time= -p ${pids// /,} 2>/dev/null \
+    | awk '{ t = $0; gsub(/ /, "", t); d = 0
+             if (index(t, "-")) { split(t, p, "-"); d = p[1]; t = p[2] }
+             n = split(t, q, ":"); s = 0
+             for (i = 1; i <= n; i++) s = s * 60 + q[i]
+             total += d * 86400 + s }
+           END { printf "%d\n", total }'
 }
 
 started_at="$(date +%s)"
@@ -134,13 +144,13 @@ while kill -0 "$verify_pid" 2>/dev/null; do
     stage="building"
     tests="n/a"
   fi
-  printf 'op=check.heartbeat elapsed=%02d:%02d stage=%s tests=%s\n' \
-    $((elapsed / 60)) $((elapsed % 60)) "$stage" "$tests"
+  cpu="$(consumed_cpu)"
+  printf 'op=check.heartbeat elapsed=%02d:%02d stage=%s tests=%s cpuSeconds=%s\n' \
+    $((elapsed / 60)) $((elapsed % 60)) "$stage" "$tests" "$cpu"
 
   # Consumed CPU is the liveness signal. Unchanged CPU across the whole window means
   # every worker is parked — a deadlock. Rising CPU with a quiet log is a slow test,
   # which must be left alone.
-  cpu="$(consumed_cpu)"
   if [[ "$cpu" != "$last_cpu" ]]; then
     last_cpu="$cpu"
     last_cpu_change_at="$(date +%s)"

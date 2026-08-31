@@ -13,7 +13,9 @@ source "$ROOT_DIR/script/lib/xcode.sh"
 source "$ROOT_DIR/script/lib/run-context.sh"
 otos_require_full_xcode
 
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+# Killing every instance made the PID lookup below unambiguous by destroying the
+# alternative — including a session the user was running. Refuse instead.
+otos_refuse_if_running "$APP_NAME"
 
 /usr/bin/xcodebuild \
   -project "$ROOT_DIR/Otos.xcodeproj" \
@@ -36,25 +38,19 @@ open_app() {
   fi
 }
 
+# The oldest instance is not the one just launched: naming a capture after it
+# labels the file with a PID that emitted none of its lines.
 wait_for_app_pid() {
-  local app_pid=""
-  for _ in $(seq 1 50); do
-    app_pid="$(pgrep -x "$APP_NAME" | head -n 1 || true)"
-    if [[ -n "$app_pid" ]]; then
-      echo "$app_pid"
-      return
-    fi
-    sleep 0.1
-  done
-  echo "Timed out waiting for $APP_NAME to launch" >&2
-  exit 1
+  otos_newly_launched_pid "$APP_NAME" "${1:-}"
 }
 
 stream_logs() {
   local predicate="$1"
+  local before
+  before="$(otos_running_pids "$APP_NAME")"
   open_app
   local app_pid
-  app_pid="$(wait_for_app_pid)"
+  app_pid="$(wait_for_app_pid "$before")"
   local output_file
   output_file="$(otos_log_file "$ROOT_DIR" run prod "$app_pid")"
   echo "Capturing unified logs for pid=$app_pid to $output_file"
