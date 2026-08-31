@@ -197,8 +197,9 @@ identical count.
 
 **A is a state the user watches, not a flash.** This was written as though it were
 momentary, and on a card it nearly is. On a camera it is not: reading a capture date from
-every item costs roughly a minute and a half for a 991-item card, because each read is a
-round trip and ImageCaptureCore serialises them. That is 29× better than the 45 minutes it
+every item took **263 seconds** for a 991-item card when measured, because each read is a
+round trip and ImageCaptureCore serialises them. (An earlier estimate of ~90 s was
+extrapolated from per-file timings and was optimistic by about 2.8x.) That is 29× better than the 45 minutes it
 cost when the card had to be transferred first, and still long enough that everything below
 about the count is load-bearing rather than cosmetic — the count must not blank, the track
 must not fall back to indeterminate, and the numbers must describe the work actually

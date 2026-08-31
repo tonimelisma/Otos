@@ -86,12 +86,28 @@ nonisolated enum DeviceStagingLocation {
     /// common case is a session that never attached a camera at all.
     static func hasStagedBytes(inContainer container: URL = containerURL()) -> Bool {
         let root = instanceRootURL(inContainer: container)
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            atPath: root.path(percentEncoded: false)
+        // Looks for an actual file, not merely a directory entry. Attaching a camera
+        // creates its session directory whether or not anything is ever staged into it —
+        // and after ranged reads became the normal path, that is the common case: the tree
+        // exists and is empty. Counting entries reported "there are bytes to clear" for
+        // every session that had seen a camera, so quit deferred termination and flashed a
+        // clearing window to delete nothing.
+        //
+        // Enumerating stops at the first file rather than walking the tree, so this stays
+        // cheap even when there genuinely are tens of gigabytes below it.
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles]
         ) else {
             return false
         }
-        return !contents.isEmpty
+        for case let url as URL in enumerator {
+            if (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+                return true
+            }
+        }
+        return false
     }
 
     /// Deletes every staging tree that is not this process's.
