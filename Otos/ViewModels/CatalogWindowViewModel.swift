@@ -316,7 +316,8 @@ final class CatalogWindowViewModel {
                         thumbnailDirectory: catalogStore.thumbnailDirectory
                             ?? FileManager.default.temporaryDirectory
                     ),
-                    materializationRequester: materializationCoordinator
+                    materializationRequester: materializationCoordinator,
+                    cameraRangeAccess: deviceStagingRegistry.makeCameraRangeAccess()
                 )
                 : nil
         )

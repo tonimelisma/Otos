@@ -948,23 +948,26 @@ Landed and verified: `CameraByteSource`, `CameraMetadataReader`, `DeviceCameraSe
 RangedRead`, and the per-session capability gate. Nothing calls them yet — enrichment still
 stages — so this is transport only, with no behaviour change.
 
-### What D1 still needs, in the order it should land
+### What D1 still needs
 
-1. **The byte-access seam.** `MediaEnricher.enrich` takes a URL, which is the assumption
-   that a row's bytes are local. It needs a value naming *how* to reach bytes — a local file
-   or a camera's ranges. One signature change, and 26 closure literals across 5 test files
-   move with it. Behaviour-preserving on its own, which is why it should land on its own.
-2. **The device route.** `LiveEnrichmentReadinessChecker` answers `.unknown` for a camera
-   item, because it asks the filesystem. A row reachable by range is a third answer, not a
-   bypass of the existing two.
-3. **Stop eager seeding.** `stageDevice` seeds every enumerated item; after 2 it seeds only
-   what a fallback actually needs. This is the step that removes the 36.5 GB wait, and it
-   must not land before 1 and 2, or planning has nothing to read.
-4. **Hash policy.** `.deviceMTP` joins `.removableVolume` as hash-not-required (ADR 0018).
-   Deliberately *not* earlier: while device bytes are still staged locally, making them
-   hash-not-required would drop a digest Otos can cheaply compute, for no gain.
-5. **The grid thumbnail** from the embedded preview the package now reports, which D1a
-   showed is the only option that ever upgrades a tile.
+Landed: the byte-access seam, the device route, the capability gate, the end of eager
+seeding, and the hash policy. A camera proven to answer ranged reads now transfers **nothing**
+to be planned.
+
+Still open, and both are follow-ons rather than parts of the same change:
+
+1. **The grid thumbnail** from the embedded preview the package now reports (D1a option 3).
+   Until it lands, a camera tile keeps the 160×120 provisional ImageCaptureCore thumbnail
+   for as long as the card is attached — which is what it shows today, so nothing regresses;
+   it simply does not improve yet. D1a's finding stands: because enrichment stamps a row
+   once, this is the only option that ever upgrades a tile.
+2. **E2's deadline**, extended to cover ranged reads. A read now blocks a dedicated thread
+   with no timeout, and libmtp#8 documents a shipping device that fails `GetPartialObject`
+   by timeout on particular offsets. The blast radius is one thread and one item, not the
+   app, which is why this is a follow-on rather than a blocker — but it is real.
+
+**C3** should be re-checked against a measured run rather than an extrapolation, which needs
+the hardware.
 
 ## Sequencing
 

@@ -171,7 +171,8 @@ struct EnrichmentCoordinatorTests {
             .path(percentEncoded: false)
         let state = FakeMaterialization(dataless: [datalessPath])
         let captureDate = Date(timeIntervalSince1970: 700)
-        let enricher = MediaEnricher { id, url, size, mtime, _ in
+        let enricher = MediaEnricher { id, access, size, mtime, _ in
+            let url = access.localURL ?? id.fileURL
             if await state.isDataless(url.path(percentEncoded: false)) {
                 return .notMaterialized
             }
@@ -769,6 +770,102 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// D1's whole point, as observable behaviour. A camera that answers ranged reads is
+    /// not seeded for download at all: its rows enrich from a few kilobytes each, so
+    /// transferring them first would be moving the entire card to read a date that sits a
+    /// few kilobytes into each file. On the measured session that was 36.5 GB and ~45
+    /// minutes before the Import button could appear.
+    @Test func aRangeCapableDeviceIsNotSeededForDownload() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/RangedCamera")
+        await coordinator.markRangeCapable(rootPath)
+
+        await coordinator.stageDevice((0 ..< 40).map { index in
+            deviceStagingSeed(
+                rootPath: rootPath,
+                relativePath: "IMG_\(index).arw",
+                captureDate: TimeInterval(index),
+                isVideo: false
+            )
+        })
+
+        let snapshot = await coordinator.workStateSnapshot()
+        #expect(snapshot.materializationPending == 0)
+        #expect(snapshot.materializationInFlight == 0)
+        #expect(
+            snapshot.deviceSeedsQueued == 0,
+            "a device that can be read by range must transfer nothing to be planned"
+        )
+        await coordinator.shutdown()
+    }
+
+    /// The fallback that keeps D1 safe. A device that fails its capability probe is never
+    /// marked, and stages exactly as every device did before this path existed —
+    /// `GetPartialObject` is optional in MTP, so this is the normal case for some hardware
+    /// rather than an error path.
+    @Test func aDeviceThatCannotServeRangesStillStagesEverything() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/OldCamera")
+        let total = 40
+
+        await coordinator.stageDevice((0 ..< total).map { index in
+            deviceStagingSeed(
+                rootPath: rootPath,
+                relativePath: "IMG_\(index).jpg",
+                captureDate: TimeInterval(index),
+                isVideo: false
+            )
+        })
+
+        let snapshot = await coordinator.workStateSnapshot()
+        #expect(
+            snapshot.materializationPending + snapshot.materializationInFlight
+                + snapshot.deviceSeedsQueued == total,
+            "without a proven ranged read, every item must still be staged"
+        )
+        await coordinator.shutdown()
+    }
+
+    /// Without a resolvable session, a row falls back to its local file — so a camera that
+    /// detaches between seeding and enriching degrades to the staging path rather than
+    /// reading from a session that is gone.
+    @Test func aRowWithoutALiveSessionFallsBackToItsLocalFile() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized)
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/GoneCamera")
+        await coordinator.markRangeCapable(rootPath)
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a.arw"))
+        let work = EnrichmentCoordinator.EnrichWork(
+            id: id,
+            url: id.fileURL,
+            sourceSize: 1024,
+            sourceMTimeSeconds: nil,
+            isVideo: false,
+            captureDate: nil,
+            isDeviceStaging: true,
+            shouldHash: false
+        )
+
+        let access = await coordinator.byteAccess(for: work)
+
+        #expect(access.localURL == id.fileURL, "no live session means no ranged read")
+        await coordinator.shutdown()
+    }
+
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
@@ -883,7 +980,8 @@ struct EnrichmentCoordinatorTests {
         }
 
         let recorder = ShouldHashRecorder()
-        let enricher = MediaEnricher { id, url, size, mtime, shouldHash in
+        let enricher = MediaEnricher { id, access, size, mtime, shouldHash in
+            let url = access.localURL ?? id.fileURL
             await recorder.record(name: url.lastPathComponent, shouldHash: shouldHash)
             return .complete(
                 EnrichmentResult(

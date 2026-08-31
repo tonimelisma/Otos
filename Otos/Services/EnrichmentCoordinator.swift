@@ -192,6 +192,16 @@ actor EnrichmentCoordinator {
     var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
     var enrichmentAdmissionTransitionCount = 0
     var readinessRetryNotBefore: [MediaAssetID: Date] = [:]
+    /// Resolves a device root to its live session, so a camera row can be enriched from
+    /// ranges instead of from a downloaded copy. Nil when no camera is attached, or in
+    /// tests that do not exercise the device path.
+    let cameraRangeAccess: CameraRangeAccess?
+    /// Device roots proven to answer ranged reads, decided once per attach.
+    ///
+    /// `GetPartialObject` is optional in MTP and devices that advertise it are documented
+    /// failing it, so this is measured rather than assumed. A root absent from this set
+    /// stages, which is what every device did before this path existed.
+    var rangeCapableRootPaths: Set<LibraryRootPath> = []
     /// Last emitted scheduler-route facts, and how many identical passes have been
     /// collapsed since (B1). The route line was unconditional, so a scheduler spinning at
     /// zero delay emitted hundreds of identical `dispatched=0` lines per second: the
@@ -218,6 +228,7 @@ actor EnrichmentCoordinator {
         store: CatalogStore,
         enricher: MediaEnricher,
         materializationRequester: (any MaterializationRequesting)? = nil,
+        cameraRangeAccess: CameraRangeAccess? = nil,
         materialize: @escaping @Sendable (URL) async -> MaterializationResult = { _ in .cancelled },
         readinessChecker: any EnrichmentReadinessChecking = LiveEnrichmentReadinessChecker(),
         enrichConcurrency: Int = EnrichmentAdmissionPolicy.production.enrichConcurrency,
@@ -237,6 +248,7 @@ actor EnrichmentCoordinator {
     ) {
         self.store = store
         self.enricher = enricher
+        self.cameraRangeAccess = cameraRangeAccess
         self.materializationRequester = materializationRequester
             ?? ClosureMaterializationRequester(operation: materialize)
         var policy = admissionPolicy
@@ -339,6 +351,34 @@ extension EnrichmentCoordinator {
         signal()
     }
 
+    /// How this row's bytes are reachable.
+    ///
+    /// A local file unless the row is on a device root that has proven it answers ranged
+    /// reads *and* its session is still attached. Both conditions are checked here rather
+    /// than assumed at seeding time, because a camera can leave between the two.
+    func byteAccess(for work: EnrichWork) async -> EnrichmentByteAccess {
+        guard rangeCapableRootPaths.contains(work.id.libraryRootPath),
+              let cameraRangeAccess,
+              let session = await cameraRangeAccess.session(for: work.id.libraryRootPath),
+              let size = work.sourceSize,
+              size > 0
+        else {
+            return .localFile(work.url)
+        }
+        return .cameraRanges(
+            session: session,
+            relativePath: work.id.relativePath,
+            size: UInt64(size)
+        )
+    }
+
+    /// Records that a device root answers ranged reads, so its rows enrich without being
+    /// downloaded first.
+    func markRangeCapable(_ rootPath: LibraryRootPath) {
+        rangeCapableRootPaths.insert(rootPath)
+        signal()
+    }
+
     func stageDevice(_ seeds: [DeviceStagingSeed]) {
         guard !isShuttingDown else {
             return
@@ -346,7 +386,25 @@ extension EnrichmentCoordinator {
         // Device staging has no Store enrichment claim. It is an independent
         // materialization demand and therefore cannot consume ready capacity.
         deviceRootPaths.formUnion(seeds.map(\.id.libraryRootPath))
-        pendingDeviceSeeds.append(contentsOf: seeds)
+
+        // A root that answers ranged reads is not seeded at all. Its rows enrich from a few
+        // kilobytes each, so downloading them first would be transferring the whole card to
+        // read a date that is 4 KB in — the 36.5 GB and ~45 minutes this path removes.
+        //
+        // Filtered here rather than at the call site because capability is decided per
+        // attach and this is the one place that turns items into transfers. A row still
+        // reaches staging when it needs to: a container the reader cannot index, a ranged
+        // read that keeps failing, or a loupe open all route one item through
+        // `DeviceStagingRegistry.materialize`, which is untouched.
+        let seedsNeedingBytes = seeds.filter { !rangeCapableRootPaths.contains($0.id.libraryRootPath) }
+        let skipped = seeds.count - seedsNeedingBytes.count
+        if skipped > 0 {
+            OtosLog.metadata.noticeOperation("enrichment.stageDevice", phase: "rangedInstead", fields: [
+                "skipped": "\(skipped)",
+                "seeded": "\(seedsNeedingBytes.count)",
+            ])
+        }
+        pendingDeviceSeeds.append(contentsOf: seedsNeedingBytes)
         admitPendingDeviceSeeds()
         signal()
     }
@@ -483,9 +541,10 @@ extension EnrichmentCoordinator {
                         continue
                     }
                     let enricher = enricher
+                    let access = await byteAccess(for: work)
                     group.addTask {
                         let outcome = await enricher.enrich(
-                            work.id, work.url, work.sourceSize, work.sourceMTimeSeconds, work.shouldHash
+                            work.id, access, work.sourceSize, work.sourceMTimeSeconds, work.shouldHash
                         )
                         await self.finishEnrich(work, outcome)
                     }

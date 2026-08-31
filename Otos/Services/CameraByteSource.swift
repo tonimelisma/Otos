@@ -39,15 +39,38 @@ import Synchronization
 final nonisolated class CameraByteSource: MediaByteSource {
     let size: UInt64
 
-    private let session: DeviceCameraSession
-    private let relativePath: MediaRelativePath
+    /// Issues one ranged read and calls back when it settles.
+    ///
+    /// A closure rather than the session itself, so the bounds and short-read rules below —
+    /// which are the load-bearing part of this type — can be tested without an attached
+    /// camera. `DeviceCameraSession` cannot be constructed without a real `ICCameraDevice`,
+    /// so a source coupled to it would have had its contract verified only on hardware.
+    typealias RangeReader = @Sendable (
+        _ offset: UInt64,
+        _ length: Int,
+        _ completion: @escaping @Sendable (Result<Data, DeviceCameraSessionError>) -> Void
+    ) -> Void
+
+    private let read: RangeReader
 
     /// - Parameter size: from `ICCameraFile.fileSize`. A camera item has no filesystem
     ///   entry to stat, which is why the protocol takes size from the source.
-    init(session: DeviceCameraSession, relativePath: MediaRelativePath, size: UInt64) {
-        self.session = session
-        self.relativePath = relativePath
+    init(size: UInt64, read: @escaping RangeReader) {
         self.size = size
+        self.read = read
+    }
+
+    /// The production source: every read goes back through the session, so the
+    /// non-`Sendable` `ICCameraFile` never leaves the main actor.
+    convenience init(session: DeviceCameraSession, relativePath: MediaRelativePath, size: UInt64) {
+        self.init(size: size) { offset, length, completion in
+            session.beginRangedRead(
+                relativePath: relativePath,
+                offset: offset,
+                length: length,
+                completion: completion
+            )
+        }
     }
 
     func data(offset: UInt64, length: Int) throws -> Data? {
@@ -63,7 +86,7 @@ final nonisolated class CameraByteSource: MediaByteSource {
 
         let outcome = Mutex<Result<Data, DeviceCameraSessionError>?>(nil)
         let finished = DispatchSemaphore(value: 0)
-        session.beginRangedRead(relativePath: relativePath, offset: offset, length: length) { result in
+        read(offset, length) { result in
             outcome.withLock { $0 = result }
             finished.signal()
         }

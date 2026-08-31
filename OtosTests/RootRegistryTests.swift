@@ -136,10 +136,21 @@ struct RootRegistryTests {
         #expect(partitioned.hashNotRequired == [2])
     }
 
-    @Test func contentHashRequiredIsKindDerived() {
+    /// The rule is byte locality, not kind for its own sake (ADR 0018): a digest costs
+    /// every byte, so it is only free where enrichment reads those bytes anyway.
+    ///
+    /// `.deviceMTP` moved into the not-required group when camera rows began enriching from
+    /// a few kilobytes of ranged reads instead of a downloaded copy. Requiring a digest
+    /// would have reintroduced exactly the whole-file transfer that removal was for. Those
+    /// rows are hashed after import, from the destination's local bytes — which is what the
+    /// ADR already prescribes for a removable volume.
+    @Test func contentHashIsRequiredOnlyWhereEnrichmentAlreadyReadsEveryByte() {
         let path = LibraryRootPath(rawValue: "/x")
         #expect(LibraryRoot(path: path, kind: .library).isContentHashRequired)
-        #expect(LibraryRoot(path: path, kind: .deviceMTP).isContentHashRequired)
+        #expect(
+            !LibraryRoot(path: path, kind: .deviceMTP).isContentHashRequired,
+            "a camera row is read as ranges, so hashing it would re-download the file it avoided"
+        )
         #expect(!LibraryRoot(path: path, kind: .removableVolume).isContentHashRequired)
         #expect(LibraryRoot(path: path, kind: .removableVolume).isRemovableSource)
     }

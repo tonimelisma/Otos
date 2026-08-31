@@ -127,7 +127,7 @@ struct OriginalsReadOnlyTests {
 
         let outcome = await MediaEnricher.live(thumbnailDirectory: thumbnailDirectory).enrich(
             id,
-            root.appending(path: "photo.jpg"),
+            .localFile(root.appending(path: "photo.jpg")),
             100,
             1000,
             true
