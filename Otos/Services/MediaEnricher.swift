@@ -186,7 +186,13 @@ nonisolated struct MediaEnricher {
         OtosLog.metadata.noticeOperation("camera.rangedRead", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
             "relativePath": relativePath.rawValue,
-            "reads": "\(result.readCost.readOperationCount)",
+            "parserReads": "\(result.readCost.readOperationCount)",
+            // What the camera was actually asked to do, after the package's internal
+            // buffering and Otos's chunk cache. This is the number that costs ~40 ms each
+            // over MTP, and the gap between it and `parserReads` is the only direct evidence
+            // that the caching is working — a ratio near 1 means a parse is paying a round
+            // trip per field, which reads from outside as "import is slow".
+            "transportReads": "\(result.readCost.transportReadCount)",
             "uniqueBytes": "\(result.readCost.uniqueBytesRead)",
             "fileBytes": "\(size)",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
