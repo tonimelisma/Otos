@@ -3,22 +3,28 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-## Active
+No active plans.
 
-- **0100 — Camera import: prove naming from ranges, stage only what is imported.**
-  Opened from the 2026-08-30 live MTP session (Sony ILCE-6700, 991 items, 36.5 GB): the
-  card staged in full before the Import button could appear, taking ~45 minutes and ~73 GB
-  of writes for one import. Carries the range-driven metadata reader (D1) and its
-  device-session concurrency cap (D1b), staging lifetime (A), the readiness-retry spin
-  that flooded the log (B2), progress honesty (C), and device concurrency (E).
-- **0101 — MediaMetadata: upstream brief for transport-independent reading.** The package
-  half of 0100's D1, written in package-general terms for
-  `github.com/tonimelisma/MediaMetadata` and filed there as issues. Otos plans against a
-  released tag, never against a promise; the package never learns Otos exists.
+Plan 0100 (camera import: prove naming from ranges, stage only what is imported) is complete
+and was removed at closure. It opened from a live MTP session where a 991-item card staged in
+full — 36.5 GB, ~45 minutes — before the Import button could appear, and ~73 GB was written
+for one import. Its decisions live in ENR-011 (a device that answers ranged reads is not
+staged at all; capability is measured per attach; a failed read is transient), APP-018
+(staging cleared at three points, per-instance trees, proven containment before any delete),
+ARC-047 (the session holds its last proven naming count across a rebuild), APP-029 and
+DES-031 (the bar's track reports the progress of the stage it is in), and ADR 0018 (content
+hashing follows byte locality, so `.deviceMTP` is hashed after import).
 
-0101 shipped as `MediaMetadata` 0.4.1 and Otos is pinned to it. Everything in 0100 except D1 (and D2, C3, E2's deadline, which follow it) landed in PR #320; D1's transport is landed and its concurrency question is answered; the remaining wiring is listed in the plan's Status section.
+Plan 0101 shipped as `MediaMetadata` 0.4.1: a transport-independent byte source, a
+three-outcome read contract, public read cost, `identify(source:)`, `CachingByteSource`, and
+embedded preview descriptors. Its boundary rule — every change must be justifiable to a
+second consumer who has never heard of Otos — lives in that package's `ARCHITECTURE.md`.
 
-## Closed
+The residual risk is recorded in `docs/research/removable-volume-and-camera-sources.md`:
+every measurement behind the work comes from one Sony body, and a timed run with a card
+attached is the next useful measurement.
+
+## Closed## Closed
 
 Plan 0099 (honest import naming and plan stability) is complete across six
 increments and was removed at closure. It opened from a card whose import bar

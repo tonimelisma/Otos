@@ -195,6 +195,18 @@ as though it were the user's problem — the exact failure DES-035 names — and
 enriching cloud destination it did so about once a second, each cycle ending in the
 identical count.
 
+**A is a state the user watches, not a flash.** This was written as though it were
+momentary, and on a card it nearly is. On a camera it is not: reading a capture date from
+every item costs roughly a minute and a half for a 991-item card, because each read is a
+round trip and ImageCaptureCore serialises them. That is 29× better than the 45 minutes it
+cost when the card had to be transferred first, and still long enough that everything below
+about the count is load-bearing rather than cosmetic — the count must not blank, the track
+must not fall back to indeterminate, and the numbers must describe the work actually
+happening. A user who watches a bar for ninety seconds notices every one of those.
+
+The figure is arithmetic over per-file measurements, not a timed run; a run with a camera
+attached is what would confirm it.
+
 L1 `Checking the card…` · L3 `112 of 181 items`. Middle: a **determinate** bar
 driven by that same count — HIG prefers determinate wherever a real total exists,
 and once enumeration has finished the total is real. It is indeterminate only
