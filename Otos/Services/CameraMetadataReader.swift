@@ -23,6 +23,15 @@ import MediaMetadata
 ///
 /// This is the "dedicated thread" the plan named and the repo did not have: the only other
 /// `DispatchQueue`s here serve DiskArbitration and FSEvents, neither of which blocks.
+/// One camera parse, plus what waiting for the camera cost it.
+nonisolated struct ParsedCameraItem: Sendable {
+    let result: MediaMetadataResult
+    /// Time blocked on the transport. The gap between this and the parse's own elapsed time
+    /// is everything that is *not* the camera — scheduling, contention, decode — and is the
+    /// number that says whether tuning chunk sizes could help at all.
+    let transportWaitMilliseconds: Int
+}
+
 nonisolated enum CameraMetadataReader {
     private static let queue = DispatchQueue(
         label: "net.melisma.Otos.camera-metadata",
@@ -54,13 +63,18 @@ nonisolated enum CameraMetadataReader {
         session: DeviceCameraSession,
         relativePath: MediaRelativePath,
         size: UInt64
-    ) async -> MediaMetadataResult {
+    ) async -> ParsedCameraItem {
         await withCheckedContinuation { continuation in
             queue.async {
                 let source = CameraByteSource(session: session, relativePath: relativePath, size: size)
                 let cached = CachingByteSource(wrapping: source, chunkSize: chunkSize)
                 let result = MediaMetadataReader.read(source: cached, filenameHint: relativePath.rawValue)
-                continuation.resume(returning: result)
+                continuation.resume(
+                    returning: ParsedCameraItem(
+                        result: result,
+                        transportWaitMilliseconds: source.transportWaitMilliseconds
+                    )
+                )
             }
         }
     }
@@ -90,11 +104,13 @@ nonisolated enum CameraMetadataReader {
         size: UInt64,
         previews: [EmbeddedPreview]
     ) async -> CGImage? {
-        let usable = previews.first { preview in
-            (preview.pixelWidth ?? 0) >= ThumbnailStore.maxPixelSize
-                || (preview.pixelHeight ?? 0) >= ThumbnailStore.maxPixelSize
-        }
-        guard let preview = usable else {
+        // Largest first, by bytes, because declared dimensions are usually absent — Sony's
+        // ARW omits them in exactly the directories that carry previews. Selecting on
+        // `pixelWidth >= 256` therefore discarded every preview on real files: measured,
+        // 991 camera tiles kept a 160x120 thumbnail while a full-size preview sat inside
+        // each one. Whether a preview is actually an improvement is decided after decoding
+        // it, below, where the real dimensions are known rather than declared.
+        guard let preview = previews.first else {
             return nil
         }
         return await withCheckedContinuation { continuation in
@@ -110,7 +126,22 @@ nonisolated enum CameraMetadataReader {
                     continuation.resume(returning: nil)
                     return
                 }
-                continuation.resume(returning: decodeThumbnail(from: bytes))
+                guard let image = decodeThumbnail(from: bytes) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                // Only an improvement counts. ImageCaptureCore's own thumbnail is 160x120,
+                // already on disk and already shown, so replacing it with something no
+                // larger spends a read to change nothing.
+                guard image.width > 160 || image.height > 120 else {
+                    OtosLog.metadata.noticeOperation("camera.previewThumbnail", phase: "notBetter", fields: [
+                        "relativePath": relativePath.rawValue,
+                        "decoded": "\(image.width)x\(image.height)",
+                    ])
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: image)
             }
         }
     }

@@ -168,11 +168,12 @@ nonisolated struct MediaEnricher {
             return .notMaterialized
         }
         let started = Date()
-        let result = await CameraMetadataReader.read(
+        let parsed = await CameraMetadataReader.read(
             session: session,
             relativePath: relativePath,
             size: size
         )
+        let result = parsed.result
         guard !result.outcome.shouldRetry else {
             OtosLog.metadata.noticeOperation("camera.rangedRead", phase: "transient", fields: [
                 "rootPath": id.libraryRootPath.rawValue,
@@ -186,7 +187,6 @@ nonisolated struct MediaEnricher {
         OtosLog.metadata.noticeOperation("camera.rangedRead", phase: "finish", fields: [
             "rootPath": id.libraryRootPath.rawValue,
             "relativePath": relativePath.rawValue,
-            "parserReads": "\(result.readCost.readOperationCount)",
             // What the camera was actually asked to do, after the package's internal
             // buffering and Otos's chunk cache. This is the number that costs ~40 ms each
             // over MTP, and the gap between it and `parserReads` is the only direct evidence
@@ -196,6 +196,17 @@ nonisolated struct MediaEnricher {
             "uniqueBytes": "\(result.readCost.uniqueBytesRead)",
             "fileBytes": "\(size)",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+            // Splits "the camera is slow" from "everything around the camera is slow". A
+            // parse whose elapsed time greatly exceeds its transport wait is not
+            // transport-bound, and tuning chunk sizes cannot help it.
+            "transportWaitMs": "\(parsed.transportWaitMilliseconds)",
+            // What the container declares, so a preview that is found but rejected is
+            // distinguishable from one that was never there. The thumbnail path silently
+            // produced nothing on real ARW files and neither case could be told apart.
+            "previews": "\(result.previews.count)",
+            "previewSizes": result.previews
+                .map { "\($0.pixelWidth ?? -1)x\($0.pixelHeight ?? -1)@\($0.sourcePath)" }
+                .joined(separator: ","),
         ])
         // The container's own preview, when it declares one big enough to be an improvement.
         // This is the only chance to give this tile a real thumbnail: the row is about to be

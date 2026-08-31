@@ -52,6 +52,16 @@ final nonisolated class CameraByteSource: MediaByteSource {
     ) -> Void
 
     private let read: RangeReader
+    private let waitNanos = Mutex<UInt64>(0)
+
+    /// Total time this source spent blocked waiting for the transport.
+    ///
+    /// Separates "the camera is slow" from "everything around the camera is slow". A parse
+    /// whose elapsed time greatly exceeds this is not transport-bound, and no amount of
+    /// chunk tuning will help it.
+    var transportWaitMilliseconds: Int {
+        Int(waitNanos.withLock { $0 } / 1_000_000)
+    }
 
     /// How long one ranged read may take before it is treated as a hang.
     ///
@@ -113,7 +123,10 @@ final nonisolated class CameraByteSource: MediaByteSource {
         // The deadline is deliberately far past any legitimate read — measured latency is
         // ~43 ms and a chunked fetch 77-234 ms — because its job is to break a hang, not to
         // second-guess a slow device.
-        guard finished.wait(timeout: .now() + readDeadline) == .success else {
+        let waitStarted = DispatchTime.now()
+        let outcomeSignal = finished.wait(timeout: .now() + readDeadline)
+        waitNanos.withLock { $0 += DispatchTime.now().uptimeNanoseconds - waitStarted.uptimeNanoseconds }
+        guard outcomeSignal == .success else {
             throw DeviceCameraSessionError.rangedReadFailed(
                 "timed out after \(readDeadline)s: asked \(length) at \(offset)"
             )
