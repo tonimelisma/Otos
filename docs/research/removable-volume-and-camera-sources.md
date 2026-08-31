@@ -632,8 +632,7 @@ is copied into the library. July also asked for staging "survival across app res
 the current product decision is the opposite (discard at quit, sweep stale trees at
 launch, owner decision 2026-08-30), so that item is superseded rather than outstanding.
 
-Consequences and fixes are tracked in
-`docs/plans/0100-mtp-import-staging-observability-and-progress.md`.
+Consequences and fixes shipped; see "Outcome (2026-08-31)" below.
 
 **New (2026-08-30, external): ranged reads are an optional MTP capability, and can fail
 in success-shaped ways**
@@ -679,6 +678,34 @@ The same header notes that `ICImageSourceThumbnailMaxPixelSize` **is ignored whe
 (`CameraSourceMonitor.swift:433`), which is the correct combination, so the measurement
 stands — but it is a fact about *this body over PTP*, which returns only its embedded EXIF
 thumb, not about the framework. Another vendor may answer a 256 px request directly.
+
+### Outcome (2026-08-31): range-driven reading shipped
+
+The 2026-08-30 findings are implemented. A camera proven to answer ranged reads now
+transfers nothing to be planned: its rows are enriched from the container's own index, and
+their grid thumbnails come from the container's embedded preview. Device transfers are
+capped at one, staged bytes are released on settlement, and the import bar's track reports
+the stage it is in.
+
+What the implementation added to what was measured here:
+
+- **Ranged reads are gated, not assumed.** `GetPartialObject` is optional in MTP and absent
+  from the mandatory PTP command set, and libmtp#8 documents a shipping device that fails it
+  by timeout. One 12-byte read per attach must identify a family consistent with the item's
+  extension; a device that fails stages exactly as before.
+- **A failed read is transient, never absence.** The byte source throws on a transport error,
+  a short in-bounds read, and the zero-bytes-no-error shape of FB7663947, so the package
+  reports `.readFailure` rather than a definitive "no capture date" — which ARC-057 would
+  treat as proof and turn into an mtime-derived filename, and that name is the dedupe key.
+- **Reads are bounded.** A read that never answers times out rather than parking a dedicated
+  thread.
+
+**What is still unproven is the same thing throughout: one body.** Everything here is the
+Sony ILCE-6700. The capability gate exists for devices that cannot serve ranges and has never
+been run against one; the preview path is measured for ARW and HIF only; and the per-card
+figure of ~93 s is arithmetic over per-file measurements rather than a timed run. Attaching a
+card to a build carrying this would confirm all three at once, and is the single most useful
+next measurement.
 
 ### Still open after this round
 
