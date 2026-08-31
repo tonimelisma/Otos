@@ -212,12 +212,21 @@ nonisolated struct LibraryRoot: Identifiable, Hashable {
     }
 
     /// Whether enrichment on this root produces a content hash (ADR 0018).
-    /// Everything except `.removableVolume` is read in place and hashed during
-    /// enrichment; a removable volume is never hashed in place, so its rows carry no
-    /// digest until import. Single home for the rule so a future root kind cannot
-    /// diverge one caller.
+    ///
+    /// The rule is byte locality, not root kind for its own sake: a digest costs every byte
+    /// of the file, so it is only free where enrichment is reading those bytes anyway. A
+    /// fixed library is. A removable volume is not — hashing in place would read the whole
+    /// card to checksum it.
+    ///
+    /// `.deviceMTP` joins the second group now that a camera row is enriched from a few
+    /// kilobytes of ranged reads rather than from a downloaded copy. Requiring a digest
+    /// would reintroduce exactly the whole-file transfer that removal was for. Those rows
+    /// receive their digest after import, from the destination's local bytes — which is
+    /// what ADR 0018 already prescribes for a removable volume.
+    ///
+    /// Single home for the rule so a future root kind cannot diverge one caller.
     var isContentHashRequired: Bool {
-        kind != .removableVolume
+        kind == .library
     }
 }
 

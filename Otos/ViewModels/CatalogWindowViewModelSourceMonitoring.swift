@@ -106,6 +106,21 @@ extension CatalogWindowViewModel {
                 scannedFiles(for: items),
                 scan: scan
             )
+            // Decide once per attach whether this device answers ranged reads, before any
+            // seeding, because the answer decides whether seeding happens at all. One
+            // 12-byte read against one item: cheap enough to always do, and the only honest
+            // way to know — `GetPartialObject` is optional in MTP and devices that advertise
+            // it are documented failing it.
+            if let probe = items.first(where: { ($0.byteSize ?? 0) > 0 }),
+               let size = probe.byteSize,
+               await CameraMetadataReader.isRangeCapable(
+                   session: session,
+                   relativePath: probe.relativePath,
+                   size: UInt64(size)
+               )
+            {
+                await enrichmentCoordinator?.markRangeCapable(rootPath)
+            }
             await enrichmentCoordinator?.stageDevice(stagingSeeds(for: items, rootPath: rootPath))
             if snapshot.isStable {
                 try await catalogStore.completeDeviceCatalogEnumeration(

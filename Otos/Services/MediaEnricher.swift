@@ -28,7 +28,7 @@ import UniformTypeIdentifiers
 nonisolated struct MediaEnricher {
     var enrich: @Sendable (
         _ id: MediaAssetID,
-        _ url: URL,
+        _ access: EnrichmentByteAccess,
         _ sourceSize: Int64?,
         _ sourceMTimeSeconds: Int?,
         _ shouldHash: Bool
@@ -46,7 +46,20 @@ nonisolated struct MediaEnricher {
             ContentHasher().hashMaterializedFile(at: url)
         }
     ) -> MediaEnricher {
-        MediaEnricher { id, url, sourceSize, sourceMTimeSeconds, shouldHash in
+        MediaEnricher { id, access, sourceSize, sourceMTimeSeconds, shouldHash in
+            // A camera row has no local file, so the readiness checker — which asks the
+            // filesystem — cannot speak for it. It is routed here precisely because its
+            // bytes are reachable another way, and answering `.notMaterialized` would send
+            // it back to be downloaded, which is the cost this path exists to avoid.
+            guard case let .localFile(url) = access else {
+                return await Self.enrichFromRanges(
+                    id: id,
+                    access: access,
+                    sourceSize: sourceSize,
+                    sourceMTimeSeconds: sourceMTimeSeconds,
+                    thumbnailDirectory: thumbnailDirectory
+                )
+            }
             guard readinessChecker.status(of: url) == .materialized else {
                 return .notMaterialized
             }
@@ -121,6 +134,76 @@ nonisolated struct MediaEnricher {
                 return .transient
             }
         }
+    }
+
+    /// Enriches a row whose bytes are ranges on an attached camera.
+    ///
+    /// Deliberately narrower than the local path, and each omission is a decision rather
+    /// than a gap:
+    ///
+    /// - **No content hash.** Hashing needs every byte, which is the transfer this path
+    ///   exists to avoid. A device row receives its digest after import, from the
+    ///   destination's local bytes — exactly what ADR 0018 already prescribes for a
+    ///   removable volume.
+    /// - **No QuickLook thumbnail.** QuickLook needs a file. The camera's own provisional
+    ///   thumbnail is already on disk from enumeration and is not disturbed; a full-quality
+    ///   one comes from the container's embedded preview, which the package reports the
+    ///   location of.
+    /// - **No readiness re-check.** There is no local file whose materialization could have
+    ///   regressed underneath us.
+    ///
+    /// A `.readFailure` returns `.transient`, never `.complete`. That is the whole reason
+    /// the byte source throws rather than returning nil on a transport fault: a definitive
+    /// outcome here would stamp "this file has no capture date", and ARC-057 would then name
+    /// it from its filesystem mtime — a name that is also the dedupe key, so a detached
+    /// camera would produce duplicate imports rather than a retry.
+    private static func enrichFromRanges(
+        id: MediaAssetID,
+        access: EnrichmentByteAccess,
+        sourceSize: Int64?,
+        sourceMTimeSeconds: Int?,
+        thumbnailDirectory _: URL
+    ) async -> EnrichmentOutcome {
+        guard case let .cameraRanges(session, relativePath, size) = access else {
+            return .notMaterialized
+        }
+        let started = Date()
+        let result = await CameraMetadataReader.read(
+            session: session,
+            relativePath: relativePath,
+            size: size
+        )
+        guard !result.outcome.shouldRetry else {
+            OtosLog.metadata.noticeOperation("camera.rangedRead", phase: "transient", fields: [
+                "rootPath": id.libraryRootPath.rawValue,
+                "relativePath": relativePath.rawValue,
+            ])
+            return .transient
+        }
+        // What the read actually cost, per asset. The package counts it, and it is the only
+        // way to see a vendor whose containers need ten times the reads, or a chunk cache
+        // that has stopped working — both of which look like "import is slow" from outside.
+        OtosLog.metadata.noticeOperation("camera.rangedRead", phase: "finish", fields: [
+            "rootPath": id.libraryRootPath.rawValue,
+            "relativePath": relativePath.rawValue,
+            "reads": "\(result.readCost.readOperationCount)",
+            "uniqueBytes": "\(result.readCost.uniqueBytesRead)",
+            "fileBytes": "\(size)",
+            "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
+        ])
+        return .complete(
+            EnrichmentResult(
+                id: id,
+                metadata: Self.map(result),
+                enrichedKind: Self.normalizedKind(result.format),
+                enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
+                thumbnailPath: nil,
+                sourceSize: sourceSize ?? -1,
+                sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
+                contentHash: nil,
+                generatedThumbnail: nil
+            )
+        )
     }
 
     /// The un-hashed path: identical to the post-hash continuation above except no

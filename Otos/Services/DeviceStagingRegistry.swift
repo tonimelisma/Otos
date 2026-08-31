@@ -148,6 +148,22 @@ final class DeviceStagingRegistry {
         return available >= freeSpaceFloorBytes
     }
 
+    /// A Sendable resolver from a device root to its live session.
+    ///
+    /// Enrichment needs a session to read ranges from, and the coordinator is an actor that
+    /// cannot reach this `@MainActor` registry directly. The same shape as
+    /// `CameraImportAccess`: a value that closes over the registry weakly, so a detached
+    /// camera resolves to nil rather than keeping a dead session alive.
+    func makeCameraRangeAccess() -> CameraRangeAccess {
+        CameraRangeAccess { [weak self] rootPath in
+            await MainActor.run {
+                self?.sessionsByIdentity.values.first {
+                    (try? CatalogPath.normalizedDirectoryPath(for: $0.stagingRootURL)) == rootPath
+                }
+            }
+        }
+    }
+
     // MARK: - Import gateway (ARC-049)
 
     /// Builds a Sendable import gateway over the live session map.
@@ -299,5 +315,22 @@ nonisolated struct CameraImportAccess: Sendable {
 
     func eject(identity: String) async -> RemovableEjectOutcome {
         await ejectHook(identity)
+    }
+}
+
+/// Resolves a device root to its live camera session, for enrichment's ranged reads.
+///
+/// `DeviceCameraSession` is `@MainActor` and therefore `Sendable`, so it can cross to the
+/// enrichment actor freely; the non-`Sendable` `ICCameraFile` never does, because every
+/// read goes back through the session.
+nonisolated struct CameraRangeAccess: Sendable {
+    private let resolve: @Sendable (LibraryRootPath) async -> DeviceCameraSession?
+
+    init(resolve: @escaping @Sendable (LibraryRootPath) async -> DeviceCameraSession?) {
+        self.resolve = resolve
+    }
+
+    func session(for rootPath: LibraryRootPath) async -> DeviceCameraSession? {
+        await resolve(rootPath)
     }
 }
