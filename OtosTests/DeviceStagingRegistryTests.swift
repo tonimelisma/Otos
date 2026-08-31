@@ -153,6 +153,28 @@ struct DeviceStagingRegistryTests {
         #expect(!DeviceStagingLocation.hasStagedBytes(inContainer: container))
     }
 
+    /// Attaching a camera creates its session directory whether or not anything is staged
+    /// into it, and after ranged reads became the normal path that is the common case. An
+    /// entry count reported "there are bytes to clear" for every session that had seen a
+    /// camera, so quit deferred termination and flashed a clearing window to delete nothing.
+    @Test func anEmptySessionDirectoryIsNotStagedBytes() throws {
+        let container = try makeCatalogStoreTemporaryDirectory().appending(
+            path: "DeviceStaging",
+            directoryHint: .isDirectory
+        )
+        let session = DeviceStagingLocation.instanceRootURL(inContainer: container)
+            .appending(path: "camera-1/2026-08-20", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: session, withIntermediateDirectories: true)
+
+        #expect(
+            !DeviceStagingLocation.hasStagedBytes(inContainer: container),
+            "directories alone are not bytes; quitting must not defer to delete nothing"
+        )
+
+        try Data([0x1]).write(to: session.appending(path: "DSC00001.ARW", directoryHint: .notDirectory))
+        #expect(DeviceStagingLocation.hasStagedBytes(inContainer: container))
+    }
+
     /// A1's guard. The release intent takes a path, and a path wrong by one component
     /// would be a delete inside the user's own media — which Otos never does. Containment
     /// is proven, not assumed.

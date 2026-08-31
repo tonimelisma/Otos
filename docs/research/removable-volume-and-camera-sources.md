@@ -707,6 +707,53 @@ figure of ~93 s is arithmetic over per-file measurements rather than a timed run
 card to a build carrying this would confirm all three at once, and is the single most useful
 next measurement.
 
+### Measured on hardware (2026-08-31): it works, and running it found two defects
+
+The 2026-08-30 design shipped, and was then run against the same attached ILCE-6700 with
+its overlay cleared so enrichment actually had to work. Two defects surfaced that 848
+passing unit tests had not, and both were in code already reported as verified.
+
+**The camera rows never reached enrichment.** Not seeding a range-capable device is only
+half the change; the rows must then be *routed*. `LiveEnrichmentReadinessChecker` asks the
+filesystem, a camera row has no file, `lstat` answers `.unknown`, and `.unknown` routes to a
+readiness retry that can never succeed because nothing will ever create that file. Observed:
+`probes=128 ready=0 rangedReady=0 retryReadiness=32 dispatched=0`, on repeat, with no
+enrichment at all. This section's own design note said it — "readiness has no vocabulary for
+reachable-by-range, so this needs a route, not a bypass" — and the implementation did not do
+it.
+
+It was invisible without hardware, and the reason is worth keeping: **a re-attached camera
+keeps the overlay it already had**, so every row still looked enriched from the previous
+session and the import bar went Ready as normal. Only clearing that overlay exposed it.
+
+**Camera tiles lost their thumbnails.** `EnrichmentResult` resolves
+`generatedThumbnail?.finalRelativePath ?? thumbnailPath`; the device path passed nil for
+both, so every enriched row *cleared* the column, pointing the tile at nothing while its
+provisional JPEG sat on disk under exactly that deterministic name. Measured: 684 of 991
+rows lost their thumbnail with all 8,606 files still present. Neither owner's tests could
+see it, because the provisional write and the enrichment write belong to different types.
+
+**With both fixed, measured over MTP:**
+
+| Measurement | Result |
+| --- | --- |
+| Rows enriched by ranged read | **991 / 991** |
+| Downloads | **0** |
+| Staged on disk | **0 B** |
+| Bytes read off the camera | **1.9 MB** (the card holds 36.5 GB) |
+| Elapsed for the whole card | **263 s** |
+| Read caching | **41x** — 87,048 parser reads served by 2,108 transport reads |
+| Capture walls vs full-file enrichment | **991 / 991 byte-identical** |
+| Grid thumbnails retained | **991 / 991** |
+
+That last-but-one row is the differential oracle, run end to end over MTP for the first
+time rather than over staged copies.
+
+**Correcting the estimate.** The plan projected ~93 s per card from per-file measurements.
+The real figure is **263 s** — still roughly 10x better than the ~45 minutes a transfer took,
+but the extrapolation was optimistic by ~2.8x, because it assumed reads pipeline better than
+ImageCaptureCore's serial queue allows. Quote 263 s, not 93 s.
+
 ### Still open after this round
 
 - Removable-volumes TCC prompt behavior for the real app bundle (signed,
@@ -717,7 +764,9 @@ next measurement.
   (expected same volume UUID — same synthesized-from-filesystem mechanism
   shown stable across remounts, but not physically confirmed).
 - Canon/Nikon PTP bodies and Android-phone MTP/PTP visibility and their
-  metadata/thumbnail behavior (only the Sony MTP path measured).
+  metadata/thumbnail behavior (only the Sony MTP path measured). The ranged-read
+  capability gate exists precisely for a device that cannot serve `GetPartialObject`
+  and has still never been run against one.
 - Locked/unlocked iPhone access-restriction flow.
 - Whether Sony Mass Storage mode (full filesystem, real EXIF, ranged reads of
   embedded previews via plain file I/O) should be the *recommended* connection
