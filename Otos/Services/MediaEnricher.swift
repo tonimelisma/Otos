@@ -162,7 +162,7 @@ nonisolated struct MediaEnricher {
         access: EnrichmentByteAccess,
         sourceSize: Int64?,
         sourceMTimeSeconds: Int?,
-        thumbnailDirectory _: URL
+        thumbnailDirectory: URL
     ) async -> EnrichmentOutcome {
         guard case let .cameraRanges(session, relativePath, size) = access else {
             return .notMaterialized
@@ -191,6 +191,18 @@ nonisolated struct MediaEnricher {
             "fileBytes": "\(size)",
             "elapsedMs": "\(DiagnosticsTiming.milliseconds(since: started))",
         ])
+        // The container's own preview, when it declares one big enough to be an improvement.
+        // This is the only chance to give this tile a real thumbnail: the row is about to be
+        // stamped, and a stamped row is never re-claimed, so "generate it later" means never
+        // for as long as the card is attached.
+        let generatedThumbnail = await Self.stagedPreviewThumbnail(
+            id: id,
+            session: session,
+            relativePath: relativePath,
+            size: size,
+            previews: result.previews,
+            thumbnailDirectory: thumbnailDirectory
+        )
         return .complete(
             EnrichmentResult(
                 id: id,
@@ -201,9 +213,49 @@ nonisolated struct MediaEnricher {
                 sourceSize: sourceSize ?? -1,
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
                 contentHash: nil,
-                generatedThumbnail: nil
+                generatedThumbnail: generatedThumbnail
             )
         )
+    }
+
+    /// Stages a grid thumbnail from a container's embedded preview, or nil when there is
+    /// none worth using.
+    ///
+    /// Nil is a safe answer, not a failure: the camera's provisional thumbnail is already on
+    /// disk under the same deterministic name and is left alone, so a tile that gets no
+    /// preview keeps showing what it shows today rather than falling back to a placeholder.
+    private static func stagedPreviewThumbnail(
+        id: MediaAssetID,
+        session: DeviceCameraSession,
+        relativePath: MediaRelativePath,
+        size: UInt64,
+        previews: [EmbeddedPreview],
+        thumbnailDirectory: URL
+    ) async -> GeneratedThumbnail? {
+        guard !previews.isEmpty else {
+            return nil
+        }
+        guard let image = await CameraMetadataReader.loadPreviewImage(
+            session: session,
+            relativePath: relativePath,
+            size: size,
+            previews: previews
+        ) else {
+            return nil
+        }
+        do {
+            return try ThumbnailStore.stage(
+                image,
+                finalRelativeName: ThumbnailStore.relativeName(for: id),
+                in: thumbnailDirectory
+            )
+        } catch {
+            OtosLog.thumbnails.errorOperation("camera.previewThumbnail", phase: "stageFailed", fields: [
+                "relativePath": relativePath.rawValue,
+                "error": String(describing: error),
+            ])
+            return nil
+        }
     }
 
     /// The un-hashed path: identical to the post-hash continuation above except no
