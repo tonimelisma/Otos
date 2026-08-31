@@ -3,7 +3,22 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-No active plans.
+## Active
+
+- **0100 — Camera import: prove naming from ranges, stage only what is imported.**
+  Opened from the 2026-08-30 live MTP session (Sony ILCE-6700, 991 items, 36.5 GB): the
+  card staged in full before the Import button could appear, taking ~45 minutes and ~73 GB
+  of writes for one import. Carries the range-driven metadata reader (D1) and its
+  device-session concurrency cap (D1b), staging lifetime (A), the readiness-retry spin
+  that flooded the log (B2), progress honesty (C), and device concurrency (E).
+- **0101 — MediaMetadata: upstream brief for transport-independent reading.** The package
+  half of 0100's D1, written in package-general terms for
+  `github.com/tonimelisma/MediaMetadata` and filed there as issues. Otos plans against a
+  released tag, never against a promise; the package never learns Otos exists.
+
+0100 step 5 depends on 0101 shipping; everything else in 0100 is independent of it.
+
+## Closed
 
 Plan 0099 (honest import naming and plan stability) is complete across six
 increments and was removed at closure. It opened from a card whose import bar
