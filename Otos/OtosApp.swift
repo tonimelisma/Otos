@@ -9,13 +9,79 @@ import AppKit
 import OSLog
 import SwiftUI
 
-/// Clears device staging when the app quits. Staged camera bytes live for the
-/// session — kept across an eject so re-attaching does not re-download the device —
-/// so app close is where they are released. A crash skips this, which is why launch
-/// sweeps as well (APP-018).
+/// Clears device staging when the app quits, and tells the user it is doing it.
+///
+/// Staged camera bytes live for the session — kept across an eject, because they are
+/// already off the camera and discarding them would re-download the whole device on the
+/// next attach — so app close is where they are released. A crash skips this, which is why
+/// launch sweeps as well (APP-018).
+///
+/// This runs in `applicationShouldTerminate`, not `applicationWillTerminate`, and the
+/// difference is the whole point. `applicationWillTerminate` is a **bounded** window: macOS
+/// ends the process partway through, which is exactly why 36.5 GB of staging survived a
+/// clean quit on 2026-08-30 while a 101 MB test case did not — the small case fit inside
+/// the window and hid the defect. `.terminateLater` gives an unbounded one.
+///
+/// The delete runs off the main thread so the window paints and the app does not beachball,
+/// and `reply(toApplicationShouldTerminate:)` is called on both the success and failure
+/// paths — a failed delete must never trap the user in an app that will not quit. The
+/// launch sweep is the backstop for that case, as it already is for a crash.
 private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
-    func applicationWillTerminate(_ notification: Notification) {
-        DeviceStagingRegistry.discardAllStaging()
+    private var clearingWindow: NSWindow?
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // The common session never attaches a camera. Deferring termination and flashing a
+        // window at it would add delay to every quit to report work that does not exist.
+        guard DeviceStagingLocation.hasStagedBytes() else {
+            return .terminateNow
+        }
+        showClearingWindow()
+        Task.detached(priority: .userInitiated) {
+            DeviceStagingLocation.discardInstanceStaging()
+            await MainActor.run {
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
+
+    /// A minimal AppKit window because termination is an AppKit lifecycle event: the
+    /// SwiftUI scene is on its way down and cannot be relied on to present anything. The
+    /// content is still SwiftUI, hosted — only the shell is AppKit.
+    @MainActor
+    private func showClearingWindow() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 96),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = ""
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: ClearingStagingView())
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        clearingWindow = window
+    }
+}
+
+/// Shown while quit clears the staging cache.
+///
+/// Indeterminate: the honest total would need the tree enumerated before deleting it, which
+/// doubles the work to feed a number nobody acts on. Present participle and a moving
+/// indicator per DES-031; no action, because this is not cancellable — the bytes are a
+/// cache and quitting is already the decision.
+private struct ClearingStagingView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .progressViewStyle(.linear)
+            Text("Clearing cached camera files…")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

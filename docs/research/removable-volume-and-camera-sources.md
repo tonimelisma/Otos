@@ -424,6 +424,262 @@ inserted in the Mac:
   listing, and it exercises the plain Tier 1 pipeline. Keep the MTP/PTP path
   for devices that offer nothing else (iPhones, most Canon/Nikon bodies).
 
+### Re-measurement on the shipped implementation (2026-08-30)
+
+Same body (ILCE-6700) over MTP, now against the real app with 991 items / 36.5 GB
+staged. A standalone ImageCaptureCore probe re-ran the 2026-07-06 checks and added
+byte-threshold measurements. **Every 2026-07-06 API finding above still holds**:
+`exifCreationDate` nil, `duration` 0.0 for a 335 MB video, `requestMetadataDictionary`
+failing with -20150, partial reads working. Two facts changed and several are new.
+
+**Changed since 2026-07-06**
+
+- **`pairedRawImage` now populates.** July recorded it as `nil` "even for a
+  DSC06715.ARW/DSC06715.HIF pair", requiring Otos-side basename pairing. The probe
+  shows `DSC08976.HIF → pairedRawImage = DSC08976.ARW`. Otos-side pairing is still the
+  safe default, but the API value is no longer always absent.
+- **Throughput is far below the July benchmark.** July measured 40 MB/s single-stream
+  (201 MB MP4 in 4.8 s). This session, running the shipped 16-way admission window,
+  measured 8.5 MB/s (335 MB in 39 s) down to 0.9 MB/s (8.1 MB in 9.2 s), averaging
+  ~13.5 MB/s across 36.5 GB in ~45 minutes. ImageCaptureCore funnels every request
+  through one serial `ICDeviceCommandQueue` — a process sample showed it parked in
+  `-[ICCameraFile requestDownloadWithOptions:completion:]` for 1,465 of 1,481 samples —
+  so the 16 concurrent requests are not parallelism, and the evidence suggests they
+  cost throughput rather than adding it. A single-stream re-benchmark against the July
+  number is the way to confirm.
+
+**New: how few bytes are actually needed for a naming fact**
+
+July identified header partial-reads as "the door to header-parsing EXIF" but did not
+establish the sizes. Measured on this session's staged originals:
+
+| Type | Method | Bytes | Result |
+| --- | --- | --- | --- |
+| HIF / HEIC / JPEG | `CGImageSource` over the prefix | **256 KB** | `DateTimeOriginal=2026:08:23 13:11:35`, `OffsetTimeOriginal=-07:00` |
+| ARW (Sony RAW) | direct TIFF/IFD walk over the prefix | **256 KB** | `DateTimeOriginal=2026:08:23 13:06:47`, `OffsetTimeOriginal=-07:00`; ExifIFD at byte 4,556 |
+| MP4 / MOV | tail read, parse `moov`/`mvhd` | **2 MB from the end** | creation `2026-08-23 18:57:31` UTC, duration `14.01 s`; `moov` began 1,025,182 bytes into the last 1 MB |
+
+Two details matter for implementation:
+
+- **ImageIO cannot parse a truncated ARW.** Prefixes up to 16 MB still yielded nothing,
+  because `CGImageSource` validates the container. The data is not the obstacle — a
+  direct IFD walk finds the tag 4.5 KB in. RAW needs a small explicit TIFF reader, not
+  a framework call.
+- **The video result was cross-checked against full-file enrichment.** The 2 MB tail
+  gave creation 18:57:31 UTC (11:57:31 local at -07:00) and 14.01 s; the catalog row
+  produced by enriching the whole 201 MB file holds `capture_wall_compact=20260823115731`
+  and `duration_seconds=14.014`. Exact agreement. This also supplies the duration that
+  ENR-012's `mtime − duration` derivation currently obtains by downloading whole videos.
+
+For 991 items that is roughly 250 MB of still prefixes plus ~126 MB of video tails —
+**under 400 MB against 36.5 GB, about 100×** — and it yields the local wall clock *with
+its UTC offset*, which is strictly stronger evidence than the absolute instant ARC-057
+rejects. Against July's estimate of ~0.2–0.5 s of parsing per file, 991 items is ~6
+minutes of header work versus the ~45 minutes of full staging measured here.
+
+**New: corpus validation of header-only naming (991/991)**
+
+The byte-threshold result above was one file per format, so the extraction was rerun
+over **every staged original** and each result compared against the capture wall that
+full-file enrichment had already written to the catalog:
+
+| Format | n | Range that worked | Agreement with full-file enrichment |
+| --- | --- | --- | --- |
+| ARW | 464 | **64 KB prefix** | 464 / 464 exact |
+| HIF | 464 | **256 KB prefix** | 464 / 464 exact |
+| MP4 | 63 | **1 MB tail** | 63 / 63 exact |
+
+Zero failures, zero mismatches, 208 MB read in total against 36.5 GB staged (**180×
+less**), in ~2 s of CPU for the whole card. Note ARW needed only 64 KB — a quarter of
+the single-sample figure — and the three formats needed three different ranges *on one
+camera*, which is the argument against any fixed prefix constant.
+
+Method per format, and why it differs: HEIF/JPEG parse through `CGImageSource` over the
+prefix; ARW needs a direct TIFF/IFD walk because `CGImageSource` validates the whole
+container and refuses a truncated one; MP4 needs a tail scan because Sony writes `moov`
+last. A parser must therefore distinguish "tag absent" from "offset lies beyond the
+bytes I was given" — the latter is the signal to escalate rather than to fail.
+
+**Transport measurements (2026-08-30, ILCE-6700 attached, app idle)**
+
+A standalone benchmark drove `ICCameraFile` directly, so these are transport numbers, not
+inferences from the app's behaviour.
+
+| Measurement | Result |
+| --- | --- |
+| Ranged read latency, 512 B × 20 | median **42.6 ms** (min 38.6, max 73.2) |
+| Chunked parse fetch, ARW (1 × 64 KB) | **77 ms/file** |
+| Chunked parse fetch, HIF (1 × 128 KB) | **91 ms/file** |
+| Chunked parse fetch, MP4 (head + tail) | **234 ms/file** |
+| Full download, single stream, 32 MB ARW | 0.86 s = **37.2 MB/s** |
+| Full download, single stream, 320 MB MP4 | 8.03 s = **39.9 MB/s** |
+
+Two conclusions follow.
+
+*The 16-way admission window costs throughput.* Single-stream reproduces the 2026-07-06
+benchmark of 40 MB/s almost exactly, while the shipped 16-way window delivered 0.9–8.5 MB/s
+during the same session and ~13.5 MB/s averaged over the card. ImageCaptureCore serialises
+on one `ICDeviceCommandQueue`, so the window buys no parallelism and demonstrably loses
+throughput: 36.5 GB at 40 MB/s is ~15 minutes against the ~45 observed.
+
+*Caching is what makes header reads viable, not the header reads themselves.* At 42.6 ms
+per read, the package's uncached pattern (138 reads for HEIF) costs ~5.9 s per file — for
+464 stills that is ~45 minutes, no better than downloading the card. With the reads served
+from one cached chunk the same parse costs 77–234 ms, putting a 991-item card at **~100
+seconds and ~97 MB**. This is the measurement behind requirement R3 in
+`docs/plans/0101-mediametadata-byte-source-requirements.md`.
+
+**Embedded previews are reachable by range (Sony ARW)**
+
+The TIFF IFD chain declares its previews, so no scanning is needed: IFD0 carries
+`PreviewOffset` 196,770 / `PreviewLength` 292,799, which extracts as a valid **1616×1080**
+JPEG, and IFD1 carries a **160×120** thumbnail — exactly the size ICC serves, confirming the
+device simply returns the embedded EXIF thumb rather than generating anything. A real
+256 px grid thumbnail therefore needs one extra ~286 KB ranged read (~90–150 ms), not the
+38 MB original.
+
+HEIF is better still: `CGImageSourceCreateThumbnailAtIndex` with
+`kCGImageSourceCreateThumbnailFromImageIfAbsent: false` returns a **256×170** embedded
+thumbnail from a **128 KB prefix** — the same prefix the capture-wall read already fetches,
+so a full-quality grid thumbnail costs nothing extra for HIF/HEIC. Untested for other RAW
+vendors.
+
+**How a reader knows where to look — from the format specifications, not from sampling**
+
+An earlier draft of this section proposed an escalating prefix ladder (64 KB → 256 KB →
+1 MB …) and a tail read for containers. That is guessing dressed as a strategy. The
+formats are self-describing: each carries an index that states where its metadata lives,
+so a reader follows the index instead of betting on a location. One read of the first
+12 bytes identifies the family:
+
+| Magic | Family | Members |
+| --- | --- | --- |
+| `ftyp` at offset 4 | ISO-BMFF | MP4, MOV, HEIC/HEIF, AVIF, CR3 |
+| `II*\0` / `MM\0*` | TIFF | ARW, NEF, CR2, DNG, RW2, ORF, TIFF |
+| `FFD8` | JPEG | JPEG/JFIF |
+
+**ISO-BMFF** — ISO/IEC 14496-12:2015 clause 4.2: every box header carries "the entire
+size of the box, including the size and type header, fields, and all contained boxes.
+This facilitates general parsing of the file", with `size==1` meaning a 64-bit
+`largesize` and `size==0` meaning the box extends to end of file. Clause 4.3.1 makes
+`ftyp` mandatory, exactly one, and "placed as early as possible in the file … before any
+significant variable-size boxes such as a Movie Box, Media Data Box, or Free Space".
+Critically, the specification places **no constraint on whether `moov` precedes or
+follows `mdat`** — Figure 1 shows `moov` first only as an example, which is precisely why
+"faststart" exists as a post-processing step. So neither "head" nor "tail" is correct as
+a rule: the reader walks the top-level box chain, 8–16 bytes per box, and finds `moov`
+(or HEIF's `meta`) wherever the writer put it. Clause 4.2 also states that "boxes with
+an unrecognized type shall be ignored and skipped", which is what makes a generic walk
+safe against vendor boxes and future additions.
+
+**TIFF** — the header occupies the first 8 bytes: byte order, magic, and at bytes 4–7 the
+absolute offset of IFD0. IFDs may sit anywhere in the file at any even offset ≥ 8, each
+ending with the offset of the next, and every IFD entry whose value exceeds 4 bytes
+stores an absolute offset from the start of the file. A reader therefore reads 8 bytes,
+seeks to IFD0, reads the directory, follows the `ExifIFD` pointer (0x8769), and reads
+`DateTimeOriginal` (0x9003) and `OffsetTimeOriginal` (0x9011) at the absolute offsets
+given. Nothing is assumed about placement; every step is directed by the file.
+
+**JPEG/Exif** — CIPA DC-008 requires the `APP1` marker segment carrying the Exif IFD to
+be placed immediately after the `SOI` marker, with `APP2` following it. Here the location
+*is* specified, so a small fixed prefix is correct by the standard rather than by
+observation.
+
+**Anything else** — Fuji RAF and other proprietary containers have no public index rule
+this reader can rely on. That case takes the terminal fallback: transfer the file and
+enrich normally. This is what keeps the optimization from ever affecting correctness —
+an unrecognized container costs bytes, never accuracy, and ARC-057's "proven, not
+assumed" invariant holds unchanged.
+
+The implication for the implementation is that the parser must be **range-driven**: it
+asks a transport for byte ranges and the transport satisfies them, whether that is a
+local file, an `ICCameraFile.requestReadDataAtOffset` call, or a cloud file. "How many
+bytes did it take" then becomes a measured outcome worth logging, not a tuning constant
+to guess. The corpus figures above (64 KB / 256 KB / 1 MB) are what this camera's files
+happened to need — they are validation of the approach, not its design basis.
+
+**Planning needs no staged bytes at all.** The two facts planning requires are the
+capture wall (above) and a thumbnail, and the camera already serves thumbnails through
+`requestThumbnailData` without a transfer — hard-capped at 160×120 on this body against
+`ThumbnailStore.maxPixelSize` of 256, so they are functional but soft. Staging is
+therefore an *import-time* concern only; nothing about offering a plan requires it.
+
+**New: `fileCreationDate` agreed with EXIF for this material**
+
+Rendering the scanner-recorded instant (which comes from `fileCreationDate`, since
+`exifCreationDate` is nil) in the local timezone matched the enrichment-derived capture
+wall for **991 of 991** items — 928 stills and 63 videos, exact to the second. That is
+evidence this camera's file dates track EXIF for this material; it is *not* evidence
+that the agreement survives media shot at a different UTC offset than the machine's
+current one, because every item here was shot in the local zone. It is a useful
+cross-check, not a naming source.
+
+**New: catalog-callback ordering, confirming July's "racy state" note**
+
+`deviceDidBecomeReady` fired with `mediaFiles` empty (0 items); the full 991 arrived
+only at `deviceDidBecomeReadyWithCompleteContentCatalog`. July recorded the inverse
+hazard (complete-catalog callback firing while `mediaFiles.count == 1`). Neither
+callback is proof of a populated list on its own.
+
+**What the shipped design cost, measured**
+
+Option C (eager staging) was adopted. Its measured cost on this card: 36.5 GB staged
+before the Import button could appear, ~45 minutes, and a further 36.5 GB written when
+importing — ~73 GB of writes for one import. July's requirement that the staging store
+have "an eviction policy for never-imported files" was not implemented: staged bytes
+are released only by a whole-tree discard at app close or at launch, never when an item
+is copied into the library. July also asked for staging "survival across app restarts";
+the current product decision is the opposite (discard at quit, sweep stale trees at
+launch, owner decision 2026-08-30), so that item is superseded rather than outstanding.
+
+Consequences and fixes are tracked in
+`docs/plans/0100-mtp-import-staging-observability-and-progress.md`.
+
+**New (2026-08-30, external): ranged reads are an optional MTP capability, and can fail
+in success-shaped ways**
+
+The measurements above establish that ranged reads work *on this body*. Protocol and
+vendor sources establish that this does not generalise, which bounds any design built on
+them.
+
+- **`GetPartialObject` (opcode 0x101B) is optional.** `ICCameraFile.requestReadDataAtOffset`
+  is backed by it, and it is absent from the mandatory PTP command set — which requires
+  only `GetDeviceInfo`, `OpenSession`, `CloseSession`, `GetStorageIDs`, `GetStorageInfo`,
+  `GetObjectHandles`, `GetObjectInfo`, `GetObject` and `GetThumb`. A conforming device may
+  implement none of it. Windows' own MTP driver reportedly uses `GetObject` rather than
+  `GetPartialObject`, which is evidence that working around its absence is normal practice
+  rather than an edge case.
+- **A device can advertise it and still fail.** libmtp issue #8 records Samsung Galaxy
+  devices failing `GetPartialObject` **by timeout** whenever the offset lands on
+  `size − (N × 512) + 500` — roughly one file in 512. libmtp's workaround is to read one
+  byte less and force an extra request. The failure mode is a hang, not an error.
+- **A failure can arrive shaped like success.** FB7663947 records
+  `requestReadData(atOffset:length:completion:)` on iPadOS 13.4 calling its completion with
+  a **non-nil, zero-byte `Data` and a nil error** where the file's actual contents were
+  expected. A consumer that treats "no bytes, no error" as an in-bounds answer will read a
+  transport failure as an empty file.
+
+The design consequences are carried in `docs/plans/0100`: a per-session capability probe
+before trusting ranged reads, a fallback to full transfer for devices that fail it, a
+deadline covering ranged reads and not only downloads, and — in
+`docs/plans/0101` R6/R7 — a byte-source contract in which a fully in-bounds range that does
+not deliver its bytes is distinguishable from a range that ran past the end of the file.
+
+**New (2026-08-30, SDK header): 160×120 is what ImageCaptureCore *caches*, not its ceiling**
+
+The 160×120 thumbnail measured on this body was read as a framework limit. The macOS 27 SDK
+header documents otherwise, on `ICImageSourceThumbnailMaxPixelSize`:
+
+> Only the embedded EXIF thumbnail, or a created thumbnail of EXIF standard size (160x120)
+> will be cached. […] Multiple calls to both cache the EXIF thumbnail, and subsequently
+> retrieve a larger thumbnail will work as defined.
+
+The same header notes that `ICImageSourceThumbnailMaxPixelSize` **is ignored when
+`ICImageSourceShouldCache` is also passed**. Otos passes the size without the cache flag
+(`CameraSourceMonitor.swift:433`), which is the correct combination, so the measurement
+stands — but it is a fact about *this body over PTP*, which returns only its embedded EXIF
+thumb, not about the framework. Another vendor may answer a 256 px request directly.
+
 ### Still open after this round
 
 - Removable-volumes TCC prompt behavior for the real app bundle (signed,
@@ -439,6 +695,34 @@ inserted in the Mac:
 - Whether Sony Mass Storage mode (full filesystem, real EXIF, ranged reads of
   embedded previews via plain file I/O) should be the *recommended* connection
   mode in-product, with MTP as fallback.
+- Whether any non-Sony device supports `GetPartialObject` at all, and how a
+  non-supporting device fails — no such device was available. This is now the
+  load-bearing unknown for range-driven reading, in place of the prefix-size question
+  retired below.
+- Whether another vendor's ICC thumbnail honours a 256 px request, which the SDK header
+  says is possible and which would remove the need to extract previews by range for that
+  vendor.
+- Whether ranged reads contend with a concurrent download on the same serial
+  `ICDeviceCommandQueue`. Measured only with the queue otherwise idle.
+
+**Retired from this list, because sections above answer them.** Recorded rather than
+deleted so a later reader does not re-run the measurement:
+
+- *Whether the 16-way admission window reduces MTP throughput.* **Answered** in
+  "Transport measurements" above: single-stream `requestDownload` gives 37.2 MB/s (32 MB
+  ARW) and 39.9 MB/s (320 MB MP4), against 0.9–8.5 MB/s observed under the shipped 16-way
+  window. The single-stream re-run this item asked for has been done.
+- *Whether header prefix sizes hold beyond this body.* **Superseded** by "How a reader knows
+  where to look": the question assumed a prefix constant, and the formats are
+  self-describing, so a correct reader follows the container's own index and has no prefix
+  size to generalise. The 64 KB / 256 KB / 1 MB figures are validation of the approach, not
+  its design basis.
+- *Whether `com.apple.quicktime.creationdate` is present in the same tail.* **Answered** by
+  reading the package rather than the camera: `MediaMetadata` already surfaces
+  `CaptureTimestamps.quickTimeCreation` from `com.apple.quicktime.creationdate` / Sony NRTM
+  with an explicit `localWithOffset` / `localFloating` / `absolute` precision, and
+  `VideoInfo.durationSeconds` from the movie header. `mvhd` supplies duration only; its
+  UTC-anchored time is excluded from naming by ENR-012 anyway.
 
 ## Sources
 
@@ -466,3 +750,12 @@ inserted in the Mac:
   [Extracting embedded JPEGs from RAW](https://havecamerawilltravel.com/extract-jpg-raw-2/)
 - `ICReturnMetadataNotAvailable` (-20150): macOS 27 SDK
   `ImageCaptureConstants.h:81` (local SDK header).
+- Thumbnail caching and max-pixel-size semantics: macOS 27 SDK
+  `ICCameraItem.h`, `ICImageSourceThumbnailMaxPixelSize` / `ICImageSourceShouldCache`
+  (local SDK header).
+- MTP ranged-read capability and failure modes:
+  [PTP required commands (Microsoft)](https://learn.microsoft.com/en-us/windows-hardware/drivers/image/ptp-required-commands),
+  [libmtp#8 — GetPartialObject bug on Samsung Galaxy devices](https://github.com/libmtp/libmtp/issues/8),
+  [cvubrugier/mtp-galaxy-bug reproducer](https://github.com/cvubrugier/mtp-galaxy-bug),
+  [FB7663947 — requestReadData passes an empty Data to the completion block](http://ileyf.cn.openradar.appspot.com/FB7663947)
+  and its [gist writeup](https://gist.github.com/mjrusso/b223bf8db93e64d858e80b6fb8ab6ef8).

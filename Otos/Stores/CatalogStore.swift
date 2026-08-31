@@ -3367,7 +3367,7 @@ private extension CatalogStore {
             // watched destination root while the import executor copies) are never
             // catalogued and must not record namespace mutations, bump occupancy, or
             // fire reconcile/replan churn.
-            if let relativePath, relativePath.rawValue.hasSuffix(MediaImportExecutor.importStagingSuffix) {
+            if let relativePath, relativePath.rawValue.hasSuffix(MediaImportExecutor.destinationTempSuffix) {
                 stagingSuppressedCount += 1
                 continue
             }

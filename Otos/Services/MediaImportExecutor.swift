@@ -30,6 +30,27 @@ nonisolated enum SourceEraseOutcome: Equatable, Sendable {
 /// comment: import execution, the erase sweep, and journal recovery all route
 /// here, and none of them implements a second delete. Library roots are
 /// read-only, so there is exactly one place that decides it.
+/// Frees cached camera bytes once an item is durably in the library.
+///
+/// Deliberately separate from `SourceEraser`, which deletes the user's original off the
+/// card when they asked for it. This deletes Otos's own transfer cache and is never a user
+/// decision -- confusing the two would be deleting someone's photos.
+nonisolated enum StagedSourceReleaser {
+    /// Synchronous, and that matters. Settlement runs inside the executor actor for every
+    /// copied entry, and `recoverJournal()` runs it again for every interrupted one at
+    /// `MediaOperationCoordinator.start()`. An `await` here would add a suspension to both
+    /// hot paths to delete a file that needs no actor at all.
+    static func releaseIfCached(kind: LibraryRootKind, sourceURL: URL) {
+        // Only a device root has a cache to release. A removable volume's "source" is the
+        // user's own card, and a library's is the user's own file; neither is ours to
+        // remove, which is why this switches on kind rather than testing for a file.
+        guard kind == .deviceMTP else {
+            return
+        }
+        DeviceStagingLocation.releaseStagedFile(at: sourceURL)
+    }
+}
+
 nonisolated enum SourceEraser {
     static func erase(
         kind: LibraryRootKind,
@@ -94,7 +115,7 @@ actor MediaImportExecutor {
     /// root while copying (`.\(UUID().uuidString).otos-import-staging`). Shared with
     /// `CatalogStore`'s filesystem-event path so these Otos-owned transient files
     /// never schedule reconciliation or occupancy bumps.
-    static let importStagingSuffix = ".otos-import-staging"
+    static let destinationTempSuffix = ".otos-import-staging"
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
@@ -174,7 +195,7 @@ actor MediaImportExecutor {
 
     /// Journal-row recovery. Runs at coordinator start and again before each
     /// execution. Does not walk library trees — orphan staging cleanup is
-    /// destination-parent scoped via `removeOrphanedStaging(near:)`.
+    /// destination-parent scoped via `removeOrphanedDestinationTemps(near:)`.
     func recoverJournal() async {
         let signpost = OtosSignpost.catalog.beginInterval("ImportJournalRecovery")
         defer { OtosSignpost.catalog.endInterval("ImportJournalRecovery", signpost) }
@@ -195,7 +216,7 @@ actor MediaImportExecutor {
     /// Removes abandoned `*.otos-import-staging` files only in parent directories
     /// of planned destinations. Full-library enumeration is forbidden — large
     /// cloud libraries would hang startup and tests.
-    func removeOrphanedStaging(near destinationURLs: [URL]) async {
+    func removeOrphanedDestinationTemps(near destinationURLs: [URL]) async {
         let journaledStaging: Set<String>
         do {
             journaledStaging = try await Set(store.activeImportOperations().compactMap(\.stagingPath))
@@ -213,7 +234,7 @@ actor MediaImportExecutor {
                 ) else {
                     continue
                 }
-                for item in items where item.lastPathComponent.hasSuffix(Self.importStagingSuffix) {
+                for item in items where item.lastPathComponent.hasSuffix(Self.destinationTempSuffix) {
                     guard !journaledStaging.contains(item.path) else { continue }
                     try? fileManager.removeItem(at: item)
                     OtosLog.catalog.notice(
@@ -239,7 +260,7 @@ actor MediaImportExecutor {
             return .failed(reason: .unexpected(detail: "notAnImportPlan"))
         }
         await recoverJournal()
-        await removeOrphanedStaging(near: destinationParentURLs(plan: plan, destination: destination))
+        await removeOrphanedDestinationTemps(near: destinationParentURLs(plan: plan, destination: destination))
         let copyEntries = plan.entries.filter {
             if case .copy = $0.disposition {
                 return true
@@ -901,7 +922,7 @@ actor MediaImportExecutor {
             identity: identity,
             relativePath: entry.source.relativePath,
             enrichmentURL: enrichmentURL,
-            importStagingURL: stagingURL
+            destinationTempURL: stagingURL
         ) {
         case .completed:
             if let size = try? stagingURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
@@ -920,7 +941,7 @@ actor MediaImportExecutor {
                     identity: identity,
                     relativePath: sourceRelative,
                     enrichmentURL: companionEnrichment,
-                    importStagingURL: companionStaging
+                    destinationTempURL: companionStaging
                 ) {
                 case .completed:
                     continue
@@ -1312,6 +1333,13 @@ actor MediaImportExecutor {
             )
             return .failed(.other)
         }
+        // A1. The one route from "durably in the library" to "cache copy gone". Placed
+        // after `settleImportedAsset` returns rather than beside the copy, because
+        // settlement is what proves the bytes are safe elsewhere -- releasing before it
+        // would discard the only local copy of something that might still fail to publish.
+        // A failed or blocked entry never reaches here, so its bytes stay and a retry does
+        // not re-download them.
+        StagedSourceReleaser.releaseIfCached(kind: request.sourceKind, sourceURL: request.sourceURL)
         let settleFinished = ContinuousClock().now
         let totalElapsedMs = max(
             DiagnosticsTiming.milliseconds(from: request.copyStarted, to: settleFinished),
@@ -1615,6 +1643,14 @@ actor MediaImportExecutor {
                 batch: ImportBatchID(unixMilliseconds: batchMs),
                 companions: []
             )
+            // Crash recovery settles the same way, so it must release the same way --
+            // otherwise a run that was interrupted leaves its staged bytes behind forever,
+            // which is the leak A1 exists to close.
+            StagedSourceReleaser.releaseIfCached(
+                kind: operation.sourceKind,
+                sourceURL: operation.sourceRootPath.url
+                    .appendingPathComponent(operation.sourceRelativePath.rawValue)
+            )
             if operation.deleteSourceRequested {
                 let sourceURL = operation.sourceRootPath.url
                     .appendingPathComponent(operation.sourceRelativePath.rawValue)
@@ -1769,7 +1805,7 @@ actor MediaImportExecutor {
 
     private nonisolated static func stagingURL(adjacentTo final: URL) -> URL {
         let parent = final.deletingLastPathComponent()
-        let name = ".\(UUID().uuidString)\(Self.importStagingSuffix)"
+        let name = ".\(UUID().uuidString)\(Self.destinationTempSuffix)"
         return parent.appendingPathComponent(name)
     }
 

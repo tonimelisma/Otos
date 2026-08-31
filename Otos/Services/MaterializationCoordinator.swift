@@ -106,6 +106,10 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private var inFlightCount = 0
     private var inFlightBytes: Int64 = 0
     private var inFlightLargeVideos = 0
+    /// Device transfers currently handed to ImageCaptureCore. Capped at one by
+    /// `MaterializationAdmissionPolicy.deviceConcurrency` because the framework serialises
+    /// them anyway; counting them here is what lets the policy see that.
+    private var inFlightDeviceCount = 0
     private var effectiveInteractiveCount = 0
     private var backgroundByRoot: [LibraryRootPath: Int] = [:]
 
@@ -228,6 +232,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         precondition(inFlightCount == 0)
         precondition(inFlightBytes == 0)
         precondition(inFlightLargeVideos == 0)
+        precondition(inFlightDeviceCount == 0)
         precondition(effectiveInteractiveCount == 0)
         precondition(backgroundByRoot.isEmpty)
         publishUnblockedIfNeeded()
@@ -463,6 +468,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
         if policy.isLargeVideo(request) {
             inFlightLargeVideos += 1
         }
+        if request.priority == .device {
+            inFlightDeviceCount += 1
+        }
         if request.priority == .background {
             backgroundByRoot[request.id.libraryRootPath, default: 0] += 1
         }
@@ -561,6 +569,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
         inFlightBytes -= entry.estimatedBytes
         if policy.isLargeVideo(entry.request) {
             inFlightLargeVideos -= 1
+        }
+        if entry.request.priority == .device {
+            inFlightDeviceCount -= 1
         }
         if entry.request.priority == .background {
             let root = entry.request.id.libraryRootPath
@@ -686,6 +697,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             count: inFlightCount,
             bytes: inFlightBytes,
             largeVideoCount: inFlightLargeVideos,
+            deviceCount: inFlightDeviceCount,
             backgroundByRoot: backgroundByRoot
         )
     }

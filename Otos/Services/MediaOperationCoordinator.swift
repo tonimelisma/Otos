@@ -113,6 +113,15 @@ actor MediaOperationCoordinator {
         let eraseOutcome: EraseOutcome?
     }
 
+    /// A proven naming count for one attachment.
+    ///
+    /// Named rather than a tuple so "done of total" cannot be read in the wrong order at a
+    /// call site, and so the thing being held has a name in the state that holds it.
+    struct NamingProgress: Equatable, Sendable {
+        let done: Int
+        let total: Int
+    }
+
     private struct SourceSession {
         let attachmentGeneration: AttachmentGeneration
         var root: CatalogLibraryState
@@ -141,6 +150,19 @@ actor MediaOperationCoordinator {
         /// begins and overwritten by every subsequent progress callback; only
         /// meaningful while `phase` is `.executing`.
         var lastProgress: MediaOperationProgress?
+        /// The most recent naming progress this attachment reported.
+        ///
+        /// Preparing is the state that owns a count, but nothing held one across a
+        /// rebuild: `.building` fell through to `.planning`, which draws no L3 line and an
+        /// indeterminate track. The live session alternated `.planning` and
+        /// `.waitingForMetadata` about once a second with the pair ~140 ms apart, so the
+        /// bar's track could not hold still while the user watched it — the count vanished
+        /// and the bar went indeterminate for a fraction of every cycle.
+        ///
+        /// Held rather than recomputed because a rebuild has no count of its own to offer;
+        /// showing the last proven one asserts nothing new, since it was already proven and
+        /// published. Scoped to the attachment, so a new card starts from nothing.
+        var lastNamingProgress: NamingProgress?
         /// The most recent settled `.completed` execution's outcome. Set in the
         /// same transaction as `phase = .completed`; only meaningful while
         /// `phase` is `.completed`.
@@ -185,7 +207,9 @@ actor MediaOperationCoordinator {
     }
 
     private var sourceSessions: [LibraryRootPath: SourceSession] = [:]
-    private var lastPresentationLogAt: [LibraryRootPath: ContinuousClock.Instant] = [:]
+    /// Last state logged per source, so `publish()` records transitions rather than a
+    /// sample of whatever a timer happened to catch (B3).
+    private var lastLoggedState: [LibraryRootPath: MediaOperationSourceState] = [:]
     /// The last presentation a *settled* attachment showed, captured at the
     /// moment its source session is removed (card ejected or pulled once
     /// nothing is executing). The batch row outlives the source session
@@ -1347,6 +1371,7 @@ actor MediaOperationCoordinator {
             + "filesWithNoDateAtAll=\(filesWithNoDateAtAll)"
         OtosLog.catalog.notice("\(message, privacy: .public)")
         session.phase = .waitingForMetadata(done: settled, total: max(total, 1))
+        session.lastNamingProgress = NamingProgress(done: settled, total: max(total, 1))
         sourceSessions[source] = session
         publish()
         return true
@@ -1420,8 +1445,19 @@ actor MediaOperationCoordinator {
         // progress is the honest thing to draw.
         case let .waitingForMetadata(done, total):
             session.importRequested ? .queuedForReadiness : .waitingForMetadata(done: done, total: total)
+        // A rebuild that has no proven plan to fall back on still has a proven *count*.
+        // `.planning` draws neither, so it is the last resort rather than the default: it
+        // is correct only before this attachment has reported any naming progress at all.
         case .building:
-            session.importRequested ? .queuedForReadiness : heldPlanState(for: session) ?? .planning
+            if session.importRequested {
+                .queuedForReadiness
+            } else if let held = heldPlanState(for: session) {
+                held
+            } else if let progress = session.lastNamingProgress {
+                .waitingForMetadata(done: progress.done, total: progress.total)
+            } else {
+                .planning
+            }
         case let .ready(ctx):
             session.importRequested ? .queuedForReadiness : readyState(for: session, ctx: ctx)
         case .executing:
@@ -1554,15 +1590,24 @@ actor MediaOperationCoordinator {
         return (live + detached).sorted { $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending }
     }
 
+    /// Publishes to every consumer, and logs each source's state **when it changes**.
+    ///
+    /// The log used to be throttled to one line per 250 ms per source. That is fine for a
+    /// state that changes slowly and useless for one that does not: the 2026-08-30 session
+    /// alternated `.planning` and `.waitingForMetadata` roughly every 1.1 s with the pair
+    /// only ~140 ms apart, so the throttle recorded 33 `planning` publishes and *zero*
+    /// `waitingForMetadata` ones. It was impossible to tell from the log whether the
+    /// counting frames ever reached the view — the defect C2 fixes was invisible in the one
+    /// place it should have been obvious.
+    ///
+    /// Logging on change keeps every transition and drops only genuine repeats. Note the
+    /// yield to continuations was never throttled, so this only ever affected what could be
+    /// diagnosed, never what was drawn.
     private func publish() {
         let values = sortedPresentations()
-        let now = ContinuousClock().now
         for presentation in values {
-            let shouldLog = lastPresentationLogAt[presentation.sourcePath].map {
-                $0.duration(to: now) >= .milliseconds(250)
-            } ?? true
-            guard shouldLog else { continue }
-            lastPresentationLogAt[presentation.sourcePath] = now
+            guard lastLoggedState[presentation.sourcePath] != presentation.state else { continue }
+            lastLoggedState[presentation.sourcePath] = presentation.state
             let progress: MediaOperationProgress? = if case let .executing(value) = presentation.state {
                 value
             } else {

@@ -192,6 +192,14 @@ actor EnrichmentCoordinator {
     var lastEnrichmentAdmissionSnapshot: AdmissionDiagnosticSnapshot?
     var enrichmentAdmissionTransitionCount = 0
     var readinessRetryNotBefore: [MediaAssetID: Date] = [:]
+    /// Last emitted scheduler-route facts, and how many identical passes have been
+    /// collapsed since (B1). The route line was unconditional, so a scheduler spinning at
+    /// zero delay emitted hundreds of identical `dispatched=0` lines per second: the
+    /// 2026-08-30 camera session peaked at 2,336 lines/second and the unified log dropped
+    /// ~836 download completions, which produced a false diagnosis of a wedged pipeline.
+    /// Logging on change keeps every transition and costs one line per steady state.
+    var lastSchedulerRoute: SchedulerRouteFacts?
+    var suppressedSchedulerRoutes = 0
 
     let writeFailureBackoff: Duration
 

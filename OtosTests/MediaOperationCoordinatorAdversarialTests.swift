@@ -1271,6 +1271,90 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     // MARK: - 12. Metadata wake (deterministic)
 
+    /// C2. Preparing is the state that owns a count, and nothing held one across a
+    /// rebuild: `.building` fell through to `.planning`, which draws no count and an
+    /// indeterminate track. The live session alternated the two about once a second with
+    /// the pair ~140 ms apart, so the bar's track could not hold still while a user watched
+    /// it — the count vanished for a fraction of every cycle for the whole of preparation.
+    ///
+    /// A rebuild has no count of its own to offer, but the last one was already proven and
+    /// published, so showing it asserts nothing new.
+    @Test func aRebuildDuringPreparationKeepsTheProvenCount() async throws {
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        let relative = MediaRelativePath(rawValue: "undated.jpg")
+
+        let scanner = CatalogScanner { rootPath, _, batchHandler in
+            guard rootPath == cardPath else { return .empty }
+            try await batchHandler([
+                ScannedMediaFile(
+                    relativePath: relative,
+                    name: relative.rawValue,
+                    contentTypeIdentifier: "public.jpeg",
+                    byteSize: 10,
+                    createdAt: nil,
+                    contentModifiedAt: nil
+                ),
+            ])
+            return .mediaOnly([relative])
+        }
+        let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL, identity: "volume:c2-count-hold", displayName: "Card", isEjectable: true
+        )
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
+        await coordinator.start()
+
+        _ = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
+            if case .waitingForMetadata = pres.state {
+                return true
+            }
+            return false
+        })
+
+        // Drive rebuilds while the naming fact is still unproven. Every frame this source
+        // publishes must still carry a count; `.planning` is only correct before this
+        // attachment has ever reported one.
+        // `retryPlanning` is the user-facing intent that forces a rebuild without proving
+        // any naming fact, so it reproduces exactly the situation that blanked the count:
+        // a re-plan over a set whose rows enrichment has still not read.
+        //
+        // One rebuild, then a bounded observation. Two earlier shapes of this test hung the
+        // suite and are recorded so neither is reintroduced: consuming the presentation
+        // stream with an unbounded `await iterator.next()` cannot tell "no bad frame yet"
+        // from "no frame is coming", and hammering `retryPlanning` in a tight loop queued
+        // enough builds that `shutdown()` never drained. One rebuild is all the proof
+        // needs — the defect was that *any* rebuild dropped the count.
+        await coordinator.retryPlanning(for: cardPath)
+
+        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+        var sawPlanning = false
+        var sawCount = false
+        while ContinuousClock().now < deadline {
+            for pres in await coordinator.currentPresentations() where pres.sourcePath == cardPath {
+                switch pres.state {
+                case .planning: sawPlanning = true
+                case .waitingForMetadata: sawCount = true
+                default: break
+                }
+            }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+
+        #expect(!sawPlanning, "a rebuild dropped the proven count back to an indeterminate Preparing")
+        #expect(sawCount, "the source must keep reporting its proven count while preparing")
+
+        await coordinator.shutdown()
+    }
+
     @Test func catalogChangeWakesWaitingForMetadataSourceDeterministic() async throws {
         log("START catalogChangeWakesWaitingForMetadataSourceDeterministic")
         let temp = try makeTempRoot()
