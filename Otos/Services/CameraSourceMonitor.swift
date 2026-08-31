@@ -583,6 +583,46 @@ final class DeviceCameraSession: NSObject {
         ])
     }
 
+    /// Issues one ranged read and returns immediately; `completion` carries the answer.
+    ///
+    /// The whole point of this shape is that `ICCameraFile` never leaves the main actor.
+    /// It is not `Sendable`, and Otos forbids the escape hatches that would let it cross
+    /// (ARC-042), so the file is looked up and used here, and only Sendable values — a
+    /// relative path, an offset, a length, and the result — travel in either direction.
+    ///
+    /// This method does no waiting. `requestReadData` returns as soon as the request is
+    /// queued, so the main actor's share of a ranged read is microseconds; the caller does
+    /// the waiting on its own thread. That asymmetry is what makes a synchronous byte
+    /// source safe to build on top of this without ever blocking the main actor.
+    ///
+    /// The completion claims no isolation, per APP-018: ImageCaptureCore invokes it on a
+    /// queue of its own choosing, and a closure that inherited this type's `@MainActor`
+    /// would get a runtime executor check that traps rather than a hop.
+    nonisolated func beginRangedRead(
+        relativePath: MediaRelativePath,
+        offset: UInt64,
+        length: Int,
+        completion: @escaping @Sendable (Result<Data, DeviceCameraSessionError>) -> Void
+    ) {
+        Task { @MainActor in
+            guard !isClosed, let file = filesByRelativePath[relativePath] else {
+                completion(.failure(.itemUnavailable(relativePath.rawValue)))
+                return
+            }
+            file.requestReadData(atOffset: off_t(offset), length: off_t(length)) { @Sendable data, error in
+                if let error {
+                    completion(.failure(.rangedReadFailed(String(describing: error))))
+                    return
+                }
+                guard let data else {
+                    completion(.failure(.rangedReadFailed("no data and no error")))
+                    return
+                }
+                completion(.success(data))
+            }
+        }
+    }
+
     func file(for relativePath: MediaRelativePath) -> ICCameraFile? {
         filesByRelativePath[relativePath]
     }
