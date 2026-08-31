@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import MediaMetadata
 
 /// Runs `MediaMetadata` parses that block, on threads that are allowed to block.
@@ -54,6 +56,74 @@ nonisolated enum CameraMetadataReader {
                 continuation.resume(returning: result)
             }
         }
+    }
+
+    /// Fetches and decodes a container's embedded preview into a grid-sized thumbnail.
+    ///
+    /// This is the only path that ever gives a camera tile a real thumbnail, and the reason
+    /// is enrichment's stamp-once rule: `needsEnrichment` does not consider whether a
+    /// thumbnail exists, so once a device row is stamped it is never re-claimed. "Generate
+    /// it later, when the file is local" therefore means "never" for as long as the card is
+    /// attached — the tile would keep ImageCaptureCore's 160×120 embedded EXIF thumb, which
+    /// is all that body returns however large a size is asked for.
+    ///
+    /// The package reports *where* the preview is; the bytes are fetched here and decoded
+    /// with ImageIO, which is the split that keeps the package free of graphics frameworks.
+    /// ImageIO is also why this is needed at all for RAW: it refuses a truncated container
+    /// outright, so a prefix of an ARW cannot be decoded even though the preview inside it
+    /// is a complete JPEG.
+    ///
+    /// Cost is one extra ranged read of a few hundred kilobytes, and only when the container
+    /// declares a preview at least as large as the grid needs. A smaller one is skipped
+    /// rather than upscaled: a blurred 160×120 is not an improvement on the provisional
+    /// thumbnail already on disk, it is the same picture with more steps.
+    static func loadPreviewImage(
+        session: DeviceCameraSession,
+        relativePath: MediaRelativePath,
+        size: UInt64,
+        previews: [EmbeddedPreview]
+    ) async -> CGImage? {
+        let usable = previews.first { preview in
+            (preview.pixelWidth ?? 0) >= ThumbnailStore.maxPixelSize
+                || (preview.pixelHeight ?? 0) >= ThumbnailStore.maxPixelSize
+        }
+        guard let preview = usable else {
+            return nil
+        }
+        return await withCheckedContinuation { continuation in
+            queue.async {
+                let source = CameraByteSource(session: session, relativePath: relativePath, size: size)
+                // `try?` collapses a throw to nil, and the inner optional is the protocol's
+                // out-of-bounds answer. Both mean the same thing here — no preview — so
+                // flattening them is honest rather than lossy.
+                guard let bytes = try? source.data(
+                    offset: preview.byteOffset,
+                    length: preview.byteLength
+                ) ?? nil else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                continuation.resume(returning: decodeThumbnail(from: bytes))
+            }
+        }
+    }
+
+    /// Downsamples the embedded image to the grid's size without ever decoding it full-size.
+    ///
+    /// `kCGImageSourceCreateThumbnailFromImageIfAbsent` is false on purpose: this is already
+    /// an embedded preview, and asking ImageIO to synthesise one from the full image would
+    /// decode a 1616×1080 JPEG to produce a 256 px tile.
+    private static func decodeThumbnail(from data: Data) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
+            kCGImageSourceThumbnailMaxPixelSize: ThumbnailStore.maxPixelSize,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
     }
 
     /// Whether this device can serve ranged reads at all, decided once per session.

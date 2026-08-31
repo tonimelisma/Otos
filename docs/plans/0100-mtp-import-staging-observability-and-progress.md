@@ -948,26 +948,26 @@ Landed and verified: `CameraByteSource`, `CameraMetadataReader`, `DeviceCameraSe
 RangedRead`, and the per-session capability gate. Nothing calls them yet — enrichment still
 stages — so this is transport only, with no behaviour change.
 
-### What D1 still needs
+### D1 is complete
 
 Landed: the byte-access seam, the device route, the capability gate, the end of eager
-seeding, and the hash policy. A camera proven to answer ranged reads now transfers **nothing**
-to be planned.
+seeding, the hash policy, the grid thumbnail from the container's embedded preview (D1a
+option 3, which D2's finding made the only option that ever upgrades a tile), and E2's
+deadline extended to ranged reads.
 
-Still open, and both are follow-ons rather than parts of the same change:
+A camera proven to answer ranged reads now transfers **nothing** to be planned.
 
-1. **The grid thumbnail** from the embedded preview the package now reports (D1a option 3).
-   Until it lands, a camera tile keeps the 160×120 provisional ImageCaptureCore thumbnail
-   for as long as the card is attached — which is what it shows today, so nothing regresses;
-   it simply does not improve yet. D1a's finding stands: because enrichment stamps a row
-   once, this is the only option that ever upgrades a tile.
-2. **E2's deadline**, extended to cover ranged reads. A read now blocks a dedicated thread
-   with no timeout, and libmtp#8 documents a shipping device that fails `GetPartialObject`
-   by timeout on particular offsets. The blast radius is one thread and one item, not the
-   app, which is why this is a follow-on rather than a blocker — but it is real.
+**What is still unproven, and it is the same thing throughout.** Every measurement behind
+this comes from one Sony ILCE-6700. The capability gate exists for devices that cannot serve
+ranges and has never been run against one; the preview path is measured for Sony ARW and HIF
+only; and the ~93 s per-card figure is arithmetic over per-file measurements, not a timed
+run. C3's re-check of the "momentary Preparing" premise needs that timed run, so it stays
+open until a card is attached to a build carrying this.
 
-**C3** should be re-checked against a measured run rather than an extrapolation, which needs
-the hardware.
+The remaining risk is bounded by design rather than by luck: a device that fails the probe
+stages exactly as before, an unindexable container stages one item, a failed ranged read is
+transient rather than a wrong date, and a read that never answers times out instead of
+parking a thread.
 
 ## Sequencing
 

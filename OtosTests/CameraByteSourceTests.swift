@@ -57,6 +57,44 @@ struct CameraByteSourceTests {
         }
     }
 
+    /// E2, at the point D1 makes hot. A read that never answers must not park a dedicated
+    /// thread for the life of the process — libmtp#8 documents a shipping device that fails
+    /// `GetPartialObject` by timeout at particular offsets.
+    @Test func aReadThatNeverAnswersTimesOutInsteadOfHangingTheThread() {
+        let subject = CameraByteSource(size: 64, readDeadline: 0.2) { _, _, _ in
+            // Never calls back, which is exactly the shipping-device failure mode.
+        }
+
+        #expect(throws: DeviceCameraSessionError.self) {
+            _ = try subject.data(offset: 0, length: 12)
+        }
+    }
+
+    /// Timing out is safe by construction, which is why the bridge is a semaphore rather
+    /// than a `CheckedContinuation`: a completion that arrives after the deadline writes
+    /// into the mutex and signals a semaphore nobody is waiting on. Resuming a continuation
+    /// twice would crash the process; this simply drops the answer.
+    @Test func aCompletionArrivingAfterTheDeadlineIsHarmless() throws {
+        let stash = Mutex<(@Sendable (Result<Data, DeviceCameraSessionError>) -> Void)?>(nil)
+        let subject = CameraByteSource(size: 64, readDeadline: 0.2) { _, _, completion in
+            stash.withLock { $0 = completion }
+        }
+
+        #expect(throws: DeviceCameraSessionError.self) {
+            _ = try subject.data(offset: 0, length: 12)
+        }
+
+        // The device answers late. Nothing is waiting; this must not trap.
+        stash.withLock { $0 }?(.success(Data(repeating: 0, count: 12)))
+
+        // And the source is still usable afterwards, so one timed-out read does not poison
+        // the item — the next read of the same file gets a fresh wait.
+        let recovered = CameraByteSource(size: 64, readDeadline: 0.2) { _, length, completion in
+            completion(.success(Data(repeating: 9, count: length)))
+        }
+        #expect(try recovered.data(offset: 0, length: 12)?.count == 12)
+    }
+
     @Test func aTransportFailureThrows() {
         let subject = source(size: 64) { _, _ in .failure(.rangedReadFailed("camera detached")) }
         #expect(throws: DeviceCameraSessionError.self) {

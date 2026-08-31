@@ -53,10 +53,20 @@ final nonisolated class CameraByteSource: MediaByteSource {
 
     private let read: RangeReader
 
+    /// How long one ranged read may take before it is treated as a hang.
+    ///
+    /// Far past any legitimate read — measured latency is ~43 ms and a chunked fetch
+    /// 77-234 ms — because its job is to break a hang, not to second-guess a slow device.
+    /// Injectable so the timeout path can be tested in milliseconds rather than by waiting.
+    static let defaultReadDeadline: TimeInterval = 30
+
+    private let readDeadline: TimeInterval
+
     /// - Parameter size: from `ICCameraFile.fileSize`. A camera item has no filesystem
     ///   entry to stat, which is why the protocol takes size from the source.
-    init(size: UInt64, read: @escaping RangeReader) {
+    init(size: UInt64, readDeadline: TimeInterval = defaultReadDeadline, read: @escaping RangeReader) {
         self.size = size
+        self.readDeadline = readDeadline
         self.read = read
     }
 
@@ -90,7 +100,24 @@ final nonisolated class CameraByteSource: MediaByteSource {
             outcome.withLock { $0 = result }
             finished.signal()
         }
-        finished.wait()
+
+        // A read that never answers must not hold this thread forever. libmtp#8 documents a
+        // shipping device that fails `GetPartialObject` by timeout at particular offsets, and
+        // an unbounded wait there would park a dedicated thread for the life of the process.
+        //
+        // Timing out is safe by construction here, which is why the bridge is a semaphore
+        // and not a `CheckedContinuation`: a late completion writes into the mutex and
+        // signals a semaphore nobody is waiting on. Resuming a continuation twice would
+        // crash; this simply drops the answer.
+        //
+        // The deadline is deliberately far past any legitimate read — measured latency is
+        // ~43 ms and a chunked fetch 77-234 ms — because its job is to break a hang, not to
+        // second-guess a slow device.
+        guard finished.wait(timeout: .now() + readDeadline) == .success else {
+            throw DeviceCameraSessionError.rangedReadFailed(
+                "timed out after \(readDeadline)s: asked \(length) at \(offset)"
+            )
+        }
 
         guard let result = outcome.withLock({ $0 }) else {
             throw DeviceCameraSessionError.rangedReadFailed("completed without an outcome")
