@@ -924,38 +924,47 @@ Landed on `main` in PR #320, each increment verified by `script/check.sh` (837 t
 **Not started: D1**, the Otos half of the range-driven read, and with it D2, C3, and E2's
 deadline. Its package half is done and released.
 
-### D1 is blocked on one design decision
+### D1's transport is landed; the concurrency question is answered
 
-The plan already flagged that no execution context exists for a blocking parse. Building
-it surfaced the sharper form of that problem, and it needs an owner decision rather than a
-guess:
+The plan warned that no execution context existed for a blocking parse, and building it
+first looked like a hard blocker: the package read API is synchronous, `ICCameraFile` is not
+`Sendable`, `DeviceCameraSession` is `@MainActor`, and ARC-042 forbids the escapes that
+would paper over the gap.
 
-- The package's read API is **synchronous** and may block for the duration of a transport
-  read (0101 R4).
-- `ICCameraFile` is **not `Sendable`**, and `DeviceCameraSession` is `@MainActor`.
-- Otos forbids `@unchecked Sendable` and `nonisolated(unsafe)` outright, enforced by
-  `script/check-no-unchecked-sendable.sh` (ARC-042).
+**It is not a blocker, because the file never has to move.** `beginRangedRead` is
+`nonisolated`, hops to the main actor to look the file up and issue the request, and returns
+immediately — `requestReadData` does not wait for its answer, so the main actor's share of a
+read is microseconds. Only Sendable values cross: a relative path, an offset, a length, and
+the result. `CameraByteSource` does the waiting on `CameraMetadataReader`'s dedicated serial
+queue, so the main actor is never blocked and the blocked thread holds nothing the main actor
+needs. No `@unchecked Sendable`, no `nonisolated(unsafe)`; ARC-042 stays clean.
 
-So a parse running on a dedicated thread cannot reach `ICCameraFile` without either an
-escape the repo bans, or blocking that thread on main-actor work — which during an import,
-with the main actor busy drawing the grid, is a plausible deadlock rather than a
-theoretical one. The three ways out, in increasing cost:
+One correction worth keeping: the cooperative pool is *not* an option for the parse. It is
+sized to the core count and assumes threads yield at suspension points, so blocking one is a
+forward-progress hazard rather than a slowdown — which makes `Task.detached` exactly the
+wrong tool despite looking like the right one.
 
-1. **Run the parse on the main actor's thread via a serial queue owned by the session.**
-   Cheapest, and wrong: it puts 100–300 ms of blocking I/O per file on the main thread,
-   which the repo's 100 ms hang budget forbids outright.
-2. **Give `DeviceCameraSession` a `nonisolated` ranged-read** that owns its own serial
-   queue and an `ICCameraFile` map reachable without the main actor. Moves the isolation
-   boundary rather than crossing it, and is the smallest change that is actually correct —
-   but it means the session stops being uniformly `@MainActor`, which APP-018 currently
-   requires for every ImageCaptureCore callback.
-3. **Make the package's read API `async`** (0101 R4 option (a), deferred there). The
-   cleanest contract by far, and it removes the blocking-thread question entirely, at the
-   cost of an invasive change to a package whose other consumers read local files where
-   sync is correct.
+Landed and verified: `CameraByteSource`, `CameraMetadataReader`, `DeviceCameraSession.begin-
+RangedRead`, and the per-session capability gate. Nothing calls them yet — enrichment still
+stages — so this is transport only, with no behaviour change.
 
-Option 2 is the recommendation, with the APP-018 amendment stated explicitly. It is not
-taken here because it changes a rule written after a crash, and that is the owner's call.
+### What D1 still needs, in the order it should land
+
+1. **The byte-access seam.** `MediaEnricher.enrich` takes a URL, which is the assumption
+   that a row's bytes are local. It needs a value naming *how* to reach bytes — a local file
+   or a camera's ranges. One signature change, and 26 closure literals across 5 test files
+   move with it. Behaviour-preserving on its own, which is why it should land on its own.
+2. **The device route.** `LiveEnrichmentReadinessChecker` answers `.unknown` for a camera
+   item, because it asks the filesystem. A row reachable by range is a third answer, not a
+   bypass of the existing two.
+3. **Stop eager seeding.** `stageDevice` seeds every enumerated item; after 2 it seeds only
+   what a fallback actually needs. This is the step that removes the 36.5 GB wait, and it
+   must not land before 1 and 2, or planning has nothing to read.
+4. **Hash policy.** `.deviceMTP` joins `.removableVolume` as hash-not-required (ADR 0018).
+   Deliberately *not* earlier: while device bytes are still staged locally, making them
+   hash-not-required would drop a digest Otos can cheaply compute, for no gain.
+5. **The grid thumbnail** from the embedded preview the package now reports, which D1a
+   showed is the only option that ever upgrades a tile.
 
 ## Sequencing
 
