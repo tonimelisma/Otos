@@ -30,6 +30,54 @@ struct MediaEnricherTests {
             .appending(path: "Fixtures/Media", directoryHint: .isDirectory)
     }
 
+    /// APP-015, at the seam where two owners write the same column.
+    ///
+    /// A camera row's provisional thumbnail is written at enumeration by one type; its
+    /// enrichment result is written by another. `EnrichmentResult` resolves
+    /// `generatedThumbnail?.finalRelativePath ?? thumbnailPath`, so a device pass that
+    /// produced no preview and reported nil for both *cleared* the column — pointing the
+    /// tile at nothing while its image sat on disk under the deterministic name.
+    ///
+    /// Found on a live 991-item card: 684 rows lost their thumbnail with all 8,606 files
+    /// still present. Neither owner's tests could see it alone.
+    @Test func aDeviceRowKeepsItsProvisionalThumbnailWhenNoPreviewIsProduced() throws {
+        let directory = try makeCatalogStoreTemporaryDirectory()
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Cam"),
+            relativePath: MediaRelativePath(rawValue: "DSC00001.ARW")
+        )
+        let name = ThumbnailStore.relativeName(for: id)
+        try Data([0xFF, 0xD8, 0xFF, 0xD9]).write(to: directory.appending(path: name))
+
+        let result = EnrichmentResult(
+            id: id,
+            metadata: AssetMetadata(),
+            enrichedKind: nil,
+            enrichedFormat: nil,
+            thumbnailPath: MediaEnricher.testExistingThumbnailName(for: id, in: directory),
+            sourceSize: 1,
+            sourceMTimeSeconds: 1,
+            contentHash: nil,
+            generatedThumbnail: nil
+        )
+
+        #expect(
+            result.thumbnailPath == name,
+            "a pass with no new thumbnail must keep the one already on disk, not blank the tile"
+        )
+    }
+
+    /// The other half: a row with nothing on disk still reports nothing, rather than a path
+    /// that resolves to a missing file.
+    @Test func aRowWithNoThumbnailOnDiskReportsNone() throws {
+        let directory = try makeCatalogStoreTemporaryDirectory()
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/DeviceStaging/Cam"),
+            relativePath: MediaRelativePath(rawValue: "absent.arw")
+        )
+        #expect(MediaEnricher.testExistingThumbnailName(for: id, in: directory) == nil)
+    }
+
     @Test func enrichesJpegFixtureWithMetadataThumbnailAndTimestampFacts() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let thumbnailDirectory = temp.appending(path: "Thumbnails", directoryHint: .isDirectory)

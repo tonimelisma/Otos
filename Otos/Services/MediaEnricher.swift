@@ -215,13 +215,41 @@ nonisolated struct MediaEnricher {
                 metadata: Self.map(result),
                 enrichedKind: Self.normalizedKind(result.format),
                 enrichedFormat: MediaFormatToken.normalize(extension: result.format.fileExtension),
-                thumbnailPath: nil,
+                // Keeps the camera's provisional thumbnail when this pass produced no
+                // better one. `EnrichmentResult` resolves `generatedThumbnail?.finalRelative-
+                // Path ?? thumbnailPath`, so passing nil for both *clears* the column — and
+                // the provisional JPEG written at enumeration lives at exactly this
+                // deterministic name, so clearing it points the tile at nothing while its
+                // image sits on disk.
+                //
+                // Measured on a 991-item card: 684 rows lost their thumbnail this way, with
+                // all 8,606 files still present. A tile that had an image showing a
+                // placeholder is precisely what APP-015 exists to prevent, and no unit test
+                // caught it because the provisional write and the enrichment write are
+                // owned by different types.
+                thumbnailPath: Self.existingThumbnailName(for: id, in: thumbnailDirectory),
                 sourceSize: sourceSize ?? -1,
                 sourceMTimeSeconds: sourceMTimeSeconds ?? -1,
                 contentHash: nil,
                 generatedThumbnail: generatedThumbnail
             )
         )
+    }
+
+    /// The deterministic thumbnail name for `id`, when a file is actually there.
+    ///
+    /// Returns nil when nothing is on disk, so a row with no thumbnail at all still reports
+    /// none rather than a path that resolves to a missing file.
+    static func existingThumbnailName(for id: MediaAssetID, in directory: URL) -> String? {
+        let name = ThumbnailStore.relativeName(for: id)
+        let url = directory.appending(path: name, directoryHint: .notDirectory)
+        return FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) ? name : nil
+    }
+
+    /// Test seam for `existingThumbnailName`, which is otherwise only reachable through a
+    /// live camera session.
+    static func testExistingThumbnailName(for id: MediaAssetID, in directory: URL) -> String? {
+        existingThumbnailName(for: id, in: directory)
     }
 
     /// Stages a grid thumbnail from a container's embedded preview, or nil when there is

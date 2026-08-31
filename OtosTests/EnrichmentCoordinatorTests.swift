@@ -866,6 +866,78 @@ struct EnrichmentCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// The defect a live 991-item card found, which no unit test had caught.
+    ///
+    /// Not seeding a range-capable device is only half the change: the rows must then be
+    /// *routed* to enrichment. They were not. `LiveEnrichmentReadinessChecker` asks the
+    /// filesystem, a camera row has no file, `lstat` answers `.unknown`, and `.unknown`
+    /// routes to a readiness retry — one that can never succeed, because nothing is going
+    /// to create that file. Every camera row was deferred, re-probed and deferred again:
+    /// `probes=128 ready=0 retryReadiness=32 dispatched=0`, forever, with no enrichment.
+    ///
+    /// The bug was invisible in the catalog because a re-attached camera keeps the overlay
+    /// it already had, so rows still looked enriched from a previous session. It only showed
+    /// once that overlay was cleared.
+    @Test func rowsOnARangeCapableDeviceAreDispatchedDespiteHavingNoLocalFile() async throws {
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        let rootPath = try await store.attachDeviceMTP(
+            stagingRootURL: URL(fileURLWithPath: "/tmp/RangedCameraRoute", isDirectory: true),
+            identity: "camera:ranged-route",
+            displayName: "Camera"
+        )
+        let scan = try await store.beginDeviceCatalogEnumeration(rootPath: rootPath)
+        try await store.recordDeviceCatalogBatch([
+            ScannedMediaFile(
+                relativePath: MediaRelativePath(rawValue: "DSC00001.ARW"),
+                name: "DSC00001.ARW",
+                contentTypeIdentifier: "com.sony.arw-raw-image",
+                byteSize: 42_680_320,
+                createdAt: nil,
+                contentModifiedAt: nil
+            ),
+        ], scan: scan)
+
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            // `.unknown` is what the filesystem really answers for a camera row: no file
+            // exists at the staging path, so `lstat` fails.
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .unknown)
+        )
+        await coordinator.markRangeCapable(rootPath)
+
+        let work = await coordinator.dequeueEnrichmentWork()
+
+        #expect(
+            work.contains { $0.id.libraryRootPath == rootPath },
+            "a row whose bytes are reachable by range must be dispatched, not parked on a retry that cannot resolve"
+        )
+        await coordinator.shutdown()
+    }
+
+    /// The other half: a device that is *not* range-capable must still be governed by the
+    /// filesystem, so a row with no local bytes routes to materialization rather than being
+    /// handed to an enricher that has nothing to read.
+    @Test func rowsOnADeviceWithoutRangedReadsStillFollowTheFilesystem() async {
+        let coordinator = EnrichmentCoordinator(
+            store: CatalogStore(location: .inMemory),
+            enricher: MediaEnricher { _, _, _, _, _ in .transient },
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .unknown)
+        )
+        let rootPath = LibraryRootPath(rawValue: "/DeviceStaging/PlainCamera")
+        let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "a.arw"))
+        let work = EnrichmentCoordinator.EnrichWork(
+            id: id, url: id.fileURL, sourceSize: 1024, sourceMTimeSeconds: nil,
+            isVideo: false, captureDate: nil, isDeviceStaging: true, shouldHash: false
+        )
+
+        #expect(await coordinator.byteAccess(for: work).localURL == id.fileURL)
+        await coordinator.shutdown()
+    }
+
     @Test func stageDeviceSkipsSeedAlreadyMaterializing() async throws {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
