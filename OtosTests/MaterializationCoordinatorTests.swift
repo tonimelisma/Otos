@@ -395,6 +395,60 @@ struct MaterializationCoordinatorTests {
             priority: priority
         )
     }
+
+    /// Withdrawal is what makes an interactive transfer safe to run without a deadline.
+    ///
+    /// Interactive persistence polls until the bytes arrive, so the last waiter leaving is
+    /// the only thing that can end it. Without this the poll outlives every consumer and
+    /// runs for the life of the process — the hazard the 120 s timeout used to cover by
+    /// accident.
+    ///
+    /// Cancelling must not shortcut the unwind: `finishOperation` is the single owner of
+    /// the Store suppression close (ARC-036) and of admission accounting, so the entry has
+    /// to survive until the cancelled task reaches it. An earlier draft removed the entry
+    /// here instead, which left `inFlightBytes` and `backgroundByRoot` non-zero and tripped
+    /// `shutdown()`'s preconditions — a trap that killed the test host and reported as 362
+    /// unrelated failures.
+    @Test func theLastInteractiveWaiterLeavingEndsTheTransferAndReleasesAccounting() async throws {
+        let store = CatalogStore(location: .inMemory)
+        let executor = HeldInteractiveExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: store,
+            executor: { await executor.run($0.id.fileURL) }
+        )
+        await coordinator.start()
+
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/library"),
+            relativePath: MediaRelativePath(rawValue: "loupe.arw")
+        )
+        let waiting = Task {
+            await coordinator.materialize(
+                MaterializationCoordinator.Request(
+                    id: id, sourceSize: 4096, isVideo: false, priority: .interactive
+                )
+            )
+        }
+        try await executor.waitForStart()
+        #expect(await coordinator.stateSnapshot().inFlight == 1)
+
+        waiting.cancel()
+        _ = await waiting.value
+
+        try await withTestTimeout("interactive transfer ends after its last waiter leaves") {
+            while await coordinator.stateSnapshot().inFlight != 0 {
+                await Task.yield()
+            }
+        }
+        let settled = await coordinator.stateSnapshot()
+        #expect(settled.waiters == 0)
+        #expect(settled.bytes == 0)
+        #expect(settled.effectiveInteractive == 0)
+        #expect(settled.backgroundByRoot.isEmpty)
+
+        // Passes only because accounting actually reached zero, not because nothing ran.
+        await coordinator.shutdown()
+    }
 }
 
 private actor ControlledMaterializationExecutor {
@@ -446,5 +500,36 @@ private final class AdmissionDiagnosticRecorder: Sendable {
 
     func unblockedCount() -> Int {
         storage.withLock { $0.count(where: { $0 == nil }) }
+    }
+}
+
+/// Holds a transfer open until cancelled, so the test observes withdrawal rather than a
+/// race with a fast completion.
+private actor HeldInteractiveExecutor {
+    private var started = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func run(_: URL) async -> MaterializationResult {
+        started = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+        do {
+            try await Task.sleep(for: .seconds(60))
+            return .testMaterialized
+        } catch {
+            return .cancelled
+        }
+    }
+
+    func waitForStart() async throws {
+        try await withTestTimeout("held interactive transfer starts") {
+            while await !self.hasStarted() {
+                await Task.yield()
+            }
+        }
+    }
+
+    func hasStarted() -> Bool {
+        started
     }
 }

@@ -2,6 +2,14 @@ import Foundation
 @testable import OtosKit
 import Testing
 
+/// Serialized because the state under test is genuinely process-global: `DeviceStagingLocation`
+/// keeps one `flock` table for the whole app instance, and `releaseOwnership()` releases *every*
+/// claim in it — correct for the app-quit path it exists to serve, and unusable concurrently.
+///
+/// Run in parallel, one test's cleanup revokes another's claim, the sweep can then take that
+/// tree's lock, and it is deleted. Observed 2026-09-01 as a flaky failure of
+/// `theSweepLeavesATreeALiveInstanceHolds`, which had passed in the preceding runs.
+@Suite(.serialized)
 struct DeviceStagingRegistryTests {
     /// `stagingRootURL` is a directory URL, so its path already ends in "/". Appending
     /// another produced a "…/root//" prefix that no requested path could match, so

@@ -86,8 +86,11 @@ struct FileMaterializationTests {
         let result = await FileMaterialization.materialize(
             url,
             pollInterval: .milliseconds(10),
-            timeout: .seconds(10),
-            requestRetryInterval: .milliseconds(20),
+            persistence: FileMaterialization.Persistence(
+                failsFastOnProviderUnavailable: true,
+                deadline: .seconds(10),
+                requestRetryInterval: .milliseconds(20)
+            ),
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in },
@@ -105,8 +108,11 @@ struct FileMaterializationTests {
         let result = await FileMaterialization.materialize(
             url,
             pollInterval: .milliseconds(10),
-            timeout: .milliseconds(80),
-            requestRetryInterval: .milliseconds(20),
+            persistence: FileMaterialization.Persistence(
+                failsFastOnProviderUnavailable: true,
+                deadline: .milliseconds(80),
+                requestRetryInterval: .milliseconds(20)
+            ),
             providers: FileMaterializationProviders(
                 status: { _ in .dataless },
                 request: { _ in },
@@ -128,6 +134,77 @@ struct FileMaterializationTests {
                 return $0
             }
         }
+    }
+
+    /// The oracle for plan 0102.
+    ///
+    /// A provider that is merely slow returns `ETIMEDOUT` on the one-byte probe exactly as
+    /// a dead one does, so the two-strike short-circuit abandoned the image in front of the
+    /// user. Measured 2026-08-31: 43 interactive requests failed between 2402 ms and
+    /// 5539 ms against a 120 s budget, while the slowest *successful* materialization in
+    /// the same window took 62,316 ms. Healthy hydration on this library reaches 8.9 s
+    /// (research 2026-07-11) — inside the 3 s probe timeout's blind spot.
+    ///
+    /// Interactive persistence must therefore outlast an unbroken run of refusals and still
+    /// deliver when the bytes land. Fails before this change; the probe is not even called.
+    @Test func interactiveMaterializationOutlastsAnUnbrokenRunOfProviderRefusals() async {
+        let probes = Mutex(0)
+        let polls = Mutex(0)
+        let result = await FileMaterialization.materialize(
+            URL(fileURLWithPath: "/tmp/slow-provider.arw"),
+            pollInterval: .milliseconds(1),
+            persistence: FileMaterialization.Persistence(
+                failsFastOnProviderUnavailable: false,
+                deadline: nil,
+                requestRetryInterval: .milliseconds(1)
+            ),
+            providers: FileMaterializationProviders(
+                status: { _ in
+                    // Arrives only after far more polling than the fail-fast would allow.
+                    let seen = polls.withLock { (count: inout Int) -> Int in
+                        count += 1
+                        return count
+                    }
+                    return seen < 200 ? .dataless : .materialized
+                },
+                request: { _ in },
+                probe: { _ async in
+                    probes.withLock { $0 += 1 }
+                    return .providerUnavailable
+                }
+            )
+        )
+
+        #expect(
+            result.outcome == .materialized,
+            "an interactive request must wait out a slow provider, not read it as a refusal"
+        )
+        #expect(
+            probes.withLock { $0 } == 0,
+            "the probe is a faulting one-byte read whose only consumer was the short-circuit"
+        )
+    }
+
+    /// The other half, so the change is scoped rather than global: background keeps PR 172's
+    /// behaviour exactly, because its reason still holds — a background transfer squatting
+    /// `rootBackgroundCap=1` blocks every other candidate for that root.
+    @Test func backgroundMaterializationStillShortCircuitsOnTheSameInput() async {
+        let result = await FileMaterialization.materialize(
+            URL(fileURLWithPath: "/tmp/slow-provider.arw"),
+            pollInterval: .milliseconds(1),
+            persistence: FileMaterialization.Persistence(
+                failsFastOnProviderUnavailable: true,
+                deadline: .seconds(10),
+                requestRetryInterval: .milliseconds(1)
+            ),
+            providers: FileMaterializationProviders(
+                status: { _ in .dataless },
+                request: { _ in },
+                probe: { _ async in .providerUnavailable }
+            )
+        )
+
+        #expect(result.outcome == .providerUnavailable)
     }
 }
 

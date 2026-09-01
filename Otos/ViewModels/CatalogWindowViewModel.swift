@@ -299,7 +299,10 @@ final class CatalogWindowViewModel {
             executor: { [weak catalogStore] request in
                 let kind = await catalogStore?.rootKind(for: request.id.libraryRootPath)
                 guard kind == .deviceMTP else {
-                    return await FileMaterialization.materialize(request.id.fileURL)
+                    return await FileMaterialization.materialize(
+                        request.id.fileURL,
+                        persistence: .forPriority(request.priority)
+                    )
                 }
                 guard let result = await deviceStagingRegistry.materialize(request.id.fileURL) else {
                     return MaterializationResult(outcome: .deviceUnavailable, rerequestCount: 0, elapsedMs: 0)

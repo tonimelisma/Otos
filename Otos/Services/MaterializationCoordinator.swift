@@ -379,6 +379,28 @@ actor MaterializationCoordinator: MaterializationRequesting {
         let previous = active.effectivePriority
         active.effectivePriority = maximumPriority(in: active.waiters, fallback: active.request.priority)
         adjustEffectiveInteractive(from: previous, to: active.effectivePriority)
+        // An interactive transfer polls without a deadline, so the last waiter leaving is
+        // the only thing that ends it. Without this the poll outlives every consumer and
+        // runs for the life of the process — the hazard the 120 s timeout used to cover.
+        //
+        // Nothing is lost by stopping: the provider download continues regardless (we hold
+        // no handle on it, research 2026-07-14), and the next request finds the file either
+        // materialized or worth watching again. Background entries keep polling on purpose —
+        // ENR-008 wants those bytes whether or not anyone is still asking.
+        if active.waiters.isEmpty, previous == .interactive, active.request.priority == .interactive {
+            // Cancel only. The entry stays: the cancelled task still unwinds through
+            // `finishOperation`, which is the one place that closes the Store
+            // known-materialization suppression window (ARC-036), releases admission
+            // accounting, and records the breaker outcome. Removing the entry here would
+            // make that unwind a no-op and strand all three.
+            active.task?.cancel()
+            logLifecycle(
+                phase: "abandonedByLastWaiter",
+                request: active.request,
+                effectivePriority: previous,
+                isNotice: true
+            )
+        }
         inFlightByID[id] = active
         wake()
     }

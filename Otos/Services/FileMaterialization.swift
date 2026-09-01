@@ -138,6 +138,27 @@ extension FileMaterialization {
         }
     }
 
+    /// Whether bytes are actually arriving, sampled without reading any.
+    ///
+    /// PR 172 had to guess "slow" versus "dead" from a probe timeout because nothing
+    /// reported movement. `st_blocks` costs one `lstat` and answers directly *if* the
+    /// provider hydrates progressively. If it flips atomically from 0 to full, this logs
+    /// exactly one transition and tells us that too — either way the guessing stops.
+    private nonisolated static func progressSample(
+        _ url: URL,
+        since start: ContinuousClock.Instant
+    ) -> (blocks: Int64, logicalBytes: Int64, elapsedMs: Int)? {
+        var info = stat()
+        guard lstat(url.path(percentEncoded: false), &info) == 0 else {
+            return nil
+        }
+        return (
+            Int64(info.st_blocks),
+            Int64(info.st_size),
+            DiagnosticsTiming.milliseconds(from: start, to: ContinuousClock().now)
+        )
+    }
+
     private nonisolated static func blockingProbe(of url: URL) -> FileMaterializationProbeResult {
         do {
             let handle = try FileHandle(forReadingFrom: url)
@@ -168,17 +189,61 @@ extension FileMaterialization {
         return .inconclusive
     }
 
+    /// How hard a materialization tries, and for how long.
+    ///
+    /// This is the fact PR 172 could not express, which is why its background fix
+    /// reached the loupe. The two-strike probe was written to stop a background transfer
+    /// squatting `rootBackgroundCap=1` for two minutes — a slot interactive work never
+    /// holds. It arrived here anyway because the executor called `materialize(url)` and
+    /// dropped the request's priority on the floor.
+    ///
+    /// Measured 2026-08-31: 43 interactive requests failed, every one between 2402 ms and
+    /// 5539 ms against the 120 s budget they had been given, while the slowest *successful*
+    /// materialization in the same window took 62,316 ms. Healthy hydration on this library
+    /// reaches 8.9 s (research 2026-07-11) against a 3 s probe timeout, so the threshold
+    /// sits inside the provider's own latency distribution.
+    nonisolated struct Persistence: Equatable, Sendable {
+        /// Abandon after two consecutive `ETIMEDOUT` probes. Background only.
+        let failsFastOnProviderUnavailable: Bool
+        /// `nil` polls until the caller stops waiting. The provider exposes no transfer
+        /// handle (research 2026-07-14), so watching is the only way to learn of arrival,
+        /// and a clock is the wrong thing to bound it by — demand is.
+        let deadline: Duration?
+        /// How often the provider request is re-asserted. `startDownloadingUbiquitousItem`
+        /// returns no acknowledgement, so a saturated provider can discard queued work with
+        /// no way for us to tell; re-asserting is the only insurance available. One XPC
+        /// round trip, against an image the user is staring at — the costs are not
+        /// comparable, so interactive asks more often.
+        let requestRetryInterval: Duration
+
+        static let background = Persistence(
+            failsFastOnProviderUnavailable: true,
+            deadline: .seconds(120),
+            requestRetryInterval: .seconds(1)
+        )
+
+        /// The image in front of the user outranks everything. No deadline: bounded by the
+        /// caller going away, which `MaterializationCoordinator` signals by cancelling.
+        static let interactive = Persistence(
+            failsFastOnProviderUnavailable: false,
+            deadline: nil,
+            requestRetryInterval: .milliseconds(500)
+        )
+
+        static func forPriority(_ priority: MaterializationCoordinator.Priority) -> Persistence {
+            priority == .interactive ? .interactive : .background
+        }
+    }
+
     nonisolated static func materialize(
         _ url: URL,
         pollInterval: Duration = .milliseconds(250),
-        timeout: Duration = .seconds(120),
-        requestRetryInterval: Duration = .seconds(1)
+        persistence: Persistence = .background
     ) async -> MaterializationResult {
         await materialize(
             url,
             pollInterval: pollInterval,
-            timeout: timeout,
-            requestRetryInterval: requestRetryInterval,
+            persistence: persistence,
             providers: FileMaterializationProviders(
                 status: status(of:),
                 request: requestMaterialization(of:),
@@ -190,8 +255,7 @@ extension FileMaterialization {
     nonisolated static func materialize(
         _ url: URL,
         pollInterval: Duration = .milliseconds(250),
-        timeout: Duration = .seconds(120),
-        requestRetryInterval: Duration = .seconds(1),
+        persistence: Persistence = .background,
         providers: FileMaterializationProviders
     ) async -> MaterializationResult {
         let start = Date()
@@ -204,8 +268,7 @@ extension FileMaterialization {
         let (outcome, rerequestCount) = await pollMaterialization(
             url,
             pollInterval: pollInterval,
-            timeout: timeout,
-            requestRetryInterval: requestRetryInterval,
+            persistence: persistence,
             providers: providers
         )
         return finishMaterialization(outcome, url: url, start: start, rerequestCount: rerequestCount)
@@ -214,20 +277,34 @@ extension FileMaterialization {
     private nonisolated static func pollMaterialization(
         _ url: URL,
         pollInterval: Duration,
-        timeout: Duration,
-        requestRetryInterval: Duration,
+        persistence: Persistence,
         providers: FileMaterializationProviders
     ) async -> (MaterializationOutcome, Int) {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: timeout)
-        var nextRetry = clock.now.advanced(by: requestRetryInterval)
+        let deadline = persistence.deadline.map { clock.now.advanced(by: $0) }
+        var nextRetry = clock.now.advanced(by: persistence.requestRetryInterval)
         var rerequestCount = 0
         var consecutiveProviderUnavailable = 0
-        while clock.now < deadline {
+        var lastBlocks: Int64 = -1
+        let start = ContinuousClock().now
+        while deadline.map({ clock.now < $0 }) ?? true {
             do {
                 try await Task.sleep(for: pollInterval)
             } catch {
                 return (.cancelled, rerequestCount)
+            }
+            if let sample = progressSample(url, since: start),
+               sample.blocks != lastBlocks
+            {
+                OtosLog.mediaIO.notice(
+                    """
+                    op=materialization.progress path=\(url.lastPathComponent, privacy: .public) \
+                    elapsedMs=\(sample.elapsedMs, privacy: .public) blocks=\(sample.blocks, privacy: .public) \
+                    logicalBytes=\(sample.logicalBytes, privacy: .public) \
+                    rerequests=\(rerequestCount, privacy: .public)
+                    """
+                )
+                lastBlocks = sample.blocks
             }
             switch materializationPollDecision(now: clock.now, nextRetry: nextRetry, status: providers.status(url)) {
             case .materialized:
@@ -245,6 +322,14 @@ extension FileMaterialization {
                 // retry ledger (15/60/300/900) will pace the next attempt.
                 // A single transient ETIMEDOUT that heals on the next tick
                 // yields only one probe failure and does not short-circuit.
+                guard persistence.failsFastOnProviderUnavailable else {
+                    // Interactive: the probe is not consulted at all. It is a one-byte
+                    // faulting read whose only consumer was the short-circuit, so running
+                    // it here would cost a thread and up to 3 s per re-request to produce
+                    // an answer nothing acts on.
+                    nextRetry = clock.now.advanced(by: persistence.requestRetryInterval)
+                    continue
+                }
                 switch await providers.probe(url) {
                 case .providerUnavailable:
                     consecutiveProviderUnavailable += 1
@@ -254,7 +339,7 @@ extension FileMaterialization {
                 case .served, .inconclusive:
                     consecutiveProviderUnavailable = 0
                 }
-                nextRetry = clock.now.advanced(by: requestRetryInterval)
+                nextRetry = clock.now.advanced(by: persistence.requestRetryInterval)
             case .waitMore:
                 continue
             case .statusUnavailable:
