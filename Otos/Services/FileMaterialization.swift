@@ -138,12 +138,24 @@ extension FileMaterialization {
         }
     }
 
-    /// Whether bytes are actually arriving, sampled without reading any.
+    /// Timestamps arrival without reading any bytes.
     ///
-    /// PR 172 had to guess "slow" versus "dead" from a probe timeout because nothing
-    /// reported movement. `st_blocks` costs one `lstat` and answers directly *if* the
-    /// provider hydrates progressively. If it flips atomically from 0 to full, this logs
-    /// exactly one transition and tells us that too — either way the guessing stops.
+    /// This was added to find out whether hydration is progressive. Measured 2026-09-01
+    /// (`research 2026-09-01-onedrive-hydration-shape-and-latency.md`): it is **atomic** —
+    /// `st_blocks` stays at 0 for the whole download and jumps to full on completion, two
+    /// transitions per file, every file. So this logs exactly one line per transfer, and
+    /// there is no progress here to report.
+    ///
+    /// Kept because that one line is still worth having: it timestamps arrival independently
+    /// of the poll's own bookkeeping, and it keeps the atomicity claim falsifiable — a
+    /// provider that ever hydrates progressively will show up as extra transitions rather
+    /// than as a silent assumption someone has to re-derive.
+    ///
+    /// The consequence for the design is the important part: with no byte-level signal,
+    /// Otos cannot distinguish "downloading slowly" from "stalled" through the filesystem at
+    /// all. That is the fact PR 172 lacked when it read a 3 s `ETIMEDOUT` as definitive, and
+    /// it is why interactive work persists rather than deciding to give up on evidence that
+    /// does not exist. Real progress would require `NSFileProviderManager`'s `NSProgress`.
     private nonisolated static func progressSample(
         _ url: URL,
         since start: ContinuousClock.Instant
