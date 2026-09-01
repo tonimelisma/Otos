@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import Synchronization
 
 /// The one owner of where device staging lives on disk.
 ///
@@ -6,31 +8,43 @@ import Foundation
 /// and `DeviceCameraSession` for its own root — so "where is staging?" had two answers, and
 /// changing one would have silently diverged from the other. One owner; both ask it.
 ///
-/// ## Why roots are per process instance
+/// ## The path is stable, and that is a correctness requirement
 ///
-/// Staging is cleared at three points, and each covers a case the others cannot: per item
-/// when a copy settles, wholesale at quit, and wholesale at launch as the crash backstop —
-/// a process that died never ran its quit path, so its tree is still there.
+/// `DeviceStaging/<identity>/` is keyed by the camera, not by the process. It briefly was
+/// not: an earlier fix put the process instance in the path so a launch sweep could not
+/// delete a peer's in-flight staging. That worked, and broke something bigger — asset
+/// identity *is* the filesystem path (ADR 0008), so a per-launch path made every camera item
+/// a new asset on every launch. All overlay keyed to it was recreated each run: catalog rows,
+/// and thumbnails, whose deterministic names hash the root. Measured on a 991-item card:
+/// 9,997 thumbnail files against 9,304 rows, and a camera's thumbnails not surviving a
+/// restart. That contradicts the overlay-lifecycle invariant, which keeps overlay for as long
+/// as the item exists.
 ///
-/// The launch sweep is what forces the instance segment. Without it the sweep would delete
-/// the whole shared directory, including a second running instance's in-flight staging.
-/// Two instances ran on this machine on 2026-08-30, and the second would have destroyed the
-/// first's card transfer. With it, a launch deletes every tree that is not its own and a
-/// live instance is untouched — crash-safe and instance-safe by construction, with no
-/// cross-process ownership state to keep correct.
+/// ## Ownership is a lock, not a name
 ///
-/// The alternative considered and rejected was making one-main-window true at the process
-/// level and refusing a second launch. That is a different invariant from ARC-014 (which is
-/// about one *window*), and a user-visible product change, which is a large answer to a bug
-/// whose actual cause is a shared directory name.
+/// The sweep still must not delete what a live instance is using, and that question is asked
+/// of the kernel rather than encoded in a path: each attached session holds an exclusive
+/// `flock` on `<identity>/.otos-owner` for as long as it is attached, and the sweep deletes a
+/// tree only if it can take that lock.
+///
+/// Crash-safety falls out for free, which is why this is a lock and not a PID file or a
+/// timestamp: the kernel releases an `flock` when the holder dies, however it dies. Verified
+/// against SIGKILL — a killed holder's lock is immediately acquirable, so the next launch
+/// collects exactly the trees whose owners are gone, with no stale state to reconcile and
+/// nothing to time out.
+///
+/// The lock decides *deletion only*, never use. Two instances with the same camera attached
+/// both stage normally; only one of them is responsible for cleaning up.
 nonisolated enum DeviceStagingLocation {
-    /// Names this process's staging tree for its whole lifetime.
+    /// Locks held for cameras attached to this process, keyed by session root path.
     ///
-    /// A `static let` rather than a stored property so every caller — the session building
-    /// its root, the registry sweeping, the quit path — agrees without passing it around.
-    static let instanceID = UUID().uuidString
+    /// Held open for the life of each attachment; closing the descriptor is what releases
+    /// the claim.
+    private static let ownedDescriptors = Mutex<[String: Int32]>([:])
 
-    /// The directory holding every instance's staging tree.
+    private static let ownerMarkerName = ".otos-owner"
+
+    /// The directory holding every camera's staging tree.
     ///
     /// Under Caches: staging is a rebuildable transfer cache, not overlay. Overlay lives in
     /// Application Support and is backed up; these bytes exist only until the item they
@@ -47,21 +61,9 @@ nonisolated enum DeviceStagingLocation {
             .appending(path: "DeviceStaging", directoryHint: .isDirectory)
     }
 
-    /// This process's staging tree.
-    ///
-    /// `container` is injectable, and that is not ceremony. Every destructive operation
-    /// below is reached through it, and a test that ran them against the real container
-    /// would delete the user's actual staged camera data — which has happened here before:
-    /// an earlier sweep test called a no-argument overload and wiped live staging out of
-    /// the cache when the suite ran. A required-looking default with an injectable
-    /// parameter is what keeps the production path unambiguous and the test path harmless.
-    static func instanceRootURL(inContainer container: URL = containerURL()) -> URL {
-        container.appending(path: instanceID, directoryHint: .isDirectory)
-    }
-
-    /// Where one attached camera's bytes go.
+    /// Where one camera's bytes go. Stable across launches for the same camera.
     static func sessionRootURL(identity: String, inContainer container: URL = containerURL()) -> URL {
-        let root = instanceRootURL(inContainer: container)
+        let root = container
             .appending(path: CameraSourceMonitor.sanitize(identity), directoryHint: .isDirectory)
         var values = URLResourceValues()
         values.isExcludedFromBackup = true
@@ -70,84 +72,118 @@ nonisolated enum DeviceStagingLocation {
         return root
     }
 
-    /// Deletes this process's staging tree. Called at quit.
-    static func discardInstanceStaging(inContainer container: URL = containerURL()) {
-        let root = instanceRootURL(inContainer: container)
-        try? FileManager.default.removeItem(at: root)
-        OtosLog.fileAccess.noticeOperation("camera.staging", phase: "discardInstance", fields: [
-            "instance": instanceID,
+    /// Claims this camera's staging tree for as long as this process is attached to it.
+    ///
+    /// Best-effort by design: a failed claim means another instance will do the cleaning, not
+    /// that staging cannot be used. Returning early rather than throwing keeps attach working
+    /// in the pathological case of two instances sharing a camera.
+    @discardableResult
+    static func claimOwnership(identity: String, inContainer container: URL = containerURL()) -> Bool {
+        let root = sessionRootURL(identity: identity, inContainer: container)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let marker = root.appending(path: ownerMarkerName, directoryHint: .notDirectory)
+        let key = root.standardizedFileURL.path(percentEncoded: false)
+        return ownedDescriptors.withLock { owned in
+            guard owned[key] == nil else { return true }
+            let descriptor = open(marker.path(percentEncoded: false), O_CREAT | O_RDWR, 0o644)
+            guard descriptor >= 0 else { return false }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                close(descriptor)
+                return false
+            }
+            owned[key] = descriptor
+            return true
+        }
+    }
+
+    /// Drops every claim this process holds, so the sweep that follows can collect its trees.
+    ///
+    /// Quit releases first and then sweeps, which is why sweeping and quitting are the same
+    /// operation rather than two: an instance that has let go of its locks is
+    /// indistinguishable from one that has exited, and that is exactly the state quit wants.
+    static func releaseOwnership() {
+        ownedDescriptors.withLock { owned in
+            for descriptor in owned.values {
+                flock(descriptor, LOCK_UN)
+                close(descriptor)
+            }
+            owned.removeAll()
+        }
+    }
+
+    /// Deletes every staging tree no live instance is holding.
+    ///
+    /// The crash backstop and the quit path, in one function. A tree whose lock can be taken
+    /// has no live owner — either its process exited cleanly, or it died and the kernel
+    /// released the lock for it — so its bytes belong to a session that is over.
+    static func sweepUnownedStaging(inContainer container: URL = containerURL()) {
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: container,
+            includingPropertiesForKeys: [.isDirectoryKey]
+        ) else {
+            return
+        }
+        var removed = 0
+        var skipped = 0
+        for tree in contents {
+            let marker = tree.appending(path: ownerMarkerName, directoryHint: .notDirectory)
+            let descriptor = open(marker.path(percentEncoded: false), O_CREAT | O_RDWR, 0o644)
+            guard descriptor >= 0 else { continue }
+            defer { close(descriptor) }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+                skipped += 1
+                continue
+            }
+            try? FileManager.default.removeItem(at: tree)
+            removed += 1
+        }
+        OtosLog.fileAccess.noticeOperation("camera.staging", phase: "sweepUnowned", fields: [
+            "removed": "\(removed)",
+            "skippedLive": "\(skipped)",
         ])
     }
 
     /// Whether this process has staged anything worth clearing.
     ///
-    /// Quit shows a clearing window and defers termination; doing that when there is
-    /// nothing to delete would add a pointless flash and delay to every quit, and the
-    /// common case is a session that never attached a camera at all.
+    /// Looks for an actual file, not merely a directory entry. Attaching a camera creates its
+    /// tree whether or not anything is staged into it — and since ranged reads became the
+    /// normal path, that is the common case. Counting entries reported "there are bytes to
+    /// clear" for every session that had seen a camera, so quit deferred termination and
+    /// showed a clearing window to delete nothing.
+    ///
+    /// Enumerating stops at the first file, so this stays cheap when there genuinely are tens
+    /// of gigabytes below it.
     static func hasStagedBytes(inContainer container: URL = containerURL()) -> Bool {
-        let root = instanceRootURL(inContainer: container)
-        // Looks for an actual file, not merely a directory entry. Attaching a camera
-        // creates its session directory whether or not anything is ever staged into it —
-        // and after ranged reads became the normal path, that is the common case: the tree
-        // exists and is empty. Counting entries reported "there are bytes to clear" for
-        // every session that had seen a camera, so quit deferred termination and flashed a
-        // clearing window to delete nothing.
-        //
-        // Enumerating stops at the first file rather than walking the tree, so this stays
-        // cheap even when there genuinely are tens of gigabytes below it.
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return false
-        }
-        for case let url as URL in enumerator {
-            if (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true {
+        let roots = ownedDescriptors.withLock { Array($0.keys) }
+        for path in roots {
+            guard let enumerator = FileManager.default.enumerator(
+                at: URL(fileURLWithPath: path),
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+            for case let url as URL in enumerator
+                where (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
+            {
                 return true
             }
         }
+        _ = container
         return false
-    }
-
-    /// Deletes every staging tree that is not this process's.
-    ///
-    /// The crash backstop. Safe to run while another instance is live precisely because
-    /// trees are per instance: whatever else is in the container belongs to a process that
-    /// is either finished or is not this one, and the only tree this can remove from a live
-    /// peer is one it does not own.
-    static func sweepForeignInstanceStaging(inContainer container: URL = containerURL()) {
-        guard let contents = try? FileManager.default.contentsOfDirectory(
-            at: container,
-            includingPropertiesForKeys: nil
-        ) else {
-            return
-        }
-        var swept = 0
-        for url in contents where url.lastPathComponent != instanceID {
-            try? FileManager.default.removeItem(at: url)
-            swept += 1
-        }
-        OtosLog.fileAccess.noticeOperation("camera.staging", phase: "sweepForeign", fields: [
-            "instance": instanceID,
-            "removed": "\(swept)",
-        ])
     }
 
     /// Frees one staged file once its copy is durably in the library.
     ///
-    /// Synchronous and `nonisolated` on purpose. An earlier version routed this through
-    /// `DeviceStagingRegistry`, which is `@MainActor`, so every settled entry hopped to the
-    /// main actor to delete a file — MainActor gravity in the hot import path, and it
-    /// measurably delayed `MediaImportExecutor.recoverJournal()`, which every
-    /// `MediaOperationCoordinator.start()` awaits. Nothing about deleting an Otos-owned
-    /// file needs the main actor, and the containment guard it needed is right here.
+    /// Synchronous and `nonisolated` on purpose. Routing this through the `@MainActor`
+    /// registry made every settled entry hop to the main actor to delete a file — MainActor
+    /// gravity in the hot import path, which measurably delayed the journal recovery that
+    /// every `MediaOperationCoordinator.start()` awaits.
     ///
     /// Containment is proven before deleting, not assumed: this takes a path, and a path
-    /// wrong by one component would be a delete inside the user's own media, which Otos
-    /// never does.
+    /// wrong by one component would be a delete inside the user's own media.
     static func releaseStagedFile(at url: URL) {
-        guard isInsideInstanceStaging(url) else {
+        guard isInsideStaging(url) else {
             OtosLog.fileAccess.errorOperation("camera.staging", phase: "releaseRefused", fields: [
                 "reason": "outsideStagingRoot",
                 "path": url.path(percentEncoded: false),
@@ -170,13 +206,13 @@ nonisolated enum DeviceStagingLocation {
         }
     }
 
-    /// Whether `url` lies inside this process's staging tree.
+    /// Whether `url` lies inside the staging container.
     ///
-    /// The guard on releasing staged bytes. A release intent takes a path, and a path that
-    /// is wrong by one component would be a delete inside the user's own media — which Otos
-    /// never does. Proving containment first makes that unreachable rather than unlikely.
-    static func isInsideInstanceStaging(_ url: URL, inContainer container: URL = containerURL()) -> Bool {
-        let root = instanceRootURL(inContainer: container).standardizedFileURL.path(percentEncoded: false)
+    /// The guard on releasing staged bytes. Checked against the container rather than one
+    /// camera's tree, because a release can legitimately target any attached camera; what it
+    /// must never do is reach outside staging altogether.
+    static func isInsideStaging(_ url: URL, inContainer container: URL = containerURL()) -> Bool {
+        let root = container.standardizedFileURL.path(percentEncoded: false)
         let candidate = url.standardizedFileURL.path(percentEncoded: false)
         let prefix = root.hasSuffix("/") ? root : root + "/"
         return candidate.hasPrefix(prefix)

@@ -58,12 +58,14 @@ extension CatalogWindowViewModel {
     /// gigabytes on the main thread. The `await MainActor.run` that followed it was a no-op
     /// hop, and evidence the author believed the work was already off-main.
     ///
-    /// The sweep never touches this instance's own tree, so it cannot delete bytes a camera
-    /// attaching right now is writing — and it cannot delete a second running instance's
-    /// in-flight staging either, which the previous whole-directory delete could.
+    /// The sweep asks the kernel, not a filename: a tree is deleted only if its `flock` can
+    /// be taken, which is true exactly when no live instance holds it. A crashed owner's lock
+    /// is released by the kernel, so its tree is collected on the next launch with no stale
+    /// state to reconcile; a live peer's tree is skipped. It runs before monitoring starts so
+    /// a camera attaching right now cannot race it.
     func startDeviceStagingSweepThenCameraMonitoring() {
         deviceStagingSweepTask = Task.detached(priority: .utility) { [weak self] in
-            DeviceStagingLocation.sweepForeignInstanceStaging()
+            DeviceStagingLocation.sweepUnownedStaging()
             guard !Task.isCancelled else {
                 return
             }

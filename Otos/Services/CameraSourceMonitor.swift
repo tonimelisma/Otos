@@ -344,6 +344,10 @@ final class DeviceCameraSession: NSObject {
         self.displayName = displayName
         self.device = device
         stagingRootURL = DeviceStagingLocation.sessionRootURL(identity: identity)
+        // Claims this camera's tree for as long as this process is attached, so a peer's
+        // launch sweep leaves it alone. Best-effort: a failed claim means another instance
+        // does the cleaning, not that staging is unusable.
+        DeviceStagingLocation.claimOwnership(identity: identity)
         super.init()
         device.delegate = self
     }

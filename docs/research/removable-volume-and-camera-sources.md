@@ -801,26 +801,38 @@ consumer establishes for free by decoding. Removed in package 0.6.0. The princip
 must not spend a round trip to validate a claim its consumer validates as a side effect of
 using it.
 
-### Open: per-instance staging paths change asset identity every launch
+### Resolved: staging paths are stable again, and ownership is asked of the kernel
 
-Found while verifying the above, and it is a design problem rather than a bug to patch
-quickly.
+Found while verifying the above. Staging roots had become per process instance —
+`DeviceStaging/<instance-uuid>/<identity>/` — so the launch sweep could delete what an ended
+session left without destroying a second running instance's in-flight transfer. That worked,
+but asset identity **is** the filesystem path (ADR 0008), so a camera item's identity changed
+on every launch and every overlay keyed to it was re-created: catalog rows, and thumbnails,
+whose deterministic names hash the root path. Measured on a 991-item card: 9,997 thumbnail
+files against 9,304 catalog rows, and a camera item's thumbnail not surviving a restart. The
+instance segment solved a real problem, but it had been made part of the identity.
 
-Staging roots became per process instance — `DeviceStaging/<instance-uuid>/<identity>/` — so
-that the launch sweep could delete what an ended session left without destroying a second
-running instance's in-flight transfer. That works. But asset identity **is** the filesystem
-path (ADR 0008), so a camera item's identity now changes on every launch, and every overlay
-keyed to it is re-created: catalog rows, and thumbnails, whose deterministic names hash the
-root path. Observed: 9,997 thumbnail files against 9,304 catalog rows, and a camera item's
-thumbnail not surviving a restart.
+The fix separates the two questions. The path went back to `DeviceStaging/<identity>/`, so
+identity is stable across launches and overlay survives. Ownership moved *inside* the tree as
+an exclusive `flock(2)` on `<identity>/.otos-owner`, held for the life of the attachment, and
+it decides **deletion only** — never use. The sweep deletes a tree exactly when it can take
+that tree's lock.
 
-This conflicts with the overlay-lifecycle invariant that overlay is kept as long as the item
-exists. The instance segment solves a real problem — a sweep must not delete a live peer's
-staging — but it should not be part of the identity. Candidate directions, none yet
-evaluated: keep the root at `DeviceStaging/<identity>/` and record ownership *inside* it (a
-lock or marker file the sweep checks), or sweep by process liveness rather than by name.
-Deciding this needs an owner's call on how much the app should care about a second instance
-at all.
+`flock` is the right primitive because the kernel releases it when the holder dies. A POC
+confirmed all three cases directly: no owner → acquired; live holder → blocked; after
+`kill -9` on the holder → acquired. So a crashed instance leaves nothing to reconcile, which
+is what a marker file recording a PID could not offer without a liveness check that is itself
+racy.
+
+That collapses launch and quit into one operation — `releaseOwnership()` then
+`sweepUnownedStaging()` — because an instance that has let go of its locks is
+indistinguishable from one that has exited. Two consequences worth recording: an emptied
+`hasStagedBytes` check now enumerates for a regular file rather than counting directory
+entries, since attaching a camera creates its tree whether or not anything is staged into it
+and ranged reads made "nothing staged" the common case — counting entries made quit defer
+termination to show a clearing window and then delete nothing. And the release intent takes a
+path, so it refuses any path outside the staging container rather than following it; a path
+wrong by one component would otherwise be a delete inside the user's own media.
 
 ### Still open after this round
 

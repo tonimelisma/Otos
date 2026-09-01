@@ -37,7 +37,12 @@ private final class OtosAppLifecycle: NSObject, NSApplicationDelegate {
         }
         showClearingWindow()
         Task.detached(priority: .userInitiated) {
-            DeviceStagingLocation.discardInstanceStaging()
+            // Release first, then sweep. An instance that has let go of its locks is
+            // indistinguishable from one that has exited, which is exactly the state quit
+            // wants — so quitting and the crash backstop are the same operation rather than
+            // two that could disagree.
+            DeviceStagingLocation.releaseOwnership()
+            DeviceStagingLocation.sweepUnownedStaging()
             await MainActor.run {
                 sender.reply(toApplicationShouldTerminate: true)
             }
