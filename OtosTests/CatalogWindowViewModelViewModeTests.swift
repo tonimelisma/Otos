@@ -168,7 +168,15 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(model.panePreviews[.compareLeft] != nil)
     }
 
-    @Test func downloadingRetryDoesNotDisturbSiblingPane() async {
+    /// One pane resolving must not disturb the other, and a pane whose request resolves
+    /// without an image must stop spinning rather than spin forever.
+    ///
+    /// This replaces a test named `downloadingRetryDoesNotDisturbSiblingPane`, which
+    /// asserted that a non-image outcome *set* the spinner — the old model, where the pane
+    /// re-requested every 500 ms and the spinner meant "an attempt failed, another is
+    /// coming". The spinner now means "a request is outstanding" (plan 0102), so the same
+    /// outcome must clear it.
+    @Test func oneResolvedPaneDoesNotDisturbItsSibling() async {
         let fake = FakePreviewLoader()
         await fake.setHold(true)
         let model = makeViewModeModel(loader: fake)
@@ -185,10 +193,18 @@ struct CatalogWindowViewModelViewModeTests {
         await rightTask?.value
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
 
-        let leftTask = model.paneRequestTasks[.compareLeft]
-        await fake.release(id: ids[0], with: .downloading)
-        await leftTask?.value
+        // While left is still held, its spinner is up and right's image is untouched.
         #expect(model.downloadingSlots.contains(.compareLeft))
+        #expect(!model.downloadingSlots.contains(.compareRight))
+
+        let leftTask = model.paneRequestTasks[.compareLeft]
+        await fake.release(id: ids[0], with: .unavailable)
+        await leftTask?.value
+        #expect(
+            !model.downloadingSlots.contains(.compareLeft),
+            "a resolved request must stop the spinner; there is no retry behind it any more"
+        )
+        #expect(model.panePreviews[.compareLeft] == nil)
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
     }
 

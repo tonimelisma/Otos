@@ -111,7 +111,18 @@ cadence appropriate to *why* the file is wanted, which only the coordinator know
 
 ## 5. Design
 
-### 5.1 Demand
+### 5.1 Demand — **not built, and here is why**
+
+The registry below was designed before stage 1 existed. Its purpose was to stop consumers
+from ever observing a failed attempt. Stage 1 achieves exactly that by simpler means: an
+interactive `materialize` does not return until the bytes arrive or the request is
+cancelled, so there is no failure to observe and nothing for a consumer to decide about.
+
+Building a per-identity state machine plus subscription lifecycle to reach a property the
+call already has would be speculative machinery, which this repo's standards rule out.
+Stage 2 therefore deleted the pane's retry and collapsed `PreviewImageLoader.Outcome` to
+two cases instead. The design below is retained as the shape to grow into *if* a second
+consumer ever needs to observe materialization state independently of asking for it.
 
 ```
 MaterializationCoordinator
@@ -188,9 +199,13 @@ The requirement text must say the first and must not imply the second.
 - `CatalogWindowViewModelViewMode`'s 500 ms retry task and `downloadingSlots`
   insert-on-`.downloading` path.
 - `PreviewImageLoader.Outcome.downloading`.
-- The enrichment retry ledger's **permanent give-up** (`attemptCount <= delays.count`
-  → `nil`). A wanted file is wanted until it arrives; enrichment demand is withdrawn
-  by the scheduler, not by exhaustion.
+- ~~The enrichment retry ledger's permanent give-up.~~ **Withdrawn — the premise was
+  wrong.** `retryWorkIfNeeded` returning `nil` after `[15, 60, 300, 900]` is not
+  abandonment: it releases the *claim-window* slot and hands pacing to `retryLedger`,
+  which `scheduleRetryLedgerSignal` re-wakes at `notBefore` with no cap. Enrichment
+  therefore already retries a wanted file every 15 minutes indefinitely. Removing the
+  bound would have made one failing file hold a claim slot forever and starve the other
+  31 — trading a bug that does not exist for real starvation.
 - The provider breaker is **kept** but demoted: it paces background acquisition
   cadence and reports provider health. It must never gate interactive (it already
   does not).
@@ -264,8 +279,16 @@ completion, record that and stop looking.
 
 1. **Mechanism split** — strip policy from `FileMaterialization`, plumb priority.
    Existing tests stay green unmodified by passing background policy. Oracle added, red.
-2. **Demand and acquisition** in the coordinator; `PreviewImageLoader` and the pane
-   move onto it; retry task deleted. Oracle green.
-3. **Enrichment onto demand**; ledger give-up removed; breaker demoted.
+2. **Pane retry deleted**, spinner driven by an outstanding request rather than a failed
+   attempt, `Outcome.downloading` removed. Demand registry not built (§5.1).
+3. ~~Enrichment onto demand; ledger give-up removed.~~ **Withdrawn** (§5.5): the ledger
+   already retries indefinitely, and the breaker's interactive exemption is already correct.
 4. **Loaded-provider experiment**, cadence fixed by its result, research file written.
-5. **Docs** — ADR 0016 §2, ADR 0009 materialization half, APP-023, ARC-036, ENR-008.
+   Partly done: `research/2026-09-01-onedrive-hydration-shape-and-latency.md` records the
+   healthy-provider baseline, atomic hydration, and that re-asserting does not restart a
+   transfer. The remaining arm is the same comparison **under load**.
+5. **Docs** — ADR 0016 §2, APP-023.
+
+Two of the five stages dissolved on contact with the code. That is the plan working: both
+were written from a reading of the failure, and both were checked against the source before
+being implemented rather than after.

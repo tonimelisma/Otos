@@ -310,6 +310,11 @@ extension CatalogWindowViewModel {
         let detailReader = tileDetailReader
         let target = Self.previewTargetLongEdge()
         paneRequestTasks[slot]?.cancel()
+        // The spinner tracks an outstanding request, not a failed one. Interactive
+        // materialization now persists until the bytes arrive or this request is
+        // cancelled (plan 0102), so "still coming" is exactly "still asking" — there is
+        // no failed attempt left to infer it from.
+        downloadingSlots.insert(slot)
         paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
             let details = await detailReader.details(for: [id])
             guard !Task.isCancelled else {
@@ -324,6 +329,11 @@ extension CatalogWindowViewModel {
                 )
             )
             guard !Task.isCancelled else {
+                // Deliberately does not clear the slot. A cancelled request has almost
+                // always been superseded, and its replacement already owns the spinner —
+                // clearing here would blank the indicator for a request that is still
+                // running. `refreshPanePreviews` clears the slot before re-requesting, and
+                // `exitToGrid` clears them all; those are the owners.
                 return
             }
             await MainActor.run {
@@ -334,30 +344,19 @@ extension CatalogWindowViewModel {
                 guard self.expectedAsset(for: slot) == id else {
                     return
                 }
-                switch outcome {
-                case let .image(image):
+                // Both outcomes are terminal for this request. The 500 ms re-request that
+                // used to live on the `.downloading` arm was correct when an attempt lasted
+                // 120 s — one restart every two minutes. PR 172 shortened an attempt ~24×,
+                // and the same loop became a restart every ~5.5 s that reset the poll from
+                // zero, so an image needing 62 s could never accumulate more than 5. With
+                // the request itself persistent there is nothing left to retry.
+                self.downloadingSlots.remove(slot)
+                if case let .image(image) = outcome {
                     self.panePreviews[slot] = PanePreview(
                         id: id,
                         image: image,
                         mediaChoice: detail?.mediaChoice
                     )
-                    self.downloadingSlots.remove(slot)
-                case .downloading:
-                    self.downloadingSlots.insert(slot)
-                    self.paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
-                        try? await Task.sleep(for: .milliseconds(500))
-                        guard !Task.isCancelled else {
-                            return
-                        }
-                        await MainActor.run {
-                            guard let self, self.expectedAsset(for: slot) == id else {
-                                return
-                            }
-                            self.requestPanePreview(id, slot: slot)
-                        }
-                    }
-                case .unavailable:
-                    self.downloadingSlots.remove(slot)
                 }
             }
         }

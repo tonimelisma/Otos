@@ -19,17 +19,22 @@ nonisolated protocol PreviewLoading: Sendable {
 /// only full-size decode path (ADR 0016). Callers ask for a preview at a target long edge;
 /// this actor gates on `FileMaterialization.status` immediately before every byte read,
 /// deliberately materializes dataless originals through the non-blocking helper when the
-/// user has opened loupe/compare, and returns a downsampled `CGImage` (or `.downloading` /
-/// `.unavailable`).
+/// user has opened loupe/compare, and returns a downsampled `CGImage` or `.unavailable`.
 ///
 /// Per-id in-flight work is coalesced. A small LRU holds recent decodes; a cache hit
 /// requires `entry.longEdge >= request.targetLongEdge` so a screen-size change re-decodes
 /// instead of upscaling. Stale results are rejected by the ViewModel's expected-asset
 /// identity check — this actor returns whatever it decoded.
 actor PreviewImageLoader: PreviewLoading {
+    /// Two outcomes, because nothing downstream can act on a third.
+    ///
+    /// `.downloading` used to mean "the materialization attempt did not produce bytes",
+    /// and the pane turned that into a 500 ms re-request. Interactive materialization now
+    /// persists until the bytes arrive or the request is cancelled (plan 0102), so a
+    /// non-image result means cancelled or genuinely absent — neither of which the caller
+    /// retries. The reason is still logged; it is just not a decision anyone makes.
     enum Outcome {
         case image(CGImage)
-        case downloading
         case unavailable
     }
 
@@ -112,11 +117,11 @@ actor PreviewImageLoader: PreviewLoading {
             guard result.isMaterialized else {
                 OtosLog.mediaIO.notice(
                     """
-                    op=preview.decode phase=downloading id=\(request.id.relativePath.rawValue, privacy: .public) \
+                    op=preview.decode phase=notMaterialized id=\(request.id.relativePath.rawValue, privacy: .public) \
                     outcome=\(String(describing: result.outcome), privacy: .public)
                     """
                 )
-                return .downloading
+                return .unavailable
             }
         case .unknown:
             OtosLog.mediaIO.notice(
@@ -129,7 +134,7 @@ actor PreviewImageLoader: PreviewLoading {
 
         // Re-check immediately before the byte read (ADR 0008).
         guard status(url) == .materialized else {
-            return .downloading
+            return .unavailable
         }
 
         let isMovie = request.detail?.bestKind == .video

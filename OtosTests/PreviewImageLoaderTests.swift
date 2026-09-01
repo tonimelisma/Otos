@@ -91,8 +91,8 @@ struct PreviewImageLoaderTests {
                 targetLongEdge: 512
             )
         )
-        guard case .downloading = outcome else {
-            Issue.record("Expected downloading")
+        guard case .unavailable = outcome else {
+            Issue.record("Expected unavailable when materialization produced no bytes")
             return
         }
         #expect(materializeCalls.withLock { $0 } == 1)

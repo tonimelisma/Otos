@@ -45,8 +45,12 @@ scale × window long edge). It:
 
 1. Checks `FileMaterialization.status` immediately before every byte read.
 2. On `.dataless`, submits an interactive request to the shared
-   `MaterializationCoordinator`, returns `.downloading` when that attempt does not
-   materialize, and re-decodes on arrival.
+   `MaterializationCoordinator` and awaits it. Interactive materialization is
+   *persistent*: it re-asserts the provider request every 500 ms and polls until the
+   bytes arrive or the request is cancelled, with no fail-fast and no deadline
+   (plan 0102). There is therefore no "attempt did not materialize" outcome to report —
+   the loader returns the decoded image, or `.unavailable` when the file is genuinely
+   absent or the request was cancelled.
 3. Decodes images via Image I/O
    `CGImageSourceCreateThumbnailAtIndex` with
    `kCGImageSourceThumbnailMaxPixelSize` (bounded memory; embedded RAW previews
@@ -87,9 +91,12 @@ placeholder).
   `expectedAsset(for: slot) == id`. Generation counters are not used. A slot
   whose expected id already matches keeps its preview across pair/focus churn;
   a mismatched or nil expectation clears that slot and re-requests. Each
-  `PaneSlot` owns at most one `paneRequestTasks` entry (request or downloading
-  retry) at `.userInitiated`; superseded requests cancel after the detail fetch
-  before enqueueing another decode. `PreviewImageLoader`'s per-id dedup task is
+  `PaneSlot` owns at most one `paneRequestTasks` entry at `.userInitiated`; superseded
+  requests cancel after the detail fetch before enqueueing another decode. There is no
+  downloading-retry task: the pane's 500 ms re-request was correct when an attempt lasted
+  120 s, and became a hot loop when the fail-fast shortened attempts ~24×. The spinner is
+  driven by an outstanding request, and a cancelled request deliberately does not clear it
+  — its replacement already owns that slot. `PreviewImageLoader`'s per-id dedup task is
   also `.userInitiated` so decode does not inherit ambient/default QoS.
 - Entering Compare activates the right position; clicking a pane activates only
   that position; strip replacement and sliding activate the arriving position;
