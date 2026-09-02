@@ -174,7 +174,7 @@ struct CatalogWindowViewModelViewModeTests {
     /// This replaces a test named `downloadingRetryDoesNotDisturbSiblingPane`, which
     /// asserted that a non-image outcome *set* the spinner — the old model, where the pane
     /// re-requested every 500 ms and the spinner meant "an attempt failed, another is
-    /// coming". The spinner now means "a request is outstanding" (plan 0102), so the same
+    /// coming". The spinner now means "a request is outstanding" (APP-023), so the same
     /// outcome must clear it.
     @Test func oneResolvedPaneDoesNotDisturbItsSibling() async {
         let fake = FakePreviewLoader()

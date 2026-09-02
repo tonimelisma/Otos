@@ -2,7 +2,7 @@
 
 The healthy-provider baseline `2026-08-03-post-increment-review-experiments.md` §4c said
 "should be decided against a healthy-provider baseline, **which does not exist yet**", plus
-the hydration-shape measurement plan 0102 §7 asked for. Both were taken against the
+the hydration-shape measurement the persistent-materialization work needed. Both were taken against the
 production library on the machine that produced the 2026-08-31 loupe failures.
 
 ## Method
@@ -36,14 +36,14 @@ transitions per file, across every file measured:
 **Consequences.**
 
 1. `st_blocks` carries no progress information. The `op=materialization.progress` instrumentation
-   added in plan 0102 stage 1 logs exactly one transition per file. It still timestamps arrival
+   added alongside the persistence change logs exactly one transition per file. It still timestamps arrival
    and proves atomicity, but it cannot drive a progress bar.
 2. **Otos cannot distinguish "downloading slowly" from "stalled" with the filesystem API alone.**
    This is not a gap in the implementation; the information is not exposed. It is precisely the
    fact whose absence let PR 172 read a 3 s `ETIMEDOUT` as a definitive refusal.
 3. Therefore a determinate progress indicator for a cloud original requires
    `NSFileProviderManager`'s `NSProgress`. That is now the *only* route to progress, not a
-   convenience — which changes how plan 0102 §4 (approach C) should be weighed if progress is
+   convenience — which changes how the NSFileProviderManager option should be weighed if progress is
    ever wanted.
 4. And it is the empirical justification for never giving up: with no signal on which to base a
    give-up decision, persisting is the only defensible behaviour.
@@ -88,7 +88,7 @@ hammer when necessary costs the image the user is looking at.
 
 ## Finding 4 — re-asserting does not restart an in-progress transfer
 
-The one result that could have inverted plan 0102's cadence. Two arms, interleaved over the
+The one result that could have inverted the interactive re-assert cadence. Two arms, interleaved over the
 same file population so provider state drifts across both equally: arm A re-asserts
 `startDownloadingUbiquitousItem` every 500 ms, arm B asks once and waits.
 
@@ -110,7 +110,7 @@ same file population so provider state drifts across both equally: arm A re-asse
 
 Medians differ by 19 ms — noise at this sample size. Twelve re-assertions on a 36.8 MB file did
 not prevent or delay its completion, and no arm-A file failed. **Hammering is safe**: it neither
-restarts nor measurably slows a transfer, which is what plan 0102 §3 needed before defaulting
+restarts nor measurably slows a transfer, which is what was needed before defaulting
 interactive work to a 500 ms cadence.
 
 This is a *safety* result, and safety is the direction that generalises least badly from an idle
@@ -122,7 +122,7 @@ it was guarding against is not present.
 120,276 ms) remain consistent with both "persistence failing" and "the provider was simply down",
 and `2026-08-03` §4a proved the provider *was* down for those. Given finding 4, hammering costs
 nothing; given no acknowledgement from the API, it is the only insurance available. The two-arm
-experiment under real load in plan 0102 §7 has not been run.
+experiment under real load in under real load has not been run.
 
 ## Context: why the library is in this state
 
@@ -140,3 +140,11 @@ The same behaviour was recorded once before, in
 
 Every measurement here comes from one OneDrive Personal account on one Mac at ~19 GB free.
 No other provider (iCloud Drive, Dropbox) and no healthy-disk machine has been measured.
+
+## Closed unrun
+
+The two-arm experiment under real load was **closed unrun by owner decision on
+2026-09-01** — reproducing the conditions means writing tens of gigabytes into a
+cloud-synced folder on a nearly-full disk, which the measurement does not justify.
+The cadence therefore rests on finding 4 (hammering is safe) and on asymmetric cost
+(a wasted syscall versus an image that never appears), not on a measured optimum.

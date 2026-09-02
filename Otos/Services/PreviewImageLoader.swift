@@ -30,7 +30,7 @@ actor PreviewImageLoader: PreviewLoading {
     ///
     /// `.downloading` used to mean "the materialization attempt did not produce bytes",
     /// and the pane turned that into a 500 ms re-request. Interactive materialization now
-    /// persists until the bytes arrive or the request is cancelled (plan 0102), so a
+    /// persists until the bytes arrive or the request is cancelled (APP-023), so a
     /// non-image result means cancelled or genuinely absent — neither of which the caller
     /// retries. The reason is still logged; it is just not a decision anyone makes.
     enum Outcome {

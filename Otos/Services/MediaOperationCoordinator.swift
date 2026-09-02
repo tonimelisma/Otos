@@ -800,13 +800,55 @@ actor MediaOperationCoordinator {
     /// asset already in the destination renames nothing on disk and
     /// `fetchDestinationOccupants` never reads a capture wall. A wake that moves
     /// neither is `planRevision`-only churn and does no work.
+    /// Wakes that moved no revision, per root, since the last one that did.
+    ///
+    /// Every planning-change notification used to log a line, and most notifications
+    /// change nothing: a 999-item import produced 5,381 `receive` lines against **16**
+    /// actual plan rebuilds. Thirteen log lines per imported item buried the fact an agent
+    /// actually needs — *which* wake moved a revision — under the ones that moved none.
+    ///
+    /// The count rides on the next line that reports a real change, so "wakes are arriving
+    /// but nothing is moving" stays diagnosable without a line each.
+    private var churnWakesByRoot: [LibraryRootPath: Int] = [:]
+
+    /// Refreshes that left the source set unchanged, since the last one that did not.
+    private var suppressedRefreshes = 0
+    private var lastLoggedSourceCount: Int?
+
+    /// Emit a summary after this many suppressed events even when nothing changed.
+    ///
+    /// Without it, a run where the source set never changes would log nothing at all and an
+    /// agent debugging a stuck import would see silence — which is indistinguishable from a
+    /// dead subscription. This bounds the worst case to roughly one line per 200 wakes
+    /// instead of one per wake, while guaranteeing the path is never invisible.
+    private static let churnSummaryThreshold = 200
+
+    /// Logs a planning wake only when it moved a revision, or when enough have not.
+    private func logPlanningWake(_ change: RootPlanningChange, moved: Bool) {
+        let churn = churnWakesByRoot[change.rootPath, default: 0]
+        guard moved || churn + 1 >= Self.churnSummaryThreshold else {
+            churnWakesByRoot[change.rootPath] = churn + 1
+            return
+        }
+        churnWakesByRoot[change.rootPath] = 0
+        OtosLog.catalog.noticeOperation(
+            "import.coordinator",
+            phase: moved ? "receive" : "receiveChurn",
+            fields: [
+                "rootPath": change.rootPath.rawValue,
+                "namespaceRevision": "\(change.namespaceRevision)",
+                "namingRevision": "\(change.namingRevision)",
+                "churnWakes": "\(moved ? churn : churn + 1)",
+            ]
+        )
+    }
+
     private func handlePlanningChange(_ change: RootPlanningChange) async {
-        // swiftlint:disable:next line_length
-        OtosLog.catalog.noticeOperation("import.coordinator", phase: "receive", fields: ["rootPath": change.rootPath.rawValue, "namespaceRevision": "\(change.namespaceRevision)", "namingRevision": "\(change.namingRevision)"])
         let previous = lastSeenRevisions[change.rootPath]
         let namespaceChanged = previous?.namespaceRevision != change.namespaceRevision
         let namingChanged = previous?.namingRevision != change.namingRevision
         lastSeenRevisions[change.rootPath] = change.revisions
+        logPlanningWake(change, moved: namespaceChanged || namingChanged)
         if namespaceChanged || namingChanged {
             let libraries = await store.currentLibraries()
             let removable = libraries.filter { $0.root.kind != .library }
@@ -911,6 +953,25 @@ actor MediaOperationCoordinator {
         if didConfirm {
             publish()
         }
+    }
+
+    /// Same aggregation as `receive`, and for the same reason: this fires once per wake,
+    /// and the facts it carries — the reason and the source count — are unchanged across
+    /// almost all of them. Extracted so `refreshSources` keeps its complexity budget.
+    private func logRefresh(reason: String, sourceCount: Int) {
+        guard lastLoggedSourceCount != sourceCount
+            || suppressedRefreshes + 1 >= Self.churnSummaryThreshold
+        else {
+            suppressedRefreshes += 1
+            return
+        }
+        OtosLog.catalog.noticeOperation("import.coordinator", phase: "refresh", fields: [
+            "reason": reason,
+            "sourceCount": "\(sourceCount)",
+            "suppressedRefreshes": "\(suppressedRefreshes)",
+        ])
+        lastLoggedSourceCount = sourceCount
+        suppressedRefreshes = 0
     }
 
     private func refreshSources(reason: String) async {
@@ -1112,7 +1173,7 @@ actor MediaOperationCoordinator {
             lastSeenRevisions.removeValue(forKey: path)
         }
         publish()
-        OtosLog.catalog.noticeOperation("import.coordinator", phase: "refresh", fields: ["reason": reason, "sourceCount": "\(removable.count)"])
+        logRefresh(reason: reason, sourceCount: removable.count)
     }
 
     private func scheduleBuildIfNeeded(_ source: LibraryRootPath) {

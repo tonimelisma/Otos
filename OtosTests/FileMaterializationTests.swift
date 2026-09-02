@@ -136,7 +136,7 @@ struct FileMaterializationTests {
         }
     }
 
-    /// The oracle for plan 0102.
+    /// The oracle for APP-023's persistence rule.
     ///
     /// A provider that is merely slow returns `ETIMEDOUT` on the one-byte probe exactly as
     /// a dead one does, so the two-strike short-circuit abandoned the image in front of the

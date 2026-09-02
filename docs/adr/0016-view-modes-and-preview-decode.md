@@ -48,7 +48,7 @@ scale × window long edge). It:
    `MaterializationCoordinator` and awaits it. Interactive materialization is
    *persistent*: it re-asserts the provider request every 500 ms and polls until the
    bytes arrive or the request is cancelled, with no fail-fast and no deadline
-   (plan 0102). There is therefore no "attempt did not materialize" outcome to report —
+   (APP-023). There is therefore no "attempt did not materialize" outcome to report —
    the loader returns the decoded image, or `.unavailable` when the file is genuinely
    absent or the request was cancelled.
 3. Decodes images via Image I/O

@@ -312,7 +312,7 @@ extension CatalogWindowViewModel {
         paneRequestTasks[slot]?.cancel()
         // The spinner tracks an outstanding request, not a failed one. Interactive
         // materialization now persists until the bytes arrive or this request is
-        // cancelled (plan 0102), so "still coming" is exactly "still asking" — there is
+        // cancelled (APP-023), so "still coming" is exactly "still asking" — there is
         // no failed attempt left to infer it from.
         downloadingSlots.insert(slot)
         paneRequestTasks[slot] = Task(priority: .userInitiated) { [weak self] in
