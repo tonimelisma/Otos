@@ -577,11 +577,29 @@ actor MediaOperationCoordinator {
         )
     }
 
+    /// Rejects a sample that would move either counter backwards.
+    ///
+    /// `ByteProgressTracker` is monotonic by construction — `creditedBytes` absorbs the
+    /// drop when an entry finishes, and `settledCount` only increments — so a decrease is
+    /// not a real regression but a sample that arrived out of order. It arrives out of
+    /// order because the executor's callback fires on ~10 copy worker threads and each one
+    /// spawns its own `Task` to reach this actor; Swift orders the snapshots the tracker's
+    /// lock produces, but nothing orders the hops that carry them. Measured on a 999-item
+    /// card: 528 of 3,925 published samples (13.5%) carried a smaller count than the one
+    /// before, which the bar drew as a visible stutter.
+    ///
+    /// Dropping the stale sample loses nothing: samples are cumulative, so the next one
+    /// carries everything the dropped one did, and the terminal value comes from
+    /// `applyExecutionResult` rather than from any sample. This is the newest-value
+    /// coalescing the callback always needed and never declared.
     private func applyExecutionProgress(source: LibraryRootPath, attachment: AttachmentGeneration, progress: MediaOperationProgress) {
         guard var session = sourceSessions[source],
               session.attachmentGeneration == attachment,
               case .executing = session.phase
         else {
+            return
+        }
+        if let previous = session.lastProgress, progress.isStale(comparedTo: previous) {
             return
         }
         // Stored on the session so any later `publish()` — including one fired

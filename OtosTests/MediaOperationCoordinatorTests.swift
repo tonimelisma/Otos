@@ -1022,4 +1022,63 @@ struct ImportBatchSidebarPolicyTests {
         )
         #expect(resolved == .importBatch(batch.batchID))
     }
+
+    /// The import counter stuttered: it stepped forward and then back, hundreds of times.
+    ///
+    /// `ByteProgressTracker` is monotonic where it computes a sample, so a decrease never
+    /// means progress reversed. It means the sample lost its ordering in transit — the
+    /// executor's callback fires on ~10 copy worker threads and each spawns its own `Task`
+    /// to reach the coordinator, and nothing orders those hops. Measured on a 999-item card:
+    /// 528 of 3,925 published samples (13.5%) carried a smaller count than the one before.
+    @Test func aProgressSampleThatArrivedLateIsRecognisedAsStale() {
+        let newer = MediaOperationProgress(
+            completedCount: 13,
+            totalCount: 999,
+            completedBytes: 402_477_056,
+            totalBytes: 38_044_791_876,
+            elapsedMs: 6017
+        )
+        let older = MediaOperationProgress(
+            completedCount: 10,
+            totalCount: 999,
+            completedBytes: 385_699_840,
+            totalBytes: 38_044_791_876,
+            elapsedMs: 5996
+        )
+
+        #expect(older.isStale(comparedTo: newer), "a sample behind on both counters is stale")
+        #expect(!newer.isStale(comparedTo: older), "the newer sample must still be applied")
+        #expect(!newer.isStale(comparedTo: newer), "a repeat of the current sample is not stale")
+    }
+
+    /// Either counter regressing is enough. Bytes move on every callback while the item
+    /// count only moves when a file settles, so a reordered pair often disagrees on just one
+    /// of them — checking only bytes would let the item count walk backwards, which is the
+    /// number the bar puts at L1.
+    @Test func eitherCounterRegressingAloneIsStale() {
+        let base = MediaOperationProgress(
+            completedCount: 20,
+            totalCount: 999,
+            completedBytes: 1_000_000,
+            totalBytes: 38_044_791_876,
+            elapsedMs: 8000
+        )
+        let bytesBehind = MediaOperationProgress(
+            completedCount: 20,
+            totalCount: 999,
+            completedBytes: 900_000,
+            totalBytes: 38_044_791_876,
+            elapsedMs: 7990
+        )
+        let countBehind = MediaOperationProgress(
+            completedCount: 18,
+            totalCount: 999,
+            completedBytes: 1_000_000,
+            totalBytes: 38_044_791_876,
+            elapsedMs: 7990
+        )
+
+        #expect(bytesBehind.isStale(comparedTo: base))
+        #expect(countBehind.isStale(comparedTo: base))
+    }
 }

@@ -442,6 +442,18 @@ nonisolated struct MediaOperationProgress: Equatable, Sendable {
     /// the mapper omits the estimate until this and `completedBytes` are large
     /// enough for a rate to be meaningful, never guessing one.
     let elapsedMs: Int
+
+    /// Whether this sample would move either counter backwards relative to `other`.
+    ///
+    /// Both counters are monotonic where they are produced (`ByteProgressTracker`), so a
+    /// decrease in either never means progress reversed — it identifies a sample that lost
+    /// its ordering in transit between the worker thread that computed it and the actor
+    /// that applies it. Stating the rule on the type keeps it with the values it constrains,
+    /// rather than leaving each consumer to rediscover that these samples can arrive
+    /// shuffled.
+    nonisolated func isStale(comparedTo other: MediaOperationProgress) -> Bool {
+        completedBytes < other.completedBytes || completedCount < other.completedCount
+    }
 }
 
 nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identifiable {

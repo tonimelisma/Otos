@@ -625,4 +625,25 @@ struct ImportBarPresentationTests {
         #expect(ImportBarByteFormat.string(bytes: 99_999_999_999) == "100.0 GB")
         #expect(ImportBarByteFormat.string(bytes: 100_000_000_000) == "100 GB")
     }
+
+    /// DES-032 permits exactly one estimate and requires it be hedged. It says nothing about
+    /// units, and the code rendered raw seconds — a 38 GB card opened at `about 221 seconds
+    /// left`. Precision degrades with magnitude so the estimate never states more than a
+    /// bytes-over-elapsed rate can support.
+    @Test func theRemainingEstimateIsStatedInUnitsAPersonReads() {
+        #expect(ImportBarPresentation.remainingClause(seconds: 45) == "45 seconds")
+        #expect(ImportBarPresentation.remainingClause(seconds: 1) == "1 second")
+        // The measured case: 221 s is four minutes, not two hundred and twenty-one of
+        // anything, and the trailing digits carry no information the rate can support.
+        #expect(ImportBarPresentation.remainingClause(seconds: 221) == "4 minutes")
+        #expect(ImportBarPresentation.remainingClause(seconds: 309) == "5 minutes")
+    }
+
+    /// Above an hour the estimate keeps the minutes, because "1 hour" alone would round away
+    /// most of the wait on a long card.
+    @Test func aLongRunKeepsItsMinutesAlongsideTheHours() {
+        let clause = ImportBarPresentation.remainingClause(seconds: 4800)
+        #expect(clause.contains("1 hour"))
+        #expect(clause.contains("20 minutes"))
+    }
 }

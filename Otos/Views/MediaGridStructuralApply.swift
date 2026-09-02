@@ -46,6 +46,7 @@ extension MediaGridViewController {
         let snapshot = mediaSnapshot(for: grid)
         let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
 
+        let scrollAnchor = captureScrollAnchor(resetScroll: resetScroll)
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
         logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
         let stallMonitor = stallMonitor
@@ -89,6 +90,7 @@ extension MediaGridViewController {
             snapshot,
             summary: summary,
             animationSuppressed: animationSuppressed,
+            scrollAnchor: scrollAnchor,
             completion: completion
         )
     }
@@ -111,6 +113,102 @@ extension MediaGridViewController {
         )
     }
 
+    /// Where the viewport sat before a structural apply, as an item plus the item's
+    /// offset from the viewport's top edge — not a raw scroll position, which means
+    /// nothing once the content above it changes length.
+    struct ScrollAnchor {
+        let id: MediaAssetID
+        let offsetFromViewportTop: CGFloat
+    }
+
+    /// Below this the grid counts as being at the top. One point, not a row height: the
+    /// question is only whether the user parked at the top or moved away from it, and
+    /// scroll elasticity can leave a sub-point residue at rest.
+    static let scrollAnchorTopThreshold: CGFloat = 1
+
+    /// Content inserted above the viewport displaces what the user is reading.
+    ///
+    /// `NSScrollView` holds the scroll *offset* fixed, so items inserted above slide the
+    /// content down under a stationary window and the user drifts backwards through the
+    /// grid. The default order is `best_capture_unix DESC` and a card copies oldest-first,
+    /// so during an import every newly published asset is newer than everything already in
+    /// the batch and lands at index 0 — above the viewport, every time. Measured on a
+    /// 999-item card: 273 applies inserting 2–10 items each, one about every 1.1 s for the
+    /// whole five minutes.
+    ///
+    /// Anchoring is skipped at the top of the grid, and that exception is the point: it is
+    /// the one place where letting arrivals push the content down reports that something is
+    /// happening, and the one place where nothing the user was looking at gets displaced.
+    /// It is also skipped for a deliberate `resetScroll`, and for the strip, whose position
+    /// is already owned by `scrollToFocusTarget`.
+    func captureScrollAnchor(resetScroll: Bool) -> ScrollAnchor? {
+        guard !resetScroll, !presentation.isStrip else {
+            return nil
+        }
+        let viewport = scrollView.documentVisibleRect
+        guard viewport.minY > Self.scrollAnchorTopThreshold,
+              let layout = collectionView.collectionViewLayout
+        else {
+            return nil
+        }
+        // Ask the *layout* what occupies the viewport, not the collection view which cells
+        // it has realized. `indexPathsForVisibleItems()` reports realized cells, which is a
+        // rendering fact rather than a geometric one: it answered "index 0" for a grid
+        // scrolled 600 points down, because nothing had been realized yet. Anchoring on
+        // that pins the wrong item — and pins it silently, since index 0 is a plausible
+        // answer. The layout's own attributes are a pure function of geometry.
+        _ = layout.collectionViewContentSize
+        let topmost = layout.layoutAttributesForElements(in: viewport)
+            .filter { $0.representedElementCategory == .item }
+            .min { lhs, rhs in
+                lhs.frame.minY == rhs.frame.minY
+                    ? lhs.frame.minX < rhs.frame.minX
+                    : lhs.frame.minY < rhs.frame.minY
+            }
+        guard let topmost,
+              let indexPath = topmost.indexPath,
+              let id = dataSource.itemIdentifier(for: indexPath)
+        else {
+            return nil
+        }
+        return ScrollAnchor(id: id, offsetFromViewportTop: topmost.frame.minY - viewport.minY)
+    }
+
+    /// Puts the anchored item back where it was on screen.
+    ///
+    /// Called immediately after the apply rather than from its completion: an animated
+    /// apply updates the layout synchronously and only *animates* items to the new frames,
+    /// so correcting the offset in the same run-loop turn cancels the displacement before
+    /// it is ever drawn. Correcting it from the completion would instead show the slide and
+    /// then snap it back, which is the same defect with an extra step.
+    ///
+    /// A vanished anchor (its item removed by this very apply) leaves the scroll alone
+    /// rather than guessing at a replacement.
+    func restoreScrollAnchor(_ anchor: ScrollAnchor?) {
+        guard let anchor, let layout = collectionView.collectionViewLayout else {
+            return
+        }
+        // The layout's own content size, not the document view's bounds. The document view
+        // is resized to content in a later layout pass, so its height here can still answer
+        // with the clip's height — which clamps every restore to the top, i.e. the exact
+        // displacement this exists to prevent, wearing a different hat. Asking the layout
+        // also settles it, so the item frame read next is the post-apply one.
+        let contentHeight = layout.collectionViewContentSize.height
+        guard let indexPath = dataSource.indexPath(for: anchor.id),
+              let frame = layout.layoutAttributesForItem(at: indexPath)?.frame
+        else {
+            return
+        }
+        let clip = scrollView.contentView
+        let maxY = max(0, contentHeight - clip.bounds.height)
+        let targetY = min(max(frame.minY - anchor.offsetFromViewportTop, 0), maxY)
+        guard abs(targetY - clip.bounds.origin.y) > 0.5 else {
+            return
+        }
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: targetY))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
     /// Animated branch (`animatingDifferences: true`): small insert/remove and
     /// same-descriptor reorder-only applies (enrichment trickle). Tuned duration/
     /// timing via an explicit `NSAnimationContext` group. Moves surviving items
@@ -127,10 +225,12 @@ extension MediaGridViewController {
         _ snapshot: NSDiffableDataSourceSnapshot<Section, MediaAssetID>,
         summary: MediaGridStructuralApplyPolicy,
         animationSuppressed: Bool,
+        scrollAnchor: ScrollAnchor?,
         completion: @escaping () -> Void
     ) {
         guard summary.animatingDifferences else {
             dataSource.apply(snapshot, animatingDifferences: false, completion: completion)
+            restoreScrollAnchor(scrollAnchor)
             return
         }
         NSAnimationContext.beginGrouping()
@@ -139,6 +239,7 @@ extension MediaGridViewController {
             : MediaGridAnimation.applyDuration
         NSAnimationContext.current.timingFunction = MediaGridAnimation.applyTimingFunction
         dataSource.apply(snapshot, animatingDifferences: true, completion: completion)
+        restoreScrollAnchor(scrollAnchor)
         NSAnimationContext.endGrouping()
     }
 

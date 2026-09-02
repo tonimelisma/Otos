@@ -391,7 +391,25 @@ nonisolated enum ImportBarPresentation {
         let remainingBytes = Double(progress.totalBytes - progress.completedBytes)
         let remainingSeconds = Int((remainingBytes / rate / 1000).rounded())
         guard remainingSeconds > 0 else { return nil }
-        return "about \(remainingSeconds) \(remainingSeconds == 1 ? "second" : "seconds") left"
+        return "about \(remainingClause(seconds: remainingSeconds)) left"
+    }
+
+    /// Precision degrades with magnitude, so the estimate never states more than it knows
+    /// (DES-032): seconds below a minute, whole minutes below an hour, hours and minutes
+    /// above. A 38 GB card opened at `about 221 seconds left` before this — a figure the
+    /// reader has to convert, and one whose trailing digits re-render every second while
+    /// carrying no information a rate estimate can support.
+    static func remainingClause(seconds: Int) -> String {
+        let allowed: Set<Duration.UnitsFormatStyle.Unit> = if seconds < 60 {
+            [.seconds]
+        } else if seconds < 3600 {
+            [.minutes]
+        } else {
+            [.hours, .minutes]
+        }
+        return Duration.seconds(seconds).formatted(
+            .units(allowed: allowed, width: .wide, maximumUnitCount: 2)
+        )
     }
 
     // MARK: - F · Done
