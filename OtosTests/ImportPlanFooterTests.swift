@@ -22,7 +22,6 @@ struct ImportPlanFooterRenderedPrimaryTests {
             middleZone: .hidden,
             primaryAction: primaryAction,
             primaryEnabled: primaryEnabled,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }
@@ -32,7 +31,6 @@ struct ImportPlanFooterRenderedPrimaryTests {
         .importItems(count: 3),
         .ejectCard,
         .eraseItems(count: 3),
-        .showTheseItems,
         .cancel,
         .tryAgain,
     ]
@@ -59,7 +57,7 @@ struct ImportPlanFooterRenderedPrimaryTests {
         #expect(title(.ejectCard) == "Eject Card")
         #expect(title(.eraseItems(count: 1)) == "Erase 1 Item")
         #expect(title(.eraseItems(count: 3)) == "Erase 3 Items")
-        #expect(title(.showTheseItems) == "Show These Items")
+        #expect(title(.none).isEmpty)
         #expect(title(.cancel) == "Cancel")
         #expect(title(.tryAgain) == "Try Again")
     }
@@ -80,5 +78,15 @@ struct ImportPlanFooterRenderedPrimaryTests {
         }
         let cancel = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: .cancel, primaryEnabled: true))
         #expect(!cancel.isDefault)
+    }
+
+    /// `.none` renders no button at all, so it has no title and nothing for
+    /// Return to fire — the act zone is empty (DES-053's "subject no longer
+    /// exists" exception, `import-bar.md` state F).
+    @Test func theEmptyActionRendersNoTitleAndTakesNoReturnKey() {
+        let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: .none, primaryEnabled: true))
+        #expect(rendered.title.isEmpty)
+        #expect(!rendered.isDefault)
+        #expect(!rendered.isDestructive)
     }
 }

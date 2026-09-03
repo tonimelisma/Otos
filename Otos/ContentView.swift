@@ -68,9 +68,6 @@ struct ContentView: View {
                         retryPlanning: {
                             viewModel.retryImportPlanning(for: presentation.sourcePath)
                         },
-                        showTheseItems: presentation.batchID.map { batchID in
-                            { viewModel.selectSidebar(.importBatch(batchID)) }
-                        },
                         revealAttentionItems: { ids in
                             viewModel.selectAssets(ids)
                         },

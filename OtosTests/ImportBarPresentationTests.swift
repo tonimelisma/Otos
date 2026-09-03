@@ -116,7 +116,6 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryLine == "Card erased · 4 items deleted")
         #expect(drawn.primaryBadge == .checkmark)
         #expect(drawn.primaryAction == .ejectCard)
-        #expect(drawn.showsSecondaryShowItemsButton == false)
     }
 
     @Test func preparingWordingIsCameraForDeviceMTPAndCardForRemovableVolume() {
@@ -426,7 +425,6 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryBadge == .checkmark)
         #expect(drawn.secondaryLine == .plain("42 copied just now · 181 items in Summer Photos"))
         #expect(drawn.primaryAction == .ejectCard)
-        #expect(drawn.showsSecondaryShowItemsButton)
         #expect(drawn.eraseConfirmationProvenClean)
     }
 
@@ -464,8 +462,7 @@ struct ImportBarPresentationTests {
             itemIDs: [failedID, foreignID]
         ))
         #expect(drawn.middleZone == .hidden)
-        #expect(drawn.primaryAction == .showTheseItems)
-        #expect(drawn.showsSecondaryShowItemsButton == false)
+        #expect(drawn.primaryAction == .none)
         #expect(drawn.eraseConfirmationProvenClean == false)
     }
 
@@ -483,7 +480,7 @@ struct ImportBarPresentationTests {
         ))
         #expect(drawn.primaryLine == "0 of 1 item copied")
         #expect(drawn.primaryBadge == .attention)
-        #expect(drawn.primaryAction == .showTheseItems)
+        #expect(drawn.primaryAction == .none)
     }
 
     @Test func doneNotFullyCleanWithNoIncompleteItemsFallsBackWithoutReveal() {
@@ -510,8 +507,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryBadge == .checkmark)
         #expect(drawn.secondaryLine == .plain("In Summer Photos · card ejected — safe to remove"))
         #expect(drawn.middleZone == .hidden)
-        #expect(drawn.primaryAction == .showTheseItems)
-        #expect(drawn.showsSecondaryShowItemsButton == false)
+        #expect(drawn.primaryAction == .none)
     }
 
     @Test func doneKeepsShowingAfterRebuildViaCopiedJustNow() {

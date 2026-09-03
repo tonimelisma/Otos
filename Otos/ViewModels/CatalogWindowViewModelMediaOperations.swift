@@ -123,6 +123,16 @@ extension CatalogWindowViewModel {
             })
             cancellingImportSources.formIntersection(stillExecuting)
         }
+        // Live sessions only (`cardStillExists`): a detached snapshot carries
+        // the *previous* attachment's batch under the same `sourcePath`, and
+        // would otherwise resurrect it over the fresh session's honest `nil`.
+        // Assigning the optional straight through is what makes this
+        // self-clearing — re-inserting a card starts a session with no batch,
+        // which removes the key, so ejecting it again without importing falls
+        // back normally instead of following a stale batch.
+        for presentation in presentations where presentation.cardStillExists {
+            lastBatchBySourcePath[presentation.sourcePath] = presentation.batchID
+        }
         followNewBatchesOnce(presentations)
         scheduleAutoDismiss(for: presentations)
         Task {

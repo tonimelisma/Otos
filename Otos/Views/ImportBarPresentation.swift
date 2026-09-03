@@ -42,13 +42,18 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
         case hidden
     }
 
+    /// The bar's act. `.none` is the DES-053 exception applied to the act
+    /// zone: a state that has no act left renders an empty zone rather than a
+    /// button whose subject is gone or whose effect is already on screen. It is
+    /// reached only by state F, and only where the user is by construction
+    /// already looking at the items the bar is talking about.
     enum PrimaryAction: Equatable, Sendable {
+        case none
         case importPending
         case importQueued
         case importItems(count: Int)
         case ejectCard
         case eraseItems(count: Int)
-        case showTheseItems
         case cancel
         case tryAgain
     }
@@ -60,9 +65,6 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
     let middleZone: MiddleZone
     let primaryAction: PrimaryAction
     let primaryEnabled: Bool
-    /// F-attached only: `Show These Items` as a secondary text button beside the
-    /// primary `Eject Card`. F-gone promotes the same action to primary instead.
-    let showsSecondaryShowItemsButton: Bool
     /// Whether an `.eraseItems` confirmation may state its second sentence
     /// ("All of them are already in X") — true only when the current plan
     /// proves every item is already in the destination: no blocked entries
@@ -180,7 +182,6 @@ nonisolated enum ImportBarPresentation {
             middleZone: .progress(track: track, caption: nil),
             primaryAction: primaryAction,
             primaryEnabled: false,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }
@@ -203,7 +204,6 @@ nonisolated enum ImportBarPresentation {
             middleZone: .addLibraryButton,
             primaryAction: .importPending,
             primaryEnabled: false,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }
@@ -230,7 +230,6 @@ nonisolated enum ImportBarPresentation {
                     middleZone: .hidden,
                     primaryAction: .ejectCard,
                     primaryEnabled: true,
-                    showsSecondaryShowItemsButton: false,
                     eraseConfirmationProvenClean: false
                 )
             }
@@ -248,7 +247,6 @@ nonisolated enum ImportBarPresentation {
                 middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
                 primaryAction: action,
                 primaryEnabled: true,
-                showsSecondaryShowItemsButton: false,
                 eraseConfirmationProvenClean: true
             )
         }
@@ -261,7 +259,6 @@ nonisolated enum ImportBarPresentation {
             middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: .importItems(count: summary.copyCount),
             primaryEnabled: true,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }
@@ -286,7 +283,6 @@ nonisolated enum ImportBarPresentation {
             ),
             primaryAction: .importItems(count: summary.copyCount),
             primaryEnabled: true,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }
@@ -347,7 +343,6 @@ nonisolated enum ImportBarPresentation {
                 ),
                 primaryAction: .cancel,
                 primaryEnabled: false,
-                showsSecondaryShowItemsButton: false,
                 eraseConfirmationProvenClean: false
             )
         }
@@ -371,7 +366,6 @@ nonisolated enum ImportBarPresentation {
             ),
             primaryAction: .cancel,
             primaryEnabled: true,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }
@@ -439,7 +433,6 @@ nonisolated enum ImportBarPresentation {
                 middleZone: .hidden,
                 primaryAction: .ejectCard,
                 primaryEnabled: true,
-                showsSecondaryShowItemsButton: false,
                 eraseConfirmationProvenClean: false
             )
         }
@@ -489,7 +482,10 @@ nonisolated enum ImportBarPresentation {
         // F, incomplete (some items couldn't be copied): its own copy and
         // badge regardless of whether the card is still attached — neither
         // eject nor erase decides anything further here, just go look
-        // (`import-bar.md` state F, mockup "F incomplete").
+        // (`import-bar.md` state F, mockup "F incomplete"). The looking is the
+        // L3 `Show them` reveal, which selects the failed items in place; the
+        // act zone is empty because a second, whole-batch "show" would only
+        // navigate to what is already on screen.
         if !isFullyClean, !incompleteItems.isEmpty {
             return ImportBarDrawnState(
                 kind: .done,
@@ -501,12 +497,18 @@ nonisolated enum ImportBarPresentation {
                     itemIDs: incompleteItems
                 ),
                 middleZone: .hidden,
-                primaryAction: .showTheseItems,
+                primaryAction: .none,
                 primaryEnabled: true,
-                showsSecondaryShowItemsButton: false,
                 eraseConfirmationProvenClean: false
             )
         }
+        // F, card gone. Both variants below have an empty act zone: eject and
+        // erase address a card that no longer exists (DES-053's "subject no
+        // longer exists" exception, the same one that hides the choices zone
+        // here), and the batch the bar is reporting on is what the user is
+        // already standing on — the selection followed the work there at
+        // execution start, and follows it there on eject if they had walked
+        // back to the card's row (`import-bar.md` "Where the user is standing").
         guard presentation.cardStillExists else {
             if isFullyClean {
                 return ImportBarDrawnState(
@@ -515,25 +517,24 @@ nonisolated enum ImportBarPresentation {
                     primaryBadge: .checkmark,
                     secondaryLine: .plain("In \(destinationName) · card ejected — safe to remove"),
                     middleZone: .hidden,
-                    primaryAction: .showTheseItems,
+                    primaryAction: .none,
                     primaryEnabled: true,
-                    showsSecondaryShowItemsButton: false,
                     eraseConfirmationProvenClean: false
                 )
             }
             // Not fully clean, but nothing failed to copy — items are still
             // blocked from an earlier plan (state D) rather than incomplete
             // from this run. The card is already gone, so just report what
-            // landed; there is no reveal to offer without a copy failure.
+            // landed; there is no reveal to offer without a copy failure, and
+            // no act either — the card the act would have addressed is gone.
             return ImportBarDrawnState(
                 kind: .done,
                 primaryLine: "\(copiedCount) \(copiedCount == 1 ? "item" : "items") copied",
                 primaryBadge: .none,
                 secondaryLine: .plain("In \(destinationName) · card ejected — safe to remove"),
                 middleZone: .hidden,
-                primaryAction: .showTheseItems,
+                primaryAction: .none,
                 primaryEnabled: true,
-                showsSecondaryShowItemsButton: false,
                 eraseConfirmationProvenClean: false
             )
         }
@@ -554,7 +555,6 @@ nonisolated enum ImportBarPresentation {
                 middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
                 primaryAction: action,
                 primaryEnabled: true,
-                showsSecondaryShowItemsButton: true,
                 eraseConfirmationProvenClean: false
             )
         }
@@ -572,7 +572,6 @@ nonisolated enum ImportBarPresentation {
             middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: action,
             primaryEnabled: true,
-            showsSecondaryShowItemsButton: true,
             eraseConfirmationProvenClean: true
         )
     }
@@ -606,7 +605,6 @@ nonisolated enum ImportBarPresentation {
             middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: .tryAgain,
             primaryEnabled: true,
-            showsSecondaryShowItemsButton: false,
             eraseConfirmationProvenClean: false
         )
     }

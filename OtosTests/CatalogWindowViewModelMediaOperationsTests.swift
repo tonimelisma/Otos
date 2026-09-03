@@ -11,6 +11,7 @@ import Testing
 struct CatalogWindowViewModelMediaOperationsTests {
     private static let cardPath = LibraryRootPath(rawValue: "/Volumes/CARD")
     private static let otherPath = LibraryRootPath(rawValue: "/Volumes/OTHER")
+    private static let libraryPath = LibraryRootPath(rawValue: "/Users/example/Pictures")
     private static let batchID = ImportBatchID(unixMilliseconds: 1_704_067_200_000)
 
     private static func presentation(
@@ -227,15 +228,129 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation == nil)
     }
 
+    // MARK: - Following the items when the card's own row disappears
+
+    /// `import-bar.md` "Where the user is standing": ejecting after an import
+    /// removes the row the user is standing on, and the forced re-resolution
+    /// lands on the batch holding the items that source just produced rather
+    /// than on `defaultSelection`'s unrelated answer. This is what makes the
+    /// card-gone Done bar honest without a `Show These Items` button.
+    @Test func ejectingTheSelectedCardFollowsItsImportBatch() {
+        let model = makeModel()
+        // The user walked back to the card's own row after the import.
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.selectSidebar(.library(Self.cardPath))
+
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.cardPath),
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 42)],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)],
+            removableSources: []
+        ))
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+    }
+
+    /// The batch ID is read from the ViewModel's own memory of that source's
+    /// run, not from `importPresentations`, so a detach frame that clears the
+    /// coordinator's presentations before the catalog publish arrives cannot
+    /// change where the user lands.
+    @Test func ejectFollowsTheBatchEvenWhenPresentationsAreAlreadyGone() {
+        let model = makeModel()
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([])
+
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.cardPath),
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 42)],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)]
+        ))
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+    }
+
+    /// Nothing was imported from this card, so there is no batch to follow and
+    /// the ordinary fallback stands.
+    @Test func ejectingACardThatImportedNothingFallsBackNormally() {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.libraryPath),
+            importBatches: [],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)]
+        ))
+        #expect(model.sidebarSelection == .library(Self.libraryPath))
+    }
+
+    /// Adversarial: the same card comes back, and this time nothing is
+    /// imported from it. The remembered batch belongs to the *previous*
+    /// attachment, so ejecting again must fall back normally rather than drag
+    /// the user to a batch this attachment did not produce.
+    @Test func aReattachedCardThatImportsNothingDoesNotFollowThePreviousBatch() {
+        let model = makeModel()
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        // Ejected: the live session is gone and only the detached snapshot,
+        // which still carries that batch under the same source path, remains.
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID, cardStillExists: false)])
+        // Re-inserted: a fresh session with no batch of its own.
+        model.applyImportPresentations([
+            Self.presentation(batchID: nil, state: .inventory),
+            Self.presentation(batchID: Self.batchID, cardStillExists: false),
+        ])
+        model.selectSidebar(.library(Self.cardPath))
+
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.libraryPath),
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 42)],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)]
+        ))
+        #expect(model.sidebarSelection == .library(Self.libraryPath))
+    }
+
+    /// The card is still attached, so nothing is forced: the user stays where
+    /// they chose to stand (rule 2, "never move them twice").
+    @Test func theStillAttachedCardRowIsNeverPulledToItsBatch() {
+        let model = makeModel()
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.selectSidebar(.library(Self.cardPath))
+
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.cardPath),
+            importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 42)],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)],
+            removableSources: [Self.card(Self.cardPath)]
+        ))
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+    }
+
+    private static func card(_ path: LibraryRootPath) -> CatalogLibraryState {
+        CatalogLibraryState(
+            root: LibraryRoot(path: path, kind: .removableVolume),
+            availability: .available,
+            activity: .idle
+        )
+    }
+
+    private static func library(_ path: LibraryRootPath) -> CatalogLibraryState {
+        CatalogLibraryState(root: LibraryRoot(path: path), availability: .available, activity: .idle)
+    }
+
     private static func state(
         resolvedSidebarSelection: SidebarSelection,
         importBatches: [ImportBatchSummary],
-        queryGeneration: UInt64
+        queryGeneration: UInt64,
+        libraries: [CatalogLibraryState] = [],
+        removableSources: [CatalogLibraryState] = []
     ) -> CatalogWindowState {
         CatalogWindowState(
             title: "Test",
-            libraries: [],
-            removableSources: [],
+            libraries: libraries,
+            removableSources: removableSources,
             importBatches: importBatches,
             mediaGrid: .empty,
             filterOptions: .empty,

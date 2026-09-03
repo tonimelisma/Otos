@@ -3,7 +3,8 @@ import SwiftUI
 /// Bottom import status surface for the selected removable source (ARC-047,
 /// `docs/design/import-bar.md`). Three fixed zones, left to right: *what* (L1
 /// over L3), *choices* (destination pop-up, eject/erase checkboxes), *the act*
-/// (one prominent button). The view is passive: `ImportBarPresentation.map`
+/// (at most one prominent button — empty in the Done states that have no act
+/// left, DES-052/DES-053). The view is passive: `ImportBarPresentation.map`
 /// computes every string and the middle zone's shape; this file renders that
 /// value and calls intents (`AGENTS.md` → Architecture Standards). One fixed
 /// height across every state (DES-018, DES-053) — a state with nothing to show
@@ -19,7 +20,6 @@ struct ImportPlanFooter: View {
     let cancelImport: () -> Void
     let ejectCard: () -> Void
     let retryPlanning: (() -> Void)?
-    let showTheseItems: (() -> Void)?
     let revealAttentionItems: (([MediaAssetID]) -> Void)?
     let sessionPreferences: ImportPreferences?
     let setSessionPreferences: ((ImportPreferences) -> Void)?
@@ -64,6 +64,8 @@ struct ImportPlanFooter: View {
     /// isolation (a `View`'s default) — this is pure computation with no UI
     /// state, and a test needs to call it off the main actor.
     nonisolated struct RenderedPrimary: Equatable {
+        /// Empty exactly when `drawn.primaryAction` is `.none` — the state has
+        /// no act, and the act zone renders nothing at all.
         let title: String
         let isEnabled: Bool
         let isDefault: Bool
@@ -75,6 +77,9 @@ struct ImportPlanFooter: View {
         var isDefault = true
         var isDestructive = false
         switch drawn.primaryAction {
+        case .none:
+            title = ""
+            isDefault = false
         case .importPending:
             title = "Import"
         case .importQueued:
@@ -86,8 +91,6 @@ struct ImportPlanFooter: View {
         case let .eraseItems(count):
             title = "Erase \(count) \(count == 1 ? "Item" : "Items")"
             isDestructive = true
-        case .showTheseItems:
-            title = "Show These Items"
         case .cancel:
             title = "Cancel"
             isDefault = false
@@ -320,28 +323,27 @@ struct ImportPlanFooter: View {
 
     // MARK: - The act
 
+    /// One owner for every action's enabled state: `renderedPrimary.isEnabled`
+    /// is applied here, not per-case — a case that forgets `.disabled` used to
+    /// render a live button (the cancelling state, `primaryEnabled: false`).
+    /// The zone holds its width whether or not it draws anything, so the states
+    /// with no act (`.none`) leave the other two zones exactly where they were.
     private var actZone: some View {
-        HStack(spacing: 8) {
-            if drawn.showsSecondaryShowItemsButton {
-                Button("Show These Items") {
-                    showTheseItems?()
-                }
-                .buttonStyle(.borderless)
-            }
-            // One owner for every action's enabled state:
-            // `renderedPrimary.isEnabled` is applied here, not per-case — a
-            // case that forgets `.disabled` used to render a live button
-            // (the cancelling state, `primaryEnabled: false`).
-            primaryButton
-                .disabled(!renderedPrimary.isEnabled)
-        }
-        .frame(minWidth: 140, alignment: .trailing)
+        primaryButton
+            .disabled(!renderedPrimary.isEnabled)
+            .frame(minWidth: 140, alignment: .trailing)
     }
 
     @ViewBuilder
     private var primaryButton: some View {
         let rendered = renderedPrimary
         switch drawn.primaryAction {
+        case .none:
+            // Nothing to offer: no card left to eject or erase, and the batch a
+            // "show" would navigate to is already selected (DES-053 exception,
+            // `import-bar.md` "There is no `Show These Items` button"). The act
+            // zone holds its width regardless, so no other zone moves.
+            EmptyView()
         case .importPending, .importQueued:
             Text(rendered.title)
                 .font(.body.weight(.semibold))
@@ -375,10 +377,6 @@ struct ImportPlanFooter: View {
                         Text("\(count) \(count == 1 ? "item" : "items") will be deleted from the card.")
                     }
                 }
-        case .showTheseItems:
-            styledPrimary(Button(rendered.title) {
-                showTheseItems?()
-            })
         case .cancel:
             styledPrimary(Button(rendered.title, action: cancelImport), hint: "Stops the current import")
         case .tryAgain:

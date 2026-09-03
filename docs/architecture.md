@@ -116,6 +116,10 @@ everything expensive happens on an actor off the main thread.
   collection-view layout; it coalesces deferred work and performs the one next-turn retry.
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
+  One case needs media-operation knowledge the pure policy does not have, so
+  `CatalogWindowViewModel` owns it: when the selected removable row stops existing
+  and that source produced an import batch, the selection resolves to that batch
+  instead of the policy default (`batchToFollowAfterSourceRemoved`).
 - **Materialization** has one path: preview submits interactive demand and enrichment
   submits device/background demand to `MaterializationCoordinator`, which calls the
   one-URL `FileMaterialization` mechanism. The coordinator owns the bounded physical
