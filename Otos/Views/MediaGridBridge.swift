@@ -165,6 +165,10 @@ final class MediaGridViewController: NSViewController {
     var preheatGeneration = 0
     /// Scroll-bounds diagnostic window: tick/query/preheat counters flushed each second.
     private var scrollBoundsWindowStart = Date()
+    /// The asset the pointer is over, if any — the single owner of hover across
+    /// the whole grid. Kept as an *identity*, not an index path, so a structural
+    /// apply that renumbers rows cannot leave the highlight on the wrong tile.
+    private var hoveredAssetID: MediaAssetID?
     private var scrollBoundsTickCount = 0
     private var scrollFlushCount = 0
     private var scrollDetailQueryStarted = 0
@@ -350,6 +354,10 @@ final class MediaGridViewController: NSViewController {
 
     private func flushScrollDrivenWork() {
         scrollFlushCount += 1
+        // Tiles just moved under a possibly-stationary cursor, which produces no
+        // mouse event of its own; without this the control stays lit on every
+        // tile the pointer passed over.
+        collectionView.refreshHover()
         reportViewport()
         let visibleIDs = visibleAssetIDs()
         guard !visibleIDs.isEmpty else {
@@ -463,6 +471,18 @@ extension MediaGridViewController {
         collectionView.allowsEmptySelection = true
         collectionView.delegate = self
         collectionView.prefetchDataSource = self
+        // The one place the real pointer is read. A window that is not key, or an
+        // inactive app, means there is no pointer over this grid to speak of.
+        collectionView.pointerLocationInWindow = { [weak collectionView] in
+            guard let window = collectionView?.window, NSApp.isActive else {
+                return nil
+            }
+            return window.mouseLocationOutsideOfEventStream
+        }
+        collectionView.onHoverChanged = { [weak self] indexPath in
+            guard let self else { return }
+            setHoveredAssetID(indexPath.flatMap { dataSource.itemIdentifier(for: $0) })
+        }
         collectionView.onMouseSelection = { [weak self] hit, modifiers in
             self?.applyMouseSelection(hit: hit, modifiers: modifiers)
         }
@@ -897,10 +917,60 @@ extension MediaGridViewController {
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 
+    /// What is on screen right now.
+    ///
+    /// `indexPathsForVisibleItems()` reports the items AppKit has actually
+    /// *attached*, which is empty for the whole first runloop turn after an
+    /// animated diffable apply — so an apply into a grid at rest asked for detail
+    /// on nothing, and nothing re-asked until the next scroll tick. Measured on a
+    /// 74-item import: twelve consecutive applies logged
+    /// `visibleDetailRequestCount=0`, and the first `tileDetail` query in the run
+    /// landed 240 ms after the first scroll in 26 s — the grid held rows it had
+    /// never requested a thumbnail for.
+    ///
+    /// The layout resolves inserted items immediately, and is already the source
+    /// `preheatLookahead` reads, so it answers when the attached set cannot. The
+    /// fallback is used only when nothing is attached, so the steady state is
+    /// unchanged and this can only ever report more than before, never less.
     func visibleAssetIDs() -> [MediaAssetID] {
-        collectionView.indexPathsForVisibleItems()
+        let attached = collectionView.indexPathsForVisibleItems()
+        guard attached.isEmpty else {
+            return attached.sorted().compactMap { dataSource.itemIdentifier(for: $0) }
+        }
+        return layoutVisibleAssetIDs()
+    }
+
+    private func layoutVisibleAssetIDs() -> [MediaAssetID] {
+        let visibleRect = scrollView.contentView.bounds
+        guard visibleRect.width > 0, visibleRect.height > 0,
+              let attributes = collectionView.collectionViewLayout?
+              .layoutAttributesForElements(in: visibleRect),
+              !attributes.isEmpty
+        else {
+            return []
+        }
+        return attributes
+            .compactMap(\.indexPath)
             .sorted()
             .compactMap { dataSource.itemIdentifier(for: $0) }
+    }
+
+    /// Assigns hover to exactly one tile. Called on pointer moves, on every scroll
+    /// tick, and after a structural apply — the tile showing `hoveredAssetID` may
+    /// be a different view each time, because tiles are recycled.
+    private func setHoveredAssetID(_ id: MediaAssetID?) {
+        guard hoveredAssetID != id else {
+            return
+        }
+        hoveredAssetID = id
+        applyHoverToVisibleTiles()
+    }
+
+    func applyHoverToVisibleTiles() {
+        for case let item as MediaGridItem in collectionView.visibleItems() {
+            let id = collectionView.indexPath(for: item).flatMap { dataSource.itemIdentifier(for: $0) }
+            item.setChoiceControlVisible(id != nil && id == hoveredAssetID)
+        }
     }
 
     /// Whether a scroll flush would start a new visible detail query for `visibleIDs`.

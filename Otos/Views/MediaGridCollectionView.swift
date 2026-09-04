@@ -32,6 +32,81 @@ final class MediaGridCollectionView: NSCollectionView {
     var onMediaChoiceKey: ((MediaChoice) -> Void)?
     /// When true, ←/→ are forwarded to `onArrowKey` instead of native collection nav.
     var forwardsArrowKeys = false
+    /// The item under the cursor, or `nil` when the pointer is outside the grid.
+    /// Reported only on change. The controller owns what hover *means*; this view
+    /// owns only the geometry question, for the same reason it owns `mouseDown`.
+    var onHoverChanged: ((IndexPath?) -> Void)?
+
+    private var hoverTrackingArea: NSTrackingArea?
+    private var hoveredIndexPath: IndexPath?
+
+    /// One tracking area for the whole grid rather than one per tile. Scrolling
+    /// moves tiles under a stationary cursor without producing a single mouse
+    /// event, so per-tile enter/exit is structurally unable to stay correct;
+    /// `refreshHover()` is what closes that gap, and it needs a single owner of
+    /// the current hovered item to compare against.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        updateHover(forWindowLocation: event.locationInWindow)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        updateHover(forWindowLocation: event.locationInWindow)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        setHovered(nil)
+    }
+
+    /// Where the pointer is, in window coordinates, or `nil` when it is not over
+    /// this view at all. Injected rather than read inline so the one piece of
+    /// ambient global state this view depends on has an explicit owner — and so
+    /// a test can place the pointer instead of depending on where the developer
+    /// happened to leave the mouse.
+    var pointerLocationInWindow: () -> NSPoint? = { nil }
+
+    /// Recomputes hover with no mouse event to prompt it. The controller calls
+    /// this whenever tiles move under a possibly-stationary cursor — every
+    /// scroll tick, and after a structural apply — which is precisely when
+    /// AppKit reports nothing.
+    func refreshHover() {
+        guard let locationInWindow = pointerLocationInWindow(),
+              visibleRect.contains(convert(locationInWindow, from: nil))
+        else {
+            setHovered(nil)
+            return
+        }
+        updateHover(forWindowLocation: locationInWindow)
+    }
+
+    private func updateHover(forWindowLocation locationInWindow: NSPoint) {
+        setHovered(indexPathForItem(at: convert(locationInWindow, from: nil)))
+    }
+
+    private func setHovered(_ indexPath: IndexPath?) {
+        guard hoveredIndexPath != indexPath else {
+            return
+        }
+        hoveredIndexPath = indexPath
+        onHoverChanged?(indexPath)
+    }
 
     override func mouseDown(with event: NSEvent) {
         let pointInCollectionView = convert(event.locationInWindow, from: nil)

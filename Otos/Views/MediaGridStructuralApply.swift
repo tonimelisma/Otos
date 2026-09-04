@@ -343,6 +343,12 @@ extension MediaGridViewController {
         collectionView.layoutSubtreeIfNeeded()
         tileContents.pinVisible(Set(visibleAssetIDs()))
         let visibleDetailRequestCount = requestVisibleDetails(reason: reason)
+        // Rows moved under a possibly-stationary cursor and tiles were recycled,
+        // so the tile showing the hovered asset is not the one that had the
+        // control. Re-assert from the pointer's real position (`refreshHover`)
+        // and then repaint the assignment onto whichever tiles now hold it.
+        collectionView.refreshHover()
+        applyHoverToVisibleTiles()
         reportViewport()
         let preheatCount = switch preheatLookahead(reason: reason) {
         case let .started(count):

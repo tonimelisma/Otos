@@ -190,6 +190,43 @@ private final class StripHarness {
         _ = controller.mutationGate.endScrollHold()
     }
 
+    /// Places the pointer for hover recomputation; `nil` means "not over the grid".
+    func placePointer(_ locationInWindow: NSPoint?) {
+        controller.collectionView.pointerLocationInWindow = { locationInWindow }
+    }
+
+    /// Places the pointer over an item's centre and drives the real recompute, so
+    /// tests establish hover through the same path production uses rather than
+    /// poking the controller callback (which would leave the collection view's own
+    /// hovered-item state unset, and the next clear deduplicated away).
+    func hoverItem(_ item: Int) {
+        guard let attributes = controller.collectionView
+            .layoutAttributesForItem(at: IndexPath(item: item, section: 0))
+        else {
+            return
+        }
+        placePointer(controller.collectionView.convert(
+            NSPoint(x: attributes.frame.midX, y: attributes.frame.midY),
+            to: nil
+        ))
+        controller.collectionView.refreshHover()
+    }
+
+    func hoveredItemIndexes() -> [Int] {
+        controller.collectionView.visibleItems()
+            .compactMap { $0 as? MediaGridItem }
+            .filter(\.isChoiceControlVisible)
+            .compactMap { controller.collectionView.indexPath(for: $0)?.item }
+            .sorted()
+    }
+
+    func tilesShowingChoiceControl() -> Int {
+        controller.collectionView.visibleItems()
+            .compactMap { $0 as? MediaGridItem }
+            .filter(\.isChoiceControlVisible)
+            .count
+    }
+
     func seedSelection(_ id: MediaAssetID) {
         modelSelection = GridSelection.empty.plainClick(id)
         controller.selectionHandlers = MediaGridSelectionHandlers(
@@ -285,4 +322,100 @@ private func makeStripAssetID(path: String) -> MediaAssetID {
         libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
         relativePath: MediaRelativePath(rawValue: path)
     )
+}
+
+/// Two defects the 2026-09-02 import surfaced, both of the same shape: the grid
+/// only reacted to *scrolling*, so a grid at rest under a stationary cursor was
+/// left stale.
+///
+/// Serialized for the same reason as `MediaGridStripInputTests` — concurrent
+/// NSWindow hosts race AppKit teardown.
+@Suite(.serialized)
+@MainActor
+struct MediaGridAtRestTests {
+    /// The blank-import-grid bug, at its actual condition: the scroll view is
+    /// laid out and the layout knows the items, but AppKit has attached no item
+    /// views. `indexPathsForVisibleItems()` reports only attached items, so the
+    /// post-apply pass asked for detail on nothing — and nothing re-asked until
+    /// the next scroll tick. In the field that was twelve consecutive applies
+    /// logging `visibleDetailRequestCount=0`, with the first tile-detail query of
+    /// the whole import landing 240 ms after the first scroll in 26 s.
+    ///
+    /// `reloadData()` without a following layout pass is what makes that state
+    /// deterministic: it detaches every item view while the laid-out scroll view
+    /// keeps its bounds and the layout still answers for the visible rect.
+    /// Skipping layout entirely would *not* reproduce it — the scroll view would
+    /// have no bounds either, and reporting nothing visible would be correct.
+    @Test func aGridWithNoAttachedItemsStillKnowsWhatIsVisible() throws {
+        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+        #expect(!harness.controller.collectionView.indexPathsForVisibleItems().isEmpty)
+
+        harness.controller.collectionView.reloadData()
+
+        #expect(harness.controller.collectionView.indexPathsForVisibleItems().isEmpty)
+        #expect(!harness.controller.visibleAssetIDs().isEmpty)
+        #expect(harness.controller.requestVisibleDetails(reason: "test") > 0)
+    }
+
+    /// The hover-overlay leak. A tile that scrolls *under* a stationary cursor
+    /// gets `mouseEntered`, but the one scrolling away never gets `mouseExited`,
+    /// so with per-tile tracking areas every tile the pointer passed kept its
+    /// control lit. Hover now has one owner that recomputes on every scroll tick.
+    ///
+    /// The pointer is placed explicitly. Reading the real one made this depend on
+    /// where the mouse happened to be sitting, which is not a test. The scroll is
+    /// also deliberately small: a long scroll recycles the hovered tile and
+    /// `prepareForReuse` hides the control on its own, so it would pass whether
+    /// or not hover is ever recomputed.
+    @Test func scrollingClearsHoverOnATileThatStaysAttached() throws {
+        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+        harness.hoverItem(0)
+        harness.layout()
+        #expect(harness.hoveredItemIndexes() == [0])
+        let hovered = try #require(harness.controller.dataSource.indexPath(for: harness.ids[0]))
+
+        // The pointer leaves the grid while the tiles move under it — the exact
+        // shape of the leak, since neither produces a `mouseExited`.
+        harness.placePointer(nil)
+        harness.scrollClipHorizontally(by: 24)
+        harness.controller.flushScrollDrivenWorkNow()
+        harness.layout()
+
+        // Still on screen, so recycling is not what cleared it.
+        #expect(harness.controller.collectionView.indexPathsForVisibleItems().contains(hovered))
+        #expect(harness.tilesShowingChoiceControl() == 0)
+    }
+
+    /// The other half: a pointer that *is* over a tile after the scroll lights
+    /// exactly that tile, so the recompute is a real reassignment rather than a
+    /// blanket clear.
+    @Test func scrollingReassignsHoverToTheTileNowUnderThePointer() throws {
+        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+        harness.hoverItem(0)
+        harness.layout()
+        #expect(harness.hoveredItemIndexes() == [0])
+
+        harness.hoverItem(2)
+        harness.controller.flushScrollDrivenWorkNow()
+        harness.layout()
+
+        #expect(harness.hoveredItemIndexes() == [2])
+    }
+
+    /// The invariant the leak violated, stated directly: hover is a single
+    /// assignment, so no two tiles can ever show the control at once.
+    @Test func atMostOneTileEverShowsTheChoiceControl() throws {
+        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+
+        for item in 0 ..< 5 {
+            harness.hoverItem(item)
+            harness.layout()
+            #expect(harness.tilesShowingChoiceControl() <= 1)
+        }
+
+        harness.placePointer(nil)
+        harness.controller.collectionView.refreshHover()
+        harness.layout()
+        #expect(harness.tilesShowingChoiceControl() == 0)
+    }
 }

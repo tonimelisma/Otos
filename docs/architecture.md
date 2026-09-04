@@ -105,7 +105,16 @@ everything expensive happens on an actor off the main thread.
   stops a read from honoring one and forgetting the other.
 - **The grid** is the one AppKit boundary (`MediaGridBridgeView` +
   `MediaGrid*`), for cell reuse at tens of thousands of tiles. `MediaGridMutationGate`
-  is the single arbiter of structural applies and zoom swaps. Mouse selection is
+  is the single arbiter of structural applies and zoom swaps. Pointer hover has the
+  same single-owner shape as mouse selection: `MediaGridCollectionView` answers only
+  the geometry question (which item is under the cursor) through one grid-wide
+  tracking area, and the bridge owns what hover means, assigning the curation control
+  to at most one tile. Per-tile tracking areas cannot work here — scrolling moves
+  tiles under a stationary cursor without producing the matching `mouseExited` — so
+  the bridge recomputes on every scroll tick and after every structural apply.
+  "What is visible" likewise falls back to the layout when AppKit has attached no
+  items yet, so an apply into a grid at rest still requests tile detail. Mouse
+  selection is
   model-owned (`GridSelection` lives in `CatalogWindowViewModel`; the AppKit controller
   renders it and the subclass never calls `super.mouseDown`). AppKit surfaces never
   write selection truth; the model flows one way, ViewModel → renderer, and

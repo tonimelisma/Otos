@@ -40,6 +40,16 @@ final class MediaGridItem: NSCollectionViewItem {
         tileView?.prepareForReuse()
     }
 
+    /// Hover is owned by `MediaGridBridge`; the item only forwards it, the same
+    /// way it forwards selection.
+    func setChoiceControlVisible(_ visible: Bool) {
+        tileView?.setChoiceControlVisible(visible)
+    }
+
+    var isChoiceControlVisible: Bool {
+        tileView?.isChoiceControlVisible ?? false
+    }
+
     func render(content: TileContent?, change: TileContentChange) {
         guard let tileView else {
             return

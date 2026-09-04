@@ -52,7 +52,6 @@ final class MediaAssetTileView: NSView {
     private let placeholderIconView = NSImageView()
     private let choiceControl = NSVisualEffectView()
     private var choiceButtons: [MediaChoiceButton] = []
-    private var trackingArea: NSTrackingArea?
     var onMediaChoice: ((MediaChoice) -> Void)?
 
     /// Aspect-fit face size for the currently painted image; nil while placeholder.
@@ -148,29 +147,23 @@ final class MediaAssetTileView: NSView {
         })
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        if let trackingArea {
-            removeTrackingArea(trackingArea)
-        }
-        let area = NSTrackingArea(
-            rect: bounds,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self,
-            userInfo: nil
-        )
-        addTrackingArea(area)
-        trackingArea = area
+    /// Hover visibility is assigned by `MediaGridBridge`, the one owner of "which
+    /// tile is under the cursor" — the tile does not track the mouse itself.
+    ///
+    /// A per-tile `NSTrackingArea` cannot answer this correctly in a scrolling
+    /// collection view: AppKit delivers `mouseEntered` to a tile that scrolls
+    /// *under* a stationary cursor but no matching `mouseExited` to the one that
+    /// scrolls away, so every tile the pointer passed kept its control shown.
+    /// Enter/exit are mouse-movement events; scrolling moves the views instead,
+    /// and only an owner that recomputes on scroll can stay correct.
+    func setChoiceControlVisible(_ visible: Bool) {
+        choiceControl.isHidden = !visible
     }
 
-    override func mouseEntered(with event: NSEvent) {
-        super.mouseEntered(with: event)
-        choiceControl.isHidden = false
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        super.mouseExited(with: event)
-        choiceControl.isHidden = true
+    /// Observable hover state — the assertion point for "at most one tile shows
+    /// the control", which is the invariant the per-tile tracking areas broke.
+    var isChoiceControlVisible: Bool {
+        !choiceControl.isHidden
     }
 
     @objc private func choiceButtonClicked(_ sender: MediaChoiceButton) {
