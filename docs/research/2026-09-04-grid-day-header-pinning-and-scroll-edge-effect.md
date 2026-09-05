@@ -460,6 +460,63 @@ removed a label without asking why they looked unrelated. The invariant that sur
 both is the one the original design had by accident: **a day is one label, and it
 should look like one label wherever it is drawn.**
 
+## Follow-up (2026-09-05): alignment, motion, and how to differentiate the bar
+
+Shipping the one-label design surfaced two more things: the handoff between header and
+bar showed a visible slide, and neither label was distinguishable from the content
+behind it.
+
+### The slide was a geometry bug, not a transition
+
+Measured with a probe, viewport 900 pt wide, section insets 12 pt:
+
+```
+supplementariesFollowContentInsets = true    header = x=12  y=0  w=876
+supplementariesFollowContentInsets = false   header = x=0   y=0  w=900
+```
+
+The bar spans the viewport (x=0, w=900); the header followed the section's content
+insets. So the label moved 12 pt sideways at every handoff, and the cross-fade smeared
+that into a slide. Vertical already agreed — the section's 12 pt top inset lands
+*below* the header, between it and the first row, not above it. My guess had been that
+both axes were off; the probe corrected it.
+
+With `supplementariesFollowContentInsets = false` the two occupy the same rect, and the
+cross-fade goes away entirely: appearing and disappearing changes no pixel, so there is
+nothing for motion to explain (DES-070). The cross-fade only put both labels at partial
+alpha over each other, which is what read as a slide.
+
+### How to differentiate a floating label — the options
+
+| | Approach | macOS precedent | Keeps one label |
+| --- | --- | --- | --- |
+| A | Nothing; opaque, matching the surface | the shipped state | yes |
+| B | Hairline underneath while floating | `NSTitlebarSeparatorStyle.automatic` | yes |
+| C | Background value step (chrome band) | NSTableView column headers, Finder path bar | no |
+| D | Soft shadow underneath | `NSTitlebarSeparatorStyle.shadow` | yes |
+| E | Material / vibrancy | sidebars, popovers, Liquid Glass | partly |
+| F | The real scroll edge effect | WWDC25's recommendation | yes, but blocked |
+
+The discriminator is whether the option touches the label's **background** or only adds
+an **edge**. Changing the background makes the bar stop matching the in-flow header,
+which is the two-objects problem the one-label design exists to prevent. An edge leaves
+the label identical and adds only the boundary — and the boundary is not part of the
+label, it is the scroll edge.
+
+**B chosen.** It is the literal system convention: `NSTitlebarSeparatorStyle` has
+defaulted to `.automatic` since macOS 11, drawing a line beneath the titlebar while
+content is scrolled under it and hiding it at the top, and WWDC25 describes the macOS
+hard scroll-edge style the same way — "a more opaque backing to provide greater
+separation… ideal for pinned table headers". It reuses DES-023 and DES-084 with no new
+rule, and because the bar is shown only when content is scrolled under it, the line is
+contextual for free: at the top of the grid the header renders and no line is drawn,
+because nothing is underneath yet.
+
+C is what an earlier increment shipped and the owner rejected. E reintroduces the
+translucency that started this thread, and Apple's own Photos carries a live bug in that
+direction — its date indicator stops showing entirely under Reduce Transparency. F
+remains unreachable from `NavigationSplitView`.
+
 ## Appendix: reproducing the probe
 
 A single-file AppKit program, compiled with `xcrun swiftc`, is enough. The essentials:

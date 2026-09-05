@@ -103,7 +103,12 @@ A day is named twice — in flow at the head of its run, and by
 `MediaGridDayBarView` held at the grid's top edge. **Those are one label drawn
 twice, not two kinds of object**: `MediaGridDayLabel.swift` owns the single view both
 hosts draw, so neither can restyle it, and the label takes DES-022's `content` value
-because it is a section header rather than chrome. An earlier revision gave the bar
+because it is a section header rather than chrome. The two occupy the same rect —
+`supplementariesFollowContentInsets` is off, because following the section insets put
+the header at x=12 w=876 against the bar's x=0 w=900 and the label jumped 12 pt
+sideways at every handoff — so the handoff needs no animation at all. The bar alone
+draws a DES-023 hairline at its bottom edge, the contextual scroll edge macOS draws
+while content passes beneath a floating element (`NSTitlebarSeparatorStyle.automatic`). An earlier revision gave the bar
 the `bar` value and left the header bare; the two immediately read as unrelated things
 that happened to be adjacent, which is the defect this arrangement exists to prevent.
 

@@ -97,6 +97,13 @@ extension MediaGridViewController {
         let section = NSCollectionLayoutSection(group: group)
         section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
         if showsDayHeader {
+            // The header spans the section's full width rather than its inset content
+            // width, because the bar that carries the same label spans the viewport.
+            // Measured: following the insets puts the header at x=12 w=876 against the
+            // bar's x=0 w=900, so the label jumped 12 pt sideways at every handoff.
+            // Vertical already agrees — the section's top inset lands below the
+            // header, between it and the tiles.
+            section.supplementariesFollowContentInsets = false
             // DES-069: an in-flow header, self-sized to its SwiftUI content, that
             // scrolls with its own run. Deliberately **not** `pinToVisibleBounds` —
             // `MediaGridDayLabel.swift` records what pinning actually does and why

@@ -34,8 +34,17 @@ nonisolated struct MediaGridDayLabelPresentation: Equatable, Sendable {
 /// The surface is `content`, opaque. Opaque because the bar must cover tiles passing
 /// beneath rather than blend with them; `content` because this is not chrome — it is
 /// the section's header, held in place.
+///
+/// `showsScrollEdge` is the one thing the two hosts may differ on, and it is not part
+/// of the label: it is the boundary between a floating label and the content passing
+/// under it. macOS draws exactly this, contextually — `NSTitlebarSeparatorStyle` has
+/// defaulted to `.automatic` since macOS 11, showing a line beneath the titlebar while
+/// content is scrolled under it and hiding it at the top. The in-flow header has
+/// nothing passing beneath it and takes no edge; the bar does and takes a DES-023
+/// hairline.
 private struct MediaGridDayLabelContent: View {
     let presentation: MediaGridDayLabelPresentation
+    var showsScrollEdge = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -53,6 +62,12 @@ private struct MediaGridDayLabelContent: View {
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DesignPalette.content(for: colorScheme))
+        .overlay(alignment: .bottom) {
+            if showsScrollEdge {
+                DesignPalette.hairline(for: colorScheme)
+                    .frame(height: 1)
+            }
+        }
     }
 }
 
@@ -60,14 +75,18 @@ private struct MediaGridDayLabelContent: View {
 /// in-flow header and the top bar are this plus a host-specific role, so the two
 /// cannot drift apart.
 private final class MediaGridDayLabelHost: NSView {
-    private let hostingView = NSHostingView(
-        rootView: MediaGridDayLabelContent(
-            presentation: MediaGridDayLabelPresentation(dateText: "", countText: "")
-        )
-    )
+    private let showsScrollEdge: Bool
+    private let hostingView: NSHostingView<MediaGridDayLabelContent>
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(showsScrollEdge: Bool) {
+        self.showsScrollEdge = showsScrollEdge
+        hostingView = NSHostingView(
+            rootView: MediaGridDayLabelContent(
+                presentation: MediaGridDayLabelPresentation(dateText: "", countText: ""),
+                showsScrollEdge: showsScrollEdge
+            )
+        )
+        super.init(frame: .zero)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hostingView)
         NSLayoutConstraint.activate([
@@ -84,7 +103,10 @@ private final class MediaGridDayLabelHost: NSView {
     }
 
     func render(_ presentation: MediaGridDayLabelPresentation) {
-        hostingView.rootView = MediaGridDayLabelContent(presentation: presentation)
+        hostingView.rootView = MediaGridDayLabelContent(
+            presentation: presentation,
+            showsScrollEdge: showsScrollEdge
+        )
     }
 }
 
@@ -102,7 +124,7 @@ private final class MediaGridDayLabelHost: NSView {
 final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
     static let elementKind = "MediaGridDayHeader"
 
-    private let label = MediaGridDayLabelHost()
+    private let label = MediaGridDayLabelHost(showsScrollEdge: false)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -139,7 +161,7 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
 /// header is still fully visible below the top edge, that header is the rendering and
 /// the bar shows the day being left, or nothing at all at the very top of the grid.
 final class MediaGridDayBarView: NSView {
-    private let label = MediaGridDayLabelHost()
+    private let label = MediaGridDayLabelHost(showsScrollEdge: true)
     private var presentation: MediaGridDayLabelPresentation?
 
     override init(frame frameRect: NSRect) {
@@ -168,21 +190,19 @@ final class MediaGridDayBarView: NSView {
     }
 
     /// `nil` hides the bar — the grid has no day structure to name, which is every
-    /// sort but Date. Both the text swap and the fade are idempotent, so this can be
-    /// called on every coalesced scroll flush without churn.
+    /// sort but Date. Idempotent, so this can be called on every coalesced scroll
+    /// flush without churn.
+    ///
+    /// Deliberately unanimated. The bar and the header it hands off to occupy the same
+    /// rect and draw the same label, so appearing and disappearing changes no pixel a
+    /// transition could smooth; a cross-fade only put the two at partial alpha over
+    /// each other, which read as the label sliding. DES-070 governs motion that
+    /// explains a change of position or state — there is neither here.
     func render(_ next: MediaGridDayLabelPresentation?) {
         if let next, next != presentation {
             presentation = next
             label.render(next)
         }
-        let target: CGFloat = next == nil ? 0 : 1
-        guard abs(alphaValue - target) > 0.001 else {
-            return
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = MediaGridAnimation.dayBarFadeDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().alphaValue = target
-        }
+        alphaValue = next == nil ? 0 : 1
     }
 }
