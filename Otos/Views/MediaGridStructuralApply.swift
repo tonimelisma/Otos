@@ -258,10 +258,23 @@ extension MediaGridViewController {
             orderedIDs: grid.orderedAssetIDs,
             dayBuckets: grid.dayBuckets
         )
+        var daySections: [AppliedDaySection?] = []
+        daySections.reserveCapacity(runs.count)
         for run in runs {
             snapshot.appendSections([run.section])
             snapshot.appendItems(run.ids, toSection: run.section)
+            switch run.section {
+            case .ungrouped:
+                daySections.append(nil)
+            case let .day(date):
+                daySections.append(AppliedDaySection(date: date, itemCount: run.ids.count))
+            }
         }
+        // Recorded here, not in the apply's completion: `dataSource.apply` updates the
+        // layout synchronously and only *animates* items to their new frames (see
+        // `restoreScrollAnchor`), and nothing suspends between this line and that call,
+        // so no reader can observe this array and the layout disagreeing.
+        appliedDaySections = daySections
         return snapshot
     }
 
@@ -349,6 +362,7 @@ extension MediaGridViewController {
         // and then repaint the assignment onto whichever tiles now hold it.
         collectionView.refreshHover()
         applyHoverToVisibleTiles()
+        updateDayBar()
         reportViewport()
         let preheatCount = switch preheatLookahead(reason: reason) {
         case let .started(count):

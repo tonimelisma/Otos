@@ -53,6 +53,17 @@ nonisolated enum MediaGridAnimation {
 
     static let thumbnailFadeDuration: TimeInterval = 0.18
 
+    /// Day-bar appearance/disappearance (DES-069). DES-070's "content appearing"
+    /// duration, dropping to DES-075's cross-fade duration under Reduce Motion. The
+    /// bar only ever changes alpha, so it is already a cross-fade in both cases and
+    /// Reduce Motion shortens it rather than replacing it with a different animation.
+    static let dayBarAppearDuration: TimeInterval = 0.25
+    static let reduceMotionCrossFadeDuration: TimeInterval = 0.15
+
+    static var dayBarFadeDuration: TimeInterval {
+        prefersReducedMotion ? reduceMotionCrossFadeDuration : dayBarAppearDuration
+    }
+
     static let selectionRingInDuration: TimeInterval = 0.12
     static let selectionRingOutDuration: TimeInterval = 0.10
 

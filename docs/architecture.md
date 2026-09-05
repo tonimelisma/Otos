@@ -128,7 +128,10 @@ everything expensive happens on an actor off the main thread.
   write selection truth; the model flows one way, ViewModel → renderer, and
   `selectionIndexPaths` is render output. Paint truth lives in
   `TileContentStore` (sole decoded-image owner, ViewModel-owned and shared by grid, strip, and panes; visible IDs pinned; cost-bounded);
-  tiles never blank a painted same-asset thumbnail (ADR 0006). `GridPostLayoutWorkQueue`
+  tiles never blank a painted same-asset thumbnail (ADR 0006). Day headers scroll in
+  flow and are never pinned; `MediaGridDayBarView` is a controller-owned bar at the
+  grid's top edge, with `MediaGridDayBarPolicy` (pure) deciding which day it names and
+  whether it shows at all. `GridPostLayoutWorkQueue`
   owns keyed focus-scroll and visible-detail/preheat work that must wait for a real
   collection-view layout; it coalesces deferred work and performs the one next-turn retry.
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach

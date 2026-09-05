@@ -117,11 +117,12 @@ private extension MediaGridViewController {
 @MainActor
 private func makeAnchorController(itemCount: Int) -> MediaGridViewController {
     let controller = MediaGridViewController()
-    _ = controller.view
     // A real frame: the anchor is defined by where an item sits relative to the viewport,
-    // so a zero-sized scroll view would make every offset trivially equal.
-    controller.scrollView.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-    controller.scrollView.layoutSubtreeIfNeeded()
+    // so a zero-sized scroll view would make every offset trivially equal. Sized on the
+    // controller's root — the grid's root is a container holding the scroll view and the
+    // day bar, and the scroll view takes its size from that container's constraints.
+    controller.view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+    controller.view.layoutSubtreeIfNeeded()
 
     let ids = (0 ..< itemCount).map {
         MediaAssetID(

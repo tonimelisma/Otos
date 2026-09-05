@@ -68,6 +68,7 @@ Non-authoritative: they record what we learned, not current behavior.
 - [research/removable-volume-and-camera-sources.md](research/removable-volume-and-camera-sources.md)
 - [research/2026-08-19-zero-byte-media-handling.md](research/2026-08-19-zero-byte-media-handling.md)
 - [research/2026-08-19-source-file-disposition-prior-art.md](research/2026-08-19-source-file-disposition-prior-art.md)
+- [research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md](research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md)
 
 ## Plans and roadmap
 

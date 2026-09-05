@@ -88,7 +88,7 @@ documented way to drive a transition incrementally from a pinch gesture.
 Under Date sort the grid groups into day sections (DES-069, APP-030) via a
 `sectionProvider` closure on `NSCollectionViewCompositionalLayout` rather than a
 fixed `section:` layout — the closure looks up the diffable data source's current
-section identifier per index and attaches a pinned boundary header only for
+section identifier per index and attaches a boundary header only for
 `.day` sections, never `.ungrouped`. This avoids rebuilding the layout object
 whenever grouping toggles between sort orders: compositional layout already
 re-invokes the closure on every layout pass that follows a diffable apply, so it
@@ -98,11 +98,31 @@ plus a parallel `dayBuckets: [Date?]` (populated only under `.bestDate` sort, on
 `Calendar.startOfDay` per asset) on every structural apply
 (`MediaGridSectionGroupingPolicy`, pure and independent of AppKit); nothing diffs
 sections against the previous snapshot, so there is no separate section-level
-invalidation to go stale. The day header itself is the one `NSHostingView` in this
-otherwise pure-AppKit grid — justified by cardinality (one header per day, not one
-per tile), letting it reuse `DesignPalette`'s SwiftUI dynamic-appearance colors
-instead of new AppKit-native dynamic-color infrastructure built for a single
-low-cardinality view.
+invalidation to go stale. The day header and the day bar are the only
+`NSHostingView`s in this otherwise pure-AppKit grid — justified by cardinality (one
+header per day and one bar per grid, not one per tile), letting them reuse
+`DesignPalette`'s SwiftUI dynamic-appearance colors instead of new AppKit-native
+dynamic-color infrastructure built for two low-cardinality views.
+
+The header is deliberately **not** pinned. `pinToVisibleBounds` does not stick the
+current header: it moves every header of the section out of the collection view into
+`_NSScrollViewFloatingSubviewsContainerView`, where AppKit recomputes each frame from
+the main thread on every bounds change while the tiles move on the compositor, so the
+header visibly slides against its own run under main-thread load. It also installs an
+`NSScrollPocket` sized to the bar, whose `PocketBlur` portals the tiles passing
+beneath, and macOS 26+ offers no public way to decline it — `NSScrollEdgeEffectStyle`
+is settable only on titlebar and split-view-item accessory view controllers.
+Instead the controller owns `MediaGridDayBarView`, held at the grid's top edge by
+constraints that never change: a constant frame cannot separate from the content it
+labels, and app-owned colors honor DES-022/023/084 and DES-070/075. What the bar
+names — the day owning the viewport's top edge, the rule a pinned header implements
+implicitly — is the pure `MediaGridDayBarPolicy`, which is what makes DES-069
+testable without a live collection view. Keying it off the topmost visible *item*
+instead is the near-miss the tests pin down: up to 24 pt of section inset separates
+one day's last row from the next day's header, and a bar that hid while the top edge
+sat in that gap would blink out and back at every day boundary. Alternatives weighed, including keeping the pinned header and
+hardening it, are in
+`docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`.
 
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or
 Auto Layout trees. Each square collection cell is transparent; the visible tile

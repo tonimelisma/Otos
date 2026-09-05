@@ -100,7 +100,24 @@ extension MediaGridViewController {
         let section = NSCollectionLayoutSection(group: group)
         section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
         if showsDayHeader {
-            // DES-069: pinned header, self-sized to its SwiftUI content.
+            // DES-069: an in-flow header, self-sized to its SwiftUI content, that
+            // scrolls with its own run. Deliberately **not** `pinToVisibleBounds`.
+            //
+            // Pinning does not stick the current header; it moves *every* header of
+            // the section out of the collection view into the scroll view's
+            // floating-subviews container, where AppKit recomputes each frame from
+            // the main thread on every bounds change while the tiles move on the
+            // compositor. The two clocks visibly separate under main-thread load —
+            // the header slides against its own tiles. Pinning also installs an
+            // `NSScrollPocket` sized to the bar, whose `PocketBlur` is a live portal
+            // of the tiles passing beneath, and macOS 26+ exposes no public API to
+            // decline it: `NSScrollEdgeEffectStyle` is settable only on titlebar and
+            // split-view-item accessory view controllers.
+            //
+            // `MediaGridDayBarView` keeps a date on screen instead. Its frame is
+            // constant, so it has neither failure mode. Evidence and the rejected
+            // alternatives:
+            // `docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`.
             let headerSize = NSCollectionLayoutSize(
                 widthDimension: .fractionalWidth(1),
                 heightDimension: .estimated(32)
@@ -110,7 +127,6 @@ extension MediaGridViewController {
                 elementKind: MediaGridDayHeaderView.elementKind,
                 alignment: .top
             )
-            header.pinToVisibleBounds = true
             section.boundarySupplementaryItems = [header]
         }
         return section

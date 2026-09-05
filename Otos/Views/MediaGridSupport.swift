@@ -3,7 +3,7 @@
 // These value helpers back the AppKit collection bridge without belonging to the
 // bridge's view-controller lifecycle. Sticky paint truth lives in `TileContentStore`;
 // `MediaTileDetailReader` lives in Services because it queries the catalog; this file
-// keeps structural-apply and section-grouping policy. `MediaAssetTile*`
+// keeps structural-apply, section-grouping, and day-bar policy. `MediaAssetTile*`
 // types intentionally keep the per-asset prefix — they are not grid-level and are
 // not part of this rename.
 
@@ -101,5 +101,91 @@ nonisolated enum MediaGridSectionGroupingPolicy {
             runs.append((currentSection, currentRun))
         }
         return runs
+    }
+}
+
+/// DES-069 day-bar content and visibility, pure from the geometry at the top of the
+/// viewport.
+///
+/// The bar exists because the day headers are **not** pinned: `pinToVisibleBounds`
+/// moves every header of a section out of the collection view into the scroll view's
+/// floating-subviews container, where AppKit repositions it from the main thread on
+/// each bounds change while the tiles move on the compositor, and installs an
+/// `NSScrollPocket` whose live blur of the passing tiles has no public opt-out
+/// (`docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`).
+/// A controller-owned bar with a constant frame has neither problem.
+///
+/// The rule it implements is the one a pinned header implements implicitly: name the
+/// day that owns the viewport's top edge. Keying off the topmost visible *item*
+/// instead is the near-miss — between one day's last row and the next day's header
+/// lies up to 24 pt of section inset, and a bar that hid while the top edge sat in
+/// that gap would blink out and back at every single day boundary.
+nonisolated enum MediaGridDayBarPolicy {
+    /// One day section's user-facing facts.
+    struct Day: Equatable {
+        let date: Date?
+        let itemCount: Int
+
+        init(date: Date?, itemCount: Int) {
+            self.date = date
+            self.itemCount = itemCount
+        }
+    }
+
+    /// What the layout reports about the top of the viewport.
+    struct TopEdge: Equatable {
+        /// The day section holding the topmost visible item.
+        let day: Day
+        /// The top of that section's own header, or `nil` once the header has scrolled
+        /// above the viewport — the ordinary case inside a run of any length.
+        let headerMinY: CGFloat?
+        /// The day section immediately before it, where there is one.
+        let precedingDay: Day?
+
+        init(day: Day, headerMinY: CGFloat?, precedingDay: Day?) {
+            self.day = day
+            self.headerMinY = headerMinY
+            self.precedingDay = precedingDay
+        }
+    }
+
+    /// What the bar should render, or `nil` to hide it.
+    ///
+    /// `topEdge == nil` covers an empty grid and every `.ungrouped` case — under
+    /// `.name`/`.size` sort there is no day relationship to name, so no bar.
+    ///
+    /// A header that is missing, or clipped by the top edge, means its day owns the
+    /// top edge and the bar names it; the bar is opaque and sits exactly where that
+    /// header is, so it covers rather than duplicates it.
+    ///
+    /// A header lying wholly below the top edge means the edge is in the inset gap
+    /// above it, which still belongs to the preceding day — so the bar names *that*
+    /// day and its text changes exactly once per boundary. Only at the very start of
+    /// the grid is there no preceding day, and only there does the bar hide, leaving
+    /// the first day's own header to name it.
+    static func barPresentation(
+        topEdge: TopEdge?,
+        viewportMinY: CGFloat,
+        now: Date = .now,
+        calendar: Calendar = .current
+    ) -> MediaGridDayHeaderPresentation? {
+        guard let topEdge else {
+            return nil
+        }
+        guard let headerMinY = topEdge.headerMinY, headerMinY >= viewportMinY else {
+            return presentation(for: topEdge.day, now: now, calendar: calendar)
+        }
+        guard let preceding = topEdge.precedingDay else {
+            return nil
+        }
+        return presentation(for: preceding, now: now, calendar: calendar)
+    }
+
+    private static func presentation(
+        for day: Day,
+        now: Date,
+        calendar: Calendar
+    ) -> MediaGridDayHeaderPresentation {
+        .map(date: day.date, itemCount: day.itemCount, now: now, calendar: calendar)
     }
 }

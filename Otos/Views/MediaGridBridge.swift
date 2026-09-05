@@ -139,11 +139,32 @@ final class MediaGridViewController: NSViewController {
         case day(Date?)
     }
 
+    /// What one applied `.day` section contributes to a header or the day bar.
+    struct AppliedDaySection: Equatable {
+        let date: Date?
+        let itemCount: Int
+    }
+
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaGridItem")
     private static let dayHeaderIdentifier = NSUserInterfaceItemIdentifier("MediaGridDayHeader")
 
     let scrollView = NSScrollView()
     let collectionView = MediaGridCollectionView()
+    /// DES-069's always-visible date. Grid only; the strip has no day structure.
+    /// Held at the top edge of the grid by constraints that never change, so its
+    /// frame cannot fall behind the tiles the way a pinned supplementary's does
+    /// (`MediaGridDayBar.swift`).
+    let dayBar = MediaGridDayBarView()
+    /// Per-section day facts for the snapshot currently applied, in section order;
+    /// `nil` marks an `.ungrouped` section, which has no header and no bar.
+    ///
+    /// Written by `mediaSnapshot(for:)` in the same synchronous region that applies
+    /// the snapshot, so the layout and this array are never separately observable.
+    /// It exists because the two readers — the day bar on every coalesced scroll
+    /// flush, and header dequeue during scroll — would otherwise each copy the whole
+    /// applied snapshot through `dataSource.snapshot()` to learn one section's date
+    /// and count.
+    var appliedDaySections: [AppliedDaySection?] = []
     /// The single arbiter for both exclusive collection-view mutations (structural applies
     /// and zoom swaps) and the sole owner of column-count truth (`installedColumnCount`,
     /// `requestedColumnCount`). The controller holds no separate column-count state.
@@ -296,6 +317,8 @@ final class MediaGridViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
+        // A resize or a zoom-swap moves every header without producing a scroll tick.
+        updateDayBar()
         // NSCollectionView has no post-layout callback; the queue owns the one-turn
         // deferral and coalesces focus/detail work by kind.
         postLayoutWorkQueue.runDeferredWork()
@@ -358,6 +381,7 @@ final class MediaGridViewController: NSViewController {
         // mouse event of its own; without this the control stays lit on every
         // tile the pointer passed over.
         collectionView.refreshHover()
+        updateDayBar()
         reportViewport()
         let visibleIDs = visibleAssetIDs()
         guard !visibleIDs.isEmpty else {
@@ -544,14 +568,12 @@ extension MediaGridViewController {
         else {
             return nil
         }
-        let snapshot = dataSource.snapshot()
-        guard indexPath.section < snapshot.sectionIdentifiers.count,
-              case let .day(date) = snapshot.sectionIdentifiers[indexPath.section]
+        guard indexPath.section < appliedDaySections.count,
+              let day = appliedDaySections[indexPath.section]
         else {
             return header
         }
-        let itemCount = snapshot.numberOfItems(inSection: snapshot.sectionIdentifiers[indexPath.section])
-        header.configure(.map(date: date, itemCount: itemCount))
+        header.configure(.map(date: day.date, itemCount: day.itemCount))
         return header
     }
 
@@ -594,7 +616,29 @@ extension MediaGridViewController {
             scrollView.hasHorizontalScroller = false
         }
         scrollView.autohidesScrollers = true
-        view = scrollView
+        guard !presentation.isStrip else {
+            view = scrollView
+            return
+        }
+        // The grid's root is a plain container holding the scroll view edge to edge
+        // with the day bar over its top edge, rather than the scroll view itself with
+        // a subview added to it. `NSScrollView.tile()` owns the geometry of its own
+        // subviews; a container keeps the bar's constraints out of that negotiation,
+        // which is what makes its frame constant.
+        let container = NSView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(scrollView)
+        container.addSubview(dayBar)
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            dayBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            dayBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            dayBar.topAnchor.constraint(equalTo: container.topAnchor),
+        ])
+        view = container
     }
 
     /// Applies a grid/strip mode change when the representable updates. Grid density is
