@@ -57,8 +57,13 @@ struct CompareView: View {
         mediaChoice: MediaChoice?,
         isDownloading: Bool
     ) -> some View {
-        MediaChoiceHoverRegion(
+        // Resolved once: the hover region needs the media's size to place the
+        // curation group on the picture rather than in the pane's letterbox
+        // (DES-066), and the content needs the same decision to render.
+        let display = PanePresentation.display(paneID: id, preview: preview)
+        return MediaChoiceHoverRegion(
             currentChoice: mediaChoice,
+            mediaPixelSize: display.mediaPixelSize,
             onChoice: { choice in
                 onPaneActivated(position)
                 onPaneMediaChoice(position, choice)
@@ -66,7 +71,7 @@ struct CompareView: View {
         ) {
             ZStack {
                 Color.black.opacity(0.92)
-                switch PanePresentation.display(paneID: id, preview: preview) {
+                switch display {
                 case let .full(image):
                     Image(decorative: image, scale: 1)
                         .resizable()

@@ -1,12 +1,21 @@
 import SwiftUI
 
 /// Shared content-choice control for the large Loupe and Compare surfaces. The
-/// hover region owns visibility; the row itself owns only the two toggle acts,
-/// resolving each through `MediaChoiceToggle` so pressing the active one clears
-/// to Not Rated. The region is full-pane so the controls appear without
-/// reserving resting space or moving with an aspect-fit image.
+/// hover region owns visibility and placement; the row itself owns only the two
+/// toggle acts, resolving each through `MediaChoiceToggle` so pressing the active
+/// one clears to Not Rated.
+///
+/// The *region* stays full-pane, so hover is detected anywhere over the pane and
+/// nothing reserves resting space. The *group* is placed on the media, not on the
+/// pane: a pane wider than its photo paints black beside it, and a group anchored
+/// to the pane corner sits in that letterbox instead of on the picture (DES-066).
+/// `mediaPixelSize` is nil where the pane cannot know the size (a poster or a
+/// video), and `contentRect` answers the full bounds for nil — the honest
+/// fallback, since a guessed frame would put the group somewhere the media may
+/// not be.
 struct MediaChoiceHoverRegion<Content: View>: View {
     let currentChoice: MediaChoice?
+    let mediaPixelSize: CGSize?
     let onChoice: (MediaChoice) -> Void
     @ViewBuilder let content: () -> Content
     @State private var isHovering = false
@@ -14,12 +23,19 @@ struct MediaChoiceHoverRegion<Content: View>: View {
     var body: some View {
         ZStack(alignment: .topLeading) {
             content()
-            MediaChoiceControl(
-                currentChoice: currentChoice,
-                isVisible: isHovering,
-                onChoice: onChoice
-            )
-            .padding(12)
+            GeometryReader { proxy in
+                let face = MediaAssetTilePresentation.contentRect(
+                    imagePixelSize: mediaPixelSize,
+                    bounds: CGRect(origin: .zero, size: proxy.size)
+                )
+                MediaChoiceControl(
+                    currentChoice: currentChoice,
+                    isVisible: isHovering,
+                    onChoice: onChoice
+                )
+                .padding(12)
+                .offset(x: face.minX, y: face.minY)
+            }
         }
         .onHover { isHovering = $0 }
         // DES-068: the item carries the curation value once — not each of the

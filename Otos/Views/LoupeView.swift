@@ -45,17 +45,22 @@ struct LoupeView: View {
     }
 
     private var previewPane: some View {
-        MediaChoiceHoverRegion(
+        // Resolved once: the hover region needs the media's size to place the
+        // curation group on the picture rather than in the pane's letterbox
+        // (DES-066), and the content needs the same decision to render.
+        let display = PanePresentation.display(
+            paneID: focusedAssetID,
+            preview: panePreview,
+            videoState: loupeVideoState
+        )
+        return MediaChoiceHoverRegion(
             currentChoice: focusedMediaChoice,
+            mediaPixelSize: display.mediaPixelSize,
             onChoice: onPreviewMediaChoice
         ) {
             ZStack {
                 Color.black.opacity(0.92)
-                switch PanePresentation.display(
-                    paneID: focusedAssetID,
-                    preview: panePreview,
-                    videoState: loupeVideoState
-                ) {
+                switch display {
                 case let .video(state):
                     LoupeVideoPlayerView(state: state)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
