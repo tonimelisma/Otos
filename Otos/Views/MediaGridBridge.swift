@@ -139,14 +139,7 @@ final class MediaGridViewController: NSViewController {
         case day(Date?)
     }
 
-    /// What one applied `.day` section contributes to a header or the day bar.
-    struct AppliedDaySection: Equatable {
-        let date: Date?
-        let itemCount: Int
-    }
-
     private static let itemIdentifier = NSUserInterfaceItemIdentifier("MediaGridItem")
-    private static let dayHeaderIdentifier = NSUserInterfaceItemIdentifier("MediaGridDayHeader")
 
     let scrollView = NSScrollView()
     let collectionView = MediaGridCollectionView()
@@ -156,15 +149,14 @@ final class MediaGridViewController: NSViewController {
     /// (`MediaGridDayBar.swift`).
     let dayBar = MediaGridDayBarView()
     /// Per-section day facts for the snapshot currently applied, in section order;
-    /// `nil` marks an `.ungrouped` section, which has no header and no bar.
+    /// `nil` marks an `.ungrouped` section, which names no day.
     ///
     /// Written by `mediaSnapshot(for:)` in the same synchronous region that applies
     /// the snapshot, so the layout and this array are never separately observable.
-    /// It exists because the two readers — the day bar on every coalesced scroll
-    /// flush, and header dequeue during scroll — would otherwise each copy the whole
-    /// applied snapshot through `dataSource.snapshot()` to learn one section's date
-    /// and count.
-    var appliedDaySections: [AppliedDaySection?] = []
+    /// It exists because the alternative — asking the data source, whose only route
+    /// to section identifiers is `dataSource.snapshot()` — copies the whole applied
+    /// snapshot to learn one section's date and count.
+    var appliedDaySections: [MediaGridDayBarPolicy.Day?] = []
     /// The single arbiter for both exclusive collection-view mutations (structural applies
     /// and zoom swaps) and the sole owner of column-count truth (`installedColumnCount`,
     /// `requestedColumnCount`). The controller holds no separate column-count state.
@@ -317,7 +309,9 @@ final class MediaGridViewController: NSViewController {
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        // A resize or a zoom-swap moves every header without producing a scroll tick.
+        // A resize or a zoom-swap changes which section is at the top without
+        // producing a scroll tick, and the bar's own height follows its text size.
+        updateDayBarContentInset()
         updateDayBar()
         // NSCollectionView has no post-layout callback; the queue owns the one-turn
         // deferral and coalesces focus/detail work by kind.
@@ -533,48 +527,11 @@ extension MediaGridViewController {
             MediaGridItem.self,
             forItemWithIdentifier: Self.itemIdentifier
         )
-        collectionView.register(
-            MediaGridDayHeaderView.self,
-            forSupplementaryViewOfKind: MediaGridDayHeaderView.elementKind,
-            withIdentifier: Self.dayHeaderIdentifier
-        )
-
         dataSource = NSCollectionViewDiffableDataSource<Section, MediaAssetID>(
             collectionView: collectionView
         ) { [weak self] collectionView, indexPath, assetID in
             self?.makeCollectionItem(collectionView: collectionView, indexPath: indexPath, assetID: assetID)
         }
-        dataSource.supplementaryViewProvider = {
-            [weak self] (
-                collectionView: NSCollectionView,
-                kind: NSCollectionView.SupplementaryElementKind,
-                indexPath: IndexPath
-            ) -> (any NSView & NSCollectionViewElement)? in
-            self?.makeDayHeader(collectionView: collectionView, kind: kind, indexPath: indexPath)
-        }
-    }
-
-    private func makeDayHeader(
-        collectionView: NSCollectionView,
-        kind: NSCollectionView.SupplementaryElementKind,
-        indexPath: IndexPath
-    ) -> MediaGridDayHeaderView? {
-        guard kind == MediaGridDayHeaderView.elementKind,
-              let header = collectionView.makeSupplementaryView(
-                  ofKind: kind,
-                  withIdentifier: Self.dayHeaderIdentifier,
-                  for: indexPath
-              ) as? MediaGridDayHeaderView
-        else {
-            return nil
-        }
-        guard indexPath.section < appliedDaySections.count,
-              let day = appliedDaySections[indexPath.section]
-        else {
-            return header
-        }
-        header.configure(.map(date: day.date, itemCount: day.itemCount))
-        return header
     }
 
     private func makeCollectionItem(
@@ -957,7 +914,9 @@ extension MediaGridViewController {
     }
 
     func scrollToTop() {
-        scrollView.contentView.scroll(to: .zero)
+        // Not `.zero`: the day bar reserves its height as a top content inset, so the
+        // top of the content sits at `-contentInsets.top` in clip-view coordinates.
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: -scrollView.contentInsets.top))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 

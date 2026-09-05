@@ -296,6 +296,109 @@ fighting private AppKit machinery while appearing to have fixed something.
 Option 3b remains the choice instead of 3 only if the in-flow day break is judged not
 to earn its place. That is a product call, and it is open.
 
+## Follow-up pass (2026-09-05): what the bar should look like
+
+The first pass fixed the flicker and the lag and left the appearance wrong. Shipped
+screenshots showed three things: the bar painted `bar` while the in-flow header
+painted nothing, so the two read as unrelated; at a day boundary the bar named a day
+with none of its content on screen while the incoming header sat immediately beneath
+it; and the bar clipped the top row of tiles. The owner's summary was that the old,
+flickering version "looked nicer".
+
+It did, and the reason is worth stating plainly: **the old version had exactly one
+date on screen.** A pinned header does not add a second rendering — the pinned thing
+*is* the section's header. Every complaint above is a consequence of there now being
+two renderings of one fact, with two surfaces, that can be adjacent.
+
+### What the platform actually offers
+
+- **Apple's structural answer is an accessory bar, not a pinned header.** WWDC25
+  "Build an AppKit app with the new design": *"Split item accessories, along with
+  titlebar accessories, are the best way to incorporate floating content into the
+  scroll edge effect. They influence the size and shape of the effect, and they inset
+  the content safe area, simplifying content layout."*
+  `NSSplitViewItemAccessoryViewController` is new in macOS 26 and carries an animatable
+  `hidden` that collapses it to zero height, plus `preferredScrollEdgeEffectStyle` in
+  26.1. It attaches to an `NSSplitViewItem`, which SwiftUI's `NavigationSplitView` does
+  not vend — so it is unreachable here without replacing the window's composition.
+- **The style for this job is hard, not soft.** WWDC25 "Get to know the new design
+  system": *"Hard is mostly used on macOS. It creates a stronger, more opaque
+  boundary — ideal for interactive text, controls without backgrounds, or pinned table
+  headers that need extra clarity."* Also *"avoid mixing or stacking them"* and
+  *"apply one scroll edge effect per view"*.
+- **SwiftUI has the same shape**: the macOS 27 SDK's `SwiftUI.swiftinterface` carries
+  `safeAreaBar(edge:alignment:spacing:content:)`, `scrollEdgeEffectStyle(_:for:)`, and
+  `scrollEdgeEffectHidden(_:for:)`. Apple considers hiding the effect legitimate; they
+  simply never exposed it on `NSScrollView`.
+- **Photos does not keep a persistent date bar.** In iOS 26 the date indicator appears
+  only while actively scrolling and fades a second or two after, showing a single date
+  rather than a range; the always-visible date range users remember was removed. Its
+  accessibility footnote is a warning: with Reduce Transparency on, Photos' indicator
+  stops showing at all — *"presumably a white on white problem"*. That is the DES-084
+  failure this repo avoids by owning its colors, shipping in Apple's own app.
+
+macOS Photos' exact pixels were not verified: screenshotting needs a permission this
+environment does not have, and loading `PhotosUICore` into a probe process trapped
+(SIGTRAP, library validation). The Photos behavior above is documentation and user
+reports, not direct observation.
+
+### Two repo-side findings
+
+- **`DesignPalette.content` had zero callers.** `bar` and `sidebar` were painted;
+  `content` was not, so DES-022's own check — *"chrome is distinguishable from content
+  by value alone"* — could not pass: there was no content surface to be distinguished
+  from, and the bar was a grey band on the raw window background. This codebase has a
+  precedent for exactly this: the ambient hierarchy level was retired because
+  *"DesignPalette had zero real callers for it"*. The two honest resolutions were to
+  paint it or to retire it; painting it is what the surface order was written for.
+- **`sectionShowsDayHeader` called `dataSource.snapshot()` once per section, per
+  layout pass**, purely to answer whether a section carried a header. With a day
+  section per day and enrichment applying about once a second, that was the most
+  expensive remaining reader of a structure the controller already held in
+  `appliedDaySections`. Unmeasured, but structural: it is a full snapshot copy per
+  section.
+
+### Options
+
+| | Approach | Fixes the clash | Fixes the boundary stacking | Cost |
+| --- | --- | --- | --- | --- |
+| A | Paint the grid's content surface | yes | no | one line |
+| B | Bar drops to the `content` value | yes | no | one line |
+| C | Bar only; drop the in-flow header | yes | yes | deletes code |
+| D | Push the bar out with the incoming header | partly | yes | per-tick frame update |
+| E | `safeAreaBar` — real bar, content inset | yes | no | small |
+| F | Transient pill, as Photos ships | yes | yes | medium |
+
+**D** is the faithful rebuild of the old look and the only option that keeps both
+renderings and still reads correctly at a boundary. Its price is a per-scroll-tick
+frame update — the same mechanism the first pass removed. It would be a frame late
+across the ~28 pt push window: invisible on a fling, invisible when scrolling slowly,
+a slight rubber-band at mid speed. Bounded, and far milder than the original defect
+where every header tracked content over its whole travel — but not free, and it keeps
+the per-section snapshot copy.
+
+**E** was rejected because with C the bar is always visible anyway, so making it real
+chrome that permanently insets 28 pt trades the content-forward feel for nothing that
+C does not already give. **F** fails DES-069's "a date is visible at all times", and
+Apple's own version carries the Reduce Transparency bug above.
+
+### Conclusion
+
+**A + C**, implemented in this increment. Paint the content surface, and let the bar
+be the only rendering of the day.
+
+C removes the clash and the boundary stacking by construction rather than by rule,
+and it deletes rather than adds: the supplementary registration, the supplementary
+view provider, `makeDayHeader`, the header view, the per-section
+`dataSource.snapshot()` copy, the `sectionProvider` closure, and the bar's whole
+visibility rule all go. Against the repo's stated order — correctness, simplicity,
+ownership, then performance — it wins on each.
+
+The cost, stated plainly because it is the whole cost: **the inline day label is
+gone.** The day is read from the bar, not from text between the rows, and a day run
+is marked by the section inset alone. That was an owner decision, taken with D on the
+table as the alternative.
+
 ## Appendix: reproducing the probe
 
 A single-file AppKit program, compiled with `xcrun swiftc`, is enough. The essentials:
@@ -331,6 +434,10 @@ reports and on the pocket's presence and sizing.
   — pinned headers fade out on scroll and sometimes do not fade back; concludes no
   public API exists to detect or control the effect.
 - Apple, [NSScrollEdgeEffectStyle](https://developer.apple.com/documentation/appkit/nsscrolledgeeffectstyle).
+- Apple Developer Forums, [No date showing in gallery when scrolling through
+  photos](https://discussions.apple.com/thread/256140985) — iOS 26 Photos shows the
+  date only while scrolling, and not at all under Reduce Transparency.
+- Apple, [scrollEdgeEffectStyle(_:for:)](https://developer.apple.com/documentation/swiftui/view/scrolledgeeffectstyle(_:for:)).
 - Apple, [NSCollectionViewCompositionalLayout](https://developer.apple.com/documentation/appkit/nscollectionviewcompositionallayout).
 - WWDC25 session 310, [Build an AppKit app with the new
   design](https://developer.apple.com/videos/play/wwdc2025/310/) — covers the scroll

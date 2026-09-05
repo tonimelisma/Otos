@@ -79,6 +79,14 @@ struct MediaGridView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // DES-022's content surface. Without it the grid shows the raw window
+            // background, and the surface order has no base: `bar` and `sidebar` were
+            // painted while `content` had no caller at all, so nothing chrome sat on
+            // was ever the value the order is measured against, and the day bar read
+            // as an unexplained band rather than as a step above the content beneath
+            // it. Loupe and Compare own their own darker surface deliberately, so
+            // this is the grid's alone.
+            .background(DesignPalette.content(for: colorScheme))
         }
         .navigationTitle(title)
     }

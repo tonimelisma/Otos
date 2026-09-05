@@ -258,7 +258,7 @@ extension MediaGridViewController {
             orderedIDs: grid.orderedAssetIDs,
             dayBuckets: grid.dayBuckets
         )
-        var daySections: [AppliedDaySection?] = []
+        var daySections: [MediaGridDayBarPolicy.Day?] = []
         daySections.reserveCapacity(runs.count)
         for run in runs {
             snapshot.appendSections([run.section])
@@ -267,7 +267,7 @@ extension MediaGridViewController {
             case .ungrouped:
                 daySections.append(nil)
             case let .day(date):
-                daySections.append(AppliedDaySection(date: date, itemCount: run.ids.count))
+                daySections.append(MediaGridDayBarPolicy.Day(date: date, itemCount: run.ids.count))
             }
         }
         // Recorded here, not in the apply's completion: `dataSource.apply` updates the

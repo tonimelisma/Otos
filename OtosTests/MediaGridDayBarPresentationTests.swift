@@ -2,12 +2,12 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-struct MediaGridDayHeaderPresentationTests {
+struct MediaGridDayBarPresentationTests {
     private static let calendar = Calendar(identifier: .gregorian)
     private static let now = Date(timeIntervalSince1970: 1_700_000_000) // 2023-11-14T22:13:20Z
 
     @Test func todayReadsToday() {
-        let presentation = MediaGridDayHeaderPresentation.map(
+        let presentation = MediaGridDayBarPresentation.map(
             date: Self.now,
             itemCount: 3,
             now: Self.now,
@@ -18,7 +18,7 @@ struct MediaGridDayHeaderPresentationTests {
     }
 
     @Test func nilDateReadsNoDate() {
-        let presentation = MediaGridDayHeaderPresentation.map(
+        let presentation = MediaGridDayBarPresentation.map(
             date: nil,
             itemCount: 5,
             now: Self.now,
@@ -28,7 +28,7 @@ struct MediaGridDayHeaderPresentationTests {
     }
 
     @Test func singleItemUsesSingularNoun() {
-        let presentation = MediaGridDayHeaderPresentation.map(
+        let presentation = MediaGridDayBarPresentation.map(
             date: Self.now,
             itemCount: 1,
             now: Self.now,
@@ -38,7 +38,7 @@ struct MediaGridDayHeaderPresentationTests {
     }
 
     @Test func zeroItemsStillPluralizes() {
-        let presentation = MediaGridDayHeaderPresentation.map(
+        let presentation = MediaGridDayBarPresentation.map(
             date: Self.now,
             itemCount: 0,
             now: Self.now,

@@ -104,24 +104,25 @@ nonisolated enum MediaGridSectionGroupingPolicy {
     }
 }
 
-/// DES-069 day-bar content and visibility, pure from the geometry at the top of the
-/// viewport.
+/// DES-069 day-bar content, pure from the applied day structure plus which section
+/// sits at the top of the viewport.
 ///
-/// The bar exists because the day headers are **not** pinned: `pinToVisibleBounds`
-/// moves every header of a section out of the collection view into the scroll view's
-/// floating-subviews container, where AppKit repositions it from the main thread on
-/// each bounds change while the tiles move on the compositor, and installs an
-/// `NSScrollPocket` whose live blur of the passing tiles has no public opt-out
+/// The bar is the grid's only rendering of the current day. There is no in-flow
+/// header, so there is no second thing to agree with and no visibility rule: under
+/// Date sort the bar always names a day, and under any other sort there is no day
+/// relationship to name and it shows nothing.
+///
+/// The bar exists in this shape because the day headers cannot be pinned.
+/// `pinToVisibleBounds` moves every header of a section out of the collection view
+/// into the scroll view's floating-subviews container, where AppKit repositions it
+/// from the main thread on each bounds change while the tiles move on the
+/// compositor, and installs an `NSScrollPocket` whose live blur of the passing tiles
+/// has no public opt-out
 /// (`docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`).
 /// A controller-owned bar with a constant frame has neither problem.
-///
-/// The rule it implements is the one a pinned header implements implicitly: name the
-/// day that owns the viewport's top edge. Keying off the topmost visible *item*
-/// instead is the near-miss — between one day's last row and the next day's header
-/// lies up to 24 pt of section inset, and a bar that hid while the top edge sat in
-/// that gap would blink out and back at every single day boundary.
 nonisolated enum MediaGridDayBarPolicy {
-    /// One day section's user-facing facts.
+    /// One applied section's user-facing day facts. `nil` in a `days` array marks an
+    /// `.ungrouped` section, which names no day.
     struct Day: Equatable {
         let date: Date?
         let itemCount: Int
@@ -132,60 +133,36 @@ nonisolated enum MediaGridDayBarPolicy {
         }
     }
 
-    /// What the layout reports about the top of the viewport.
-    struct TopEdge: Equatable {
-        /// The day section holding the topmost visible item.
-        let day: Day
-        /// The top of that section's own header, or `nil` once the header has scrolled
-        /// above the viewport — the ordinary case inside a run of any length.
-        let headerMinY: CGFloat?
-        /// The day section immediately before it, where there is one.
-        let precedingDay: Day?
-
-        init(day: Day, headerMinY: CGFloat?, precedingDay: Day?) {
-            self.day = day
-            self.headerMinY = headerMinY
-            self.precedingDay = precedingDay
-        }
-    }
-
     /// What the bar should render, or `nil` to hide it.
     ///
-    /// `topEdge == nil` covers an empty grid and every `.ungrouped` case — under
-    /// `.name`/`.size` sort there is no day relationship to name, so no bar.
+    /// `topmostSection` is the section holding the topmost visible item, which is the
+    /// section that owns the viewport's top edge: a section's items run from its own
+    /// start to the next section's, so whichever section an item at the top belongs
+    /// to is the run the reader is looking at — including when the edge sits in the
+    /// inset gap between two runs, where the row above has already left the viewport.
     ///
-    /// A header that is missing, or clipped by the top edge, means its day owns the
-    /// top edge and the bar names it; the bar is opaque and sits exactly where that
-    /// header is, so it covers rather than duplicates it.
-    ///
-    /// A header lying wholly below the top edge means the edge is in the inset gap
-    /// above it, which still belongs to the preceding day — so the bar names *that*
-    /// day and its text changes exactly once per boundary. Only at the very start of
-    /// the grid is there no preceding day, and only there does the bar hide, leaving
-    /// the first day's own header to name it.
+    /// `nil` in, `nil` out. An out-of-range index answers `nil` rather than trapping:
+    /// the caller reads geometry from the layout and this array from the last applied
+    /// snapshot, and while those cannot disagree in practice, a bar that blanks is a
+    /// better failure than a crash.
     static func barPresentation(
-        topEdge: TopEdge?,
-        viewportMinY: CGFloat,
+        days: [Day?],
+        topmostSection: Int?,
         now: Date = .now,
         calendar: Calendar = .current
-    ) -> MediaGridDayHeaderPresentation? {
-        guard let topEdge else {
+    ) -> MediaGridDayBarPresentation? {
+        guard let topmostSection,
+              topmostSection >= 0,
+              topmostSection < days.count,
+              let day = days[topmostSection]
+        else {
             return nil
         }
-        guard let headerMinY = topEdge.headerMinY, headerMinY >= viewportMinY else {
-            return presentation(for: topEdge.day, now: now, calendar: calendar)
-        }
-        guard let preceding = topEdge.precedingDay else {
-            return nil
-        }
-        return presentation(for: preceding, now: now, calendar: calendar)
-    }
-
-    private static func presentation(
-        for day: Day,
-        now: Date,
-        calendar: Calendar
-    ) -> MediaGridDayHeaderPresentation {
-        .map(date: day.date, itemCount: day.itemCount, now: now, calendar: calendar)
+        return .map(
+            date: day.date,
+            itemCount: day.itemCount,
+            now: now,
+            calendar: calendar
+        )
     }
 }
