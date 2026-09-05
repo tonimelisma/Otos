@@ -460,6 +460,28 @@ struct MediaAssetTilePresentationTests {
         #expect(onLandscape.minY == landscape.minY + inset)
         #expect(onLandscape.minY > bounds.minY + inset)
     }
+
+    /// DES-067: the smallest filmstrip tile is sized by what the group needs.
+    /// Two 28pt acts plus spacing and the margin need 61pt, so a tile below that
+    /// would either shrink the targets where they are hardest to hit or push one
+    /// act over the neighbouring tile. This is the guard on that arithmetic — it
+    /// fails if the floor drops or the group grows.
+    @Test func theChoiceGroupFitsTheSmallestFilmstripTile() {
+        let edge = MediaGridPresentation.minStripTileEdge
+        let tile = CGRect(x: 0, y: 0, width: edge, height: edge)
+        // A square thumbnail fills the square tile, so the face is the whole tile.
+        let face = MediaAssetTilePresentation.contentRect(
+            imagePixelSize: CGSize(width: 1000, height: 1000),
+            bounds: tile
+        )
+        let group = MediaAssetTilePresentation.choiceGroupRect(buttonCount: 2, contentRect: face)
+
+        #expect(tile.contains(group))
+        #expect(group.maxX <= tile.maxX)
+        #expect(group.maxY <= tile.maxY)
+        // And it fits at full-size targets, not by shrinking them.
+        #expect(MediaAssetTileLayout.choiceButtonSize >= 28)
+    }
 }
 
 private func makeDetail(

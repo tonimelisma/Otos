@@ -23,17 +23,28 @@ private final class MediaChoiceButton: NSButton {
         focusRingType = .none
         setAccessibilityElement(false)
         toolTip = toggle.actionLabel
+        wantsLayer = true
+        // Half of MediaAssetTileLayout.choiceButtonSize: the accent disc is round.
+        layer?.cornerRadius = MediaAssetTileLayout.choiceButtonSize / 2
         setOn(false)
     }
 
-    /// Outline at rest, filled when the item carries this act's choice.
+    /// Outline at rest, filled on an accent disc when the item carries this act.
+    ///
+    /// Two independent carriers, because neither may be colour alone (DES-068):
+    /// the glyph switches outline -> filled, and the disc appears behind it. The
+    /// glyph stays at full contrast rather than taking the accent itself —
+    /// tinting the glyph made the selected act read *dimmer* than the unselected
+    /// one in grayscale, because accent desaturates to a mid grey below both
+    /// white and black.
     func setOn(_ isOn: Bool) {
         let symbol = toggle.symbol(isOn: isOn)
         if symbol != appliedSymbol {
             image = NSImage(systemSymbolName: symbol, accessibilityDescription: toggle.actionLabel)
             appliedSymbol = symbol
         }
-        contentTintColor = isOn ? .controlAccentColor : .labelColor
+        contentTintColor = isOn ? .white : .labelColor
+        layer?.backgroundColor = isOn ? NSColor.controlAccentColor.cgColor : nil
     }
 
     @available(*, unavailable)

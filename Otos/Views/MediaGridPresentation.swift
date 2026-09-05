@@ -12,7 +12,12 @@ nonisolated enum MediaGridPresentation: Equatable {
     case strip(tileEdge: CGFloat)
 
     static let defaultStripTileEdge: CGFloat = 72
-    static let minStripTileEdge: CGFloat = 48
+    /// The smallest filmstrip tile, set by what the hover curation group needs
+    /// rather than by how small a thumbnail can usefully be drawn. Two 28pt acts
+    /// (DES-067's hit-region floor) plus spacing and the corner margin need 61pt,
+    /// so a 48pt tile could not show them without either shrinking the targets —
+    /// exactly where they are hardest to hit — or overflowing onto the next tile.
+    static let minStripTileEdge: CGFloat = 64
     static let maxStripTileEdge: CGFloat = 192
 
     var isStrip: Bool {

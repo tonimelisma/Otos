@@ -50,11 +50,17 @@ struct MediaChoiceControl: View {
                 Button {
                     onChoice(toggle.resolved(from: currentChoice ?? .default))
                 } label: {
-                    // The filled variant is the selected state (DES-068); the
-                    // accent tint only reinforces it, so grayscale still reads.
+                    // Two independent carriers of the selected state, because
+                    // neither may be colour alone (DES-068): the glyph switches
+                    // outline -> filled, and an accent disc sits behind it. The
+                    // glyph itself stays at full contrast — tinting it accent
+                    // made the *selected* act read dimmer than the unselected
+                    // one in grayscale, since accent desaturates to a mid grey
+                    // below both white and black.
                     Image(systemName: toggle.symbol(isOn: isOn))
                         .frame(width: 28, height: 28)
-                        .foregroundStyle(isOn ? Color.accentColor : Color.primary)
+                        .foregroundStyle(isOn ? Color.white : Color.primary)
+                        .background(isOn ? Color.accentColor : Color.clear, in: Circle())
                 }
                 .buttonStyle(.borderless)
                 .help(toggle.actionLabel)
