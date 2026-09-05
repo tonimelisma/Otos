@@ -1,0 +1,188 @@
+import AppKit
+import SwiftUI
+
+/// DES-069 day label display, pure from `(date, itemCount)`. `date == nil` pairs with
+/// `MediaGridViewController.Section.day(nil)` — assets whose capture date is unknown
+/// are still grouped into their own section rather than dropped from the day
+/// structure, and the label names that section "No Date" like any other.
+nonisolated struct MediaGridDayLabelPresentation: Equatable, Sendable {
+    let dateText: String
+    let countText: String
+
+    static func map(
+        date: Date?,
+        itemCount: Int,
+        now: Date = .now,
+        calendar: Calendar = .current
+    ) -> MediaGridDayLabelPresentation {
+        let dateText = date.map {
+            RelativeDateText.string(for: $0, now: now, calendar: calendar)
+        } ?? "No Date"
+        let countText = itemCount == 1 ? "1 item" : "\(itemCount) items"
+        return MediaGridDayLabelPresentation(dateText: dateText, countText: countText)
+    }
+}
+
+/// The one day label, drawn identically wherever it appears.
+///
+/// A day is named twice — once in flow at the head of its run, once by the bar held
+/// at the top edge — and those are the same label at two moments, not two kinds of
+/// object. So there is exactly one view of it, and neither host may restyle it. The
+/// previous design gave the bar DES-022's `bar` value and left the header bare, and
+/// the two immediately read as unrelated things that happened to be near each other.
+///
+/// The surface is `content`, opaque. Opaque because the bar must cover tiles passing
+/// beneath rather than blend with them; `content` because this is not chrome — it is
+/// the section's header, held in place.
+private struct MediaGridDayLabelContent: View {
+    let presentation: MediaGridDayLabelPresentation
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(presentation.dateText)
+                .font(.headline)
+                .foregroundStyle(DesignPalette.label(for: colorScheme))
+            Text(presentation.countText)
+                .font(.subheadline)
+                .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                .monospacedDigit()
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(DesignPalette.content(for: colorScheme))
+    }
+}
+
+/// Hosts `MediaGridDayLabelContent` at a fixed size in an AppKit view. Both the
+/// in-flow header and the top bar are this plus a host-specific role, so the two
+/// cannot drift apart.
+private final class MediaGridDayLabelHost: NSView {
+    private let hostingView = NSHostingView(
+        rootView: MediaGridDayLabelContent(
+            presentation: MediaGridDayLabelPresentation(dateText: "", countText: "")
+        )
+    )
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func render(_ presentation: MediaGridDayLabelPresentation) {
+        hostingView.rootView = MediaGridDayLabelContent(presentation: presentation)
+    }
+}
+
+/// The in-flow day header (DES-069): one per day section, at the head of its run,
+/// scrolling with it.
+///
+/// It is deliberately **not** pinned. `pinToVisibleBounds` does not stick the current
+/// header; it moves every header of the section out of the collection view into the
+/// scroll view's floating-subviews container, where AppKit repositions it from the
+/// main thread on each bounds change while the tiles move on the compositor — so it
+/// slides against its own run — and it installs an `NSScrollPocket` whose live blur
+/// portal of the passing tiles has no public opt-out on macOS 26+.
+/// `MediaGridDayBarView` holds the current day at the top instead. See
+/// `docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`.
+final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
+    static let elementKind = "MediaGridDayHeader"
+
+    private let label = MediaGridDayLabelHost()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        addSubview(label)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(_ presentation: MediaGridDayLabelPresentation) {
+        label.render(presentation)
+    }
+}
+
+/// The day bar (DES-069): the same label, held at the grid's top edge.
+///
+/// It is a copy of the header for whichever day owns the viewport's top edge, drawn
+/// with the identical treatment at the identical horizontal position: as a run
+/// scrolls, its header slides underneath and the bar keeps its place. That is a
+/// pinned header, implemented here rather than by AppKit — and because this view is
+/// held by constraints that never change, its frame cannot fall behind the tiles the
+/// way a floating supplementary's does.
+///
+/// It reserves no space, and it withdraws rather than doubling up: while a day's own
+/// header is still fully visible below the top edge, that header is the rendering and
+/// the bar shows the day being left, or nothing at all at the very top of the grid.
+final class MediaGridDayBarView: NSView {
+    private let label = MediaGridDayLabelHost()
+    private var presentation: MediaGridDayLabelPresentation?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+        alphaValue = 0
+        addSubview(label)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor),
+            label.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    /// The bar is a rendering of content, not a control: it must never take a click
+    /// meant for the tile beneath it, and it is not a keyboard stop.
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
+    }
+
+    /// `nil` hides the bar — the grid has no day structure to name, which is every
+    /// sort but Date. Both the text swap and the fade are idempotent, so this can be
+    /// called on every coalesced scroll flush without churn.
+    func render(_ next: MediaGridDayLabelPresentation?) {
+        if let next, next != presentation {
+            presentation = next
+            label.render(next)
+        }
+        let target: CGFloat = next == nil ? 0 : 1
+        guard abs(alphaValue - target) > 0.001 else {
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = MediaGridAnimation.dayBarFadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animator().alphaValue = target
+        }
+    }
+}

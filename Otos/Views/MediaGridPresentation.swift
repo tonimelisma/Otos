@@ -43,30 +43,41 @@ extension MediaGridViewController {
         makeGridLayout(columnCount: columnCount)
     }
 
-    /// One fixed `section:` rather than a `sectionProvider` closure. Every grid
-    /// section is laid out identically — day grouping changes which items sit in
-    /// which section, never how a section is built — so there is nothing for a
-    /// per-section closure to vary.
+    /// A `sectionProvider` closure (not a fixed `section:`) so `.day` and
+    /// `.ungrouped` sections — which never coexist in one snapshot, but alternate as
+    /// the sort changes — can differ in whether they carry a day header, without
+    /// rebuilding this layout object on a data change.
     ///
-    /// It used to vary one thing: whether a section carried a day header. Answering
-    /// that meant reading the diffable data source's section identifiers, and the
-    /// only way AppKit offers to read them is `dataSource.snapshot()`, which copies
-    /// the applied snapshot — once per section, on every layout pass following an
-    /// apply. With a day section per day and enrichment applying about once a
-    /// second, that was the most expensive remaining reader of a structure the
-    /// controller already knows (`appliedDaySections`). Removing the header removed
-    /// the question.
+    /// Which sections carry one is answered from `appliedDaySections`, the record the
+    /// controller writes in the same synchronous region that applies the snapshot.
+    /// It used to be answered from `dataSource.snapshot()`, whose only route to
+    /// section identifiers copies the whole applied snapshot — once per section, on
+    /// every layout pass following an apply, with a day section per day and
+    /// enrichment applying about once a second.
     ///
     /// Column-count changes still replace the whole layout object via the zoom-swap
-    /// path (`MediaGridZoom.swift`).
+    /// path (`MediaGridZoom.swift`); this closure only varies per-section header
+    /// presence within one such object.
     private func makeGridLayout(columnCount: Int) -> MediaGridAnimatedLayout {
         MediaGridAnimatedLayout(
-            section: Self.gridLayoutSection(columnCount: columnCount),
+            sectionProvider: { [weak self] sectionIndex, _ in
+                Self.gridLayoutSection(
+                    columnCount: columnCount,
+                    showsDayHeader: self?.sectionShowsDayHeader(at: sectionIndex) ?? false
+                )
+            },
             configuration: NSCollectionViewCompositionalLayoutConfiguration()
         )
     }
 
-    private static func gridLayoutSection(columnCount: Int) -> NSCollectionLayoutSection {
+    private func sectionShowsDayHeader(at sectionIndex: Int) -> Bool {
+        guard sectionIndex >= 0, sectionIndex < appliedDaySections.count else {
+            return false
+        }
+        return appliedDaySections[sectionIndex] != nil
+    }
+
+    private static func gridLayoutSection(columnCount: Int, showsDayHeader: Bool) -> NSCollectionLayoutSection {
         let itemSize = NSCollectionLayoutSize(
             widthDimension: .fractionalWidth(1),
             heightDimension: .fractionalHeight(1)
@@ -84,11 +95,22 @@ extension MediaGridViewController {
             count: columnCount
         )
         let section = NSCollectionLayoutSection(group: group)
-        // DES-060. Under Date sort each day is its own section, so this inset is also
-        // what marks a day break in the grid: 24 pt between runs against 8 pt gutters
-        // within one. There is no in-flow header to mark it — `MediaGridDayBarView` is
-        // the single rendering of the day (DES-069).
         section.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+        if showsDayHeader {
+            // DES-069: an in-flow header, self-sized to its SwiftUI content, that
+            // scrolls with its own run. Deliberately **not** `pinToVisibleBounds` —
+            // `MediaGridDayLabel.swift` records what pinning actually does and why
+            // `MediaGridDayBarView` holds the current day instead.
+            let header = NSCollectionLayoutBoundarySupplementaryItem(
+                layoutSize: NSCollectionLayoutSize(
+                    widthDimension: .fractionalWidth(1),
+                    heightDimension: .estimated(32)
+                ),
+                elementKind: MediaGridDayHeaderView.elementKind,
+                alignment: .top
+            )
+            section.boundarySupplementaryItems = [header]
+        }
         return section
     }
 

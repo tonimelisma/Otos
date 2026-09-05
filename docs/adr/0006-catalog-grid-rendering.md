@@ -85,47 +85,50 @@ never a continuous interactive transition: macOS exposes
 (that API is UIKit-only, verified against the Xcode 27 beta SDK), so there is no
 documented way to drive a transition incrementally from a pinch gesture.
 
-Under Date sort the grid groups into day sections (DES-069, APP-030). Section
-membership is derived fresh from `CatalogMediaGridState.orderedAssetIDs` plus a
-parallel `dayBuckets: [Date?]` (populated only under `.bestDate` sort, one
-`Calendar.startOfDay` per asset) on every structural apply
+Under Date sort the grid groups into day sections (DES-069, APP-030) via a
+`sectionProvider` closure on `NSCollectionViewCompositionalLayout` rather than a
+fixed `section:`, so `.day` and `.ungrouped` sections can differ in whether they
+carry a header without rebuilding the layout object on a data change. Which sections
+carry one is answered from `appliedDaySections`, the record the controller writes in
+the same synchronous region that applies the snapshot; asking the data source instead
+means `dataSource.snapshot()`, whose only route to section identifiers copies the
+whole applied snapshot — once per section, on every layout pass following an apply.
+Section membership is derived fresh from `CatalogMediaGridState.orderedAssetIDs` plus
+a parallel `dayBuckets: [Date?]` on every structural apply
 (`MediaGridSectionGroupingPolicy`, pure and independent of AppKit); nothing diffs
 sections against the previous snapshot, so there is no separate section-level
-invalidation to go stale. Every section is laid out identically, so the layout takes
-one fixed `section:` rather than a `sectionProvider` closure.
+invalidation to go stale.
 
-The day is named by exactly one thing: `MediaGridDayBarView`, a controller-owned
-opaque bar held at the grid's top edge by constraints that never change. There is no
-in-flow section header, and the section inset is what marks a day run in the grid.
+A day is named twice — in flow at the head of its run, and by
+`MediaGridDayBarView` held at the grid's top edge. **Those are one label drawn
+twice, not two kinds of object**: `MediaGridDayLabel.swift` owns the single view both
+hosts draw, so neither can restyle it, and the label takes DES-022's `content` value
+because it is a section header rather than chrome. An earlier revision gave the bar
+the `bar` value and left the header bare; the two immediately read as unrelated things
+that happened to be adjacent, which is the defect this arrangement exists to prevent.
 
-That follows from two facts about the platform. First, the header cannot be pinned:
-`pinToVisibleBounds` does not stick the current header, it moves every header of the
-section out of the collection view into `_NSScrollViewFloatingSubviewsContainerView`,
-where AppKit recomputes each frame from the main thread on every bounds change while
-the tiles move on the compositor — so the header visibly slides against its own run
-under main-thread load — and it installs an `NSScrollPocket` whose `PocketBlur`
-portals the tiles passing beneath, which macOS 26+ offers no public way to decline
-(`NSScrollEdgeEffectStyle` is settable only on titlebar and split-view-item accessory
-view controllers, and SwiftUI's `NavigationSplitView` does not vend its
-`NSSplitViewItem`). Second, an app-owned bar *plus* an in-flow header is two
-renderings of one fact: they carried different surfaces, and at a day boundary the
-bar and the incoming header stacked and disagreed, because a bar with a constant
-frame cannot be pushed out of the way the way a pinned header is. Dropping the header
-resolves that by construction rather than by rule, and takes with it the supplementary
-registration, the supplementary view provider, and the per-section
-`dataSource.snapshot()` copy that answering "does this section carry a header" required
-on every layout pass following an apply.
-
-A constant frame cannot separate from the content it labels, and app-owned colors
-honor DES-022/023/084 and DES-070/075. What the bar says — the day of the section
-holding the topmost visible item — is the pure `MediaGridDayBarPolicy`, which is what
-makes DES-069 testable without a live collection view. The bar reserves its height as
-`scrollView.contentInsets.top`, so the first row rests below it rather than under it.
-The bar is the one `NSHostingView` in this otherwise pure-AppKit grid — justified by
-cardinality (one per grid, not one per tile), letting it reuse `DesignPalette`'s
-SwiftUI dynamic-appearance colors instead of AppKit-native dynamic-color
-infrastructure built for a single low-cardinality view. Alternatives weighed,
-including keeping the header and pushing the bar with it, are in
+The header is deliberately not pinned. `pinToVisibleBounds` does not stick the
+current header: it moves every header of the section out of the collection view into
+`_NSScrollViewFloatingSubviewsContainerView`, where AppKit recomputes each frame from
+the main thread on every bounds change while the tiles move on the compositor, so the
+header visibly slides against its own run under main-thread load. It also installs an
+`NSScrollPocket` sized to the bar, whose `PocketBlur` portals the tiles passing
+beneath, and macOS 26+ offers no public way to decline it — `NSScrollEdgeEffectStyle`
+is settable only on titlebar and split-view-item accessory view controllers, and
+SwiftUI's `NavigationSplitView` does not vend its `NSSplitViewItem`. The bar is held
+by constraints that never change, so a constant frame cannot separate from the content
+it labels, and app-owned colors honor DES-022/023/084 and DES-070/075. Which day it
+names — the day owning the viewport's top edge, including the inset gap between runs,
+which belongs to the day being left — is the pure `MediaGridDayBarPolicy`, and that is
+what makes DES-069 testable without a live collection view. The bar reserves no space, and
+withdraws rather than doubling a visible header: while a day's own header is still
+fully below the top edge that header is the rendering, and at the very top of the grid
+the bar is absent. The label is the one `NSHostingView` kind in this
+otherwise pure-AppKit grid — justified by cardinality (one per day and one per grid,
+not one per tile), letting it reuse `DesignPalette`'s SwiftUI dynamic-appearance colors
+instead of AppKit-native dynamic-color infrastructure built for a low-cardinality view.
+Alternatives weighed, including pushing the bar out with the incoming header and
+dropping the in-flow header entirely, are in
 `docs/research/2026-09-04-grid-day-header-pinning-and-scroll-edge-effect.md`.
 
 Tiles are layer-backed frame-layout AppKit views, not SwiftUI hosting views or

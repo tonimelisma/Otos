@@ -384,7 +384,9 @@ Apple's own version carries the Reduce Transparency bug above.
 
 ### Conclusion
 
-**A + C**, implemented in this increment. Paint the content surface, and let the bar
+**A + C** was implemented, and **C was wrong**. Corrected below.
+
+**A + C**, as implemented at the time. Paint the content surface, and let the bar
 be the only rendering of the day.
 
 C removes the clash and the boundary stacking by construction rather than by rule,
@@ -398,6 +400,65 @@ The cost, stated plainly because it is the whole cost: **the inline day label is
 gone.** The day is read from the bar, not from text between the rows, and a day run
 is marked by the section inset alone. That was an owner decision, taken with D on the
 table as the alternative.
+
+## Correction (2026-09-05): C was the wrong half
+
+Shipping C — the bar as the only rendering, no in-flow header — removed the day
+labels from the middle of the grid, and the owner wanted them. Re-examining the
+screenshots that motivated it, the diagnosis was wrong.
+
+A bar reading "Yesterday" with "Last Wednesday" arriving beneath it **is not a bug**.
+That is what a sticky header looks like a moment before the swap. What made it read
+as broken was that the two were styled as unrelated objects: a chrome-valued band
+directly above bare text, with no content surface underneath to explain why one was
+elevated and the other was not. The defect was the treatment, not the existence of
+two labels — symptom, not cause, for the second time in this thread.
+
+**A was the whole fix.** With the content surface painted, the relationship between
+the two becomes legible. What A alone did not do is make them *identical*, and that
+is what closes it.
+
+### The correct approach
+
+A day is named twice: in flow at the head of its run, and by the bar at the top edge.
+Those are **one label at two moments** — which is precisely what a pinned header is,
+and why the original looked right despite the flicker. So:
+
+- One view of the label, in `MediaGridDayLabel.swift`. Both hosts draw it; neither may
+  restyle it. Identical type, colors, height, and horizontal position.
+- Its surface is `content`, opaque. Opaque so the bar covers tiles passing beneath;
+  `content` because it is a section header, not chrome. DES-022 gains the exception:
+  the elevation order governs chrome over content, and this floats without being
+  chrome.
+- The bar reserves no space, and withdraws rather than doubling a visible header:
+  while a day's own header is still fully below the top edge that header is the
+  rendering, and at the very top of the grid the bar is absent. (The first draft
+  claimed the bar would lie exactly on the first header — false: the header sits at
+  the 12 pt section inset, so drawing both would print the same date twice, 12 pt
+  apart. The test caught it.) The `contentInsets.top` reservation added with C is
+  removed.
+- The rule is unchanged from the first pass and was always correct: the bar names the
+  day owning the viewport's top edge, and the inset gap between runs belongs to the day
+  being left.
+- `sectionShowsDayHeader` returns, but answered from `appliedDaySections` in O(1)
+  rather than from `dataSource.snapshot()`. The per-section snapshot copy C removed
+  stays removed; only the header comes back.
+
+**Accepted artifact.** For roughly 28 pt of travel at each boundary the incoming
+header is partly behind the bar, so the lower part of its text is briefly visible
+under a bar still naming the previous day. Avoiding it needs the push (option D),
+which reintroduces per-tick frame updates — the mechanism the first pass removed. At
+any real scroll speed 28 pt is one to three frames, and it is the same "content
+scrolls under an opaque surface" every tile in the grid already does.
+
+### What to take from this
+
+Two corrections in two increments, both the same mistake: treating a visual symptom as
+the design problem. The first pass read "the header slides and flickers" and removed
+pinning without asking what pinning was *for*; the second read "two labels stack" and
+removed a label without asking why they looked unrelated. The invariant that survives
+both is the one the original design had by accident: **a day is one label, and it
+should look like one label wherever it is drawn.**
 
 ## Appendix: reproducing the probe
 
