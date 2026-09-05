@@ -99,7 +99,11 @@ verify_pid=$!
 # So this compares consumed CPU across samples and only acts when it has genuinely
 # stopped, then samples the parked threads to say *what* it is blocked on.
 STALL_SECONDS="${OTOS_CHECK_STALL_SECONDS:-420}"
+# CPU-seconds per wall minute the test host must consume to count as alive. A parked
+# poller measured 0.18; one busy core is 60. Anything in between is not a real mode.
+MIN_CPU_SECONDS_PER_MINUTE="${OTOS_CHECK_MIN_CPU_PER_MINUTE:-5}"
 last_cpu_change_at="$(date +%s)"
+cpu_at_mark=0
 last_cpu=""
 
 # Total CPU seconds consumed by the test host and its children.
@@ -148,11 +152,18 @@ while kill -0 "$verify_pid" 2>/dev/null; do
   printf 'op=check.heartbeat elapsed=%02d:%02d stage=%s tests=%s cpuSeconds=%s\n' \
     $((elapsed / 60)) $((elapsed % 60)) "$stage" "$tests" "$cpu"
 
-  # Consumed CPU is the liveness signal. Unchanged CPU across the whole window means
-  # every worker is parked — a deadlock. Rising CPU with a quiet log is a slow test,
-  # which must be left alone.
-  if [[ "$cpu" != "$last_cpu" ]]; then
+  # Consumed CPU is the liveness signal, but *rate* is the signal — not inequality.
+  # A parked test host still burns a trickle: XCTWaiter polls while it waits, so its
+  # CPU seconds keep ticking up by ones. Comparing against the previous sample let
+  # every one of those ticks reset the window, and a real deadlock ran 17 minutes
+  # without ever being detected (CPU 17s -> 19s across 11 minutes, ~0.18 s/min).
+  # Real work — one slow test on one core — consumes ~60 s/min, three orders of
+  # magnitude above that, so requiring a floor separates parked from slow safely.
+  cpu_delta=$(( cpu - cpu_at_mark ))
+  since_mark=$(( $(date +%s) - last_cpu_change_at ))
+  if (( since_mark > 0 && cpu_delta * 60 >= since_mark * MIN_CPU_SECONDS_PER_MINUTE )); then
     last_cpu="$cpu"
+    cpu_at_mark="$cpu"
     last_cpu_change_at="$(date +%s)"
   elif [[ $(( $(date +%s) - last_cpu_change_at )) -ge "$STALL_SECONDS" ]]; then
     echo "op=check.stall phase=detected elapsed=$((elapsed / 60))m stage=$stage tests=$tests cpuSeconds=$cpu blockedFor=$(( ($(date +%s) - last_cpu_change_at) / 60 ))m" >&2
@@ -165,7 +176,7 @@ while kill -0 "$verify_pid" 2>/dev/null; do
       echo "--- last test to report ---" >&2
       grep -E "passed on|failed on" "$newest_test_log" 2>/dev/null | tail -1 >&2 || true
     fi
-    echo "check: DEADLOCKED — consumed no CPU for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2
+    echo "check: DEADLOCKED — consumed under ${MIN_CPU_SECONDS_PER_MINUTE} CPU-s/min for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2
     cleanup_children
     cat "$VERIFY_LOG" 2>/dev/null
     rm -f "$VERIFY_LOG"

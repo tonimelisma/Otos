@@ -178,6 +178,18 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
   could never produce (a hosted bundle cannot run test *processes* in true
   parallel; unhosted, `parallelizable="YES"` — already set, unchanged by this
   work — now genuinely can). Not fixed by this ADR; flagged as a follow-up.
+- **A suite that hosts a real `NSWindow` is serialized and closes its windows.**
+  Genuine parallelism made two latent faults reachable at once. `NSWindow`
+  ordered in by `makeKeyAndOrderFront` is retained by AppKit's window list, so a
+  harness (or a local binding) going out of scope leaked a live key window
+  rather than releasing it; and concurrent window-hosting suites that each spin
+  `RunLoop.current.run(until:)` race AppKit over key-window state and teardown.
+  `MediaGridStripInputTests` was serialized for this, which moved the race
+  rather than removing it: a full run deadlocked in the still-parallel
+  `MediaGridSelectionControllerTests` after 786 tests, parked in `XCTWaiter`
+  with flat CPU. Every window-hosting suite is now `@Suite(.serialized)` and
+  every harness closes its window in an `isolated deinit` (main-actor, where
+  `NSWindow` requires it); inline windows close via `defer`.
 
 ## Defers
 

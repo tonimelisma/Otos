@@ -18,6 +18,12 @@ import Testing
 /// is deterministic, runs headless, and still exercises the owned path end-to-end — the
 /// only thing it skips is AppKit's native selection tracking loop, which the design
 /// deliberately never calls.
+/// Serialized for the same reason as `MediaGridStripInputTests`: these tests host
+/// real `NSWindow`s and spin the run loop, and concurrent window-hosting suites
+/// race AppKit over key-window state and teardown. Leaving this suite parallel
+/// while the strip suite was serialized only moved the race here — a full run
+/// deadlocked in this suite after 786 tests, parked in `XCTWaiter`.
+@Suite(.serialized)
 @MainActor
 struct MediaGridSelectionControllerTests {
     // MARK: - Acceptance matrix (rows 1–14)
@@ -343,6 +349,11 @@ private final class GridSelectionTestHarness {
             backing: .buffered,
             defer: false
         )
+        // Swift owns this window through a strong reference, so AppKit must not
+        // also release it on close — the default `true` makes `close()` an extra
+        // release on top of ARC's, which is an over-release, and `objc_release`
+        // crashes during suite runs are already on record for these harnesses.
+        window.isReleasedWhenClosed = false
         window.contentView = controller.view
         window.makeKeyAndOrderFront(nil)
         controller.view.layoutSubtreeIfNeeded()
@@ -352,6 +363,18 @@ private final class GridSelectionTestHarness {
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
         installSelectionHandlers()
+    }
+
+    /// Closes the window deterministically.
+    ///
+    /// `makeKeyAndOrderFront` puts a window into AppKit's window list, and that
+    /// list *retains* it — so a harness going out of scope leaks a live, key,
+    /// ordered-in window rather than releasing it. Across a full suite run that
+    /// is hundreds of them, all competing for key-window status while other
+    /// window-hosting suites spin the run loop. `isolated deinit` lets the close
+    /// happen on the main actor, where NSWindow requires it.
+    isolated deinit {
+        window.close()
     }
 
     private func installSelectionHandlers() {

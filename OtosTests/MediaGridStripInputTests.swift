@@ -64,8 +64,16 @@ struct MediaGridStripInputTests {
             backing: .buffered,
             defer: false
         )
+        // Swift owns this window through a strong reference, so AppKit must not
+        // also release it on close — the default `true` makes `close()` an extra
+        // release on top of ARC's, which is an over-release, and `objc_release`
+        // crashes during suite runs are already on record for these harnesses.
+        window.isReleasedWhenClosed = false
         window.contentView = controller.view
         window.makeKeyAndOrderFront(nil)
+        // AppKit's window list retains an ordered-in window, so a local binding
+        // going out of scope is not enough to release it.
+        defer { window.close() }
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
         // Flush the deferred viewDidLayout focus retry (scroll mid-layout is a no-op).
@@ -95,8 +103,16 @@ struct MediaGridStripInputTests {
             backing: .buffered,
             defer: false
         )
+        // Swift owns this window through a strong reference, so AppKit must not
+        // also release it on close — the default `true` makes `close()` an extra
+        // release on top of ARC's, which is an over-release, and `objc_release`
+        // crashes during suite runs are already on record for these harnesses.
+        window.isReleasedWhenClosed = false
         window.contentView = controller.view
         window.makeKeyAndOrderFront(nil)
+        // AppKit's window list retains an ordered-in window, so a local binding
+        // going out of scope is not enough to release it.
+        defer { window.close() }
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
         // Flush deferred layout retry so the park is cleared before redelivery,
@@ -169,10 +185,23 @@ private final class StripHarness {
             backing: .buffered,
             defer: false
         )
+        // Swift owns this window through a strong reference, so AppKit must not
+        // also release it on close — the default `true` makes `close()` an extra
+        // release on top of ARC's, which is an over-release, and `objc_release`
+        // crashes during suite runs are already on record for these harnesses.
+        window.isReleasedWhenClosed = false
         window.contentView = controller.view
         window.makeKeyAndOrderFront(nil)
         layout()
         _ = controller.mutationGate.endScrollHold()
+    }
+
+    /// Closes the window deterministically: `makeKeyAndOrderFront` adds it to
+    /// AppKit's window list, which retains it, so letting the harness go out of
+    /// scope leaks a live key window instead of releasing it. `isolated deinit`
+    /// runs the close on the main actor, where NSWindow requires it.
+    isolated deinit {
+        window.close()
     }
 
     func layout() {

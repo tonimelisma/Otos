@@ -7,6 +7,12 @@ import Testing
 /// image across detail-query merges and structural recycle of other IDs. The
 /// invariant lives in `TileContentStore` (pin + cost budget); the tile is a pure
 /// renderer, so these tests assert through the controller → store → tile path.
+/// Serialized for the same reason as `MediaGridStripInputTests`: these tests host
+/// real `NSWindow`s and spin the run loop, and concurrent window-hosting suites
+/// race AppKit over key-window state and teardown. Leaving this suite parallel
+/// while the strip suite was serialized only moved the race here — a full run
+/// deadlocked in this suite after 786 tests, parked in `XCTWaiter`.
+@Suite(.serialized)
 @MainActor
 struct MediaGridPaintInvariantTests {
     @Test func detailQueryMergeDoesNotBlankPaintedVisibleTile() throws {
@@ -148,11 +154,24 @@ private final class PaintInvariantHarness {
             backing: .buffered,
             defer: false
         )
+        // Swift owns this window through a strong reference, so AppKit must not
+        // also release it on close — the default `true` makes `close()` an extra
+        // release on top of ARC's, which is an over-release, and `objc_release`
+        // crashes during suite runs are already on record for these harnesses.
+        window.isReleasedWhenClosed = false
         window.contentView = controller.view
         window.makeKeyAndOrderFront(nil)
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+
+    /// Closes the window deterministically: `makeKeyAndOrderFront` adds it to
+    /// AppKit's window list, which retains it, so letting the harness go out of
+    /// scope leaks a live key window instead of releasing it. `isolated deinit`
+    /// runs the close on the main actor, where NSWindow requires it.
+    isolated deinit {
+        window.close()
     }
 
     func paintThumbnail(for id: MediaAssetID, pixelSize: CGSize) {
