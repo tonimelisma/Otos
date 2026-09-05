@@ -38,6 +38,13 @@ nonisolated enum MediaAssetTileLayout {
     static let placeholderIconMinSide: CGFloat = 16
     static let placeholderIconMaxSide: CGFloat = 40
     static let rawLabel = "RAW"
+    /// DES-067 floor: every curation act stays individually targetable at the
+    /// smallest configured filmstrip size.
+    static let choiceButtonSize: CGFloat = 28
+    static let choiceButtonSpacing: CGFloat = 1
+    /// Margin from the thumbnail's own corner. Matches `kindBadge`'s inset on the
+    /// opposite corner so the two overlays read as one system.
+    static let choiceGroupInset: CGFloat = 4
 
     /// A quarter of the shorter content dimension, clamped to a legible range — big
     /// enough to read as a deliberate kind indicator on a small tile, small enough to
@@ -239,6 +246,26 @@ nonisolated enum MediaAssetTilePresentation {
             y: bounds.minY + ((bounds.height - fittedHeight) / 2).rounded(),
             width: fittedWidth,
             height: fittedHeight
+        )
+    }
+
+    /// The hover curation group's frame, in tile coordinates.
+    ///
+    /// Anchored inside the *thumbnail face* — `contentRect`, the aspect-fit image
+    /// the user actually sees — at its upper-left corner plus one margin, so the
+    /// group sits on the photo rather than out in the cell's letterbox (DES-066).
+    /// Taking the face as a parameter rather than reading a view keeps the
+    /// placement a pure function the layout can be tested against.
+    static func choiceGroupRect(buttonCount: Int, contentRect: CGRect) -> CGRect {
+        let count = CGFloat(max(0, buttonCount))
+        let size = MediaAssetTileLayout.choiceButtonSize
+        let spacing = MediaAssetTileLayout.choiceButtonSpacing
+        let inset = MediaAssetTileLayout.choiceGroupInset
+        return CGRect(
+            x: contentRect.minX + inset,
+            y: contentRect.minY + inset,
+            width: size * count + spacing * max(0, count - 1),
+            height: count > 0 ? size : 0
         )
     }
 

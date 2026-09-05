@@ -10,17 +10,30 @@ private final class FlippedView: NSView {
 }
 
 private final class MediaChoiceButton: NSButton {
-    let choice: MediaChoice
+    let toggle: MediaChoiceToggle
+    /// Last symbol assigned; skip the NSImage lookup when the state is unchanged,
+    /// because render runs on every reconfigure pass during scrolling.
+    private var appliedSymbol: String?
 
-    init(choice: MediaChoice) {
-        self.choice = choice
+    init(toggle: MediaChoiceToggle) {
+        self.toggle = toggle
         super.init(frame: .zero)
-        image = NSImage(systemSymbolName: choice.systemImage, accessibilityDescription: choice.label)
         imagePosition = .imageOnly
         isBordered = false
         focusRingType = .none
         setAccessibilityElement(false)
-        toolTip = choice.actionLabel
+        toolTip = toggle.actionLabel
+        setOn(false)
+    }
+
+    /// Outline at rest, filled when the item carries this act's choice.
+    func setOn(_ isOn: Bool) {
+        let symbol = toggle.symbol(isOn: isOn)
+        if symbol != appliedSymbol {
+            image = NSImage(systemSymbolName: symbol, accessibilityDescription: toggle.actionLabel)
+            appliedSymbol = symbol
+        }
+        contentTintColor = isOn ? .controlAccentColor : .labelColor
     }
 
     @available(*, unavailable)
@@ -115,9 +128,12 @@ final class MediaAssetTileView: NSView {
         choiceControl.layer?.cornerRadius = 5
         choiceControl.layer?.masksToBounds = true
         choiceControl.isHidden = true
-        contentView.addSubview(choiceControl)
-        for choice in MediaChoice.allCases {
-            let button = MediaChoiceButton(choice: choice)
+        // Sibling of `contentView` rather than a child, so the 4pt corner radius
+        // and `masksToBounds` cannot clip it — but positioned from `contentRect`
+        // in `layout()`, so it still tracks the thumbnail face (DES-066).
+        addSubview(choiceControl)
+        for toggle in MediaChoiceToggle.allCases {
+            let button = MediaChoiceButton(toggle: toggle)
             button.target = self
             button.action = #selector(choiceButtonClicked(_:))
             choiceControl.addSubview(button)
@@ -167,7 +183,9 @@ final class MediaAssetTileView: NSView {
     }
 
     @objc private func choiceButtonClicked(_ sender: MediaChoiceButton) {
-        onMediaChoice?(sender.choice)
+        // One resolution, shared with the SwiftUI control: pressing the act the
+        // item already carries clears it to Not Rated.
+        onMediaChoice?(sender.toggle.resolved(from: renderedDetail?.mediaChoice ?? .default))
     }
 
     @available(*, unavailable)
@@ -225,10 +243,7 @@ extension MediaAssetTileView {
         )
         setAccessibilityValue(MediaAssetTilePresentation.accessibilityValue(detail: detail))
         for button in choiceButtons {
-            button.state = button.choice == detail.mediaChoice ? .on : .off
-            button.contentTintColor = button.choice == detail.mediaChoice
-                ? .controlAccentColor
-                : .labelColor
+            button.setOn(button.toggle.choice == detail.mediaChoice)
         }
     }
 
@@ -280,10 +295,11 @@ extension MediaAssetTileView {
         badgeLabel.isHidden = true
         filmIconView.isHidden = true
         kindBadge.isHidden = true
+        // Hover is re-asserted by `MediaGridBridge` on every render, so clearing
+        // it here cannot outlive this pass.
         choiceControl.isHidden = true
         for button in choiceButtons {
-            button.state = .off
-            button.contentTintColor = .labelColor
+            button.setOn(false)
         }
         updatePlaceholderPresentation()
         setSelected(false, animated: false)
@@ -314,22 +330,16 @@ extension MediaAssetTileView {
         imageView.frame = contentView.bounds
         updatePlaceholderPresentation()
         layoutKindBadge()
-        let choiceButtonSize: CGFloat = 28
-        let choiceSpacing: CGFloat = 1
-        let choiceSize = CGSize(
-            width: choiceButtonSize * CGFloat(choiceButtons.count) + choiceSpacing * CGFloat(max(0, choiceButtons.count - 1)) + 4,
-            height: choiceButtonSize + 2
-        )
-        choiceControl.frame = CGRect(
-            x: 6,
-            y: 6,
-            width: choiceSize.width,
-            height: choiceSize.height
+        let choiceButtonSize = Layout.choiceButtonSize
+        let choiceSpacing = Layout.choiceButtonSpacing
+        choiceControl.frame = MediaAssetTilePresentation.choiceGroupRect(
+            buttonCount: choiceButtons.count,
+            contentRect: contentView.frame
         )
         for (index, button) in choiceButtons.enumerated() {
             button.frame = CGRect(
-                x: 2 + CGFloat(index) * (choiceButtonSize + choiceSpacing),
-                y: 1,
+                x: CGFloat(index) * (choiceButtonSize + choiceSpacing),
+                y: 0,
                 width: choiceButtonSize,
                 height: choiceButtonSize
             )

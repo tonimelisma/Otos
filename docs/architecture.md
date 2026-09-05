@@ -111,7 +111,15 @@ everything expensive happens on an actor off the main thread.
   tracking area, and the bridge owns what hover means, assigning the curation control
   to at most one tile. Per-tile tracking areas cannot work here — scrolling moves
   tiles under a stationary cursor without producing the matching `mouseExited` — so
-  the bridge recomputes on every scroll tick and after every structural apply.
+  the bridge recomputes on every scroll tick and after every structural apply, and
+  re-asserts hover on every tile render. That last assertion is what keeps the
+  control steady: a tile clears its own control when its content resets, and both
+  change guards (asset identity in the bridge, index path in the collection view)
+  correctly suppress a repair while the pointer holds on one thumbnail, so the
+  owner has to state its answer on every pass rather than only when it changes.
+  Scroll-driven recomputation therefore reports the index path unconditionally and
+  dedups on asset identity, since a reorder can leave the same index path holding a
+  different asset.
   "What is visible" likewise falls back to the layout when AppKit has attached no
   items yet, so an apply into a grid at rest still requests tile detail. Mouse
   selection is
@@ -213,7 +221,12 @@ everything expensive happens on an actor off the main thread.
   and lossless serial choice-command owner. `CatalogStore.setMediaChoice` is the one
   transaction; `MediaFilter.choices` is a query descriptor dimension, not selection
   or a second ViewModel truth. `MediaChoice` stays in tile/pane detail values so Grid,
-  filmstrip, Loupe, and Compare render the same persisted overlay.
+  filmstrip, Loupe, and Compare render the same persisted overlay. The pointer
+  control is two toggles rather than three targets: `MediaChoiceToggle` owns both
+  the outline/filled symbol pair and the single "pressing the carried act clears it
+  to Not Rated" resolution, so the AppKit tile and the SwiftUI Loupe/Compare control
+  stay two renderers of one intent. Neutral keeps its keyboard, menu, and VoiceOver
+  paths.
 - **Move to Trash**: `CatalogWindowViewModelTrash.swift` resolves the current browser
   target and owns stale-navigation checks; `MediaTrashCoordinator` owns the serial
   filesystem lifecycle; `CatalogStore` supplies catalog-proven companions and

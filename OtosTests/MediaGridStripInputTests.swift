@@ -418,4 +418,28 @@ struct MediaGridAtRestTests {
         harness.layout()
         #expect(harness.tilesShowingChoiceControl() == 0)
     }
+
+    /// The flicker regression: a tile clears its own control whenever its content
+    /// resets, and while the pointer holds on one thumbnail neither the asset-id
+    /// guard in `setHoveredAssetID` nor the index-path guard in the collection
+    /// view fires to repair it. The control then stayed dark until some unrelated
+    /// apply happened to run. Hover must be re-asserted by the render itself.
+    @Test func aRenderMidScrollDoesNotDropTheHoveredTilesControl() throws {
+        let harness = try StripHarness(itemCount: 40, windowWidth: 320)
+        harness.hoverItem(2)
+        harness.layout()
+        #expect(harness.tilesShowingChoiceControl() == 1)
+
+        let hovered = harness.ids[2]
+        // A content reset for the hovered tile — exactly what an enrichment
+        // trickle or a visible-detail requery produces mid-scroll.
+        harness.controller.renderVisibleItem(id: hovered, change: .firstImage)
+        harness.layout()
+        #expect(harness.tilesShowingChoiceControl() == 1)
+
+        // And it is still the tile under the pointer, not some other one.
+        harness.controller.flushScrollDrivenWorkNow()
+        harness.layout()
+        #expect(harness.tilesShowingChoiceControl() == 1)
+    }
 }

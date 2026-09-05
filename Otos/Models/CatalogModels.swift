@@ -292,11 +292,15 @@ nonisolated enum MediaChoice: String, Codable, CaseIterable, Hashable, Sendable 
         }
     }
 
+    /// The flat glyph that names this value where all three are listed at once
+    /// (the filter popover). The hover control does not use it: there the two
+    /// acts are toggles with an outline/filled pair, which `MediaChoiceToggle`
+    /// owns.
     var systemImage: String {
         switch self {
-        case .liked: "heart.fill"
+        case .liked: "hand.thumbsup"
         case .notRated: "minus"
-        case .disliked: "xmark"
+        case .disliked: "hand.thumbsdown"
         }
     }
 
@@ -307,6 +311,44 @@ nonisolated enum MediaChoice: String, Codable, CaseIterable, Hashable, Sendable 
         case "x": self = .disliked
         default: return nil
         }
+    }
+}
+
+/// The two acts the hover control offers. Neutral is deliberately not a button:
+/// pressing the act an item already carries returns it to `.notRated`, so the
+/// control is two toggles rather than three mutually exclusive states (DES-066).
+/// `MediaChoice` keeps all three values — the neutral one is still reachable by
+/// keyboard (`u`), by menu, and as a VoiceOver action; it just has no button.
+nonisolated enum MediaChoiceToggle: String, CaseIterable, Hashable, Sendable {
+    case like
+    case dislike
+
+    var choice: MediaChoice {
+        switch self {
+        case .like: .liked
+        case .dislike: .disliked
+        }
+    }
+
+    /// Outline at rest, filled when the item carries this act's choice. Shape,
+    /// not tint, is what carries the selected state, so it survives grayscale
+    /// and Increase Contrast (DES-068).
+    func symbol(isOn: Bool) -> String {
+        switch self {
+        case .like: isOn ? "hand.thumbsup.fill" : "hand.thumbsup"
+        case .dislike: isOn ? "hand.thumbsdown.fill" : "hand.thumbsdown"
+        }
+    }
+
+    /// The one resolution every surface shares. The grid tile (AppKit) and the
+    /// Loupe/Compare control (SwiftUI) are two renderers of one user intent, so
+    /// neither re-derives "pressing the active act clears it" for itself.
+    func resolved(from current: MediaChoice) -> MediaChoice {
+        current == choice ? .notRated : choice
+    }
+
+    var actionLabel: String {
+        choice.actionLabel
     }
 }
 

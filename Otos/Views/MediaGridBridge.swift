@@ -973,6 +973,19 @@ extension MediaGridViewController {
         }
     }
 
+    /// Re-asserts hover for one tile immediately after it renders.
+    ///
+    /// The tile clears its own control whenever its content resets (reuse, or a
+    /// render with no content). `setHoveredAssetID` is change-guarded and so is
+    /// the collection view's index-path tracking, so while the pointer rests on
+    /// a single thumbnail during a scroll *nothing* fires to undo that clear —
+    /// the control stayed dark until some unrelated apply happened to repair it,
+    /// which is what flickered. Asserting here makes the owner's answer win on
+    /// every pass instead of only when the answer changes.
+    private func applyHover(to item: MediaGridItem, assetID: MediaAssetID) {
+        item.setChoiceControlVisible(assetID == hoveredAssetID)
+    }
+
     /// Whether a scroll flush would start a new visible detail query for `visibleIDs`.
     func wouldStartVisibleDetailQuery(for visibleIDs: [MediaAssetID]) -> Bool {
         !visibleIDs.isEmpty && visibleIDs != lastDetailQueryIDs
@@ -1001,6 +1014,7 @@ extension MediaGridViewController {
     private func renderItem(_ item: MediaGridItem, assetID: MediaAssetID, change: TileContentChange) {
         let content = ensureStoreEntry(for: assetID)
         item.render(content: content, change: change)
+        applyHover(to: item, assetID: assetID)
     }
 
     /// Ensures a store entry exists (empty detail stub if needed), starts decode when a
@@ -1088,5 +1102,6 @@ extension MediaGridViewController {
             return
         }
         item.render(content: tileContents.content(for: id), change: change)
+        applyHover(to: item, assetID: id)
     }
 }

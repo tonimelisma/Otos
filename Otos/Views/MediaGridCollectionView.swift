@@ -93,7 +93,14 @@ final class MediaGridCollectionView: NSCollectionView {
             setHovered(nil)
             return
         }
-        updateHover(forWindowLocation: locationInWindow)
+        // Delivered unconditionally rather than through `setHovered`'s change
+        // guard: after a reorder the same index path can hold a *different*
+        // asset, so an unchanged index path is not evidence of unchanged hover.
+        // The controller dedups on asset identity, which is the identity that
+        // actually decides which tile lights up.
+        let indexPath = indexPathForItem(at: convert(locationInWindow, from: nil))
+        hoveredIndexPath = indexPath
+        onHoverChanged?(indexPath)
     }
 
     private func updateHover(forWindowLocation locationInWindow: NSPoint) {

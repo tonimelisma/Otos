@@ -420,6 +420,46 @@ struct MediaAssetTilePresentationTests {
         #expect(frame.midX == bounds.midX)
         #expect(frame.midY == bounds.midY)
     }
+
+    /// DES-066: the group rides the *thumbnail face* — the aspect-fit image the
+    /// user sees — at its corner plus one margin, so it sits on the photo rather
+    /// than out in the cell's letterbox, and it moves with the face instead of
+    /// staying pinned to a cell corner the image does not reach.
+    @Test func theChoiceGroupSitsInTheThumbnailsUpperLeftCorner() {
+        let bounds = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let portrait = CGSize(width: 400, height: 1200)
+        let face = MediaAssetTilePresentation.contentRect(imagePixelSize: portrait, bounds: bounds)
+        // Precondition: this cell really does letterbox, so face and cell differ.
+        #expect(face.minX > bounds.minX)
+
+        let inset = MediaAssetTileLayout.choiceGroupInset
+        let group = MediaAssetTilePresentation.choiceGroupRect(buttonCount: 2, contentRect: face)
+        #expect(group.minX == face.minX + inset)
+        #expect(group.minY == face.minY + inset)
+        // It tracks the thumbnail, not the cell.
+        #expect(group.minX > bounds.minX + inset)
+        // A margin, not a flush corner — and the group stays inside the face.
+        #expect(inset > 0)
+        #expect(face.contains(group))
+
+        // Two targets at the DES-067 floor, sized from the constants themselves so
+        // the assertion keeps meaning if the floor ever moves.
+        let expectedWidth = MediaAssetTileLayout.choiceButtonSize * 2
+            + MediaAssetTileLayout.choiceButtonSpacing
+        #expect(group.width == expectedWidth)
+        #expect(group.height == MediaAssetTileLayout.choiceButtonSize)
+        #expect(MediaAssetTileLayout.choiceButtonSize >= 28)
+
+        // A landscape image in the same cell letterboxes vertically instead, and
+        // the group follows the face down rather than staying at the cell's top.
+        let landscape = MediaAssetTilePresentation.contentRect(
+            imagePixelSize: CGSize(width: 1200, height: 400),
+            bounds: bounds
+        )
+        let onLandscape = MediaAssetTilePresentation.choiceGroupRect(buttonCount: 2, contentRect: landscape)
+        #expect(onLandscape.minY == landscape.minY + inset)
+        #expect(onLandscape.minY > bounds.minY + inset)
+    }
 }
 
 private func makeDetail(

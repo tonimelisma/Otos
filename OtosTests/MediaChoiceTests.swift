@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import OtosKit
 import Testing
@@ -19,6 +20,40 @@ struct MediaChoiceTests {
         #expect(MediaChoice.liked.accessibilityValue == "liked")
         #expect(MediaChoice.notRated.accessibilityValue == "not rated")
         #expect(MediaChoice.disliked.accessibilityValue == "disliked")
+    }
+
+    /// DES-066: neutral has no button, so the third state is reached by pressing
+    /// the act the item already carries. Both the AppKit tile and the SwiftUI
+    /// Loupe/Compare control resolve through this one function rather than each
+    /// re-deriving the rule.
+    @Test func pressingTheCarriedActClearsItToNotRated() {
+        #expect(MediaChoiceToggle.like.resolved(from: .liked) == .notRated)
+        #expect(MediaChoiceToggle.dislike.resolved(from: .disliked) == .notRated)
+
+        #expect(MediaChoiceToggle.like.resolved(from: .notRated) == .liked)
+        #expect(MediaChoiceToggle.dislike.resolved(from: .notRated) == .disliked)
+        // Crossing straight from one act to the other never detours via neutral.
+        #expect(MediaChoiceToggle.like.resolved(from: .disliked) == .liked)
+        #expect(MediaChoiceToggle.dislike.resolved(from: .liked) == .disliked)
+    }
+
+    /// DES-068: shape, not tint, carries the selected state, so each act needs a
+    /// distinct outline and filled glyph of the same family.
+    @Test func eachActPairsAnOutlineWithAFilledSymbol() {
+        #expect(MediaChoiceToggle.allCases == [.like, .dislike])
+        #expect(MediaChoiceToggle.like.choice == .liked)
+        #expect(MediaChoiceToggle.dislike.choice == .disliked)
+
+        for act in MediaChoiceToggle.allCases {
+            let outline = act.symbol(isOn: false)
+            let filled = act.symbol(isOn: true)
+            #expect(outline != filled)
+            #expect(filled == outline + ".fill")
+            #expect(NSImage(systemSymbolName: outline, accessibilityDescription: nil) != nil)
+            #expect(NSImage(systemSymbolName: filled, accessibilityDescription: nil) != nil)
+        }
+        // The two acts must not collapse onto one glyph.
+        #expect(MediaChoiceToggle.like.symbol(isOn: true) != MediaChoiceToggle.dislike.symbol(isOn: true))
     }
 
     @Test func choiceFilterUsesOrWithinCurationAndAndAcrossMediaGroups() {

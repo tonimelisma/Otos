@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// Shared content-choice control for the large Loupe and Compare surfaces. The
-/// hover region owns visibility; the row itself owns only the three explicit
-/// owner intents. The region is full-pane so the controls appear without
+/// hover region owns visibility; the row itself owns only the two toggle acts,
+/// resolving each through `MediaChoiceToggle` so pressing the active one clears
+/// to Not Rated. The region is full-pane so the controls appear without
 /// reserving resting space or moving with an aspect-fit image.
 struct MediaChoiceHoverRegion<Content: View>: View {
     let currentChoice: MediaChoice?
@@ -44,23 +45,20 @@ struct MediaChoiceControl: View {
 
     var body: some View {
         HStack(spacing: 1) {
-            ForEach(MediaChoice.allCases, id: \.self) { choice in
+            ForEach(MediaChoiceToggle.allCases, id: \.self) { toggle in
+                let isOn = currentChoice == toggle.choice
                 Button {
-                    onChoice(choice)
+                    onChoice(toggle.resolved(from: currentChoice ?? .default))
                 } label: {
-                    Image(systemName: choice.systemImage)
+                    // The filled variant is the selected state (DES-068); the
+                    // accent tint only reinforces it, so grayscale still reads.
+                    Image(systemName: toggle.symbol(isOn: isOn))
                         .frame(width: 28, height: 28)
-                        .foregroundStyle(currentChoice == choice ? Color.accentColor : Color.primary)
-                        .background(
-                            currentChoice == choice
-                                ? Color.accentColor.opacity(0.16)
-                                : Color.clear,
-                            in: Circle()
-                        )
+                        .foregroundStyle(isOn ? Color.accentColor : Color.primary)
                 }
                 .buttonStyle(.borderless)
-                .help(choice.actionLabel)
-                .accessibilityLabel(choice.actionLabel)
+                .help(toggle.actionLabel)
+                .accessibilityLabel(toggle.actionLabel)
             }
         }
         .padding(.horizontal, 2)
