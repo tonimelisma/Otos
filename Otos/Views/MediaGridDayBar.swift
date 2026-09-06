@@ -49,7 +49,7 @@ extension MediaGridViewController {
                 topEdge: dayBarTopEdge(),
                 viewportMinY: viewportMinY
             ),
-            showsScrollEdge: MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: viewportMinY)
+            showsHairline: MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: viewportMinY)
         )
     }
 

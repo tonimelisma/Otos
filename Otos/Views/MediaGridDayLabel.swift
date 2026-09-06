@@ -35,18 +35,20 @@ nonisolated struct MediaGridDayLabelPresentation: Equatable, Sendable {
 /// beneath rather than blend with them; `content` because this is not chrome — it is
 /// the section's header, held in place.
 ///
-/// `showsScrollEdge` is the one thing that may differ between drawings, and it is not
-/// part of the label: it is the boundary between a floating label and the content
-/// passing under it. macOS draws exactly this, contextually — `NSTitlebarSeparatorStyle`
+/// `showsHairline` is the one thing that may differ between drawings, and it is not
+/// part of the label: it is the DES-023 rule that closes the label off from what sits
+/// below it. An in-flow header draws it as a day separator, so a run reads as a run.
+/// The bar draws it as a scroll edge, and only once the grid has moved off its top —
+/// the contextual behavior macOS gives the titlebar, where `NSTitlebarSeparatorStyle`
 /// has defaulted to `.automatic` since macOS 11, showing a line beneath the titlebar
-/// while content is scrolled under it and hiding it at the top. An in-flow header never
-/// has anything passing beneath it; the bar does, once the grid has moved off its top.
+/// while content is scrolled under it and hiding it at the top. A blank header (the
+/// first section's) draws neither label nor rule.
 private struct MediaGridDayLabelContent: View {
     /// `nil` draws the label's space and nothing in it. The first section's header
     /// takes this: the bar already covers its rect, so its text would only ever be
     /// seen when rubber-band scrolling pushes it out from under the bar as a duplicate.
     let presentation: MediaGridDayLabelPresentation?
-    var showsScrollEdge = false
+    var showsHairline = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -67,7 +69,7 @@ private struct MediaGridDayLabelContent: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DesignPalette.content(for: colorScheme))
         .overlay(alignment: .bottom) {
-            if showsScrollEdge {
+            if showsHairline {
                 DesignPalette.hairline(for: colorScheme)
                     .frame(height: 1)
             }
@@ -100,10 +102,10 @@ private final class MediaGridDayLabelHost: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func render(_ presentation: MediaGridDayLabelPresentation?, showsScrollEdge: Bool) {
+    func render(_ presentation: MediaGridDayLabelPresentation?, showsHairline: Bool) {
         hostingView.rootView = MediaGridDayLabelContent(
             presentation: presentation,
-            showsScrollEdge: showsScrollEdge
+            showsHairline: showsHairline
         )
     }
 }
@@ -141,10 +143,10 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
         fatalError("init(coder:) has not been implemented")
     }
 
-    /// `nil` leaves the header's space blank. Nothing passes beneath an in-flow
-    /// header, so it never draws a scroll edge either.
+    /// A drawn header closes its run off with the DES-023 rule. `nil` leaves the
+    /// header's space blank — no label and no rule.
     func configure(_ presentation: MediaGridDayLabelPresentation?) {
-        label.render(presentation, showsScrollEdge: false)
+        label.render(presentation, showsHairline: presentation != nil)
     }
 }
 
@@ -163,7 +165,7 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
 final class MediaGridDayBarView: NSView {
     private let label = MediaGridDayLabelHost()
     private var presentation: MediaGridDayLabelPresentation?
-    private var rendersScrollEdge = false
+    private var rendersHairline = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -200,11 +202,11 @@ final class MediaGridDayBarView: NSView {
     /// and draw the same label, so there is no change of position or state for motion
     /// to explain (DES-070); a cross-fade only put the two at partial alpha over each
     /// other, which read as the label sliding.
-    func render(_ next: MediaGridDayLabelPresentation?, showsScrollEdge: Bool) {
-        if let next, next != presentation || showsScrollEdge != rendersScrollEdge {
+    func render(_ next: MediaGridDayLabelPresentation?, showsHairline: Bool) {
+        if let next, next != presentation || showsHairline != rendersHairline {
             presentation = next
-            rendersScrollEdge = showsScrollEdge
-            label.render(next, showsScrollEdge: showsScrollEdge)
+            rendersHairline = showsHairline
+            label.render(next, showsHairline: showsHairline)
         }
         alphaValue = next == nil ? 0 : 1
     }
