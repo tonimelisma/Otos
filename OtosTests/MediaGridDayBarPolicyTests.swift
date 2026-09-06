@@ -54,11 +54,25 @@ struct MediaGridDayBarPolicyTests {
         #expect(Self.barText(headerMinY: 599.5, viewportMinY: 600)?.dateText == "Today")
     }
 
-    @Test func restingAtTheTopOfTheGridLeavesTheHeaderToNameIt() {
-        // Nothing has scrolled. Section 0's header sits at the section inset, fully
-        // visible, so it is the rendering and the bar stays out of the way — drawing
-        // it too would print the same date twice, 12 pt apart.
-        #expect(Self.barText(headerMinY: 12, viewportMinY: 0) == nil)
+    @Test func restingAtTheTopOfTheGridStillNamesTheFirstDay() {
+        // The bar is on continuously under Date sort. At the top it rests exactly on
+        // section 0's header, drawing the same label in the same rect, so leaving it
+        // on costs nothing visible and spares the design a state to get wrong.
+        #expect(Self.barText(headerMinY: 0, viewportMinY: 0)?.dateText == "Today")
+    }
+
+    @Test func aHeaderWithNoPrecedingDayNamesItsOwnDay() {
+        // Cannot arise in a day-sorted grid — section 0's header sits at the very top,
+        // with no gap above it — but the bar names something rather than blanking.
+        #expect(Self.barText(headerMinY: 12, viewportMinY: 0)?.dateText == "Today")
+    }
+
+    @Test func theScrollEdgeIsDrawnOnlyOnceTheGridLeavesItsTop() {
+        // The hairline means "content passes under this bar". At the top nothing does.
+        #expect(!MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: 0))
+        #expect(!MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: -40))
+        #expect(!MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: 0.5))
+        #expect(MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: 40))
     }
 
     @Test func topEdgeInTheGapAboveAHeaderKeepsNamingThePrecedingDay() {

@@ -27,19 +27,29 @@ import AppKit
 // pinned-header design never was (APP-030 carried the gap as `unverified:`).
 
 extension MediaGridViewController {
-    /// Re-resolves what the day bar shows. Called from the coalesced scroll flush, the
-    /// post-apply pass, and `viewDidLayout` — every path that can move a header
-    /// relative to the viewport. Cheap and idempotent: one layout query plus a pure
-    /// decision, and `render` no-ops when nothing changed.
+    /// Re-resolves what the day bar shows. Called on **every** scroll-bounds change,
+    /// plus the post-apply pass and `viewDidLayout` — every path that can move a header
+    /// relative to the viewport.
+    ///
+    /// Deliberately not behind `flushScrollDrivenWork`'s coalesce. That coalesce is a
+    /// trailing-edge debounce with no maximum wait, cancelled and restarted by each
+    /// bounds change; bounds changes arrive faster than its 16 ms window during a
+    /// fling, so work behind it runs only once scrolling *pauses*. That is the right
+    /// shape for restarting Store queries and the wrong one for the label naming what
+    /// the user is looking at — it left the bar seconds behind the grid. This is a
+    /// layout read plus a pure decision, cheap enough to run per tick, and `render`
+    /// no-ops when nothing changed.
     func updateDayBar() {
         guard !presentation.isStrip else {
             return
         }
+        let viewportMinY = scrollView.documentVisibleRect.minY
         dayBar.render(
             MediaGridDayBarPolicy.barPresentation(
                 topEdge: dayBarTopEdge(),
-                viewportMinY: scrollView.documentVisibleRect.minY
-            )
+                viewportMinY: viewportMinY
+            ),
+            showsScrollEdge: MediaGridDayBarPolicy.showsScrollEdge(viewportMinY: viewportMinY)
         )
     }
 

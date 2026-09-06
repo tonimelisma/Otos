@@ -517,6 +517,62 @@ translucency that started this thread, and Apple's own Photos carries a live bug
 direction — its date indicator stops showing entirely under Reduce Transparency. F
 remains unreachable from `NavigationSplitView`.
 
+## Follow-up (2026-09-05): the bar is on continuously, and updates per tick
+
+Two more reports on the shipped bar: scrolling down, the first header left the
+viewport and the bar took *seconds* to appear. Both the delay and the state that
+caused it are gone.
+
+### The delay was a debounce with no maximum wait
+
+`updateDayBar()` lived in `flushScrollDrivenWork()`, behind this
+(`MediaGridBridge.scrollBoundsChanged`):
+
+```swift
+scrollCoalesceTask?.cancel()
+scrollCoalesceTask = Task {
+    try await Task.sleep(for: .milliseconds(16))
+    …
+    flushScrollDrivenWork()
+}
+```
+
+Cancel-and-restart on every bounds change is a trailing-edge debounce with no maximum
+wait. Bounds-change notifications arrive at display rate during a fling — roughly every
+8 ms — so the task is cancelled before its 16 ms window elapses, every time. Work behind
+it does not run until scrolling *pauses*. That is exactly the reported symptom.
+
+The bar's update is a layout read plus a pure decision, so it now runs directly in the
+bounds-change handler. That cadence — coalesce the expensive thing, run the cheap thing
+per tick — is the right split; the mistake was putting a label that names what the user
+is looking at on the same clock as Store queries.
+
+**Wider finding, not addressed here.** The same debounce also gates `refreshHover()`,
+`reportViewport()`, visible detail queries and preheat. ARC-023 states hover
+"recomputes from the pointer's real position on every scroll tick"; during a sustained
+fling it currently does not. Changing the cadence of Store-backed work needs
+measurement and its own increment.
+
+### The withdraw-at-the-top state bought nothing
+
+The bar previously hid at the top of the grid so it would not double the first
+section's header. Since the two were given the same rect, that reasoning no longer
+holds: at the top the bar rests *exactly* on the first header and draws the same label,
+so it is indistinguishable from it. Hiding it was a state with no visible effect and one
+more thing to get wrong — which it duly did, by taking the debounce's latency with it on
+the way back.
+
+The bar is now shown continuously wherever there is a day to name, and hidden only where
+there is none: an empty grid, or the single `.ungrouped` section that `.name`/`.size`
+sort produces. The rule for *which* day is unchanged, with one boundary correction —
+a header level with the top edge (`headerMinY == viewportMinY`, which is the top of the
+grid) now names its own day rather than falling through to a preceding day that does not
+exist.
+
+The hairline stays contextual on the same fact, sharing the one-point tolerance
+`captureScrollAnchor` uses for the same reason: elasticity leaves a sub-point residue at
+rest.
+
 ## Appendix: reproducing the probe
 
 A single-file AppKit program, compiled with `xcrun swiftc`, is enough. The essentials:

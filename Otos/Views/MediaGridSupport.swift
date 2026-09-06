@@ -148,22 +148,38 @@ nonisolated enum MediaGridDayBarPolicy {
         }
     }
 
+    /// Below this the grid counts as resting at its top. One point, not a row height:
+    /// the question is only whether the user has moved off the top at all, and scroll
+    /// elasticity leaves a sub-point residue at rest. (`captureScrollAnchor` asks a
+    /// different question with the same tolerance, for the same reason.)
+    static let atTopThreshold: CGFloat = 1
+
+    /// Whether the bar should draw its scroll edge.
+    ///
+    /// The hairline means "content passes under this bar". At the top of the grid
+    /// nothing does — the bar rests exactly on the first section's header, drawing the
+    /// same label in the same rect — so no line. This is the contextual behavior macOS
+    /// gives the titlebar (`NSTitlebarSeparatorStyle.automatic`).
+    static func showsScrollEdge(viewportMinY: CGFloat) -> Bool {
+        viewportMinY > atTopThreshold
+    }
+
     /// What the bar should render, or `nil` to hide it.
     ///
-    /// `topEdge == nil` covers an empty grid and every `.ungrouped` case — under
-    /// `.name`/`.size` sort there is no day relationship to name, so no bar.
+    /// The bar is on continuously under Date sort. It is hidden only when there is no
+    /// day structure to name — an empty grid, or the single `.ungrouped` section that
+    /// `.name`/`.size` sort produces. Nothing else turns it off, and in particular it
+    /// does not withdraw at the top of the grid: there it lies exactly on the first
+    /// header, drawing the same label in the same rect, so leaving it on costs nothing
+    /// visible and spares the design a state to get wrong.
     ///
-    /// A header that is missing, or already clipped by the top edge, means its day
-    /// owns the edge: the bar names it and sits exactly where that header is, so it
-    /// covers rather than duplicates it. At rest at the very top of the grid this is
-    /// the ordinary case — the bar lies precisely on the first header, and being the
-    /// same label drawn the same way, the two read as one.
-    ///
-    /// A header lying wholly below the top edge means the edge is in the inset gap
-    /// above it, which still belongs to the preceding day. Naming the preceding day
-    /// there is what a pinned header does: you see the day you are leaving, with the
-    /// next day's header rising toward it. Naming the *incoming* day instead would
-    /// print the same date twice, a few points apart.
+    /// Which day: the one owning the viewport's top edge. A header that is missing, or
+    /// already level with or clipped by the top edge, means its own day owns the edge.
+    /// A header lying strictly below the edge means the edge is in the inset gap above
+    /// it, which still belongs to the preceding day — that is what a pinned header
+    /// does: you see the day you are leaving, with the next day's header rising toward
+    /// it. Naming the incoming day there would print the same date twice, a few points
+    /// apart.
     static func barPresentation(
         topEdge: TopEdge?,
         viewportMinY: CGFloat,
@@ -173,13 +189,13 @@ nonisolated enum MediaGridDayBarPolicy {
         guard let topEdge else {
             return nil
         }
-        guard let headerMinY = topEdge.headerMinY, headerMinY >= viewportMinY else {
-            return presentation(for: topEdge.day, now: now, calendar: calendar)
+        if let headerMinY = topEdge.headerMinY,
+           headerMinY > viewportMinY,
+           let preceding = topEdge.precedingDay
+        {
+            return presentation(for: preceding, now: now, calendar: calendar)
         }
-        guard let preceding = topEdge.precedingDay else {
-            return nil
-        }
-        return presentation(for: preceding, now: now, calendar: calendar)
+        return presentation(for: topEdge.day, now: now, calendar: calendar)
     }
 
     private static func presentation(

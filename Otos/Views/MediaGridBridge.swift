@@ -329,6 +329,10 @@ final class MediaGridViewController: NSViewController {
         lastScrollTickAt = Date()
         scrollBoundsTickCount += 1
         scrollWorkDirty = true
+        // Not deferred to the coalesced flush below: that is a trailing-edge debounce
+        // with no maximum wait, so during a fling it does not fire until scrolling
+        // stops. The day bar names what the user is looking at right now.
+        updateDayBar()
         mutationGate.beginScrollHold()
         scheduleScrollHoldQuietRelease()
         scrollCoalesceTask?.cancel()
@@ -374,7 +378,6 @@ final class MediaGridViewController: NSViewController {
         // mouse event of its own; without this the control stays lit on every
         // tile the pointer passed over.
         collectionView.refreshHover()
-        updateDayBar()
         reportViewport()
         let visibleIDs = visibleAssetIDs()
         guard !visibleIDs.isEmpty else {

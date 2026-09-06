@@ -125,10 +125,14 @@ by constraints that never change, so a constant frame cannot separate from the c
 it labels, and app-owned colors honor DES-022/023/084 and DES-070/075. Which day it
 names — the day owning the viewport's top edge, including the inset gap between runs,
 which belongs to the day being left — is the pure `MediaGridDayBarPolicy`, and that is
-what makes DES-069 testable without a live collection view. The bar reserves no space, and
-withdraws rather than doubling a visible header: while a day's own header is still
-fully below the top edge that header is the rendering, and at the very top of the grid
-the bar is absent. The label is the one `NSHostingView` kind in this
+what makes DES-069 testable without a live collection view. The bar reserves no space and is shown
+continuously wherever there is a day to name: at the top of the grid it rests exactly
+on the first header and draws the same label in the same rect, so leaving it on costs
+nothing visible and removes a state. It is resolved on every scroll-bounds change
+rather than behind `flushScrollDrivenWork`'s coalesce — a trailing-edge debounce with
+no maximum wait, cancelled by each bounds change, so work behind it does not run until
+scrolling stops. That cadence is right for restarting Store queries and wrong for a
+label naming what the user is looking at. The label is the one `NSHostingView` kind in this
 otherwise pure-AppKit grid — justified by cardinality (one per day and one per grid,
 not one per tile), letting it reuse `DesignPalette`'s SwiftUI dynamic-appearance colors
 instead of AppKit-native dynamic-color infrastructure built for a low-cardinality view.

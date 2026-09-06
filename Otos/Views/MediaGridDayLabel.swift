@@ -35,13 +35,12 @@ nonisolated struct MediaGridDayLabelPresentation: Equatable, Sendable {
 /// beneath rather than blend with them; `content` because this is not chrome — it is
 /// the section's header, held in place.
 ///
-/// `showsScrollEdge` is the one thing the two hosts may differ on, and it is not part
-/// of the label: it is the boundary between a floating label and the content passing
-/// under it. macOS draws exactly this, contextually — `NSTitlebarSeparatorStyle` has
-/// defaulted to `.automatic` since macOS 11, showing a line beneath the titlebar while
-/// content is scrolled under it and hiding it at the top. The in-flow header has
-/// nothing passing beneath it and takes no edge; the bar does and takes a DES-023
-/// hairline.
+/// `showsScrollEdge` is the one thing that may differ between drawings, and it is not
+/// part of the label: it is the boundary between a floating label and the content
+/// passing under it. macOS draws exactly this, contextually — `NSTitlebarSeparatorStyle`
+/// has defaulted to `.automatic` since macOS 11, showing a line beneath the titlebar
+/// while content is scrolled under it and hiding it at the top. An in-flow header never
+/// has anything passing beneath it; the bar does, once the grid has moved off its top.
 private struct MediaGridDayLabelContent: View {
     let presentation: MediaGridDayLabelPresentation
     var showsScrollEdge = false
@@ -75,18 +74,14 @@ private struct MediaGridDayLabelContent: View {
 /// in-flow header and the top bar are this plus a host-specific role, so the two
 /// cannot drift apart.
 private final class MediaGridDayLabelHost: NSView {
-    private let showsScrollEdge: Bool
-    private let hostingView: NSHostingView<MediaGridDayLabelContent>
-
-    init(showsScrollEdge: Bool) {
-        self.showsScrollEdge = showsScrollEdge
-        hostingView = NSHostingView(
-            rootView: MediaGridDayLabelContent(
-                presentation: MediaGridDayLabelPresentation(dateText: "", countText: ""),
-                showsScrollEdge: showsScrollEdge
-            )
+    private let hostingView = NSHostingView(
+        rootView: MediaGridDayLabelContent(
+            presentation: MediaGridDayLabelPresentation(dateText: "", countText: "")
         )
-        super.init(frame: .zero)
+    )
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hostingView)
         NSLayoutConstraint.activate([
@@ -102,7 +97,7 @@ private final class MediaGridDayLabelHost: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func render(_ presentation: MediaGridDayLabelPresentation) {
+    func render(_ presentation: MediaGridDayLabelPresentation, showsScrollEdge: Bool) {
         hostingView.rootView = MediaGridDayLabelContent(
             presentation: presentation,
             showsScrollEdge: showsScrollEdge
@@ -124,7 +119,7 @@ private final class MediaGridDayLabelHost: NSView {
 final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
     static let elementKind = "MediaGridDayHeader"
 
-    private let label = MediaGridDayLabelHost(showsScrollEdge: false)
+    private let label = MediaGridDayLabelHost()
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -144,7 +139,8 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
     }
 
     func configure(_ presentation: MediaGridDayLabelPresentation) {
-        label.render(presentation)
+        // Nothing passes beneath an in-flow header, so it never draws a scroll edge.
+        label.render(presentation, showsScrollEdge: false)
     }
 }
 
@@ -161,8 +157,9 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
 /// header is still fully visible below the top edge, that header is the rendering and
 /// the bar shows the day being left, or nothing at all at the very top of the grid.
 final class MediaGridDayBarView: NSView {
-    private let label = MediaGridDayLabelHost(showsScrollEdge: true)
+    private let label = MediaGridDayLabelHost()
     private var presentation: MediaGridDayLabelPresentation?
+    private var rendersScrollEdge = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -190,18 +187,20 @@ final class MediaGridDayBarView: NSView {
     }
 
     /// `nil` hides the bar — the grid has no day structure to name, which is every
-    /// sort but Date. Idempotent, so this can be called on every coalesced scroll
-    /// flush without churn.
+    /// sort but Date. Under Date sort the bar is on continuously, including at the top
+    /// of the grid where it rests exactly on the first section's header and draws the
+    /// same label in the same rect. Idempotent, so this can be called on every scroll
+    /// tick without churn.
     ///
-    /// Deliberately unanimated. The bar and the header it hands off to occupy the same
-    /// rect and draw the same label, so appearing and disappearing changes no pixel a
-    /// transition could smooth; a cross-fade only put the two at partial alpha over
-    /// each other, which read as the label sliding. DES-070 governs motion that
-    /// explains a change of position or state — there is neither here.
-    func render(_ next: MediaGridDayLabelPresentation?) {
-        if let next, next != presentation {
+    /// Deliberately unanimated. The bar and the header behind it occupy the same rect
+    /// and draw the same label, so there is no change of position or state for motion
+    /// to explain (DES-070); a cross-fade only put the two at partial alpha over each
+    /// other, which read as the label sliding.
+    func render(_ next: MediaGridDayLabelPresentation?, showsScrollEdge: Bool) {
+        if let next, next != presentation || showsScrollEdge != rendersScrollEdge {
             presentation = next
-            label.render(next)
+            rendersScrollEdge = showsScrollEdge
+            label.render(next, showsScrollEdge: showsScrollEdge)
         }
         alphaValue = next == nil ? 0 : 1
     }
