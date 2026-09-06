@@ -588,11 +588,17 @@ extension MediaGridViewController {
         else {
             return nil
         }
-        // Set on every dequeue, both ways: supplementary views are recycled.
-        header.isHidden = !MediaGridDayHeaderVisibility.drawsInFlowHeader(section: indexPath.section)
-        guard indexPath.section < appliedDaySections.count,
+        // Blank rather than hidden. `isHidden` does not survive: AppKit sends
+        // `applyLayoutAttributes:` after this provider returns, and the attributes carry
+        // their own `hidden` — false — which overwrites it, so the first header kept
+        // reappearing from under the bar on a rubber-band scroll. Rendering no content
+        // is not something the collection view can undo. Set on every dequeue, both
+        // ways, because supplementary views are recycled.
+        guard MediaGridDayHeaderVisibility.drawsInFlowHeader(section: indexPath.section),
+              indexPath.section < appliedDaySections.count,
               let day = appliedDaySections[indexPath.section]
         else {
+            header.configure(nil)
             return header
         }
         header.configure(.map(date: day.date, itemCount: day.itemCount))

@@ -42,19 +42,24 @@ nonisolated struct MediaGridDayLabelPresentation: Equatable, Sendable {
 /// while content is scrolled under it and hiding it at the top. An in-flow header never
 /// has anything passing beneath it; the bar does, once the grid has moved off its top.
 private struct MediaGridDayLabelContent: View {
-    let presentation: MediaGridDayLabelPresentation
+    /// `nil` draws the label's space and nothing in it. The first section's header
+    /// takes this: the bar already covers its rect, so its text would only ever be
+    /// seen when rubber-band scrolling pushes it out from under the bar as a duplicate.
+    let presentation: MediaGridDayLabelPresentation?
     var showsScrollEdge = false
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(presentation.dateText)
-                .font(.headline)
-                .foregroundStyle(DesignPalette.label(for: colorScheme))
-            Text(presentation.countText)
-                .font(.subheadline)
-                .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                .monospacedDigit()
+            if let presentation {
+                Text(presentation.dateText)
+                    .font(.headline)
+                    .foregroundStyle(DesignPalette.label(for: colorScheme))
+                Text(presentation.countText)
+                    .font(.subheadline)
+                    .foregroundStyle(DesignPalette.l3(for: colorScheme))
+                    .monospacedDigit()
+            }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 12)
@@ -75,9 +80,7 @@ private struct MediaGridDayLabelContent: View {
 /// cannot drift apart.
 private final class MediaGridDayLabelHost: NSView {
     private let hostingView = NSHostingView(
-        rootView: MediaGridDayLabelContent(
-            presentation: MediaGridDayLabelPresentation(dateText: "", countText: "")
-        )
+        rootView: MediaGridDayLabelContent(presentation: nil)
     )
 
     override init(frame frameRect: NSRect) {
@@ -97,7 +100,7 @@ private final class MediaGridDayLabelHost: NSView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func render(_ presentation: MediaGridDayLabelPresentation, showsScrollEdge: Bool) {
+    func render(_ presentation: MediaGridDayLabelPresentation?, showsScrollEdge: Bool) {
         hostingView.rootView = MediaGridDayLabelContent(
             presentation: presentation,
             showsScrollEdge: showsScrollEdge
@@ -138,8 +141,9 @@ final class MediaGridDayHeaderView: NSView, NSCollectionViewElement {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(_ presentation: MediaGridDayLabelPresentation) {
-        // Nothing passes beneath an in-flow header, so it never draws a scroll edge.
+    /// `nil` leaves the header's space blank. Nothing passes beneath an in-flow
+    /// header, so it never draws a scroll edge either.
+    func configure(_ presentation: MediaGridDayLabelPresentation?) {
         label.render(presentation, showsScrollEdge: false)
     }
 }
