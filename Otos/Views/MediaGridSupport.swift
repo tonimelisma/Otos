@@ -206,3 +206,53 @@ nonisolated enum MediaGridDayBarPolicy {
         .map(date: day.date, itemCount: day.itemCount, now: now, calendar: calendar)
     }
 }
+
+/// When scroll-driven work may run.
+///
+/// The grid coalesces hover refresh, viewport reporting, visible detail queries and
+/// preheat behind a trailing edge, so a burst of bounds notifications does not restart
+/// Store queries on every tick. A trailing edge *alone* is the wrong shape: it is
+/// cancelled and rescheduled by each notification, and notifications arrive faster than
+/// its window for the whole duration of a fling, so it never fires until scrolling
+/// stops.
+///
+/// Measured on a live session before this policy existed: 3,594 bounds ticks produced
+/// 221 flushes — 6.1% — with a busiest second of 153 ticks and a single flush, and one
+/// full second of scrolling that flushed nothing at all. At 153 ticks per second the
+/// gap between them is ~6.5 ms against a 16 ms window, so the cancel always wins.
+///
+/// The fix is a maximum wait, not a shorter window: the trailing edge still collapses a
+/// burst that ends, and the maximum wait guarantees that sustained scrolling is served
+/// too. `maximumWait` is deliberately far longer than the coalesce window — this bounds
+/// Store-backed work to ten passes a second during a fling, where before it got none,
+/// while staying well inside the time a thumbnail has to appear before a reader notices
+/// it missing.
+nonisolated enum MediaGridScrollWorkCadence {
+    /// Trailing edge for a burst that ends. One display frame at 60 Hz.
+    static let coalesceWindow: TimeInterval = 0.016
+
+    /// Longest a dirty grid may go unflushed while scrolling continues.
+    static let maximumWait: TimeInterval = 0.1
+
+    /// True when scroll-driven work has waited long enough that it must run now rather
+    /// than be rescheduled behind another trailing edge.
+    static func runsImmediately(sinceLastRun: TimeInterval) -> Bool {
+        sinceLastRun >= maximumWait
+    }
+}
+
+/// Whether a day section draws its own in-flow header (DES-069).
+///
+/// Every section does, except the first. The bar covers the top-most header's rect
+/// exactly, so a header at the top of the viewport is never separately visible — with
+/// one exception: rubber-band scrolling past the top pushes the content down while the
+/// bar stays at the viewport edge, and the first section's header slides out from under
+/// it as a duplicate of the label already being drawn. No other header can do this,
+/// because no other header is at the top when the content bounces. Since the first
+/// header is never visible on its own anyway, not drawing it removes the duplicate and
+/// nothing else; its space is still reserved, so the first row does not move.
+nonisolated enum MediaGridDayHeaderVisibility {
+    static func drawsInFlowHeader(section: Int) -> Bool {
+        section > 0
+    }
+}

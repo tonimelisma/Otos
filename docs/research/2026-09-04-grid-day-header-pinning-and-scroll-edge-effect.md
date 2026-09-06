@@ -573,6 +573,47 @@ The hairline stays contextual on the same fact, sharing the one-point tolerance
 `captureScrollAnchor` uses for the same reason: elasticity leaves a sub-point residue at
 rest.
 
+## Measurement (2026-09-05): the scroll coalesce, quantified
+
+The previous pass flagged that `flushScrollDrivenWork`'s trailing edge might never fire
+during a fling but did not measure it. It does not, and the app already logged the proof:
+`op=ui.mediaGrid.scrollBounds` reports `boundsTickCount` and `flushCount` per one-second
+window. Taken from a live session, 69 windows:
+
+```
+totalTicks = 3594   totalFlushes = 221   flushRate = 6.1%
+busiest window: 153 ticks -> 1 flush
+one full second of scrolling with 20+ ticks and zero flushes
+```
+
+153 ticks per second is a notification every ~6.5 ms against a 16 ms window that is
+cancelled and rescheduled by each one, so the cancel always wins. Everything behind it —
+hover recomputation, viewport reporting, visible detail queries, preheat — waited for
+scrolling to stop.
+
+**The fix is a maximum wait, not a shorter window.** A shorter window would spend more
+CPU on the quiet case without fixing the busy one, because the problem is not the window
+length but that the window is never allowed to elapse. `MediaGridScrollWorkCadence` adds
+a 100 ms ceiling: the trailing edge still collapses a burst that ends, and sustained
+scrolling is served at up to ten passes a second where before it got none. That bounds
+Store-backed work rather than removing the bound, and stays inside the time a thumbnail
+has to appear before a reader notices it missing.
+
+**ARC-023 was wrong, and is corrected.** It claimed hover "recomputes from the pointer's
+real position on every scroll tick". It never did — hover sits behind the same coalesce.
+The requirement now states what is implemented: recomputation whenever scroll-driven work
+runs, on a trailing edge bounded by a maximum wait.
+
+### The rubber-band duplicate
+
+Scrolling past the top of the grid bounces the content downward while the bar stays at
+the viewport edge, so the first section's header slides out from under the bar and shows
+as a second copy of the same date. No other header can do this: every other one is either
+above the viewport or exactly under the bar, and the content only bounces at the extremes.
+
+Since the first header is never separately visible anyway — the bar covers its rect
+exactly — it is simply not drawn. Its space is still reserved, so no row moves.
+
 ## Appendix: reproducing the probe
 
 A single-file AppKit program, compiled with `xcrun swiftc`, is enough. The essentials:

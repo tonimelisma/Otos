@@ -191,6 +191,8 @@ final class MediaGridViewController: NSViewController {
     private var scrollPreheatStarted = 0
     private var scrollPreheatReused = 0
     private var scrollWorkDirty = false
+    /// When scroll-driven work last ran, for `MediaGridScrollWorkCadence`'s maximum wait.
+    private var lastScrollWorkRunAt = Date.distantPast
     private var scrollCoalesceTask: Task<Void, Never>?
     /// Cancels/restarts on each scroll tick; fires after the shared quiet
     /// threshold to release the mutation gate's scroll hold.
@@ -335,21 +337,31 @@ final class MediaGridViewController: NSViewController {
         updateDayBar()
         mutationGate.beginScrollHold()
         scheduleScrollHoldQuietRelease()
-        scrollCoalesceTask?.cancel()
-        scrollCoalesceTask = Task { [weak self] in
-            do {
-                try await Task.sleep(for: .milliseconds(16))
-            } catch {
-                return
+        // A trailing edge alone never fires while scrolling continues: each notification
+        // cancels and reschedules it, and they arrive faster than its window for the
+        // whole duration of a fling. `MediaGridScrollWorkCadence` records the measured
+        // shortfall. The maximum wait is what serves sustained scrolling; the trailing
+        // edge still collapses a burst that ends.
+        if MediaGridScrollWorkCadence.runsImmediately(
+            sinceLastRun: Date().timeIntervalSince(lastScrollWorkRunAt)
+        ) {
+            scrollCoalesceTask?.cancel()
+            scrollCoalesceTask = nil
+            runScrollDrivenWork()
+        } else {
+            scrollCoalesceTask?.cancel()
+            let window = Int(MediaGridScrollWorkCadence.coalesceWindow * 1000)
+            scrollCoalesceTask = Task { [weak self] in
+                do {
+                    try await Task.sleep(for: .milliseconds(window))
+                } catch {
+                    return
+                }
+                guard let self, !Task.isCancelled else {
+                    return
+                }
+                runScrollDrivenWork()
             }
-            guard let self, !Task.isCancelled else {
-                return
-            }
-            guard scrollWorkDirty else {
-                return
-            }
-            scrollWorkDirty = false
-            flushScrollDrivenWork()
         }
         flushScrollBoundsDiagnosticsIfNeeded()
     }
@@ -403,6 +415,17 @@ final class MediaGridViewController: NSViewController {
         case .skipped:
             break
         }
+    }
+
+    /// The one place scroll-driven work is actually performed, so the immediate and
+    /// coalesced paths cannot drift on what they clear and stamp.
+    private func runScrollDrivenWork() {
+        guard scrollWorkDirty else {
+            return
+        }
+        scrollWorkDirty = false
+        lastScrollWorkRunAt = Date()
+        flushScrollDrivenWork()
     }
 
     /// Test hook: run the scroll-driven detail/preheat path immediately.
@@ -565,6 +588,8 @@ extension MediaGridViewController {
         else {
             return nil
         }
+        // Set on every dequeue, both ways: supplementary views are recycled.
+        header.isHidden = !MediaGridDayHeaderVisibility.drawsInFlowHeader(section: indexPath.section)
         guard indexPath.section < appliedDaySections.count,
               let day = appliedDaySections[indexPath.section]
         else {
