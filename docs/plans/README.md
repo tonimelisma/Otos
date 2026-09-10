@@ -3,7 +3,11 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-No active plans.
+Plan 0102 (import out of space, terminal-state durability, and batch navigation)
+is active. It opened from a live session where `Import 38 Items` drew its correct
+`The disk is full` verdict for 24 ms before a speculative replan erased it, and a
+second click unmounted the bar for 8.3 s. Its research pass is
+`docs/research/2026-09-09-destination-free-space-and-import-failure-recovery.md`.
 
 Plan 0100 (camera import: prove naming from ranges, stage only what is imported) is complete
 and was removed at closure. It opened from a live MTP session where a 991-item card staged in
