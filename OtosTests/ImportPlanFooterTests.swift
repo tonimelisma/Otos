@@ -27,8 +27,8 @@ struct ImportPlanFooterRenderedPrimaryTests {
     }
 
     private static let allActions: [ImportBarDrawnState.PrimaryAction] = [
-        .importPending,
-        .importItems(count: 3),
+        .importNewItems,
+        .importQueued,
         .ejectCard,
         .eraseItems(count: 3),
         .cancel,
@@ -51,9 +51,8 @@ struct ImportPlanFooterRenderedPrimaryTests {
         func title(_ action: ImportBarDrawnState.PrimaryAction) -> String {
             ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: action, primaryEnabled: true)).title
         }
-        #expect(title(.importPending) == "Import")
-        #expect(title(.importItems(count: 1)) == "Import 1 Item")
-        #expect(title(.importItems(count: 3)) == "Import 3 Items")
+        #expect(title(.importNewItems) == "Import")
+        #expect(title(.importQueued) == "Import queued")
         #expect(title(.ejectCard) == "Eject Card")
         #expect(title(.eraseItems(count: 1)) == "Erase 1 Item")
         #expect(title(.eraseItems(count: 3)) == "Erase 3 Items")

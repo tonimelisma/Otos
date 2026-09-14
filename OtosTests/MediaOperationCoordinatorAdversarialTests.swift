@@ -1432,7 +1432,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(ready.destinationAvailableBytes == FreeSpaceFloor.bytes + 100)
         let drawn = ImportBarPresentation.map(presentation: ready, preferences: .default, sourceDisplayName: "Card")
         #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 5.4 GB available"))
-        #expect(drawn.primaryAction == .importItems(count: 1))
+        #expect(drawn.primaryAction == .importNewItems)
         log("END")
         await coordinator.shutdown()
     }

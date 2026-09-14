@@ -433,6 +433,21 @@ actor MediaOperationCoordinator {
         session.isDestinationExplicit = true
         if previous != destination {
             session.isDirty = true
+            // The held plan and the settled outcome were measured against the
+            // previous library — "42 new items", "139 already in", "everything
+            // on this card is imported" are all claims about *it*. Holding them
+            // across the rebuild (ARC-047's refresh-is-not-a-first-check rule)
+            // would draw the old counts under the new library's name and offer
+            // an Import whose number the click would not honour. A destination
+            // change is a rebuild whose inputs changed, like a settlement, so
+            // the bar returns to Checking until the new plan lands; the last
+            // naming progress still carries its determinate count.
+            session.lastReadyContext = nil
+            session.settledOutcome = nil
+            if case .completed = session.phase {
+                // `.completed` presents from `settledOutcome`, which is gone.
+                session.phase = .inventory
+            }
         }
         sourceSessions[source] = session
         if session.isDirty {

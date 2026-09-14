@@ -138,7 +138,7 @@ column gap 28:
 ```
 ┌──────────────────────────────────┬─────────────────────────────────┬────────────────────┐
 │ L1  42 new items · 68 MB         │ Copy into   [Summer Photos ⌄]    │  ┌──────────────┐  │
-│ L3  139 already in Summer Photos  │ Afterwards  ☑ Eject  ☐ Erase    │  │  Import 42…  │  │
+│ L3  139 already in Summer Photos  │ Afterwards  ☑ Eject  ☐ Erase    │  │    Import    │  │
 └──────────────────────────────────┴─────────────────────────────────┴────────────────────┘
       what                              choices                            the act
 ```
@@ -150,6 +150,8 @@ act* is drawn only here, to mark the zone.
 - **Choices** — behind a `.5 pt` hairline, `padding-left: 12`. Two rows, `.callout`
   introductory labels in a fixed 66 pt column (DES-016), controls at 22 pt.
   Row 1: destination pop-up button. Row 2: `Eject the card`, `Erase the card`.
+  Above row 1, a 12 pt slot for state A's small linear track; every other state
+  holds it blank, so the rows never move when the plan lands (DES-053).
 - **The act** — one prominent 30 pt push button, Return default (DES-052).
 
 Both checkboxes take their initial value from the Settings → Import preferences
@@ -214,8 +216,14 @@ L1 `Checking the card…` · L3 `112 of 181 items`. Middle: a **determinate** ba
 driven by that same count — HIG prefers determinate wherever a real total exists,
 and once enumeration has finished the total is real. It is indeterminate only
 during enumeration itself, before any honest total exists, and L3 is then omitted
-(DES-030, DES-032). The destination and checkboxes stay visible and usable; choosing
-while we check costs nothing. Action: `Import` — visible, disabled (DES-053).
+(DES-030, DES-032). The track sits above the choices in the same zone (mockup 2b):
+the destination pop-up and both checkboxes are the controls Ready draws, usable
+from the first frame, because choosing while we check costs nothing — the plan is
+simply built against the choice — and a control that only appeared at Ready would
+move between states (DES-053). Action: `Import` — the same push button Ready
+enables, disabled and dimmed in place, never static text: a verb title says the
+control is interactive, and a disabled control stays a control to VoiceOver and the
+tab order (DES-053, HIG push buttons).
 
 ### B · No destination
 
@@ -228,14 +236,17 @@ the primary action stays `Import`, disabled.
 ### C · Ready
 
 L1 `42 new items · 68 MB` · L3 `139 already in Summer Photos`, omitted at zero.
-Action: `Import 42 Items` — count and scope in the title (DES-036).
+Action: `Import` — no count: the number is L1's primary fact, and Otos imports
+everything new, so the title has no scope to name (DES-036). Photos does the same,
+reserving a count for a user-chosen subset (`Import 3 Selected`) that Otos does not
+offer.
 
 **When not everything will fit**, L3 is that instead of anything else:
 `Not everything will fit yet · 37.7 GB available`. Drawn only when the plan's bytes
 plus the 5 GB floor exceed what the destination volume reported available when this
 Ready was published — two measured values and Otos's own stopping rule (ADR 0027),
 not an estimate, so it is not DES-032's one permitted estimate. It gates nothing: the
-act stays `Import 680 Items`, the run copies what fits, stops at the floor, and state F's
+act stays `Import`, the run copies what fits, stops at the floor, and state F's
 Stopped variant states what happened. "Yet" is the resumable design in one word — free
 space, import the rest. It outranks the already-in-library clause because it changes
 what the click will do (DES-034: one clause). "Available" is the metric's name across
@@ -271,9 +282,9 @@ plan keeps showing (ADR 0019).
 L1 `39 new items · 61 MB` · L3 ⚠ `3 items have no date · Show them`. The orange
 badge carries a glyph, never colour alone (DES-029). `Show them` selects and scrolls
 the affected tiles in the grid — the grid is the plan view; there is no modal list
-(DES-041). Action: `Import 39 Items` — omitted when nothing is importable, because
-`Import 0 Items` is a control whose subject does not exist (DES-053; drawn once, on
-2026-09-13, over 368 blocked items). `Erase the card` is disabled while attention
+(DES-041). Action: `Import` — omitted when nothing is importable, because a button
+over nothing is a control whose subject does not exist (DES-053; drawn once, as
+`Import 0 Items`, on 2026-09-13 over 368 blocked items). `Erase the card` is disabled while attention
 remains, with the tooltip `Some items still need attention.` (DES-038).
 
 **The clause must name the real cause.** `blocked` is not one condition, and none of
@@ -340,12 +351,12 @@ run's own facts, and offer what is left. L1 `Stopped — 12 of 42 items copied` 
 one clause for the cause: `They're in Summer Photos` after a Cancel (omitted when
 nothing was copied), `Not enough room on the disk · 5.4 GB left` at the floor — the
 capacity read when the run stopped, in the bar's byte units. Choices present while the card
-is attached. The act is the remainder's own **`Import 30 Items`** — and this is the
-one F variant with a prominent act, because its subject exists: 30 items are still
-on an attached card, so DES-053's exception does not apply. The count is the
-re-plan's, not the run's: the coordinator drops the plan the run executed from (its
-landed entries are skips now), so for the moment the re-plan takes the act reads a
-disabled `Import`, then the honest number (DES-030). When nothing is left, the act
+is attached. The act is **`Import`** for what is left — and this is the one F
+variant with a prominent act, because its subject exists: items are still on an
+attached card, so DES-053's exception does not apply. What it imports is the
+re-plan's remainder, not the run's arithmetic: the coordinator drops the plan the run
+executed from (its landed entries are skips now), so the act is disabled for the
+moment the re-plan takes and enabled once the honest plan lands (DES-030). When nothing is left, the act
 is the card's, as in F-attached. Identical on `.library(card)` and
 `.importBatch(new)`. Never auto-dismisses, and never fully clean, so the card is
 neither ejected nor erased on the stop's account.
@@ -355,7 +366,8 @@ to remove`; choices and act omitted, as in F card-gone.
 
 The stop is a fact about the *last run*, so it is stated until the next run starts —
 a card that gains a file meanwhile still reads `Stopped — 12 of 42 items copied`,
-now with `Import 31 Items`, because both halves stay true. A new run's Working (or
+still offering `Import`, which takes whatever is new — the extra file included —
+because both halves stay true. A new run's Working (or
 its own Failed) outranks it. It is not a failure: nothing went wrong that
 `Try Again` could fix, and state G's cause vocabulary does not include it.
 
@@ -548,7 +560,7 @@ coordinator's plan, never by a remembered UI flag.
 | 1 | `.library(card)` — auto-selected on attach | slides up, 24 pt + fade | Card appears under **Removable** |
 | 2 | `.library(card)` | **A** `Checking the card…`, indeterminate, L3 empty | Enumerating; no honest total yet |
 | 3 | `.library(card)` | **A** + `112 of 181 items`, determinate | Total is now real |
-| 4 | `.library(card)` | **C** `42 new items · 68 MB` / `139 already in Summer Photos` | `Copy into: Summer Photos`, eject checked from preference. Primary `Import 42 Items` |
+| 4 | `.library(card)` | **C** `42 new items · 68 MB` / `139 already in Summer Photos` | `Copy into: Summer Photos`, eject checked from preference. Primary `Import` |
 | 5 | → `.importBatch(new)` | **E**, travels with the operation | Import pressed; `ImportBatchID()` minted, batch row appears and the view follows it |
 | 6 | `.importBatch(new)` | **E** `Importing 12 of 42` / `19 MB of 68 MB · about 40 seconds left` | Grid fills in as items land. The card's own row shows nothing — the bar owns status |
 | 7 | `.importBatch(new)` | **F, card gone** ✓ `42 items copied and verified` / `In Summer Photos · card ejected — safe to remove` | Verified, then ejected. No card to talk about, so the sentence is about the result; choices and act both omitted |
@@ -588,7 +600,7 @@ for concreteness only.
 Where: `.library(card)`.
 
 1. From **F**, the camera writes one more frame. The watcher fires; the session re-plans.
-2. **C** — `1 new item · 4 MB` / `181 already in Summer Photos`, primary `Import 1 Item`.
+2. **C** — `1 new item · 4 MB` / `181 already in Summer Photos`, primary `Import`.
 3. Importing it mints a *second* batch and moves the selection there, exactly as J1 step 5.
 
 This is why F is derived rather than remembered: nothing has to expire.
@@ -610,7 +622,7 @@ the controls' subject does not exist (DES-053 exception).
 
 ### J7 · Items that need attention
 
-1. `.library(card)` — **D** `39 new items · 61 MB` / ⚠ `3 items can't be read · Show them`, primary `Import 39 Items`. `Erase the card` disabled, tooltip `Some items still need attention.` — the invariant lives on the control it blocks, not in a status line.
+1. `.library(card)` — **D** `39 new items · 61 MB` / ⚠ `3 items can't be read · Show them`, primary `Import`. `Erase the card` disabled, tooltip `Some items still need attention.` — the invariant lives on the control it blocks, not in a status line.
 2. `Show them` selects and scrolls those tiles **in place**, on `.library(card)`. The grid is the plan view; there is no modal list, and the selection does not move.
 3. Import proceeds on the 39; selection moves to the new batch as in J1.
 4. Eject was withheld while attention remains, so the card survives: the bar settles into **F, card attached** reporting `39 copied just now` — on either row.
@@ -622,7 +634,7 @@ Where: `.importBatch(new)` — the user is on the batch when they cancel.
 1. `Cancel` (or Escape). No confirmation: copies are additive, originals read-only.
 2. **E, cancelling** — `Stopping…` / `Finishing the current item`. Indicator stays determinate and moving; button disabled.
 3. **F, Stopped** — `Stopped — 12 of 42 items copied` / `They're in Summer Photos`, and the act zone is empty if the card went with the cancel; the user is already on the batch holding the 12. Never auto-dismisses. The partial batch remains a real batch in the sidebar.
-4. With the card still attached, the same bar — on the batch row and on `.library(card)` alike — offers `Import 30 Items` for what is left, once the re-plan has counted it. Pressing it creates a *second* batch. Nothing is duplicated.
+4. With the card still attached, the same bar — on the batch row and on `.library(card)` alike — offers `Import` for what is left, once the re-plan has counted it. Pressing it creates a *second* batch. Nothing is duplicated.
 
 ### J9 · A failure mid-import
 
@@ -725,3 +737,12 @@ in `hig-validation.md`.
 | Day headers | Yes, pinned while scrolling (DES-069) |
 | Chrome | Sidebar `#FAFAFB`, bar `#FBFBFC`, hairlines 8% (DES-022, DES-023) |
 | L3 text colour | 60%, raised from the system value for contrast (`hig-validation.md` F-1) |
+
+## Decisions, 2026-09-13
+
+| Question | Decision |
+| --- | --- |
+| Count on the Import button | None — `Import`. The count is L1's primary fact and the click has no scope to choose (DES-036 rewritten). A count stays on `Erase N Items`, where it is the new information a destructive click commits to |
+| Disabled Import | A real push button, disabled and dimmed in place — never static text (DES-053, HIG). One `PrimaryAction` case whether enabled or not |
+| Choices while checking | Usable from the first frame, with the small linear track above them in the same zone (mockup 2b); the bar's fixed height grows to fit (61 pt content) |
+| Destination changed on a Ready plan | The held plan and settled outcome are dropped and the bar returns to A until the plan for the new library lands — the old counts were measured against another library, so holding them (ARC-047) would put them under the wrong name and offer an Import the click would not honour |

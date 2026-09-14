@@ -489,6 +489,76 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// A destination change is the rebuild whose inputs changed: the held plan's
+    /// counts were measured against the previous library, so holding it across
+    /// the rebuild (`aRebuildKeepsShowingThePlanItIsReplacing`) would draw those
+    /// counts under the new library's name and offer an Import the click would
+    /// not honour. The bar must never present the old plan after the pick: it
+    /// returns to Checking until a plan built against the new destination lands.
+    @Test func changingTheDestinationNeverPresentsThePlanBuiltForTheOldOne() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let firstRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let secondRoot = temp.appending(path: "Camera Roll", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        for root in [firstRoot, secondRoot, cardRoot] {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        }
+        try writeCatalogStoreFile(cardRoot.appending(path: "card.jpg"), contents: "jpeg-bytes")
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: firstRoot)
+        try await store.addLibrary(url: secondRoot)
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstRoot)
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:destination-change",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        await coordinator.start()
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+        await coordinator.setDestination(firstPath, for: cardPath)
+        let oldGeneration = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        await coordinator.setDestination(secondPath, for: cardPath)
+        // Every frame from the pick onward is either not a plan at all, or a
+        // plan built for the new destination. The first read is deliberately
+        // immediate: the old plan's presentation would appear here if it were
+        // still being held.
+        var sawOldPlan = false
+        var newGeneration: UInt64?
+        let deadline = ContinuousClock().now + .seconds(15)
+        while ContinuousClock().now < deadline, newGeneration == nil {
+            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
+                #expect(presentation.destinationPath == secondPath)
+                if case let .ready(_, generation, _, _) = presentation.state {
+                    if generation <= oldGeneration {
+                        sawOldPlan = true
+                    } else {
+                        newGeneration = generation
+                    }
+                }
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!sawOldPlan, "the bar presented the plan built for the previous destination after the pick")
+        #expect(newGeneration != nil, "no plan built for the new destination arrived")
+        await coordinator.shutdown()
+    }
+
     @Test func destinationNamingChurnDoesNotDisturbReadyPlan() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)

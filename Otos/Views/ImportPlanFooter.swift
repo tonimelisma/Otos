@@ -29,9 +29,13 @@ struct ImportPlanFooter: View {
     @State private var showsEraseConfirmation = false
 
     /// Fixed content height (excludes the surface's own vertical padding), so
-    /// the bar's total height never changes across states (DES-018, DES-053):
-    /// the choices zone's two 22 pt rows plus its row gap set the floor.
-    private static let contentHeight: CGFloat = 50
+    /// the bar's total height never changes across states (DES-018, DES-053).
+    /// The floor is the Preparing choices zone, the tallest content any state
+    /// draws: the small linear track's 12 pt layout box, the 4 pt row gap, and
+    /// the two control rows' 45 pt, measured with `NSHostingView.fittingSize`
+    /// on 2026-09-13 (a regular-size track's box is 20 pt, which is why the
+    /// track is `.small`).
+    private static let contentHeight: CGFloat = 61
 
     private var effectivePreferences: ImportPreferences {
         sessionPreferences ?? importPreferences
@@ -80,12 +84,10 @@ struct ImportPlanFooter: View {
         case .none:
             title = ""
             isDefault = false
-        case .importPending:
+        case .importNewItems:
             title = "Import"
         case .importQueued:
             title = "Import queued"
-        case let .importItems(count):
-            title = "Import \(count) \(count == 1 ? "Item" : "Items")"
         case .ejectCard:
             title = "Eject Card"
         case let .eraseItems(count):
@@ -203,8 +205,16 @@ struct ImportPlanFooter: View {
     @ViewBuilder
     private var choicesZone: some View {
         switch drawn.middleZone {
-        case let .choices(eraseEnabled, eraseDisabledReason):
+        case let .choices(track, eraseEnabled, eraseDisabledReason):
             VStack(alignment: .leading, spacing: 4) {
+                // Preparing's track sits above the controls it does not gate;
+                // every other choices state holds the same 12 pt so the rows
+                // never move between Preparing and Ready (DES-053).
+                if let track {
+                    progressTrackView(track)
+                } else {
+                    Color.clear.frame(height: 12)
+                }
                 HStack(spacing: 6) {
                     introLabel("Copy into")
                     Picker("Copy into", selection: destinationBinding) {
@@ -281,9 +291,11 @@ struct ImportPlanFooter: View {
         case .indeterminate:
             ProgressView()
                 .progressViewStyle(.linear)
+                .controlSize(.small)
         case let .determinate(completed, total):
             ProgressView(value: Double(completed), total: Double(max(total, 1)))
                 .progressViewStyle(.linear)
+                .controlSize(.small)
                 .animation(reduceMotion ? .linear(duration: 0.1) : .linear(duration: 0.2), value: completed)
         }
     }
@@ -344,15 +356,15 @@ struct ImportPlanFooter: View {
             // `import-bar.md` "There is no `Show These Items` button"). The act
             // zone holds its width regardless, so no other zone moves.
             EmptyView()
-        case .importPending, .importQueued:
-            Text(rendered.title)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(DesignPalette.l3(for: colorScheme))
-                .frame(height: 30)
-                .accessibilityLabel(rendered.title)
-                .accessibilityAddTraits(.isStaticText)
-        case .importItems:
+        case .importNewItems:
+            // The same push button whether or not the plan is ready: `actZone`
+            // disables it from `primaryEnabled`, and macOS dims it in place. It
+            // is never static text — a verb title says the control is
+            // interactive, and a disabled control stays a control to VoiceOver
+            // and the tab order (DES-053; HIG push buttons).
             styledPrimary(Button(rendered.title, action: queueImport), hint: "Imports new items from the card")
+        case .importQueued:
+            styledPrimary(Button(rendered.title, action: queueImport), hint: "The import starts once the card has been checked")
         case .ejectCard:
             styledPrimary(Button(rendered.title, action: ejectCard), hint: "Ejects the card")
         case let .eraseItems(count):

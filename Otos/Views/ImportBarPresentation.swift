@@ -35,8 +35,16 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
     /// The bar's middle column. Exactly one of these per state — `.hidden` is the
     /// DES-053 exception for a control whose subject no longer exists (empty card,
     /// card gone), never an empty `.choices`.
+    ///
+    /// `.choices` carries the Preparing track above its two control rows while
+    /// the card is being checked: the destination and the per-run checkboxes are
+    /// usable from the first frame, because choosing costs nothing — the plan
+    /// rebuilds against the choice — and a control that only appears at Ready
+    /// would move between states (DES-053; `import-bar.md` state A, mockup 2b).
+    /// `.progress` is Working's zone: a track with the destination caption and
+    /// no choices, because the run has already consumed them.
     enum MiddleZone: Equatable, Sendable {
-        case choices(eraseEnabled: Bool, eraseDisabledReason: String?)
+        case choices(track: ProgressTrack?, eraseEnabled: Bool, eraseDisabledReason: String?)
         case addLibraryButton
         case progress(track: ProgressTrack, caption: String?)
         case hidden
@@ -47,11 +55,17 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
     /// button whose subject is gone or whose effect is already on screen. It is
     /// reached only by state F, and only where the user is by construction
     /// already looking at the items the bar is talking about.
+    ///
+    /// `.importNewItems` is one case whether or not it is enabled: its title is
+    /// `Import` either way and `primaryEnabled` says which (DES-053, "a disabled
+    /// primary action shall keep its position and its title"). The title carries
+    /// no count — Otos imports everything new, so the number is L1's primary fact,
+    /// not a scope the click chooses (DES-036). `.importQueued` is the same
+    /// button after a click the coordinator is holding across a rebuild.
     enum PrimaryAction: Equatable, Sendable {
         case none
-        case importPending
+        case importNewItems
         case importQueued
-        case importItems(count: Int)
         case ejectCard
         case eraseItems(count: Int)
         case cancel
@@ -198,13 +212,18 @@ nonisolated enum ImportBarPresentation {
         let primaryLine = sourceKind == .deviceMTP ? "Checking the camera…" : "Checking the card…"
         let primaryAction: ImportBarDrawnState.PrimaryAction = state == .queuedForReadiness
             ? .importQueued
-            : .importPending
+            : .importNewItems
+        // The choices are live while Otos checks: nothing about the check
+        // depends on the destination or the checkboxes, and a pick made now is
+        // what the first plan is built against. Erase is enabled because no
+        // plan has yet found anything to hold it back; state D disables it once
+        // one does.
         return ImportBarDrawnState(
             kind: .preparing,
             primaryLine: primaryLine,
             primaryBadge: .none,
             secondaryLine: itemsLine.map { ImportBarDrawnState.SecondaryLine.plain($0) } ?? .none,
-            middleZone: .progress(track: track, caption: nil),
+            middleZone: .choices(track: track, eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: primaryAction,
             primaryEnabled: false,
             eraseConfirmationProvenClean: false
@@ -227,7 +246,7 @@ nonisolated enum ImportBarPresentation {
             primaryBadge: .none,
             secondaryLine: secondary,
             middleZone: .addLibraryButton,
-            primaryAction: .importPending,
+            primaryAction: .importNewItems,
             primaryEnabled: false,
             eraseConfirmationProvenClean: false
         )
@@ -269,7 +288,7 @@ nonisolated enum ImportBarPresentation {
                 secondaryLine: .plain(
                     "All \(summary.skipCount) \(summary.skipCount == 1 ? "item is" : "items are") already in \(destinationName)"
                 ),
-                middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
+                middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
                 primaryAction: action,
                 primaryEnabled: true,
                 eraseConfirmationProvenClean: true
@@ -287,8 +306,8 @@ nonisolated enum ImportBarPresentation {
             primaryLine: newItemsHeadline(summary: summary),
             primaryBadge: .none,
             secondaryLine: secondary,
-            middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
-            primaryAction: .importItems(count: summary.copyCount),
+            middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
+            primaryAction: .importNewItems,
             primaryEnabled: true,
             eraseConfirmationProvenClean: false
         )
@@ -298,7 +317,7 @@ nonisolated enum ImportBarPresentation {
     /// the floor exceed what the destination volume reported available at
     /// publish — two measured values and Otos's own stopping rule, not an
     /// estimate (DES-032 permits one estimate and this is not it). It gates
-    /// nothing: the act stays `Import N Items`, the run copies what fits and
+    /// nothing: the act stays `Import`, the run copies what fits and
     /// stops at the floor, and the Stopped bar states what happened. "Yet"
     /// is the resumable design in one word. Outranks the already-in-library
     /// clause because it changes what the click will do (DES-034: one clause).
@@ -328,7 +347,7 @@ nonisolated enum ImportBarPresentation {
         // `Import 0 Items` — drawn on 2026-09-13 over 368 blocked items — is a
         // control whose subject does not exist (DES-053): the act zone is empty.
         let action: ImportBarDrawnState.PrimaryAction = summary.copyCount > 0
-            ? .importItems(count: summary.copyCount)
+            ? .importNewItems
             : .none
         return ImportBarDrawnState(
             kind: .needsAttention,
@@ -336,6 +355,7 @@ nonisolated enum ImportBarPresentation {
             primaryBadge: .none,
             secondaryLine: .attention(clause: clause, revealLabel: "Show them", itemIDs: attentionItems.map(\.id)),
             middleZone: .choices(
+                track: nil,
                 eraseEnabled: false,
                 eraseDisabledReason: "Some items still need attention."
             ),
@@ -585,13 +605,13 @@ nonisolated enum ImportBarPresentation {
             // The re-plan has not landed yet: the act is coming, its count is not.
             let action: ImportBarDrawnState.PrimaryAction = presentation.state == .queuedForReadiness
                 ? .importQueued
-                : .importPending
+                : .importNewItems
             return ImportBarDrawnState(
                 kind: .done,
                 primaryLine: primaryLine,
                 primaryBadge: .none,
                 secondaryLine: clause.map { .plain($0) } ?? .none,
-                middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
+                middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
                 primaryAction: action,
                 primaryEnabled: false,
                 eraseConfirmationProvenClean: false
@@ -600,11 +620,12 @@ nonisolated enum ImportBarPresentation {
         // Attention items keep erase disabled for the same reason state D
         // does (DES-038); the stop stays the primary fact.
         let middleZone: ImportBarDrawnState.MiddleZone = .choices(
+            track: nil,
             eraseEnabled: attentionItems.isEmpty,
             eraseDisabledReason: attentionItems.isEmpty ? nil : "Some items still need attention."
         )
         let action: ImportBarDrawnState.PrimaryAction = if summary.copyCount > 0 {
-            .importItems(count: summary.copyCount)
+            .importNewItems
         } else if preferences.deleteSourceAfterImport {
             .eraseItems(count: summary.skipCount + summary.companionCopyCount)
         } else {
@@ -705,7 +726,7 @@ nonisolated enum ImportBarPresentation {
                 secondaryLine: .plain(
                     "\(copiedCount) copied just now · \(itemsInLibrary) \(itemsInLibrary == 1 ? "item" : "items") in \(destinationName)"
                 ),
-                middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
+                middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
                 primaryAction: action,
                 primaryEnabled: true,
                 eraseConfirmationProvenClean: false
@@ -722,7 +743,7 @@ nonisolated enum ImportBarPresentation {
             secondaryLine: .plain(
                 "\(copiedCount) copied just now · \(itemsInLibrary) \(itemsInLibrary == 1 ? "item" : "items") in \(destinationName)"
             ),
-            middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
+            middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: action,
             primaryEnabled: true,
             eraseConfirmationProvenClean: true
@@ -773,7 +794,7 @@ nonisolated enum ImportBarPresentation {
             primaryLine: primaryLine,
             primaryBadge: .none,
             secondaryLine: secondary,
-            middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
+            middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: .tryAgain,
             primaryEnabled: true,
             eraseConfirmationProvenClean: false

@@ -87,8 +87,8 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .preparing)
         #expect(drawn.primaryLine == "Checking the card…")
         #expect(drawn.secondaryLine == .none)
-        #expect(drawn.middleZone == .progress(track: .indeterminate, caption: nil))
-        #expect(drawn.primaryAction == .importPending)
+        #expect(drawn.middleZone == .choices(track: .indeterminate, eraseEnabled: true, eraseDisabledReason: nil))
+        #expect(drawn.primaryAction == .importNewItems)
         #expect(drawn.primaryEnabled == false)
     }
 
@@ -96,7 +96,37 @@ struct ImportBarPresentationTests {
         let drawn = Self.map(Self.presentation(state: .waitingForMetadata(done: 112, total: 181)))
         #expect(drawn.kind == .preparing)
         #expect(drawn.secondaryLine == .plain("112 of 181 items"))
-        #expect(drawn.middleZone == .progress(track: .determinate(completed: 112, total: 181), caption: nil))
+        #expect(drawn.middleZone == .choices(
+            track: .determinate(completed: 112, total: 181),
+            eraseEnabled: true,
+            eraseDisabledReason: nil
+        ))
+    }
+
+    /// `import-bar.md` state A: "the destination and checkboxes stay visible and
+    /// usable; choosing while we check costs nothing." The choices are the same
+    /// zone Ready draws, with the track above them, so no control appears or
+    /// moves when the plan lands (DES-053). The act is the same `Import` button
+    /// Ready enables, disabled — never static text.
+    @Test func preparingOffersTheChoicesAndTheDisabledImportButton() {
+        for state in [MediaOperationSourceState.inventory, .planning, .waitingForMetadata(done: 1, total: 2)] {
+            let drawn = Self.map(Self.presentation(state: state))
+            guard case let .choices(track, eraseEnabled, reason) = drawn.middleZone else {
+                Issue.record("Expected the choices zone while preparing from \(state)")
+                continue
+            }
+            #expect(track != nil)
+            #expect(eraseEnabled)
+            #expect(reason == nil)
+            let rendered = ImportPlanFooter.renderedPrimary(for: drawn)
+            #expect(rendered.title == "Import")
+            #expect(!rendered.isEnabled)
+        }
+        let ready = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 1, copyBytes: 10), generation: 1, skippedPackageCount: 0)
+        ))
+        #expect(ImportPlanFooter.renderedPrimary(for: ready).title == "Import")
+        #expect(ImportPlanFooter.renderedPrimary(for: ready).isEnabled)
     }
 
     @Test func preparingFoldsPlanningIntoA() {
@@ -108,6 +138,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .preparing)
         #expect(drawn.primaryAction == .importQueued)
         #expect(drawn.primaryEnabled == false)
+        #expect(drawn.middleZone == .choices(track: .indeterminate, eraseEnabled: true, eraseDisabledReason: nil))
     }
 
     @Test func eraseOnlyCompletionReportsDeletedFilesAndDoesNotRevealBatchItems() {
@@ -143,7 +174,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .noDestination)
         #expect(drawn.primaryLine == "Otos needs a library to copy into")
         #expect(drawn.middleZone == .addLibraryButton)
-        #expect(drawn.primaryAction == .importPending)
+        #expect(drawn.primaryAction == .importNewItems)
         #expect(drawn.primaryEnabled == false)
     }
 
@@ -174,8 +205,9 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .ready)
         #expect(drawn.primaryLine == "42 new items · 68 MB")
         #expect(drawn.secondaryLine == .plain("139 already in Summer Photos"))
-        #expect(drawn.primaryAction == .importItems(count: 42))
-        if case let .choices(eraseEnabled, reason) = drawn.middleZone {
+        #expect(drawn.primaryAction == .importNewItems)
+        if case let .choices(track, eraseEnabled, reason) = drawn.middleZone {
+            #expect(track == nil)
             #expect(eraseEnabled)
             #expect(reason == nil)
         } else {
@@ -194,7 +226,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .ready)
         #expect(drawn.primaryLine == "680 new items · 54.8 GB")
         #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 37.7 GB available"))
-        #expect(drawn.primaryAction == .importItems(count: 680))
+        #expect(drawn.primaryAction == .importNewItems)
         #expect(drawn.primaryEnabled)
     }
 
@@ -312,8 +344,9 @@ struct ImportBarPresentationTests {
             revealLabel: "Show them",
             itemIDs: [itemID, itemID, itemID]
         ))
-        #expect(drawn.primaryAction == .importItems(count: 39))
-        if case let .choices(eraseEnabled, reason) = drawn.middleZone {
+        #expect(drawn.primaryAction == .importNewItems)
+        if case let .choices(track, eraseEnabled, reason) = drawn.middleZone {
+            #expect(track == nil)
             #expect(!eraseEnabled)
             #expect(reason == "Some items still need attention.")
         } else {
@@ -368,7 +401,7 @@ struct ImportBarPresentationTests {
         let some = Self.map(Self.presentation(
             state: .ready(summary: Self.totals(copyCount: 5, copyBytes: 5000), generation: 1, skippedPackageCount: 0, attentionItems: [item])
         ))
-        #expect(some.primaryAction == .importItems(count: 5))
+        #expect(some.primaryAction == .importNewItems)
     }
 
     @Test func needsAttentionWithMixedCausesNamesNoSingleCause() {
@@ -630,8 +663,8 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .done)
         #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
         #expect(drawn.secondaryLine == .plain("They're in Summer Photos"))
-        #expect(drawn.middleZone == .choices(eraseEnabled: true, eraseDisabledReason: nil))
-        #expect(drawn.primaryAction == .importItems(count: 30))
+        #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil))
+        #expect(drawn.primaryAction == .importNewItems)
         #expect(drawn.primaryEnabled)
     }
 
@@ -646,7 +679,7 @@ struct ImportBarPresentationTests {
             plannedCount: 42
         ))
         #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
-        #expect(drawn.primaryAction == .importPending)
+        #expect(drawn.primaryAction == .importNewItems)
         #expect(!drawn.primaryEnabled)
         let queued = Self.map(Self.presentation(
             state: .queuedForReadiness,
@@ -686,7 +719,7 @@ struct ImportBarPresentationTests {
         ))
         #expect(drawn.primaryLine == "Stopped — 0 of 42 items copied")
         #expect(drawn.secondaryLine == .none)
-        #expect(drawn.primaryAction == .importItems(count: 42))
+        #expect(drawn.primaryAction == .importNewItems)
     }
 
     @Test func stoppedWithNothingLeftOffersEjectOrErase() {
@@ -718,8 +751,8 @@ struct ImportBarPresentationTests {
             plannedCount: 42
         ))
         #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
-        #expect(drawn.middleZone == .choices(eraseEnabled: false, eraseDisabledReason: "Some items still need attention."))
-        #expect(drawn.primaryAction == .importItems(count: 30))
+        #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: false, eraseDisabledReason: "Some items still need attention."))
+        #expect(drawn.primaryAction == .importNewItems)
     }
 
     @Test func aNewRunOutranksTheStopItFollows() {
@@ -781,7 +814,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryLine == "Couldn't prepare the import")
         #expect(drawn.secondaryLine == .plain("Summer Photos isn't available"))
         #expect(drawn.primaryAction == .tryAgain)
-        #expect(drawn.middleZone == .choices(eraseEnabled: true, eraseDisabledReason: nil))
+        #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil))
 
         let unexpected = Self.map(Self.presentation(state: .planningFailed(reason: .unexpected(detail: "snapshotUnavailable"))))
         #expect(unexpected.primaryLine == "Couldn't prepare the import")
@@ -801,7 +834,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .done)
         #expect(drawn.primaryLine == "Stopped — 412 of 680 items copied")
         #expect(drawn.secondaryLine == .plain("Not enough room on the disk · 5.4 GB left"))
-        #expect(drawn.primaryAction == .importItems(count: 268))
+        #expect(drawn.primaryAction == .importNewItems)
         let nothing = Self.map(Self.presentation(
             state: .ready(summary: Self.totals(copyCount: 680), generation: 2, skippedPackageCount: 0),
             copiedJustNow: 0,
