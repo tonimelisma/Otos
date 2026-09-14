@@ -73,17 +73,13 @@
 		2FF9500192B89B315E8A84D1 /* Exceptions for "Otos" folder in "OtosKit" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Assets.xcassets/AccentColor.colorset/Contents.json,
-				Assets.xcassets/AppIcon.appiconset/Contents.json,
-				Assets.xcassets/Contents.json,
+				main.swift,
 				Support/OtosXXH3.c,
 				Support/OtosXXH3.h,
-				Support/module.modulemap,
 				"Vendor/xxHash-0.8.3/LICENSE",
 				"Vendor/xxHash-0.8.3/README.md",
 				"Vendor/xxHash-0.8.3/xxhash.c",
 				"Vendor/xxHash-0.8.3/xxhash.h",
-				main.swift,
 			);
 			target = E3AF0A4A4C05349C25C4A3BC /* OtosKit */;
 		};
@@ -108,8 +104,8 @@
 				Models/MediaOperationModels.swift,
 				Models/MediaTrashModels.swift,
 				Models/PanePreview.swift,
-				Models/PreferenceStore.swift,
 				Models/PreferencesDomain.swift,
+				Models/PreferenceStore.swift,
 				Models/RemovableEjectOutcome.swift,
 				Models/ReorganizationModels.swift,
 				Models/XXH3Digest128.swift,
@@ -139,11 +135,11 @@
 				Services/ExclusivePublication.swift,
 				Services/FileMaterialization.swift,
 				Services/FilesystemEventFlags.swift,
-				"Services/FilesystemNamespaceSemantics+NameKey.swift",
 				Services/FilesystemNamespaceSemantics.swift,
+				"Services/FilesystemNamespaceSemantics+NameKey.swift",
 				Services/ImportDestinationDate.swift,
-				Services/ImportNaming.swift,
 				Services/ImportExecuting.swift,
+				Services/ImportNaming.swift,
 				Services/ImportPlanBuilder.swift,
 				Services/ImportSourceReadiness.swift,
 				Services/LibraryReorganizationRunner.swift,
@@ -180,16 +176,13 @@
 				Support/DiagnosticsTiming.swift,
 				Support/Instrumentation.swift,
 				Support/OtosXXH3.c,
-				Support/OtosXXH3.h,
 				Support/RelativeDateText.swift,
 				Support/RunContext.swift,
 				Support/SmokeLibrarySelection.swift,
 				Support/UIJankDiagnostics.swift,
-				Support/module.modulemap,
 				"Vendor/xxHash-0.8.3/LICENSE",
 				"Vendor/xxHash-0.8.3/README.md",
 				"Vendor/xxHash-0.8.3/xxhash.c",
-				"Vendor/xxHash-0.8.3/xxhash.h",
 				ViewModels/CatalogWindowViewModel.swift,
 				ViewModels/CatalogWindowViewModelCuration.swift,
 				ViewModels/CatalogWindowViewModelMediaOperations.swift,
@@ -240,10 +233,8 @@
 		A8685DBD37D06A6C4E2EAE4B /* Exceptions for "Otos" folder in "OtosXXH3" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
-				Assets.xcassets/AccentColor.colorset/Contents.json,
-				Assets.xcassets/AppIcon.appiconset/Contents.json,
-				Assets.xcassets/Contents.json,
 				ContentView.swift,
+				main.swift,
 				Models/ActiveFileOperation.swift,
 				Models/ActiveReorganizationModels.swift,
 				Models/AssetMetadata.swift,
@@ -261,8 +252,8 @@
 				Models/MediaOperationModels.swift,
 				Models/MediaTrashModels.swift,
 				Models/PanePreview.swift,
-				Models/PreferenceStore.swift,
 				Models/PreferencesDomain.swift,
+				Models/PreferenceStore.swift,
 				Models/RemovableEjectOutcome.swift,
 				Models/ReorganizationModels.swift,
 				Models/XXH3Digest128.swift,
@@ -292,11 +283,11 @@
 				Services/ExclusivePublication.swift,
 				Services/FileMaterialization.swift,
 				Services/FilesystemEventFlags.swift,
-				"Services/FilesystemNamespaceSemantics+NameKey.swift",
 				Services/FilesystemNamespaceSemantics.swift,
+				"Services/FilesystemNamespaceSemantics+NameKey.swift",
 				Services/ImportDestinationDate.swift,
-				Services/ImportNaming.swift,
 				Services/ImportExecuting.swift,
+				Services/ImportNaming.swift,
 				Services/ImportPlanBuilder.swift,
 				Services/ImportSourceReadiness.swift,
 				Services/LibraryReorganizationRunner.swift,
@@ -336,9 +327,6 @@
 				Support/RunContext.swift,
 				Support/SmokeLibrarySelection.swift,
 				Support/UIJankDiagnostics.swift,
-				Support/module.modulemap,
-				"Vendor/xxHash-0.8.3/LICENSE",
-				"Vendor/xxHash-0.8.3/README.md",
 				ViewModels/CatalogWindowViewModel.swift,
 				ViewModels/CatalogWindowViewModelCuration.swift,
 				ViewModels/CatalogWindowViewModelMediaOperations.swift,
@@ -383,7 +371,6 @@
 				Views/SettingsView.swift,
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
-				main.swift,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 		};
@@ -393,8 +380,8 @@
 		3B44EB602FCEBA57007E4158 /* Otos */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				A8685DBD37D06A6C4E2EAE4B /* Exceptions for "Otos" folder in "OtosXXH3" target */,
 				6D0F18C301F79354A2999F84 /* Exceptions for "Otos" folder in "Otos" target */,
+				A8685DBD37D06A6C4E2EAE4B /* Exceptions for "Otos" folder in "OtosXXH3" target */,
 				2FF9500192B89B315E8A84D1 /* Exceptions for "Otos" folder in "OtosKit" target */,
 			);
 			path = Otos;
@@ -402,8 +389,6 @@
 		};
 		3B44EB6E2FCEBA59007E4158 /* OtosTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
 			path = OtosTests;
 			sourceTree = "<group>";
 		};
