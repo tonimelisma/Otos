@@ -158,6 +158,10 @@ public struct OtosApp: App {
                     }
                 }
                 .disabled(!catalogViewModel.openWithMenu.canOpenWith)
+                Button("Share…") {
+                    catalogViewModel.shareCurrentTargets()
+                }
+                .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
                 Divider()
                 Button("Reveal in Finder") {
                     catalogViewModel.revealSelectionInFinder()

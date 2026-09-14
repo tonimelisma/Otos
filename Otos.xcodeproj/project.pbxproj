@@ -190,6 +190,7 @@
 				ViewModels/CatalogWindowViewModelMutation.swift,
 				ViewModels/CatalogWindowViewModelOpenWith.swift,
 				ViewModels/CatalogWindowViewModelSelection.swift,
+				ViewModels/CatalogWindowViewModelShare.swift,
 				ViewModels/CatalogWindowViewModelSourceMonitoring.swift,
 				ViewModels/CatalogWindowViewModelTrash.swift,
 				ViewModels/CatalogWindowViewModelViewMode.swift,
@@ -227,6 +228,7 @@
 				Views/PanePresentation.swift,
 				Views/ReorganizationSummaryPresentation.swift,
 				Views/SettingsView.swift,
+				Views/SharePickerPresenter.swift,
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
 			);
@@ -337,6 +339,7 @@
 				ViewModels/CatalogWindowViewModelMutation.swift,
 				ViewModels/CatalogWindowViewModelOpenWith.swift,
 				ViewModels/CatalogWindowViewModelSelection.swift,
+				ViewModels/CatalogWindowViewModelShare.swift,
 				ViewModels/CatalogWindowViewModelSourceMonitoring.swift,
 				ViewModels/CatalogWindowViewModelTrash.swift,
 				ViewModels/CatalogWindowViewModelViewMode.swift,
@@ -374,6 +377,7 @@
 				Views/PanePresentation.swift,
 				Views/ReorganizationSummaryPresentation.swift,
 				Views/SettingsView.swift,
+				Views/SharePickerPresenter.swift,
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
 			);

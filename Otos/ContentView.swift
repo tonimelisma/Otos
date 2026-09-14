@@ -110,6 +110,14 @@ struct ContentView: View {
                 )
                 .disabled(viewModel.viewMode != .grid)
             }
+            // Trailing-edge Share over the current targets (APP-036). File ▸ Share…
+            // is the menu-bar equivalent every toolbar item must have.
+            ToolbarItem(placement: .primaryAction) {
+                ShareLink(items: viewModel.currentTargetFileURLs) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .disabled(viewModel.currentTargetFileURLs.isEmpty)
+            }
         }
         .alert(
             "Could Not Eject Disk",

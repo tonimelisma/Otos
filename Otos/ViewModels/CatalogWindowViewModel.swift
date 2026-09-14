@@ -113,10 +113,17 @@ final class CatalogWindowViewModel {
         didSet { refreshOpenWithMenu() }
     }
 
+    /// The current targets' original file URLs in display order — what Open, Open
+    /// With and Share act on. Written only by `refreshOpenWithMenu()`
+    /// (`CatalogWindowViewModelOpenWith.swift`), which the five target writers above
+    /// trigger from `didSet`, so toolbar and menus render a stored value rather than
+    /// re-resolving the selection on every body evaluation.
+    var currentTargetFileURLs: [URL] = []
     /// What File ▸ Open / Open With render for the current targets. Written only by
-    /// `refreshOpenWithMenu()`'s completed build (`CatalogWindowViewModelOpenWith.swift`);
-    /// the five target writers above trigger that rebuild from `didSet`.
+    /// `refreshOpenWithMenu()`'s completed build.
     var openWithMenu: OpenWithMenuModel = .empty
+    /// Owns the File ▸ Share… picker while it is on screen.
+    @ObservationIgnored let sharePickerPresenter = SharePickerPresenter()
     /// App icons for `openWithMenu.applications`, resolved once per model change.
     @ObservationIgnored var openWithApplicationIcons: [URL: NSImage] = [:]
     /// When enabled, a successful choice advances to the next surviving item in display

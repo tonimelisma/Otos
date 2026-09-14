@@ -23,12 +23,17 @@ import UniformTypeIdentifiers
 /// refusing an app it just listed is not a user-actionable state.
 extension CatalogWindowViewModel {
     /// File URLs of the current targets in display order; empty when nothing is targeted.
-    var openTargetFileURLs: [URL] {
+    func resolveCurrentTargetFileURLs() -> [URL] {
         mediaChoiceTargetIDs(.current).map(\.fileURL)
     }
 
+    /// Resolves the targets once per writer change into `currentTargetFileURLs` (read
+    /// synchronously by Share and the toolbar) and rebuilds the Open With model off main.
     func refreshOpenWithMenu() {
-        let targets = openTargetFileURLs
+        let targets = resolveCurrentTargetFileURLs()
+        if currentTargetFileURLs != targets {
+            currentTargetFileURLs = targets
+        }
         openWithMenuTask?.cancel()
         guard !targets.isEmpty else {
             openWithMenu = .empty
@@ -39,7 +44,7 @@ extension CatalogWindowViewModel {
         let workspace = workspace
         openWithMenuTask = Task { [weak self] in
             let model = await Self.buildOpenWithMenu(targets: targets, workspace: workspace)
-            guard !Task.isCancelled, let self, openTargetFileURLs == targets else { return }
+            guard !Task.isCancelled, let self, currentTargetFileURLs == targets else { return }
             openWithMenu = model
             // Icon Services caches by path; resolving once per model change keeps the
             // menu body free of lookups.
@@ -61,7 +66,7 @@ extension CatalogWindowViewModel {
 
     /// ⌘E. Every target opens in its own default app; one launch-services call per app.
     func openTargetsInDefaultApplication() {
-        let targets = openTargetFileURLs
+        let targets = currentTargetFileURLs
         let model = openWithMenu
         guard !targets.isEmpty, model.canOpen else { return }
         let groups = model.targetsByDefaultApplication(order: targets)
@@ -77,14 +82,14 @@ extension CatalogWindowViewModel {
 
     /// Open With ▸ item. The whole target list goes to that app in one call.
     func openTargets(with application: OpenWithApplication) {
-        let targets = openTargetFileURLs
+        let targets = currentTargetFileURLs
         guard !targets.isEmpty else { return }
         open(targets, with: application.url, origin: "openWith")
     }
 
     /// Open With ▸ Other…: an application chooser rooted at /Applications.
     func openTargetsWithChosenApplication() {
-        let targets = openTargetFileURLs
+        let targets = currentTargetFileURLs
         guard !targets.isEmpty else { return }
         let panel = NSOpenPanel()
         panel.title = "Choose Application"
