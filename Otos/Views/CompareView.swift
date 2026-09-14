@@ -33,6 +33,9 @@ struct CompareView: View {
     var rightMediaChoice: MediaChoice?
     var onPaneMediaChoice: (PanePosition, MediaChoice) -> Void = { _, _ in }
     var onPaneActivated: (PanePosition) -> Void = { _ in }
+    /// Context menu for the active pane's asset (pane) and the clicked tile (strip).
+    /// A pane context click activates that pane first, so the menu describes it.
+    var contextMenu: () -> NSMenu? = { nil }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -116,6 +119,9 @@ struct CompareView: View {
             .onTapGesture {
                 onPaneActivated(position)
             }
+            .overlay {
+                ContextMenuHost(willOpen: { onPaneActivated(position) }, makeMenu: contextMenu)
+            }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
@@ -137,6 +143,7 @@ struct CompareView: View {
             onArrowKey: onStripArrow,
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
+            contextMenu: contextMenu,
             focusTargetID: focusTargetID
         )
     }

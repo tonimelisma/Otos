@@ -1,0 +1,83 @@
+import Foundation
+@testable import OtosKit
+import Testing
+
+/// The context menu's ordered contents (APP-037) as a pure value: same titles as the
+/// menu bar, same order on every surface, enablement per act.
+struct MediaItemMenuModelTests {
+    @Test func entriesMirrorTheMenuBarInOrder() {
+        let preview = OpenWithApplication(url: URL(fileURLWithPath: "/System/Applications/Preview.app"), displayName: "Preview")
+        let openWith = OpenWithMenuModel(
+            defaultApplication: preview,
+            applications: [preview],
+            defaultsByTarget: [URL(fileURLWithPath: "/Pictures/a.jpg"): preview.url],
+            targetCount: 1,
+            targetsWithoutDefault: 0
+        )
+        let items = [URL(fileURLWithPath: "/Pictures/a.jpg")]
+
+        let model = MediaItemMenuModel(openWith: openWith, shareItems: items, canReveal: true, canTrash: true)
+
+        #expect(model.entries == [
+            .command(.open, title: "Open in Preview", enabled: true),
+            .openWith(applications: [preview], enabled: true),
+            .share(items: items),
+            .separator,
+            .command(.revealInFinder, title: "Reveal in Finder", enabled: true),
+            .separator,
+            .command(.choice(.liked), title: "Like", enabled: true),
+            .command(.choice(.notRated), title: "Mark as Not Rated", enabled: true),
+            .command(.choice(.disliked), title: "Dislike", enabled: true),
+            .separator,
+            .command(.moveToTrash, title: "Move to Trash", enabled: true),
+        ])
+    }
+
+    @Test func emptyModelDisablesEveryAct() {
+        let model = MediaItemMenuModel.empty
+
+        for entry in model.entries {
+            switch entry {
+            case let .command(_, _, enabled):
+                #expect(!enabled)
+            case let .openWith(applications, enabled):
+                #expect(applications.isEmpty)
+                #expect(!enabled)
+            case let .share(items):
+                #expect(items.isEmpty)
+            case .separator:
+                break
+            }
+        }
+        #expect(model.openTitle == "Open")
+    }
+
+    @Test func trashEligibilityIsIndependentOfTheRest() {
+        let openWith = OpenWithMenuModel.make(targets: [], workspace: NoWorkspace())
+        let model = MediaItemMenuModel(
+            openWith: openWith,
+            shareItems: [URL(fileURLWithPath: "/Pictures/a.jpg")],
+            canReveal: true,
+            canTrash: false
+        )
+
+        #expect(model.entries.contains(.command(.moveToTrash, title: "Move to Trash", enabled: false)))
+        #expect(model.entries.contains(.command(.choice(.liked), title: "Like", enabled: true)))
+    }
+}
+
+private struct NoWorkspace: WorkspaceOpening {
+    func applicationURLs(toOpen _: URL) -> [URL] {
+        []
+    }
+
+    func defaultApplicationURL(toOpen _: URL) -> URL? {
+        nil
+    }
+
+    func displayName(forApplicationAt url: URL) -> String {
+        url.lastPathComponent
+    }
+
+    func open(_: [URL], withApplicationAt _: URL) async throws {}
+}

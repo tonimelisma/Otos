@@ -21,6 +21,7 @@ struct MediaGridView: View {
     var onReturnKey: () -> Void = {}
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    var contextMenu: () -> NSMenu? = { nil }
     /// Centers the grid on this asset after loupe/compare exit (fresh controller).
     var focusTargetID: MediaAssetID?
     var identityRemapEpoch: UInt64 = 0
@@ -72,6 +73,7 @@ struct MediaGridView: View {
                         onReturnKey: onReturnKey,
                         onMediaChoiceKey: onMediaChoiceKey,
                         onMediaChoice: onMediaChoice,
+                        contextMenu: contextMenu,
                         focusTargetID: focusTargetID,
                         identityRemapEpoch: identityRemapEpoch,
                         identityRemapBatch: identityRemapBatch

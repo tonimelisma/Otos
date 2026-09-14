@@ -19,6 +19,7 @@ nonisolated enum MediaChoiceOrigin: String, Equatable {
     case keyboard
     case inline
     case accessibility
+    case contextMenu
 }
 
 struct MediaChoiceCommand: Equatable {

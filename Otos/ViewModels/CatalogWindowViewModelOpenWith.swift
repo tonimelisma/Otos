@@ -45,15 +45,21 @@ extension CatalogWindowViewModel {
         openWithMenuTask = Task { [weak self] in
             let model = await Self.buildOpenWithMenu(targets: targets, workspace: workspace)
             guard !Task.isCancelled, let self, currentTargetFileURLs == targets else { return }
-            openWithMenu = model
-            // Icon Services caches by path; resolving once per model change keeps the
-            // menu body free of lookups.
-            var icons: [URL: NSImage] = [:]
-            for application in model.applications {
-                icons[application.url] = NSWorkspace.shared.icon(forFile: application.url.path)
-            }
-            openWithApplicationIcons = icons
+            applyOpenWithMenu(model)
+            openWithMenuTask = nil
         }
+    }
+
+    /// The one writer of `openWithMenu` and its icons, for the off-main build and the
+    /// context menu's synchronous build alike. Icon Services caches by path; resolving
+    /// once per model change keeps the menu bodies free of lookups.
+    func applyOpenWithMenu(_ model: OpenWithMenuModel) {
+        openWithMenu = model
+        var icons: [URL: NSImage] = [:]
+        for application in model.applications {
+            icons[application.url] = NSWorkspace.shared.icon(forFile: application.url.path)
+        }
+        openWithApplicationIcons = icons
     }
 
     @concurrent

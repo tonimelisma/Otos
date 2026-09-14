@@ -76,6 +76,9 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var onArrowKey: (Int) -> Void = { _ in }
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    /// Builds the context menu for the current targets after the controller has made
+    /// the clicked tile a target (APP-037). `nil` shows no menu.
+    var contextMenu: () -> NSMenu? = { nil }
     /// Asset to keep centered (loupe focus, compare newest member, or grid return focus).
     var focusTargetID: MediaAssetID?
     /// Catalog identity remap batch from reorganization settlement (ARC-051).
@@ -105,6 +108,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
         controller.onArrowKey = onArrowKey
         controller.onMediaChoiceKey = onMediaChoiceKey
         controller.onMediaChoice = onMediaChoice
+        controller.contextMenu = contextMenu
         if identityRemapEpoch != controller.appliedIdentityRemapEpoch,
            let batch = identityRemapBatch
         {
@@ -232,6 +236,7 @@ final class MediaGridViewController: NSViewController {
     var onArrowKey: (Int) -> Void = { _ in }
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
+    var contextMenu: () -> NSMenu? = { nil }
     /// Current presentation; strip disables pinch and forwards arrow keys.
     private(set) var presentation: MediaGridPresentation
     /// The item under the gesture location at pinch start, held for the gesture's
@@ -546,6 +551,20 @@ extension MediaGridViewController {
         }
         collectionView.onMediaChoiceKey = { [weak self] choice in
             self?.onMediaChoiceKey(choice)
+        }
+        // Finder's rule: a context click on a tile outside the selection makes that
+        // tile the sole target through the ordinary plain-click path; inside the
+        // selection it leaves the selection alone. Only then is the menu built. The
+        // test is against the ViewModel's selection model — AppKit's selection is a
+        // render output that may lag a model write by an apply pass (APP-011).
+        collectionView.onContextMenu = { [weak self] hit in
+            guard let self, let id = dataSource.itemIdentifier(for: hit) else {
+                return nil
+            }
+            if !selectionHandlers.currentSelection().selection.contains(id) {
+                applyMouseSelection(hit: hit, modifiers: [])
+            }
+            return contextMenu()
         }
         collectionView.forwardsArrowKeys = presentation.isStrip
         collectionView.register(

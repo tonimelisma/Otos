@@ -36,6 +36,9 @@ final class MediaGridCollectionView: NSCollectionView {
     /// Reported only on change. The controller owns what hover *means*; this view
     /// owns only the geometry question, for the same reason it owns `mouseDown`.
     var onHoverChanged: ((IndexPath?) -> Void)?
+    /// Context click on a tile's thumbnail face. The controller decides what the hit
+    /// does to the selection and returns the menu; empty space has no menu.
+    var onContextMenu: ((IndexPath) -> NSMenu?)?
 
     private var hoverTrackingArea: NSTrackingArea?
     private var hoveredIndexPath: IndexPath?
@@ -129,6 +132,17 @@ final class MediaGridCollectionView: NSCollectionView {
         if modifiers.isEmpty, event.clickCount == 2, let hit {
             onDoubleClickHit?(hit)
         }
+    }
+
+    /// Right-click and control-click. The same face test as `mouseDown` so a click in
+    /// a tile's letterbox is empty space for both buttons.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = indexPathForItem(at: point), clickHitsThumbnailFace(hit, event: event) else {
+            return nil
+        }
+        window?.makeFirstResponder(self)
+        return onContextMenu?(hit)
     }
 
     override func keyDown(with event: NSEvent) {

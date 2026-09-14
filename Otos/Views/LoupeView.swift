@@ -30,6 +30,8 @@ struct LoupeView: View {
     var onPlayVideo: (MediaAssetID) -> Void = { _ in }
     var focusedMediaChoice: MediaChoice?
     var onPreviewMediaChoice: (MediaChoice) -> Void = { _ in }
+    /// Context menu for the focused asset (pane) and the clicked tile (strip).
+    var contextMenu: () -> NSMenu? = { nil }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -114,6 +116,7 @@ struct LoupeView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture(count: 2, perform: onDoubleClickPreview)
+            .overlay { ContextMenuHost(makeMenu: contextMenu) }
         }
     }
 
@@ -148,6 +151,7 @@ struct LoupeView: View {
             onArrowKey: onStripArrow,
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
+            contextMenu: contextMenu,
             focusTargetID: focusedAssetID
         )
     }

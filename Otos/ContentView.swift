@@ -221,6 +221,7 @@ struct ContentView: View {
                 onMediaChoice: { id, choice in
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
                 },
+                contextMenu: viewModel.makeMediaItemContextMenu,
                 focusTargetID: viewModel.focusedAssetID,
                 identityRemapEpoch: viewModel.identityRemapEpoch,
                 identityRemapBatch: viewModel.identityRemapBatch,
@@ -261,7 +262,8 @@ struct ContentView: View {
                 onPreviewMediaChoice: { choice in
                     guard let id = viewModel.focusedAssetID else { return }
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
-                }
+                },
+                contextMenu: viewModel.makeMediaItemContextMenu
             )
             .navigationTitle(viewModel.state.title)
         case .compare:
@@ -295,7 +297,8 @@ struct ContentView: View {
                 onPaneMediaChoice: { pane, choice in
                     viewModel.submitMediaChoice(choice, target: .compare(pane), origin: .inline)
                 },
-                onPaneActivated: viewModel.activateComparePane
+                onPaneActivated: viewModel.activateComparePane,
+                contextMenu: viewModel.makeMediaItemContextMenu
             )
             .navigationTitle(viewModel.state.title)
         }
