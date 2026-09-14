@@ -1072,7 +1072,11 @@ actor MediaImportExecutor {
                     try? FileManager.default.removeItem(at: stagingURL)
                     try? await store.abandonImportOperation(key: operationKey)
                     return .cancelled
-                case let .failed(message):
+                case .failed(.outOfSpace):
+                    try? FileManager.default.removeItem(at: stagingURL)
+                    try? await store.abandonImportOperation(key: operationKey)
+                    return .failed(.outOfSpace)
+                case let .failed(.other(message)):
                     try? FileManager.default.removeItem(at: stagingURL)
                     try? await store.abandonImportOperation(key: operationKey)
                     OtosLog.catalog.error(
@@ -1087,7 +1091,13 @@ actor MediaImportExecutor {
             try? FileManager.default.removeItem(at: stagingURL)
             try? await store.abandonImportOperation(key: operationKey)
             return .cancelled
-        case let .failed(message):
+        case .failed(.outOfSpace):
+            // The staging write refused for space: the floor, reached the hard
+            // way, on a camera — the same stop as a refused `copyfile` on a card.
+            try? FileManager.default.removeItem(at: stagingURL)
+            try? await store.abandonImportOperation(key: operationKey)
+            return .failed(.outOfSpace)
+        case let .failed(.other(message)):
             try? FileManager.default.removeItem(at: stagingURL)
             try? await store.abandonImportOperation(key: operationKey)
             OtosLog.catalog.error(

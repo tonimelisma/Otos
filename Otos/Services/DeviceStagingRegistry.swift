@@ -186,7 +186,7 @@ final class DeviceStagingRegistry {
                     relativePath: relativePath,
                     enrichmentURL: enrichmentURL,
                     destinationTempURL: destinationTempURL
-                ) ?? .failed("cameraRegistryGone")
+                ) ?? .failed(.other("cameraRegistryGone"))
             },
             deleteItem: { [weak self] identity, relativePath in
                 guard let registry = self else { return false }
@@ -212,7 +212,7 @@ final class DeviceStagingRegistry {
         destinationTempURL: URL
     ) async -> CameraByteOutcome {
         guard let session = sessionsByIdentity[identity] else {
-            return .failed("cameraSessionMissing")
+            return .failed(.other("cameraSessionMissing"))
         }
         try? FileManager.default.createDirectory(
             at: destinationTempURL.deletingLastPathComponent(),
@@ -248,14 +248,14 @@ final class DeviceStagingRegistry {
             case .cancelled:
                 return .cancelled
             case let .failed(code):
-                return .failed("copyfile errno=\(code)")
+                return .failed(code == ENOSPC ? .outOfSpace : .other("copyfile errno=\(code)"))
             }
         }
         do {
             try await session.download(relativePath: relativePath, to: destinationTempURL)
             return .completed
         } catch {
-            return .failed(String(describing: error))
+            return .failed(CameraByteFailure(error))
         }
     }
 }
@@ -264,7 +264,40 @@ final class DeviceStagingRegistry {
 nonisolated enum CameraByteOutcome: Equatable, Sendable {
     case completed
     case cancelled
-    case failed(String)
+    case failed(CameraByteFailure)
+}
+
+/// Why camera bytes could not be staged. `outOfSpace` is the one cause the
+/// executor acts on: the staging volume is the destination volume, so a write
+/// refused for space is the disk floor reached the hard way (ADR 0027) and stops
+/// the run rather than counting the entry as failed — the same as a refused
+/// `copyfile` on a card. Everything else stays a per-entry failure whose detail
+/// is for the log.
+nonisolated enum CameraByteFailure: Equatable, Sendable {
+    case outOfSpace
+    case other(String)
+
+    /// Classifies a download error by its typed chain, never by its wording:
+    /// Foundation's `NSFileWriteOutOfSpaceError` or a POSIX `ENOSPC` anywhere in
+    /// the underlying-error chain is out of space. An error that carries neither
+    /// is `other`, whatever it says — the shape ImageCaptureCore uses for a full
+    /// disk has not been observed, and this does not guess at it.
+    init(_ error: Error) {
+        self = Self.isOutOfSpace(error as NSError) ? .outOfSpace : .other(String(describing: error))
+    }
+
+    private static func isOutOfSpace(_ error: NSError) -> Bool {
+        if error.domain == NSCocoaErrorDomain, error.code == NSFileWriteOutOfSpaceError {
+            return true
+        }
+        if error.domain == NSPOSIXErrorDomain, error.code == Int(ENOSPC) {
+            return true
+        }
+        if let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError {
+            return isOutOfSpace(underlying)
+        }
+        return false
+    }
 }
 
 /// Camera-side import hooks used by `MediaImportExecutor` (ARC-049).

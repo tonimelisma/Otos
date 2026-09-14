@@ -216,16 +216,23 @@ diagnosing and deliberately left outside it; none is a requirement.
    was syncing new files into the destination (`destinationOccupants` 8270→8277),
    200–470 ms of planning each. Harmless to terminal states now; still O(n) per
    arriving file.
-6. **`op=ui.sidebarSelectionToPaint` leaves its span open** when a selection is
-   abandoned, so an abandoned navigation is indistinguishable from a hung one.
+6. **`op=ui.sidebarSelectionToPaint` left its span open — fixed.** A newer
+   intent now closes the pending one as `phase=abandoned` with `supersededBy=`
+   and the milliseconds it stood, so an abandoned navigation reads as abandoned
+   and only a hung one reads as open.
 7. **Stale Ready between two Done frames — observed live and fixed.** On
    2026-09-13 at 17:57:37 a completed 368-item run drew `Ready · Import 368 Items`
    for 360 ms between two Done frames, from the held pre-run plan. A completed run
    now drops that plan like a stop does, and the settlement presents until the
    re-plan lands (`docs/research/2026-09-13-unreadable-destination-folder-frozen-into-a-plan.md`).
-8. **Camera (MTP) writes that refuse for space** arrive as a string from the camera
-   layer and classify as per-file `.other`, not `.outOfSpace`; the per-entry floor
-   admission covers that path, so only a lying capacity figure reaches this gap.
+8. **Camera (MTP) writes that refuse for space — typed, fixed for the shapes
+   known.** `CameraByteOutcome.failed` now carries `CameraByteFailure`, and a
+   refused staging write is `.outOfSpace` when `copyfile` returns `ENOSPC` or the
+   download's error chain carries `NSFileWriteOutOfSpaceError` / POSIX `ENOSPC`;
+   the executor stops at the floor for it exactly as for a card. The error
+   ImageCaptureCore itself reports for a full disk has not been observed, so an
+   untyped shape still classifies as `.other` rather than being guessed from its
+   wording — the per-entry floor admission covers that path first.
 9. **Superseded batch rows.** With a real partial batch selected, starting a second
    run mints a new batch and the first batch's row has no live presentation, so its
    bar disappears until the selection resolves elsewhere. `import-bar.md` describes

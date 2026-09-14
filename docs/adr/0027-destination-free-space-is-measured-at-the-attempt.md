@@ -20,8 +20,10 @@ refused, which exist nowhere but the card, are never touched. The remainder is
 offered by the ordinary post-settlement re-plan.
 
 A write that fails for space anyway (`ENOSPC` / `NSFileWriteOutOfSpaceError`) is a
-per-entry `EntryFailure.outOfSpace` and stops the run the same way. It is the
-backstop, not a second outcome.
+per-entry `EntryFailure.outOfSpace` and stops the run the same way — from a card's
+`copyfile` or from a camera's staging download, whose failure is typed
+(`CameraByteFailure`) from the same two error shapes. It is the backstop, not a
+second outcome.
 
 Free space is never a property of a plan, never gates a control, and is never
 observed on a timer. `FreeSpaceFloor.bytes` (5 GB) is one constant with one home,

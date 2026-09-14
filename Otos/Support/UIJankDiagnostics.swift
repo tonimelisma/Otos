@@ -51,8 +51,10 @@ final class MainRunLoopStallMonitor {
     /// renders it. Begins in `CatalogWindowViewModel.setQueryDescriptor` when the
     /// scope changes and completes in the grid controller's `completeStructuralApply`
     /// for the same scope, so click→paint latency is measurable end to end.
-    /// A newer intent replaces a stale pending one; a pending that never
-    /// reaches an apply of its scope leaks at most one interval.
+    /// A newer intent abandons a pending one — its interval is closed and logged
+    /// as abandoned, so a navigation the user moved on from never reads as one
+    /// that hung. A pending that never reaches an apply of its scope and is never
+    /// superseded holds at most one interval open.
     private struct PendingIntentToPaint {
         let signpost: OSSignpostIntervalState
         let scope: SidebarSelection
@@ -88,7 +90,23 @@ final class MainRunLoopStallMonitor {
 
     /// Starts the click→paint interval for a sidebar/scope intent. Called from the
     /// single query-descriptor writer when the scope changes on a user intent.
-    func beginIntentToPaint(scope: SidebarSelection) {
+    /// Returns whether a still-pending intent was abandoned to make room.
+    @discardableResult
+    func beginIntentToPaint(scope: SidebarSelection) -> Bool {
+        let abandoned = pendingIntentToPaint != nil
+        if let pending = pendingIntentToPaint {
+            pendingIntentToPaint = nil
+            OtosSignpost.ui.endInterval("SidebarSelectionToPaint", pending.signpost)
+            OtosLog.ui.noticeOperation(
+                "ui.sidebarSelectionToPaint",
+                phase: "abandoned",
+                fields: [
+                    "scope": pending.scope.diagnosticDescription,
+                    "supersededBy": scope.diagnosticDescription,
+                    "ms": "\(DiagnosticsTiming.milliseconds(since: pending.startedAt))",
+                ]
+            )
+        }
         pendingIntentToPaint = PendingIntentToPaint(
             signpost: OtosSignpost.ui.beginInterval("SidebarSelectionToPaint"),
             scope: scope,
@@ -99,6 +117,7 @@ final class MainRunLoopStallMonitor {
             phase: "start",
             fields: ["scope": scope.diagnosticDescription]
         )
+        return abandoned
     }
 
     /// Ends the click→paint interval when a structural apply renders the intent's

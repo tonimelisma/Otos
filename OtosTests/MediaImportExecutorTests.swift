@@ -359,7 +359,7 @@ struct CameraImportAccessTests {
                     try data.write(to: staging)
                     return .completed
                 } catch {
-                    return .failed(String(describing: error))
+                    return .failed(.other(String(describing: error)))
                 }
             },
             deleteItem: { _, _ in true },
@@ -389,6 +389,31 @@ struct CameraImportAccessTests {
         )
         #expect(result == .completed)
         #expect(try Data(contentsOf: staging) == Data([0x01, 0x02]))
+    }
+
+    /// A camera download refused for space is typed from the error chain, not
+    /// its wording, so the executor can stop at the floor for a camera the way
+    /// it does for a card (ADR 0027). Anything else stays a per-entry failure.
+    @Test func downloadFailureIsOutOfSpaceOnlyFromATypedChain() {
+        let cocoa = NSError(domain: NSCocoaErrorDomain, code: NSFileWriteOutOfSpaceError, userInfo: nil)
+        #expect(CameraByteFailure(cocoa) == .outOfSpace)
+        let posix = NSError(domain: NSPOSIXErrorDomain, code: Int(ENOSPC), userInfo: nil)
+        #expect(CameraByteFailure(posix) == .outOfSpace)
+        let wrapped = NSError(
+            domain: "com.apple.ImageCaptureCore",
+            code: -9999,
+            userInfo: [NSUnderlyingErrorKey: posix]
+        )
+        #expect(CameraByteFailure(wrapped) == .outOfSpace)
+        let wordsOnly = NSError(
+            domain: "com.apple.ImageCaptureCore",
+            code: -9999,
+            userInfo: [NSLocalizedDescriptionKey: "No space left on device"]
+        )
+        guard case .other = CameraByteFailure(wordsOnly) else {
+            Issue.record("An untyped error must not be classified by its wording")
+            return
+        }
     }
 }
 

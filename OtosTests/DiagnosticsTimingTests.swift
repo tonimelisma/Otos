@@ -43,13 +43,16 @@ struct IntentToPaintMeasurementTests {
         #expect(monitor.completeIntentToPaint(appliedScope: .library(path)))
     }
 
+    /// A newer intent closes the pending one as abandoned rather than leaving
+    /// its interval open: an abandoned navigation must never read as a hung one.
     @MainActor
-    @Test func newerIntentReplacesPendingMeasurement() {
+    @Test func newerIntentAbandonsPendingMeasurement() {
         let monitor = MainRunLoopStallMonitor()
         let path = LibraryRootPath(rawValue: "/tmp/Lib")
-        monitor.beginIntentToPaint(scope: .allMedia)
-        monitor.beginIntentToPaint(scope: .library(path))
+        #expect(!monitor.beginIntentToPaint(scope: .allMedia))
+        #expect(monitor.beginIntentToPaint(scope: .library(path)))
         #expect(!monitor.completeIntentToPaint(appliedScope: .allMedia))
         #expect(monitor.completeIntentToPaint(appliedScope: .library(path)))
+        #expect(!monitor.beginIntentToPaint(scope: .allMedia), "a completed intent leaves nothing to abandon")
     }
 }
