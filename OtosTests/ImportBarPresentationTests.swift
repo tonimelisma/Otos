@@ -274,10 +274,7 @@ struct ImportBarPresentationTests {
         let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let item = MediaAttentionItem(
             id: itemID,
-            reason: .filesystemObservationUnavailable(
-                destination: MediaRelativePath(rawValue: "a.jpg"),
-                detail: "enumerate failed"
-            )
+            reason: .filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "a.jpg"))
         )
         let drawn = Self.map(Self.presentation(
             state: .ready(
@@ -294,16 +291,42 @@ struct ImportBarPresentationTests {
         ))
     }
 
+    @Test func needsAttentionNamesTheNoFreeNameCause() {
+        let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let item = MediaAttentionItem(id: itemID, reason: .noFreeDestinationName(destination: MediaRelativePath(rawValue: "a.jpg")))
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 1, copyBytes: 1000), generation: 1, skippedPackageCount: 0, attentionItems: [item, item])
+        ))
+        #expect(drawn.secondaryLine == .attention(
+            clause: "Otos couldn't find a free name for 2 items in Summer Photos",
+            revealLabel: "Show them",
+            itemIDs: [itemID, itemID]
+        ))
+    }
+
+    /// 2026-09-13: every item blocked, and the bar offered `Import 0 Items`,
+    /// enabled. A control whose subject does not exist is omitted (DES-053).
+    @Test func needsAttentionWithNothingImportableOffersNoAct() {
+        let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
+        let item = MediaAttentionItem(id: itemID, reason: .noUsableDate)
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 0), generation: 1, skippedPackageCount: 0, attentionItems: [item])
+        ))
+        #expect(drawn.kind == .needsAttention)
+        #expect(drawn.primaryAction == .none)
+        let some = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 5, copyBytes: 5000), generation: 1, skippedPackageCount: 0, attentionItems: [item])
+        ))
+        #expect(some.primaryAction == .importItems(count: 5))
+    }
+
     @Test func needsAttentionWithMixedCausesNamesNoSingleCause() {
         let aID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let bID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "b.jpg"))
         let a = MediaAttentionItem(id: aID, reason: .noUsableDate)
         let b = MediaAttentionItem(
             id: bID,
-            reason: .filesystemObservationUnavailable(
-                destination: MediaRelativePath(rawValue: "b.jpg"),
-                detail: "x"
-            )
+            reason: .filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "b.jpg"))
         )
         let drawn = Self.map(Self.presentation(
             state: .ready(

@@ -295,6 +295,13 @@ nonisolated enum ImportBarPresentation {
     ) -> ImportBarDrawnState {
         let destinationName = presentation.destinationDisplayName ?? "the library"
         let clause = attentionClause(items: attentionItems, destinationName: destinationName)
+        // D's act is Import, for the items that are not blocked. When every
+        // item is blocked there is nothing to import, and a button reading
+        // `Import 0 Items` — drawn on 2026-09-13 over 368 blocked items — is a
+        // control whose subject does not exist (DES-053): the act zone is empty.
+        let action: ImportBarDrawnState.PrimaryAction = summary.copyCount > 0
+            ? .importItems(count: summary.copyCount)
+            : .none
         return ImportBarDrawnState(
             kind: .needsAttention,
             primaryLine: newItemsHeadline(summary: summary),
@@ -304,18 +311,19 @@ nonisolated enum ImportBarPresentation {
                 eraseEnabled: false,
                 eraseDisabledReason: "Some items still need attention."
             ),
-            primaryAction: .importItems(count: summary.copyCount),
+            primaryAction: action,
             primaryEnabled: true,
             eraseConfirmationProvenClean: false
         )
     }
 
-    /// Groups by case, not full equality: `filesystemObservationUnavailable` carries a
-    /// per-item destination/detail, so two instances of the same *cause* are never
-    /// `==`. The clause names the cause, not the payload (state D, "the real cause").
+    /// Groups by case, not full equality: the destination-carrying cases carry
+    /// a per-item path, so two instances of the same *cause* are never `==`.
+    /// The clause names the cause, not the payload (state D, "the real cause").
     private enum AttentionCauseKind: Equatable {
         case noUsableDate
         case filesystemObservationUnavailable
+        case noFreeDestinationName
         case sourceUnreadable
     }
 
@@ -323,6 +331,7 @@ nonisolated enum ImportBarPresentation {
         switch reason {
         case .noUsableDate: .noUsableDate
         case .filesystemObservationUnavailable: .filesystemObservationUnavailable
+        case .noFreeDestinationName: .noFreeDestinationName
         case .sourceUnreadable: .sourceUnreadable
         }
     }
@@ -337,8 +346,15 @@ nonisolated enum ImportBarPresentation {
         case .noUsableDate:
             return count == 1 ? "1 item has no date" : "\(count) items have no date"
         case .filesystemObservationUnavailable:
+            // The coordinator never presents a plan built on an unread folder
+            // (it retries the build instead), so this clause is the model's
+            // completeness, not a state the bar expects to draw.
             let noun = count == 1 ? "name" : "names"
             return "Otos couldn't check \(count) \(noun) in \(destinationName)"
+        case .noFreeDestinationName:
+            return count == 1
+                ? "Otos couldn't find a free name for 1 item in \(destinationName)"
+                : "Otos couldn't find a free name for \(count) items in \(destinationName)"
         case .sourceUnreadable:
             // Names what the user can act on — the file will not copy either — without
             // the internal vocabulary DES-035 forbids.

@@ -1184,6 +1184,210 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// A destination folder that exists but cannot be listed is a missing
+    /// observation, not a plan: the build is deferred with a bounded backoff
+    /// and the last proven plan keeps presenting. On 2026-09-13 the blocked
+    /// plan was promoted instead and drew `0 new items · Import 0 Items` over
+    /// 368 items already in the library.
+    @Test func anUnreadableDestinationFolderDefersTheBuildAndHoldsTheProvenPlan() async throws {
+        log("START anUnreadableDestinationFolderDefersTheBuildAndHoldsTheProvenPlan")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 8, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:unreadable-defer", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let builder = UnreadableThenLivePlanBuilder(unreadableBuilds: 0)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            unreadableRetryDelays: [.milliseconds(30), .milliseconds(30), .milliseconds(30)]
+        )
+        await coordinator.start()
+        let proven = try await waitForReady(coordinator, source: cardPath)
+        #expect(proven.totals.copyCount == 1)
+
+        // The next two builds cannot read the destination; the third can.
+        await builder.setUnreadableBuilds(2)
+        await coordinator.retryPlanning(for: cardPath)
+        var sawBlockedPlan = false
+        var sawProvenPlan = false
+        let deadline = ContinuousClock().now + .seconds(2)
+        while ContinuousClock().now < deadline {
+            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
+               case let .ready(summary, _, _, attention) = pres.state
+            {
+                if summary.blockedCount > 0 || !attention.isEmpty {
+                    sawBlockedPlan = true
+                }
+                if summary.copyCount == 1, attention.isEmpty {
+                    sawProvenPlan = true
+                }
+            }
+            if await builder.builds >= 4 {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        #expect(!sawBlockedPlan, "a plan built on an unread folder is never presented")
+        #expect(sawProvenPlan, "the last proven plan keeps presenting across the deferral")
+        #expect(await builder.builds == 4, "one proven build, two deferred, one that read everything")
+        let settled = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case let .ready(summary, _, _, attention) = pres.state {
+                return summary.copyCount == 1 && attention.isEmpty
+            }
+            return false
+        }
+        #expect(settled.batchID == nil)
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// Past the last backoff delay the condition is a planning failure the user
+    /// can act on; `Try Again` restarts the backoff and, with the folder readable
+    /// again, reaches Ready.
+    @Test func anUnreadableDestinationThatPersistsBecomesAPlanningFailureThatTryAgainClears() async throws {
+        log("START anUnreadableDestinationThatPersistsBecomesAPlanningFailureThatTryAgainClears")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 9, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:unreadable-persist", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let builder = UnreadableThenLivePlanBuilder(unreadableBuilds: 10)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            unreadableRetryDelays: [.milliseconds(20)]
+        )
+        await coordinator.start()
+        let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .failed = pres.state {
+                return true
+            }
+            return false
+        }
+        guard case let .failed(reason, _) = failed.state else {
+            Issue.record("Expected a planning failure, got \(failed.state)")
+            return
+        }
+        #expect(reason == .destinationUnavailable)
+        #expect(await builder.builds == 2, "the first build and one retry, then the backoff is exhausted")
+
+        await builder.setUnreadableBuilds(0)
+        await coordinator.retryPlanning(for: cardPath)
+        let ready = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case let .ready(summary, _, _, _) = pres.state {
+                return summary.copyCount == 1
+            }
+            return false
+        }
+        #expect(ready.stopReason == nil)
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// After a completed run the coordinator dropped into `.building` while still
+    /// holding the pre-run plan, so the bar drew `Ready · Import 368 Items` for
+    /// 360 ms between two Done frames (observed 2026-09-13, 17:57:37). The plan a
+    /// run executed from is dropped on settlement, and the settlement itself is
+    /// what presents until the re-plan lands.
+    @Test func aCompletedRunPresentsItsSettlementUntilTheRePlanLands() async throws {
+        log("START aCompletedRunPresentsItsSettlementUntilTheRePlanLands")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 2, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:settlement-window", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let builder = ControlledImportPlanBuilder()
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            planBuilder: builder,
+            makeExecutor: { _ in LiveImportExecutor(store: store) }
+        )
+        await coordinator.start()
+        let proven = try await waitForReady(coordinator, source: cardPath)
+        #expect(proven.totals.copyCount == 1)
+
+        // Hold the post-settlement rebuild so the window between settling and
+        // re-planning is observable instead of a few hundred milliseconds wide.
+        await builder.suspendNextBuild(for: cardPath)
+        await coordinator.queueImport(for: cardPath)
+        let deadline = ContinuousClock().now + .seconds(8)
+        while ContinuousClock().now < deadline, await builder.pendingCount(for: cardPath) == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await builder.pendingCount(for: cardPath) == 1, "the post-settlement rebuild is in flight")
+        let during = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        guard case let .completed(summary, _, _, _) = during.state else {
+            Issue.record("Expected the settlement to present while the re-plan is in flight, got \(during.state)")
+            return
+        }
+        #expect(summary.copyCount == 1)
+        #expect(during.copiedJustNow == 1)
+
+        await builder.resumePendingBuild(for: cardPath)
+        let after = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case let .ready(summary, _, _, _) = pres.state {
+                return summary.copyCount == 0 && summary.skipCount == 1
+            }
+            return false
+        }
+        #expect(after.copiedJustNow == 1)
+        #expect(after.isFullyClean == true)
+        log("END")
+        await coordinator.shutdown()
+    }
+
     /// Plan 0102 B1: a run that stops early settles as a partial success whose
     /// facts — why it stopped, what it copied, of what it planned — are
     /// published as state and survive the post-settlement re-plan, so state F's
@@ -2020,5 +2224,44 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("END")
         log("END")
         await coordinator.shutdown()
+    }
+}
+
+/// A builder whose next `unreadableBuilds` results carry a destination folder
+/// that could not be listed — the shape a cloud provider mid-sync produced on
+/// 2026-09-13 — and live results otherwise.
+private actor UnreadableThenLivePlanBuilder: ImportPlanBuilding {
+    private var unreadableBuilds: Int
+    private(set) var builds = 0
+
+    init(unreadableBuilds: Int) {
+        self.unreadableBuilds = unreadableBuilds
+    }
+
+    func setUnreadableBuilds(_ count: Int) {
+        unreadableBuilds = count
+    }
+
+    func build(
+        snapshot: ImportPlanningSnapshot,
+        additionalReserved: Set<MediaRelativePath>
+    ) async -> ImportPlanBuildResult {
+        builds += 1
+        if unreadableBuilds > 0 {
+            unreadableBuilds -= 1
+            let namespace = DestinationNamespace(
+                entries: [:],
+                enumeratedFolders: [],
+                unreadableFolders: ["": "NSCocoaErrorDomain#256"],
+                capabilities: snapshot.destinationCapabilities
+            )
+            let plan = MediaTransferPlanner.planImport(
+                snapshot: snapshot,
+                namespace: namespace,
+                additionalReserved: additionalReserved
+            )
+            return ImportPlanBuildResult(plan: plan, namespace: namespace, enumerateMs: 0, planMs: 0)
+        }
+        return await LiveImportPlanBuilder().build(snapshot: snapshot, additionalReserved: additionalReserved)
     }
 }

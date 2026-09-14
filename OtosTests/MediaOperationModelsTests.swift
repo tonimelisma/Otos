@@ -57,10 +57,7 @@ struct MediaOperationModelsTests {
         let noDate = Self.entry(name: "no-date.jpg", disposition: .blocked(.noUsableDate))
         let observation = Self.entry(
             name: "unreadable.jpg",
-            disposition: .blocked(.filesystemObservationUnavailable(
-                destination: MediaRelativePath(rawValue: "unreadable.jpg"),
-                detail: "enumerate failed"
-            ))
+            disposition: .blocked(.filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "unreadable.jpg")))
         )
         let copied = Self.entry(name: "fine.jpg", disposition: .copy(destination: MediaRelativePath(rawValue: "fine.jpg")))
         let skipped = Self.entry(name: "dup.jpg", disposition: .skipPreexisting(destination: MediaRelativePath(rawValue: "dup.jpg")))

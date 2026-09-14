@@ -27,6 +27,10 @@ actor MediaOperationCoordinator {
     private let materializationRequester: MaterializationRequesting?
     private let autoEjectHandler: (@Sendable (LibraryRoot) async -> Void)?
     private let planBuilder: any ImportPlanBuilding
+    /// Backoff for a build deferred on an unreadable destination folder — a
+    /// cloud provider mid-sync answers `contentsOfDirectory` with an error for a
+    /// moment. Injectable so a test does not wait a minute.
+    private let unreadableRetryDelays: [Duration]
     private let makeExecutor: @Sendable (LibraryRootPath) -> any ImportExecuting
 
     // MARK: - Stage 4 single-session model
@@ -42,6 +46,16 @@ actor MediaOperationCoordinator {
     private struct BuildContext {
         let generation: BuildGeneration
         let runID: String
+        let task: Task<Void, Never>
+    }
+
+    /// A build that found a destination folder it could not read is deferred,
+    /// not published: the absence of an observation is not a plan. The retry
+    /// is owned here — cancelled with the session on detach and shutdown —
+    /// and bounded by `unreadableRetryDelays`; past the last delay the
+    /// condition is presented as a planning failure the user can `Try Again`.
+    private struct UnreadableRetry {
+        let attempt: Int
         let task: Task<Void, Never>
     }
 
@@ -215,6 +229,10 @@ actor MediaOperationCoordinator {
         /// when the next attempt starts (`runExecution`) and when the user
         /// asks to plan again (`retryPlanning`) — never by a rebuild.
         var lastFailure: AttachmentFailure?
+        /// The pending retry for a build deferred on an unreadable destination
+        /// folder; `nil` when no such build is outstanding. Reset by a build
+        /// that reads everything, by `Try Again`, and by a fresh attachment.
+        var unreadableRetry: UnreadableRetry?
         /// Correlates the current source session's plan, execution, and
         /// presentation diagnostics. Minted at the building boundary so a
         /// re-plan cannot accidentally join an older run.
@@ -272,6 +290,7 @@ actor MediaOperationCoordinator {
         store: CatalogStore,
         preferencesDomain: PreferencesDomain,
         planBuilder: any ImportPlanBuilding = LiveImportPlanBuilder(),
+        unreadableRetryDelays: [Duration] = [.seconds(1), .seconds(4), .seconds(16), .seconds(60)],
         makeExecutor: (@Sendable (LibraryRootPath) -> any ImportExecuting)? = nil,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
@@ -281,6 +300,7 @@ actor MediaOperationCoordinator {
         self.preferencesDomain = preferencesDomain
         preferences = preferencesDomain.makeDefaults()
         self.planBuilder = planBuilder
+        self.unreadableRetryDelays = unreadableRetryDelays
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
@@ -357,6 +377,7 @@ actor MediaOperationCoordinator {
         var ownedExecTasks: [Task<Void, Never>] = []
         var ownedExecutors: [any ImportExecuting] = []
         for session in sourceSessions.values {
+            session.unreadableRetry?.task.cancel()
             switch session.phase {
             case let .building(ctx):
                 ownedBuildTasks.append(ctx.task)
@@ -683,6 +704,12 @@ actor MediaOperationCoordinator {
                 incompleteItems: incompleteItems,
                 eraseOutcome: nil
             )
+            // The plan this run executed from is false now — its entries are
+            // skips — so it must not be held across the rebuild: on 2026-09-13
+            // the held pre-run plan drew `Ready · Import 368 Items` for 360 ms
+            // between two Done frames. `presentation(for:)` shows the
+            // settlement instead until the re-plan lands.
+            session.lastReadyContext = nil
             sourceSessions[source] = session
             publish()
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
@@ -709,6 +736,7 @@ actor MediaOperationCoordinator {
                 incompleteItems: incompleteItems,
                 eraseOutcome: eraseOutcome
             )
+            session.lastReadyContext = nil
             sourceSessions[source] = session
             publish()
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures,
@@ -731,8 +759,10 @@ actor MediaOperationCoordinator {
             // yet. Holding it (ARC-047's refresh-is-not-a-first-check rule)
             // would offer the *pre-run* count as the remainder for the length
             // of the rebuild; dropping it makes the bar draw the act as
-            // pending until the honest number lands (DES-030).
+            // pending until the honest number lands (DES-030). The settled
+            // outcome is this stop, not an earlier completion.
             session.lastReadyContext = nil
+            session.settledOutcome = nil
             session.lastCompletion = AttachmentCompletion(
                 batch: context.batch,
                 publishedCount: publishedCount,
@@ -754,6 +784,7 @@ actor MediaOperationCoordinator {
             session.phase = .inventory
             session.isDirty = true
             session.lastReadyContext = nil
+            session.settledOutcome = nil
             session.lastFailure = AttachmentFailure(reason: reason, publishedCount: 0, batch: context.batch)
             sourceSessions[source] = session
             publish()
@@ -833,8 +864,11 @@ actor MediaOperationCoordinator {
     func retryPlanning(for source: LibraryRootPath) async {
         guard var session = sourceSessions[source] else { return }
         // `Try Again` is the one act on state G: the user has addressed the
-        // cause, so the recorded failure yields to whatever the re-plan finds.
+        // cause, so the recorded failure yields to whatever the re-plan finds,
+        // and a deferred build's backoff starts over.
         session.lastFailure = nil
+        session.unreadableRetry?.task.cancel()
+        session.unreadableRetry = nil
         session.isDirty = true
         sourceSessions[source] = session
         scheduleBuildIfNeeded(source)
@@ -1077,6 +1111,7 @@ actor MediaOperationCoordinator {
                     settledOutcome: nil,
                     lastCompletion: nil,
                     lastFailure: nil,
+                    unreadableRetry: nil,
                     activeRunID: nil
                 )
                 sourceSessions[source.path] = newSession
@@ -1172,6 +1207,7 @@ actor MediaOperationCoordinator {
         for path in Array(sourceSessions.keys) where !seen.contains(path) {
             if let session = sourceSessions[path] {
                 var isExecutingNewImport = false
+                session.unreadableRetry?.task.cancel()
                 switch session.phase {
                 case let .building(ctx): ctx.task.cancel()
                 case let .executing(ctx):
@@ -1293,7 +1329,7 @@ actor MediaOperationCoordinator {
         result: ImportPlanBuildResult
     ) {
         // swiftlint:disable:next line_length
-        OtosLog.catalog.noticeOperation("import.plan", phase: "finish", fields: ["rootPath": source.rawValue, "run": runID, "sourceCount": "\(sourceCount)", "folders": "\(result.namespace.folderCount)", "namespaceEntries": "\(result.namespace.entryCount)", "enumerateMs": "\(result.enumerateMs)", "planMs": "\(result.planMs)", "copyCount": "\(result.plan.totals.copyCount)", "skipCount": "\(result.plan.totals.skipCount)", "excludedCount": "\(result.plan.totals.excludedCount)", "blockedCount": "\(result.plan.totals.blockedCount)", "namingMtimeCount": "\(namingMtimeCount)", "namingSettledCount": "\(namingSettledCount)"])
+        OtosLog.catalog.noticeOperation("import.plan", phase: "finish", fields: ["rootPath": source.rawValue, "run": runID, "sourceCount": "\(sourceCount)", "folders": "\(result.namespace.folderCount)", "namespaceEntries": "\(result.namespace.entryCount)", "enumerateMs": "\(result.enumerateMs)", "planMs": "\(result.planMs)", "copyCount": "\(result.plan.totals.copyCount)", "skipCount": "\(result.plan.totals.skipCount)", "excludedCount": "\(result.plan.totals.excludedCount)", "blockedCount": "\(result.plan.totals.blockedCount)", "unreadableFolders": "\(result.namespace.unreadableFolders.count)", "namingMtimeCount": "\(namingMtimeCount)", "namingSettledCount": "\(namingSettledCount)"])
     }
 
     private func buildPlan(source: LibraryRootPath, destination: LibraryRootPath, generation: UInt64, attachment: AttachmentGeneration) async throws {
@@ -1396,6 +1432,16 @@ actor MediaOperationCoordinator {
             scheduleBuildIfNeeded(source)
             return
         }
+        if !build.namespace.unreadableFolders.isEmpty {
+            deferBuildOnUnreadableDestination(
+                source: source,
+                session: current,
+                attachment: attachment,
+                folders: build.namespace.unreadableFolders,
+                runID: runID
+            )
+            return
+        }
         let newClaims = planClaims(from: plan, capabilities: snapshot.destinationCapabilities)
         let currentLedger = ledgerClaims(for: destination, excluding: source)
         if !newClaims.isDisjoint(with: currentLedger) {
@@ -1419,6 +1465,8 @@ actor MediaOperationCoordinator {
         var updated = current
         updated.phase = .ready(readyCtx)
         updated.lastReadyContext = readyCtx
+        updated.unreadableRetry?.task.cancel()
+        updated.unreadableRetry = nil
         updated.isDirty = false
         if updated.attachToReadyMs == nil {
             let elapsed = updated.attachStartedAt.duration(to: ContinuousClock().now)
@@ -1433,6 +1481,78 @@ actor MediaOperationCoordinator {
         } else if updated.isDirty {
             scheduleBuildIfNeeded(source)
         }
+    }
+
+    /// A destination folder that exists but could not be listed is not a fact
+    /// about the namespace; it is a missing observation, and a plan built on it
+    /// would block every candidate in that folder as "couldn't check" — which
+    /// the bar drew as `0 new items · Import 0 Items` over 368 items that were
+    /// already in the library (2026-09-13, a OneDrive folder mid-sync). So the
+    /// build is deferred: the phase returns to `.inventory`, the last proven plan
+    /// keeps presenting (ARC-047), and a bounded backoff re-plans. Past the last
+    /// delay the condition is presented as a planning failure — the destination
+    /// is not available to plan against — which `Try Again` and any planning
+    /// wake clear by rebuilding.
+    private func deferBuildOnUnreadableDestination(
+        source: LibraryRootPath,
+        session: SourceSession,
+        attachment: AttachmentGeneration,
+        folders: [String: String],
+        runID: String
+    ) {
+        var updated = session
+        updated.phase = .inventory
+        // A planning wake may have rebuilt before the pending retry fired; that
+        // retry is superseded by this deferral's own.
+        session.unreadableRetry?.task.cancel()
+        let attempt = (session.unreadableRetry?.attempt ?? 0) + 1
+        let detail = folders.map { "\($0.key.isEmpty ? "." : $0.key)=\($0.value)" }.sorted().joined(separator: ",")
+        guard attempt <= unreadableRetryDelays.count else {
+            updated.unreadableRetry = nil
+            updated.phase = .failed(reason: .destinationUnavailable, publishedCount: 0)
+            OtosLog.catalog.noticeOperation("import.plan", phase: "unreadableExhausted", fields: [
+                "rootPath": source.rawValue,
+                "run": runID,
+                "attempts": "\(attempt - 1)",
+                "folders": detail,
+            ])
+            sourceSessions[source] = updated
+            publish()
+            return
+        }
+        let delay = unreadableRetryDelays[attempt - 1]
+        updated.isDirty = true
+        updated.unreadableRetry = UnreadableRetry(attempt: attempt, task: Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, let self else { return }
+            await retryDeferredBuild(source: source, attachment: attachment)
+        })
+        OtosLog.catalog.noticeOperation("import.plan", phase: "deferred", fields: [
+            "rootPath": source.rawValue,
+            "run": runID,
+            "reason": "destinationUnreadable",
+            "attempt": "\(attempt)",
+            "delayMs": "\(DiagnosticsTiming.milliseconds(delay))",
+            "folders": detail,
+        ])
+        sourceSessions[source] = updated
+        publish()
+    }
+
+    /// The backoff's wake: rebuilds only if the same attachment is still parked
+    /// on the deferral — a newer attachment, a build a planning wake already
+    /// started, or an execution in flight all mean the retry is moot.
+    private func retryDeferredBuild(source: LibraryRootPath, attachment: AttachmentGeneration) {
+        guard var session = sourceSessions[source],
+              session.attachmentGeneration == attachment,
+              session.unreadableRetry != nil,
+              case .inventory = session.phase
+        else {
+            return
+        }
+        session.isDirty = true
+        sourceSessions[source] = session
+        scheduleBuildIfNeeded(source)
     }
 
     // swiftlint:disable:next line_length
@@ -1560,7 +1680,7 @@ actor MediaOperationCoordinator {
         // dirty, so it can never use a held plan to claim "This card is empty".
         let state: MediaOperationSourceState = switch session.phase {
         case .inventory:
-            session.importRequested ? .queuedForReadiness : heldPlanState(for: session) ?? .inventory
+            session.importRequested ? .queuedForReadiness : heldPlanState(for: session) ?? settlementState(for: session) ?? .inventory
         // Deliberately *not* held across `.waitingForMetadata`. `.building` and
         // `.inventory` re-derive a plan over a set whose naming facts are already
         // proven, so the old answer stays true until the new one lands. Waiting for
@@ -1579,6 +1699,8 @@ actor MediaOperationCoordinator {
                 .queuedForReadiness
             } else if let held = heldPlanState(for: session) {
                 held
+            } else if let settlement = settlementState(for: session) {
+                settlement
             } else if let progress = session.lastNamingProgress {
                 .waitingForMetadata(done: progress.done, total: progress.total)
             } else {
@@ -1627,6 +1749,18 @@ actor MediaOperationCoordinator {
     /// sets `phase = .completed`, and is the only writer of either — so a
     /// `.completed` phase with no stored outcome is unreachable, not a case to
     /// paper over with a fabricated zero-summary literal.
+    /// Between a run settling and its re-plan landing there is no proven plan
+    /// to hold (the pre-run one was dropped as false), but there is a settled
+    /// outcome — and Done is what the user is looking at. Presenting it across
+    /// the window keeps the bar on Done instead of flashing the stale pre-run
+    /// Ready (observed 2026-09-13) or falling back to Preparing.
+    private func settlementState(for session: SourceSession) -> MediaOperationSourceState? {
+        guard session.lastReadyContext == nil, session.settledOutcome != nil else {
+            return nil
+        }
+        return completedState(for: session)
+    }
+
     private func completedState(for session: SourceSession) -> MediaOperationSourceState {
         guard let outcome = session.settledOutcome else {
             preconditionFailure("`.completed` phase always sets `settledOutcome` in the same transaction (applyExecutionResult)")

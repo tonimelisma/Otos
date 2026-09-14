@@ -211,14 +211,11 @@ diagnosing and deliberately left outside it; none is a requirement.
    arriving file.
 6. **`op=ui.sidebarSelectionToPaint` leaves its span open** when a selection is
    abandoned, so an abandoned navigation is indistinguishable from a hung one.
-7. **Possible stale Ready between two Done frames.** After a *completed* run the
-   coordinator moves `.completed` → `.building` within one actor turn while still
-   holding the pre-run plan, so the mapper may draw Ready ("42 new items") for the
-   rebuild window before the re-plan's `copyCount == 0` lets Done reappear. Found
-   reading, not observed live. Stops and failures drop the held plan; the same
-   "a settled run invalidates the plan it ran from" rule would resolve this if it
-   proves real, with Done rendering from `lastCompletion` while the re-plan is
-   pending.
+7. **Stale Ready between two Done frames — observed live and fixed.** On
+   2026-09-13 at 17:57:37 a completed 368-item run drew `Ready · Import 368 Items`
+   for 360 ms between two Done frames, from the held pre-run plan. A completed run
+   now drops that plan like a stop does, and the settlement presents until the
+   re-plan lands (`docs/research/2026-09-13-unreadable-destination-folder-frozen-into-a-plan.md`).
 8. **Camera (MTP) writes that refuse for space** arrive as a string from the camera
    layer and classify as per-file `.other`, not `.outOfSpace`; the per-entry floor
    admission covers that path, so only a lying capacity figure reaches this gap.
@@ -227,7 +224,11 @@ diagnosing and deliberately left outside it; none is a requirement.
    bar disappears until the selection resolves elsewhere. `import-bar.md` describes
    two rows onto *the same* operation and does not say whether a superseded batch
    row keeps its own finished operation's bar — an owner decision.
-10. **Deferred by decision, not oversight**: an advisory free-space line in Ready
+10. **Auto-eject after a completed import failed with `fBsyErr: File is busy`**
+    (2026-09-13, 17:57:37) — the card was still being read by Otos's own
+    enrichment, and the failure was logged only; the user, who had ticked
+    `Eject the card`, was not told. Recorded, not fixed.
+11. **Deferred by decision, not oversight**: an advisory free-space line in Ready
     (`54.8 GB needed · 37.7 GB free`) beside a still-live button, sampled when Ready
     is drawn and never on the plan cadence.
 

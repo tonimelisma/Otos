@@ -1,4 +1,5 @@
 import Foundation
+import OSLog
 
 /// Filesystem namespace semantics guide
 ///
@@ -69,6 +70,7 @@ nonisolated enum FilesystemNamespaceSemantics {
     ) -> DestinationNamespace {
         var entries: [MediaRelativePath: NamespaceOccupancyResult] = [:]
         var enumerated: Set<String> = []
+        var unreadable: [String: String] = [:]
         let fileManager = FileManager.default
 
         for folder in folders {
@@ -82,11 +84,26 @@ nonisolated enum FilesystemNamespaceSemantics {
                 enumerated.insert(folder)
                 continue
             }
-            guard isDirectory.boolValue,
-                  let names = try? fileManager.contentsOfDirectory(atPath: folderURL.path(percentEncoded: false))
-            else {
-                // A file where a folder belongs, or an unreadable folder: leave it
-                // unenumerated so candidates surface as unobservable, not as free.
+            guard isDirectory.boolValue else {
+                // A file where a folder belongs: leave it unenumerated so
+                // candidates surface as unobservable, not as free.
+                unreadable[folder] = "notADirectory"
+                logUnreadable(folder: folder, error: "notADirectory")
+                continue
+            }
+            let names: [String]
+            do {
+                names = try fileManager.contentsOfDirectory(atPath: folderURL.path(percentEncoded: false))
+            } catch {
+                // An unreadable folder — a cloud provider mid-sync answers this way
+                // for a moment (observed 2026-09-13 on a OneDrive folder that had
+                // just received 368 imports). Record the error rather than
+                // swallowing it: the coordinator retries on it, and the log must
+                // say why.
+                let nsError = error as NSError
+                let detail = "\(nsError.domain)#\(nsError.code)"
+                unreadable[folder] = detail
+                logUnreadable(folder: folder, error: detail)
                 continue
             }
             for name in names {
@@ -99,7 +116,14 @@ nonisolated enum FilesystemNamespaceSemantics {
         return DestinationNamespace(
             entries: entries,
             enumeratedFolders: enumerated,
+            unreadableFolders: unreadable,
             capabilities: capabilities
+        )
+    }
+
+    private static func logUnreadable(folder: String, error: String) {
+        OtosLog.catalog.error(
+            "op=plan.namespace.enumerate phase=unreadable folder=\(folder, privacy: .public) error=\(error, privacy: .public)"
         )
     }
 }

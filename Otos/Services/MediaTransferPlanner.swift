@@ -363,10 +363,7 @@ private nonisolated extension MediaTransferPlanner {
                             idealDestination: companionPath,
                             finalDestination: companionPath,
                             companionDestinations: [:],
-                            disposition: .blocked(.filesystemObservationUnavailable(
-                                destination: companionPath,
-                                detail: "namespaceUnreadable"
-                            ))
+                            disposition: .blocked(.filesystemObservationUnavailable(destination: companionPath))
                         )
                     }
                 }
@@ -413,9 +410,8 @@ private nonisolated extension MediaTransferPlanner {
                 idealDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
                 finalDestination: MediaRelativePath(rawValue: member.relativePath.rawValue),
                 companionDestinations: [:],
-                disposition: .blocked(.filesystemObservationUnavailable(
-                    destination: MediaRelativePath(rawValue: member.relativePath.rawValue),
-                    detail: "suffixExhausted"
+                disposition: .blocked(.noFreeDestinationName(
+                    destination: MediaRelativePath(rawValue: member.relativePath.rawValue)
                 ))
             )
         }
@@ -448,10 +444,7 @@ private nonisolated extension MediaTransferPlanner {
         guard let probe = namespace.occupancy(of: candidate) else {
             // The candidate's folder was not readable, so freeness is unproven.
             // Blocking keeps an unreadable namespace from planning an overwrite.
-            return .blocked(.filesystemObservationUnavailable(
-                destination: candidate,
-                detail: "namespaceUnreadable"
-            ))
+            return .blocked(.filesystemObservationUnavailable(destination: candidate))
         }
 
         switch probe {

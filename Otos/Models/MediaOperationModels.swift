@@ -167,7 +167,13 @@ nonisolated enum ExclusionReason: Equatable, Sendable {
 
 nonisolated enum MediaOperationBlockReason: Equatable, Sendable {
     case noUsableDate
-    case filesystemObservationUnavailable(destination: MediaRelativePath, detail: String)
+    /// The destination folder this candidate would land in could not be read
+    /// when the plan was built, so its freeness is unproven. The planner's
+    /// safety net (ADR 0019) — the coordinator never presents a plan built on
+    /// an unread folder; it retries the build and holds the last proven plan.
+    case filesystemObservationUnavailable(destination: MediaRelativePath)
+    /// Every suffix the naming policy allows is taken in the destination folder.
+    case noFreeDestinationName(destination: MediaRelativePath)
     /// The source file's bytes could not be opened, so enrichment could not read it
     /// and a copy could not read it either. On a card this is a failing card or a
     /// file that vanished — never a transient condition worth waiting out, since a
@@ -702,11 +708,18 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
 
     private let entries: [FilesystemNameKey: Entry]
     private let enumeratedFolders: Set<String>
+    /// Folders that exist but could not be listed, with the error each gave.
+    /// Absence is a claim about a folder that was actually read (ADR 0019);
+    /// these were not, so every candidate in them answers `nil` — and the
+    /// coordinator treats a build carrying any of these as a transient
+    /// condition to retry, not a plan to present.
+    let unreadableFolders: [String: String]
     let capabilities: VolumeNamespaceCapabilities
 
     init(
         entries: [MediaRelativePath: NamespaceOccupancyResult],
         enumeratedFolders: Set<String>,
+        unreadableFolders: [String: String] = [:],
         capabilities: VolumeNamespaceCapabilities = .unknown
     ) {
         var keyed: [FilesystemNameKey: Entry] = [:]
@@ -720,6 +733,7 @@ nonisolated struct DestinationNamespace: Equatable, Sendable {
         }
         self.entries = keyed
         self.enumeratedFolders = enumeratedFolders
+        self.unreadableFolders = unreadableFolders
         self.capabilities = capabilities
     }
 

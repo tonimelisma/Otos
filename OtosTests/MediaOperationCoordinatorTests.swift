@@ -325,8 +325,12 @@ struct MediaOperationCoordinatorTests {
 
         let presentations = await coordinator.currentPresentations()
         let card = try #require(presentations.first { $0.sourcePath == cardPath })
+        // A one-file import through the live executor can settle inside the
+        // wait; a settled run presents its completion until the re-plan lands,
+        // so `.executing` and `.completed` are as legitimate here as the
+        // states before them.
         switch card.state {
-        case .executionUnavailable, .queuedForReadiness, .waitingForMetadata, .ready, .planning:
+        case .executionUnavailable, .queuedForReadiness, .waitingForMetadata, .ready, .planning, .executing, .completed:
             break
         default:
             Issue.record("Unexpected import presentation state \(card.state)")

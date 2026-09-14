@@ -49,6 +49,7 @@ nonisolated struct LiveImportPlanBuilder: ImportPlanBuilding {
                 "destination": snapshot.destinationRoot.rawValue,
                 "folders": "\(namespace.folderCount)",
                 "entries": "\(namespace.entryCount)",
+                "unreadable": "\(namespace.unreadableFolders.count)",
                 "elapsedMs": "\(DiagnosticsTiming.milliseconds(enumerateStart.duration(to: planStart)))",
             ]
         )

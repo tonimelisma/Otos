@@ -58,6 +58,19 @@ planner blocks those candidates with `.filesystemObservationUnavailable`. A fold
 that does not exist is fully enumerated and contributes no occupants, which correctly
 makes every candidate in it free.
 
+A folder that exists but cannot be listed is recorded in the namespace's
+`unreadableFolders` with the error it gave, and **a build carrying one is never
+presented as a plan**: the planner's block is the safety net that keeps an unread
+folder from planning an overwrite, not a state the user should see. The coordinator
+defers such a build — the phase returns to `.inventory`, the last proven plan keeps
+presenting, and a bounded backoff (1 s, 4 s, 16 s, 60 s) re-plans; past the last
+delay the condition is a planning failure (`destinationUnavailable`, state G) that
+`Try Again` or any planning wake clears by rebuilding. A cloud provider mid-sync
+answers `contentsOfDirectory` with an error for a moment; on 2026-09-13 that moment
+was promoted to a plan that read `0 new items · Import 0 Items` over 368 items
+already in the library. Suffix exhaustion is a separate, per-item reason
+(`.noFreeDestinationName`).
+
 **Plan building is an owned per-source child task.** `scheduleBuildIfNeeded` is
 synchronous: it flips the `dirty`/`building` pair and starts a task held in
 `buildTasks`. The planning-change consumer never awaits a build, so the coordinator

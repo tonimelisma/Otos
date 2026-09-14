@@ -247,15 +247,20 @@ Action: `Import 42 Items` — count and scope in the title (DES-036).
 
 ### D · Ready, needs attention
 
-Causes currently drawn here: items with no usable date, destination names Otos could
-not check, and items whose bytes could not be read — the last of which cannot be
-copied either, so blocking and showing it is the only honest outcome; retrying it
-forever would hide a failing card behind a bar that never settles.
+Causes currently drawn here: items with no usable date, items for which no free
+destination name exists, and items whose bytes could not be read — the last of which
+cannot be copied either, so blocking and showing it is the only honest outcome;
+retrying it forever would hide a failing card behind a bar that never settles. A
+destination folder Otos could not *list* is not drawn here at all: that is a missing
+observation, not a plan, and the coordinator retries the build while the last proven
+plan keeps showing (ADR 0019).
 
 L1 `39 new items · 61 MB` · L3 ⚠ `3 items have no date · Show them`. The orange
 badge carries a glyph, never colour alone (DES-029). `Show them` selects and scrolls
 the affected tiles in the grid — the grid is the plan view; there is no modal list
-(DES-041). Action: `Import 39 Items`. `Erase the card` is disabled while attention
+(DES-041). Action: `Import 39 Items` — omitted when nothing is importable, because
+`Import 0 Items` is a control whose subject does not exist (DES-053; drawn once, on
+2026-09-13, over 368 blocked items). `Erase the card` is disabled while attention
 remains, with the tooltip `Some items still need attention.` (DES-038).
 
 **The clause must name the real cause.** `blocked` is not one condition, and none of
@@ -265,7 +270,8 @@ diagnosis (`MediaOperationBlockReason`, `MediaOperationModels.swift:109`):
 | Cause | Clause | Why |
 | --- | --- | --- |
 | `noUsableDate` | `3 items have no date` | The file reads fine. It carries no capture date and no modification date, so Otos cannot choose a dated folder for it. |
-| `filesystemObservationUnavailable` | `Otos couldn't check 3 names in Summer Photos` | A destination problem, not a source one: Otos could not determine whether the destination name was free. |
+| `noFreeDestinationName` | `Otos couldn't find a free name for 3 items in Summer Photos` | Every suffix the naming policy allows is taken in the destination folder. |
+| `filesystemObservationUnavailable` | `Otos couldn't check 3 names in Summer Photos` | The planner's safety net for a folder it could not read. Never presented: the coordinator defers such a build and retries it (ADR 0019); the clause exists so the mapper stays total. |
 | More than one cause present | `3 items need attention` | DES-034 allows one clause; a mixed set names no single cause honestly. |
 
 `Show them` therefore needs the affected items' identities, not a count.
