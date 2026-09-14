@@ -187,6 +187,50 @@ Only the executor cannot produce it.
 5. **Terminal states must outrank speculative rebuilds** on the presentation channel,
    by design rather than by whether someone stored a companion fact next to the phase.
 
+## Open observations at closure (2026-09-13)
+
+Plan 0102 shipped its five increments and was deleted. These were found while
+diagnosing and deliberately left outside it; none is a requirement.
+
+1. **GRDB and MediaMetadata are linked twice** — into `OtosKit.framework` and
+   `Otos.debug.dylib`; dyld warns of "spurious casting failures and mysterious
+   crashes". `Otos.xcodeproj/project.pbxproj` carried uncommitted local changes
+   at the time.
+2. **`op=mainThreadStall stallMs=126`** attributed to
+   `MediaGridViewController.reconfigureVisibleItems` while reporting
+   `lastLongOperationMs=0` — the blamed op did nothing.
+3. **Enrichment and import compete for the same finite disk** with no arbitration
+   (ADR 0008 accepts the materialization cost but does not consider a concurrent
+   import). The floor bounds the damage from Otos's own side only.
+4. **Startup publishes `failed(unexpected("noDestinationLibrary"))`** for an
+   ordinary not-yet-resolved condition; it stays a planning-failure phase after
+   plan 0102 A, which is where to reconsider it.
+5. **Rebuild storm**: plan generations 27→34 in 50 s on 2026-09-13 because OneDrive
+   was syncing new files into the destination (`destinationOccupants` 8270→8277),
+   200–470 ms of planning each. Harmless to terminal states now; still O(n) per
+   arriving file.
+6. **`op=ui.sidebarSelectionToPaint` leaves its span open** when a selection is
+   abandoned, so an abandoned navigation is indistinguishable from a hung one.
+7. **Possible stale Ready between two Done frames.** After a *completed* run the
+   coordinator moves `.completed` → `.building` within one actor turn while still
+   holding the pre-run plan, so the mapper may draw Ready ("42 new items") for the
+   rebuild window before the re-plan's `copyCount == 0` lets Done reappear. Found
+   reading, not observed live. Stops and failures drop the held plan; the same
+   "a settled run invalidates the plan it ran from" rule would resolve this if it
+   proves real, with Done rendering from `lastCompletion` while the re-plan is
+   pending.
+8. **Camera (MTP) writes that refuse for space** arrive as a string from the camera
+   layer and classify as per-file `.other`, not `.outOfSpace`; the per-entry floor
+   admission covers that path, so only a lying capacity figure reaches this gap.
+9. **Superseded batch rows.** With a real partial batch selected, starting a second
+   run mints a new batch and the first batch's row has no live presentation, so its
+   bar disappears until the selection resolves elsewhere. `import-bar.md` describes
+   two rows onto *the same* operation and does not say whether a superseded batch
+   row keeps its own finished operation's bar — an owner decision.
+10. **Deferred by decision, not oversight**: an advisory free-space line in Ready
+    (`54.8 GB needed · 37.7 GB free`) beside a still-live button, sampled when Ready
+    is drawn and never on the plan cadence.
+
 ## Sources
 
 - Apple, [Checking Volume Storage Capacity](https://developer.apple.com/documentation/foundation/checking-volume-storage-capacity)

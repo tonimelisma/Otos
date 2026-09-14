@@ -1,7 +1,7 @@
 # ADR 0027: Destination Free Space Is Measured Only At The Attempt
 
 - Status: Accepted
-- Date: 2026-09-14
+- Date: 2026-09-13
 
 ## Decision
 

@@ -1016,7 +1016,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:immediate-fail", displayName: "Card", isEjectable: true)
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
-        let destPath = try CatalogPath.normalizedDirectoryPath(for: destURL)
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1039,17 +1038,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         #expect(executing.batchID == nil, "batchID must stay hidden during .executing until a real asset has published")
 
-        // A failure with nothing really wrong self-heals via the coordinator's
-        // ordinary "rebuild after any terminal settlement" behavior — `.failed`
-        // would be gone again within the same actor turn, before any poll
-        // could observe it. Removing the destination first makes the
-        // triggered rebuild fail too (no destination), settling on a stable
-        // `.failed` this test can actually poll for — the same shape a real
-        // persistent problem (destination genuinely gone) would have in
-        // production. Running out of room is no longer a failure at all
-        // (ADR 0027), so the injected reason is the destination's absence.
-        try await store.removeLibrary(path: destPath)
-        await execControl.resumePending(for: cardPath, with: .failed(reason: .destinationUnavailable))
+        // The failure is recorded beside the completion, not held as a phase,
+        // so the rebuild that follows settlement cannot erase it — the test
+        // polls for it with the destination still present, as production
+        // would present it (plan 0102 A; `import-bar.md` state G).
+        await execControl.resumePending(for: cardPath, with: .failed(reason: .unexpected(detail: "test")))
         await queueTask.value
 
         let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
@@ -1059,6 +1052,134 @@ struct MediaOperationCoordinatorAdversarialTests {
             return false
         }
         #expect(failed.batchID != nil, "The batch minted for this attempt must survive into the Failed presentation")
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// Plan 0102 A: a failed run stays Failed after the rebuild it schedules
+    /// lands. The failure is a recorded fact about the last run; the rebuild
+    /// replaces the *phase* and finds a Ready plan, which the presentation
+    /// keeps behind state G until the user presses Try Again.
+    @Test func aFailedRunStaysFailedAfterTheRebuildItSchedules() async throws {
+        log("START aFailedRunStaysFailedAfterTheRebuildItSchedules")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 4, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:failed-stays", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+        await execControl.resumePending(for: cardPath, with: .failed(reason: .destinationUnavailable))
+        await queueTask.value
+
+        let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .failed = pres.state {
+                return true
+            }
+            return false
+        }
+        #expect(failed.batchID != nil)
+        // Let the post-settlement rebuild land — it does, and the plan is Ready
+        // underneath — and the presentation is still Failed.
+        var rebuilt: MediaOperationPlan?
+        let deadline = ContinuousClock().now + .seconds(5)
+        while ContinuousClock().now < deadline {
+            if let plan = await coordinator.readyPlan(for: cardPath) {
+                rebuilt = plan
+                break
+            }
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        #expect(rebuilt != nil, "the rebuild after settlement still runs")
+        let after = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
+        guard case let .failed(reason, _) = after.state else {
+            Issue.record("Expected the failure to survive the rebuild, got \(after.state)")
+            return
+        }
+        #expect(reason == .destinationUnavailable)
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// Plan 0102 A: `Try Again` is what leaves state G — it clears the
+    /// recorded failure and re-plans, and the Ready the rebuild already found
+    /// is what the user sees next.
+    @Test func tryAgainLeavesTheFailedState() async throws {
+        log("START tryAgainLeavesTheFailedState")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 6, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:try-again", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        _ = try await waitForReady(coordinator, source: cardPath)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+        await execControl.resumePending(for: cardPath, with: .failed(reason: .unexpected(detail: "test")))
+        await queueTask.value
+        _ = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .failed = pres.state {
+                return true
+            }
+            return false
+        }
+
+        await coordinator.retryPlanning(for: cardPath)
+        let ready = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .ready = pres.state {
+                return true
+            }
+            return false
+        }
+        #expect(ready.batchID == nil, "no run is being presented once the failure is cleared")
         log("END")
         await coordinator.shutdown()
     }

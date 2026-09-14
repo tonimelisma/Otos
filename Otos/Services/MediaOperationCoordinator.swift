@@ -112,6 +112,26 @@ actor MediaOperationCoordinator {
         let settledAt: Date
     }
 
+    /// The last run's failure, recorded beside `lastCompletion` rather than as
+    /// a phase. A phase says what the session is doing *now*, and the rebuild
+    /// that follows every settlement rightly replaces it; a finished run's
+    /// outcome is a fact that rebuild has no business rewriting. Kept as a phase,
+    /// the failure was erased by the re-plan within the same actor turn — drawn
+    /// for 24 ms on 2026-09-09 — against `import-bar.md` state G's "never
+    /// auto-dismisses". Planning failures (no destination, no snapshot) stay
+    /// phases: they *are* the session's current condition, and a successful
+    /// rebuild should replace them.
+    private struct AttachmentFailure {
+        let reason: MediaOperationFailureReason
+        /// What this run had landed before it failed — state G states it when
+        /// nonzero. Every present producer fails before any copy.
+        let publishedCount: Int
+        /// The run's batch, pinned on state G and carried into detach whether
+        /// or not anything ever published (identity — navigation is
+        /// `batchHasPublishedAssets`, and this run has none).
+        let batch: ImportBatchID
+    }
+
     /// A settled `.completed` execution's outcome, stored on the session so
     /// `presentation(for:)` can read a real value instead of the zero-summary
     /// literal `.completed` used to synthesize on every publish.
@@ -191,20 +211,15 @@ actor MediaOperationCoordinator {
         /// ejecting and re-inserting a card forget the old plan.
         var lastReadyContext: ReadyContext?
         var lastCompletion: AttachmentCompletion?
-        /// The most recently minted batch for this attachment, set the moment
-        /// execution begins and left alone afterward. `lastCompletion` only
-        /// exists for a *settled* execution, so a run that fails before ever
-        /// producing one (out of space detected immediately, say) would
-        /// otherwise lose its batch ID the instant the phase leaves
-        /// `.executing` — right when state G most needs it, to stay pinned and
-        /// visible on the batch row (`import-bar.md` state G, "never
-        /// auto-dismisses").
-        var lastAttemptedBatch: ImportBatchID?
+        /// The last run's failure, if the most recent attempt failed. Cleared
+        /// when the next attempt starts (`runExecution`) and when the user
+        /// asks to plan again (`retryPlanning`) — never by a rebuild.
+        var lastFailure: AttachmentFailure?
         /// Correlates the current source session's plan, execution, and
         /// presentation diagnostics. Minted at the building boundary so a
         /// re-plan cannot accidentally join an older run.
         var activeRunID: String?
-        /// Whether `lastAttemptedBatch` has at least one durably-published
+        /// Whether the executing batch has at least one durably-published
         /// asset yet, per `store.importBatchAssetCount`. Gates `.executing`'s
         /// own `batchID` exposure so `followNewBatchesOnce` never navigates
         /// to a batch row before there is anything in it to show (owner
@@ -527,9 +542,9 @@ actor MediaOperationCoordinator {
         // Minted here, not read off `plan.mode` (a throwaway id re-minted on
         // every re-plan — trap #6) and not left to the executor to mint deep
         // inside `execute()`: the coordinator is the one place that must know
-        // it before execution starts, tracked as session state
-        // (`lastAttemptedBatch`) from here on (`import-bar.md` "Where the
-        // user is standing"). The presentation's own `batchID` field is not
+        // it before execution starts, carried on the phase while executing and
+        // on the recorded outcome afterward (`import-bar.md` "Where the user
+        // is standing"). The presentation's own `batchID` field is not
         // exposed this eagerly — see `exposedBatch(for:)`.
         let batch = ImportBatchID()
 
@@ -552,7 +567,9 @@ actor MediaOperationCoordinator {
         )
         session.phase = .executing(ctx)
         session.importRequested = false
-        session.lastAttemptedBatch = batch
+        // A new attempt supersedes the last one's failure; its own outcome
+        // will be recorded when it settles.
+        session.lastFailure = nil
         session.batchAssetCountConfirmed = false
         // A true starting value (real totals, zero completed), overwritten by
         // the executor's first progress callback moments later — not a
@@ -666,9 +683,6 @@ actor MediaOperationCoordinator {
                 incompleteItems: incompleteItems,
                 eraseOutcome: nil
             )
-            if summary.copyCount + summary.companionCopyCount == 0 {
-                session.lastAttemptedBatch = nil
-            }
             sourceSessions[source] = session
             publish()
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
@@ -695,9 +709,6 @@ actor MediaOperationCoordinator {
                 incompleteItems: incompleteItems,
                 eraseOutcome: eraseOutcome
             )
-            if summary.copyCount + summary.companionCopyCount == 0 {
-                session.lastAttemptedBatch = nil
-            }
             sourceSessions[source] = session
             publish()
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures,
@@ -735,7 +746,15 @@ actor MediaOperationCoordinator {
             sourceSessions[source] = session
             publish()
         case let .failed(reason):
-            session.phase = .failed(reason: reason, publishedCount: 0)
+            // Recorded, not phased: the rebuild scheduled just below replaces
+            // the phase and must not erase the failure (state G, "never
+            // auto-dismisses"). The plan this run executed from is dropped as
+            // on a stop — the run may have changed the namespace before it
+            // failed — so the re-plan is what `Try Again` reveals.
+            session.phase = .inventory
+            session.isDirty = true
+            session.lastReadyContext = nil
+            session.lastFailure = AttachmentFailure(reason: reason, publishedCount: 0, batch: context.batch)
             sourceSessions[source] = session
             publish()
         }
@@ -813,6 +832,9 @@ actor MediaOperationCoordinator {
 
     func retryPlanning(for source: LibraryRootPath) async {
         guard var session = sourceSessions[source] else { return }
+        // `Try Again` is the one act on state G: the user has addressed the
+        // cause, so the recorded failure yields to whatever the re-plan finds.
+        session.lastFailure = nil
         session.isDirty = true
         sourceSessions[source] = session
         scheduleBuildIfNeeded(source)
@@ -1054,7 +1076,7 @@ actor MediaOperationCoordinator {
                     lastProgress: nil,
                     settledOutcome: nil,
                     lastCompletion: nil,
-                    lastAttemptedBatch: nil,
+                    lastFailure: nil,
                     activeRunID: nil
                 )
                 sourceSessions[source.path] = newSession
@@ -1573,6 +1595,20 @@ actor MediaOperationCoordinator {
         case let .failed(reason, publishedCount):
             .failed(reason: reason, publishedCount: publishedCount)
         }
+        // A recorded failure outranks whatever the re-plan found (state G,
+        // "never auto-dismisses"); only a new attempt — executing, or queued
+        // to execute — is a newer fact about this attachment.
+        if let failure = session.lastFailure {
+            switch state {
+            case .executing, .queuedForReadiness:
+                break
+            default:
+                return makePresentation(
+                    session: session,
+                    state: .failed(reason: failure.reason, publishedCount: failure.publishedCount)
+                )
+            }
+        }
         return makePresentation(session: session, state: state)
     }
 
@@ -1650,30 +1686,29 @@ actor MediaOperationCoordinator {
 
     /// The batch this attachment is currently working on or last worked on:
     /// the live execution's batch while executing (once it has proven itself
-    /// non-empty — see `batchAssetCountConfirmed`), else the most recent
-    /// *settled* execution's batch, else the most recent *attempted* one —
-    /// covering a run that failed before ever settling — else `nil` before any
-    /// execution has started (`import-bar.md` "Where the user is standing").
+    /// non-empty — see `batchAssetCountConfirmed`), else the batch of the run
+    /// being presented: the recorded failure's while state G stands, else the
+    /// most recent *settled* execution's, else `nil` before any execution has
+    /// started (`import-bar.md` "Where the user is standing").
     ///
     /// Identity and navigation are answered separately. The `.executing`
     /// branch withholds the identity itself until the first asset lands; the
     /// terminal fallbacks always expose it, because a *failed* run still needs
     /// its batch pinned and visible on state G regardless of whether anything
     /// ever published — and say alongside it whether the row has anything to
-    /// show. A settled run's batch has assets exactly when it published some;
-    /// a batch known only through `lastAttemptedBatch` never settled, so it
-    /// has none. The ViewModel reads that fact rather than inferring it from
+    /// show. A run's batch has assets exactly when that run published some.
+    /// The ViewModel reads that fact rather than inferring it from
     /// `copiedJustNow`, which belongs to the last *settled* run and can
     /// describe a different batch than the one pinned here.
     private func exposedBatch(for session: SourceSession) -> ExposedBatch? {
         if case let .executing(ctx) = session.phase {
             return session.batchAssetCountConfirmed ? ExposedBatch(id: ctx.batch, hasPublishedAssets: true) : nil
         }
+        if let failure = session.lastFailure {
+            return ExposedBatch(id: failure.batch, hasPublishedAssets: failure.publishedCount > 0)
+        }
         if let completion = session.lastCompletion, let batch = completion.batch {
             return ExposedBatch(id: batch, hasPublishedAssets: completion.publishedCount > 0)
-        }
-        if let batch = session.lastAttemptedBatch {
-            return ExposedBatch(id: batch, hasPublishedAssets: false)
         }
         return nil
     }

@@ -3,13 +3,24 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+No active plans.
+
 Plan 0102 (import to the disk floor, stopped outcomes, and terminal-state durability)
-is active. It opened from a live session where `Import 38 Items` drew its correct
-`The disk is full` verdict for 24 ms before a speculative replan erased it, and a
-second click unmounted the bar for 8.3 s; on 2026-09-13 the owner decided that an
-import that cannot fit whole copies up to a 5 GB floor and stops as a designed,
-resumable outcome. Its research pass is
+is complete across five increments and was removed at closure. It opened from a live
+session where `Import 38 Items` drew its correct `The disk is full` verdict for 24 ms
+before a speculative replan erased it, and a second click unmounted the bar for
+8.3 s; on 2026-09-13 the owner decided that an import that cannot fit whole copies
+up to a 5 GB floor and stops as a designed, resumable outcome. Its decisions live in
+ADR 0027 (free space is measured only at the attempt: no precheck, no polling, a
+per-entry floor with in-flight accounting, `ENOSPC` as backstop, a floor stop as a
+Cancel-shaped outcome), APP-029 (batch identity and navigation are two facts; state
+F's Stopped variant; the floor's rendering; a recorded failure outranks the re-plan),
+ARC-047 (a run's outcome is a fact, not a phase; the executor never refuses for
+space) and `docs/design/import-bar.md` (F · Stopped, J8, J9, G). Its research pass is
 `docs/research/2026-09-09-destination-free-space-and-import-failure-recovery.md`.
+Two observations it left open, recorded in that research doc's closing note: a
+possible stale Ready between two Done frames after a *completed* run, and MTP
+writes that refuse for space classifying as per-file failures.
 
 Plan 0100 (camera import: prove naming from ranges, stage only what is imported) is complete
 and was removed at closure. It opened from a live MTP session where a 991-item card staged in
