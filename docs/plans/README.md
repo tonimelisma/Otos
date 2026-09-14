@@ -3,10 +3,12 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-Plan 0102 (import out of space, terminal-state durability, and batch navigation)
+Plan 0102 (import to the disk floor, stopped outcomes, and terminal-state durability)
 is active. It opened from a live session where `Import 38 Items` drew its correct
 `The disk is full` verdict for 24 ms before a speculative replan erased it, and a
-second click unmounted the bar for 8.3 s. Its research pass is
+second click unmounted the bar for 8.3 s; on 2026-09-13 the owner decided that an
+import that cannot fit whole copies up to a 5 GB floor and stops as a designed,
+resumable outcome. Its research pass is
 `docs/research/2026-09-09-destination-free-space-and-import-failure-recovery.md`.
 
 Plan 0100 (camera import: prove naming from ranges, stage only what is imported) is complete
@@ -28,7 +30,7 @@ The residual risk is recorded in `docs/research/removable-volume-and-camera-sour
 every measurement behind the work comes from one Sony body, and a timed run with a card
 attached is the next useful measurement.
 
-## Closed## Closed
+## Closed
 
 Plan 0099 (honest import naming and plan stability) is complete across six
 increments and was removed at closure. It opened from a card whose import bar

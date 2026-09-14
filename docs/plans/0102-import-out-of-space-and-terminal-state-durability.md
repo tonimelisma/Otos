@@ -1,215 +1,282 @@
-# Plan 0102 — import out of space, terminal-state durability, and batch navigation
+# Plan 0102 — import to the disk floor, stopped outcomes, and terminal-state durability
 
 Opened 2026-09-09 from a live session: the owner clicked `Import 38 Items`, nothing
-appeared to happen, and a second click made the import bar vanish. Evidence, timings
-and the design research behind this plan are in
+appeared to happen, and a second click made the import bar vanish. Re-observed
+2026-09-13 with the same card grown to 680 items / 54.8 GB against 37.7 GB free: three
+clicks, three correct `outOfSpace` verdicts drawn for 24, 10 and 10 ms. Evidence,
+timings and the research behind this plan are in
 `docs/research/2026-09-09-destination-free-space-and-import-failure-recovery.md`.
 
-The import genuinely could not fit — 26,558,298,038 bytes into 18,183,512,064 free —
-and Otos detected that correctly. Every defect below is in what happened *after* the
-correct verdict was reached.
+## The rule (owner decision, 2026-09-13)
+
+> **Import never refuses to start because the whole card doesn't fit.** It copies
+> entries in plan order and stops before the first entry that would leave the
+> destination volume with less than **5 GB** free. The stop is a designed outcome:
+> the copied items are a real batch, the un-copied ones stay on the card, the card's
+> re-plan offers the remainder, and nothing is erased or ejected. Free space is
+> measured before each entry, never predicted.
+
+Consequences the rule fixes rather than leaves open:
+
+- **A floor stop is structurally a Cancel, not a Failure.** Cancel already returns a
+  partial result before the erase sweep, stores `lastCompletion` with
+  `isFullyClean: false`, survives the post-settlement rebuild, and re-plans the
+  remainder (`import-bar.md` J8). The floor stop lands on that path with one
+  addition — a *stop reason* — instead of on state G.
+- **The run-level precheck is deleted**, not kept as a courtesy: its only job was to
+  refuse a run that would not fit whole, which the rule forbids. Deleting it also
+  retires research finding 4's false-refusal risk — nothing refuses any more.
+- **`ENOSPC` is the backstop, not a second outcome.** The capacity figure can be wrong
+  or another process can take the space between check and write; a write that fails
+  for space stops the run the same way the floor does.
+- **One floor, one owner.** `DeviceStagingRegistry` carries a 10 GB staging floor and
+  the precheck carried a 64 MB headroom — three floors for one promise. One constant,
+  5 GB, used by both.
+- **Stop at the first entry that does not fit; do not skip it and continue.** The
+  result is a contiguous prefix in plan order — "the first 412 were imported" —
+  predictable and matching how the bar counts. An entry with companions (RAW+HIF,
+  video+SRT) is atomic at the boundary.
+- **A floor stop is never fully clean**: no auto-eject, no erase. The un-copied items
+  exist only on that card.
 
 ## What this plan is not
 
 - **No polling, no free-space service, no free space on the plan.** macOS has no
   notification for free space crossing an app-defined threshold, and the capacity
-  figure is CacheDelete's cached calculation that is documented to be wrong in both
-  directions (research findings 3 and 4). A design that needs to know when the disk
-  changed is unbuildable here.
-- **No gating `Import` on space.** A blocker raised from an unobservable, unreliable
-  number can never be cleared truthfully. The button stays live; the attempt is the
-  check.
-- **No pre-commit "won't fit" warning in Ready.** That is a product decision the owner
-  has not made. Recorded under *Deferred* below, not built here.
+  figure is CacheDelete's cached calculation (research findings 3 and 4). A design
+  that needs to know when the disk changed is unbuildable here.
+- **No gating `Import` on space**, in either direction.
+- **No pre-commit "won't fit" warning in Ready.** Not requested; recorded under
+  *Deferred*.
 
-## Increment A — the last run's outcome is a fact, not a phase
+## Increment order
 
-**The fault.** `MediaOperationCoordinator` uses one `.failed` phase for two unrelated
-things: *"a plan cannot be built right now"* (`noDestinationLibrary`,
-`snapshotUnavailable`) and *"the run the user started has finished, unsuccessfully"*.
-The first is a current state and a successful rebuild **should** replace it. The
-second is a finished fact and a rebuild **must not** touch it. Because they share a
-phase, the rebuild's correct behaviour for the first destroys the second.
-
-That rebuild is unconditional: after every terminal settlement the coordinator sets
-`current.isDirty = true` and calls `scheduleBuildIfNeeded(source)`, and the build ends
-at `updated.phase = .ready(readyCtx)` with no check of what it is replacing
-(`Otos/Services/MediaOperationCoordinator.swift`, terminal settlement and build
-completion). A completed run survives only because completion is *separately* stored
-as `session.lastCompletion` and re-attached to every rebuilt presentation. Failure has
-no such carry, so it is erased. In the incident the Failed bar lived 24 ms on the first
-click and was coalesced away entirely on the second — violating
-`docs/design/import-bar.md` state G, "Never auto-dismisses".
-
-**The change.** An execution outcome stops being a phase and becomes a recorded fact
-about the last run, at the same tier and lifetime as `lastCompletion`. `phase` keeps
-answering "what is this session doing now"; the last run's result is a separate stored
-fact that a rebuild has no business rewriting. Planning failure stays a phase, because
-it genuinely is one.
-
-- Files: `Otos/Services/MediaOperationCoordinator.swift`,
-  `Otos/Models/MediaOperationModels.swift`.
-- Superseded when — and only when — a new run starts for that attachment, exactly as
-  `lastCompletion` is; `Try Again` therefore clears it by starting the next run.
-- Reuse ARC-047's existing "a published plan survives the rebuilds that replace it"
-  mechanism. Do not add a second holding mechanism beside it.
-
-**Oracle.** Behaviour-preserving for every non-failure path: the existing
-`MediaOperationCoordinator*Tests` and `ImportBarPresentationTests` stay green
-*unmodified*, including `nonCleanSettleDoesNotAutoDismiss`,
-`cleanSettleWithCardGoneAutoDismissesAfterDeadline` and
-`batchPresentationSurvivesDetachAfterCleanSettle`.
-
-**New tests** (`OtosTests/MediaOperationCoordinatorAdversarialTests.swift`):
-- a run that fails still presents `.failed` after the rebuild it schedules completes;
-- the same, when the rebuild's `ready` publishes in the same actor hop as the failure
-  (the incident's shape — both published at 22:23:59.427);
-- a *planning* failure is still replaced by a successful rebuild (the behaviour worth
-  keeping);
-- `Try Again` leaves the failed state.
-
-## Increment B — out of space is a run outcome with an honest partial count
-
-**The fault.** The only place Otos names out-of-space is the precheck before any bytes
-move. The per-entry vocabulary is `sourceNotReady | sourceChanged | sourceAbsent |
-other` (`Otos/Services/MediaImportExecutor.swift`), so an `ENOSPC` from a transfer
-lands in `.other` — documented in that type as "inherently per-file", and never
-promoted to a run-level classification. A 26.6 GB copy that exhausts the volume at item
-20 of 38 therefore reports a vague per-file failure inside an otherwise clean-shaped
-`.completed`, not "the disk filled up".
-
-This is the case no precheck can cover, because it is exactly the case where free space
-changed after the check — and it is likely in practice here, since
-`EnrichmentCoordinator` materializes OneDrive placeholders onto the same volume
-concurrently (ADR 0008).
-
-**The change.**
-- Add `EntryFailure.outOfSpace`; map `NSFileWriteOutOfSpaceError` and POSIX `ENOSPC` at
-  the transfer sites.
-- Stop the run at the first out-of-space rather than attempting the remaining entries:
-  they will all fail, and each attempt opens and rolls back a journal entry.
-- Promote it to `.failed(reason: .outOfSpace)` through the existing "every attempted
-  entry failed for the same systemic reason" rule that `sourceNotReady` already uses.
-- Carry the real count. `session.phase = .failed(reason: reason, publishedCount: 0)`
-  hardcodes zero and would discard it.
-- Author **ADR 0027 — destination free space is measured only at the attempt**:
-  context (findings 3–5), decision (no gate, no plan state, no polling; precheck as a
-  courtesy, `ENOSPC` as the authority, `Try Again` because a purge-blocked write may
-  succeed next time), rejected alternatives (timer polling; free space on
-  `MediaOperationPlanTotals`; a blocking Ready variant), consequences (a forecast is
-  never shown, so partial completion must be honest — which is what makes the absence
-  of a forecast acceptable).
-
-**No presentation work is needed.** `MediaOperationSourcePresentation` already carries
-`failed(reason:publishedCount:)` and `ImportBarPresentation` already renders
-`"N items were copied before it stopped"` when the count is nonzero — the mapper is
-waiting for a producer.
-
-**New tests:**
-- `OtosTests/MediaImportExecutorTests.swift` — with the Nth copy throwing `ENOSPC`, the
-  run classifies as `.failed(reason: .outOfSpace)` with `publishedCount == N-1`, and
-  entries after it are not attempted. Use the same seam
-  `allEntriesFailingSourceNotReadyClassifiesRunAsFailed` uses.
-- A mixed run (one `ENOSPC`, one per-file failure) stays `.completed`, mirroring
-  `mixedFailureReasonsStayCompletedNotSystemic`.
-- `OtosTests/ImportBarPresentationTests.swift` — the drawn Failed state reads
-  `The disk is full · 19 items were copied before it stopped`.
-
-**Resumption needs no new code, and the plan must prove it.** The plan is rebuilt from
-the filesystem and already produces `skipCount` for items present at the destination,
-so the next `Import` copies only what is left. Add a coordinator test that asserts it:
-after a partial out-of-space run, the rebuilt plan's `copyCount` equals the unfinished
-remainder.
+**C → B1 → B2 → A → closure.** C is tiny and removes a hazard every later increment's
+tests would otherwise trip over (a 0-copied stop must not navigate anywhere). B1 gives
+"stopped early" a first-class outcome and rendering — a spec gap that exists today for
+user cancel — and B2 puts the floor on that substrate. A is last because it depends on
+C: `lastAttemptedBatch` is "set the moment execution begins and left alone", so a new
+run's first frames advertise the *previous* run's batch (observed 17:10:56.053 on
+2026-09-13); that stale carry is what kept the footer mounted between the owner's
+clicks, and moving batch identity onto a recorded outcome before C lands would unmount
+the footer at the *start* of the second click instead of at its failure.
 
 ## Increment C — never navigate to a batch with nothing in it
 
 **The fault.** `followNewBatchesOnce`
 (`Otos/ViewModels/CatalogWindowViewModelMediaOperations.swift`) moves the sidebar to a
 batch the first time its ID appears on any presentation, without asking whether that
-batch has anything in it. The failed run published `batchID=…439390` with
-`publishedCount: 0`, so the selection moved to an empty batch that will never have
-content — `retainedResolvedSelection=true` in the projection, i.e. the sidebar and the
-grid disagreed.
+batch has anything in it. A run refused before any copy published `batchID` with
+`publishedCount: 0`; the selection moved to an empty batch that will never have
+content (`retainedResolvedSelection=true` — sidebar and grid disagreed). The next click
+minted a *new* batch ID, `selectedImportPresentation` matched the `.importBatch`
+selection by `batchID`, found nothing, and `ContentView`'s `if let presentation`
+unmounted the footer until the next catalog publication — 8.3 s on 2026-09-09, ~2.5 s
+on 2026-09-13.
 
-The second click then minted a *new* batch ID. `selectedImportPresentation` matches a
-`.importBatch` selection by `batchID`, found nothing, and `ContentView`'s
-`if let presentation` unmounted the footer. The selection only recovered on the next
-catalog publication — **8.3 seconds later**, because nothing in the catalog had
-changed. That is the disappearing bar.
-
-**The change is narrow, and it must respect APP-029.** APP-029 already gates
-`.executing`'s `batchID` on `store.importBatchAssetCount(batch) > 0` "so
-`followNewBatchesOnce` never navigates to a batch row before there is anything in it to
-show", and deliberately exempts terminal states so batch pinning keeps working. So the
-requirement already holds the right intent and covers only one of the two states that
-need it — because **carrying a batch identity and choosing to navigate to it are the
-same field today.** Separate them: the terminal presentation keeps carrying its
-`batchID` (identity, pinning, detach), and `followNewBatchesOnce` consults the
-outcome's `publishedCount` before moving the user.
+**The change, and why it is narrow.** APP-029 already gates `.executing`'s `batchID` on
+`store.importBatchAssetCount(batch) > 0` "so `followNewBatchesOnce` never navigates
+to a batch row before there is anything in it to show", and deliberately exempts
+terminal states so batch pinning keeps working. The requirement holds the right intent
+and covers one of the two states that need it, because **carrying a batch identity
+and choosing to navigate to it are the same field today.** Separate them: the terminal
+presentation keeps carrying its `batchID` (identity, pinning, detach), and
+`followNewBatchesOnce` moves the user only when the presentation proves the batch is
+non-empty — `.executing` with an exposed `batchID` (already gated), or a settled state
+whose count copied is greater than zero.
 
 `OtosTests/MediaOperationCoordinatorAdversarialTests.swift#batchIDSurvivesAnImmediateFailureBeforeAnyCopy`
-must stay green **unmodified** — it asserts identity, which this does not touch.
+stays green **unmodified** — it asserts identity, which this does not touch.
 
-**New tests** (`OtosTests/CatalogWindowViewModelMediaOperationsTests.swift`):
-- a terminal failure with `publishedCount == 0` does not move the selection;
-- a terminal failure with `publishedCount > 0` does move it, and the batch row holds
-  those items;
-- with the selection left on the card, a second failed run does not unmount the footer.
+**New tests** (`OtosTests/CatalogWindowViewModelMediaOperationsTests.swift`): a
+terminal outcome with nothing copied does not move the selection; one with items
+copied does; with the selection left on the card, a second run that fails before
+copying does not unmount the footer.
 
-**Open question for the owner, not decided here.** With a real partial batch selected,
-starting a second run mints a new batch and the first batch's row then has no live
-presentation, so its bar disappears until the selection resolves elsewhere. Whether a
-superseded batch row should keep showing its own finished operation's bar is a design
-question `import-bar.md` does not answer (state F/G describe two rows onto *the same*
-operation). Increment C's fix means the incident cannot reach that path; the question
-stands on its own.
+**Docs.** APP-029's navigation clause states the rule for terminal states.
 
-## Increment D — documentation closure
+## Increment B1 — "stopped early" is a first-class outcome
 
-- `docs/requirements.md`: APP-029 gains terminal-state durability and the
-  navigation-only-into-a-non-empty-batch clause; ARC-047 gains the outcome-vs-phase
-  split. Both cite the new tests.
-- `docs/adr/0027-destination-free-space-is-measured-at-the-attempt.md` (authored in B).
-- `docs/architecture.md`: the coordinator's ownership line, if the outcome/phase split
-  changes what that table says.
-- `docs/design/import-bar.md`: no rule change expected — state G and journey J9 already
-  specify this behaviour, and this plan implements them. If drafting proves otherwise,
-  the rule changes in the same PR.
-- Delete this plan at closure.
+**The gap.** `import-bar.md` J8 step 3 specifies `Stopped — 12 items copied` on the
+batch row after a cancel. Nothing renders it: `ImportBarPresentation.map` handles
+`.failed`, `.executing`, `.completed`, then derives Done only when the rebuilt plan has
+`copyCount == 0`; a cancel with a remainder falls through to plain Ready for the
+remainder, and the fact that a run just stopped is never stated. The data cannot say
+it either — `MediaImportExecutionResult.cancelled` reaches `AttachmentCompletion` as
+`isFullyClean: false` and nothing more, indistinguishable from a run that attempted
+everything and lost some.
+
+**The change.**
+- `MediaImportExecutionResult.cancelled` becomes `.stopped(reason:…)` with
+  `StopReason.user` (B2 adds `.diskFloor`). The reason is data; a stop is a stop.
+- `AttachmentCompletion` and `MediaOperationSourcePresentation` carry `stopReason`
+  and the run's own `attemptedTotal`, so the bar can state "412 of 680" from run facts
+  rather than from a live plan that may since have changed.
+- The mapper gains **F · Stopped**: L1 `Stopped — 12 of 42 items copied`, L3 one
+  clause for the reason, and the act is the remainder's own `Import 30 Items` when
+  the card is still attached (the live plan's `copyCount`) — an empty act zone when
+  the card is gone (DES-053's "subject no longer exists" exception). Identical on the
+  card row and the batch row, following state F's own rule.
+- `import-bar.md`: state F gains the Stopped variant; J8 step 4 changes — the card row
+  no longer reverts to C after a cancel, the Stopped bar carries the remainder's act
+  itself. That is a rule change and lands in the same PR.
+
+**Oracle.** `ImportBarPresentationTests` and the coordinator suites stay green apart
+from the tests that asserted the old fall-through-to-Ready after cancel, which change
+with the rule. New tests: the mapper renders Stopped with the remainder act while the
+card is attached and an empty act when it is gone; the coordinator publishes
+`stopReason` and `attemptedTotal` across the post-settlement rebuild; a stopped run is
+never fully clean and never auto-dismisses (`nonCleanSettleDoesNotAutoDismiss` already
+covers the second half).
+
+**Docs.** APP-029 gains the Stopped variant; ARC-047's "given execution is cancelled"
+clause states what is presented.
+
+## Increment B2 — the disk floor
+
+**The change in `MediaImportExecutor`.**
+- Delete `freeSpaceRequired` / the run-level refusal at the top of `execute()`.
+- In `runPlanEntries`, before each `submit(index)`: read the destination volume's
+  `volumeAvailableCapacityForImportantUsage` fresh and require
+  `capacity − inFlightBytes − entryBytes ≥ floor`, where `inFlightBytes` is the sum of
+  submitted-but-unfinished entries' `byteSize`. With `workerCount = 8`, a check that
+  ignores in-flight bytes overshoots the floor by up to eight items — with 500 MB
+  clips, the whole floor. An unknown capacity (`nil`) admits the entry; `ENOSPC` is
+  the backstop. Entries already in flight complete: they were admitted with their
+  bytes counted.
+- On the first entry that does not fit, stop submitting, let in-flight entries land,
+  and return `.stopped(reason: .diskFloor(bytesFree:), publishedCount:, …)`. Do not
+  raise `cancelFlag` — that is the user's, and the erase sweep keys on it.
+- Add `EntryFailure.outOfSpace`, mapped from `NSFileWriteOutOfSpaceError` / POSIX
+  `ENOSPC` at the transfer sites; a run that sees one stops the same way.
+- Capacity is read through an injectable `@Sendable (URL) -> Int64?` on
+  `MediaImportExecutor.init` with a default that reads `resourceValues` — the OS is a
+  real substitution boundary, and the floor is otherwise untestable.
+- `MediaOperationFailureReason.outOfSpace` and its `The disk is full` clause are
+  removed: nothing produces them once the precheck is gone. The two tests that used
+  `.outOfSpace` as a generic injected failure switch to the reason that fits their
+  setup (`destinationUnavailable` for the one that removes the destination).
+
+**The floor.** One `nonisolated enum FreeSpaceFloor { static let bytes }` at 5 GB in
+`Otos/Models/`, used by the executor and by `DeviceStagingRegistry`, whose check
+becomes `available − fileBytes ≥ floor` (it currently checks `available ≥ 10 GB`
+without counting the file about to be staged — the same promise, applied
+consistently).
+
+**Presentation.** B1's Stopped state with the `.diskFloor` clause:
+`Stopped — 412 of 680 items copied` / `Not enough room on the disk · 5.0 GB left`,
+act `Import 268 Items` while the card is attached. A stop before the first entry reads
+`Stopped — 0 of 680 items copied` with the same clause — one outcome, no special case.
+
+**ADR 0027 — destination free space is measured only at the attempt.** Context
+(research findings 3–5); decision (no gate, no plan state, no polling; per-entry floor
+with in-flight accounting; `ENOSPC` as backstop; partial completion as the mechanism
+that makes the absence of a forecast acceptable); rejected alternatives (timer polling;
+free space on `MediaOperationPlanTotals`; a blocking Ready variant; skip-and-continue
+past a non-fitting entry); consequences (a forecast is never shown; every stop is
+resumable by construction because the plan is rebuilt from the filesystem and already
+produces `skipCount` for what landed).
+
+**Tests** (`OtosTests/MediaImportExecutorTests.swift`, using the injected capacity):
+- capacity `floor + 25` over three 10-byte entries, decreasing as bytes land: two
+  publish, the third is never attempted, result is `.stopped(.diskFloor)` with
+  `publishedCount == 2`;
+- the same with a constant (stale) capacity: in-flight accounting alone still stops
+  at the right entry;
+- capacity `nil` admits everything;
+- an injected `ENOSPC` on entry *k* stops the run with `publishedCount == k − 1`;
+- a floor stop returns before the erase sweep even with delete-after-import requested
+  — nothing on the card is deleted.
+- Coordinator: after a floor stop, the rebuilt plan's `copyCount` equals the
+  remainder; no auto-eject fires.
+- Mapper: the two Stopped strings above.
+- `DeviceStagingRegistry`: staging respects the shared floor including the file's
+  own bytes.
+
+**Docs.** APP-029 (floor stop rendering, never clean), ARC-047 (no precheck; per-entry
+floor; `ENOSPC`), ENR-011/APP-018 if the staging floor's value is stated there,
+`import-bar.md` J9 (disk full is a Stopped outcome, not state G) and state G's clause
+list, `docs/architecture.md` if the where-to-change row for imports names the
+precheck.
+
+## Increment A — the last run's failure is a fact, not a phase
+
+**The fault.** `MediaOperationCoordinator` uses one `.failed` phase for two unrelated
+things: *"a plan cannot be built right now"* (`noDestinationLibrary`,
+`snapshotUnavailable`) and *"the run the user started finished unsuccessfully"*. The
+first is a current state and a successful rebuild **should** replace it; the second is
+a finished fact a rebuild **must not** touch. Because they share a phase, the
+rebuild's correct behaviour for the first destroys the second: after every terminal
+settlement the coordinator sets `isDirty = true` and schedules a build that ends at
+`updated.phase = .ready(readyCtx)` with no check of what it replaces. A completed or
+stopped run survives only because it is *separately* stored as `lastCompletion`;
+failure has no carry and is erased — 24 ms on 2026-09-09, 10 ms on 2026-09-13,
+violating state G's "Never auto-dismisses".
+
+After B1/B2 this no longer sits on the disk-space path, but it still holds for a card
+pulled or a destination lost mid-run, and the spec violation stands.
+
+**The change.** An execution failure becomes a recorded fact about the last run, at
+the same tier and lifetime as `lastCompletion`; `phase` keeps answering "what is this
+session doing now". Planning failure stays a phase. Superseded when — and only when —
+a new run starts for that attachment; `Try Again` therefore clears it by starting the
+next run. Batch identity for a failed run comes from the recorded outcome, retiring
+the stale `lastAttemptedBatch` carry described under *Increment order*.
+
+**Test scaffolding to retire.** `batchIDSurvivesAnImmediateFailureBeforeAnyCopy`
+says in its own comment that `.failed` "would be gone again within the same actor
+turn, before any poll could observe it" and removes the destination first so the
+rebuild fails too. After A the assertion stands and that workaround goes.
+
+**New tests** (`OtosTests/MediaOperationCoordinatorAdversarialTests.swift`): a run
+that fails still presents `.failed` after the rebuild it schedules completes; the
+same when the rebuild's `ready` publishes in the same actor hop as the failure; a
+*planning* failure is still replaced by a successful rebuild; `Try Again` leaves the
+failed state.
+
+**Docs.** APP-029 gains the durability clause; ARC-047 the outcome-vs-phase split;
+`docs/architecture.md`'s coordinator row if its ownership sentence changes.
+
+## Closure
+
+- Delete this plan; `docs/plans/README.md` records where its decisions live
+  (ADR 0027, APP-029, ARC-047, `import-bar.md` F/J8/J9).
+- The open question C leaves for the owner, recorded rather than decided: with a
+  real partial batch selected, starting a second run mints a new batch and the first
+  batch's row then has no live presentation, so its bar disappears until the selection
+  resolves elsewhere. `import-bar.md` describes two rows onto *the same* operation and
+  does not say whether a superseded batch row keeps its own finished operation's bar.
 
 ## Deferred — owner decision, not built here
 
-An advisory free-space line in Ready (`26.6 GB needed · 17 GB free`) beside a still-live
-button, sampled when Ready is drawn and never on the plan cadence. It would be stale by
-construction and gate nothing. Worth doing only if the owner wants the warning; the
-correctness work above does not depend on it.
+An advisory free-space line in Ready (`54.8 GB needed · 37.7 GB free`) beside a
+still-live button, sampled when Ready is drawn and never on the plan cadence. Stale by
+construction, gating nothing.
 
 ## Out of scope, found while diagnosing
 
-Logged here so they are not lost; none belongs in this plan.
-
 1. **GRDB and MediaMetadata are linked twice** — into `OtosKit.framework` and
-   `Otos.debug.dylib`. dyld warns of "spurious casting failures and mysterious
+   `Otos.debug.dylib`; dyld warns of "spurious casting failures and mysterious
    crashes". `Otos.xcodeproj/project.pbxproj` has uncommitted local changes.
-2. **`op=mainThreadStall stallMs=126`** (threshold 100) attributed to
+2. **`op=mainThreadStall stallMs=126`** attributed to
    `MediaGridViewController.reconfigureVisibleItems` while reporting
-   `lastLongOperationMs=0` — the blamed op did nothing, so the attribution misleads.
+   `lastLongOperationMs=0` — the blamed op did nothing.
 3. **Enrichment and import compete for the same finite disk** with no arbitration
    (ADR 0008 accepts the materialization cost but does not consider a concurrent
-   import).
+   import). The floor bounds the damage from Otos's own side only.
 4. **Startup publishes `failed(unexpected("noDestinationLibrary"))`** for an ordinary
-   not-yet-resolved condition. Increment A's outcome/phase split is the natural place
-   to reconsider it.
-5. **Enrichment claim queries waited 380 ms and 170 ms** behind 642/563/424 ms scan
-   batch writes; one projection equality check spiked to 15.7 ms.
+   not-yet-resolved condition; A's split is the place to reconsider it.
+5. **Rebuild storm**: 2026-09-13 saw plan generations 27→34 in 50 s because OneDrive
+   was syncing new files into the destination (`destinationOccupants` 8270→8277),
+   200–470 ms of planning each. Harmless once A lands; still O(n) per arriving file.
+6. **`op=ui.sidebarSelectionToPaint` leaves its span open** when a selection is
+   abandoned, so an abandoned navigation is indistinguishable from a hung one.
+7. Reaching Ready took 25.7 s for 680 items (`attachToReady elapsedMs=25688`) — the
+   metadata wait scaling with the card (ADR 0024/0026), not a defect.
 
 ## Verification
 
 `script/check.sh`, run in the background under a `Monitor` that emits every 60 s and is
 stopped in the same action that reads it (AGENTS.md → Supervising long checks).
-Evidence must come from the run that measured the final tree.
-
-Increments A and C are provable by unit tests. Increment B's mid-copy path needs an
-injected `ENOSPC` at the executor's transfer seam; if that seam does not admit
-injection cleanly, adding it is part of B rather than a reason to assert the behaviour
-untested.
+Evidence must come from the run that measured the final tree. Each increment is one
+PR with its own DoD report on the PR.
