@@ -22,7 +22,6 @@ struct CatalogWindowViewModelMediaOperationsTests {
         cardStillExists: Bool = true,
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
-        settledAt: Date? = nil,
         sessionPreferences: ImportPreferences = .default,
         // The production default for an exposed `.executing` batch: the
         // coordinator withholds the ID until the first asset has landed.
@@ -40,7 +39,6 @@ struct CatalogWindowViewModelMediaOperationsTests {
             cardStillExists: cardStillExists,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
-            settledAt: settledAt,
             stopReason: nil,
             plannedCount: nil,
             sessionPreferences: sessionPreferences,
@@ -183,11 +181,10 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sessionPreferences(for: Self.cardPath) == toggled)
     }
 
-    /// Plan 0095 D20: a run that finished with skips/failures must never
-    /// auto-dismiss (`import-bar.md` "Done bar auto-dismisses after ~6 s only
-    /// on a fully clean run; otherwise persists") — `isFullyClean == false`
-    /// must never schedule a dismissal, however long the card has been gone.
-    @Test func nonCleanSettleDoesNotAutoDismiss() {
+    /// `import-bar.md` state F, "Dismissal": a run that finished with skips or
+    /// failures keeps its bar on the batch row — the `Show them` reveal lives
+    /// there — however long the card has been gone.
+    @Test func nonCleanSettleKeepsTheBarOnTheBatchRow() {
         let model = makeModel()
         model.selectSidebar(.library(Self.cardPath))
         model.applyImportPresentations([
@@ -197,41 +194,46 @@ struct CatalogWindowViewModelMediaOperationsTests {
                     summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 1, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
                 ),
                 cardStillExists: false,
-                isFullyClean: false,
-                settledAt: Date()
+                isFullyClean: false
             ),
         ])
         #expect(model.sidebarSelection == .importBatch(Self.batchID))
         #expect(model.selectedImportPresentation != nil)
     }
 
-    /// Plan 0095 D20, positive path: a fully clean run whose card is gone
-    /// dismisses the bar once its `settledAt + 6s` deadline passes, but
-    /// leaves the batch selected — "Batch stays selected; the user is
-    /// looking at exactly what they just imported" (`import-bar.md`, state
-    /// F row 8). `settledAt` is seeded already 10s in the past so the
-    /// deadline has already elapsed, avoiding a real 6s sleep in the test.
-    @Test func cleanSettleWithCardGoneAutoDismissesAfterDeadline() async throws {
-        let model = makeModel()
-        model.selectSidebar(.library(Self.cardPath))
-        model.applyImportPresentations([
-            Self.presentation(
+    /// A fully clean settle leaves the batch row the moment it lands, card
+    /// gone or attached, with no timer: the user is looking at exactly what
+    /// they just imported, and the batch stays selected. Nothing is
+    /// remembered about the dismissal, so the very same frame still shows the
+    /// bar on the card's own row, where `Eject Card` and Erase live.
+    @Test func cleanSettleLeavesTheBatchRowImmediatelyAndKeepsTheCardRow() {
+        for cardStillExists in [false, true] {
+            let model = makeModel()
+            model.selectSidebar(.library(Self.cardPath))
+            let settled = Self.presentation(
                 batchID: Self.batchID,
                 state: .completed(
                     summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
                 ),
-                cardStillExists: false,
-                isFullyClean: true,
-                settledAt: Date().addingTimeInterval(-10)
-            ),
-        ])
-        #expect(model.sidebarSelection == .importBatch(Self.batchID))
-        #expect(model.selectedImportPresentation != nil)
+                cardStillExists: cardStillExists,
+                isFullyClean: true
+            )
+            model.applyImportPresentations([settled])
+            #expect(model.sidebarSelection == .importBatch(Self.batchID))
+            #expect(model.selectedImportPresentation == nil, "cardStillExists=\(cardStillExists)")
 
-        try await Task.sleep(for: .milliseconds(100))
-
-        #expect(model.sidebarSelection == .importBatch(Self.batchID))
-        #expect(model.selectedImportPresentation == nil)
+            guard cardStillExists else { continue }
+            model.applyState(Self.state(
+                resolvedSidebarSelection: .library(Self.cardPath),
+                importBatches: [ImportBatchSummary(batchID: Self.batchID, assetCount: 5)],
+                queryGeneration: model.queryGeneration,
+                libraries: [Self.library(Self.libraryPath)],
+                removableSources: [Self.card(Self.cardPath)]
+            ))
+            model.selectSidebar(.library(Self.cardPath))
+            #expect(model.sidebarSelection == .library(Self.cardPath))
+            #expect(model.selectedImportPresentation == settled)
+        }
     }
 
     // MARK: - Following the items when the card's own row disappears
@@ -372,7 +374,6 @@ struct CatalogWindowViewModelMediaOperationsTests {
             state: .completed(summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 5)),
             copiedJustNow: 5,
             isFullyClean: true,
-            settledAt: Date(),
             batchHasPublishedAssets: true
         )])
         #expect(model.sidebarSelection == .importBatch(Self.batchID))

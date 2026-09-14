@@ -9,13 +9,21 @@ import OSLog
 extension CatalogWindowViewModel {
     /// The bar is reachable from two sidebar rows once execution starts — the
     /// removable row and the batch row — both views onto the same operation
-    /// (`import-bar.md` "Where the user is standing", state F: "Both the
-    /// removable row and the import batch row are views onto the same
-    /// operation, so both show the same bar"). A batch row can outlive its
-    /// source's session (card ejected or pulled), which is why matching by
+    /// (`import-bar.md` "Where the user is standing"). A batch row can outlive
+    /// its source's session (card ejected or pulled), which is why matching by
     /// `batchID` also has to see `detachedBatchPresentations` on the
     /// coordinator — `applyImportPresentations` already folds those into
     /// `importPresentations`.
+    ///
+    /// The batch row shows the bar only while there is something the grid
+    /// cannot say: the run in flight, or a settled run that was not fully
+    /// clean (its `Show them` reveal lives here). A fully clean settle has
+    /// nothing left to report on this row — the user is looking at exactly
+    /// what they just imported — so the bar leaves the moment it settles, with
+    /// no timer and no remembered dismissal (`import-bar.md` state F,
+    /// "Dismissal"). The card's own row is unaffected: it keeps `Eject Card`
+    /// and Erase for as long as the card is attached, derived from the plan
+    /// on every frame.
     var selectedImportPresentation: MediaOperationSourcePresentation? {
         switch sidebarSelection {
         case let .library(path):
@@ -24,10 +32,12 @@ extension CatalogWindowViewModel {
             }
             return importPresentations.first { $0.sourcePath == path }
         case let .importBatch(batchID):
-            guard !dismissedBatchIDs.contains(batchID) else {
+            guard let presentation = importPresentations.first(where: { $0.batchID == batchID }),
+                  presentation.isFullyClean != true
+            else {
                 return nil
             }
-            return importPresentations.first { $0.batchID == batchID }
+            return presentation
         default:
             return nil
         }
@@ -135,54 +145,8 @@ extension CatalogWindowViewModel {
             lastBatchBySourcePath[presentation.sourcePath] = presentation.batchID
         }
         followNewBatchesOnce(presentations)
-        scheduleAutoDismiss(for: presentations)
         Task {
             await refreshRemovableDestinations()
-        }
-    }
-
-    /// Plan 0095 D20: recomputes the full set of pending Done-bar dismissals
-    /// from this frame's presentations and replaces `autoDismissTask`
-    /// wholesale. Each deadline is `settledAt + 6s`, a fixed instant carried
-    /// on the presentation itself — cancelling and respawning the task here
-    /// on every frame never actually moves a deadline that was already
-    /// scheduled, since the next frame recomputes the identical instant from
-    /// the same `settledAt`. Only a batch whose qualifying condition stops
-    /// holding (re-attached, or not fully clean) drops out of `pending` and
-    /// stays un-dismissed.
-    private func scheduleAutoDismiss(for presentations: [MediaOperationSourcePresentation]) {
-        let liveBatchIDs = Set(presentations.compactMap(\.batchID))
-        dismissedBatchIDs.formIntersection(liveBatchIDs)
-        let pending = presentations
-            .compactMap { presentation -> (ImportBatchID, Date)? in
-                guard let batchID = presentation.batchID,
-                      presentation.isFullyClean == true,
-                      presentation.cardStillExists == false,
-                      let settledAt = presentation.settledAt,
-                      !dismissedBatchIDs.contains(batchID)
-                else {
-                    return nil
-                }
-                return (batchID, settledAt.addingTimeInterval(6))
-            }
-            .sorted { $0.1 < $1.1 }
-
-        autoDismissTask?.cancel()
-        guard !pending.isEmpty else {
-            autoDismissTask = nil
-            return
-        }
-        autoDismissTask = Task { [weak self] in
-            for (batchID, deadline) in pending {
-                let remaining = deadline.timeIntervalSinceNow
-                if remaining > 0 {
-                    try? await Task.sleep(for: .seconds(remaining))
-                }
-                guard !Task.isCancelled, let self else {
-                    return
-                }
-                dismissedBatchIDs.insert(batchID)
-            }
         }
     }
 

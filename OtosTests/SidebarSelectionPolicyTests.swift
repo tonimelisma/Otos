@@ -120,7 +120,6 @@ struct SidebarSelectionPolicyTests {
             cardStillExists: true,
             copiedJustNow: nil,
             isFullyClean: nil,
-            settledAt: nil,
             stopReason: nil,
             plannedCount: nil,
             sessionPreferences: .default,

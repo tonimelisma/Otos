@@ -1391,6 +1391,76 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// A run's outcome is a claim about the library it copied into. Change
+    /// the destination and the outcome is withheld — otherwise the bar would
+    /// read `1 copied just now · N items in <the other library>` — and it
+    /// returns when the original library is picked again. The batch identity
+    /// is not gated, so the batch row keeps its pin either way.
+    @Test func aCompletionIsPresentedOnlyForTheLibraryItCopiedInto() async throws {
+        log("START aCompletionIsPresentedOnlyForTheLibraryItCopiedInto")
+        let temp = try makeTempRoot()
+        let firstURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let secondURL = temp.appending(path: "Camera Roll", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        for url in [firstURL, secondURL, cardURL] {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        }
+        try Data(repeating: 2, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: firstURL)
+        try await store.addLibrary(url: secondURL)
+        let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
+        let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:completion-scope", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in LiveImportExecutor(store: store) }
+        )
+        await coordinator.start()
+        await coordinator.setDestination(firstPath, for: cardPath)
+        _ = try await waitForReady(coordinator, source: cardPath, timeout: .seconds(15))
+        await coordinator.queueImport(for: cardPath)
+        let settled = try await waitForPresentation(coordinator, source: cardPath, predicate: { $0.copiedJustNow == 1 }, timeout: .seconds(15))
+        #expect(settled.isFullyClean == true)
+        let batch = try #require(settled.batchID)
+
+        await coordinator.setDestination(secondPath, for: cardPath)
+        let elsewhere = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
+            if case .ready = pres.state, pres.destinationPath == secondPath {
+                return true
+            }
+            return false
+        }, timeout: .seconds(15))
+        #expect(elsewhere.copiedJustNow == nil)
+        #expect(elsewhere.isFullyClean == nil)
+        #expect(elsewhere.batchID == batch)
+
+        await coordinator.setDestination(firstPath, for: cardPath)
+        let back = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
+            if case .ready = pres.state, pres.destinationPath == firstPath {
+                return true
+            }
+            return false
+        }, timeout: .seconds(15))
+        #expect(back.copiedJustNow == 1)
+        #expect(back.isFullyClean == true)
+        log("END")
+        await coordinator.shutdown()
+    }
+
     /// State C's "not everything will fit" line needs the destination's
     /// available capacity on the Ready presentation, sampled with the same
     /// reader the floor uses, and only where there is a plan to compare it to.

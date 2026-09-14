@@ -9,6 +9,14 @@ import UniformTypeIdentifiers
 nonisolated enum MediaOperationMode: Equatable, Sendable {
     case `import`(source: LibraryRootPath, destination: LibraryRootPath, batch: ImportBatchID)
     case reorganize(library: LibraryRootPath)
+
+    /// The library an import plan copies into; `nil` for a reorganization.
+    var importDestination: LibraryRootPath? {
+        if case let .import(_, destination, _) = self {
+            return destination
+        }
+        return nil
+    }
 }
 
 /// Which fact changed between what a plan expected and what the live source
@@ -557,15 +565,12 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// attempt's own count separately (`import-bar.md` state G: "nothing
     /// already copied is lost").
     let copiedJustNow: Int?
+    /// Whether that same settled run was fully clean. On the batch row this
+    /// is also the dismissal gate: a fully clean settle has nothing left to
+    /// report where the user is already looking at the items, so the bar
+    /// leaves that row the moment it settles (`import-bar.md` state F,
+    /// "Dismissal"). The card's own row never dismisses.
     let isFullyClean: Bool?
-    /// The instant that same settled execution actually landed — a stable
-    /// anchor for the ViewModel's auto-dismiss task to compute its 6 s
-    /// deadline from, so an unrelated `publish()` re-emitting this same
-    /// unchanged completion (another source's progress tick, say) cannot
-    /// restart the countdown (`import-bar.md` "Done bar auto-dismisses after
-    /// ~6 s only on a fully clean run"). `nil` exactly when
-    /// `isFullyClean`/`copiedJustNow` are.
-    let settledAt: Date?
     /// Why that same settled execution stopped before attempting everything it
     /// planned, or `nil` for a run that attempted every entry (whether or not
     /// every entry landed). Set, the bar draws state F's Stopped variant from
@@ -617,7 +622,6 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         cardStillExists: Bool,
         copiedJustNow: Int?,
         isFullyClean: Bool?,
-        settledAt: Date?,
         stopReason: ImportStopReason?,
         plannedCount: Int?,
         destinationAvailableBytes: Int64? = nil,
@@ -637,7 +641,6 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.cardStillExists = cardStillExists
         self.copiedJustNow = copiedJustNow
         self.isFullyClean = isFullyClean
-        self.settledAt = settledAt
         self.stopReason = stopReason
         self.plannedCount = plannedCount
         self.destinationAvailableBytes = destinationAvailableBytes

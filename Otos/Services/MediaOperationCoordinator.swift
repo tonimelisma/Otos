@@ -120,14 +120,15 @@ actor MediaOperationCoordinator {
         /// "12 of 42". The re-plan's own `copyCount` is the remainder and is
         /// not this number.
         let plannedCount: Int
-        /// The instant this run actually settled, published as state
-        /// (`MediaOperationSourcePresentation.settledAt`) so the ViewModel's
-        /// auto-dismiss task computes its 6 s deadline from a stable anchor
-        /// rather than from whenever it happened to observe a frame — an
-        /// unrelated `publish()` re-emitting this same unchanged completion
-        /// must not restart the countdown (`import-bar.md` "Done bar
-        /// auto-dismisses after ~6 s only on a fully clean run").
-        let settledAt: Date
+        /// The library this run copied into. `presentation(for:)` publishes
+        /// the completion's outcome only while the session's destination is
+        /// still this library: "42 copied just now · 181 items in Camera Roll"
+        /// would otherwise pair a count that landed in one library with the
+        /// name of another after a destination change (`import-bar.md` state
+        /// F, "scoped to this attachment and to the library it copied into").
+        /// The batch identity is not gated: it is the run's, whatever the
+        /// destination now says.
+        let destination: LibraryRootPath
     }
 
     /// The last run's failure, recorded beside `lastCompletion` rather than as
@@ -695,6 +696,9 @@ actor MediaOperationCoordinator {
             return
         }
         let summary = context.summary
+        guard let destination = context.plan.mode.importDestination else {
+            preconditionFailure("an executing session's plan is always an import plan (mode: \(context.plan.mode))")
+        }
         switch result {
         case let .completed(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems):
             session.phase = .completed
@@ -712,7 +716,7 @@ actor MediaOperationCoordinator {
                 eraseOutcome: nil,
                 stopReason: nil,
                 plannedCount: summary.copyCount,
-                settledAt: Date()
+                destination: destination
             )
             // Stored on the session so `presentation(for:)` reads the real
             // outcome instead of the zero-summary literal `.completed` used to
@@ -748,7 +752,7 @@ actor MediaOperationCoordinator {
                 eraseOutcome: eraseOutcome,
                 stopReason: nil,
                 plannedCount: summary.copyCount,
-                settledAt: Date()
+                destination: destination
             )
             session.settledOutcome = SettledOutcome(
                 summary: summary,
@@ -792,7 +796,7 @@ actor MediaOperationCoordinator {
                 eraseOutcome: nil,
                 stopReason: reason,
                 plannedCount: summary.copyCount,
-                settledAt: Date()
+                destination: destination
             )
             sourceSessions[source] = session
             publish()
@@ -1428,10 +1432,26 @@ actor MediaOperationCoordinator {
         guard let current = sourceSessions[source],
               current.attachmentGeneration == attachment,
               case let .building(currentCtx) = current.phase,
-              currentCtx.generation.rawValue == generation,
-              current.destination == destination
+              currentCtx.generation.rawValue == generation
         else {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=staleAfterBuild source=\(source.rawValue, privacy: .public)")
+            return
+        }
+        guard current.destination == destination else {
+            // The destination changed while this build ran. The build is still
+            // the session's current one — nothing else will end `.building` —
+            // so it must hand the phase back and reschedule, exactly as the
+            // pre-build destination guard does. Returning here left the session
+            // building forever with `isDirty` set and nothing to drain it
+            // (2026-09-14, a destination change during the post-settlement
+            // rebuild).
+            OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=destinationChangedMidBuild source=\(source.rawValue, privacy: .public)")
+            var updated = current
+            updated.isDirty = true
+            updated.phase = .inventory
+            sourceSessions[source] = updated
+            publish()
+            scheduleBuildIfNeeded(source)
             return
         }
         // Revalidate per role, matching `handlePlanningChange`: the source's
@@ -1883,6 +1903,13 @@ actor MediaOperationCoordinator {
         default:
             nil
         }
+        // The run's outcome is a claim about the library it copied into. After
+        // a destination change the bar measures the card against a different
+        // library, so the outcome is withheld and the plan speaks for itself
+        // ("Nothing new on this card" or "181 new items"); pick the original
+        // library again and the outcome returns. Identity (`exposedBatch`) is
+        // not gated — the batch row still needs its pin.
+        let completion = session.lastCompletion.flatMap { $0.destination == session.destination ? $0 : nil }
         return MediaOperationSourcePresentation(
             sourcePath: session.root.path,
             sourceKind: session.root.kind,
@@ -1894,15 +1921,14 @@ actor MediaOperationCoordinator {
             batchID: exposedBatch?.id,
             batchHasPublishedAssets: exposedBatch?.hasPublishedAssets ?? false,
             cardStillExists: cardStillExists ?? (session.root.availability == .available),
-            copiedJustNow: session.lastCompletion?.publishedCount,
-            isFullyClean: session.lastCompletion?.isFullyClean,
-            settledAt: session.lastCompletion?.settledAt,
-            stopReason: session.lastCompletion?.stopReason,
-            plannedCount: session.lastCompletion?.plannedCount,
+            copiedJustNow: completion?.publishedCount,
+            isFullyClean: completion?.isFullyClean,
+            stopReason: completion?.stopReason,
+            plannedCount: completion?.plannedCount,
             destinationAvailableBytes: availableBytes,
             sessionPreferences: session.preferences,
-            incompleteItems: session.lastCompletion?.incompleteItems ?? [],
-            eraseOutcome: session.lastCompletion?.eraseOutcome
+            incompleteItems: completion?.incompleteItems ?? [],
+            eraseOutcome: completion?.eraseOutcome
         )
     }
 
