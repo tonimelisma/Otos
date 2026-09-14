@@ -23,7 +23,10 @@ struct CatalogWindowViewModelMediaOperationsTests {
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
         settledAt: Date? = nil,
-        sessionPreferences: ImportPreferences = .default
+        sessionPreferences: ImportPreferences = .default,
+        // The production default for an exposed `.executing` batch: the
+        // coordinator withholds the ID until the first asset has landed.
+        batchHasPublishedAssets: Bool = true
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: cardPath,
@@ -33,6 +36,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
             state: state,
             attachToReadyMs: nil,
             batchID: batchID,
+            batchHasPublishedAssets: batchID != nil && batchHasPublishedAssets,
             cardStillExists: cardStillExists,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
@@ -326,6 +330,78 @@ struct CatalogWindowViewModelMediaOperationsTests {
             removableSources: [Self.card(Self.cardPath)]
         ))
         #expect(model.sidebarSelection == .library(Self.cardPath))
+    }
+
+    // MARK: - Plan 0102 C: a batch is followed only once it has something to show
+
+    /// A run refused before any copy still carries its batch — identity, for
+    /// state G and detach — but its row has nothing in it. Moving the user
+    /// there leaves the sidebar and the grid disagreeing, so the selection
+    /// stays where the user was standing.
+    @Test func autoSelectDoesNotFollowABatchWithNothingInIt() {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(
+            batchID: Self.batchID,
+            state: .failed(reason: .destinationUnavailable, publishedCount: 0),
+            batchHasPublishedAssets: false
+        )])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+    }
+
+    /// An empty batch is not "spent" by being seen: the first frame that
+    /// proves it non-empty still gets the once-only move, which is how a live
+    /// execution's first landed asset pulls the user to the batch row.
+    @Test func anEmptyBatchStillFollowsOnceItHasSomethingToShow() {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID, batchHasPublishedAssets: false)])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID, batchHasPublishedAssets: true)])
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+    }
+
+    /// A settled run that copied something is followed as before.
+    @Test func autoSelectFollowsASettledBatchThatCopiedSomething() {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(
+            batchID: Self.batchID,
+            state: .completed(summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 5)),
+            copiedJustNow: 5,
+            isFullyClean: true,
+            settledAt: Date(),
+            batchHasPublishedAssets: true
+        )])
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+    }
+
+    /// The 2026-09-13 shape: two runs refused before any copy, seconds apart.
+    /// Each mints its own batch; neither has anything to show. With the
+    /// selection left on the card, the footer keeps matching by source path
+    /// and stays mounted through the second refusal instead of unmounting
+    /// until the next catalog publish resolves a dangling batch selection.
+    @Test func aSecondRefusedRunLeavesTheFooterMounted() {
+        let model = makeModel()
+        model.applyState(Self.state(
+            resolvedSidebarSelection: .library(Self.cardPath),
+            importBatches: [],
+            queryGeneration: model.queryGeneration,
+            libraries: [Self.library(Self.libraryPath)],
+            removableSources: [Self.card(Self.cardPath)]
+        ))
+        model.selectSidebar(.library(Self.cardPath))
+        let first = ImportBatchID(unixMilliseconds: 1_789_344_644_250)
+        let second = ImportBatchID(unixMilliseconds: 1_789_344_656_054)
+        for batch in [first, second] {
+            model.applyImportPresentations([Self.presentation(
+                batchID: batch,
+                state: .failed(reason: .destinationUnavailable, publishedCount: 0),
+                batchHasPublishedAssets: false
+            )])
+        }
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+        #expect(model.selectedImportPresentation?.batchID == second)
     }
 
     private static func card(_ path: LibraryRootPath) -> CatalogLibraryState {

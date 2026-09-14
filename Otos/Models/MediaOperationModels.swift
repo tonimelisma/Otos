@@ -471,14 +471,21 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// State rather than an event `presentationsStream()`'s dropping buffer
     /// could lose (`import-bar.md` "Where the user is standing"). Present
     /// once set, not from execution start: `.executing` withholds it until
-    /// the batch has at least one durably-published asset, so
-    /// `followNewBatchesOnce` never navigates to a batch row with nothing in
-    /// it yet (owner decision — "move batch selection to first-asset"). A
-    /// terminal `.failed`/`.cancelled`/`.completed` state's
-    /// own fallback is unaffected by that gate — those keep the run's batch
-    /// pinned and visible regardless of whether anything ever published, per
-    /// `MediaOperationCoordinator`'s `currentBatchID(for:)`.
+    /// the batch has at least one durably-published asset. A terminal
+    /// `.failed`/`.completed` state's own fallback is unaffected by that gate
+    /// — those keep the run's batch pinned and visible regardless of whether
+    /// anything ever published, per `MediaOperationCoordinator`'s
+    /// `exposedBatch(for:)`. This is the batch's *identity*; whether the user
+    /// should be taken to its row is `batchHasPublishedAssets`.
     let batchID: ImportBatchID?
+    /// Whether the batch `batchID` names holds at least one durably-published
+    /// asset — the fact `followNewBatchesOnce` needs before moving the user to
+    /// its row. Carrying an identity and choosing to navigate to it are two
+    /// different questions: a run refused before any copy still pins its batch
+    /// (identity, for state G and detach), but its row has nothing to show, and
+    /// a selection moved there leaves the sidebar and the grid disagreeing.
+    /// `false` whenever `batchID` is `nil`.
+    let batchHasPublishedAssets: Bool
     /// Whether this source is still attached and available, read fresh from the
     /// catalog rather than inferred from session existence — a fact about the
     /// world, not about where the user is standing (`import-bar.md` state F).
@@ -541,6 +548,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         state: MediaOperationSourceState,
         attachToReadyMs: Int?,
         batchID: ImportBatchID?,
+        batchHasPublishedAssets: Bool,
         cardStillExists: Bool,
         copiedJustNow: Int?,
         isFullyClean: Bool?,
@@ -556,6 +564,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.state = state
         self.attachToReadyMs = attachToReadyMs
         self.batchID = batchID
+        self.batchHasPublishedAssets = batchHasPublishedAssets
         self.cardStillExists = cardStillExists
         self.copiedJustNow = copiedJustNow
         self.isFullyClean = isFullyClean

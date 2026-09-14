@@ -185,12 +185,19 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Moves the sidebar selection to a batch the first time its ID appears on
-    /// a presentation, and never again for that batch (`import-bar.md` "Where
-    /// the user is standing", "Required change"). `batchID` is carried as
-    /// state rather than an event specifically so this can't miss a dropped
-    /// intermediate frame — the check is "have we seen this ID," not "did we
-    /// just observe a transition."
+    /// Moves the sidebar selection to a batch the first time a presentation
+    /// shows it has something in it, and never again for that batch
+    /// (`import-bar.md` "Where the user is standing", "Required change").
+    /// `batchID` is carried as state rather than an event specifically so this
+    /// can't miss a dropped intermediate frame — the check is "have we seen
+    /// this ID," not "did we just observe a transition."
+    ///
+    /// A batch with nothing in it is skipped *and not marked seen*: a run
+    /// refused before any copy still pins its batch for state G, but moving
+    /// the user to an empty row leaves the sidebar and the grid disagreeing,
+    /// and once the next run mints a new batch the footer has nothing to match
+    /// and unmounts. Leaving the ID unmarked means the first frame that proves
+    /// the batch non-empty still gets the once-only move.
     ///
     /// `.allImports` counts as not having navigated away (J12: "that list is a
     /// navigation surface, not a place to watch work from"); any other
@@ -198,7 +205,10 @@ extension CatalogWindowViewModel {
     /// Media — is a real navigation choice and is respected.
     private func followNewBatchesOnce(_ presentations: [MediaOperationSourcePresentation]) {
         for presentation in presentations {
-            guard let batchID = presentation.batchID, !autoSelectedBatchIDs.contains(batchID) else {
+            guard let batchID = presentation.batchID,
+                  presentation.batchHasPublishedAssets,
+                  !autoSelectedBatchIDs.contains(batchID)
+            else {
                 continue
             }
             autoSelectedBatchIDs.insert(batchID)

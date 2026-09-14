@@ -520,7 +520,7 @@ actor MediaOperationCoordinator {
         // it before execution starts, tracked as session state
         // (`lastAttemptedBatch`) from here on (`import-bar.md` "Where the
         // user is standing"). The presentation's own `batchID` field is not
-        // exposed this eagerly — see `currentBatchID(for:)`.
+        // exposed this eagerly — see `exposedBatch(for:)`.
         let batch = ImportBatchID()
 
         // Keep execution task for cancellation/shutdown, but execution itself
@@ -922,7 +922,7 @@ actor MediaOperationCoordinator {
 
     /// Confirms, for every still-executing session that hasn't proven itself
     /// yet, whether its batch now has at least one durably-published asset —
-    /// the fact `currentBatchID` gates `.executing`'s own `batchID` exposure
+    /// the fact `exposedBatch` gates `.executing`'s own `batchID` exposure
     /// on. Piggybacks on the catalog-change notification
     /// this coordinator already consumes for every attached source rather
     /// than adding a second, dedicated polling loop: an import's own
@@ -1616,6 +1616,13 @@ actor MediaOperationCoordinator {
         )
     }
 
+    /// The batch a presentation exposes, with the one fact the ViewModel needs
+    /// before moving the user to its row: whether anything is in it.
+    private struct ExposedBatch {
+        let id: ImportBatchID
+        let hasPublishedAssets: Bool
+    }
+
     /// The batch this attachment is currently working on or last worked on:
     /// the live execution's batch while executing (once it has proven itself
     /// non-empty — see `batchAssetCountConfirmed`), else the most recent
@@ -1623,19 +1630,27 @@ actor MediaOperationCoordinator {
     /// covering a run that failed before ever settling — else `nil` before any
     /// execution has started (`import-bar.md` "Where the user is standing").
     ///
-    /// The `.executing` branch is gated and the terminal fallback is not: a
-    /// long-running import must not surface `batchID` — and so pull
-    /// `followNewBatchesOnce` into a batch row with nothing in it yet —
-    /// before its first asset actually lands (owner decision), but a
-    /// *failed* run still needs its batch pinned and visible
-    /// on state G regardless of whether anything ever published, which is
-    /// exactly what `lastAttemptedBatch`'s existing fallback already
-    /// guarantees.
-    private func currentBatchID(for session: SourceSession) -> ImportBatchID? {
+    /// Identity and navigation are answered separately. The `.executing`
+    /// branch withholds the identity itself until the first asset lands; the
+    /// terminal fallbacks always expose it, because a *failed* run still needs
+    /// its batch pinned and visible on state G regardless of whether anything
+    /// ever published — and say alongside it whether the row has anything to
+    /// show. A settled run's batch has assets exactly when it published some;
+    /// a batch known only through `lastAttemptedBatch` never settled, so it
+    /// has none. The ViewModel reads that fact rather than inferring it from
+    /// `copiedJustNow`, which belongs to the last *settled* run and can
+    /// describe a different batch than the one pinned here.
+    private func exposedBatch(for session: SourceSession) -> ExposedBatch? {
         if case let .executing(ctx) = session.phase {
-            return session.batchAssetCountConfirmed ? ctx.batch : nil
+            return session.batchAssetCountConfirmed ? ExposedBatch(id: ctx.batch, hasPublishedAssets: true) : nil
         }
-        return session.lastCompletion?.batch ?? session.lastAttemptedBatch
+        if let completion = session.lastCompletion, let batch = completion.batch {
+            return ExposedBatch(id: batch, hasPublishedAssets: completion.publishedCount > 0)
+        }
+        if let batch = session.lastAttemptedBatch {
+            return ExposedBatch(id: batch, hasPublishedAssets: false)
+        }
+        return nil
     }
 
     private func makePresentation(
@@ -1643,14 +1658,16 @@ actor MediaOperationCoordinator {
         state: MediaOperationSourceState,
         cardStillExists: Bool? = nil
     ) -> MediaOperationSourcePresentation {
-        MediaOperationSourcePresentation(
+        let exposedBatch = exposedBatch(for: session)
+        return MediaOperationSourcePresentation(
             sourcePath: session.root.path,
             sourceKind: session.root.kind,
             destinationPath: session.destination,
             destinationDisplayName: session.destination.flatMap { librariesByPath[$0]?.displayName },
             state: state,
             attachToReadyMs: session.attachToReadyMs,
-            batchID: currentBatchID(for: session),
+            batchID: exposedBatch?.id,
+            batchHasPublishedAssets: exposedBatch?.hasPublishedAssets ?? false,
             cardStillExists: cardStillExists ?? (session.root.availability == .available),
             copiedJustNow: session.lastCompletion?.publishedCount,
             isFullyClean: session.lastCompletion?.isFullyClean,

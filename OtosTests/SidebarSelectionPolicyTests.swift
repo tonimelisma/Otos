@@ -116,6 +116,7 @@ struct SidebarSelectionPolicyTests {
             state: state,
             attachToReadyMs: nil,
             batchID: batchID,
+            batchHasPublishedAssets: batchID != nil,
             cardStillExists: true,
             copiedJustNow: nil,
             isFullyClean: nil,

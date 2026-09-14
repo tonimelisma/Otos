@@ -32,6 +32,7 @@ struct ImportBarPresentationTests {
             state: state,
             attachToReadyMs: nil,
             batchID: batchID,
+            batchHasPublishedAssets: batchID != nil && (copiedJustNow ?? 1) > 0,
             cardStillExists: cardStillExists,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
