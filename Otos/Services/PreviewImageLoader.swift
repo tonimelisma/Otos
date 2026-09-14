@@ -34,9 +34,15 @@ actor PreviewImageLoader: PreviewLoading {
     /// non-image result means cancelled or genuinely absent — neither of which the caller
     /// retries. The reason is still logged; it is just not a decision anyone makes.
     enum Outcome {
-        case image(CGImage)
+        /// The decode plus the source's native pixel size (oriented), when the source
+        /// reports one — the loupe sizes its zoom document from it (APP-040).
+        case image(CGImage, nativePixelSize: CGSize?)
         case unavailable
     }
+
+    /// `Request.targetLongEdge` value asking for the full native resolution; the decode
+    /// clamps it to the source's own long edge.
+    static let fullResolution = Int.max
 
     struct Request {
         let id: MediaAssetID
@@ -48,6 +54,7 @@ actor PreviewImageLoader: PreviewLoading {
         let image: CGImage
         let byteCost: Int
         let longEdge: Int
+        let nativePixelSize: CGSize?
     }
 
     private let materializationRequester: any MaterializationRequesting
@@ -74,7 +81,7 @@ actor PreviewImageLoader: PreviewLoading {
     func preview(for request: Request) async -> Outcome {
         if let cached = cache[request.id], cached.longEdge >= request.targetLongEdge {
             touch(request.id)
-            return .image(cached.image)
+            return .image(cached.image, nativePixelSize: cached.nativePixelSize)
         }
         if let existing = inFlight[request.id] {
             return await existing.value
@@ -85,8 +92,8 @@ actor PreviewImageLoader: PreviewLoading {
         inFlight[request.id] = task
         let outcome = await task.value
         inFlight[request.id] = nil
-        if case let .image(image) = outcome {
-            insert(image, for: request.id, longEdge: request.targetLongEdge)
+        if case let .image(image, nativePixelSize) = outcome {
+            insert(image, for: request.id, longEdge: request.targetLongEdge, nativePixelSize: nativePixelSize)
         }
         return outcome
     }
@@ -146,16 +153,15 @@ actor PreviewImageLoader: PreviewLoading {
         // that QoS avoids the Thread Performance Checker priority-inversion hang risk
         // that fires when this path runs at .userInitiated.
         let target = request.targetLongEdge
-        let decoded: (CGImage, String)? = await Task.detached(priority: .medium) {
+        let decoded: (CGImage, String, CGSize?)? = await Task.detached(priority: .medium) { () -> (CGImage, String, CGSize?)? in
             if isMovie {
-                await Self.decodeVideoPoster(url: url, targetLongEdge: target)
-            } else {
-                Self.decodeImage(url: url, targetLongEdge: target)
+                return await Self.decodeVideoPoster(url: url, targetLongEdge: target)
             }
+            return Self.decodeImage(url: url, targetLongEdge: target)
         }.value
 
         let decodeMs = DiagnosticsTiming.milliseconds(since: start)
-        guard let (image, source) = decoded else {
+        guard let (image, source, nativePixelSize) = decoded else {
             OtosLog.mediaIO.notice(
                 """
                 op=preview.decode phase=fail id=\(request.id.relativePath.rawValue, privacy: .public) \
@@ -168,30 +174,42 @@ actor PreviewImageLoader: PreviewLoading {
             """
             op=preview.decode phase=ok id=\(request.id.relativePath.rawValue, privacy: .public) \
             decodeMs=\(decodeMs, privacy: .public) source=\(source, privacy: .public) \
-            edge=\(request.targetLongEdge, privacy: .public)
+            edge=\(request.targetLongEdge, privacy: .public) \
+            decoded=\(max(image.width, image.height), privacy: .public)
             """
         )
-        return .image(image)
+        return .image(image, nativePixelSize: nativePixelSize)
     }
 
-    private nonisolated static func decodeImage(url: URL, targetLongEdge: Int) -> (CGImage, String)? {
+    private nonisolated static func decodeImage(url: URL, targetLongEdge: Int) -> (CGImage, String, CGSize?)? {
         let options: [CFString: Any] = [
             kCGImageSourceShouldCache: false,
         ]
         guard let source = CGImageSourceCreateWithURL(url as CFURL, options as CFDictionary) else {
             return nil
         }
-        // Prefer an embedded thumbnail when it is already large enough (common for RAW).
+        let nativePixelSize = Self.nativePixelSize(of: source)
+        let nativeLongEdge = nativePixelSize.map { Int(max($0.width, $0.height)) }
+        // A full-resolution request is the source's own long edge; a smaller image
+        // never upsamples.
+        let target: Int = if targetLongEdge == fullResolution {
+            nativeLongEdge ?? 16384
+        } else {
+            targetLongEdge
+        }
+        // Prefer an embedded thumbnail when it is already large enough (common for RAW);
+        // for the full tier only an embedded image at native size qualifies.
+        let embeddedFloor = targetLongEdge == fullResolution ? (nativeLongEdge ?? Int.max) : min(target, 1024)
         if let embedded = CGImageSourceCreateThumbnailAtIndex(
             source,
             0,
             [
                 kCGImageSourceCreateThumbnailFromImageIfAbsent: false,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: targetLongEdge,
+                kCGImageSourceThumbnailMaxPixelSize: target,
             ] as CFDictionary
-        ), max(embedded.width, embedded.height) >= min(targetLongEdge, 1024) {
-            return (embedded, "embedded")
+        ), max(embedded.width, embedded.height) >= embeddedFloor {
+            return (embedded, "embedded", nativePixelSize)
         }
         guard let image = CGImageSourceCreateThumbnailAtIndex(
             source,
@@ -199,18 +217,33 @@ actor PreviewImageLoader: PreviewLoading {
             [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: targetLongEdge,
+                kCGImageSourceThumbnailMaxPixelSize: target,
             ] as CFDictionary
         ) else {
             return nil
         }
-        return (image, "imageio")
+        return (image, "imageio", nativePixelSize)
+    }
+
+    /// Oriented pixel size from the source's properties — a header read, no decode.
+    /// EXIF orientations 5–8 swap width and height.
+    private nonisolated static func nativePixelSize(of source: CGImageSource) -> CGSize? {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0
+        else {
+            return nil
+        }
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        let swapped = orientation >= 5
+        return swapped ? CGSize(width: height, height: width) : CGSize(width: width, height: height)
     }
 
     private nonisolated static func decodeVideoPoster(
         url: URL,
         targetLongEdge: Int
-    ) async -> (CGImage, String)? {
+    ) async -> (CGImage, String, CGSize?)? {
         let request = QLThumbnailGenerator.Request(
             fileAt: url,
             size: CGSize(width: targetLongEdge, height: targetLongEdge),
@@ -221,18 +254,18 @@ actor PreviewImageLoader: PreviewLoading {
             let representation = try await QLThumbnailGenerator.shared.generateBestRepresentation(
                 for: request
             )
-            return (representation.cgImage, "quicklook")
+            return (representation.cgImage, "quicklook", nil)
         } catch {
             return nil
         }
     }
 
-    private func insert(_ image: CGImage, for id: MediaAssetID, longEdge: Int) {
+    private func insert(_ image: CGImage, for id: MediaAssetID, longEdge: Int, nativePixelSize: CGSize?) {
         let cost = image.height * image.bytesPerRow
         if let existing = cache[id] {
             cacheBytes -= existing.byteCost
         }
-        cache[id] = CacheEntry(image: image, byteCost: cost, longEdge: longEdge)
+        cache[id] = CacheEntry(image: image, byteCost: cost, longEdge: longEdge, nativePixelSize: nativePixelSize)
         cacheBytes += cost
         touch(id)
         evictIfNeeded(keeping: [id])

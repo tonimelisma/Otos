@@ -5,63 +5,79 @@ import Foundation
 import Synchronization
 import Testing
 
-/// Controllable preview loader for ViewModel pane-identity tests.
-actor FakePreviewLoader: PreviewLoading {
+/// Controllable preview loader for ViewModel pane-identity tests. A `Mutex`-guarded
+/// class rather than an actor: its Sendability and initializer are then explicit, and
+/// nothing is left to isolation inference. Mutators stay `async` so call sites keep
+/// their `await`.
+final class FakePreviewLoader: PreviewLoading {
     struct Pending {
         let id: MediaAssetID
         let continuation: CheckedContinuation<PreviewImageLoader.Outcome, Never>
     }
 
-    private(set) var requestedIDs: [MediaAssetID] = []
-    private var outcomes: [MediaAssetID: PreviewImageLoader.Outcome] = [:]
-    private var hold = false
-    private var pending: [Pending] = []
-    private var defaultOutcome: PreviewImageLoader.Outcome?
-
-    func setOutcome(_ outcome: PreviewImageLoader.Outcome, for id: MediaAssetID) {
-        outcomes[id] = outcome
+    private struct State {
+        var requestedIDs: [MediaAssetID] = []
+        var requestedLongEdges: [Int] = []
+        var outcomes: [MediaAssetID: PreviewImageLoader.Outcome] = [:]
+        var hold = false
+        var pending: [Pending] = []
+        var defaultOutcome: PreviewImageLoader.Outcome?
     }
 
-    func setDefaultOutcome(_ outcome: PreviewImageLoader.Outcome) {
-        defaultOutcome = outcome
+    private let state = Mutex(State())
+
+    init() {}
+
+    func setOutcome(_ outcome: PreviewImageLoader.Outcome, for id: MediaAssetID) async {
+        state.withLock { $0.outcomes[id] = outcome }
     }
 
-    func setHold(_ value: Bool) {
-        hold = value
+    func setDefaultOutcome(_ outcome: PreviewImageLoader.Outcome) async {
+        state.withLock { $0.defaultOutcome = outcome }
     }
 
-    func releaseAll(with outcome: PreviewImageLoader.Outcome) {
-        let waiting = pending
-        pending = []
+    func setHold(_ value: Bool) async {
+        state.withLock { $0.hold = value }
+    }
+
+    func releaseAll(with outcome: PreviewImageLoader.Outcome) async {
+        let waiting: [Pending] = state.withLock { current in
+            let waiting = current.pending
+            current.pending = []
+            return waiting
+        }
         for item in waiting {
             item.continuation.resume(returning: outcome)
         }
     }
 
-    func release(id: MediaAssetID, with outcome: PreviewImageLoader.Outcome) {
-        var remaining: [Pending] = []
-        for item in pending {
-            if item.id == id {
-                item.continuation.resume(returning: outcome)
-            } else {
-                remaining.append(item)
-            }
+    func release(id: MediaAssetID, with outcome: PreviewImageLoader.Outcome) async {
+        let released: [Pending] = state.withLock { current in
+            let matching = current.pending.filter { $0.id == id }
+            current.pending.removeAll { $0.id == id }
+            return matching
         }
-        pending = remaining
+        for item in released {
+            item.continuation.resume(returning: outcome)
+        }
     }
 
-    func requested() -> [MediaAssetID] {
-        requestedIDs
+    func requested() async -> [MediaAssetID] {
+        state.withLock { $0.requestedIDs }
     }
 
-    func pendingCount() -> Int {
-        pending.count
+    func requestedEdges() async -> [Int] {
+        state.withLock { $0.requestedLongEdges }
+    }
+
+    func pendingCount() async -> Int {
+        state.withLock { $0.pending.count }
     }
 
     func waitUntilPending(atLeast count: Int) async {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if pending.count >= count {
+            if state.withLock({ $0.pending.count >= count }) {
                 return
             }
             try? await Task.sleep(for: .milliseconds(5))
@@ -71,7 +87,7 @@ actor FakePreviewLoader: PreviewLoading {
     func waitUntilPending(id: MediaAssetID) async {
         let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
-            if pending.contains(where: { $0.id == id }) {
+            if state.withLock({ $0.pending.contains { $0.id == id } }) {
                 return
             }
             try? await Task.sleep(for: .milliseconds(5))
@@ -79,19 +95,17 @@ actor FakePreviewLoader: PreviewLoading {
     }
 
     func preview(for request: PreviewImageLoader.Request) async -> PreviewImageLoader.Outcome {
-        requestedIDs.append(request.id)
-        if hold {
+        let held: Bool = state.withLock { current in
+            current.requestedIDs.append(request.id)
+            current.requestedLongEdges.append(request.targetLongEdge)
+            return current.hold
+        }
+        if held {
             return await withCheckedContinuation { continuation in
-                pending.append(Pending(id: request.id, continuation: continuation))
+                state.withLock { $0.pending.append(Pending(id: request.id, continuation: continuation)) }
             }
         }
-        if let outcome = outcomes[request.id] {
-            return outcome
-        }
-        if let defaultOutcome {
-            return defaultOutcome
-        }
-        return .unavailable
+        return state.withLock { $0.outcomes[request.id] ?? $0.defaultOutcome ?? .unavailable }
     }
 }
 
@@ -113,11 +127,11 @@ struct CatalogWindowViewModelViewModeTests {
         await fake.waitUntilPending(atLeast: 2)
 
         let imageX = makeViewModeCGImage(seed: 1)
-        await fake.release(id: ids[0], with: .image(imageX))
+        await fake.release(id: ids[0], with: .image(imageX, nativePixelSize: nil))
 
         let loupeTask = model.paneRequestTasks[.loupe]
         let imageY = makeViewModeCGImage(seed: 2)
-        await fake.release(id: ids[1], with: .image(imageY))
+        await fake.release(id: ids[1], with: .image(imageY, nativePixelSize: nil))
         await loupeTask?.value
 
         #expect(model.panePreviews[.loupe]?.id == ids[1])
@@ -127,7 +141,7 @@ struct CatalogWindowViewModelViewModeTests {
     @Test func loupeStripClickMovesFocusSelectionAndPreview() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeCGImage(seed: 3)
-        await fake.setDefaultOutcome(.image(image))
+        await fake.setDefaultOutcome(.image(image, nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 4)
         model.applyState(makeViewModeState(orderedIDs: ids))
@@ -148,7 +162,7 @@ struct CatalogWindowViewModelViewModeTests {
     @Test func pairChangeClearsOnlyChangedSlots() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeCGImage(seed: 4)
-        await fake.setDefaultOutcome(.image(image))
+        await fake.setDefaultOutcome(.image(image, nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 4)
         model.applyState(makeViewModeState(orderedIDs: ids))
@@ -189,7 +203,7 @@ struct CatalogWindowViewModelViewModeTests {
 
         let rightTask = model.paneRequestTasks[.compareRight]
         let rightImage = makeViewModeCGImage(seed: 5)
-        await fake.release(id: ids[1], with: .image(rightImage))
+        await fake.release(id: ids[1], with: .image(rightImage, nativePixelSize: nil))
         await rightTask?.value
         #expect(model.panePreviews[.compareRight]?.id == ids[1])
 
@@ -256,7 +270,7 @@ struct CatalogWindowViewModelViewModeTests {
     @Test func positionalClickReplacesNamedPane() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeCGImage(seed: 6)
-        await fake.setDefaultOutcome(.image(image))
+        await fake.setDefaultOutcome(.image(image, nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
         let ids = makeViewModeIDs(count: 5)
         model.applyState(makeViewModeState(orderedIDs: ids))
@@ -318,7 +332,7 @@ struct CatalogWindowViewModelViewModeTests {
 
         let finalTask = model.paneRequestTasks[.loupe]
         let image = makeViewModeCGImage(seed: 9)
-        await fake.releaseAll(with: .image(image))
+        await fake.releaseAll(with: .image(image, nativePixelSize: nil))
         await finalTask?.value
         #expect(!publishedWrong)
         #expect(model.panePreviews[.loupe]?.id == finalFocus)

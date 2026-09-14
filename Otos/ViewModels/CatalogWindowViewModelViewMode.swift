@@ -29,12 +29,14 @@ extension CatalogWindowViewModel {
     func setFocus(_ id: MediaAssetID?) {
         focusedAssetID = id
         focusedAssetKind = nil
+        resetLoupeZoomForFocusChange()
         guard let id else { return }
         let reader = tileDetailReader
         Task { @MainActor [weak self] in
             let details = await reader.details(for: [id])
             guard let self, focusedAssetID == id else { return }
             focusedAssetKind = details[id]?.bestKind
+            refreshLoupeInfo()
             // Opening a video prepares it, exactly as opening an image decodes it: no
             // click stands between the user and a playable asset. Kind is only known
             // here, so this is the one place that can start it.
@@ -109,6 +111,7 @@ extension CatalogWindowViewModel {
         lastReplacedComparePane = nil
         cancelAllPaneRequestTasks()
         clearLoupeVideo()
+        resetLoupeZoomForFocusChange()
         OtosLog.ui.notice("op=viewMode.set mode=grid")
     }
 
@@ -305,10 +308,12 @@ extension CatalogWindowViewModel {
         refreshPanePreviews()
     }
 
-    private func requestPanePreview(_ id: MediaAssetID, slot: PaneSlot) {
+    /// `targetLongEdge` defaults to the screen-sized tier; the loupe passes
+    /// `PreviewImageLoader.fullResolution` for its 100-percent decode (APP-040).
+    func requestPanePreview(_ id: MediaAssetID, slot: PaneSlot, targetLongEdge: Int? = nil) {
         let loader = previewLoader
         let detailReader = tileDetailReader
-        let target = Self.previewTargetLongEdge()
+        let target = targetLongEdge ?? Self.previewTargetLongEdge()
         paneRequestTasks[slot]?.cancel()
         // The spinner tracks an outstanding request, not a failed one. Interactive
         // materialization now persists until the bytes arrive or this request is
@@ -351,12 +356,17 @@ extension CatalogWindowViewModel {
                 // zero, so an image needing 62 s could never accumulate more than 5. With
                 // the request itself persistent there is nothing left to retry.
                 self.downloadingSlots.remove(slot)
-                if case let .image(image) = outcome {
+                if case let .image(image, nativePixelSize) = outcome {
                     self.panePreviews[slot] = PanePreview(
                         id: id,
                         image: image,
-                        mediaChoice: detail?.mediaChoice
+                        mediaChoice: detail?.mediaChoice,
+                        nativePixelSize: nativePixelSize
                     )
+                    if slot == .loupe {
+                        self.requestFullResolutionIfNeeded()
+                        self.refreshLoupeInfo()
+                    }
                 }
             }
         }

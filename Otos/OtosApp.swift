@@ -267,8 +267,9 @@ public struct OtosApp: App {
                     catalogViewModel.showFilter()
                 }
                 Divider()
+                // One item per mode: grid density in grid, the image in loupe (APP-040).
                 Button("Zoom In") {
-                    catalogViewModel.zoomInGrid()
+                    catalogViewModel.zoomIn()
                 }
                 // Physical ⌘= (the zoom-in key in Preview/Safari/Photos). AppKit matches
                 // menu key-equivalents by typed character, and "+" is ⇧= on a US layout, so
@@ -276,17 +277,29 @@ public struct OtosApp: App {
                 // the menu render ⌘= honestly; the ⌘+/⌘− glyph symmetry is sacrificed (F3).
                 .keyboardShortcut("=", modifiers: .command)
                 .disabled(
-                    catalogViewModel.viewMode != .grid
-                        || catalogViewModel.gridColumnCount <= GridColumnCount.minimum
+                    !catalogViewModel.canZoom
+                        || (catalogViewModel.viewMode == .grid
+                            && catalogViewModel.gridColumnCount <= GridColumnCount.minimum)
                 )
                 Button("Zoom Out") {
-                    catalogViewModel.zoomOutGrid()
+                    catalogViewModel.zoomOut()
                 }
                 .keyboardShortcut("-", modifiers: .command)
                 .disabled(
-                    catalogViewModel.viewMode != .grid
-                        || catalogViewModel.gridColumnCount >= GridColumnCount.maximum
+                    !catalogViewModel.canZoom
+                        || (catalogViewModel.viewMode == .grid
+                            && catalogViewModel.gridColumnCount >= GridColumnCount.maximum)
                 )
+                Button("Toggle Actual Size") {
+                    catalogViewModel.toggleLoupeZoom()
+                }
+                .keyboardShortcut("z", modifiers: [])
+                .disabled(catalogViewModel.viewMode != .loupe || catalogViewModel.loupeZoomReport == nil)
+                Button(catalogViewModel.showsLoupeInfo ? "Hide Info" : "Show Info") {
+                    catalogViewModel.toggleLoupeInfo()
+                }
+                .keyboardShortcut("i", modifiers: [])
+                .disabled(catalogViewModel.viewMode != .loupe)
             }
             CommandGroup(replacing: .help) {}
         }

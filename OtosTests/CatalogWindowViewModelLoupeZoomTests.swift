@@ -1,0 +1,201 @@
+import CoreGraphics
+import Foundation
+@testable import OtosKit
+import Testing
+
+/// Loupe zoom intents (APP-040) and the info overlay (APP-041) at the ViewModel: menu
+/// items dispatch by mode, Escape unwinds zoom before the mode, a report past the held
+/// decode requests full resolution once, and focus changes reset everything.
+@MainActor
+struct CatalogWindowViewModelLoupeZoomTests {
+    @Test func zoomInChangesColumnsInGridAndMagnificationInLoupe() {
+        let fake = FakePreviewLoader()
+        let model = makeZoomModel(loader: fake)
+        let ids = makeIDs(count: 2)
+        model.applyState(zoomWindowState(ids: ids))
+        let columns = model.gridColumnCount
+
+        model.zoomIn()
+        #expect(model.gridColumnCount == columns - 1)
+        #expect(model.loupeZoomCommand == nil)
+
+        model.openLoupe(id: ids[0])
+        #expect(!model.canZoom)
+        model.zoomIn()
+        #expect(model.loupeZoomCommand == nil)
+
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
+        #expect(model.canZoom)
+        model.zoomIn()
+        #expect(model.loupeZoomCommand?.target == .magnification(0.625))
+        #expect(model.gridColumnCount == columns - 1)
+
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.9, fit: 0.5))
+        model.zoomIn()
+        #expect(model.loupeZoomCommand?.target == .magnification(1))
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.55, fit: 0.5))
+        model.zoomOut()
+        #expect(model.loupeZoomCommand?.target == .fit)
+    }
+
+    @Test func toggleGoesToActualSizeAboutTheClickAndBack() {
+        let model = makeZoomModel(loader: FakePreviewLoader())
+        let ids = makeIDs(count: 1)
+        model.applyState(zoomWindowState(ids: ids))
+        model.openLoupe(id: ids[0])
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
+
+        model.toggleLoupeZoom(at: CGPoint(x: 10, y: 20))
+        #expect(model.loupeZoomCommand?.target == .magnification(1))
+        #expect(model.loupeZoomCommand?.anchor == CGPoint(x: 10, y: 20))
+        let first = model.loupeZoomCommand?.generation
+
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.5))
+        model.toggleLoupeZoom()
+        #expect(model.loupeZoomCommand?.target == .fit)
+        #expect(model.loupeZoomCommand?.generation != first)
+    }
+
+    @Test func escapeReturnsToFitThenExits() {
+        let model = makeZoomModel(loader: FakePreviewLoader())
+        let ids = makeIDs(count: 1)
+        model.applyState(zoomWindowState(ids: ids))
+        model.openLoupe(id: ids[0])
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.5))
+
+        model.loupeEscape()
+        #expect(model.viewMode == .loupe)
+        #expect(model.loupeZoomCommand?.target == .fit)
+
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.5, fit: 0.5))
+        model.loupeEscape()
+        #expect(model.viewMode == .grid)
+        #expect(model.loupeZoomReport == nil)
+    }
+
+    @Test func zoomingPastTheDecodeRequestsFullResolutionOnce() async {
+        let fake = FakePreviewLoader()
+        let small = makeZoomImage(width: 400, height: 300)
+        await fake.setDefaultOutcome(.image(small, nativePixelSize: CGSize(width: 6000, height: 4500)))
+        let model = makeZoomModel(loader: fake)
+        let ids = makeIDs(count: 1)
+        model.applyState(zoomWindowState(ids: ids))
+        model.openLoupe(id: ids[0])
+        await model.paneRequestTasks[.loupe]?.value
+        #expect(model.panePreviews[.loupe]?.nativePixelSize == CGSize(width: 6000, height: 4500))
+
+        // At fit the 400-px decode covers a 0.05 magnification; nothing more is asked.
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 0.05, fit: 0.05))
+        #expect(await fake.requestedEdges().count == 1)
+
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+        await model.paneRequestTasks[.loupe]?.value
+        let edges = await fake.requestedEdges()
+        #expect(edges.count == 2)
+        #expect(edges.last == PreviewImageLoader.fullResolution)
+
+        // A second report at the same magnification does not ask again.
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.05))
+        #expect(await fake.requestedEdges().count == 2)
+        // The fit-size decode was never blanked while the sharper one was pending.
+        #expect(model.panePreviews[.loupe]?.id == ids[0])
+    }
+
+    @Test func focusChangeResetsZoom() {
+        let model = makeZoomModel(loader: FakePreviewLoader())
+        let ids = makeIDs(count: 2)
+        model.applyState(zoomWindowState(ids: ids))
+        model.openLoupe(id: ids[0])
+        model.reportLoupeZoom(LoupeZoomReport(magnification: 1, fit: 0.5))
+        model.toggleLoupeZoom()
+        #expect(model.loupeZoomCommand != nil)
+
+        model.focusNext()
+
+        #expect(model.focusedAssetID == ids[1])
+        #expect(model.loupeZoomReport == nil)
+        #expect(model.loupeZoomCommand == nil)
+        #expect(!model.canZoom)
+    }
+
+    @Test func infoOverlayFollowsFocusAndToggle() async throws {
+        let model = makeZoomModel(loader: FakePreviewLoader())
+        let ids = makeIDs(count: 2)
+        model.applyState(zoomWindowState(ids: ids))
+        model.openLoupe(id: ids[0])
+        #expect(model.loupeInfo == nil)
+
+        model.toggleLoupeInfo()
+        try await waitForZoom("info shown") { model.loupeInfo != nil }
+        #expect(model.loupeInfo?.fileName == "asset-0.jpg")
+        #expect(model.loupeInfo?.captureDate == LoupeInfoModel.unknown)
+
+        model.focusNext()
+        try await waitForZoom("info follows focus") { model.loupeInfo?.fileName == "asset-1.jpg" }
+
+        model.toggleLoupeInfo()
+        #expect(model.loupeInfo == nil)
+        #expect(!model.showsLoupeInfo)
+    }
+}
+
+@MainActor
+private func makeZoomModel(loader: FakePreviewLoader) -> CatalogWindowViewModel {
+    CatalogWindowViewModel(
+        catalogStore: CatalogStore(location: .inMemory),
+        startsStallMonitor: false,
+        startsEnrichment: false,
+        startsSourceMonitoring: false,
+        preferencesDomain: .suite(UUID().uuidString),
+        previewLoader: loader
+    )
+}
+
+private func makeIDs(count: Int) -> [MediaAssetID] {
+    (0 ..< count).map { index in
+        MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+            relativePath: MediaRelativePath(rawValue: "asset-\(index).jpg")
+        )
+    }
+}
+
+private func zoomWindowState(ids: [MediaAssetID]) -> CatalogWindowState {
+    CatalogWindowState(
+        title: "Zoom",
+        libraries: [],
+        removableSources: [],
+        mediaGrid: CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids),
+        filterOptions: .empty,
+        resolvedSidebarSelection: .allMedia,
+        mediaEmptyState: .noMedia,
+        deviceConnectionBanner: nil
+    )
+}
+
+private func makeZoomImage(width: Int, height: Int) -> CGImage {
+    let context = CGContext(
+        data: nil,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    )!
+    context.setFillColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()!
+}
+
+private func waitForZoom(
+    _ label: String,
+    timeout: Duration = .seconds(5),
+    condition: @escaping @MainActor @Sendable () async -> Bool
+) async throws {
+    try await withTestTimeout(label, timeout: timeout) {
+        while await !condition() {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+    }
+}

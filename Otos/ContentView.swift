@@ -251,19 +251,24 @@ struct ContentView: View {
                         viewModel.focusNext()
                     }
                 },
-                onEscape: viewModel.exitToGrid,
+                onEscape: viewModel.loupeEscape,
                 onMediaChoiceKey: { viewModel.submitMediaChoice($0, origin: .keyboard) },
                 onMediaChoice: { id, choice in
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
                 },
-                onDoubleClickPreview: viewModel.exitToGrid,
                 onPlayVideo: { id in viewModel.playLoupeVideo(id: id) },
                 focusedMediaChoice: viewModel.panePreviews[.loupe]?.mediaChoice,
                 onPreviewMediaChoice: { choice in
                     guard let id = viewModel.focusedAssetID else { return }
                     viewModel.submitMediaChoice(choice, target: .item(id), origin: .inline)
                 },
-                contextMenu: viewModel.makeMediaItemContextMenu
+                contextMenu: viewModel.makeMediaItemContextMenu,
+                loupeZoomCommand: viewModel.loupeZoomCommand,
+                onZoomReport: viewModel.reportLoupeZoom,
+                onZoomDoubleClick: { viewModel.toggleLoupeZoom(at: $0) },
+                onZoomToggle: { viewModel.toggleLoupeZoom() },
+                loupeInfo: viewModel.loupeInfo,
+                onInfoToggle: viewModel.toggleLoupeInfo
             )
             .navigationTitle(viewModel.state.title)
         case .compare:

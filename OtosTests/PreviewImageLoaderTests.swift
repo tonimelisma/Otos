@@ -70,6 +70,44 @@ struct PreviewImageLoaderTests {
         }
     }
 
+    @Test func decodeReportsNativePixelSize() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "otos-preview-native-\(UUID().uuidString)", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "sample.jpg")
+        try writeTinyJPEG(to: file)
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: directory.path(percentEncoded: false)),
+            relativePath: MediaRelativePath(rawValue: "sample.jpg")
+        )
+        let loader = PreviewImageLoader(
+            status: { _ in .materialized },
+            materializationRequester: ClosureMaterializationRequester { _ in
+                MaterializationResult(outcome: .alreadyMaterialized, rerequestCount: 0, elapsedMs: 0)
+            }
+        )
+
+        // The fit tier downsamples but still reports the source's native 32 × 24.
+        let fit = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: 16))
+        guard case let .image(small, nativePixelSize) = fit else {
+            Issue.record("Expected image, got \(String(describing: fit))")
+            return
+        }
+        #expect(nativePixelSize == CGSize(width: 32, height: 24))
+        #expect(max(small.width, small.height) <= 16)
+
+        // The full tier decodes at native size and is not served from the smaller cache entry.
+        let full = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: PreviewImageLoader.fullResolution))
+        guard case let .image(native, fullNativeSize) = full else {
+            Issue.record("Expected full image, got \(String(describing: full))")
+            return
+        }
+        #expect(fullNativeSize == CGSize(width: 32, height: 24))
+        #expect(native.width == 32)
+        #expect(native.height == 24)
+    }
+
     @Test func datalessReturnsDownloadingWithoutByteRead() async {
         let id = MediaAssetID(
             libraryRootPath: LibraryRootPath(rawValue: "/cloud"),

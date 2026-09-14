@@ -124,6 +124,17 @@ final class CatalogWindowViewModel {
     var openWithMenu: OpenWithMenuModel = .empty
     /// Owns the File ▸ Share… picker while it is on screen.
     @ObservationIgnored let sharePickerPresenter = SharePickerPresenter()
+    /// Loupe zoom (APP-040): what the zoom view measured, and the one command it has
+    /// been asked to apply. Written only in `CatalogWindowViewModelLoupeZoom.swift`.
+    var loupeZoomReport: LoupeZoomReport?
+    var loupeZoomCommand: LoupeZoomCommand?
+    @ObservationIgnored var loupeZoomGeneration: UInt64 = 0
+    /// Focused assets whose full-resolution decode has been requested this focus.
+    @ObservationIgnored var fullResolutionRequestedIDs: Set<MediaAssetID> = []
+    /// Loupe info overlay (APP-041): session-only toggle and the facts it shows.
+    var showsLoupeInfo = false
+    var loupeInfo: LoupeInfoModel?
+    @ObservationIgnored var loupeInfoTask: Task<Void, Never>?
     /// Undo stack for curation choices (APP-039). One window, one manager, owned here
     /// so Edit ▸ Undo renders `curationUndoState` rather than searching a responder
     /// chain that ends in an AppKit collection view.
@@ -401,6 +412,7 @@ final class CatalogWindowViewModel {
         mediaChoiceForwardingTask?.cancel()
         mediaTrashTask?.cancel()
         openWithMenuTask?.cancel()
+        loupeInfoTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()

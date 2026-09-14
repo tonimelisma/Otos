@@ -30,6 +30,10 @@ final class MediaGridCollectionView: NSCollectionView {
     var onEscapeKey: (() -> Void)?
     var onArrowKey: ((Int) -> Void)?
     var onMediaChoiceKey: ((MediaChoice) -> Void)?
+    /// Strip only: Z toggles loupe zoom, I toggles the info overlay — fallbacks for the
+    /// View-menu items that own those keys (APP-040/041).
+    var onZoomToggleKey: (() -> Void)?
+    var onInfoToggleKey: (() -> Void)?
     /// When true, ←/→ are forwarded to `onArrowKey` instead of native collection nav.
     var forwardsArrowKeys = false
     /// The item under the cursor, or `nil` when the pointer is outside the grid.
@@ -211,6 +215,16 @@ final class MediaGridCollectionView: NSCollectionView {
         if event.keyCode == 53 { // Escape
             onEscapeKey?()
             return
+        }
+        if forwardsArrowKeys, modifiers.isEmpty {
+            if chars == "z" {
+                onZoomToggleKey?()
+                return
+            }
+            if chars == "i" {
+                onInfoToggleKey?()
+                return
+            }
         }
         if forwardsArrowKeys {
             switch event.keyCode {

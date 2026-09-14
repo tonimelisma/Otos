@@ -17,14 +17,20 @@ nonisolated struct PanePreview: Equatable {
     let id: MediaAssetID
     let image: CGImage
     let mediaChoice: MediaChoice?
+    /// The source's native pixel size when the decode reported one; the loupe sizes its
+    /// zoom document from it so 100 percent means native pixels even while the held
+    /// `image` is the fit-size decode (APP-040).
+    let nativePixelSize: CGSize?
 
-    init(id: MediaAssetID, image: CGImage, mediaChoice: MediaChoice? = nil) {
+    init(id: MediaAssetID, image: CGImage, mediaChoice: MediaChoice? = nil, nativePixelSize: CGSize? = nil) {
         self.id = id
         self.image = image
         self.mediaChoice = mediaChoice
+        self.nativePixelSize = nativePixelSize
     }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.image === rhs.image && lhs.mediaChoice == rhs.mediaChoice
+            && lhs.nativePixelSize == rhs.nativePixelSize
     }
 }

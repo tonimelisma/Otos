@@ -26,12 +26,19 @@ struct LoupeView: View {
     var onEscape: () -> Void = {}
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
-    var onDoubleClickPreview: () -> Void = {}
     var onPlayVideo: (MediaAssetID) -> Void = { _ in }
     var focusedMediaChoice: MediaChoice?
     var onPreviewMediaChoice: (MediaChoice) -> Void = { _ in }
     /// Context menu for the focused asset (pane) and the clicked tile (strip).
     var contextMenu: () -> NSMenu? = { nil }
+    /// Zoom (APP-040): the ViewModel's pending command and where reports go.
+    var loupeZoomCommand: LoupeZoomCommand?
+    var onZoomReport: (LoupeZoomReport) -> Void = { _ in }
+    var onZoomDoubleClick: (CGPoint) -> Void = { _ in }
+    var onZoomToggle: () -> Void = {}
+    /// Info overlay (APP-041); nil when hidden.
+    var loupeInfo: LoupeInfoModel?
+    var onInfoToggle: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -67,13 +74,20 @@ struct LoupeView: View {
                     LoupeVideoPlayerView(state: state)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 case let .full(image):
-                    Image(decorative: image, scale: 1)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                    if let focusedAssetID {
+                        LoupeZoomView(
+                            assetID: focusedAssetID,
+                            image: image,
+                            nativePixelSize: panePreview?.nativePixelSize,
+                            command: loupeZoomCommand,
+                            onReport: onZoomReport,
+                            onDoubleClick: onZoomDoubleClick
+                        )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .accessibilityElement()
                         .accessibilityLabel(paneAccessibilityLabel)
                         .accessibilityAddTraits(.isImage)
+                    }
                 case let .thumbnail(id):
                     ZStack {
                         PaneThumbnailView(
@@ -115,7 +129,12 @@ struct LoupeView: View {
                 }
             }
             .contentShape(Rectangle())
-            .onTapGesture(count: 2, perform: onDoubleClickPreview)
+            .overlay(alignment: .bottomLeading) {
+                if let loupeInfo {
+                    LoupeInfoOverlay(model: loupeInfo)
+                        .padding(12)
+                }
+            }
             .overlay { ContextMenuHost(makeMenu: contextMenu) }
         }
     }
@@ -152,6 +171,8 @@ struct LoupeView: View {
             onMediaChoiceKey: onMediaChoiceKey,
             onMediaChoice: onMediaChoice,
             contextMenu: contextMenu,
+            onZoomToggleKey: onZoomToggle,
+            onInfoToggleKey: onInfoToggle,
             focusTargetID: focusedAssetID
         )
     }
