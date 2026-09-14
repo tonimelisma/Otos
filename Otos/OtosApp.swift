@@ -169,7 +169,20 @@ public struct OtosApp: App {
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
             }
-            CommandGroup(replacing: .undoRedo) {}
+            // Undo covers curation choices only; Move to Trash keeps Finder's Put Back
+            // (ADR 0022). Titles come from the manager: `Undo Like`, `Redo Dislike`.
+            CommandGroup(replacing: .undoRedo) {
+                Button(catalogViewModel.curationUndoState.undoTitle) {
+                    catalogViewModel.undoCuration()
+                }
+                .keyboardShortcut("z", modifiers: .command)
+                .disabled(!catalogViewModel.curationUndoState.canUndo)
+                Button(catalogViewModel.curationUndoState.redoTitle) {
+                    catalogViewModel.redoCuration()
+                }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+                .disabled(!catalogViewModel.curationUndoState.canRedo)
+            }
             CommandGroup(replacing: .pasteboard) {
                 Button("Copy") {
                     catalogViewModel.copySelection()

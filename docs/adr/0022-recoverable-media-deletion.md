@@ -48,6 +48,10 @@ against a root currently being trashed or reorganized.
 
 ## Consequences
 
+Move to Trash is not registered on the app's curation undo stack (APP-039): the
+system Trash's Put Back is its undo, and a second, app-side reversal of a
+filesystem move would be a competing owner of the same fact.
+
 - Successful moves have no confirmation or success alert because system Trash is recoverable.
 - Partial failures retain truthful catalog rows and selected failed identities and expose Show in Finder/Dismiss with bounded counts and no raw paths.
 - Device/MTP media remains outside this filesystem mutation path.

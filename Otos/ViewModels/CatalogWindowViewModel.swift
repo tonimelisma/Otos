@@ -124,6 +124,11 @@ final class CatalogWindowViewModel {
     var openWithMenu: OpenWithMenuModel = .empty
     /// Owns the File ▸ Share… picker while it is on screen.
     @ObservationIgnored let sharePickerPresenter = SharePickerPresenter()
+    /// Undo stack for curation choices (APP-039). One window, one manager, owned here
+    /// so Edit ▸ Undo renders `curationUndoState` rather than searching a responder
+    /// chain that ends in an AppKit collection view.
+    @ObservationIgnored let curationUndoManager = UndoManager()
+    var curationUndoState = CurationUndoState()
     /// App icons for `openWithMenu.applications`, resolved once per model change.
     @ObservationIgnored var openWithApplicationIcons: [URL: NSImage] = [:]
     /// When enabled, a successful choice advances to the next surviving item in display
@@ -290,6 +295,9 @@ final class CatalogWindowViewModel {
         workspace: any WorkspaceOpening = LaunchServicesWorkspace()
     ) {
         self.workspace = workspace
+        // Curation undo entries are registered from store completions, outside any
+        // AppKit event; groups are opened and closed explicitly (APP-039).
+        curationUndoManager.groupsByEvent = false
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )

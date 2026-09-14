@@ -188,6 +188,15 @@ actor CatalogStore {
     nonisolated struct MediaChoiceMutationResult: Equatable, Sendable {
         let existingCount: Int
         let changedCount: Int
+        /// The choice each existing row held before this write — catalog truth read in
+        /// the same transaction, so a caller can register an exact inverse (APP-039).
+        let previous: [MediaAssetID: MediaChoice]
+
+        init(existingCount: Int, changedCount: Int, previous: [MediaAssetID: MediaChoice] = [:]) {
+            self.existingCount = existingCount
+            self.changedCount = changedCount
+            self.previous = previous
+        }
 
         var accepted: Bool {
             existingCount > 0
@@ -885,8 +894,13 @@ extension CatalogStore {
         _ choice: MediaChoice,
         for ids: [MediaAssetID]
     ) async throws -> MediaChoiceMutationResult {
-        let requested = Array(Set(ids))
-        guard !requested.isEmpty else {
+        try await setMediaChoices(Dictionary(ids.map { ($0, choice) }, uniquingKeysWith: { _, last in last }))
+    }
+
+    /// One transaction assigning a possibly different choice per asset. Rows that no
+    /// longer exist are skipped; the result reports each existing row's prior value.
+    func setMediaChoices(_ assignments: [MediaAssetID: MediaChoice]) async throws -> MediaChoiceMutationResult {
+        guard !assignments.isEmpty else {
             return MediaChoiceMutationResult(existingCount: 0, changedCount: 0)
         }
         let rootIDs = roots.rowIDSnapshot()
@@ -894,19 +908,20 @@ extension CatalogStore {
         let result = try await dbWriter.write { db in
             var existingCount = 0
             var changedCount = 0
-            for id in requested {
+            var previous: [MediaAssetID: MediaChoice] = [:]
+            for (id, choice) in assignments {
                 guard let rootID = rootIDs[id.libraryRootPath] else {
                     continue
                 }
-                let exists = try Int.fetchOne(
+                guard let current = try String.fetchOne(
                     db,
-                    sql: "SELECT 1 FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                    sql: "SELECT media_choice FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
                     arguments: [rootID, id.relativePath.rawValue]
-                ) != nil
-                guard exists else {
+                ) else {
                     continue
                 }
                 existingCount += 1
+                previous[id] = MediaChoice(rawValue: current) ?? .default
                 try db.execute(
                     sql: """
                     UPDATE media_asset
@@ -919,7 +934,8 @@ extension CatalogStore {
             }
             return MediaChoiceMutationResult(
                 existingCount: existingCount,
-                changedCount: changedCount
+                changedCount: changedCount,
+                previous: previous
             )
         }
         if result.changedCount > 0 {
@@ -929,8 +945,8 @@ extension CatalogStore {
             "catalog.mediaChoice",
             phase: "finish",
             fields: [
-                "choice": choice.rawValue,
-                "requested": "\(requested.count)",
+                "choices": Set(assignments.values).map(\.rawValue).sorted().joined(separator: "+"),
+                "requested": "\(assignments.count)",
                 "existing": "\(result.existingCount)",
                 "changed": "\(result.changedCount)",
             ]

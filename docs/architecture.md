@@ -254,7 +254,7 @@ everything expensive happens on an actor off the main thread.
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader`/`VideoPreviewLoader` + `LoupeVideoPlayerView` (`AVPlayerView` inline) (ADR 0016); mode intents on `CatalogWindowViewModel` |
 | loupe video (click-to-play) | `VideoPreviewLoader` + `LoupeVideoPlayerView` + `LoupeView` poster/AVPlayer swap; compare stays poster-only |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |
-| curation choice/filter | `MediaChoice` + `CatalogStore.setMediaChoice` + `MediaFilter`/`CatalogQueryGateway`; ViewModel owns intents, views remain passive |
+| curation choice/filter | `MediaChoice` + `CatalogStore.setMediaChoices` (one transaction, reports priors) + `MediaFilter`/`CatalogQueryGateway`; ViewModel owns intents and the curation `UndoManager` (APP-039), views remain passive |
 | drag out of the grid / filmstrip | `MediaGridDragPolicy` (pure rules) + `MediaGridCollectionView` (drag detection, deferred plain click) + `MediaGridViewController.beginDrag` + `MediaGridDragSource`; file URLs only (ADR 0028) |
 | media context menus | `MediaItemMenuModel` (pure, ordered) + `CatalogWindowViewModelMediaItemMenu` (builds the model at open time, maps commands onto the menu-bar intents) + `MediaItemContextMenu` (the one `NSMenu` renderer; `ContextMenuHost` overlays it on SwiftUI panes) + `MediaGridCollectionView.menu(for:)` |
 | share the current items | `CatalogWindowViewModelShare` (File ▸ Share… intent) + `SharePickerPresenter` (owns the AppKit picker while shown) + the toolbar `ShareLink` in `ContentView`; one target list `currentTargetFileURLs`, URLs only (ADR 0012) |
