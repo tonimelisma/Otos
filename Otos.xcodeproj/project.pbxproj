@@ -8,9 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		031A33F1C0E9C535BFB21219 /* OtosKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		E4561C9BD6989749CAF9CC12 /* OtosKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; };
 		3159B8E9FEB7DFB431F9B56E /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = 1C8F7A15A3DB3475BAFE398A /* MediaMetadata */; };
-		9D47B12EC89438D47050175D /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = 5AB3FD2588303421082D48CD /* GRDB */; };
-		CFD2256CD4D769F5622195B7 /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = D0447D14BAA0788D26975931 /* MediaMetadata */; };
 		DE7F62197C13E995EEE9E501 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A07256481F38A90EADD1A61F /* Cocoa.framework */; };
 		E22ED6B0D74682661C2AF3F6 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = C818A507037575021CBE8CAA /* GRDB */; };
 		F6B99F2C261A631FF9367973 /* OtosKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; };
@@ -399,8 +398,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9D47B12EC89438D47050175D /* GRDB in Frameworks */,
-				CFD2256CD4D769F5622195B7 /* MediaMetadata in Frameworks */,
+				E4561C9BD6989749CAF9CC12 /* OtosKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -508,10 +506,6 @@
 				3B44EB602FCEBA57007E4158 /* Otos */,
 			);
 			name = Otos;
-			packageProductDependencies = (
-				5AB3FD2588303421082D48CD /* GRDB */,
-				D0447D14BAA0788D26975931 /* MediaMetadata */,
-			);
 			productName = Otos;
 			productReference = 3B44EB5E2FCEBA57007E4158 /* Otos.app */;
 			productType = "com.apple.product-type.application";
@@ -1130,20 +1124,10 @@
 			package = 3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */;
 			productName = MediaMetadata;
 		};
-		5AB3FD2588303421082D48CD /* GRDB */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
-			productName = GRDB;
-		};
 		C818A507037575021CBE8CAA /* GRDB */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 3BCB10052FEAFB0000010001 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
 			productName = GRDB;
-		};
-		D0447D14BAA0788D26975931 /* MediaMetadata */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 3BCB10082FEAFB0000010001 /* XCRemoteSwiftPackageReference "MediaMetadata" */;
-			productName = MediaMetadata;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -192,10 +192,13 @@ Only the executor cannot produce it.
 Plan 0102 shipped its five increments and was deleted. These were found while
 diagnosing and deliberately left outside it; none is a requirement.
 
-1. **GRDB and MediaMetadata are linked twice** — into `OtosKit.framework` and
-   `Otos.debug.dylib`; dyld warns of "spurious casting failures and mysterious
-   crashes". `Otos.xcodeproj/project.pbxproj` carried uncommitted local changes
-   at the time.
+1. **GRDB and MediaMetadata were linked twice — observed and fixed.** The app
+   target still carried both package products from before ADR 0023 moved every
+   source into `OtosKit`, so each static product was linked into
+   `OtosKit.framework` and again into `Otos.debug.dylib`, and dyld warned of
+   "spurious casting failures and mysterious crashes" at every launch. The app
+   target now links nothing but OtosKit, which is what `docs/architecture.md`
+   already said; ADR 0023 records the trap.
 2. **`op=mainThreadStall stallMs=126`** attributed to
    `MediaGridViewController.reconfigureVisibleItems` while reporting
    `lastLongOperationMs=0` — the blamed op did nothing.

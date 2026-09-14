@@ -143,6 +143,12 @@ foreground, since none of them touch `build/DerivedData` or Xcode state.
 - The codebase has exactly one `public` declaration (`OtosApp`). Adding a
   second needs its own justification, same bar ADR 0020's "Consequences"
   already set for adding a data location.
+- **The app target links OtosKit and nothing else.** GRDB and MediaMetadata
+  are static SwiftPM products; a target that links one of them *and* links
+  OtosKit gets a second copy of every Objective-C class in it, and dyld warns
+  at launch that each is "implemented in both" — the double link the app
+  target carried until 2026-09-13. A package product belongs to exactly one
+  of the four targets.
 - **A durable trap for future work**: any new file added under `Otos/`
   requires refreshing the exception set of *every* target that references
   the shared `Otos` synchronized-group root, not just the new file's own
