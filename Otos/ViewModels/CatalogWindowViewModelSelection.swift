@@ -1,7 +1,6 @@
 import AppKit
 import Foundation
 import OSLog
-import QuickLookUI
 
 /// Catalog window selection ownership guide
 ///
@@ -171,28 +170,6 @@ extension CatalogWindowViewModel {
         let urls = ids.map(\.fileURL)
         NSWorkspace.shared.activateFileViewerSelecting(urls)
         OtosLog.ui.notice("op=ui.revealInFinder count=\(urls.count, privacy: .public)")
-    }
-
-    /// Toggles Quick Look for the current selection via the system preview panel.
-    func toggleQuickLook() {
-        let ids = orderedSelectedAssetIDs
-        guard !ids.isEmpty else { return }
-        if QLPreviewPanel.sharedPreviewPanelExists(), QLPreviewPanel.shared().isVisible {
-            QLPreviewPanel.shared().orderOut(nil)
-        } else {
-            NSApp.sendAction(Selector(("togglePreviewPanel:")), to: nil, from: nil)
-        }
-        OtosLog.ui.notice("op=ui.quickLook count=\(ids.count, privacy: .public)")
-    }
-
-    /// Shows a Get Info panel for the current selection. Read-only.
-    func showInfoForSelection() {
-        let ids = orderedSelectedAssetIDs
-        guard !ids.isEmpty else { return }
-        if let first = ids.first {
-            NSWorkspace.shared.activateFileViewerSelecting([first.fileURL])
-        }
-        OtosLog.ui.notice("op=ui.getInfo count=\(ids.count, privacy: .public)")
     }
 }
 

@@ -134,17 +134,6 @@ public struct OtosApp: App {
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
-                Button("Quick Look") {
-                    catalogViewModel.toggleQuickLook()
-                }
-                .keyboardShortcut(.space, modifiers: [])
-                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
-                Divider()
-                Button("Get Info") {
-                    catalogViewModel.showInfoForSelection()
-                }
-                .keyboardShortcut("i", modifiers: .command)
-                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
             }
             CommandGroup(replacing: .undoRedo) {}
             CommandGroup(replacing: .pasteboard) {
