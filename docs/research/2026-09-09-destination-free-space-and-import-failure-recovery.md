@@ -225,9 +225,10 @@ diagnosing and deliberately left outside it; none is a requirement.
    two rows onto *the same* operation and does not say whether a superseded batch
    row keeps its own finished operation's bar — an owner decision.
 10. **Auto-eject after a completed import failed with `fBsyErr: File is busy`**
-    (2026-09-13, 17:57:37) — the card was still being read by Otos's own
-    enrichment, and the failure was logged only; the user, who had ticked
-    `Eject the card`, was not told. Recorded, not fixed.
+    (2026-09-13, 17:57:37) — fixed: the auto path had skipped the reader drain and
+    dropped the outcome. It now fires the same intent as the sidebar's eject
+    control, retries a busy volume on a bounded schedule, and shows the alert if
+    it still cannot.
 11. **Advisory line in Ready — decided and built** (owner, 2026-09-13): `Not
     everything will fit yet · 37.7 GB available`, sampled on each Ready publish,
     gating nothing (ADR 0027).

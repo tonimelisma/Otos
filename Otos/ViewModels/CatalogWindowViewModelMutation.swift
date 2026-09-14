@@ -163,8 +163,18 @@ extension CatalogWindowViewModel {
             || description.localizedCaseInsensitiveContains("busy")
     }
 
+    /// `fBsyErr` from CarbonCore/MacErrors.h, spelled out because the Carbon
+    /// error enums do not import into Swift by name.
+    nonisolated static let fileBusyOSStatus = -47
+
     nonisolated static func isTypedBusyError(_ error: NSError) -> Bool {
         if error.domain == NSPOSIXErrorDomain, error.code == EBUSY {
+            return true
+        }
+        // `NSWorkspace.unmountAndEjectDevice` reports a held volume as the
+        // Carbon `fBsyErr` ("File is busy", CarbonCore/MacErrors.h) —
+        // observed 2026-09-13.
+        if error.domain == NSOSStatusErrorDomain, error.code == fileBusyOSStatus {
             return true
         }
         // DiskArbitration dissenter domain; busy/in-use dissent codes vary by OS, so any
@@ -186,6 +196,84 @@ extension CatalogWindowViewModel {
         case .failed:
             "failed"
         }
+    }
+
+    /// How long a busy volume is given before the eject is reported as busy.
+    /// Otos's own readers on a card — a thumbnail or metadata pass that was in
+    /// flight when the erase sweep finished — close within a few seconds; a
+    /// bounded retry outlasts them without hiding a volume that is genuinely
+    /// held by something else. On 2026-09-13 the first attempt came 120 ms
+    /// after the erase sweep released the card and failed `fBsyErr`.
+    nonisolated static let ejectBusyRetryDelays: [Duration] = [
+        .milliseconds(500), .seconds(1), .seconds(2), .seconds(4),
+    ]
+
+    nonisolated static func performEjectRemovableSource(
+        _ root: LibraryRoot,
+        store: CatalogStore,
+        coordinator: EnrichmentCoordinator?,
+        retryDelays: [Duration] = ejectBusyRetryDelays,
+        unmount: @Sendable (URL) async throws -> Void = unmountAndEjectDeviceOffMain
+    ) async -> RemovableEjectOutcome {
+        guard let identity = root.deviceIdentity else {
+            return .failed(description: "The disk could not be ejected.")
+        }
+        do {
+            try await store.quiesceRemovableSource(identity: identity)
+            if let coordinator {
+                let drained = await coordinator.drainWork(under: root.path)
+                if !drained {
+                    OtosLog.catalog.error(
+                        "op=removableEject drainTimedOut rootPath=\(root.path.rawValue, privacy: .public)"
+                    )
+                }
+            }
+        } catch {
+            return await ejectFailed(root: root, error: error)
+        }
+        var attempt = 0
+        while true {
+            do {
+                try await unmount(root.path.url)
+                OtosLog.catalog.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.removable.eject phase=finish outcome=ejected attempts=\(attempt + 1, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
+                )
+                return .ejected
+            } catch {
+                let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
+                guard case .busy = outcome, attempt < retryDelays.count else {
+                    return await ejectFailed(root: root, error: error)
+                }
+                let delay = retryDelays[attempt]
+                attempt += 1
+                OtosLog.catalog.notice(
+                    // swiftlint:disable:next line_length
+                    "op=catalog.removable.eject phase=retry reason=busy attempt=\(attempt, privacy: .public) delayMs=\(DiagnosticsTiming.milliseconds(delay), privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
+                )
+                try? await Task.sleep(for: delay)
+            }
+        }
+    }
+
+    private nonisolated static func ejectFailed(root: LibraryRoot, error: Error) async -> RemovableEjectOutcome {
+        let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
+        await recordMutationError(
+            "Catalog eject removable source failed",
+            operation: "catalog.removable.eject",
+            fields: [
+                "rootPath": root.path.rawValue,
+                "outcome": outcomeDiagnosticCase(outcome),
+            ],
+            error: error
+        )
+        return outcome
+    }
+
+    nonisolated static func unmountAndEjectDeviceOffMain(_ url: URL) async throws {
+        try await Task.detached(priority: .utility) {
+            try NSWorkspace.shared.unmountAndEjectDevice(at: url)
+        }.value
     }
 }
 
@@ -253,51 +341,6 @@ private extension CatalogWindowViewModel {
                 error: error
             )
         }
-    }
-
-    nonisolated static func performEjectRemovableSource(
-        _ root: LibraryRoot,
-        store: CatalogStore,
-        coordinator: EnrichmentCoordinator?
-    ) async -> RemovableEjectOutcome {
-        defer {}
-        guard let identity = root.deviceIdentity else {
-            return .failed(description: "The disk could not be ejected.")
-        }
-        do {
-            try await store.quiesceRemovableSource(identity: identity)
-            if let coordinator {
-                let drained = await coordinator.drainWork(under: root.path)
-                if !drained {
-                    OtosLog.catalog.error(
-                        "op=removableEject drainTimedOut rootPath=\(root.path.rawValue, privacy: .public)"
-                    )
-                }
-            }
-            try await unmountAndEjectDeviceOffMain(root.path.url)
-            OtosLog.catalog.notice(
-                "op=catalog.removable.eject phase=finish outcome=ejected rootPath=\(root.path.rawValue, privacy: .public)"
-            )
-            return .ejected
-        } catch {
-            let outcome = removableEjectOutcome(for: error, displayName: root.displayName)
-            await recordMutationError(
-                "Catalog eject removable source failed",
-                operation: "catalog.removable.eject",
-                fields: [
-                    "rootPath": root.path.rawValue,
-                    "outcome": outcomeDiagnosticCase(outcome),
-                ],
-                error: error
-            )
-            return outcome
-        }
-    }
-
-    nonisolated static func unmountAndEjectDeviceOffMain(_ url: URL) async throws {
-        try await Task.detached(priority: .utility) {
-            try NSWorkspace.shared.unmountAndEjectDevice(at: url)
-        }.value
     }
 
     nonisolated static func performForgetRemovableSource(

@@ -47,12 +47,13 @@ extension CatalogWindowViewModel {
             preferencesDomain: preferencesDomain,
             cameraImport: cameraImport,
             materializationRequester: materializationCoordinator,
-            autoEjectHandler: { root in
-                _ = await CatalogWindowViewModel.performCatalogMutation(
-                    .ejectRemovableSource(root),
-                    store: store,
-                    coordinator: nil
-                )
+            // One eject, one path: the same intent the sidebar's eject control
+            // fires — quiesce, drain Otos's own readers, unmount with a bounded
+            // busy retry, and the alert if it still can't (APP-008). On
+            // 2026-09-13 this handler skipped the drain and dropped the outcome,
+            // so a ticked "Eject the card" failed `fBsyErr` and told no one.
+            autoEjectHandler: { [weak self] root in
+                await MainActor.run { self?.ejectRemovableSource(root) }
             }
         )
         mediaOperationCoordinator = coordinator
