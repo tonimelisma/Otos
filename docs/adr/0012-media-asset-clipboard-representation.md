@@ -53,9 +53,11 @@ a paste is, and is therefore deliberate rather than accidental materialization.
 Otos does not pre-materialize before handing off; if a receiver's own progress
 surface ever proves insufficient, pre-materialization is a separate decision.
 
-Adjacent decisions requiring their own ADR/spec when built: drag-and-drop export
-out of the grid; a pixel/"Copy as Image" representation; any export pipeline that
-transcodes originals.
+Drag-and-drop out of the grid uses the same representation and is decided in ADR
+0028.
+
+Adjacent decisions requiring their own ADR/spec when built: a pixel/"Copy as Image"
+representation; any export pipeline that transcodes originals.
 
 ## Decision
 

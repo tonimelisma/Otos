@@ -184,3 +184,50 @@ extension MediaGridViewController {
         selectionHandlers.currentSelection()
     }
 }
+
+/// Drag-out (ADR 0028). The view detected the drag; this builds one dragging item per
+/// asset — file URL writer, the on-screen tile's frame and a snapshot of it as the drag
+/// image, or the origin tile's frame for assets scrolled out of view — and starts the
+/// session with the controller's source. No byte read, no materialization.
+extension MediaGridViewController {
+    func beginDrag(from hit: IndexPath, event: NSEvent) {
+        guard let hitID = dataSource.itemIdentifier(for: hit) else {
+            return
+        }
+        let ids = MediaGridDragPolicy.draggedIDs(
+            hit: hitID,
+            selection: selectedIdentities(),
+            orderedIDs: mutationGate.displayedOrderedIDs
+        )
+        let originFrame = collectionView.layoutAttributesForItem(at: hit)?.frame ?? .zero
+        let items: [NSDraggingItem] = ids.map { id in
+            let item = NSDraggingItem(pasteboardWriter: id.fileURL as NSURL)
+            if let indexPath = dataSource.indexPath(for: id),
+               let tile = collectionView.item(at: indexPath)?.view
+            {
+                let frame = collectionView.layoutAttributesForItem(at: indexPath)?.frame ?? originFrame
+                item.setDraggingFrame(frame, contents: Self.snapshot(of: tile))
+            } else {
+                item.setDraggingFrame(originFrame, contents: nil)
+            }
+            return item
+        }
+        dragSource.onEnd = { operation in
+            OtosLog.ui.notice(
+                "op=ui.dragOut.end count=\(ids.count, privacy: .public) operation=\(operation.rawValue, privacy: .public)"
+            )
+        }
+        collectionView.beginDraggingSession(with: items, event: event, source: dragSource)
+        OtosLog.ui.notice("op=ui.dragOut.begin count=\(ids.count, privacy: .public)")
+    }
+
+    private static func snapshot(of view: NSView) -> NSImage? {
+        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+            return nil
+        }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let image = NSImage(size: view.bounds.size)
+        image.addRepresentation(rep)
+        return image
+    }
+}

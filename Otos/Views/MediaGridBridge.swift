@@ -237,6 +237,8 @@ final class MediaGridViewController: NSViewController {
     var onMediaChoiceKey: (MediaChoice) -> Void = { _ in }
     var onMediaChoice: (MediaAssetID, MediaChoice) -> Void = { _, _ in }
     var contextMenu: () -> NSMenu? = { nil }
+    /// Source for drag-out sessions (ADR 0028); one per controller, reused.
+    let dragSource = MediaGridDragSource()
     /// Current presentation; strip disables pinch and forwards arrow keys.
     private(set) var presentation: MediaGridPresentation
     /// The item under the gesture location at pinch start, held for the gesture's
@@ -565,6 +567,9 @@ extension MediaGridViewController {
                 applyMouseSelection(hit: hit, modifiers: [])
             }
             return contextMenu()
+        }
+        collectionView.onDragBegin = { [weak self] hit, event in
+            self?.beginDrag(from: hit, event: event)
         }
         collectionView.forwardsArrowKeys = presentation.isStrip
         collectionView.register(

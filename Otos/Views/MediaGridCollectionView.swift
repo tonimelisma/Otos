@@ -39,6 +39,15 @@ final class MediaGridCollectionView: NSCollectionView {
     /// Context click on a tile's thumbnail face. The controller decides what the hit
     /// does to the selection and returns the menu; empty space has no menu.
     var onContextMenu: ((IndexPath) -> NSMenu?)?
+    /// The pointer has travelled `MediaGridDragPolicy.dragThreshold` from a mouse-down
+    /// on this tile; the controller starts the dragging session (ADR 0028).
+    var onDragBegin: ((IndexPath, NSEvent) -> Void)?
+
+    /// A plain mouse-down on a selected tile whose selection change is waiting for
+    /// mouse-up, in case the gesture becomes a drag (`MediaGridClickDecision`).
+    private var deferredPlainClick: (hit: IndexPath, modifiers: NSEvent.ModifierFlags)?
+    /// Where the current mouse-down on a tile happened, in this view's coordinates.
+    private var dragOrigin: (point: NSPoint, hit: IndexPath)?
 
     private var hoverTrackingArea: NSTrackingArea?
     private var hoveredIndexPath: IndexPath?
@@ -127,11 +136,52 @@ final class MediaGridCollectionView: NSCollectionView {
 
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         window?.makeFirstResponder(self)
-        onMouseSelection?(hit, event.modifierFlags)
+        deferredPlainClick = nil
+        dragOrigin = hit.map { (pointInCollectionView, $0) }
 
-        if modifiers.isEmpty, event.clickCount == 2, let hit {
-            onDoubleClickHit?(hit)
+        let decision = MediaGridDragPolicy.decision(
+            hasHit: hit != nil,
+            hitIsSelected: hit.map { selectionIndexPaths.contains($0) } ?? false,
+            isPlainClick: modifiers.isEmpty,
+            clickCount: event.clickCount
+        )
+        switch decision {
+        case .select:
+            onMouseSelection?(hit, event.modifierFlags)
+        case .deferUntilMouseUp:
+            if let hit {
+                deferredPlainClick = (hit, event.modifierFlags)
+            }
+        case .doubleClick:
+            onMouseSelection?(hit, event.modifierFlags)
+            if let hit {
+                onDoubleClickHit?(hit)
+            }
         }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let origin = dragOrigin else {
+            super.mouseDragged(with: event)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        guard hypot(point.x - origin.point.x, point.y - origin.point.y) >= MediaGridDragPolicy.dragThreshold else {
+            return
+        }
+        // A drag is not a click: the deferred collapse never happens.
+        deferredPlainClick = nil
+        dragOrigin = nil
+        onDragBegin?(origin.hit, event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if let deferred = deferredPlainClick {
+            deferredPlainClick = nil
+            onMouseSelection?(deferred.hit, deferred.modifiers)
+        }
+        dragOrigin = nil
+        super.mouseUp(with: event)
     }
 
     /// Right-click and control-click. The same face test as `mouseDown` so a click in

@@ -57,6 +57,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0025](adr/0025-volume-aware-path-equality.md) | Volume-aware path equality, derived relative-path keys, and respelling-safe overlay identity. |
 | [0026](adr/0026-settled-naming-and-card-erase.md) | Settled import naming facts and the typed, explicit card-erase boundary. |
 | [0027](adr/0027-destination-free-space-is-measured-at-the-attempt.md) | Destination free space is measured only at the attempt: no precheck, no polling, a 5 GB per-entry floor with in-flight accounting, `ENOSPC` as backstop, and a floor stop as a resumable Cancel-shaped outcome. |
+| [0028](adr/0028-grid-drag-out-representation.md) | Grid and filmstrip drag-out: original file URLs, whole selection from a selected tile, plain click on a selected tile commits on mouse-up. |
 
 ## Research
 

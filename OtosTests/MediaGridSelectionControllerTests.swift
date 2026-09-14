@@ -118,6 +118,31 @@ struct MediaGridSelectionControllerTests {
         #expect(harness.selectedIDs() == Set(harness.ids[3 ... 6]))
     }
 
+    @Test func plainMouseDownOnASelectedTileWaitsForMouseUpAndADragKeepsTheSelection() throws {
+        // ADR 0028: {C,D,E} selected; mouse-down on D changes nothing yet, mouse-up collapses
+        // to {D}; a drag that begins in between keeps {C,D,E} and starts the drag instead.
+        let harness = try makeHarness(itemCount: 8)
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[3], modifiers: [.command])
+        try harness.click(harness.ids[4], modifiers: [.command])
+
+        try harness.mouseDown(harness.ids[3], modifiers: [])
+        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
+        try harness.mouseUp(harness.ids[3], modifiers: [])
+        #expect(harness.selectedIDs() == [harness.ids[3]])
+
+        try harness.click(harness.ids[2], modifiers: [])
+        try harness.click(harness.ids[4], modifiers: [.shift])
+        var dragStarts: [IndexPath] = []
+        harness.controller.collectionView.onDragBegin = { hit, _ in dragStarts.append(hit) }
+        try harness.mouseDown(harness.ids[3], modifiers: [])
+        try harness.mouseDrag(from: harness.ids[3], by: MediaGridDragPolicy.dragThreshold + 1)
+        try harness.mouseUp(harness.ids[3], modifiers: [])
+
+        #expect(harness.selectedIDs() == Set(harness.ids[2 ... 4]))
+        #expect(dragStarts.count == 1)
+    }
+
     @Test func row10_commandClickDeselectingTheSoleSelectionLeavesAnchorAsPivot() throws {
         // B3 setup: click B, ⌘-click B → ∅; anchor stays B, base ∅.
         let harness = try makeHarness(itemCount: 8)
@@ -493,14 +518,35 @@ private final class GridSelectionTestHarness {
         return controller.view.convert(centerInContentView, to: nil)
     }
 
-    /// Drives the real `mouseDown(with:)` override with a synthetic event at the tile's
-    /// center. `super.mouseDown` is not called by the override, so this exercises the full
-    /// owned path (hit-test → `applyMouseSelection` → `selectionIndexPaths` write) without
-    /// AppKit's tracking loop.
+    /// Drives the real `mouseDown(with:)` and `mouseUp(with:)` overrides with synthetic
+    /// events at the tile's center — a complete click. `super.mouseDown` is not called by
+    /// the override, so this exercises the full owned path (hit-test →
+    /// `applyMouseSelection` → `selectionIndexPaths` write) without AppKit's tracking
+    /// loop. A plain click on an already-selected tile commits on mouse-up (ADR 0028), so
+    /// a click is both halves.
     func click(_ id: MediaAssetID, modifiers: NSEvent.ModifierFlags) throws {
-        let point = try windowPoint(for: id)
-        let event = NSEvent.mouseEvent(
-            with: .leftMouseDown,
+        try mouseDown(id, modifiers: modifiers)
+        try mouseUp(id, modifiers: modifiers)
+    }
+
+    func mouseDown(_ id: MediaAssetID, modifiers: NSEvent.ModifierFlags) throws {
+        try controller.collectionView.mouseDown(with: mouseEvent(.leftMouseDown, at: windowPoint(for: id), modifiers: modifiers))
+    }
+
+    func mouseUp(_ id: MediaAssetID, modifiers: NSEvent.ModifierFlags) throws {
+        try controller.collectionView.mouseUp(with: mouseEvent(.leftMouseUp, at: windowPoint(for: id), modifiers: modifiers))
+    }
+
+    /// A drag past the threshold from the tile's center.
+    func mouseDrag(from id: MediaAssetID, by delta: CGFloat) throws {
+        var point = try windowPoint(for: id)
+        point.x += delta
+        try controller.collectionView.mouseDragged(with: mouseEvent(.leftMouseDragged, at: point, modifiers: []))
+    }
+
+    private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+        try #require(NSEvent.mouseEvent(
+            with: type,
             location: point,
             modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime,
@@ -509,8 +555,7 @@ private final class GridSelectionTestHarness {
             eventNumber: 0,
             clickCount: 1,
             pressure: 1.0
-        )!
-        controller.collectionView.mouseDown(with: event)
+        ))
     }
 
     /// Clicks a point outside any item frame (empty space) — the top-left gutter inside
