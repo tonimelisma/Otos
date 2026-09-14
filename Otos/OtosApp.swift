@@ -129,6 +129,36 @@ public struct OtosApp: App {
         }
         .commands {
             CommandGroup(replacing: .newItem) {
+                // File ▸ Open / Open With / Reveal: file-level acts on the current
+                // targets (plan 0103). ⌘O stays reserved for opening files into Otos.
+                Button(catalogViewModel.openWithMenu.openTitle) {
+                    catalogViewModel.openTargetsInDefaultApplication()
+                }
+                .keyboardShortcut("e", modifiers: .command)
+                .disabled(!catalogViewModel.openWithMenu.canOpen)
+                Menu("Open With") {
+                    ForEach(catalogViewModel.openWithMenu.applications) { application in
+                        Button {
+                            catalogViewModel.openTargets(with: application)
+                        } label: {
+                            Label {
+                                Text(application.displayName)
+                            } icon: {
+                                if let icon = catalogViewModel.openWithApplicationIcons[application.url] {
+                                    Image(nsImage: icon)
+                                }
+                            }
+                        }
+                    }
+                    if !catalogViewModel.openWithMenu.applications.isEmpty {
+                        Divider()
+                    }
+                    Button("Other…") {
+                        catalogViewModel.openTargetsWithChosenApplication()
+                    }
+                }
+                .disabled(!catalogViewModel.openWithMenu.canOpenWith)
+                Divider()
                 Button("Reveal in Finder") {
                     catalogViewModel.revealSelectionInFinder()
                 }

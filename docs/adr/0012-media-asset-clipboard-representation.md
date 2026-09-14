@@ -3,7 +3,9 @@
 ## Status
 
 Accepted. Implemented as APP-012: Copy writes one `public.fileURL` per selected
-asset in display order and reads no media bytes.
+asset in display order and reads no media bytes. Extended 2026-09-13 to Open /
+Open With (APP-035) and Share (APP-036), which hand the same file URLs to another
+process under the same rule.
 
 ## Context
 
@@ -41,6 +43,15 @@ What it references but does not own: the selection model and the copy command
 wiring (owned by spec 0031); asset→URL construction (`MediaAssetID.fileURL`, owned
 by the catalog model); enrichment-time byte reading and materialization (owned by
 ADR 0008/0009).
+
+Also owned here, because they are the same decision applied to another receiver:
+File ▸ Open / Open With (APP-035) and Share (APP-036) hand the current targets'
+original file URLs to LaunchServices or the system share picker and read no bytes
+in Otos. The receiving app or the share preview may download a dataless cloud
+original; that download is the receiver's act on a file the user named, exactly as
+a paste is, and is therefore deliberate rather than accidental materialization.
+Otos does not pre-materialize before handing off; if a receiver's own progress
+surface ever proves insufficient, pre-materialization is a separate decision.
 
 Adjacent decisions requiring their own ADR/spec when built: drag-and-drop export
 out of the grid; a pixel/"Copy as Image" representation; any export pipeline that

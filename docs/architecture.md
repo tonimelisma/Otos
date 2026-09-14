@@ -255,6 +255,7 @@ everything expensive happens on an actor off the main thread.
 | loupe video (click-to-play) | `VideoPreviewLoader` + `LoupeVideoPlayerView` + `LoupeView` poster/AVPlayer swap; compare stays poster-only |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |
 | curation choice/filter | `MediaChoice` + `CatalogStore.setMediaChoice` + `MediaFilter`/`CatalogQueryGateway`; ViewModel owns intents, views remain passive |
+| open in another app / Open With | `CatalogWindowViewModelOpenWith` (intents, off-main menu build) + `OpenWithMenuModel` (pure) + `WorkspaceOpening` (the one LaunchServices seam); URLs only, no bytes (ADR 0012) |
 | recoverable deletion | `CatalogWindowViewModelTrash` + `MediaTrashCoordinator` + Store namespace lease/reconciliation; never use a view or permanent-delete API |
 
 Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,

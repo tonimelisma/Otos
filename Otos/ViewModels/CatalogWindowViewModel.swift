@@ -76,28 +76,49 @@ final class CatalogWindowViewModel {
     /// only through the intents in `CatalogWindowViewModelSelection.swift`. Not
     /// `private(set)` because those intents live in a separate file and Swift's
     /// `private(set)` is file-scoped.
-    var gridSelection = GridSelection.empty
+    var gridSelection = GridSelection.empty {
+        didSet { refreshOpenWithMenu() }
+    }
+
     /// Session-only browser presentation (grid / loupe / compare). Default `.grid`.
     /// Mutated only through view-mode intents (separate file; Swift `private(set)` is
     /// file-scoped).
-    var viewMode: BrowserViewMode = .grid
+    var viewMode: BrowserViewMode = .grid {
+        didSet { refreshOpenWithMenu() }
+    }
+
     /// Loupe focus identity within the current display order. Compare does not retarget
     /// this; exit-to-grid keeps it so the grid can center on return.
-    var focusedAssetID: MediaAssetID?
+    var focusedAssetID: MediaAssetID? {
+        didSet { refreshOpenWithMenu() }
+    }
+
     /// Media kind of `focusedAssetID`, read once per focus change through the same
     /// `tileDetailReader` the panes use. Views must not guess kind: guessing is what
     /// drew a play button on still photographs. `nil` means "not yet
     /// known" and renders no affordance — MED-002, unknown stays unknown.
     var focusedAssetKind: MediaKind?
     /// Symmetric compare pair (positional left/right slots). Empty outside compare mode.
-    var comparePair = ComparePair.empty
+    var comparePair = ComparePair.empty {
+        didSet { refreshOpenWithMenu() }
+    }
+
     /// Which compare pane was most recently replaced (click/slide/entry). Drives strip
     /// focus centering; defaults to `.right` on entry.
     var lastReplacedComparePane: PanePosition?
     /// The pane targeted by the next curation command in compare mode. This is separate
     /// from `lastReplacedComparePane`: a choice changes metadata, while pane focus is a
     /// navigation concern and must remain stable when the detail projection refreshes.
-    var activeComparePane: PanePosition = .right
+    var activeComparePane: PanePosition = .right {
+        didSet { refreshOpenWithMenu() }
+    }
+
+    /// What File ▸ Open / Open With render for the current targets. Written only by
+    /// `refreshOpenWithMenu()`'s completed build (`CatalogWindowViewModelOpenWith.swift`);
+    /// the five target writers above trigger that rebuild from `didSet`.
+    var openWithMenu: OpenWithMenuModel = .empty
+    /// App icons for `openWithMenu.applications`, resolved once per model change.
+    @ObservationIgnored var openWithApplicationIcons: [URL: NSImage] = [:]
     /// When enabled, a successful choice advances to the next surviving item in display
     /// order. The preference is read and written here so grid, loupe, compare, keyboard,
     /// and menu commands share one behavior owner.
@@ -253,6 +274,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
     @ObservationIgnored let previewLoader: any PreviewLoading
+    /// LaunchServices seam for Open / Open With; tests inject a recorder.
+    @ObservationIgnored let workspace: any WorkspaceOpening
+    /// The one in-flight Open With menu build; a newer target set cancels it.
+    @ObservationIgnored var openWithMenuTask: Task<Void, Never>?
     @ObservationIgnored let videoLoader: VideoPreviewLoader
     var loupeVideoState: LoupeVideoState?
     /// The one in-flight loupe video preparation (materialize + build player). Named so
@@ -269,8 +294,10 @@ final class CatalogWindowViewModel {
         startsSourceMonitoring: Bool = true,
         preferencesDomain: PreferencesDomain,
         previewLoader: (any PreviewLoading)? = nil,
-        videoLoader: VideoPreviewLoader? = nil
+        videoLoader: VideoPreviewLoader? = nil,
+        workspace: any WorkspaceOpening = LaunchServicesWorkspace()
     ) {
+        self.workspace = workspace
         let (queryStream, queryContinuation) = AsyncStream<CatalogQueryRequest>.makeStream(
             bufferingPolicy: .bufferingNewest(1)
         )
@@ -373,6 +400,7 @@ final class CatalogWindowViewModel {
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
         mediaTrashTask?.cancel()
+        openWithMenuTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()
