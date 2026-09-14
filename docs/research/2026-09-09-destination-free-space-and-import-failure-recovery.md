@@ -228,9 +228,9 @@ diagnosing and deliberately left outside it; none is a requirement.
     (2026-09-13, 17:57:37) — the card was still being read by Otos's own
     enrichment, and the failure was logged only; the user, who had ticked
     `Eject the card`, was not told. Recorded, not fixed.
-11. **Deferred by decision, not oversight**: an advisory free-space line in Ready
-    (`54.8 GB needed · 37.7 GB free`) beside a still-live button, sampled when Ready
-    is drawn and never on the plan cadence.
+11. **Advisory line in Ready — decided and built** (owner, 2026-09-13): `Not
+    everything will fit yet · 37.7 GB available`, sampled on each Ready publish,
+    gating nothing (ADR 0027).
 
 ## Sources
 

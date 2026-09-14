@@ -563,6 +563,14 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// 42" in `Stopped — 12 of 42 items copied`. `nil` exactly when
     /// `copiedJustNow` is.
     let plannedCount: Int?
+    /// The destination volume's available capacity, sampled by the coordinator
+    /// when this Ready presentation was published, so the bar can say *before*
+    /// the click that not everything will fit (`import-bar.md` state C). A
+    /// measured value with the same reader the floor uses, not a forecast:
+    /// stale by construction, it gates nothing, and the Stopped bar states what
+    /// actually happened afterwards (ADR 0027). `nil` when the volume did not
+    /// answer or the state has no plan to compare against.
+    let destinationAvailableBytes: Int64?
     /// This attachment's live session preferences, read directly off the
     /// coordinator's own `SourceSession.preferences` rather than mirrored into a
     /// second ViewModel-owned dictionary. `setSessionPreferences` writes only to
@@ -596,6 +604,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         settledAt: Date?,
         stopReason: ImportStopReason?,
         plannedCount: Int?,
+        destinationAvailableBytes: Int64? = nil,
         sessionPreferences: ImportPreferences,
         incompleteItems: [MediaAssetID],
         eraseOutcome: EraseOutcome? = nil
@@ -614,6 +623,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.settledAt = settledAt
         self.stopReason = stopReason
         self.plannedCount = plannedCount
+        self.destinationAvailableBytes = destinationAvailableBytes
         self.sessionPreferences = sessionPreferences
         self.incompleteItems = incompleteItems
         self.eraseOutcome = eraseOutcome

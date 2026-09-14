@@ -89,5 +89,9 @@ floor, make the stop a designed and resumable outcome.
   one is caught by the `ENOSPC` backstop one entry later.
 - Device staging keeps the same promise with the same constant; its previous 10 GB
   floor and the precheck's 64 MB headroom are gone.
-- Deferred, not decided: an advisory `54.8 GB needed · 37.7 GB free` line in Ready
-  beside the still-live button, sampled when Ready is drawn.
+- Ready carries one line of advice when the plan's bytes plus the floor exceed the
+  destination's reported available capacity — `Not everything will fit yet ·
+  37.7 GB available` — sampled by the coordinator on each Ready publish with the
+  same reader the floor uses. It is two measured values and this rule, not a
+  forecast; it gates nothing and the act stays the whole plan (owner decision,
+  2026-09-13).

@@ -24,7 +24,8 @@ struct ImportBarPresentationTests {
         sourceKind: LibraryRootKind = .removableVolume,
         sessionPreferences: ImportPreferences = .default,
         stopReason: ImportStopReason? = nil,
-        plannedCount: Int? = nil
+        plannedCount: Int? = nil,
+        destinationAvailableBytes: Int64? = nil
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: source,
@@ -41,6 +42,7 @@ struct ImportBarPresentationTests {
             settledAt: settledAt,
             stopReason: stopReason,
             plannedCount: plannedCount,
+            destinationAvailableBytes: destinationAvailableBytes,
             sessionPreferences: sessionPreferences,
             incompleteItems: incompleteItems,
             eraseOutcome: eraseOutcome
@@ -179,6 +181,55 @@ struct ImportBarPresentationTests {
         } else {
             Issue.record("Expected .choices middle zone")
         }
+    }
+
+    /// State C says before the click that not everything will fit: the plan's
+    /// bytes plus the floor exceed what the volume reported available. The act
+    /// stays the whole plan — the run copies what fits and stops (ADR 0027).
+    @Test func readyAdvisesWhenNotEverythingWillFit() {
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 680, copyBytes: 54_757_512_996), generation: 1, skippedPackageCount: 0),
+            destinationAvailableBytes: 37_673_455_616
+        ))
+        #expect(drawn.kind == .ready)
+        #expect(drawn.primaryLine == "680 new items · 54.8 GB")
+        #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 37.7 GB available"))
+        #expect(drawn.primaryAction == .importItems(count: 680))
+        #expect(drawn.primaryEnabled)
+    }
+
+    @Test func readyStaysQuietWhenEverythingFitsOrTheVolumeDidNotAnswer() {
+        let fits = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 3, copyBytes: 3000), generation: 1, skippedPackageCount: 0),
+            destinationAvailableBytes: FreeSpaceFloor.bytes + 4000
+        ))
+        #expect(fits.secondaryLine == .none)
+        // Exactly the floor after the copy is still room enough.
+        let exact = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 3, copyBytes: 3000), generation: 1, skippedPackageCount: 0),
+            destinationAvailableBytes: FreeSpaceFloor.bytes + 3000
+        ))
+        #expect(exact.secondaryLine == .none)
+        let unknown = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 3, copyBytes: 3000), generation: 1, skippedPackageCount: 0),
+            destinationAvailableBytes: nil
+        ))
+        #expect(unknown.secondaryLine == .none)
+    }
+
+    /// One clause on L3 (DES-034): room outranks "already in the library"
+    /// because it changes what the click will do.
+    @Test func theSpaceAdvisoryOutranksTheAlreadyInLibraryClause() {
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 10, skipCount: 5, copyBytes: 10_000_000_000), generation: 1, skippedPackageCount: 0),
+            destinationAvailableBytes: 2_000_000_000
+        ))
+        #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 2.0 GB available"))
+        let roomy = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 10, skipCount: 5, copyBytes: 10000), generation: 1, skippedPackageCount: 0),
+            destinationAvailableBytes: FreeSpaceFloor.bytes + 1_000_000
+        ))
+        #expect(roomy.secondaryLine == .plain("5 already in Summer Photos"))
     }
 
     @Test func readyOmitsSecondaryLineWhenSkipCountIsZero() {

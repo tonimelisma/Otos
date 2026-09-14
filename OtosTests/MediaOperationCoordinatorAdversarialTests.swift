@@ -1388,6 +1388,52 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// State C's "not everything will fit" line needs the destination's
+    /// available capacity on the Ready presentation, sampled with the same
+    /// reader the floor uses, and only where there is a plan to compare it to.
+    @Test func aReadyPresentationCarriesTheDestinationsAvailableCapacity() async throws {
+        log("START aReadyPresentationCarriesTheDestinationsAvailableCapacity")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:space-advisory", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            volumeCapacity: { _ in FreeSpaceFloor.bytes + 100 }
+        )
+        await coordinator.start()
+        let ready = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .ready = pres.state {
+                return true
+            }
+            return false
+        }
+        #expect(ready.destinationAvailableBytes == FreeSpaceFloor.bytes + 100)
+        let drawn = ImportBarPresentation.map(presentation: ready, preferences: .default, sourceDisplayName: "Card")
+        #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 5.4 GB available"))
+        #expect(drawn.primaryAction == .importItems(count: 1))
+        log("END")
+        await coordinator.shutdown()
+    }
+
     /// Plan 0102 B1: a run that stops early settles as a partial success whose
     /// facts — why it stopped, what it copied, of what it planned — are
     /// published as state and survive the post-settlement re-plan, so state F's

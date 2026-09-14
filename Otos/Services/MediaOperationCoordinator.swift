@@ -31,6 +31,10 @@ actor MediaOperationCoordinator {
     /// cloud provider mid-sync answers `contentsOfDirectory` with an error for a
     /// moment. Injectable so a test does not wait a minute.
     private let unreadableRetryDelays: [Duration]
+    /// Reads the destination volume's available capacity for state C's
+    /// "not everything will fit" line — the same reader the executor's floor
+    /// uses, so "available" means one thing in Otos. Injectable for tests.
+    private let volumeCapacity: @Sendable (URL) -> Int64?
     private let makeExecutor: @Sendable (LibraryRootPath) -> any ImportExecuting
 
     // MARK: - Stage 4 single-session model
@@ -291,6 +295,7 @@ actor MediaOperationCoordinator {
         preferencesDomain: PreferencesDomain,
         planBuilder: any ImportPlanBuilding = LiveImportPlanBuilder(),
         unreadableRetryDelays: [Duration] = [.seconds(1), .seconds(4), .seconds(16), .seconds(60)],
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = MediaImportExecutor.importantUsageCapacity,
         makeExecutor: (@Sendable (LibraryRootPath) -> any ImportExecuting)? = nil,
         cameraImport: CameraImportAccess? = nil,
         materializationRequester: MaterializationRequesting? = nil,
@@ -301,6 +306,7 @@ actor MediaOperationCoordinator {
         preferences = preferencesDomain.makeDefaults()
         self.planBuilder = planBuilder
         self.unreadableRetryDelays = unreadableRetryDelays
+        self.volumeCapacity = volumeCapacity
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
         self.autoEjectHandler = autoEjectHandler
@@ -1853,6 +1859,14 @@ actor MediaOperationCoordinator {
         cardStillExists: Bool? = nil
     ) -> MediaOperationSourcePresentation {
         let exposedBatch = exposedBatch(for: session)
+        // Sampled only where the bar can compare it against a plan: a `stat`
+        // per Ready publish, never per progress tick.
+        let availableBytes: Int64? = switch state {
+        case .ready, .executionUnavailable:
+            session.destination.flatMap { volumeCapacity($0.url) }
+        default:
+            nil
+        }
         return MediaOperationSourcePresentation(
             sourcePath: session.root.path,
             sourceKind: session.root.kind,
@@ -1868,6 +1882,7 @@ actor MediaOperationCoordinator {
             settledAt: session.lastCompletion?.settledAt,
             stopReason: session.lastCompletion?.stopReason,
             plannedCount: session.lastCompletion?.plannedCount,
+            destinationAvailableBytes: availableBytes,
             sessionPreferences: session.preferences,
             incompleteItems: session.lastCompletion?.incompleteItems ?? [],
             eraseOutcome: session.lastCompletion?.eraseOutcome

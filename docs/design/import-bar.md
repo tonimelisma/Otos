@@ -229,6 +229,18 @@ the primary action stays `Import`, disabled.
 L1 `42 new items · 68 MB` · L3 `139 already in Summer Photos`, omitted at zero.
 Action: `Import 42 Items` — count and scope in the title (DES-036).
 
+**When not everything will fit**, L3 is that instead of anything else:
+`Not everything will fit yet · 37.7 GB available`. Drawn only when the plan's bytes
+plus the 5 GB floor exceed what the destination volume reported available when this
+Ready was published — two measured values and Otos's own stopping rule (ADR 0027),
+not an estimate, so it is not DES-032's one permitted estimate. It gates nothing: the
+act stays `Import 680 Items`, the run copies what fits, stops at the floor, and state F's
+Stopped variant states what happened. "Yet" is the resumable design in one word — free
+space, import the rest. It outranks the already-in-library clause because it changes
+what the click will do (DES-034: one clause). "Available" is the metric's name across
+macOS (Get Info, Storage, Software Update); Finder's "free space" belongs to a blocking
+error, which this is not.
+
 - **Nothing new:** L1 `Nothing new on this card` · L3 `All 181 items are already in
   Summer Photos` · action `Eject Card`. The choices zone stays fully present: the
   destination pop-up is *what that sentence is measured against*, and changing it

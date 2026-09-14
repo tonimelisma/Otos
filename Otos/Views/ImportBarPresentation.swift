@@ -273,17 +273,43 @@ nonisolated enum ImportBarPresentation {
                 eraseConfirmationProvenClean: true
             )
         }
+        let secondary: ImportBarDrawnState.SecondaryLine = if let advisory = spaceAdvisory(summary: summary, presentation: presentation) {
+            .plain(advisory)
+        } else if let already = alreadyInLibraryLine(skipCount: summary.skipCount, destinationName: destinationName) {
+            .plain(already)
+        } else {
+            .none
+        }
         return ImportBarDrawnState(
             kind: .ready,
             primaryLine: newItemsHeadline(summary: summary),
             primaryBadge: .none,
-            secondaryLine: alreadyInLibraryLine(skipCount: summary.skipCount, destinationName: destinationName)
-                .map { ImportBarDrawnState.SecondaryLine.plain($0) } ?? .none,
+            secondaryLine: secondary,
             middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
             primaryAction: .importItems(count: summary.copyCount),
             primaryEnabled: true,
             eraseConfirmationProvenClean: false
         )
+    }
+
+    /// State C's one line about room: shown only when the plan's bytes plus
+    /// the floor exceed what the destination volume reported available at
+    /// publish — two measured values and Otos's own stopping rule, not an
+    /// estimate (DES-032 permits one estimate and this is not it). It gates
+    /// nothing: the act stays `Import N Items`, the run copies what fits and
+    /// stops at the floor, and the Stopped bar states what happened. "Yet"
+    /// is the resumable design in one word. Outranks the already-in-library
+    /// clause because it changes what the click will do (DES-034: one clause).
+    private static func spaceAdvisory(
+        summary: MediaOperationPlanTotals,
+        presentation: MediaOperationSourcePresentation
+    ) -> String? {
+        guard let available = presentation.destinationAvailableBytes,
+              summary.copyBytes + FreeSpaceFloor.bytes > available
+        else {
+            return nil
+        }
+        return "Not everything will fit yet · \(ImportBarByteFormat.string(bytes: available)) available"
     }
 
     // MARK: - D · Ready, needs attention
