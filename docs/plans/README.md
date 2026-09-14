@@ -3,7 +3,7 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-No active plans.
+- [0103 — Share, Open With, context menus, drag-out, curation undo, and loupe gestures](0103-share-open-with-context-menus-and-loupe-gestures.md) — opened 2026-09-13; eight increments A–H, ordered A → B → C → D → E, F → G → H.
 
 Plan 0102 (import to the disk floor, stopped outcomes, and terminal-state durability)
 is complete across five increments and was removed at closure. It opened from a live
