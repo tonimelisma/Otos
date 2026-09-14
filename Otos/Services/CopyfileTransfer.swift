@@ -7,7 +7,10 @@ nonisolated enum CopyfileTransfer {
     enum Outcome: Equatable, Sendable {
         case completed
         case cancelled
-        case failed(String)
+        /// `copyfile(3)` refused, with the `errno` it left — typed so the
+        /// executor can tell a volume out of room (`ENOSPC`) from any other
+        /// refusal without matching a message.
+        case failed(errno: Int32)
     }
 
     struct Progress: Equatable, Sendable {
@@ -23,7 +26,7 @@ nonisolated enum CopyfileTransfer {
     ) -> Outcome {
         let state = copyfile_state_alloc()
         guard let state else {
-            return .failed("copyfile_state_alloc failed")
+            return .failed(errno: errno)
         }
         defer { copyfile_state_free(state) }
 
@@ -45,8 +48,9 @@ nonisolated enum CopyfileTransfer {
             return .cancelled
         }
         if result != 0 {
+            let code = errno
             try? FileManager.default.removeItem(at: destination)
-            return .failed("copyfile errno=\(errno)")
+            return .failed(errno: code)
         }
         let size = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize).map(Int64.init) ?? 0
         onProgress(Progress(completedBytes: size, totalBytes: size))

@@ -534,6 +534,8 @@ nonisolated enum ImportBarPresentation {
         let clause: String? = switch reason {
         case .user:
             copiedCount > 0 ? "They're in \(destinationName)" : nil
+        case let .diskFloor(bytesFree):
+            "Not enough room on the disk · \(ImportBarByteFormat.string(bytes: bytesFree)) left"
         }
         guard let (summary, attentionItems) = remainder else {
             // The re-plan has not landed yet: the act is coming, its count is not.
@@ -730,8 +732,6 @@ nonisolated enum ImportBarPresentation {
             } else {
                 "The library isn't available"
             }
-        case .outOfSpace:
-            "The disk is full"
         case .sourceNotReady:
             sourceKind == .deviceMTP ? "The camera is still reading its card" : "The card is still being read"
         case .unexpected:

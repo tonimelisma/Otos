@@ -36,8 +36,10 @@ Consequences the rule fixes rather than leaves open:
   result is a contiguous prefix in plan order — "the first 412 were imported" —
   predictable and matching how the bar counts. An entry with companions (RAW+HIF,
   video+SRT) is atomic at the boundary.
-- **A floor stop is never fully clean**: no auto-eject, no erase. The un-copied items
-  exist only on that card.
+- **A floor stop is never fully clean**: no auto-eject, no end-of-run erase sweep.
+  Delete-after-import of entries that landed is unchanged (each is erased on its own
+  settle, once proven in the library); the un-copied items exist only on that card
+  and are never touched.
 
 ## What this plan is not
 
@@ -273,6 +275,19 @@ construction, gating nothing.
    abandoned, so an abandoned navigation is indistinguishable from a hung one.
 7. Reaching Ready took 25.7 s for 680 items (`attachToReady elapsedMs=25688`) — the
    metadata wait scaling with the card (ADR 0024/0026), not a defect.
+8. **Possible stale Ready between two Done frames.** After a *completed* run the
+   coordinator moves `.completed` → `.building` within one actor turn while still
+   holding the pre-run plan (`lastReadyContext`), so the mapper may draw Ready
+   ("42 new items") for the rebuild window before the re-plan's `copyCount == 0`
+   lets Done reappear. Found reading the code during B1; not observed live (no
+   completed run in either capture). B1 drops the held plan on a *stop*; the same
+   "a settled run invalidates the plan it ran from" rule would resolve this if it
+   proves real, with the mapper rendering Done from `lastCompletion` while the
+   re-plan is pending.
+9. **Camera (MTP) writes that refuse for space** arrive as a string from the
+   camera layer and classify as a per-file `.other`, not `.outOfSpace`; the
+   per-entry floor admission covers that path, so only a lying capacity figure
+   reaches this gap.
 
 ## Verification
 

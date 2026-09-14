@@ -27,16 +27,22 @@ actor LiveImportExecutor: ImportExecuting {
     private let store: CatalogStore
     private let cameraImport: CameraImportAccess?
     private let materializationRequester: MaterializationRequesting?
+    /// Forwarded to every `MediaImportExecutor` this creates — the floor's
+    /// capacity reader (ADR 0027), substitutable so a coordinator-level test
+    /// can drive a real copy into a volume that "runs out".
+    private let volumeCapacity: @Sendable (URL) -> Int64?
     private var activeExecutor: MediaImportExecutor?
 
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
-        materializationRequester: MaterializationRequesting? = nil
+        materializationRequester: MaterializationRequesting? = nil,
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = MediaImportExecutor.importantUsageCapacity
     ) {
         self.store = store
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
+        self.volumeCapacity = volumeCapacity
     }
 
     func execute(
@@ -51,7 +57,8 @@ actor LiveImportExecutor: ImportExecuting {
         let executor = MediaImportExecutor(
             store: store,
             cameraImport: cameraImport,
-            materializationRequester: materializationRequester
+            materializationRequester: materializationRequester,
+            volumeCapacity: volumeCapacity
         )
         activeExecutor = executor
         defer { activeExecutor = nil }

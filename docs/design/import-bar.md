@@ -319,7 +319,8 @@ still F: a partial batch is a real batch, the card is unchanged, and nothing alr
 copied is lost. What differs is that the bar must *say* the run stopped, from the
 run's own facts, and offer what is left. L1 `Stopped — 12 of 42 items copied` · L3
 one clause for the cause: `They're in Summer Photos` after a Cancel (omitted when
-nothing was copied), the floor's clause at the floor. Choices present while the card
+nothing was copied), `Not enough room on the disk · 5.4 GB left` at the floor — the
+capacity read when the run stopped, in the bar's byte units. Choices present while the card
 is attached. The act is the remainder's own **`Import 30 Items`** — and this is the
 one F variant with a prominent act, because its subject exists: 30 items are still
 on an attached card, so DES-053's exception does not apply. The count is the
@@ -389,9 +390,11 @@ because it is the only place the exception is reported:
 ### G · Failed
 
 L1 `Couldn't finish the import` · L3 one clause naming the cause and what to do:
-`The card was removed` / `Summer Photos isn't available` / `The disk is full`.
-Action: `Try Again`. Never auto-dismisses. Nothing already copied is lost, and the
-count copied so far is stated when nonzero.
+`The card was removed` / `Summer Photos isn't available`. Action: `Try Again`. Never
+auto-dismisses. Nothing already copied is lost, and the count copied so far is stated
+when nonzero. Running out of room is **not** a failure: nothing went wrong that
+`Try Again` could fix, so it is the Stopped variant of F with the floor's clause
+(ADR 0027).
 
 **This state cannot be built on today's failure value.** `failed(problem: String)`
 carries raw internal tokens — `executionUnavailable`, `noDestinationLibrary`,
@@ -404,9 +407,9 @@ DES-035 and DES-039 forbid. A `String` also cannot be mapped to a clause without
 matching on its spelling, which is the stringly-typed smell.
 
 `problem` becomes a typed reason whose cases are the causes the user can act on —
-at minimum source removed, destination unavailable, and out of space — with one
-case reserved for the unexpected, whose clause names no cause and whose detail goes
-to the log rather than the bar. Two of the three clauses above have no producer
+source removed and destination unavailable — with one case reserved for the
+unexpected, whose clause names no cause and whose detail goes to the log rather than
+the bar. Both clauses above have no producer
 today: nothing fails with "card removed" (pulling a card removes the session and the
 row instead) and nothing fails with "destination unavailable" mid-execution. Those
 producers are part of the work, not an assumption.
@@ -595,7 +598,7 @@ Where: `.importBatch(new)` — the user is on the batch when they cancel.
 
 ### J9 · A failure mid-import
 
-1. From `.importBatch(new)` in **E**: card pulled, destination offline, or disk full.
+1. From `.importBatch(new)` in **E**: card pulled or destination offline. (Running out of room is J8's shape with the floor's clause, not this one — ADR 0027.)
 2. **G** — `Couldn't finish the import` / `The card was removed · 12 items were copied before it stopped`. Primary `Try Again`. Never auto-dismisses.
 3. If the card was pulled, its row is gone; the batch row remains, holding the 12 that landed. Nothing already copied is lost.
 4. `Try Again` needs the card back. With it re-attached, the button returns the user to `.library(card)` and re-plans against what is now reachable.

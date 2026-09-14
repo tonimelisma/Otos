@@ -881,6 +881,204 @@ struct ImportExecutionProgressTests {
         #expect(try await fixture.store.activeSourceEraseOperations().isEmpty)
     }
 
+    // MARK: - ADR 0027: the disk floor
+
+    private struct CardFixture {
+        let store: CatalogStore
+        let plan: MediaOperationPlan
+        let sourceRoot: URL
+        let destinationRoot: URL
+        let destinationPath: LibraryRootPath
+    }
+
+    /// `count` real files of `bytesEach` on a card, planned into an empty
+    /// library with original names — the shape every floor test starts from.
+    private func makeCardFixture(count: Int, bytesEach: Int) async throws -> CardFixture {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: sourceRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destinationRoot, withIntermediateDirectories: true)
+        let sourcePath = try CatalogPath.normalizedDirectoryPath(for: sourceRoot)
+        let destinationPath = try CatalogPath.normalizedDirectoryPath(for: destinationRoot)
+        let modifiedAt = Date(timeIntervalSince1970: 100)
+        let facts = try (0 ..< count).map { index -> PlanningFileFacts in
+            let relative = MediaRelativePath(rawValue: "IMG_\(index).jpg")
+            let url = sourceRoot.appending(path: relative.rawValue)
+            try Data(repeating: UInt8(index + 1), count: bytesEach).write(to: url)
+            try FileManager.default.setAttributes([.modificationDate: modifiedAt], ofItemAtPath: url.path)
+            return PlanningFileFacts(
+                id: MediaAssetID(libraryRootPath: sourcePath, relativePath: relative),
+                sourceURL: url,
+                relativePath: relative,
+                byteSize: Int64(bytesEach),
+                contentModifiedAt: modifiedAt,
+                captureWallCompact: nil,
+                mediaKind: .image,
+                fileExtension: "jpg",
+                companions: [],
+                contentTypeIdentifier: "public.jpeg"
+            )
+        }
+        var policy = ImportPolicy.from(.default)
+        policy.destinationFolderPolicy = .none
+        policy.destinationNamePolicy = .original
+        let snapshot = ImportPlanningSnapshot(
+            generation: 1,
+            sourceRoot: sourcePath,
+            destinationRoot: destinationPath,
+            sourceNamespaceRevision: 1,
+            sourceNamingRevision: 0,
+            destinationNamespaceRevision: 1,
+            sourceMedia: facts,
+            destinationOccupants: [:],
+            policy: policy,
+            calendar: Calendar(identifier: .gregorian),
+            timeZone: TimeZone(secondsFromGMT: 0) ?? .current
+        )
+        let plan = MediaTransferPlanner.buildImportPlan(snapshot: snapshot)
+        #expect(plan.totals.copyCount == count)
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destinationRoot)
+        return CardFixture(store: store, plan: plan, sourceRoot: sourceRoot, destinationRoot: destinationRoot, destinationPath: destinationPath)
+    }
+
+    /// Bytes currently sitting in a directory tree — what a live volume's
+    /// capacity would have lost to the copies that landed.
+    private static func bytesLanded(under root: URL) -> Int64 {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else {
+            return 0
+        }
+        var total: Int64 = 0
+        for case let url as URL in enumerator {
+            let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            if values?.isRegularFile == true {
+                total += Int64(values?.fileSize ?? 0)
+            }
+        }
+        return total
+    }
+
+    private func executeFloorRun(
+        _ fixture: CardFixture,
+        deleteSourceRequested: Bool = false,
+        volumeCapacity: @escaping @Sendable (URL) -> Int64?
+    ) async -> MediaImportExecutionResult {
+        await MediaImportExecutor(store: fixture.store, volumeCapacity: volumeCapacity).execute(
+            plan: fixture.plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:disk-floor",
+            deleteSourceRequested: deleteSourceRequested,
+            runID: UUID().uuidString
+        ) { _ in }
+    }
+
+    /// Three 1 KB entries into a volume with room for two above the floor:
+    /// two land, the third is never attempted, and the run settles as stopped
+    /// at the floor with the count it actually published.
+    @Test func theFloorStopsTheRunBeforeTheEntryThatWouldBreachIt() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
+        let destination = fixture.destinationRoot
+        let result = await executeFloorRun(fixture) { _ in
+            FreeSpaceFloor.bytes + 2500 - Self.bytesLanded(under: destination)
+        }
+        guard case let .stopped(reason, publishedCount, _, _, _, failedCount) = result else {
+            Issue.record("Expected a stopped run, got \(result)")
+            return
+        }
+        guard case .diskFloor = reason else {
+            Issue.record("Expected the disk floor as the reason, got \(reason)")
+            return
+        }
+        #expect(publishedCount == 2)
+        #expect(failedCount == 0, "an entry the floor refused was never attempted, so it is not a failure")
+        #expect(!FileManager.default.fileExists(atPath: destination.appending(path: "IMG_2.jpg").path))
+    }
+
+    /// A capacity figure that never moves (CacheDelete lagging) must not admit
+    /// the third entry either: the bytes already in flight are counted.
+    @Test func inFlightBytesCountEvenWhenTheCapacityFigureIsStale() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
+        let result = await executeFloorRun(fixture) { _ in FreeSpaceFloor.bytes + 2500 }
+        guard case let .stopped(_, publishedCount, _, _, _, _) = result else {
+            Issue.record("Expected a stopped run, got \(result)")
+            return
+        }
+        #expect(publishedCount == 2)
+    }
+
+    /// A volume that does not answer admits everything; `ENOSPC` is the
+    /// backstop, not a guess.
+    @Test func anUnknownCapacityAdmitsEveryEntry() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
+        let result = await executeFloorRun(fixture) { _ in nil }
+        guard case let .completed(publishedCount, _, _, _, _, _) = result else {
+            Issue.record("Expected a completed run, got \(result)")
+            return
+        }
+        #expect(publishedCount == 3)
+    }
+
+    /// A floor stop is never fully clean: with erase requested, the end-of-run
+    /// sweep does not run and the result is `.stopped`, not
+    /// `.completedWithErase`. Delete-after-import of entries that *landed* is
+    /// unchanged — each is erased on its own settle, once proven in the
+    /// library — while the entry the floor refused, which exists nowhere but
+    /// the card, is never touched.
+    @Test func aFloorStopNeverRunsTheEraseSweep() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
+        let destination = fixture.destinationRoot
+        let result = await executeFloorRun(fixture, deleteSourceRequested: true) { _ in
+            FreeSpaceFloor.bytes + 2500 - Self.bytesLanded(under: destination)
+        }
+        guard case let .stopped(_, publishedCount, _, _, _, _) = result else {
+            Issue.record("Expected a stopped run, got \(result)")
+            return
+        }
+        #expect(publishedCount == 2)
+        #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.jpg").path), "landed, proven, erased on settle")
+        #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_1.jpg").path), "landed, proven, erased on settle")
+        #expect(FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_2.jpg").path), "refused by the floor: still only on the card")
+        #expect(!FileManager.default.fileExists(atPath: destination.appending(path: "IMG_2.jpg").path))
+    }
+
+    /// The write itself refusing for space is the same stop: the entry that
+    /// hit `ENOSPC` is not counted as a failure — it never landed and the
+    /// re-plan offers it again — and nothing after it is attempted.
+    @Test func anOutOfSpaceWriteStopsTheRunTheSameWay() async throws {
+        let fixture = try await makeCardFixture(count: 3, bytesEach: 1024)
+        let executor = MediaImportExecutor(
+            store: fixture.store,
+            volumeCapacity: { _ in nil },
+            transfer: { source, destination, onProgress, shouldContinue in
+                if source.lastPathComponent == "IMG_1.jpg" {
+                    return .failed(errno: ENOSPC)
+                }
+                return CopyfileTransfer.copy(from: source, to: destination, onProgress: onProgress, shouldContinue: shouldContinue)
+            }
+        )
+        let result = await executor.execute(
+            plan: fixture.plan,
+            batch: ImportBatchID(),
+            sourceKind: .removableVolume,
+            sourceDeviceIdentity: "volume:enospc",
+            deleteSourceRequested: false,
+            runID: UUID().uuidString
+        ) { _ in }
+        guard case let .stopped(reason, publishedCount, _, _, _, failedCount) = result else {
+            Issue.record("Expected a stopped run, got \(result)")
+            return
+        }
+        guard case .diskFloor = reason else {
+            Issue.record("Expected the disk floor as the reason, got \(reason)")
+            return
+        }
+        #expect(publishedCount >= 1)
+        #expect(failedCount == 0)
+    }
+
     @Test func containmentHelperAcceptsDirectoryURLSlashAndNormalizedRoot() throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = try CatalogPath.normalizedDirectoryPath(for: temp)

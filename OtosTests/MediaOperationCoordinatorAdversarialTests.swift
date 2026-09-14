@@ -1045,10 +1045,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         // could observe it. Removing the destination first makes the
         // triggered rebuild fail too (no destination), settling on a stable
         // `.failed` this test can actually poll for — the same shape a real
-        // persistent problem (genuinely out of space, destination genuinely
-        // gone) would have in production.
+        // persistent problem (destination genuinely gone) would have in
+        // production. Running out of room is no longer a failure at all
+        // (ADR 0027), so the injected reason is the destination's absence.
         try await store.removeLibrary(path: destPath)
-        await execControl.resumePending(for: cardPath, with: .failed(reason: .outOfSpace))
+        await execControl.resumePending(for: cardPath, with: .failed(reason: .destinationUnavailable))
         await queueTask.value
 
         let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
@@ -1128,6 +1129,88 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(rePlanned.plannedCount == 3)
         #expect(rePlanned.isFullyClean == false)
         #expect(rePlanned.batchID != nil, "a stopped run's partial batch stays pinned")
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// ADR 0027 end to end through the real executor: a card that does not fit
+    /// whole is copied up to the floor, settles as stopped with the floor as
+    /// the reason, and the re-plan that follows offers exactly the remainder —
+    /// resumption needs no code of its own because the plan is rebuilt from
+    /// the filesystem and the landed entries are skips now.
+    @Test func aCardThatDoesNotFitIsCopiedUpToTheFloorAndTheRePlanOffersTheRemainder() async throws {
+        log("START aCardThatDoesNotFitIsCopiedUpToTheFloorAndTheRePlanOffersTheRemainder")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            try Data(repeating: 7, count: 1024).write(to: cardURL.appending(path: name))
+        }
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:disk-floor", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        /// A volume with room for two of the three files above the floor,
+        /// shrinking as copies land — what a real capacity figure does.
+        @Sendable func bytesLanded() -> Int64 {
+            guard let enumerator = FileManager.default.enumerator(at: destURL, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else {
+                return 0
+            }
+            var total: Int64 = 0
+            for case let url as URL in enumerator {
+                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                if values?.isRegularFile == true {
+                    total += Int64(values?.fileSize ?? 0)
+                }
+            }
+            return total
+        }
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in
+                LiveImportExecutor(store: store, volumeCapacity: { _ in FreeSpaceFloor.bytes + 2500 - bytesLanded() })
+            }
+        )
+        await coordinator.start()
+        let plan = try await waitForReady(coordinator, source: cardPath)
+        #expect(plan.totals.copyCount == 3)
+        await coordinator.queueImport(for: cardPath)
+
+        let rePlanned = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case let .ready(summary, _, _, _) = pres.state {
+                return pres.stopReason != nil && summary.copyCount == 1
+            }
+            return false
+        }
+        guard case .diskFloor = rePlanned.stopReason else {
+            Issue.record("Expected a disk-floor stop, got \(String(describing: rePlanned.stopReason))")
+            return
+        }
+        #expect(rePlanned.copiedJustNow == 2)
+        #expect(rePlanned.plannedCount == 3)
+        #expect(rePlanned.isFullyClean == false)
+        if case let .ready(summary, _, _, _) = rePlanned.state {
+            #expect(summary.skipCount == 2, "the two that landed are skips now")
+        }
+        let batch = try #require(rePlanned.batchID)
+        #expect(try await store.importBatchAssetCount(batch) == 2)
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            #expect(FileManager.default.fileExists(atPath: cardURL.appending(path: name).path), "nothing on the card is erased")
+        }
         log("END")
         await coordinator.shutdown()
     }

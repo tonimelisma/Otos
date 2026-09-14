@@ -56,6 +56,7 @@ rewrite an ADR when the decision changes; never append increment history.
 | [0024](adr/0024-import-source-readiness-gate.md) | Import source readiness gate: withholding the Ready offer until a source's live scan/enumeration proves itself, not just its plan build completing. Also: the single `makePresentation` writer every published presentation funnels through. |
 | [0025](adr/0025-volume-aware-path-equality.md) | Volume-aware path equality, derived relative-path keys, and respelling-safe overlay identity. |
 | [0026](adr/0026-settled-naming-and-card-erase.md) | Settled import naming facts and the typed, explicit card-erase boundary. |
+| [0027](adr/0027-destination-free-space-is-measured-at-the-attempt.md) | Destination free space is measured only at the attempt: no precheck, no polling, a 5 GB per-entry floor with in-flight accounting, `ENOSPC` as backstop, and a floor stop as a resumable Cancel-shaped outcome. |
 
 ## Research
 

@@ -143,6 +143,12 @@ actor MediaImportExecutor {
         }
     }
 
+    /// The floor stop's one fact for the bar: the capacity read when the
+    /// run stopped (ADR 0027).
+    private struct SpaceStop: Sendable {
+        let bytesFree: Int64
+    }
+
     private struct EntryTotals: Sendable {
         let publishedCount: Int
         let publishedBytes: Int64
@@ -155,6 +161,11 @@ actor MediaImportExecutor {
         /// via `MediaOperationPlan.attentionItems`.
         let incompleteItems: [MediaAssetID]
         let overlayReuse: OverlayReuseSummary
+        /// Set when the run stopped at the disk floor — the first entry that
+        /// would have breached it was never submitted (or a write refused for
+        /// space first) and nothing after it was attempted. Entries already in
+        /// flight finished; the erase sweep did not run.
+        let spaceStop: SpaceStop?
         /// Every failed entry's reason, in encounter order — lets `execute()`
         /// tell a systemic failure (every attempted entry failed the same
         /// non-per-file way) from an ordinary per-file one.
@@ -179,14 +190,46 @@ actor MediaImportExecutor {
         let destinationRoot: LibraryRootPath
     }
 
+    /// Copies one removable-volume file into its staging path. The OS copy is
+    /// a real substitution boundary: a test that needs a write to refuse for
+    /// space (`ENOSPC`) cannot fill a real volume, so it substitutes here.
+    typealias VolumeTransfer = @Sendable (
+        _ source: URL,
+        _ destination: URL,
+        _ onProgress: @escaping @Sendable (CopyfileTransfer.Progress) -> Void,
+        _ shouldContinue: @escaping @Sendable () -> Bool
+    ) -> CopyfileTransfer.Outcome
+
+    /// Reads the destination volume's available capacity for the per-entry
+    /// floor check (ADR 0027). Injected for the same reason as
+    /// `VolumeTransfer`: the floor is otherwise untestable. The production
+    /// reader is `importantUsageCapacity(at:)`.
+    private let volumeCapacity: @Sendable (URL) -> Int64?
+    private let transfer: VolumeTransfer
+
     init(
         store: CatalogStore,
         cameraImport: CameraImportAccess? = nil,
-        materializationRequester: MaterializationRequesting? = nil
+        materializationRequester: MaterializationRequesting? = nil,
+        volumeCapacity: @escaping @Sendable (URL) -> Int64? = MediaImportExecutor.importantUsageCapacity,
+        transfer: @escaping VolumeTransfer = CopyfileTransfer.copy
     ) {
         self.store = store
         self.cameraImport = cameraImport
         self.materializationRequester = materializationRequester
+        self.volumeCapacity = volumeCapacity
+        self.transfer = transfer
+    }
+
+    /// CacheDelete's figure for important usage: it counts purgeable space and
+    /// can lag the truth in either direction (research 2026-09-09, finding 4),
+    /// which the floor check tolerates in the conservative direction only —
+    /// a stale-low figure stops a little early and the remainder is offered
+    /// again; a stale-high one is caught by `ENOSPC` one entry later. `nil`
+    /// when the volume does not answer, which admits the entry.
+    nonisolated static func importantUsageCapacity(at url: URL) -> Int64? {
+        (try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage
     }
 
     func cancel() {
@@ -268,11 +311,9 @@ actor MediaImportExecutor {
             return false
         }
         let totalBytes = copyEntries.reduce(Int64(0)) { $0 + ($1.source.byteSize ?? 0) }
-        if let needed = freeSpaceRequired(for: copyEntries),
-           !hasEnoughFreeSpace(at: destination.url, required: needed)
-        {
-            return .failed(reason: .outOfSpace)
-        }
+        // No run-level free-space check: an import that cannot fit whole is
+        // copied up to the floor and stopped as a designed outcome (ADR 0027).
+        // The check is per entry, inside `runPlanEntries`.
         let hasBlockedEntries = plan.entries.contains {
             if case .blocked = $0.disposition {
                 return true
@@ -370,6 +411,16 @@ actor MediaImportExecutor {
                 failedCount: entryTotals.failedCount
             )
         }
+        if let spaceStop = entryTotals.spaceStop {
+            return .stopped(
+                reason: .diskFloor(bytesFree: spaceStop.bytesFree),
+                publishedCount: entryTotals.publishedCount,
+                hasBlockedEntries: hasBlockedEntries,
+                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
+                skippedForeignCount: entryTotals.skippedForeignCount,
+                failedCount: entryTotals.failedCount
+            )
+        }
         // Every attempted entry failing the same non-per-file way means the source
         // itself wasn't ready — a systemic cause, not per-file damage. Report it as
         // a run failure rather than the misleading "N of N files failed" shape of
@@ -459,10 +510,55 @@ actor MediaImportExecutor {
             }
         }
         let byteProgress = ByteProgressTracker(totalCount: totalCount, totalBytes: totalBytes)
-        await withTaskGroup(of: EntryResult.self) { group in
+        let destinationURL = URL(fileURLWithPath: context.destinationRoot.rawValue, isDirectory: true)
+        // ADR 0027: an entry is admitted only while the destination volume
+        // keeps the floor after it *and every entry still in flight* lands.
+        // With `workerCount` entries in flight, a check that looked only at
+        // the next one could overshoot the floor by that many items.
+        // The stop is the group body's result rather than a captured variable
+        // read after it: region isolation would otherwise see a value written
+        // inside the actor-isolated closure and read after it as a race.
+        let spaceStop: SpaceStop? = await withTaskGroup(of: EntryResult.self, returning: SpaceStop?.self) { group in
             var nextIndex = 0
+            var inFlightBytes: Int64 = 0
+            var inFlightByIndex: [Int: Int64] = [:]
+            var spaceStop: SpaceStop?
+            func plannedBytes(_ index: Int) -> Int64 {
+                let source = copyEntries[index].source
+                return (source.byteSize ?? 0) + source.companions.reduce(Int64(0)) { $0 + ($1.byteSize ?? 0) }
+            }
+            /// Whether the entry at `index` fits above the floor. Refusing one
+            /// entry ends admission for the run; entries already in flight were
+            /// admitted with their bytes counted and are left to land.
+            func admits(_ index: Int) -> Bool {
+                guard spaceStop == nil else {
+                    return false
+                }
+                guard let capacity = self.volumeCapacity(destinationURL) else {
+                    // The volume does not answer: admit, and let `ENOSPC` be the backstop.
+                    return true
+                }
+                let entryBytes = plannedBytes(index)
+                guard capacity - inFlightBytes - entryBytes >= FreeSpaceFloor.bytes else {
+                    spaceStop = SpaceStop(bytesFree: capacity)
+                    OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
+                        "run": context.runID,
+                        "batch": "\(context.batch.unixMilliseconds)",
+                        "nextIndex": "\(index)",
+                        "entryBytes": "\(entryBytes)",
+                        "inFlightBytes": "\(inFlightBytes)",
+                        "capacity": "\(capacity)",
+                        "floor": "\(FreeSpaceFloor.bytes)",
+                    ])
+                    return false
+                }
+                return true
+            }
             func submit(_ index: Int) {
                 let entry = copyEntries[index]
+                let bytes = plannedBytes(index)
+                inFlightBytes += bytes
+                inFlightByIndex[index] = bytes
                 group.addTask {
                     guard !self.cancelFlag.isCancelled else {
                         return EntryResult(index: index, outcome: .cancelled, byteSize: 0)
@@ -482,11 +578,12 @@ actor MediaImportExecutor {
                     return EntryResult(index: index, outcome: outcome, byteSize: entry.source.byteSize ?? 0)
                 }
             }
-            while nextIndex < min(Self.workerCount, copyEntries.count) {
+            while nextIndex < min(Self.workerCount, copyEntries.count), admits(nextIndex) {
                 submit(nextIndex)
                 nextIndex += 1
             }
             while let result = await group.next() {
+                inFlightBytes -= inFlightByIndex.removeValue(forKey: result.index) ?? 0
                 switch result.outcome {
                 case let .published(reuseResult):
                     publishedCount += 1
@@ -501,6 +598,20 @@ actor MediaImportExecutor {
                     skippedForeignCount += 1
                     incompleteItems.append(destinationAssetID(for: copyEntries[result.index], context: context))
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
+                case .failed(.outOfSpace):
+                    // The floor reached the hard way. Not a failed entry — it
+                    // never landed and the re-plan offers it again — so it is
+                    // neither counted nor revealed; it ends admission.
+                    if spaceStop == nil {
+                        spaceStop = SpaceStop(bytesFree: self.volumeCapacity(destinationURL) ?? 0)
+                        OtosLog.mediaIO.noticeOperation("mediaOperation.batch", phase: "diskFloor", fields: [
+                            "run": context.runID,
+                            "batch": "\(context.batch.unixMilliseconds)",
+                            "reason": "enospc",
+                            "index": "\(result.index)",
+                        ])
+                    }
+                    byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
                 case let .failed(failure):
                     failedCount += 1
                     failureReasons.append(failure)
@@ -508,13 +619,16 @@ actor MediaImportExecutor {
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 }
                 onProgress(byteProgress.current())
-                if nextIndex < copyEntries.count, !cancelFlag.isCancelled {
+                if nextIndex < copyEntries.count, !cancelFlag.isCancelled, admits(nextIndex) {
                     submit(nextIndex)
                     nextIndex += 1
                 }
             }
+            return spaceStop
         }
-        if context.allowSourceDeletion {
+        // A floor stop is never fully clean: the un-copied entries exist only
+        // on the card, so the erase sweep does not run (ADR 0027).
+        if context.allowSourceDeletion, spaceStop == nil {
             let eraseOutcome = await eraseSourceFiles(context: context, publishedEntries: publishedEntries)
             return EntryTotals(
                 publishedCount: publishedCount,
@@ -523,6 +637,7 @@ actor MediaImportExecutor {
                 skippedForeignCount: skippedForeignCount,
                 incompleteItems: incompleteItems,
                 overlayReuse: overlayReuse,
+                spaceStop: nil,
                 failureReasons: failureReasons,
                 eraseOutcome: eraseOutcome
             )
@@ -534,6 +649,7 @@ actor MediaImportExecutor {
             skippedForeignCount: skippedForeignCount,
             incompleteItems: incompleteItems,
             overlayReuse: overlayReuse,
+            spaceStop: spaceStop,
             failureReasons: failureReasons,
             eraseOutcome: EraseOutcome(deletedCount: 0, deletedBytes: 0, skippedCount: 0, failedCount: 0)
         )
@@ -776,6 +892,11 @@ actor MediaImportExecutor {
         case sourceNotReady
         case sourceChanged(ChangedFact)
         case sourceAbsent
+        /// The write refused for space (`ENOSPC`). Not a per-file fault: the
+        /// entry never landed and the re-plan offers it again, so it is not
+        /// counted as failed — it stops the run at the floor instead
+        /// (ADR 0027, the backstop for a capacity figure that lied).
+        case outOfSpace
         case other
 
         init(_ validation: SourceValidation) {
@@ -872,16 +993,17 @@ actor MediaImportExecutor {
         onByteProgress: @escaping @Sendable (Int64) -> Void
     ) async -> EntryOutcome? {
         let sharedCancel = cancelFlag
+        let transfer = transfer
         let copyOutcome = await withCheckedContinuation {
             (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
             Task.detached {
-                let outcome = CopyfileTransfer.copy(
-                    from: sourceURL,
-                    to: stagingURL,
-                    onProgress: { progress in
+                let outcome = transfer(
+                    sourceURL,
+                    stagingURL,
+                    { progress in
                         onByteProgress(progress.completedBytes)
                     },
-                    shouldContinue: { !sharedCancel.isCancelled }
+                    { !sharedCancel.isCancelled }
                 )
                 continuation.resume(returning: outcome)
             }
@@ -891,13 +1013,13 @@ actor MediaImportExecutor {
             try? await store.abandonImportOperation(key: operationKey)
             return .cancelled
         }
-        if case let .failed(message) = copyOutcome {
+        if case let .failed(code) = copyOutcome {
             try? FileManager.default.removeItem(at: stagingURL)
             try? await store.abandonImportOperation(key: operationKey)
             OtosLog.catalog.error(
-                "op=mediaOperation.copy phase=failed detail=\(message, privacy: .public)"
+                "op=mediaOperation.copy phase=failed errno=\(code, privacy: .public)"
             )
-            return .failed(.other)
+            return .failed(code == ENOSPC ? .outOfSpace : .other)
         }
         return nil
     }
@@ -1831,24 +1953,6 @@ actor MediaImportExecutor {
             return .changed(.date)
         }
         return .matches
-    }
-
-    private func freeSpaceRequired(for entries: [MediaOperationPlanEntry]) -> Int64? {
-        let bytes = entries.reduce(Int64(0)) { $0 + ($1.source.byteSize ?? 0) }
-        guard bytes > 0 else {
-            return nil
-        }
-        return bytes + (64 * 1024 * 1024)
-    }
-
-    private func hasEnoughFreeSpace(at url: URL, required: Int64) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
-              let capacity = values.volumeAvailableCapacityForImportantUsage
-        else {
-            // Provider quota is unobservable; do not block when capacity is unknown.
-            return true
-        }
-        return capacity >= required
     }
 }
 

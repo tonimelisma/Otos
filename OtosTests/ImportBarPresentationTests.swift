@@ -698,9 +698,29 @@ struct ImportBarPresentationTests {
         #expect(drawn.secondaryLine == .plain("Summer Photos isn't available"))
     }
 
-    @Test func failedOutOfSpace() {
-        let drawn = Self.map(Self.presentation(state: .failed(reason: .outOfSpace, publishedCount: 0)))
-        #expect(drawn.secondaryLine == .plain("The disk is full"))
+    /// ADR 0027: running out of room is a Stopped outcome, not a failure. The
+    /// clause states the capacity read at the stop, in the spec's byte units.
+    @Test func stoppedAtTheDiskFloorNamesTheRoomLeftAndOffersTheRemainder() {
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 268, skipCount: 412), generation: 2, skippedPackageCount: 0),
+            copiedJustNow: 412,
+            isFullyClean: false,
+            stopReason: .diskFloor(bytesFree: 5_400_000_000),
+            plannedCount: 680
+        ))
+        #expect(drawn.kind == .done)
+        #expect(drawn.primaryLine == "Stopped — 412 of 680 items copied")
+        #expect(drawn.secondaryLine == .plain("Not enough room on the disk · 5.4 GB left"))
+        #expect(drawn.primaryAction == .importItems(count: 268))
+        let nothing = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 680), generation: 2, skippedPackageCount: 0),
+            copiedJustNow: 0,
+            isFullyClean: false,
+            stopReason: .diskFloor(bytesFree: 4_200_000_000),
+            plannedCount: 680
+        ))
+        #expect(nothing.primaryLine == "Stopped — 0 of 680 items copied")
+        #expect(nothing.secondaryLine == .plain("Not enough room on the disk · 4.2 GB left"))
     }
 
     @Test func failedUnexpectedNamesNoCauseAndNeverLeaksDetail() {

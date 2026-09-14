@@ -191,6 +191,20 @@ nonisolated struct MediaAttentionItem: Equatable, Sendable, Identifiable {
 nonisolated enum ImportStopReason: Equatable, Sendable {
     /// The user pressed Cancel.
     case user
+    /// The next entry would have left the destination volume below
+    /// `FreeSpaceFloor.bytes`, or a write refused for space first
+    /// (ADR 0027). `bytesFree` is the capacity read at the stop, for the
+    /// bar's clause.
+    case diskFloor(bytesFree: Int64)
+}
+
+/// The free space Otos never takes a volume below (ADR 0027): the import
+/// executor admits an entry only while the destination keeps this much after
+/// it and every entry in flight lands, and device staging does not start a
+/// download below it. One constant with one home — the promise is the same
+/// wherever Otos writes.
+nonisolated enum FreeSpaceFloor {
+    static let bytes: Int64 = 5 * 1024 * 1024 * 1024
 }
 
 /// Causes of an import failure a user can act on (DES-035/DES-039 forbid
@@ -199,7 +213,6 @@ nonisolated enum ImportStopReason: Equatable, Sendable {
 nonisolated enum MediaOperationFailureReason: Equatable, Sendable {
     case sourceRemoved
     case destinationUnavailable
-    case outOfSpace
     /// Every attempted entry failed `SourceValidation` with the same
     /// non-per-file reason — the source itself wasn't ready, not any one
     /// file. Per the owner decision, `ImportSourceReadiness` (ADR 0024)

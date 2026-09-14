@@ -11,7 +11,6 @@ import OSLog
 /// keeps using `FileMaterialization`.
 @MainActor
 final class DeviceStagingRegistry {
-    private let freeSpaceFloorBytes: Int64 = 10 * 1024 * 1024 * 1024
     private var sessionsByIdentity: [String: DeviceCameraSession] = [:]
 
     init() {}
@@ -145,7 +144,10 @@ final class DeviceStagingRegistry {
         guard let available = values?.volumeAvailableCapacityForImportantUsage else {
             return true
         }
-        return available >= freeSpaceFloorBytes
+        // The same promise the import executor keeps (ADR 0027), from the
+        // same constant. The file's own size is not known at this seam, so
+        // a stage may finish just below the floor; it never starts below it.
+        return available >= FreeSpaceFloor.bytes
     }
 
     /// A Sendable resolver from a device root to its live session.
@@ -245,8 +247,8 @@ final class DeviceStagingRegistry {
                 return .completed
             case .cancelled:
                 return .cancelled
-            case let .failed(message):
-                return .failed(message)
+            case let .failed(code):
+                return .failed("copyfile errno=\(code)")
             }
         }
         do {
