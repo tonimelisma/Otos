@@ -92,6 +92,16 @@ actor MediaOperationCoordinator {
         /// (`import-bar.md` state F).
         let incompleteItems: [MediaAssetID]
         let eraseOutcome: EraseOutcome?
+        /// Why this run stopped before attempting every planned entry, or `nil`
+        /// for a run that attempted them all. Published as
+        /// `MediaOperationSourcePresentation.stopReason` so state F's Stopped
+        /// variant renders from the run's own facts across the re-plan.
+        let stopReason: ImportStopReason?
+        /// The number of entries this run set out to copy — the plan's
+        /// `copyCount` at execution — published as `plannedCount` for
+        /// "12 of 42". The re-plan's own `copyCount` is the remainder and is
+        /// not this number.
+        let plannedCount: Int
         /// The instant this run actually settled, published as state
         /// (`MediaOperationSourcePresentation.settledAt`) so the ViewModel's
         /// auto-dismiss task computes its 6 s deadline from a stable anchor
@@ -201,7 +211,7 @@ actor MediaOperationCoordinator {
         /// decision: "move batch selection to first-asset"). Reset to
         /// `false` at the start of every new attempt in
         /// `runExecution`. Terminal-state batch visibility
-        /// (`.completed`/`.cancelled`/`.failed`) is unaffected — that fallback
+        /// (`.completed`/`.stopped`/`.failed`) is unaffected — that fallback
         /// already has its own reason to stay eager (state G pinning).
         var batchAssetCountConfirmed = false
     }
@@ -641,6 +651,8 @@ actor MediaOperationCoordinator {
                     && skippedForeignCount == 0 && summary.blockedCount == 0,
                 incompleteItems: incompleteItems,
                 eraseOutcome: nil,
+                stopReason: nil,
+                plannedCount: summary.copyCount,
                 settledAt: Date()
             )
             // Stored on the session so `presentation(for:)` reads the real
@@ -672,6 +684,8 @@ actor MediaOperationCoordinator {
                     && eraseOutcome.failedCount == 0,
                 incompleteItems: incompleteItems,
                 eraseOutcome: eraseOutcome,
+                stopReason: nil,
+                plannedCount: summary.copyCount,
                 settledAt: Date()
             )
             session.settledOutcome = SettledOutcome(
@@ -691,20 +705,31 @@ actor MediaOperationCoordinator {
             {
                 await autoEjectIfRequested(sourceRoot)
             }
-        case let .cancelled(publishedCount, _, _, _, _):
+        case let .stopped(reason, publishedCount, _, _, _, _):
             // Release claim: go to inventory and rebuild. This ensures the
-            // cancelled execution's destination reservation does not block
-            // other sources (e.g. B) from reclaiming the base name. A cancelled
-            // run is never fully clean (J8): the re-planned Ready state still
-            // reports what landed before the stop.
+            // stopped execution's destination reservation does not block
+            // other sources (e.g. B) from reclaiming the base name. A stopped
+            // run is never fully clean (J8), so it neither auto-ejects nor
+            // erases; the bar draws state F's Stopped variant from this
+            // completion — what landed, of what was planned, and why it
+            // stopped — and offers the re-plan's remainder as the act.
             session.phase = .inventory
             session.isDirty = true
+            // The plan this run executed from is false now — its landed
+            // entries are skips — and the rebuild replacing it has not run
+            // yet. Holding it (ARC-047's refresh-is-not-a-first-check rule)
+            // would offer the *pre-run* count as the remainder for the length
+            // of the rebuild; dropping it makes the bar draw the act as
+            // pending until the honest number lands (DES-030).
+            session.lastReadyContext = nil
             session.lastCompletion = AttachmentCompletion(
                 batch: context.batch,
                 publishedCount: publishedCount,
                 isFullyClean: false,
                 incompleteItems: [],
                 eraseOutcome: nil,
+                stopReason: reason,
+                plannedCount: summary.copyCount,
                 settledAt: Date()
             )
             sourceSessions[source] = session
@@ -1672,6 +1697,8 @@ actor MediaOperationCoordinator {
             copiedJustNow: session.lastCompletion?.publishedCount,
             isFullyClean: session.lastCompletion?.isFullyClean,
             settledAt: session.lastCompletion?.settledAt,
+            stopReason: session.lastCompletion?.stopReason,
+            plannedCount: session.lastCompletion?.plannedCount,
             sessionPreferences: session.preferences,
             incompleteItems: session.lastCompletion?.incompleteItems ?? [],
             eraseOutcome: session.lastCompletion?.eraseOutcome

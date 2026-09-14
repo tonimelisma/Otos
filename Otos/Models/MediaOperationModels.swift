@@ -183,6 +183,16 @@ nonisolated struct MediaAttentionItem: Equatable, Sendable, Identifiable {
     let reason: MediaOperationBlockReason
 }
 
+/// Why a run ended before attempting every entry it planned (`import-bar.md`
+/// state F, Stopped). A stop is a stop — nothing went wrong that `Try Again`
+/// could fix — and the reason is data the bar names at L3. Distinct from
+/// `MediaOperationFailureReason` on purpose: a stopped run is a partial
+/// success with a real batch, a remainder, and no auto-eject or erase.
+nonisolated enum ImportStopReason: Equatable, Sendable {
+    /// The user pressed Cancel.
+    case user
+}
+
 /// Causes of an import failure a user can act on (DES-035/DES-039 forbid
 /// publishing internal vocabulary to the bar). `.unexpected` is the one case
 /// whose detail is for the log, never the bar (`import-bar.md` state G).
@@ -522,6 +532,18 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// ~6 s only on a fully clean run"). `nil` exactly when
     /// `isFullyClean`/`copiedJustNow` are.
     let settledAt: Date?
+    /// Why that same settled execution stopped before attempting everything it
+    /// planned, or `nil` for a run that attempted every entry (whether or not
+    /// every entry landed). Set, the bar draws state F's Stopped variant from
+    /// this and `copiedJustNow` of `plannedCount` — the run's own facts, not the
+    /// re-plan's, which describes the remainder and moves if the card gains
+    /// files. Persists across the post-settlement re-plan like the rest of the
+    /// completion (`import-bar.md` state F, Stopped).
+    let stopReason: ImportStopReason?
+    /// How many entries that same settled execution set out to copy — the "of
+    /// 42" in `Stopped — 12 of 42 items copied`. `nil` exactly when
+    /// `copiedJustNow` is.
+    let plannedCount: Int?
     /// This attachment's live session preferences, read directly off the
     /// coordinator's own `SourceSession.preferences` rather than mirrored into a
     /// second ViewModel-owned dictionary. `setSessionPreferences` writes only to
@@ -553,6 +575,8 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         copiedJustNow: Int?,
         isFullyClean: Bool?,
         settledAt: Date?,
+        stopReason: ImportStopReason?,
+        plannedCount: Int?,
         sessionPreferences: ImportPreferences,
         incompleteItems: [MediaAssetID],
         eraseOutcome: EraseOutcome? = nil
@@ -569,6 +593,8 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.copiedJustNow = copiedJustNow
         self.isFullyClean = isFullyClean
         self.settledAt = settledAt
+        self.stopReason = stopReason
+        self.plannedCount = plannedCount
         self.sessionPreferences = sessionPreferences
         self.incompleteItems = incompleteItems
         self.eraseOutcome = eraseOutcome

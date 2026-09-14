@@ -99,6 +99,29 @@ nonisolated enum ImportBarPresentation {
             return failed(reason: reason, publishedCount: publishedCount, presentation: presentation)
         case let .executing(progress):
             return working(progress: progress, isCancelling: isCancelling, presentation: presentation, preferences: preferences)
+        default:
+            break
+        }
+        // A stopped run outranks everything below: the re-plan's Ready would
+        // otherwise swallow the fact that a run just ended early (J8 as
+        // written today falls through to plain Ready), and the detached
+        // snapshot's `.completed` would report it as an ordinary Done. A new
+        // run's `.executing`/`.failed` above still win — they are the newer
+        // fact about this attachment.
+        if let stopReason = presentation.stopReason,
+           let copiedJustNow = presentation.copiedJustNow,
+           let plannedCount = presentation.plannedCount
+        {
+            return stopped(
+                reason: stopReason,
+                copiedCount: copiedJustNow,
+                plannedCount: plannedCount,
+                remainder: readyTotals(presentation.state),
+                presentation: presentation,
+                preferences: preferences
+            )
+        }
+        switch presentation.state {
         case let .completed(summary, skippedForeignCount, failedCount, incompleteItems):
             return doneFromCompleted(
                 summary: summary,
@@ -466,6 +489,90 @@ nonisolated enum ImportBarPresentation {
             incompleteItems: presentation.incompleteItems,
             presentation: presentation,
             preferences: preferences
+        )
+    }
+
+    // MARK: - F · Stopped
+
+    /// A run that ended before attempting every entry it planned — the user's
+    /// Cancel, or the disk floor (ADR 0027). Still F: a partial batch is a real
+    /// batch and nothing already copied is lost. What differs is that the bar
+    /// says the run stopped, from the run's own facts (`copiedJustNow` of
+    /// `plannedCount`), names the cause at L3, and offers what is left. The
+    /// remainder is the *re-plan's* `copyCount`, so the act reads a disabled
+    /// `Import` for the moment the re-plan takes and the real number once it
+    /// lands — never the pre-run plan's count, which the coordinator drops on
+    /// a stop because that run has just made it false. This is the one F
+    /// variant with a prominent act: its subject exists, the items are still
+    /// on an attached card (`import-bar.md` state F, Stopped; J8). Identical
+    /// on the card row and the batch row.
+    private static func stopped(
+        reason: ImportStopReason,
+        copiedCount: Int,
+        plannedCount: Int,
+        remainder: (MediaOperationPlanTotals, [MediaAttentionItem])?,
+        presentation: MediaOperationSourcePresentation,
+        preferences: ImportPreferences
+    ) -> ImportBarDrawnState {
+        let destinationName = presentation.destinationDisplayName ?? "the library"
+        let primaryLine = "Stopped — \(copiedCount) of \(plannedCount) \(plannedCount == 1 ? "item" : "items") copied"
+        // Card gone: the sentence is about the result, and both the choices
+        // and the act are omitted — their subject no longer exists (DES-053
+        // exception), exactly as F's own card-gone variant does.
+        guard presentation.cardStillExists else {
+            return ImportBarDrawnState(
+                kind: .done,
+                primaryLine: primaryLine,
+                primaryBadge: .none,
+                secondaryLine: .plain("In \(destinationName) · card ejected — safe to remove"),
+                middleZone: .hidden,
+                primaryAction: .none,
+                primaryEnabled: true,
+                eraseConfirmationProvenClean: false
+            )
+        }
+        let clause: String? = switch reason {
+        case .user:
+            copiedCount > 0 ? "They're in \(destinationName)" : nil
+        }
+        guard let (summary, attentionItems) = remainder else {
+            // The re-plan has not landed yet: the act is coming, its count is not.
+            let action: ImportBarDrawnState.PrimaryAction = presentation.state == .queuedForReadiness
+                ? .importQueued
+                : .importPending
+            return ImportBarDrawnState(
+                kind: .done,
+                primaryLine: primaryLine,
+                primaryBadge: .none,
+                secondaryLine: clause.map { .plain($0) } ?? .none,
+                middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),
+                primaryAction: action,
+                primaryEnabled: false,
+                eraseConfirmationProvenClean: false
+            )
+        }
+        // Attention items keep erase disabled for the same reason state D
+        // does (DES-038); the stop stays the primary fact.
+        let middleZone: ImportBarDrawnState.MiddleZone = .choices(
+            eraseEnabled: attentionItems.isEmpty,
+            eraseDisabledReason: attentionItems.isEmpty ? nil : "Some items still need attention."
+        )
+        let action: ImportBarDrawnState.PrimaryAction = if summary.copyCount > 0 {
+            .importItems(count: summary.copyCount)
+        } else if preferences.deleteSourceAfterImport {
+            .eraseItems(count: summary.skipCount + summary.companionCopyCount)
+        } else {
+            .ejectCard
+        }
+        return ImportBarDrawnState(
+            kind: .done,
+            primaryLine: primaryLine,
+            primaryBadge: .none,
+            secondaryLine: clause.map { .plain($0) } ?? .none,
+            middleZone: middleZone,
+            primaryAction: action,
+            primaryEnabled: true,
+            eraseConfirmationProvenClean: false
         )
     }
 

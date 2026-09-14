@@ -174,7 +174,8 @@ actor ControlledExecutionControl {
         } else {
             pending[source] = queue
         }
-        cont.resume(returning: .cancelled(
+        cont.resume(returning: .stopped(
+            reason: .user,
             publishedCount: 0,
             hasBlockedEntries: false,
             hasEntryFailures: false,

@@ -121,6 +121,8 @@ struct SidebarSelectionPolicyTests {
             copiedJustNow: nil,
             isFullyClean: nil,
             settledAt: nil,
+            stopReason: nil,
+            plannedCount: nil,
             sessionPreferences: .default,
             incompleteItems: []
         )

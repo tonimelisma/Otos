@@ -180,8 +180,9 @@ one of those seven.
 | 14 | No libraries configured at all | B, with `Add a Library…` opening Settings instead of a pop-up | folds into B |
 | 15 | Card removed or destination lost mid-import | G, with the cause named | folds into G |
 | 16 | Camera still enumerating | Grid-level device banner, not the bar | separate, grid spec |
+| 17 | The last run **stopped before attempting every planned entry** — the user's Cancel, or the disk floor (ADR 0027) | F, Stopped variant — never auto-dismisses | folds into F |
 
-So: **seven bar states to draw** — A, B, C (+2 variants), D, E (+1), F (+1), G.
+So: **seven bar states to draw** — A, B, C (+2 variants), D, E (+1), F (+2), G.
 
 ### A · Preparing
 
@@ -312,6 +313,32 @@ by the re-plan, so a card that gains a file returns to **C** with `1 new item`; 
 `copied just now` clause is scoped to this attachment, so re-inserting the card later
 gives C's ordinary nothing-new wording, no import having happened in that session.
 
+**F · Stopped.** The run ended before it attempted everything it planned — the user
+pressed Cancel, or the destination volume reached the disk floor (ADR 0027). It is
+still F: a partial batch is a real batch, the card is unchanged, and nothing already
+copied is lost. What differs is that the bar must *say* the run stopped, from the
+run's own facts, and offer what is left. L1 `Stopped — 12 of 42 items copied` · L3
+one clause for the cause: `They're in Summer Photos` after a Cancel (omitted when
+nothing was copied), the floor's clause at the floor. Choices present while the card
+is attached. The act is the remainder's own **`Import 30 Items`** — and this is the
+one F variant with a prominent act, because its subject exists: 30 items are still
+on an attached card, so DES-053's exception does not apply. The count is the
+re-plan's, not the run's: the coordinator drops the plan the run executed from (its
+landed entries are skips now), so for the moment the re-plan takes the act reads a
+disabled `Import`, then the honest number (DES-030). When nothing is left, the act
+is the card's, as in F-attached. Identical on `.library(card)` and
+`.importBatch(new)`. Never auto-dismisses, and never fully clean, so the card is
+neither ejected nor erased on the stop's account.
+
+**F · Stopped, card gone.** L1 the same · L3 `In Summer Photos · card ejected — safe
+to remove`; choices and act omitted, as in F card-gone.
+
+The stop is a fact about the *last run*, so it is stated until the next run starts —
+a card that gains a file meanwhile still reads `Stopped — 12 of 42 items copied`,
+now with `Import 31 Items`, because both halves stay true. A new run's Working (or
+its own Failed) outranks it. It is not a failure: nothing went wrong that
+`Try Again` could fix, and state G's cause vocabulary does not include it.
+
 ### There is no `Show These Items` button
 
 The act zone is empty here, and in F-incomplete, because the only thing that was
@@ -404,6 +431,8 @@ presentation has to carry the facts the states need. It currently carries four:
 | F | Count **copied just now**, scoped to this attachment | Partly — `completed` carries a summary, but "this attachment" needs the attachment generation the coordinator already tracks. |
 | F, G | Whether the run was **fully clean** (auto-dismiss gate) | Partly — `completed` carries `skippedForeignCount` and `failedCount`; blocked and attention items must join them. |
 | G | Typed **failure reason** | No — `failed(problem: String)`. See state G. |
+| F, Stopped | Typed **stop reason** | No — a cancelled run reaches the completion as `isFullyClean: false` and nothing more, indistinguishable from a run that attempted everything and lost some. |
+| F, Stopped | The run's own **planned count**, for "12 of 42" | No — the re-plan's `copyCount` is the remainder, not the run's total, and moves if the card gains files. |
 
 Nothing here is a new subsystem: each is a fact the coordinator already knows and
 does not publish. Add them to the presentation rather than letting the view re-derive
@@ -561,8 +590,8 @@ Where: `.importBatch(new)` — the user is on the batch when they cancel.
 
 1. `Cancel` (or Escape). No confirmation: copies are additive, originals read-only.
 2. **E, cancelling** — `Stopping…` / `Finishing the current item`. Indicator stays determinate and moving; button disabled.
-3. **F, cancelled** — `Stopped — 12 items copied` / `They're in Summer Photos`, and the act zone is empty if the card went with the cancel; the user is already on the batch holding the 12. Never auto-dismisses. The partial batch remains a real batch in the sidebar.
-4. Back on `.library(card)`, the re-plan shows **C** with the remaining 30. Pressing Import creates a *second* batch. Nothing is duplicated.
+3. **F, Stopped** — `Stopped — 12 of 42 items copied` / `They're in Summer Photos`, and the act zone is empty if the card went with the cancel; the user is already on the batch holding the 12. Never auto-dismisses. The partial batch remains a real batch in the sidebar.
+4. With the card still attached, the same bar — on the batch row and on `.library(card)` alike — offers `Import 30 Items` for what is left, once the re-plan has counted it. Pressing it creates a *second* batch. Nothing is duplicated.
 
 ### J9 · A failure mid-import
 

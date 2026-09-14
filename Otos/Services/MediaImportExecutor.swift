@@ -361,7 +361,8 @@ actor MediaImportExecutor {
             "workers": "\(Self.workerCount)",
         ])
         if cancelFlag.isCancelled {
-            return .cancelled(
+            return .stopped(
+                reason: .user,
                 publishedCount: entryTotals.publishedCount,
                 hasBlockedEntries: hasBlockedEntries,
                 hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch,
@@ -1867,7 +1868,11 @@ nonisolated enum MediaImportExecutionResult: Equatable, Sendable {
         failedCount: Int,
         incompleteItems: [MediaAssetID]
     )
-    case cancelled(
+    /// The run ended before attempting every planned entry — a partial success
+    /// carrying why (`ImportStopReason`), never a failure. What landed is a real
+    /// batch; the erase sweep never ran; the remainder is the re-plan's to offer.
+    case stopped(
+        reason: ImportStopReason,
         publishedCount: Int,
         hasBlockedEntries: Bool,
         hasEntryFailures: Bool,

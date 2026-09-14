@@ -388,7 +388,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("STEP resumePending cancelled")
         await execControl.resumePending(
             for: cardAPath,
-            with: .cancelled(
+            with: .stopped(
+                reason: .user,
                 publishedCount: 0,
                 hasBlockedEntries: false,
                 hasEntryFailures: false,
@@ -1057,6 +1058,76 @@ struct MediaOperationCoordinatorAdversarialTests {
             return false
         }
         #expect(failed.batchID != nil, "The batch minted for this attempt must survive into the Failed presentation")
+        log("END")
+        await coordinator.shutdown()
+    }
+
+    /// Plan 0102 B1: a run that stops early settles as a partial success whose
+    /// facts — why it stopped, what it copied, of what it planned — are
+    /// published as state and survive the post-settlement re-plan, so state F's
+    /// Stopped variant can render from them on either sidebar row. Never fully
+    /// clean, so it neither auto-dismisses nor ejects.
+    @Test func aStoppedRunPublishesItsStopFactsAcrossTheRePlan() async throws {
+        log("START aStoppedRunPublishesItsStopFactsAcrossTheRePlan")
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            try Data(repeating: 5, count: 1024).write(to: cardURL.appending(path: name))
+        }
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:stopped-run", displayName: "Card", isEjectable: true)
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        var prefs = ImportPreferences.default
+        prefs.destinationFolderPolicy = .none
+        prefs.destinationNamePolicy = .original
+        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
+
+        let execControl = ControlledExecutionControl()
+        await execControl.suspendNextExecution(for: cardPath)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
+        )
+        await coordinator.start()
+        let plan = try await waitForReady(coordinator, source: cardPath)
+        #expect(plan.totals.copyCount == 3)
+        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
+        try await waitForPendingExecution(execControl, source: cardPath)
+
+        await execControl.resumePending(for: cardPath, with: .stopped(
+            reason: .user,
+            publishedCount: 1,
+            hasBlockedEntries: false,
+            hasEntryFailures: false,
+            skippedForeignCount: 0,
+            failedCount: 0
+        ))
+        await queueTask.value
+
+        // The re-plan that follows settlement lands as Ready; the stop facts
+        // must still be on that frame, not only on the settlement frame.
+        let rePlanned = try await waitForPresentation(coordinator, source: cardPath) { pres in
+            if case .ready = pres.state {
+                return pres.stopReason != nil
+            }
+            return false
+        }
+        #expect(rePlanned.stopReason == .user)
+        #expect(rePlanned.copiedJustNow == 1)
+        #expect(rePlanned.plannedCount == 3)
+        #expect(rePlanned.isFullyClean == false)
+        #expect(rePlanned.batchID != nil, "a stopped run's partial batch stays pinned")
         log("END")
         await coordinator.shutdown()
     }

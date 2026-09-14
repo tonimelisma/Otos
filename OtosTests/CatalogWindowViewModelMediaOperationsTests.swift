@@ -41,6 +41,8 @@ struct CatalogWindowViewModelMediaOperationsTests {
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
             settledAt: settledAt,
+            stopReason: nil,
+            plannedCount: nil,
             sessionPreferences: sessionPreferences,
             incompleteItems: []
         )

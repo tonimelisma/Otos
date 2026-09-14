@@ -22,7 +22,9 @@ struct ImportBarPresentationTests {
         incompleteItems: [MediaAssetID] = [],
         eraseOutcome: EraseOutcome? = nil,
         sourceKind: LibraryRootKind = .removableVolume,
-        sessionPreferences: ImportPreferences = .default
+        sessionPreferences: ImportPreferences = .default,
+        stopReason: ImportStopReason? = nil,
+        plannedCount: Int? = nil
     ) -> MediaOperationSourcePresentation {
         MediaOperationSourcePresentation(
             sourcePath: source,
@@ -37,6 +39,8 @@ struct ImportBarPresentationTests {
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
             settledAt: settledAt,
+            stopReason: stopReason,
+            plannedCount: plannedCount,
             sessionPreferences: sessionPreferences,
             incompleteItems: incompleteItems,
             eraseOutcome: eraseOutcome
@@ -535,6 +539,134 @@ struct ImportBarPresentationTests {
         ))
         #expect(drawn.kind == .ready)
         #expect(drawn.primaryLine == "1 new item · 4 MB")
+    }
+
+    // MARK: - F · Stopped (plan 0102 B1, J8)
+
+    @Test func stoppedAfterCancelOffersTheRemainderWhileTheCardIsAttached() {
+        // J8 step 3–4: the run's own facts at L1, the cause at L3, and the
+        // re-plan's remainder as the act — on either row.
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 30, skipCount: 12), generation: 2, skippedPackageCount: 0),
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(drawn.kind == .done)
+        #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
+        #expect(drawn.secondaryLine == .plain("They're in Summer Photos"))
+        #expect(drawn.middleZone == .choices(eraseEnabled: true, eraseDisabledReason: nil))
+        #expect(drawn.primaryAction == .importItems(count: 30))
+        #expect(drawn.primaryEnabled)
+    }
+
+    @Test func stoppedBeforeTheRePlanLandsHoldsTheActAsPending() {
+        // The coordinator drops the pre-run plan on a stop, so until the
+        // rebuild lands there is no honest remainder to put in the title.
+        let drawn = Self.map(Self.presentation(
+            state: .waitingForMetadata(done: 42, total: 42),
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
+        #expect(drawn.primaryAction == .importPending)
+        #expect(!drawn.primaryEnabled)
+        let queued = Self.map(Self.presentation(
+            state: .queuedForReadiness,
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(queued.primaryAction == .importQueued)
+        #expect(!queued.primaryEnabled)
+    }
+
+    @Test func stoppedWithTheCardGoneHasNoChoicesAndNoAct() {
+        // The detached snapshot carries `.completed`; the stop still outranks
+        // Done, and the card-gone rule applies (DES-053 exception).
+        let drawn = Self.map(Self.presentation(
+            state: .completed(summary: Self.totals(copyCount: 12)),
+            cardStillExists: false,
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
+        #expect(drawn.secondaryLine == .plain("In Summer Photos · card ejected — safe to remove"))
+        #expect(drawn.middleZone == .hidden)
+        #expect(drawn.primaryAction == .none)
+    }
+
+    @Test func stoppedWithNothingCopiedStatesTheCountAndNoDestinationClause() {
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 42), generation: 2, skippedPackageCount: 0),
+            copiedJustNow: 0,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(drawn.primaryLine == "Stopped — 0 of 42 items copied")
+        #expect(drawn.secondaryLine == .none)
+        #expect(drawn.primaryAction == .importItems(count: 42))
+    }
+
+    @Test func stoppedWithNothingLeftOffersEjectOrErase() {
+        // Cancel landed after the last copy: the remainder is empty, so the act
+        // is the card's, exactly as F-attached offers it.
+        let base = Self.presentation(
+            state: .ready(summary: Self.totals(skipCount: 42), generation: 2, skippedPackageCount: 0),
+            copiedJustNow: 42,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        )
+        #expect(Self.map(base).primaryAction == .ejectCard)
+        var erase = ImportPreferences.default
+        erase.deleteSourceAfterImport = true
+        #expect(Self.map(base, preferences: erase).primaryAction == .eraseItems(count: 42))
+    }
+
+    @Test func stoppedKeepsEraseDisabledWhileAttentionRemains() {
+        let item = MediaAttentionItem(
+            id: MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "IMG_0001.JPG")),
+            reason: .noUsableDate
+        )
+        let drawn = Self.map(Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 30), generation: 2, skippedPackageCount: 0, attentionItems: [item]),
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
+        #expect(drawn.middleZone == .choices(eraseEnabled: false, eraseDisabledReason: "Some items still need attention."))
+        #expect(drawn.primaryAction == .importItems(count: 30))
+    }
+
+    @Test func aNewRunOutranksTheStopItFollows() {
+        // `lastCompletion` still carries the stop while the retry executes;
+        // Working (and a retry's Failed) are the newer fact.
+        let working = Self.map(Self.presentation(
+            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 30, completedBytes: 1, totalBytes: 30, elapsedMs: 10)),
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(working.kind == .working)
+        let failed = Self.map(Self.presentation(
+            state: .failed(reason: .destinationUnavailable, publishedCount: 0),
+            copiedJustNow: 12,
+            isFullyClean: false,
+            stopReason: .user,
+            plannedCount: 42
+        ))
+        #expect(failed.kind == .failed)
     }
 
     @Test func doneAttachedErasedArmedWhenEraseChecked() {
