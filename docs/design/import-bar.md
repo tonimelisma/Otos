@@ -172,7 +172,7 @@ one of those seven.
 | 4 | `ready`, `copyCount == 0`, `skipCount > 0` | C, nothing-new variant | folds into C |
 | 5 | `ready`, source empty | C, empty-card variant | folds into C |
 | 6 | `ready` or `executionUnavailable` with attention items | **D · Ready, needs attention** | ✅ badge + reveal |
-| 7 | `queuedForReadiness` | A, with the button in its queued disabled form | folds into A |
+| 7 | `importRequested` — Import was pressed and the coordinator is holding the click until the plan is ready | Whatever state the bar is on, with `Import` disabled. The click's acknowledgement is the disabled button; every string, count and zone stays as it was (DES-035: no `Import queued`) | folds into the state it is on |
 | 8 | `executing` | **E · Working** | ✅ |
 | 9 | cancel requested, still winding down | E, cancelling variant | folds into E |
 | 10 | `completed`, clean | **F · Done** | ✅ |
@@ -670,12 +670,12 @@ anyone else — that list is a navigation surface, not a place to watch work fro
 | Current string | Replacement |
 | --- | --- |
 | `Inventory…`, `Planning…`, `Waiting for metadata (12/139)`, `Source changed — replanning…` | `Checking the card…` + L3 `12 of 139 items` |
-| `Import queued — finishing metadata…` | `Checking the card…`, disabled `Import queued` button |
+| `Import queued — finishing metadata…` | `Checking the card…` + L3 `12 of 139 items`, `Import` disabled — the held click changes nothing else |
 | `Importing 12/139` | `Importing 12 of 139` + L3 `19 MB of 68 MB · about 40 seconds left` |
 | `12 copy · 4 preexisting · 3 companion · 1 blocked · 521 MB · 2 skipped packages` | `12 new items · 521 MB` + L3 `4 already in Summer Photos` (attention count moves to state D) |
 | `Cleanup/eject withheld while blocked or skipped-package attention remains` | Nothing — the erase checkbox disables with a tooltip (DES-038) |
 | `Sidecars on · Delete source after import · Auto-eject off` | Nothing — the inline checkboxes state their own condition |
-| `Import queued (execution lands in a later update)` | The disabled `Import queued` button acknowledges the request (DES-039) |
+| `Import queued (execution lands in a later update)` | The disabled `Import` button acknowledges the request (DES-039, DES-035) |
 | `Import complete — nothing new` | `Nothing new on this card` |
 | `Nothing can be imported yet · 3 need attention` | State D wording above |
 | `Destination` | `Copy into` |

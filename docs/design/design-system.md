@@ -28,8 +28,8 @@ rule below and a principle here disagree, the principle wins and the rule is a b
 - **Show the outcome, not the machine.** The user reads results and consequences.
   Internal vocabulary — plan, disposition, inventory, replan, companion, execution,
   queued — never reaches a progress label, even when it is the most accurate word
-  available. The one explicit disabled action acknowledgement `Import queued` is
-  allowed because it tells the user their intent was accepted while work is held.
+  available. A click that is accepted but held is acknowledged by disabling the
+  control that took it, not by a label that names the holding.
 - **One fact, one owner.** Any piece of state renders in exactly one place at a
   time. A second rendering is permitted only when the first is off-screen, and it
   is then smaller and quieter: an indicator, not a report.

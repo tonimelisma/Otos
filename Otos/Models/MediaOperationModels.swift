@@ -444,7 +444,6 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
         skippedPackageCount: Int,
         attentionItems: [MediaAttentionItem] = []
     )
-    case queuedForReadiness
     case executing(progress: MediaOperationProgress)
     case completed(
         summary: MediaOperationPlanTotals,
@@ -504,6 +503,14 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// must carry").
     let destinationDisplayName: String?
     let state: MediaOperationSourceState
+    /// Import was pressed and the coordinator is holding the click until the
+    /// plan is ready (`queueImport` on a session that is not `.ready`, or a
+    /// Ready plan that went stale before execution began). Not a state: the
+    /// bar keeps drawing whatever `state` says — count, track and choices
+    /// included — and disables Import, which is the click's acknowledgement
+    /// (`import-bar.md` row 7). Cleared when execution starts or the request
+    /// is refused.
+    let importRequested: Bool
     let attachToReadyMs: Int?
     /// State rather than an event `presentationsStream()`'s dropping buffer
     /// could lose (`import-bar.md` "Where the user is standing"). Present
@@ -603,6 +610,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         destinationPath: LibraryRootPath?,
         destinationDisplayName: String?,
         state: MediaOperationSourceState,
+        importRequested: Bool = false,
         attachToReadyMs: Int?,
         batchID: ImportBatchID?,
         batchHasPublishedAssets: Bool,
@@ -622,6 +630,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.destinationPath = destinationPath
         self.destinationDisplayName = destinationDisplayName
         self.state = state
+        self.importRequested = importRequested
         self.attachToReadyMs = attachToReadyMs
         self.batchID = batchID
         self.batchHasPublishedAssets = batchHasPublishedAssets

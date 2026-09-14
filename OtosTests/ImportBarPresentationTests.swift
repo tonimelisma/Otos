@@ -14,6 +14,7 @@ struct ImportBarPresentationTests {
         destinationPath: LibraryRootPath? = destination,
         destinationDisplayName: String? = "Summer Photos",
         state: MediaOperationSourceState,
+        importRequested: Bool = false,
         batchID: ImportBatchID? = nil,
         cardStillExists: Bool = true,
         copiedJustNow: Int? = nil,
@@ -33,6 +34,7 @@ struct ImportBarPresentationTests {
             destinationPath: destinationPath,
             destinationDisplayName: destinationDisplayName,
             state: state,
+            importRequested: importRequested,
             attachToReadyMs: nil,
             batchID: batchID,
             batchHasPublishedAssets: batchID != nil && (copiedJustNow ?? 1) > 0,
@@ -133,12 +135,30 @@ struct ImportBarPresentationTests {
         #expect(Self.map(Self.presentation(state: .planning)).kind == .preparing)
     }
 
-    @Test func queuedForReadinessIsAWithQueuedButtonStillDisabled() {
-        let drawn = Self.map(Self.presentation(state: .queuedForReadiness))
-        #expect(drawn.kind == .preparing)
-        #expect(drawn.primaryAction == .importQueued)
-        #expect(drawn.primaryEnabled == false)
-        #expect(drawn.middleZone == .choices(track: .indeterminate, eraseEnabled: true, eraseDisabledReason: nil))
+    /// `import-bar.md` row 7: a click the coordinator is holding until the plan
+    /// is ready is not a state of its own. The bar keeps every string and zone
+    /// it would otherwise draw — the determinate count included — and only the
+    /// Import button changes, to disabled. No `Import queued` title (DES-035).
+    @Test func aHeldClickDisablesImportAndChangesNothingElse() {
+        let checking = Self.presentation(state: .waitingForMetadata(done: 112, total: 181))
+        let held = Self.presentation(state: .waitingForMetadata(done: 112, total: 181), importRequested: true)
+        let drawnChecking = Self.map(checking)
+        let drawnHeld = Self.map(held)
+        #expect(drawnHeld.primaryLine == drawnChecking.primaryLine)
+        #expect(drawnHeld.secondaryLine == .plain("112 of 181 items"))
+        #expect(drawnHeld.middleZone == drawnChecking.middleZone)
+        #expect(drawnHeld.primaryAction == .importNewItems)
+        #expect(!drawnHeld.primaryEnabled)
+        #expect(ImportPlanFooter.renderedPrimary(for: drawnHeld).title == "Import")
+
+        let ready = Self.presentation(
+            state: .ready(summary: Self.totals(copyCount: 42, skipCount: 139, copyBytes: 68_000_000), generation: 1, skippedPackageCount: 0),
+            importRequested: true
+        )
+        let drawnReady = Self.map(ready)
+        #expect(drawnReady.primaryLine == "42 new items · 68 MB")
+        #expect(drawnReady.primaryAction == .importNewItems)
+        #expect(!drawnReady.primaryEnabled)
     }
 
     @Test func eraseOnlyCompletionReportsDeletedFilesAndDoesNotRevealBatchItems() {
@@ -681,15 +701,17 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
         #expect(drawn.primaryAction == .importNewItems)
         #expect(!drawn.primaryEnabled)
-        let queued = Self.map(Self.presentation(
-            state: .queuedForReadiness,
+        let held = Self.map(Self.presentation(
+            state: .waitingForMetadata(done: 42, total: 42),
+            importRequested: true,
             copiedJustNow: 12,
             isFullyClean: false,
             stopReason: .user,
             plannedCount: 42
         ))
-        #expect(queued.primaryAction == .importQueued)
-        #expect(!queued.primaryEnabled)
+        #expect(held.primaryLine == "Stopped — 12 of 42 items copied")
+        #expect(held.primaryAction == .importNewItems)
+        #expect(!held.primaryEnabled)
     }
 
     @Test func stoppedWithTheCardGoneHasNoChoicesAndNoAct() {

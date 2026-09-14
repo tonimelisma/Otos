@@ -86,8 +86,6 @@ struct ImportPlanFooter: View {
             isDefault = false
         case .importNewItems:
             title = "Import"
-        case .importQueued:
-            title = "Import queued"
         case .ejectCard:
             title = "Eject Card"
         case let .eraseItems(count):
@@ -363,8 +361,6 @@ struct ImportPlanFooter: View {
             // interactive, and a disabled control stays a control to VoiceOver
             // and the tab order (DES-053; HIG push buttons).
             styledPrimary(Button(rendered.title, action: queueImport), hint: "Imports new items from the card")
-        case .importQueued:
-            styledPrimary(Button(rendered.title, action: queueImport), hint: "The import starts once the card has been checked")
         case .ejectCard:
             styledPrimary(Button(rendered.title, action: ejectCard), hint: "Ejects the card")
         case let .eraseItems(count):

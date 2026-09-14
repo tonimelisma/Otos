@@ -60,12 +60,12 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
     /// `Import` either way and `primaryEnabled` says which (DES-053, "a disabled
     /// primary action shall keep its position and its title"). The title carries
     /// no count — Otos imports everything new, so the number is L1's primary fact,
-    /// not a scope the click chooses (DES-036). `.importQueued` is the same
-    /// button after a click the coordinator is holding across a rebuild.
+    /// not a scope the click chooses (DES-036). A click the coordinator is
+    /// holding until the plan is ready (`presentation.importRequested`) is the
+    /// same button disabled — the bar keeps saying what it knows.
     enum PrimaryAction: Equatable, Sendable {
         case none
         case importNewItems
-        case importQueued
         case ejectCard
         case eraseItems(count: Int)
         case cancel
@@ -104,6 +104,38 @@ nonisolated enum ImportBarPresentation {
         preferences: ImportPreferences,
         sourceDisplayName: String,
         isCancelling: Bool = false
+    ) -> ImportBarDrawnState {
+        let drawn = mapState(
+            presentation: presentation,
+            preferences: preferences,
+            sourceDisplayName: sourceDisplayName,
+            isCancelling: isCancelling
+        )
+        // A held click is not a state (`import-bar.md` row 7): the bar says
+        // exactly what it would otherwise say, and the Import button — the
+        // control that took the click — is disabled until the coordinator
+        // begins the run. Nothing else changes, so the determinate count and
+        // the choices stay where they were.
+        guard presentation.importRequested, drawn.primaryAction == .importNewItems, drawn.primaryEnabled else {
+            return drawn
+        }
+        return ImportBarDrawnState(
+            kind: drawn.kind,
+            primaryLine: drawn.primaryLine,
+            primaryBadge: drawn.primaryBadge,
+            secondaryLine: drawn.secondaryLine,
+            middleZone: drawn.middleZone,
+            primaryAction: drawn.primaryAction,
+            primaryEnabled: false,
+            eraseConfirmationProvenClean: drawn.eraseConfirmationProvenClean
+        )
+    }
+
+    private static func mapState(
+        presentation: MediaOperationSourcePresentation,
+        preferences: ImportPreferences,
+        sourceDisplayName: String,
+        isCancelling: Bool
     ) -> ImportBarDrawnState {
         guard presentation.destinationPath != nil else {
             return noDestination(presentation: presentation, sourceDisplayName: sourceDisplayName)
@@ -202,17 +234,12 @@ nonisolated enum ImportBarPresentation {
         case let .waitingForMetadata(done, total):
             itemsLine = "\(done) of \(total) items"
             track = .determinate(completed: Int64(done), total: Int64(total))
-        case .queuedForReadiness:
-            itemsLine = nil
-            track = .indeterminate
         default:
             itemsLine = nil
             track = .indeterminate
         }
         let primaryLine = sourceKind == .deviceMTP ? "Checking the camera…" : "Checking the card…"
-        let primaryAction: ImportBarDrawnState.PrimaryAction = state == .queuedForReadiness
-            ? .importQueued
-            : .importNewItems
+        let primaryAction: ImportBarDrawnState.PrimaryAction = .importNewItems
         // The choices are live while Otos checks: nothing about the check
         // depends on the destination or the checkboxes, and a pick made now is
         // what the first plan is built against. Erase is enabled because no
@@ -603,16 +630,13 @@ nonisolated enum ImportBarPresentation {
         }
         guard let (summary, attentionItems) = remainder else {
             // The re-plan has not landed yet: the act is coming, its count is not.
-            let action: ImportBarDrawnState.PrimaryAction = presentation.state == .queuedForReadiness
-                ? .importQueued
-                : .importNewItems
             return ImportBarDrawnState(
                 kind: .done,
                 primaryLine: primaryLine,
                 primaryBadge: .none,
                 secondaryLine: clause.map { .plain($0) } ?? .none,
                 middleZone: .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil),
-                primaryAction: action,
+                primaryAction: .importNewItems,
                 primaryEnabled: false,
                 eraseConfirmationProvenClean: false
             )

@@ -2228,9 +2228,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         if case .inventory = stillPreparing?.state {
             isPreparing = true
         }
-        if case .queuedForReadiness = stillPreparing?.state {
-            isPreparing = true
-        }
         #expect(isPreparing, "Published state must stay in the preparing family while still enumerating")
 
         // Pressing Import while still enumerating must not execute.

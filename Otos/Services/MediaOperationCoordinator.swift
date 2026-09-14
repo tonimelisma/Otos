@@ -492,8 +492,8 @@ actor MediaOperationCoordinator {
             // Already handled above.
             break
         default:
-            // Not ready yet; mark dirty so planning will queue execution when ready.
-            // Show queuedForReadiness immediately if not already building/executing.
+            // Not ready yet; mark dirty so planning will begin execution when
+            // ready. Publish so the bar disables Import for the held click.
             publish()
             session.isDirty = true
             sourceSessions[source]?.isDirty = true
@@ -1699,9 +1699,12 @@ actor MediaOperationCoordinator {
         // `readyState` rather than reconstructing the state, so the readiness gate
         // and the `!isDirty` empty-card proof still apply — a session mid-rebuild is
         // dirty, so it can never use a held plan to claim "This card is empty".
+        // A held click (`importRequested`) changes nothing here: the bar keeps
+        // saying what it knows, and the presentation carries the held click as
+        // its own fact so the mapper disables Import (`import-bar.md` row 7).
         let state: MediaOperationSourceState = switch session.phase {
         case .inventory:
-            session.importRequested ? .queuedForReadiness : heldPlanState(for: session) ?? settlementState(for: session) ?? .inventory
+            heldPlanState(for: session) ?? settlementState(for: session) ?? .inventory
         // Deliberately *not* held across `.waitingForMetadata`. `.building` and
         // `.inventory` re-derive a plan over a set whose naming facts are already
         // proven, so the old answer stays true until the new one lands. Waiting for
@@ -1711,14 +1714,12 @@ actor MediaOperationCoordinator {
         // copy" about files it never saw. A is correct here, and its determinate
         // progress is the honest thing to draw.
         case let .waitingForMetadata(done, total):
-            session.importRequested ? .queuedForReadiness : .waitingForMetadata(done: done, total: total)
+            .waitingForMetadata(done: done, total: total)
         // A rebuild that has no proven plan to fall back on still has a proven *count*.
         // `.planning` draws neither, so it is the last resort rather than the default: it
         // is correct only before this attachment has reported any naming progress at all.
         case .building:
-            if session.importRequested {
-                .queuedForReadiness
-            } else if let held = heldPlanState(for: session) {
+            if let held = heldPlanState(for: session) {
                 held
             } else if let settlement = settlementState(for: session) {
                 settlement
@@ -1728,7 +1729,7 @@ actor MediaOperationCoordinator {
                 .planning
             }
         case let .ready(ctx):
-            session.importRequested ? .queuedForReadiness : readyState(for: session, ctx: ctx)
+            readyState(for: session, ctx: ctx)
         case .executing:
             executingState(for: session)
         case .completed:
@@ -1739,11 +1740,11 @@ actor MediaOperationCoordinator {
             .planningFailed(reason: reason)
         }
         // A recorded failure outranks whatever the re-plan found (state G,
-        // "never auto-dismisses"); only a new attempt — executing, or queued
-        // to execute — is a newer fact about this attachment.
-        if let failure = session.lastFailure {
+        // "never auto-dismisses"); only a new attempt — executing, or a click
+        // held until the plan is ready — is a newer fact about this attachment.
+        if let failure = session.lastFailure, !session.importRequested {
             switch state {
-            case .executing, .queuedForReadiness:
+            case .executing:
                 break
             default:
                 return makePresentation(
@@ -1888,6 +1889,7 @@ actor MediaOperationCoordinator {
             destinationPath: session.destination,
             destinationDisplayName: session.destination.flatMap { librariesByPath[$0]?.displayName },
             state: state,
+            importRequested: session.importRequested,
             attachToReadyMs: session.attachToReadyMs,
             batchID: exposedBatch?.id,
             batchHasPublishedAssets: exposedBatch?.hasPublishedAssets ?? false,

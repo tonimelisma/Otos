@@ -66,7 +66,7 @@ check_font_styles() {
 # problem — their patterns are syntactically SwiftUI-only — so only this
 # check and check_lying_defaults stay scoped narrower than the full tree.
 DOMAIN_NOUNS='\bplan\b|\bdisposition\b|\bcompanion\b|\bpreexisting\b|\bblocked\b|\binventory\b|\breplan\b|\bexecution\b|\bqueued\b'
-DOMAIN_NOUN_STRING_ALLOWLIST=("Import queued")
+DOMAIN_NOUN_STRING_ALLOWLIST=()
 is_domain_noun_string_allowlisted() {
   local content="$1" a
   for a in "${DOMAIN_NOUN_STRING_ALLOWLIST[@]+"${DOMAIN_NOUN_STRING_ALLOWLIST[@]}"}"; do

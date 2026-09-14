@@ -330,7 +330,7 @@ struct MediaOperationCoordinatorTests {
         // so `.executing` and `.completed` are as legitimate here as the
         // states before them.
         switch card.state {
-        case .executionUnavailable, .queuedForReadiness, .waitingForMetadata, .ready, .planning, .executing, .completed:
+        case .executionUnavailable, .waitingForMetadata, .ready, .planning, .executing, .completed:
             break
         default:
             Issue.record("Unexpected import presentation state \(card.state)")
