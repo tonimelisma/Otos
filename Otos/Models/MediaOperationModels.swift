@@ -452,7 +452,15 @@ nonisolated enum MediaOperationSourceState: Equatable, Sendable {
         failedCount: Int = 0,
         incompleteItems: [MediaAssetID] = []
     )
+    /// A run the user started ended in failure (`import-bar.md` state G,
+    /// "Couldn't finish the import").
     case failed(reason: MediaOperationFailureReason, publishedCount: Int = 0)
+    /// No plan could be made, so nothing was attempted — the destination folder
+    /// stayed unreadable past the retry budget, a root vanished between the wake
+    /// and the snapshot, or the builder threw. Distinct from `failed` because the
+    /// bar names the stage honestly: "Couldn't prepare the import", never
+    /// "finish" for a run that never started (state G, planning variant).
+    case planningFailed(reason: MediaOperationFailureReason)
     /// Source kind cannot execute import (for example a fixed library selected as source).
     case executionUnavailable(
         summary: MediaOperationPlanTotals,

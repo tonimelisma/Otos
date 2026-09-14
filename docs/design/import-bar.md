@@ -175,7 +175,8 @@ one of those seven.
 | 9 | cancel requested, still winding down | E, cancelling variant | folds into E |
 | 10 | `completed`, clean | **F · Done** | ✅ |
 | 11 | `completed` with failures or skips | F, incomplete variant — no auto-dismiss | folds into F |
-| 12 | `failed` | **G · Failed** | ✅ actionable |
+| 12 | `failed` — a run the user started ended in failure | **G · Failed** | ✅ actionable |
+| 12a | `planningFailed` — no plan could be made, nothing was attempted | G, planning variant: `Couldn't prepare the import` | folds into G |
 | 13 | `executionUnavailable` | treated as C or D by its totals; the build condition is never shown (DES-039) | no |
 | 14 | No libraries configured at all | B, with `Add a Library…` opening Settings instead of a pop-up | folds into B |
 | 15 | Card removed or destination lost mid-import | G, with the cause named | folds into G |
@@ -413,6 +414,15 @@ auto-dismisses. Nothing already copied is lost, and the count copied so far is s
 when nonzero. Running out of room is **not** a failure: nothing went wrong that
 `Try Again` could fix, so it is the Stopped variant of F with the floor's clause
 (ADR 0027).
+
+**Planning variant.** When no plan could be made — the destination folder stayed
+unreadable past its retry budget, a root vanished between the wake and the
+snapshot, the builder threw — nothing was started, so "finish" would be a lie
+about what happened. L1 `Couldn't prepare the import`, the same L3 cause clause,
+the same choices and `Try Again`. The headline names the stage; the clause names
+the cause; the act is the same because the remedy is the same. The model keeps
+this a separate case (`planningFailed`) rather than a flag on `failed`: a run
+failure carries a count landed and a batch, a planning failure has neither.
 
 **This state cannot be built on today's failure value.** `failed(problem: String)`
 carries raw internal tokens — `executionUnavailable`, `noDestinationLibrary`,
@@ -660,6 +670,7 @@ anyone else — that list is a navigation surface, not a place to watch work fro
 | `Delete all 181 items from the card after importing` | `Erase the card`, with the consequence stated at L3 when checked |
 | `Eject the card after importing` | `Eject the card` — the `Afterwards` label carries the timing |
 | `Failed: <problem>` | `Couldn't finish the import` + a cause clause at L3 |
+| `Failed: <problem>` before any run | `Couldn't prepare the import` + the same cause clause |
 
 ## Ownership of status
 

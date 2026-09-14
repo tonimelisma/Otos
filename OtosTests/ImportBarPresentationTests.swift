@@ -772,6 +772,22 @@ struct ImportBarPresentationTests {
         #expect(drawn.secondaryLine == .plain("Summer Photos isn't available"))
     }
 
+    /// A failure before any run — the destination folder stayed unreadable, a
+    /// root vanished, the builder threw — draws G with the stage named: nothing
+    /// started, so the headline must not say "finish". Same zones, same act.
+    @Test func planningFailureSaysPrepareNotFinish() {
+        let drawn = Self.map(Self.presentation(state: .planningFailed(reason: .destinationUnavailable)))
+        #expect(drawn.kind == .failed)
+        #expect(drawn.primaryLine == "Couldn't prepare the import")
+        #expect(drawn.secondaryLine == .plain("Summer Photos isn't available"))
+        #expect(drawn.primaryAction == .tryAgain)
+        #expect(drawn.middleZone == .choices(eraseEnabled: true, eraseDisabledReason: nil))
+
+        let unexpected = Self.map(Self.presentation(state: .planningFailed(reason: .unexpected(detail: "snapshotUnavailable"))))
+        #expect(unexpected.primaryLine == "Couldn't prepare the import")
+        #expect(unexpected.secondaryLine == .none)
+    }
+
     /// ADR 0027: running out of room is a Stopped outcome, not a failure. The
     /// clause states the capacity read at the stop, in the spec's byte units.
     @Test func stoppedAtTheDiskFloorNamesTheRoomLeftAndOffersTheRemainder() {

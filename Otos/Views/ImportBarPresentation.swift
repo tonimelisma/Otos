@@ -97,6 +97,8 @@ nonisolated enum ImportBarPresentation {
         switch presentation.state {
         case let .failed(reason, publishedCount):
             return failed(reason: reason, publishedCount: publishedCount, presentation: presentation)
+        case let .planningFailed(reason):
+            return planningFailed(reason: reason, presentation: presentation)
         case let .executing(progress):
             return working(progress: progress, isCancelling: isCancelling, presentation: presentation, preferences: preferences)
         default:
@@ -745,12 +747,30 @@ nonisolated enum ImportBarPresentation {
         if publishedCount > 0 {
             clauseParts.append("\(publishedCount) \(publishedCount == 1 ? "item was" : "items were") copied before it stopped")
         }
+        return failedState(primaryLine: "Couldn't finish the import", clauseParts: clauseParts)
+    }
+
+    /// G, planning variant: the same zones and act as a run failure, with the
+    /// stage named honestly — nothing was started, so nothing "couldn't finish".
+    private static func planningFailed(
+        reason: MediaOperationFailureReason,
+        presentation: MediaOperationSourcePresentation
+    ) -> ImportBarDrawnState {
+        let cause = failureClause(
+            reason: reason,
+            destinationName: presentation.destinationDisplayName,
+            sourceKind: presentation.sourceKind
+        )
+        return failedState(primaryLine: "Couldn't prepare the import", clauseParts: cause.map { [$0] } ?? [])
+    }
+
+    private static func failedState(primaryLine: String, clauseParts: [String]) -> ImportBarDrawnState {
         let secondary: ImportBarDrawnState.SecondaryLine = clauseParts.isEmpty
             ? .none
             : .plain(clauseParts.joined(separator: " · "))
         return ImportBarDrawnState(
             kind: .failed,
-            primaryLine: "Couldn't finish the import",
+            primaryLine: primaryLine,
             primaryBadge: .none,
             secondaryLine: secondary,
             middleZone: .choices(eraseEnabled: true, eraseDisabledReason: nil),

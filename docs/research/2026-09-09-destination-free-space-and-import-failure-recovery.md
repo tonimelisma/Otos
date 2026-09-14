@@ -205,9 +205,13 @@ diagnosing and deliberately left outside it; none is a requirement.
 3. **Enrichment and import compete for the same finite disk** with no arbitration
    (ADR 0008 accepts the materialization cost but does not consider a concurrent
    import). The floor bounds the damage from Otos's own side only.
-4. **Startup publishes `failed(unexpected("noDestinationLibrary"))`** for an
-   ordinary not-yet-resolved condition; it stays a planning-failure phase after
-   plan 0102 A, which is where to reconsider it.
+4. **Startup publishes `planningFailed(unexpected("noDestinationLibrary"))`** for
+   an ordinary not-yet-resolved condition. Never drawn — the bar reads
+   `destinationPath == nil` as state B before it looks at the state — and kept
+   because the honest alternative, `inventory`, would put a "preparing" spinner
+   on the sidebar row for a card that has nothing to prepare against. Planning
+   failures that *are* drawn now say `Couldn't prepare the import` (state G,
+   planning variant) instead of borrowing the run failure's `Couldn't finish`.
 5. **Rebuild storm**: plan generations 27→34 in 50 s on 2026-09-13 because OneDrive
    was syncing new files into the destination (`destinationOccupants` 8270→8277),
    200–470 ms of planning each. Harmless to terminal states now; still O(n) per

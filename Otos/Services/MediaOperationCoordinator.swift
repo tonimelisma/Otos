@@ -91,7 +91,7 @@ actor MediaOperationCoordinator {
         case executing(ExecutionContext)
         case completed
         case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64, attentionItems: [MediaAttentionItem])
-        case failed(reason: MediaOperationFailureReason, publishedCount: Int)
+        case planningFailed(reason: MediaOperationFailureReason)
     }
 
     /// The most recent execution's outcome for the current attachment, kept
@@ -1287,7 +1287,7 @@ actor MediaOperationCoordinator {
             // No destination is state B ("No destination"), not a failure —
             // `destinationPath == nil` on the presentation is what the mapper
             // reads; this reason is never shown.
-            session.phase = .failed(reason: .unexpected(detail: "noDestinationLibrary"), publishedCount: 0)
+            session.phase = .planningFailed(reason: .unexpected(detail: "noDestinationLibrary"))
             sourceSessions[source] = session
             publish()
             return
@@ -1320,7 +1320,7 @@ actor MediaOperationCoordinator {
                 return
             }
             var updated = session
-            updated.phase = .failed(reason: .unexpected(detail: String(describing: error)), publishedCount: 0)
+            updated.phase = .planningFailed(reason: .unexpected(detail: String(describing: error)))
             sourceSessions[source] = updated
             publish()
         }
@@ -1377,7 +1377,7 @@ actor MediaOperationCoordinator {
                 availableRoots: CatalogWindowPolicy.availablePaths(from: libraries)
             )
             var updated = session
-            updated.phase = .failed(reason: reason, publishedCount: 0)
+            updated.phase = .planningFailed(reason: reason)
             sourceSessions[source] = updated
             publish()
             return
@@ -1515,7 +1515,7 @@ actor MediaOperationCoordinator {
         let detail = folders.map { "\($0.key.isEmpty ? "." : $0.key)=\($0.value)" }.sorted().joined(separator: ",")
         guard attempt <= unreadableRetryDelays.count else {
             updated.unreadableRetry = nil
-            updated.phase = .failed(reason: .destinationUnavailable, publishedCount: 0)
+            updated.phase = .planningFailed(reason: .destinationUnavailable)
             OtosLog.catalog.noticeOperation("import.plan", phase: "unreadableExhausted", fields: [
                 "rootPath": source.rawValue,
                 "run": runID,
@@ -1720,8 +1720,8 @@ actor MediaOperationCoordinator {
             completedState(for: session)
         case let .executionUnavailable(summary, generation, attentionItems):
             .executionUnavailable(summary: summary, generation: generation, attentionItems: attentionItems)
-        case let .failed(reason, publishedCount):
-            .failed(reason: reason, publishedCount: publishedCount)
+        case let .planningFailed(reason):
+            .planningFailed(reason: reason)
         }
         // A recorded failure outranks whatever the re-plan found (state G,
         // "never auto-dismisses"); only a new attempt — executing, or queued

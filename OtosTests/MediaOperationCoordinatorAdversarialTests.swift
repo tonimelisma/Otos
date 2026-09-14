@@ -28,10 +28,13 @@ struct MediaOperationCoordinatorAdversarialTests {
             if let plan = await coordinator.readyPlan(for: source) {
                 return plan
             }
-            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }),
-               case .failed = pres.state
-            {
-                throw TestError.planFailed(pres.state)
+            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }) {
+                switch pres.state {
+                case .failed, .planningFailed:
+                    throw TestError.planFailed(pres.state)
+                default:
+                    break
+                }
             }
             try await Task.sleep(for: .milliseconds(20))
         }
@@ -1294,12 +1297,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
         await coordinator.start()
         let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
-            if case .failed = pres.state {
+            if case .planningFailed = pres.state {
                 return true
             }
             return false
         }
-        guard case let .failed(reason, _) = failed.state else {
+        guard case let .planningFailed(reason) = failed.state else {
             Issue.record("Expected a planning failure, got \(failed.state)")
             return
         }
