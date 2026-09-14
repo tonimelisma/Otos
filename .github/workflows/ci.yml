@@ -106,8 +106,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Install lint tools
-        run: brew bundle install
+      # Not `brew bundle`: it accepts whatever SwiftFormat/SwiftLint the runner
+      # image already ships, so the Brewfile's pin never reached CI and an image
+      # update turned `main` red without a source change. The pinned release
+      # binaries go first on PATH; `script/lint.sh` re-asserts the versions.
+      - name: Install pinned lint tools
+        run: script/ci-install-lint-tools.sh
 
       - name: Run lint
         run: script/lint.sh

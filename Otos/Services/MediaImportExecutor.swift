@@ -731,9 +731,9 @@ actor MediaImportExecutor {
         let retainedPaths = Set(plan.entries.compactMap { entry -> MediaRelativePath? in
             switch entry.disposition {
             case .skipPreexisting, .excluded:
-                return entry.source.relativePath
+                entry.source.relativePath
             case .copy, .relocate, .noOp, .blocked:
-                return nil
+                nil
             }
         })
         return plan.eraseManifest.entries.filter {
