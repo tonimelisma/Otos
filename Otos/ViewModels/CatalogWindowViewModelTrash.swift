@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import OSLog
 
 /// Recoverable deletion intent guide
 ///
@@ -8,7 +9,39 @@ import Foundation
 /// reconciliation is always applied for paths the filesystem reports moved; only
 /// navigation is rejected when the user changed mode, query, or pane ownership while
 /// the command was suspended.
+///
+/// Every surface — Photo menu, ⌘⌫, context menu — calls `requestMoveTargetedMediaToTrash()`,
+/// which publishes a `TrashConfirmation` the window renders as a confirmation dialog;
+/// only its confirm action runs `moveTargetedMediaToTrash()`. The targets are resolved
+/// again at confirmation so a selection changed under an open dialog is never trashed.
 extension CatalogWindowViewModel {
+    /// Photo ▸ Move to Trash, ⌘⌫, and the context menu item.
+    func requestMoveTargetedMediaToTrash() {
+        guard canMoveTargetedMediaToTrash else {
+            return
+        }
+        let ids = mediaChoiceTargetIDs(.current)
+        pendingTrashConfirmation = TrashConfirmation(ids: ids)
+        OtosLog.ui.notice("op=trash.confirm phase=ask count=\(ids.count, privacy: .public)")
+    }
+
+    func confirmMoveToTrash() {
+        guard let pending = pendingTrashConfirmation else {
+            return
+        }
+        pendingTrashConfirmation = nil
+        OtosLog.ui.notice("op=trash.confirm phase=confirmed count=\(pending.count, privacy: .public)")
+        moveTargetedMediaToTrash()
+    }
+
+    func cancelMoveToTrash() {
+        guard let pending = pendingTrashConfirmation else {
+            return
+        }
+        pendingTrashConfirmation = nil
+        OtosLog.ui.notice("op=trash.confirm phase=cancelled count=\(pending.count, privacy: .public)")
+    }
+
     var canMoveTargetedMediaToTrash: Bool {
         guard mediaTrashTask == nil else {
             return false

@@ -259,6 +259,8 @@ final class CatalogWindowViewModel {
     var reorganizationAlertMessage: String?
     var trashAlertMessage: String?
     var trashFailedIDs: [MediaAssetID] = []
+    /// The Move to Trash the user has been asked to confirm (APP-027); nil when none.
+    var pendingTrashConfirmation: TrashConfirmation?
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
     @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?

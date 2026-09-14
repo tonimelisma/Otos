@@ -65,7 +65,7 @@ extension CatalogWindowViewModel {
         case let .choice(choice):
             submitMediaChoice(choice, origin: .contextMenu)
         case .moveToTrash:
-            moveTargetedMediaToTrash()
+            requestMoveTargetedMediaToTrash()
         }
     }
 }

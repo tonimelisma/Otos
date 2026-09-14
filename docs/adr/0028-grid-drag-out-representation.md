@@ -7,7 +7,7 @@
 
 ADR 0012 decided what ⌘C places on the pasteboard for selected assets — one original
 file URL per asset, references only — and named drag-and-drop out of the grid as an
-adjacent decision requiring its own ADR. Plan 0103 E builds that drag. The same facts
+adjacent decision requiring its own ADR. APP-038 is that drag. The same facts
 apply: Otos is unsandboxed, so a plain file URL is directly readable by the receiver;
 a file URL is the only representation that works for video and the only one that
 attaches at full fidelity for a few bytes; and byte reads must never accidentally

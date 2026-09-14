@@ -159,6 +159,29 @@ struct ContentView: View {
             Text("The affected items remain selected.")
         }
         .confirmationDialog(
+            viewModel.pendingTrashConfirmation?.title ?? "Move to Trash?",
+            isPresented: Binding(
+                get: { viewModel.pendingTrashConfirmation != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.cancelMoveToTrash()
+                    }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(TrashConfirmation.confirmTitle, role: .destructive) {
+                viewModel.confirmMoveToTrash()
+            }
+            Button("Cancel", role: .cancel) {
+                viewModel.cancelMoveToTrash()
+            }
+        } message: {
+            if let pending = viewModel.pendingTrashConfirmation {
+                Text(pending.message)
+            }
+        }
+        .confirmationDialog(
             "Reorganize Library?",
             isPresented: $viewModel.showsReorganizationConfirmation,
             titleVisibility: .visible

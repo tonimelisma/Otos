@@ -12,7 +12,7 @@ import OSLog
 /// that surface: the toolbar's `ShareLink`, File ▸ Share… through
 /// `SharePickerPresenter`, and the context menus' standard share item. The Otos-owned
 /// path is one: this ViewModel's target list. That is the recorded bend in the
-/// one-path rule (plan 0103 C), chosen over bridging an `NSToolbar` to unify them.
+/// one-path rule (APP-036), chosen over bridging an `NSToolbar` to unify them.
 extension CatalogWindowViewModel {
     /// File ▸ Share…. Anchors the picker to the window's top-trailing corner, below the
     /// toolbar, since a menu command has no control of its own to point at.

@@ -3,7 +3,25 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-- [0103 — Share, Open With, context menus, drag-out, curation undo, and loupe gestures](0103-share-open-with-context-menus-and-loupe-gestures.md) — opened 2026-09-13; eight increments A–H, ordered A → B → C → D → E, F → G → H.
+No active plans.
+
+Plan 0103 (Share, Open With, context menus, drag-out, curation undo, loupe zoom and
+info, trash confirmation) is complete across eight increments A–H and was removed at
+closure. It opened 2026-09-13 from an ideation pass on the macOS Share button and
+"open in the default app". Its decisions live in APP-035 (Open / Open With, ⌘E, URLs
+only), APP-036 (Share from toolbar, File menu and context menus, no shortcut), APP-037
+(one context menu model, one AppKit renderer on grid, filmstrip, loupe and compare),
+APP-038 and ADR 0028 (drag-out as file URLs; plain click on a selected tile commits on
+mouse-up), APP-039 (curation undo from Store-reported priors; Trash stays on Finder's
+Put Back, ADR 0022), APP-040 (loupe zoom as `NSScrollView` magnification with a
+native-pixel document and a second full-resolution decode), APP-041 and DES-088 (the
+read-only info overlay), and APP-027 (Move to Trash asks first; plain Delete unbound).
+ADR 0012 was extended to Open and Share. Quick Look and Get Info were removed rather
+than fixed; Show in Library, an F full-screen preview, a Move Disliked batch command
+and export stay deferred. Native full screen needed no work: on 2026-09-14 the running
+app's View menu, read through System Events, listed `Enter Full Screen` after Zoom Out,
+supplied by AppKit for the resizable `Window` scene, and the Window menu carried `Full
+Screen Tile`; no requirement row claims it because Otos implements none of it.
 
 Plan 0102 (import to the disk floor, stopped outcomes, and terminal-state durability)
 is complete across five increments and was removed at closure. It opened from a live

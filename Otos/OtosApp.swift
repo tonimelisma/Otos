@@ -130,7 +130,7 @@ public struct OtosApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 // File ▸ Open / Open With / Reveal: file-level acts on the current
-                // targets (plan 0103). ⌘O stays reserved for opening files into Otos.
+                // targets (APP-035, APP-036). ⌘O stays reserved for opening files into Otos.
                 Button(catalogViewModel.openWithMenu.openTitle) {
                     catalogViewModel.openTargetsInDefaultApplication()
                 }
@@ -218,7 +218,7 @@ public struct OtosApp: App {
                 .disabled(!catalogViewModel.hasMediaChoiceTarget)
                 Divider()
                 Button("Move to Trash", role: .destructive) {
-                    catalogViewModel.moveTargetedMediaToTrash()
+                    catalogViewModel.requestMoveTargetedMediaToTrash()
                 }
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(!catalogViewModel.canMoveTargetedMediaToTrash)
