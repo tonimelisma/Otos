@@ -7,6 +7,7 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
     case open
     case openWith(OpenWithApplication)
     case openWithOther
+    case share
     case revealInFinder
     case choice(MediaChoice)
     case moveToTrash
@@ -25,7 +26,6 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     enum Entry: Equatable, Sendable {
         case command(MediaItemCommand, title: String, enabled: Bool)
         case openWith(applications: [OpenWithApplication], enabled: Bool)
-        case share(items: [URL])
         case separator
     }
 
@@ -86,7 +86,7 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
         [
             .command(.open, title: openTitle, enabled: canOpen),
             .openWith(applications: openWithApplications, enabled: canOpenWith),
-            .share(items: shareItems),
+            .command(.share, title: "Share…", enabled: !shareItems.isEmpty),
             .separator,
             .command(.revealInFinder, title: "Reveal in Finder", enabled: canReveal),
             .separator,

@@ -31,16 +31,24 @@ extension CatalogWindowViewModel {
     /// synchronously by Share and the toolbar) and rebuilds the Open With model off main.
     func refreshOpenWithMenu() {
         let targets = resolveCurrentTargetFileURLs()
-        if currentTargetFileURLs != targets {
+        let changed = currentTargetFileURLs != targets
+        if changed {
             currentTargetFileURLs = targets
+            refreshCurrentTargetChoice()
         }
-        openWithMenuTask?.cancel()
         guard !targets.isEmpty else {
+            openWithMenuTask?.cancel()
             openWithMenu = .empty
             openWithApplicationIcons = [:]
             openWithMenuTask = nil
             return
         }
+        // Several writers fire for one gesture (selection, focus, mode); a build already
+        // finished or in flight for these same targets is not restarted.
+        guard changed || (openWithMenuTask == nil && openWithMenu.targetCount != targets.count) else {
+            return
+        }
+        openWithMenuTask?.cancel()
         let workspace = workspace
         openWithMenuTask = Task { [weak self] in
             let model = await Self.buildOpenWithMenu(targets: targets, workspace: workspace)

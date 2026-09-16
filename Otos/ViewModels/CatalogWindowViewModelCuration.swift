@@ -26,6 +26,7 @@ nonisolated enum MediaChoiceTarget: Equatable {
 
 nonisolated enum MediaChoiceOrigin: String, Equatable {
     case menu
+    case toolbar
     case keyboard
     case inline
     case accessibility
@@ -74,8 +75,37 @@ nonisolated struct CurationUndoState: Equatable, Sendable {
 }
 
 extension CatalogWindowViewModel {
+    /// Above this many targets the toolbar control shows no state rather than read a
+    /// detail row per selected asset on every selection change.
+    static let currentTargetChoiceLimit = 64
+
     var hasMediaChoiceTarget: Bool {
         !mediaChoiceTargetIDs(.current).isEmpty
+    }
+
+    /// Reads the current targets' choices once per target change (and once after a
+    /// confirmed write) and publishes the one value they share, or nil.
+    func refreshCurrentTargetChoice() {
+        currentTargetChoiceTask?.cancel()
+        let ids = mediaChoiceTargetIDs(.current)
+        guard !ids.isEmpty, ids.count <= Self.currentTargetChoiceLimit else {
+            if currentTargetChoice != nil {
+                currentTargetChoice = nil
+            }
+            currentTargetChoiceTask = nil
+            return
+        }
+        let reader = tileDetailReader
+        currentTargetChoiceTask = Task { [weak self] in
+            let details = await reader.details(for: ids)
+            guard !Task.isCancelled, let self, mediaChoiceTargetIDs(.current) == ids else { return }
+            let choices = Set(ids.compactMap { details[$0]?.mediaChoice })
+            let shared = choices.count == 1 && details.count == ids.count ? choices.first : nil
+            if currentTargetChoice != shared {
+                currentTargetChoice = shared
+            }
+            currentTargetChoiceTask = nil
+        }
     }
 
     func setAdvanceAfterMediaChoice(_ enabled: Bool) {
@@ -195,6 +225,7 @@ extension CatalogWindowViewModel {
                     }
                     updatePaneMediaChoices(command.assignments)
                     completeMediaChoice(command)
+                    refreshCurrentTargetChoice()
                     if command.origin.isUserChoice {
                         registerUndo(inverseOf: command, previous: result.previous)
                     }

@@ -37,7 +37,7 @@ struct MediaItemContextMenuTests {
         #expect(trash?.isEnabled == false)
         let openWith = menu.items[1]
         #expect(openWith.submenu?.items.map(\.title) == ["Preview", "Photos", "", "Other…"])
-        #expect(menu.items[2].representedObject is NSSharingServicePicker)
+        #expect(menu.items[2].isEnabled)
     }
 
     @Test func emptyTargetsRenderDisabledItemsIncludingShare() {
@@ -45,7 +45,6 @@ struct MediaItemContextMenuTests {
 
         #expect(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
         #expect(menu.items[2].title == "Share…")
-        #expect(menu.items[2].representedObject == nil)
     }
 
     @Test func menuItemsRouteToPerform() throws {
@@ -69,6 +68,7 @@ struct MediaItemContextMenuTests {
         fire(menu.items[0])
         try fire(#require(menu.items[1].submenu?.items[0]))
         try fire(#require(menu.items[1].submenu?.items[2]))
+        fire(menu.items[2])
         fire(menu.items[4])
         fire(menu.items[6])
         fire(menu.items[7])
@@ -76,7 +76,7 @@ struct MediaItemContextMenuTests {
         fire(menu.items[10])
 
         #expect(recorder.commands == [
-            .open, .openWith(photos), .openWithOther, .revealInFinder,
+            .open, .openWith(photos), .openWithOther, .share, .revealInFinder,
             .choice(.liked), .choice(.notRated), .choice(.disliked), .moveToTrash,
         ])
     }

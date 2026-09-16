@@ -48,7 +48,7 @@ struct CatalogWindowViewModelShareTests {
         let model = makeShareModel()
         model.applyState(shareWindowState(ids: makeIDs(count: 2)))
 
-        model.shareCurrentTargets()
+        model.shareCurrentTargets(origin: .menu)
 
         #expect(model.currentTargetFileURLs.isEmpty)
         #expect(model.sharePickerPresenter.activePicker == nil)

@@ -119,11 +119,19 @@ final class CatalogWindowViewModel {
     /// trigger from `didSet`, so toolbar and menus render a stored value rather than
     /// re-resolving the selection on every body evaluation.
     var currentTargetFileURLs: [URL] = []
+    /// The one curation choice every current target holds, for the toolbar control;
+    /// nil when targets differ, exceed `currentTargetChoiceLimit`, or are none.
+    /// Written only by `refreshCurrentTargetChoice()`.
+    var currentTargetChoice: MediaChoice?
+    @ObservationIgnored var currentTargetChoiceTask: Task<Void, Never>?
     /// What File ▸ Open / Open With render for the current targets. Written only by
     /// `refreshOpenWithMenu()`'s completed build.
     var openWithMenu: OpenWithMenuModel = .empty
-    /// Owns the File ▸ Share… picker while it is on screen.
+    /// Owns the share picker while it is on screen.
     @ObservationIgnored let sharePickerPresenter = SharePickerPresenter()
+    /// The toolbar Share button's AppKit host, the anchor every Share path presents
+    /// from (APP-036). Weak: the toolbar owns it; nil while the button is off screen.
+    @ObservationIgnored weak var shareAnchorView: NSView?
     /// Loupe zoom (APP-040): what the zoom view measured, and the one command it has
     /// been asked to apply. Written only in `CatalogWindowViewModelLoupeZoom.swift`.
     var loupeZoomReport: LoupeZoomReport?
@@ -415,6 +423,7 @@ final class CatalogWindowViewModel {
         mediaTrashTask?.cancel()
         openWithMenuTask?.cancel()
         loupeInfoTask?.cancel()
+        currentTargetChoiceTask?.cancel()
         viewportForwardingTask?.cancel()
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()

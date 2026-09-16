@@ -110,13 +110,42 @@ struct ContentView: View {
                 )
                 .disabled(viewModel.viewMode != .grid)
             }
-            // Trailing-edge Share over the current targets (APP-036). File ▸ Share…
-            // is the menu-bar equivalent every toolbar item must have.
+            // Trailing-edge Info and Share (APP-041, APP-036). File ▸ Share… and View ▸
+            // Show Info are the menu-bar equivalents every toolbar item must have; the
+            // Share button is also the anchor every Share path presents from.
             ToolbarItem(placement: .primaryAction) {
-                ShareLink(items: viewModel.currentTargetFileURLs) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-                .disabled(viewModel.currentTargetFileURLs.isEmpty)
+                CatalogCurationToolbarControl(
+                    currentChoice: viewModel.currentTargetChoice,
+                    isEnabled: viewModel.hasMediaChoiceTarget,
+                    choose: { viewModel.submitMediaChoice($0, origin: .toolbar) }
+                )
+            }
+            ToolbarItem(placement: .primaryAction) {
+                CatalogInfoToolbarButton(
+                    isEnabled: viewModel.viewMode == .loupe,
+                    isShowing: viewModel.showsLoupeInfo,
+                    toggle: viewModel.toggleLoupeInfo
+                )
+            }
+            ToolbarItem(placement: .primaryAction) {
+                CatalogShareToolbarButton(
+                    isEnabled: !viewModel.currentTargetFileURLs.isEmpty,
+                    onAnchor: viewModel.setShareAnchor,
+                    share: { viewModel.shareCurrentTargets(origin: .toolbar) }
+                )
+            }
+            ToolbarItem(placement: .primaryAction) {
+                CatalogActionToolbarMenu(
+                    openWith: viewModel.openWithMenu,
+                    icons: viewModel.openWithApplicationIcons,
+                    canReveal: !viewModel.selectedAssetIDs.isEmpty,
+                    canTrash: viewModel.canMoveTargetedMediaToTrash,
+                    open: viewModel.openTargetsInDefaultApplication,
+                    openWithApplication: viewModel.openTargets(with:),
+                    openWithOther: viewModel.openTargetsWithChosenApplication,
+                    reveal: viewModel.revealSelectionInFinder,
+                    moveToTrash: viewModel.requestMoveTargetedMediaToTrash
+                )
             }
         }
         .alert(

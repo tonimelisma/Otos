@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 @testable import OtosKit
 import Testing
@@ -57,6 +58,42 @@ struct CatalogWindowViewModelCurationTests {
         }
         #expect(model.gridSelection.selection == [fixture.ids[1]])
         model.mediaChoiceForwardingTask?.cancel()
+    }
+
+    @Test func toolbarChoiceReflectsTheTargetsSharedValue() async throws {
+        let fixture = try await makeCurationFixture(count: 3)
+        defer { fixture.removeRoot() }
+        let model = CatalogWindowViewModel(
+            catalogStore: fixture.store,
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: .suite(UUID().uuidString)
+        )
+        let ids = fixture.ids
+        model.applyState(curationWindowState(ids: ids))
+        model.startMediaChoiceForwarding(store: fixture.store)
+        defer { model.mediaChoiceForwardingTask?.cancel() }
+
+        _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
+        try await waitForCurationCondition { model.currentTargetChoice == .notRated }
+        #expect(model.currentTargetChoice == .notRated)
+
+        model.submitMediaChoice(.liked, origin: .toolbar)
+        try await waitForCurationCondition { model.currentTargetChoice == .liked }
+        #expect(model.currentTargetChoice == .liked)
+
+        // A mixed selection shares no value; a uniform one does.
+        _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
+        try await waitForCurationCondition { model.currentTargetChoice == nil }
+        #expect(model.currentTargetChoice == nil)
+        model.submitMediaChoice(.liked, origin: .toolbar)
+        try await waitForCurationCondition { model.currentTargetChoice == .liked }
+        #expect(model.currentTargetChoice == .liked)
+
+        model.deselectAll()
+        try await waitForCurationCondition { model.currentTargetChoice == nil }
+        #expect(model.currentTargetChoice == nil)
     }
 
     @Test func rejectedStoreMutationNeverAdvances() async throws {

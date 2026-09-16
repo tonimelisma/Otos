@@ -21,7 +21,7 @@ struct MediaItemMenuModelTests {
         #expect(model.entries == [
             .command(.open, title: "Open in Preview", enabled: true),
             .openWith(applications: [preview], enabled: true),
-            .share(items: items),
+            .command(.share, title: "Share…", enabled: true),
             .separator,
             .command(.revealInFinder, title: "Reveal in Finder", enabled: true),
             .separator,
@@ -43,8 +43,6 @@ struct MediaItemMenuModelTests {
             case let .openWith(applications, enabled):
                 #expect(applications.isEmpty)
                 #expect(!enabled)
-            case let .share(items):
-                #expect(items.isEmpty)
             case .separator:
                 break
             }

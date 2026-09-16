@@ -60,6 +60,8 @@ extension CatalogWindowViewModel {
             openTargets(with: application)
         case .openWithOther:
             openTargetsWithChosenApplication()
+        case .share:
+            shareCurrentTargets(origin: .contextMenu)
         case .revealInFinder:
             revealSelectionInFinder()
         case let .choice(choice):

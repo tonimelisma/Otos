@@ -74,24 +74,30 @@ final class FakePreviewLoader: PreviewLoading {
         state.withLock { $0.pending.count }
     }
 
+    /// A held request that never arrives must fail the test, not fall through: a
+    /// release issued before the request is pending leaves that request held forever
+    /// and the test awaiting it hangs the whole suite. The deadline is generous because
+    /// the parallel suite can make the store's first read slow.
     func waitUntilPending(atLeast count: Int) async {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
             if state.withLock({ $0.pending.count >= count }) {
                 return
             }
             try? await Task.sleep(for: .milliseconds(5))
         }
+        Issue.record("FakePreviewLoader: fewer than \(count) requests became pending within 15 s")
     }
 
     func waitUntilPending(id: MediaAssetID) async {
-        let deadline = Date().addingTimeInterval(2)
+        let deadline = Date().addingTimeInterval(15)
         while Date() < deadline {
             if state.withLock({ $0.pending.contains { $0.id == id } }) {
                 return
             }
             try? await Task.sleep(for: .milliseconds(5))
         }
+        Issue.record("FakePreviewLoader: \(id.relativePath.rawValue) never became pending within 15 s")
     }
 
     func preview(for request: PreviewImageLoader.Request) async -> PreviewImageLoader.Outcome {

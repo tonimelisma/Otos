@@ -283,3 +283,146 @@ struct ViewModePicker: View {
         )
     }
 }
+
+/// Toolbar Share and Info buttons (APP-036, APP-041). The Share button is the anchor
+/// every Share path presents from — File ▸ Share… and the context menus included —
+/// which is what Preview and Photos do: the popover drops from the toolbar button, not
+/// from wherever the command happened to be invoked. The button's AppKit host view is
+/// handed to the ViewModel through `onAnchor` so the presenter can point at it; the
+/// view is passive and calls one intent.
+struct CatalogShareToolbarButton: View {
+    let isEnabled: Bool
+    let onAnchor: (NSView?) -> Void
+    let share: () -> Void
+
+    var body: some View {
+        Button(action: share) {
+            Label("Share", systemImage: "square.and.arrow.up")
+        }
+        .help("Share")
+        .disabled(!isEnabled)
+        .background(ToolbarAnchorReader(onAnchor: onAnchor))
+    }
+}
+
+struct CatalogInfoToolbarButton: View {
+    let isEnabled: Bool
+    let isShowing: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            Label("Info", systemImage: isShowing ? "info.circle.fill" : "info.circle")
+        }
+        .help(isShowing ? "Hide Info" : "Show Info")
+        .disabled(!isEnabled)
+    }
+}
+
+/// Invisible AppKit view placed behind a SwiftUI toolbar button so the button's
+/// on-screen frame is known to AppKit code that must present a popover from it.
+struct ToolbarAnchorReader: NSViewRepresentable {
+    let onAnchor: (NSView?) -> Void
+
+    func makeNSView(context _: Context) -> ToolbarAnchorView {
+        let view = ToolbarAnchorView()
+        view.onAnchor = onAnchor
+        return view
+    }
+
+    func updateNSView(_ view: ToolbarAnchorView, context _: Context) {
+        view.onAnchor = onAnchor
+        if view.window != nil {
+            onAnchor(view)
+        }
+    }
+}
+
+final class ToolbarAnchorView: NSView {
+    var onAnchor: (NSView?) -> Void = { _ in }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onAnchor(window == nil ? nil : self)
+    }
+
+    override func hitTest(_: NSPoint) -> NSView? {
+        nil
+    }
+}
+
+/// Toolbar curation control (APP-024): Like / Not Rated / Dislike for the current
+/// targets — the same intent P, U, X, the Photo menu, the hover group and the context
+/// menu call. Photos' toolbar heart, in Otos's vocabulary. `currentChoice` is the one
+/// choice every target holds, or nil when they differ or nothing is targeted; the
+/// matching segment is filled so the current item's state is visible at a glance.
+struct CatalogCurationToolbarControl: View {
+    let currentChoice: MediaChoice?
+    let isEnabled: Bool
+    let choose: (MediaChoice) -> Void
+
+    var body: some View {
+        ControlGroup {
+            ForEach(MediaChoice.allCases, id: \.self) { choice in
+                Button {
+                    choose(choice)
+                } label: {
+                    Label(choice.actionLabel, systemImage: choice.systemImage)
+                        .symbolVariant(currentChoice == choice ? .fill : .none)
+                }
+                .help(choice.actionLabel)
+            }
+        }
+        .disabled(!isEnabled)
+    }
+}
+
+/// Finder-style Action menu: the long tail of per-item acts — Open, Open With ▸,
+/// Reveal in Finder, Move to Trash — with a toolbar home but not a button each. Every
+/// entry calls the intent its File / Photo menu twin calls.
+struct CatalogActionToolbarMenu: View {
+    let openWith: OpenWithMenuModel
+    let icons: [URL: NSImage]
+    let canReveal: Bool
+    let canTrash: Bool
+    let open: () -> Void
+    let openWithApplication: (OpenWithApplication) -> Void
+    let openWithOther: () -> Void
+    let reveal: () -> Void
+    let moveToTrash: () -> Void
+
+    var body: some View {
+        Menu {
+            Button(openWith.openTitle, action: open)
+                .disabled(!openWith.canOpen)
+            Menu("Open With") {
+                ForEach(openWith.applications) { application in
+                    Button {
+                        openWithApplication(application)
+                    } label: {
+                        Label {
+                            Text(application.displayName)
+                        } icon: {
+                            if let icon = icons[application.url] {
+                                Image(nsImage: icon)
+                            }
+                        }
+                    }
+                }
+                if !openWith.applications.isEmpty {
+                    Divider()
+                }
+                Button("Other…", action: openWithOther)
+            }
+            .disabled(!openWith.canOpenWith)
+            Button("Reveal in Finder", action: reveal)
+                .disabled(!canReveal)
+            Divider()
+            Button("Move to Trash", role: .destructive, action: moveToTrash)
+                .disabled(!canTrash)
+        } label: {
+            Label("More", systemImage: "ellipsis.circle")
+        }
+        .help("More")
+    }
+}

@@ -159,7 +159,7 @@ public struct OtosApp: App {
                 }
                 .disabled(!catalogViewModel.openWithMenu.canOpenWith)
                 Button("Share…") {
-                    catalogViewModel.shareCurrentTargets()
+                    catalogViewModel.shareCurrentTargets(origin: .menu)
                 }
                 .disabled(catalogViewModel.currentTargetFileURLs.isEmpty)
                 Divider()

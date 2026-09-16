@@ -9,10 +9,10 @@ import SwiftUI
 /// context clicks. One renderer for four surfaces means one title list, one order,
 /// and one enablement rule.
 ///
-/// Share is the system's own `standardShareMenuItem`; the picker that vends it is kept
-/// alive by the item's `representedObject` for as long as the menu exists. Every other
-/// item routes to the ViewModel's `performMediaItemCommand(_:)` through a closure —
-/// the renderer knows no intent by name.
+/// Every item, Share… included, routes to the ViewModel's `performMediaItemCommand(_:)`
+/// through a closure — the renderer knows no intent by name. Share is not AppKit's
+/// `standardShareMenuItem` because that anchors its popover to the whole view the menu
+/// was shown on; the ViewModel presents it from the toolbar Share button instead.
 @MainActor
 enum MediaItemContextMenu {
     static func make(
@@ -44,17 +44,6 @@ enum MediaItemContextMenu {
                 item.submenu = submenu
                 item.isEnabled = enabled
                 menu.addItem(item)
-            case let .share(items):
-                if items.isEmpty {
-                    let placeholder = NSMenuItem(title: "Share…", action: nil, keyEquivalent: "")
-                    placeholder.isEnabled = false
-                    menu.addItem(placeholder)
-                } else {
-                    let picker = NSSharingServicePicker(items: items)
-                    let shareItem = picker.standardShareMenuItem
-                    shareItem.representedObject = picker
-                    menu.addItem(shareItem)
-                }
             case .separator:
                 menu.addItem(.separator())
             }
