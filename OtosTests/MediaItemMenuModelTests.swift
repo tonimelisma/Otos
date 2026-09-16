@@ -21,6 +21,7 @@ struct MediaItemMenuModelTests {
         #expect(model.entries == [
             .command(.open, title: "Open in Preview", enabled: true),
             .openWith(applications: [preview], enabled: true),
+            .command(.copy, title: "Copy", enabled: true),
             .command(.share, title: "Share…", enabled: true),
             .separator,
             .command(.revealInFinder, title: "Reveal in Finder", enabled: true),

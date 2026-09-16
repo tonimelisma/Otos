@@ -26,7 +26,7 @@ struct MediaItemContextMenuTests {
 
         let titles = menu.items.map { $0.isSeparatorItem ? "—" : $0.title }
         #expect(titles == [
-            "Open in Preview", "Open With", "Share…", "—",
+            "Open in Preview", "Open With", "Copy", "Share…", "—",
             "Reveal in Finder", "—",
             "Like", "Mark as Not Rated", "Dislike", "—",
             "Move to Trash",
@@ -37,14 +37,14 @@ struct MediaItemContextMenuTests {
         #expect(trash?.isEnabled == false)
         let openWith = menu.items[1]
         #expect(openWith.submenu?.items.map(\.title) == ["Preview", "Photos", "", "Other…"])
-        #expect(menu.items[2].isEnabled)
+        #expect(menu.items[3].isEnabled)
     }
 
     @Test func emptyTargetsRenderDisabledItemsIncludingShare() {
         let menu = MediaItemContextMenu.make(model: .empty) { _ in }
 
         #expect(menu.items.filter { !$0.isSeparatorItem }.allSatisfy { !$0.isEnabled })
-        #expect(menu.items[2].title == "Share…")
+        #expect(menu.items[3].title == "Share…")
     }
 
     @Test func menuItemsRouteToPerform() throws {
@@ -69,14 +69,15 @@ struct MediaItemContextMenuTests {
         try fire(#require(menu.items[1].submenu?.items[0]))
         try fire(#require(menu.items[1].submenu?.items[2]))
         fire(menu.items[2])
-        fire(menu.items[4])
-        fire(menu.items[6])
+        fire(menu.items[3])
+        fire(menu.items[5])
         fire(menu.items[7])
         fire(menu.items[8])
-        fire(menu.items[10])
+        fire(menu.items[9])
+        fire(menu.items[11])
 
         #expect(recorder.commands == [
-            .open, .openWith(photos), .openWithOther, .share, .revealInFinder,
+            .open, .openWith(photos), .openWithOther, .copy, .share, .revealInFinder,
             .choice(.liked), .choice(.notRated), .choice(.disliked), .moveToTrash,
         ])
     }

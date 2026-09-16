@@ -7,6 +7,7 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
     case open
     case openWith(OpenWithApplication)
     case openWithOther
+    case copy
     case share
     case revealInFinder
     case choice(MediaChoice)
@@ -19,8 +20,9 @@ nonisolated enum MediaItemCommand: Equatable, Sendable {
 /// the loupe pane and each compare pane. It is a pure value built by the ViewModel at
 /// the moment the menu opens, from the current targets, and rendered by one AppKit
 /// builder (`MediaItemContextMenu`). Order mirrors the menu bar and shows no shortcuts
-/// (HIG: shortcuts belong in the main menus): Open, Open With ▸, Share…, then Reveal in
-/// Finder, then the three curation choices, then Move to Trash. Titles are the same
+/// (HIG: shortcuts belong in the main menus): Open, Open With ▸, Copy, Share…, then
+/// Reveal in Finder, then the three curation choices, then Move to Trash — Copy before
+/// Share as Finder and Photos order them. Titles are the same
 /// strings the menu bar uses, so the two never drift.
 nonisolated struct MediaItemMenuModel: Equatable, Sendable {
     enum Entry: Equatable, Sendable {
@@ -86,6 +88,7 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
         [
             .command(.open, title: openTitle, enabled: canOpen),
             .openWith(applications: openWithApplications, enabled: canOpenWith),
+            .command(.copy, title: "Copy", enabled: canReveal),
             .command(.share, title: "Share…", enabled: !shareItems.isEmpty),
             .separator,
             .command(.revealInFinder, title: "Reveal in Finder", enabled: canReveal),
