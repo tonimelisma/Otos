@@ -100,7 +100,7 @@ struct ProjectionEnrichmentScaleTests {
         }
         for batchStart in stride(from: 0, to: detailResults.count, by: 2) {
             let end = min(batchStart + 2, detailResults.count)
-            _ = try await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
+            _ = await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
         }
         try await waitForProjectionQuiescence(projection, timeout: .seconds(30))
 
@@ -114,7 +114,7 @@ struct ProjectionEnrichmentScaleTests {
         // One structural batch must still re-run the full order query exactly once.
         let reorderTarget = try #require(ids.last)
         let reorderAsset = try #require(assetsByID[reorderTarget])
-        _ = try await store.applyEnrichmentBatch([
+        _ = await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: reorderAsset.id,
                 metadata: .absoluteCapture(instant: Self.baseDate.addingTimeInterval(1_000_000)),

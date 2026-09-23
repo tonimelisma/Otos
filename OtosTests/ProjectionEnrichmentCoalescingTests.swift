@@ -44,7 +44,6 @@ struct ProjectionEnrichmentCoalescingTests {
     /// `.assetsDetailChanged`; one that changes `best_capture` emits `.catalogChanged`.
     @Test func enrichmentNotificationDistinguishesDetailFromStructural() async throws {
         let (store, state) = try await seededStore()
-        let id = try #require(state.testAssets.first?.id)
         let asset = try #require(state.testAssets.first)
         // Subscribe synchronously (the `await` only returns once the continuation is
         // registered on the Store actor) before firing the writes below, rather than
@@ -62,7 +61,7 @@ struct ProjectionEnrichmentCoalescingTests {
         defer { changeTask.cancel() }
 
         // Detail-only: enrichment matches the asset's current effective facts.
-        _ = try await store.applyEnrichmentBatch([
+        _ = await store.applyEnrichmentBatch([
             detailEnrichment(for: asset),
         ])
         try await withTestTimeout("detail change") {
@@ -70,7 +69,7 @@ struct ProjectionEnrichmentCoalescingTests {
         }
 
         // Structural: a newer capture date changes best_capture.
-        _ = try await store.applyEnrichmentBatch([
+        _ = await store.applyEnrichmentBatch([
             detailEnrichment(
                 for: asset,
                 captureDate: Self.baseDate.addingTimeInterval(1_000_000)
@@ -102,7 +101,7 @@ struct ProjectionEnrichmentCoalescingTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
-        _ = try await recorder.waitForValues {
+        _ = await recorder.waitForValues {
             $0.last?.mediaGrid.orderedAssetIDs.count == Self.assetCount
         }
         // Wait for scan completion and for the allMedia → library scope resolution to
@@ -111,7 +110,7 @@ struct ProjectionEnrichmentCoalescingTests {
         _ = try await waitForCatalogStoreState(store) {
             !$0.isScanning && $0.testAssets.count == Self.assetCount
         }
-        _ = try await recorder.waitForValues {
+        _ = await recorder.waitForValues {
             $0.last?.resolvedSidebarSelection == .library(rootPath)
         }
         try await waitForProjectionQuiescence(projection)
@@ -126,7 +125,7 @@ struct ProjectionEnrichmentCoalescingTests {
         }
         for batchStart in stride(from: 0, to: detailResults.count, by: 2) {
             let end = min(batchStart + 2, detailResults.count)
-            _ = try await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
+            _ = await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
         }
         try await waitForProjectionQuiescence(projection)
 
@@ -139,13 +138,13 @@ struct ProjectionEnrichmentCoalescingTests {
         // must re-run the full query once.
         let reorderTarget = try #require(ids.last)
         let reorderAsset = try #require(assetsByID[reorderTarget])
-        _ = try await store.applyEnrichmentBatch([
+        _ = await store.applyEnrichmentBatch([
             detailEnrichment(
                 for: reorderAsset,
                 captureDate: Self.baseDate.addingTimeInterval(10000)
             ),
         ])
-        let reordered = try await recorder.waitForValues {
+        let reordered = await recorder.waitForValues {
             $0.last?.mediaGrid.orderedAssetIDs.first == reorderTarget
         }
         #expect(reordered.last?.mediaGrid.orderedAssetIDs.first == reorderTarget)

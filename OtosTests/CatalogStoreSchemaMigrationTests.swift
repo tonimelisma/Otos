@@ -368,7 +368,7 @@ struct CatalogStoreSchemaMigrationTests {
                 ),
             ]
         )
-        let outcome = try await store.applyEnrichmentBatch([
+        let outcome = await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
                 metadata: metadata,

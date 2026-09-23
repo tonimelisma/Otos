@@ -974,6 +974,7 @@
 		575654FA750AED8478D400E8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
 				DEFINES_MODULE = YES;
 				EXECUTABLE_PREFIX = lib;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/Otos/Vendor/xxHash-0.8.3";
@@ -1069,6 +1070,7 @@
 		B7A1BBED30FBDB907002DA16 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				CLANG_WARN_DOCUMENTATION_COMMENTS = NO;
 				DEFINES_MODULE = YES;
 				EXECUTABLE_PREFIX = lib;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/Otos/Vendor/xxHash-0.8.3";

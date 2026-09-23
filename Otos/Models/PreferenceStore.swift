@@ -99,11 +99,11 @@ final class InMemorySuitePreferenceStore: PreferenceStore {
     }
 
     func removeObject(forKey key: String) {
-        bools.withLock { $0.removeValue(forKey: key) }
-        ints.withLock { $0.removeValue(forKey: key) }
-        doubles.withLock { $0.removeValue(forKey: key) }
-        strings.withLock { $0.removeValue(forKey: key) }
-        stringDictionaries.withLock { $0.removeValue(forKey: key) }
+        bools.withLock { _ = $0.removeValue(forKey: key) }
+        ints.withLock { _ = $0.removeValue(forKey: key) }
+        doubles.withLock { _ = $0.removeValue(forKey: key) }
+        strings.withLock { _ = $0.removeValue(forKey: key) }
+        stringDictionaries.withLock { _ = $0.removeValue(forKey: key) }
     }
 }
 

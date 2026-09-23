@@ -123,7 +123,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
-        let destPath = try CatalogPath.normalizedDirectoryPath(for: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:detach-build", displayName: "Card", isEjectable: true)
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
@@ -796,7 +795,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
                pres.copiedJustNow != nil
             {
-                mintedBatch = try #require(pres.batchID, "batchID must be present once the run has settled")
+                mintedBatch = pres.batchID
                 #expect(pres.copiedJustNow == 1)
                 sawCompletion = true
                 break
@@ -2163,8 +2162,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             try await Task.sleep(for: .milliseconds(50))
         }
         #expect(deleted, "Source file should be deleted for zero-copy with delete")
-        // Completed state is expected, but if deletion happened but presentation still ready due to timing, at least check file gone.
-        log("END")
+        #expect(completed, "Zero-copy with delete should settle as completed")
         log("END")
         await coordinator.shutdown()
     }

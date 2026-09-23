@@ -815,18 +815,10 @@ actor MediaOperationCoordinator {
             publish()
         }
         OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue, "run": session.activeRunID ?? "missing"])
-        // After terminal settlement, claims die with phase. Dirty to rebuild (new occupancy etc.)
-        session = sourceSessions[source] ?? session
-        // For completed/cancelled/failed, we want to rebuild to reflect new namespace truth.
-        // Keep destination, mark dirty, and flush if needed.
+        // Terminal settlement releases this source's claims with its phase, so
+        // re-plan it against the namespace the run just changed.
         if var current = sourceSessions[source] {
-            // Don't immediately remove completed; keep completed presentation briefly then rebuild.
-            // Per original, after execution, it dirties and schedules rebuild.
             current.isDirty = true
-            // For completed, keep completed briefly? Original dirtied and scheduled, but
-            // presentation went to completed; next build will move to planning.
-            // We schedule after a short delay via handlePlanningChange occupancy bump.
-            // For now, schedule rebuild.
             sourceSessions[source] = current
             scheduleBuildIfNeeded(source)
         }
@@ -840,17 +832,9 @@ actor MediaOperationCoordinator {
             }
             if !stillExecuting {
                 for (otherSource, dest) in destinationBySource where dest == finishedDestination && otherSource != source {
-                    if var otherSession = sourceSessions[otherSource], otherSession.isDirty {
-                        if case .building = otherSession.phase {
-                            continue
-                        }
-                        if case .executing = otherSession.phase {
-                            continue
-                        }
-                        scheduleBuildIfNeeded(otherSource)
-                        // swiftlint:disable:next line_length
-                        OtosLog.catalog.notice("op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)")
-                    }
+                    guard scheduleBuildIfNeeded(otherSource) else { continue }
+                    // swiftlint:disable:next line_length
+                    OtosLog.catalog.notice("op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)")
                 }
             }
         }
@@ -1284,15 +1268,19 @@ actor MediaOperationCoordinator {
         logRefresh(reason: reason, sourceCount: removable.count)
     }
 
-    private func scheduleBuildIfNeeded(_ source: LibraryRootPath) {
-        guard !isShuttingDown else { return }
-        guard var session = sourceSessions[source] else { return }
-        guard session.isDirty else { return }
+    /// Returns whether a dirty session was taken up — a build started, or the
+    /// session settled as having no destination. A clean, building, or
+    /// executing session is left alone and returns `false`.
+    @discardableResult
+    private func scheduleBuildIfNeeded(_ source: LibraryRootPath) -> Bool {
+        guard !isShuttingDown else { return false }
+        guard var session = sourceSessions[source] else { return false }
+        guard session.isDirty else { return false }
         if case .building = session.phase {
-            return
+            return false
         }
         if case .executing = session.phase {
-            return
+            return false
         }
         session.isDirty = false
         let buildGen = session.nextBuildGeneration
@@ -1309,7 +1297,7 @@ actor MediaOperationCoordinator {
             session.phase = .planningFailed(reason: .unexpected(detail: "noDestinationLibrary"))
             sourceSessions[source] = session
             publish()
-            return
+            return true
         }
         let task = Task { [weak self] in
             guard let self else { return }
@@ -1319,14 +1307,10 @@ actor MediaOperationCoordinator {
         session.phase = .building(BuildContext(generation: buildGen, runID: runID, task: task))
         sourceSessions[source] = session
         publish()
+        return true
     }
 
     private func runBuild(source: LibraryRootPath, destination: LibraryRootPath, generation: UInt64, attachment: AttachmentGeneration) async {
-        defer {
-            // Conditional cleanup is implicit via phase identity; no legacy dictionary to clean.
-            // If session still building with same generation/attachment, caller will clear.
-            // No action needed here beyond logging stale if needed.
-        }
         do {
             try await buildPlan(source: source, destination: destination, generation: generation, attachment: attachment)
         } catch {
@@ -1362,7 +1346,7 @@ actor MediaOperationCoordinator {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=notStarted source=\(source.rawValue, privacy: .public)")
             return
         }
-        guard var session = sourceSessions[source] else {
+        guard let session = sourceSessions[source] else {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=noSession source=\(source.rawValue, privacy: .public)")
             return
         }
@@ -1379,7 +1363,8 @@ actor MediaOperationCoordinator {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=destinationMismatch source=\(source.rawValue, privacy: .public)")
             var updated = session
             updated.isDirty = true
-            // Keep phase as building? Need to reset to inventory to allow rebuild.
+            // Move out of `.building`, which `scheduleBuildIfNeeded` skips, so
+            // the dirty session re-plans against its current destination.
             updated.phase = .inventory
             sourceSessions[source] = updated
             publish()

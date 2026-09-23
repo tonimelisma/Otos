@@ -1787,8 +1787,6 @@ extension CatalogStore {
                         existingState.rowID,
                     ]
                 )
-                // Also ensure path is correct (may be same, but update for safety).
-                try Self.updateLibraryRootPath(rootRowID: existingState.rowID, path: attachment.path, db: db)
             }
             moveRootRuntimeState(
                 oldPath: existingState.root.path,

@@ -120,7 +120,7 @@ struct ThumbnailStoreTests {
         try FileManager.default.createDirectory(at: hiddenTemporaryDirectory, withIntermediateDirectories: true)
         try Data("original".utf8).write(to: outside)
 
-        let deletedCount = try ThumbnailStore.deleteStagedTemporaryFiles(in: directory)
+        let deletedCount = ThumbnailStore.deleteStagedTemporaryFiles(in: directory)
 
         #expect(deletedCount == 1)
         #expect(!FileManager.default.fileExists(atPath: staged.path(percentEncoded: false)))

@@ -19,7 +19,9 @@ Use XXH3-128 with the default seed from the exact upstream xxHash v0.8.3 release
 commit `e626a72`. Vendor only the upstream `xxhash.c`, `xxhash.h`, and BSD-2-Clause
 license evidence. A tiny local C wrapper exposes the streaming create/reset/update/
 digest operations and converts with `XXH128_canonicalFromHash`; Swift consumes that
-boundary through `ContentHasher` and the typed `XXH3Digest128` model.
+boundary through `ContentHasher` and the typed `XXH3Digest128` model. The vendored
+files stay byte-identical to the release, so the `OtosXXH3` target sets
+`CLANG_WARN_DOCUMENTATION_COMMENTS = NO` rather than patching upstream doc comments.
 
 The persisted value is exactly 16 canonical bytes. The typed initializer rejects
 all other lengths, and a hash is valid only with the integer-second source size and
