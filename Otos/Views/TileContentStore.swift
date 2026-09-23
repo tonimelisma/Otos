@@ -148,7 +148,7 @@ final class TileContentStore {
     }
 
     /// Inserts a decoded image only when `key` still matches the store's current key for
-    /// that asset — the stale-completion check that used to live on the tile.
+    /// that asset. The store, not the tile, owns this stale-completion check.
     @discardableResult
     func applyDecoded(_ image: CGImage, key: String, for id: MediaAssetID) -> TileContentChange {
         guard var entry = entries[id] else {

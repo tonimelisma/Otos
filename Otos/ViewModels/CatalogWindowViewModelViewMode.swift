@@ -316,7 +316,7 @@ extension CatalogWindowViewModel {
         let target = targetLongEdge ?? Self.previewTargetLongEdge()
         paneRequestTasks[slot]?.cancel()
         // The spinner tracks an outstanding request, not a failed one. Interactive
-        // materialization now persists until the bytes arrive or this request is
+        // materialization persists until the bytes arrive or this request is
         // cancelled (APP-023), so "still coming" is exactly "still asking" — there is
         // no failed attempt left to infer it from.
         downloadingSlots.insert(slot)
@@ -349,12 +349,10 @@ extension CatalogWindowViewModel {
                 guard self.expectedAsset(for: slot) == id else {
                     return
                 }
-                // Both outcomes are terminal for this request. The 500 ms re-request that
-                // used to live on the `.downloading` arm was correct when an attempt lasted
-                // 120 s — one restart every two minutes. PR 172 shortened an attempt ~24×,
-                // and the same loop became a restart every ~5.5 s that reset the poll from
-                // zero, so an image needing 62 s could never accumulate more than 5. With
-                // the request itself persistent there is nothing left to retry.
+                // Both outcomes are terminal for this request. The request itself persists
+                // until the bytes arrive or it is cancelled, so there is nothing to retry;
+                // a re-request here would restart the attempt and reset its poll from zero,
+                // so an image slower than the retry period could never finish.
                 self.downloadingSlots.remove(slot)
                 if case let .image(image, nativePixelSize) = outcome {
                     self.panePreviews[slot] = PanePreview(

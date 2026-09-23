@@ -140,22 +140,22 @@ extension FileMaterialization {
 
     /// Timestamps arrival without reading any bytes.
     ///
-    /// This was added to find out whether hydration is progressive. Measured 2026-09-01
-    /// (`research 2026-09-01-onedrive-hydration-shape-and-latency.md`): it is **atomic** —
-    /// `st_blocks` stays at 0 for the whole download and jumps to full on completion, two
-    /// transitions per file, every file. So this logs exactly one line per transfer, and
-    /// there is no progress here to report.
+    /// Hydration is **atomic** — measured 2026-09-01
+    /// (`research 2026-09-01-onedrive-hydration-shape-and-latency.md`): `st_blocks` stays
+    /// at 0 for the whole download and jumps to full on completion, two transitions per
+    /// file, every file. So this logs exactly one line per transfer, and there is no
+    /// progress here to report.
     ///
-    /// Kept because that one line is still worth having: it timestamps arrival independently
-    /// of the poll's own bookkeeping, and it keeps the atomicity claim falsifiable — a
+    /// That one line is still worth having: it timestamps arrival independently of the
+    /// poll's own bookkeeping, and it keeps the atomicity claim falsifiable — a
     /// provider that ever hydrates progressively will show up as extra transitions rather
     /// than as a silent assumption someone has to re-derive.
     ///
     /// The consequence for the design is the important part: with no byte-level signal,
     /// Otos cannot distinguish "downloading slowly" from "stalled" through the filesystem at
-    /// all. That is the fact PR 172 lacked when it read a 3 s `ETIMEDOUT` as definitive, and
-    /// it is why interactive work persists rather than deciding to give up on evidence that
-    /// does not exist. Real progress would require `NSFileProviderManager`'s `NSProgress`.
+    /// all, so a 3 s `ETIMEDOUT` is not definitive. That is why interactive work persists
+    /// rather than deciding to give up on evidence that does not exist. Real progress would
+    /// require `NSFileProviderManager`'s `NSProgress`.
     private nonisolated static func progressSample(
         _ url: URL,
         since start: ContinuousClock.Instant
@@ -201,17 +201,15 @@ extension FileMaterialization {
         return .inconclusive
     }
 
-    /// How hard a materialization tries, and for how long.
+    /// How hard a materialization tries, and for how long — derived from the request's
+    /// priority, so a background-only policy cannot reach interactive work. The two-strike
+    /// probe exists to stop a background transfer squatting `rootBackgroundCap=1` for two
+    /// minutes — a slot interactive work never holds.
     ///
-    /// This is the fact PR 172 could not express, which is why its background fix
-    /// reached the loupe. The two-strike probe was written to stop a background transfer
-    /// squatting `rootBackgroundCap=1` for two minutes — a slot interactive work never
-    /// holds. It arrived here anyway because the executor called `materialize(url)` and
-    /// dropped the request's priority on the floor.
-    ///
-    /// Measured 2026-08-31: 43 interactive requests failed, every one between 2402 ms and
-    /// 5539 ms against the 120 s budget they had been given, while the slowest *successful*
-    /// materialization in the same window took 62,316 ms. Healthy hydration on this library
+    /// Applying that probe to interactive requests fails them early. Measured 2026-08-31:
+    /// 43 interactive requests failed, every one between 2402 ms and 5539 ms against a
+    /// 120 s budget, while the slowest *successful* materialization in the same window took
+    /// 62,316 ms. Healthy hydration on this library
     /// reaches 8.9 s (research 2026-07-11) against a 3 s probe timeout, so the threshold
     /// sits inside the provider's own latency distribution.
     nonisolated struct Persistence: Equatable, Sendable {

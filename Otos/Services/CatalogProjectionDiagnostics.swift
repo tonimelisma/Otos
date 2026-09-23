@@ -101,9 +101,9 @@ nonisolated struct CatalogProjectionPublicationDiagnostics {
     let dirtyAfter: Bool
     let stateChanged: Bool
     /// Cumulative full ordered-asset queries this session — the regression metric
-    /// for ADR 0011's detail-only publication path. The field-evidence gap this
-    /// closes is that answering "how many full re-sorts did N enrichment batches
-    /// cause?" previously required a test, not a capture.
+    /// for ADR 0011's detail-only publication path. It makes "how many full
+    /// re-sorts did N enrichment batches cause?" answerable from a log capture,
+    /// not only from a test.
     let orderQueryCount: UInt64
 
     func emit() async {

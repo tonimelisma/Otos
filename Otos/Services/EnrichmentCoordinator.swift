@@ -47,7 +47,7 @@ actor EnrichmentCoordinator {
         let materializationInFlight: Int
         /// Device seeds offered but not yet admitted as demands. Non-zero means a
         /// camera is larger than the outstanding limit and the rest are waiting their
-        /// turn — which is the state that used to be a silent discard.
+        /// turn, not dropped.
         let deviceSeedsQueued: Int
 
         var claimed: Int {
@@ -174,14 +174,13 @@ actor EnrichmentCoordinator {
     /// Device seeds offered but not yet admitted as materialization demands.
     ///
     /// A camera attach offers *every* catalog item at once, while only
-    /// `globalOutstandingLimit` (16) may be outstanding. `stageDevice` used to take
-    /// `seeds.prefix(available)` and drop the rest on the floor, and nothing could
-    /// recover them: the catalog flow runs once per attach, and an unstaged device
+    /// `globalOutstandingLimit` (16) may be outstanding. The overflow waits here and
+    /// is admitted as capacity frees. It cannot be dropped, because nothing would
+    /// recover it: the catalog flow runs once per attach, and an unstaged device
     /// file fails `lstat`, so readiness routing answers `.unknown` and retries
     /// readiness rather than creating a demand. A camera with more than ~16 items
-    /// therefore never fully staged, and so never fully enriched — contradicting
-    /// ENR-011's eager-staging intent (ENR-011). The overflow now waits here and
-    /// is admitted as capacity frees.
+    /// would never fully stage, and so never fully enrich — contradicting ENR-011's
+    /// eager-staging intent.
     var pendingDeviceSeeds: [DeviceStagingSeed] = []
     var nextClaimSequence: UInt64 = 0
     var retryLedger: [MediaAssetID: RetryLedgerEntry] = [:]

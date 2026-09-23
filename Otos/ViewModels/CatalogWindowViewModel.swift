@@ -170,8 +170,8 @@ final class CatalogWindowViewModel {
     }
 
     /// Decoded-image owner shared by grid, strip, and loupe/compare panes.
-    /// Single owner per docs/architecture:83 — previously the grid controller
-    /// owned it, now the ViewModel does so the pane can hit the same cache
+    /// Single owner per docs/architecture:83. The ViewModel, not the grid
+    /// controller, owns it so loupe/compare panes hit the grid's decoded cache
     /// without re-decoding.
     @ObservationIgnored let tileContentStore = TileContentStore()
 

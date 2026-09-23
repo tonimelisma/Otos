@@ -61,9 +61,9 @@ nonisolated enum MediaOperationGateway {
                 // fact. For video that fabrication is provably wrong by the clip's own
                 // duration (mtime is when recording stopped), and because the destination
                 // name is also the dedupe key, the next plan computes a different name,
-                // finds nothing there, and copies again. Plan 0099 §1.1 traced exactly
-                // that: 23 videos imported twice, five minutes apart, each pair named
-                // apart by its own duration.
+                // finds nothing there, and copies again. Field evidence: 23 videos
+                // imported twice, five minutes apart, each pair named apart by its own
+                // duration.
                 .pending
             }
             let assetID = MediaAssetID(libraryRootPath: sourceRoot, relativePath: relative)

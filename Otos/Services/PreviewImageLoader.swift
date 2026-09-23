@@ -28,11 +28,11 @@ nonisolated protocol PreviewLoading: Sendable {
 actor PreviewImageLoader: PreviewLoading {
     /// Two outcomes, because nothing downstream can act on a third.
     ///
-    /// `.downloading` used to mean "the materialization attempt did not produce bytes",
-    /// and the pane turned that into a 500 ms re-request. Interactive materialization now
-    /// persists until the bytes arrive or the request is cancelled (APP-023), so a
-    /// non-image result means cancelled or genuinely absent — neither of which the caller
-    /// retries. The reason is still logged; it is just not a decision anyone makes.
+    /// Interactive materialization persists until the bytes arrive or the request is
+    /// cancelled (APP-023), so a non-image result means cancelled or genuinely absent —
+    /// neither of which the caller retries. There is no "still downloading" outcome: it
+    /// would only invite a re-request that restarts the attempt. The reason is still
+    /// logged; it is just not a decision anyone makes.
     enum Outcome {
         /// The decode plus the source's native pixel size (oriented), when the source
         /// reports one — the loupe sizes its zoom document from it (APP-040).

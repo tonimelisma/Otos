@@ -50,10 +50,9 @@ extension MediaGridViewController {
     ///
     /// Which sections carry one is answered from `appliedDaySections`, the record the
     /// controller writes in the same synchronous region that applies the snapshot.
-    /// It used to be answered from `dataSource.snapshot()`, whose only route to
-    /// section identifiers copies the whole applied snapshot — once per section, on
-    /// every layout pass following an apply, with a day section per day and
-    /// enrichment applying about once a second.
+    /// Not `dataSource.snapshot()`: its only route to section identifiers copies the
+    /// whole applied snapshot — once per section, on every layout pass following an
+    /// apply, with a day section per day and enrichment applying about once a second.
     ///
     /// Column-count changes still replace the whole layout object via the zoom-swap
     /// path (`MediaGridZoom.swift`); this closure only varies per-section header

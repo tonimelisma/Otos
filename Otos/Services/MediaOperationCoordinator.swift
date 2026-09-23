@@ -152,8 +152,8 @@ actor MediaOperationCoordinator {
     }
 
     /// A settled `.completed` execution's outcome, stored on the session so
-    /// `presentation(for:)` can read a real value instead of the zero-summary
-    /// literal `.completed` used to synthesize on every publish.
+    /// `presentation(for:)` reads the real outcome rather than synthesizing a
+    /// zero-summary `.completed` on every publish.
     private struct SettledOutcome {
         let summary: MediaOperationPlanTotals
         let skippedForeignCount: Int
@@ -892,10 +892,10 @@ actor MediaOperationCoordinator {
     /// neither is `planRevision`-only churn and does no work.
     /// Wakes that moved no revision, per root, since the last one that did.
     ///
-    /// Every planning-change notification used to log a line, and most notifications
-    /// change nothing: a 999-item import produced 5,381 `receive` lines against **16**
-    /// actual plan rebuilds. Thirteen log lines per imported item buried the fact an agent
-    /// actually needs — *which* wake moved a revision — under the ones that moved none.
+    /// Most planning-change notifications change nothing: a 999-item import measured
+    /// 5,381 notifications against **16** actual plan rebuilds. A line per notification —
+    /// thirteen per imported item — would bury the fact an agent actually needs, *which*
+    /// wake moved a revision, under the ones that moved none.
     ///
     /// The count rides on the next line that reports a real change, so "wakes are arriving
     /// but nothing is moving" stays diagnosable without a line each.
@@ -1927,17 +1927,14 @@ actor MediaOperationCoordinator {
 
     /// Publishes to every consumer, and logs each source's state **when it changes**.
     ///
-    /// The log used to be throttled to one line per 250 ms per source. That is fine for a
-    /// state that changes slowly and useless for one that does not: the 2026-08-30 session
-    /// alternated `.planning` and `.waitingForMetadata` roughly every 1.1 s with the pair
-    /// only ~140 ms apart, so the throttle recorded 33 `planning` publishes and *zero*
-    /// `waitingForMetadata` ones. It was impossible to tell from the log whether the
-    /// counting frames ever reached the view — the defect C2 fixes was invisible in the one
-    /// place it should have been obvious.
+    /// Not time-throttled: a throttle suits a state that changes slowly and hides one that
+    /// does not. The 2026-08-30 session alternated `.planning` and `.waitingForMetadata`
+    /// roughly every 1.1 s with the pair only ~140 ms apart; a 250 ms-per-source throttle
+    /// recorded 33 `planning` publishes and *zero* `waitingForMetadata` ones, so the log
+    /// could not show whether the counting frames ever reached the view.
     ///
-    /// Logging on change keeps every transition and drops only genuine repeats. Note the
-    /// yield to continuations was never throttled, so this only ever affected what could be
-    /// diagnosed, never what was drawn.
+    /// Logging on change keeps every transition and drops only genuine repeats. It governs
+    /// only what can be diagnosed: the yield to continuations is never gated by it.
     private func publish() {
         let values = sortedPresentations()
         for presentation in values {

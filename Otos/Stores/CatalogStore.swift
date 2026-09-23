@@ -3100,9 +3100,10 @@ private extension CatalogStore {
         }
 
         notifyCatalogChanged()
-        // Drain every dirty root before starting the next queued full-root scan.
-        // Starting B first used to strand A's retained file/subtree dirt because
-        // drainDirtyReconcile exited on the global currentScanTask.
+        // Drain every dirty root before starting the next queued full-root scan:
+        // drainDirtyReconcile skips subtree/root dirt while any scan holds the
+        // global lease (currentScanTask), so starting B first would leave A's
+        // retained dirt waiting behind B.
         Task { await self.afterFilesystemLeaseCleared() }
     }
 

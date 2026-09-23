@@ -633,7 +633,7 @@ final class DeviceCameraSession: NSObject {
 
     /// Revalidates planned size/date against live `ICCameraFile` facts (ARC-049).
     /// Distinguishes "the session itself isn't ready" from "this specific file
-    /// is gone" — previously both collapsed into one `Bool`.
+    /// is gone", which a `Bool` would collapse.
     func revalidate(
         relativePath: MediaRelativePath,
         byteSize: Int64?,

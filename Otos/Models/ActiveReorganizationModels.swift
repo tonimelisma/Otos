@@ -95,11 +95,11 @@ nonisolated enum RootNamespaceMutationOwner: String, Equatable, Sendable {
 
 /// The outcome of asking for a root's namespace lease.
 ///
-/// Deliberately not `Optional`. A `nil` return collapsed two facts a caller must
-/// tell apart — "another owner holds this root" and "there is no such root" — and
-/// `MediaImportExecutor` reported the first as the second, failing an entire
-/// import with "The card was removed" while the card sat in the reader. Callers
-/// switch on this so that mistake cannot be written again.
+/// Deliberately not `Optional`. A `nil` return would collapse two facts a caller
+/// must tell apart — "another owner holds this root" and "there is no such root" —
+/// and reporting the first as the second fails an entire import with "The card was
+/// removed" while the card sits in the reader. Callers switch on this so that
+/// mistake cannot be written.
 nonisolated enum RootNamespaceLeaseAcquisition: Equatable, Sendable {
     case acquired(RootNamespaceMutationLease)
     /// A different namespace mutation owns this root right now. Transient: the

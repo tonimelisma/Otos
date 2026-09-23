@@ -7,12 +7,12 @@ import Foundation
 /// "islands" a ⇧-range unions with. It has no AppKit dependency and no I/O, so every
 /// selection rule is unit-testable without a collection view.
 ///
-/// Why a model owns selection (spec 0046): the prior design read
-/// `NSCollectionView.selectionIndexPaths` as an *input* to its selection computation and
-/// then corrected AppKit's result. That coupled the computation to AppKit's
-/// mouseDown/mouseUp commit timing — undocumented and unstable — so the correction raced
-/// AppKit's own commit and produced the "contracting range drops the clicked tile" and
-/// "selection remembers the old set" bugs. `GridSelection` inverts the relationship: the
+/// Why a model owns selection (spec 0046): reading `NSCollectionView.selectionIndexPaths`
+/// as an *input* to the selection computation and then correcting AppKit's result couples
+/// the computation to AppKit's mouseDown/mouseUp commit timing — undocumented and
+/// unstable — so the correction races AppKit's own commit, producing bugs such as "a
+/// contracting range drops the clicked tile" and "selection remembers the old set".
+/// `GridSelection` inverts the relationship: the
 /// model is the truth, and `selectionIndexPaths` is an *output* the controller writes
 /// from `gridSelection.selection`. The AppKit controller never reads AppKit's selection to
 /// *decide* a gesture; it reads it only to compute the minimal write delta and to

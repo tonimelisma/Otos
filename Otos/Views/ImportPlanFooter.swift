@@ -58,12 +58,11 @@ struct ImportPlanFooter: View {
     /// state, default-keyboard-shortcut eligibility, and destructive tint —
     /// computed once here and consumed by every `primaryAction` case in
     /// `primaryButton`, rather than each case independently re-deriving its
-    /// own title/shortcut/tint. `drawn.primaryEnabled` used to be read by
-    /// only 1 of 7 cases; the cancelling state (`primaryEnabled: false`)
-    /// rendered a live button because nothing forced every case through one
-    /// owner. A pure value type — not a rendered SwiftUI
-    /// view — is what closes the gap that let that ship green: the mapper
-    /// was fully covered by tests, the renderer was not. `nonisolated`
+    /// own title/shortcut/tint. One owner forces every case through the same
+    /// derivation, so no case can ignore `drawn.primaryEnabled` and render a
+    /// live button in the cancelling state (`primaryEnabled: false`). A pure
+    /// value type — not a rendered SwiftUI view — lets tests cover the
+    /// renderer's input, not only the mapper's output. `nonisolated`
     /// deliberately opts out of `ImportPlanFooter`'s inferred `@MainActor`
     /// isolation (a `View`'s default) — this is pure computation with no UI
     /// state, and a test needs to call it off the main actor.
@@ -129,8 +128,7 @@ struct ImportPlanFooter: View {
 
     /// One hairline, before the middle zone, only when it has content worth
     /// separating from *what* — never before the act. The mockup draws at
-    /// most one hairline per bar; this file used to draw two in every
-    /// state, including `.hidden`, where there is nothing to divide.
+    /// most one hairline per bar, and `.hidden` has nothing to divide.
     private var showsMiddleHairline: Bool {
         switch drawn.middleZone {
         case .choices, .progress: true
@@ -262,14 +260,13 @@ struct ImportPlanFooter: View {
             .frame(width: 66, alignment: .leading)
     }
 
-    /// `.help(eraseDisabledReason ?? "")` used to attach an empty tooltip
-    /// even while the toggle was enabled, and attaching `.help` directly to a
-    /// `.disabled` control is not reliably surfaced by AppKit's disabled-
-    /// control hover handling — DES-038 requires the explanation to actually
-    /// reach the user, not merely to be attached to a control that may
-    /// swallow hover events. `.help` is applied only when a
-    /// reason exists, and only to a wrapping `ZStack` — a distinct, always-
-    /// enabled hit-testable container — never to the disabled `Toggle` itself.
+    /// `.help` is applied only when a reason exists — `.help("")` would still
+    /// attach an empty tooltip while the toggle is enabled — and only to a
+    /// wrapping `ZStack`, a distinct, always-enabled hit-testable container,
+    /// never to the disabled `Toggle` itself. `.help` on a `.disabled` control
+    /// is not reliably surfaced by AppKit's disabled-control hover handling,
+    /// and DES-038 requires the explanation to actually reach the user, not
+    /// merely to be attached to a control that may swallow hover events.
     @ViewBuilder
     private func eraseToggle(eraseEnabled: Bool, eraseDisabledReason: String?) -> some View {
         let toggle = Toggle("Erase the card", isOn: erasePreferenceBinding)

@@ -27,11 +27,10 @@ nonisolated enum ChangedFact: Equatable, Sendable {
 }
 
 /// Why a plan entry's live source does or does not still match what the plan
-/// captured. One typed owner for every "does this still match" check
-/// (`MediaImportExecutor.sourceStillMatches`, `DeviceCameraSession.revalidate`)
-/// replaces the collapsed `Bool` each used to return, so a systemic cause
-/// (the source itself wasn't ready) can be told apart from an ordinary
-/// per-file one.
+/// captured. One typed answer for every "does this still match" check
+/// (`MediaImportExecutor.sourceStillMatches`, `DeviceCameraSession.revalidate`),
+/// so a systemic cause (the source itself wasn't ready) can be told apart from
+/// an ordinary per-file one — a `Bool` would collapse the two.
 nonisolated enum SourceValidation: Equatable, Sendable {
     case matches
     /// The device session or volume mount wasn't ready to answer at all —

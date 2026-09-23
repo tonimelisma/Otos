@@ -2,11 +2,11 @@ import Foundation
 
 /// How enrichment reaches an asset's bytes.
 ///
-/// Enrichment used to take a `URL`, which quietly asserted that every asset's bytes are a
-/// local file. For a camera reachable only over MTP that is false, and the cost of the
-/// assumption was the whole card: to read a capture date, Otos transferred every file so
-/// there would be a URL to hand to the reader — 36.5 GB and ~45 minutes before the Import
-/// button could appear.
+/// A bare `URL` would quietly assert that every asset's bytes are a local file. For a
+/// camera reachable only over MTP that is false, and the cost of the assumption is the
+/// whole card: to read a capture date, Otos would transfer every file so there is a URL to
+/// hand to the reader — measured at 36.5 GB and ~45 minutes before the Import button could
+/// appear.
 ///
 /// Naming the two ways to reach bytes makes the device case expressible instead of
 /// requiring a download to fake it. Both cases carry only `Sendable` values;

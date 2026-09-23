@@ -5,9 +5,9 @@ import AppKit
 ///
 /// `mouseDown(with:)` does **not** call `super.mouseDown`. AppKit's default
 /// `mouseDown` runs a mouse-tracking loop whose selection-commit timing across the mouse
-/// event sequence is not a stable, documented contract; the prior design read
-/// `selectionIndexPaths` after `super.mouseDown` to correct the result and lost the race.
-/// Instead this subclass finds the candidate item, confirms the click is inside the tile's
+/// event sequence is not a stable, documented contract, so reading `selectionIndexPaths`
+/// after `super.mouseDown` to correct the result races AppKit's own commit. Instead this
+/// subclass finds the candidate item, confirms the click is inside the tile's
 /// aspect-fit thumbnail face, preserves keyboard focus, and forwards `(hit, modifiers)` to
 /// the controller, which computes the gesture against its own `GridSelection` and writes
 /// `selectionIndexPaths` itself.

@@ -308,15 +308,13 @@ extension CatalogStore {
         return migrator
     }
 
-    /// Plan 0095 D10 backstop. `RemovableVolumeMonitor.currentAttachments`
-    /// used to accept any mounted volume with `volumeIsRemovable == true`
-    /// alone, which a mounted disk image also satisfies — production
-    /// evidence held `/Volumes/Raycast` and `/Volumes/BoltAI 2`, both
-    /// app-installer DMGs, as permanent removable sources. The monitor now
-    /// excludes disk images at the source (`RemovableVolumeMonitor.
-    /// isPhysicalRemovableDevice`); this one-time pass removes rows that
-    /// already slipped through, keyed on the identical live
-    /// `DiskArbitration` predicate.
+    /// Removes disk-image rows recorded as removable sources. A mounted disk
+    /// image satisfies `volumeIsRemovable == true` on its own, so a catalog
+    /// can hold app-installer DMGs (production evidence: `/Volumes/Raycast`,
+    /// `/Volumes/BoltAI 2`) as permanent removable sources.
+    /// `RemovableVolumeMonitor.isPhysicalRemovableDevice` excludes disk images
+    /// at the source; this one-time pass removes rows already stored, keyed on
+    /// the identical live `DiskArbitration` predicate.
     ///
     /// Additive-safe by construction: a row is deleted only when its path is
     /// *currently* mountable and `DiskArbitration` positively reports
@@ -352,7 +350,7 @@ extension CatalogStore {
 
     /// v17 closes the v16 gap for roots that were detached when the earlier
     /// migration ran. The persisted device model is authoritative when known;
-    /// unknown legacy roots remain untouched.
+    /// roots with no recorded device model remain untouched.
     private static func removeRecordedDiskImageRemovableRoots(_ db: Database) throws {
         try db.execute(
             sql: """
