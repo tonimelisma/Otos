@@ -142,7 +142,9 @@ and let instrumentation prove a real bottleneck before optimizing it.
 - Avoid unstructured `Task` ownership: long-running work needs an owner, a
   cancellation path, and stale-completion rejection or coalesced dirty/in-flight
   handling. A long-lived stream consumer captures its owner **weakly** across
-  indefinite waits and upgrades only for the smallest completed-value scope.
+  indefinite waits, upgrades only for the smallest completed-value scope, and exits
+  when that upgrade fails — a loop that only skips a beat keeps whatever its closure
+  captured alive forever.
 - Repeated synchronous UI intents that start async work define their delivery
   semantics explicitly (newest-value coalescing, lossless serial, or intentional
   concurrency). Constructive/destructive commands must not use a dropping buffer
@@ -191,8 +193,9 @@ Two lenses on every PR:
   question? Would a blank-slate build arrive here, or is this a patch around a
   wrong boundary?
 
-Review from the diff, not the author's intent. Prefer a cold `/code-review` (up
-to `ultra` for hot-path or store work). Rank findings by severity; each finding
+Review from the diff, not the author's intent. Prefer a cold `/code-review`; for
+hot-path or store work, suggest the user run `/code-review ultra` (user-triggered
+and billed — the agent cannot launch it). Rank findings by severity; each finding
 is a concrete failure scenario plus `file:line`. A confirmed correctness bug or a
 lost invariant/requirement blocks merge; smells and Lens-B notes are logged on
 the PR.
@@ -237,8 +240,7 @@ build-and-test cycle — you do not have to remember to.
 **A long check is watched, not awaited.** Waiting on process completion alone does
 not work: a hung process never completes, so it never reports, and the wait is
 unbounded. **Arm a `Monitor` that emits a line every 60 seconds**, and stop it in
-the same action that reads its result — an unstopped watcher is the single most
-repeated mistake in this repo's history, with waiters found running for hours.
+the same action that reads its result — an unstopped watcher keeps running for hours.
 `check.sh` also detects its own deadlock (below), so a hang reports itself even if
 no watcher was armed. Read the tail of the log:
 
@@ -247,17 +249,14 @@ no watcher was armed. Read the tail of the log:
 `tests=` climbing is healthy. `tests=` unchanged three heartbeats running is hung.
 No heartbeat at all means the script itself died — read the tail. Reading one file
 answers it; `ps -eo pid,etime,command` is the fallback, and note `etime` is
-`[[DD-]hh:]mm:ss` — `09:40:13` is nine *hours*, not nine minutes. Misreading it
-that way once cost a nine-hour stall.
+`[[DD-]hh:]mm:ss` — `09:40:13` is nine *hours*, not nine minutes.
 
 A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
 `sample <xctest pid>` for the parked thread, and diff the log's test-name list
 against a complete run's to find which tests never reported. Do not paper over a
 hang with a kill-timeout in shared tooling — a wall-clock limit destroys a
 legitimately slow run, and it hides the bug instead of surfacing it. **A suite that
-hangs has a defect; fix the defect.** One such hang traced to long-lived tasks that
-held their owner weakly but never exited when that upgrade failed, so each test left
-an immortal loop holding a whole `CatalogStore` alive.
+hangs has a defect; fix the defect.**
 
 Kill the **tree**, never the parent alone — killing `verify.sh` leaves its `test.sh`
 and `xcodebuild` children orphaned (`PPID 1`), and an orphan competing against the
@@ -319,9 +318,8 @@ for confirmation before relying on them.
 - A red `main` blocks merge of anything that could change build or test results,
   except the fix that greens it. A PR that observes a red baseline opens that fix
   first — merging alongside a known-red `main` is exactly when a real regression
-  hides (two PRs once landed against a `main` red from five pre-existing
-  failures; the next PR restored green a day later, and nothing had verified the
-  intervening PRs against a working baseline). **A doc-only increment is not
+  hides, because nothing verifies the intervening PRs against a working
+  baseline. **A doc-only increment is not
   blocked by a red `main`**: its diff cannot compile, run, or hide anything, and
   planning the fix is usually the first step toward it. Such a PR states the red
   baseline and the failing test by name in its DoD report, so the merge is a

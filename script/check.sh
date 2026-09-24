@@ -57,7 +57,7 @@ it sample the parked threads, name the last test to report, kill its children an
 exit non-zero. A quiet log is never enough — one long test can log nothing while
 working, and killing on silence is a timeout, not detection.
 
-Normal total is about 7 minutes: ~4 to build, ~3 for ~810 tests.
+Normal total is about 7 minutes: ~4 to build, ~3 to run the suite.
 Verification evidence counts ONLY from a run that measured the final tree —
 edit anything, even a comment, and this result no longer proves it.
 ────────────────────────────────────────────────────────────────────────

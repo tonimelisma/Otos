@@ -113,8 +113,7 @@ prints a heartbeat every 60 s carrying elapsed time and the running test count.
 
 Running verify.sh / test.sh / build.sh directly loses that:
   • test.sh and build.sh skip the gates, so nothing they produce is evidence.
-  • Nothing emits a heartbeat, so a hang is indistinguishable from slow work —
-    which is how one run stalled for 9 h 40 m unnoticed.
+  • Nothing emits a heartbeat, so a hang is indistinguishable from slow work.
 
   script/check.sh        with run_in_background: true
 then read the tail of its log every 60 s. tests= climbing is healthy; tests=
