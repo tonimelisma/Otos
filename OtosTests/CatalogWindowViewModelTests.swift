@@ -362,7 +362,7 @@ struct CatalogWindowViewModelTests {
 
 @MainActor
 private func waitForCondition(
-    timeout: Duration = .seconds(2),
+    timeout: Duration = .seconds(10),
     predicate: () -> Bool
 ) async throws {
     let clock = ContinuousClock()
@@ -493,21 +493,24 @@ private func waitForNoAdditionalBuilds(
     #expect(await probe.buildCount == baseline)
 }
 
+/// Samples until one full `quietDuration` passes with no new build. Bounded only
+/// against a genuine hang (`withTestTimeout`), never by a short wall-clock deadline:
+/// under parallel-suite load one sleep can overshoot such a deadline while the one
+/// expected post-shutdown build lands inside it, and the wait would give up before
+/// taking the sample that proves builds stopped.
 private func waitForBuildsToQuiesce(
     _ probe: WindowStateBuildProbe,
-    quietDuration: Duration,
-    timeout: Duration = .seconds(2)
+    quietDuration: Duration
 ) async throws -> Int {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    var baseline = await probe.buildCount
-    while clock.now < deadline {
-        try await Task.sleep(for: quietDuration)
-        let current = await probe.buildCount
-        if current == baseline {
-            return current
+    try await withTestTimeout("window state builds to quiesce") {
+        var baseline = await probe.buildCount
+        while true {
+            try await Task.sleep(for: quietDuration)
+            let current = await probe.buildCount
+            if current == baseline {
+                return current
+            }
+            baseline = current
         }
-        baseline = current
     }
-    throw CatalogWindowViewModelTestError.timedOut
 }
