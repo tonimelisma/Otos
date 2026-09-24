@@ -6,7 +6,10 @@ import Testing
 /// menu bar, same order on every surface, enablement per act.
 struct MediaItemMenuModelTests {
     @Test func entriesMirrorTheMenuBarInOrder() {
-        let preview = OpenWithApplication(url: URL(fileURLWithPath: "/System/Applications/Preview.app"), displayName: "Preview")
+        let preview = OpenWithApplication(
+            url: URL(fileURLWithPath: "/System/Applications/Preview.app"),
+            displayName: "Preview"
+        )
         let openWith = OpenWithMenuModel(
             defaultApplication: preview,
             applications: [preview],

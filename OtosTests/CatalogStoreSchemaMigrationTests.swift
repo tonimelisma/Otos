@@ -445,7 +445,10 @@ struct CatalogStoreSchemaMigrationTests {
             ))
         }
         #expect(!remainingPaths.contains(diskImagePath), "The disk image root must be removed")
-        #expect(remainingPaths.contains(unmountedPath), "An unmounted root must be left alone — it cannot be proven a disk image")
+        #expect(
+            remainingPaths.contains(unmountedPath),
+            "An unmounted root must be left alone — it cannot be proven a disk image"
+        )
     }
 }
 

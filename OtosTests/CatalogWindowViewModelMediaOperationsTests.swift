@@ -17,7 +17,13 @@ struct CatalogWindowViewModelMediaOperationsTests {
     private static func presentation(
         batchID: ImportBatchID?,
         state: MediaOperationSourceState = .executing(
-            progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
+            progress: MediaOperationProgress(
+                completedCount: 1,
+                totalCount: 2,
+                completedBytes: 1,
+                totalBytes: 2,
+                elapsedMs: 0
+            )
         ),
         cardStillExists: Bool = true,
         copiedJustNow: Int? = nil,
@@ -189,7 +195,13 @@ struct CatalogWindowViewModelMediaOperationsTests {
             Self.presentation(
                 batchID: Self.batchID,
                 state: .completed(
-                    summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 1, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+                    summary: MediaOperationPlanTotals(
+                        copyCount: 5,
+                        skipCount: 1,
+                        blockedCount: 0,
+                        companionCopyCount: 0,
+                        copyBytes: 0
+                    )
                 ),
                 cardStillExists: false,
                 isFullyClean: false
@@ -211,7 +223,13 @@ struct CatalogWindowViewModelMediaOperationsTests {
             let settled = Self.presentation(
                 batchID: Self.batchID,
                 state: .completed(
-                    summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+                    summary: MediaOperationPlanTotals(
+                        copyCount: 5,
+                        skipCount: 0,
+                        blockedCount: 0,
+                        companionCopyCount: 0,
+                        copyBytes: 0
+                    )
                 ),
                 cardStillExists: cardStillExists,
                 isFullyClean: true
@@ -369,7 +387,13 @@ struct CatalogWindowViewModelMediaOperationsTests {
         model.selectSidebar(.library(Self.cardPath))
         model.applyImportPresentations([Self.presentation(
             batchID: Self.batchID,
-            state: .completed(summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 5)),
+            state: .completed(summary: MediaOperationPlanTotals(
+                copyCount: 5,
+                skipCount: 0,
+                blockedCount: 0,
+                companionCopyCount: 0,
+                copyBytes: 5
+            )),
             copiedJustNow: 5,
             isFullyClean: true,
             batchHasPublishedAssets: true

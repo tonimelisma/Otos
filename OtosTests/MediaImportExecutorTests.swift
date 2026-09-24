@@ -500,7 +500,10 @@ struct ImportExecutionProgressTests {
         }
         #expect(snapshots.last?.completedCount == 12)
         #expect(snapshots.last?.completedBytes == expectedBytes)
-        #expect((snapshots.first?.elapsedMs ?? .max) < 2000, "First snapshot should be near run start, not carried over")
+        #expect(
+            (snapshots.first?.elapsedMs ?? .max) < 2000,
+            "First snapshot should be near run start, not carried over"
+        )
         let sourceAfter = try FilesystemTreeSnapshot.capture(root: sourceURL)
         #expect(sourceAfter == sourceBefore)
         await coordinator.shutdown()
@@ -965,13 +968,22 @@ struct ImportExecutionProgressTests {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destinationRoot)
-        return CardFixture(store: store, plan: plan, sourceRoot: sourceRoot, destinationRoot: destinationRoot, destinationPath: destinationPath)
+        return CardFixture(
+            store: store,
+            plan: plan,
+            sourceRoot: sourceRoot,
+            destinationRoot: destinationRoot,
+            destinationPath: destinationPath
+        )
     }
 
     /// Bytes currently sitting in a directory tree — what a live volume's
     /// capacity would have lost to the copies that landed.
     private static func bytesLanded(under root: URL) -> Int64 {
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        ) else {
             return 0
         }
         var total: Int64 = 0
@@ -1062,9 +1074,18 @@ struct ImportExecutionProgressTests {
             return
         }
         #expect(publishedCount == 2)
-        #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.jpg").path), "landed, proven, erased on settle")
-        #expect(!FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_1.jpg").path), "landed, proven, erased on settle")
-        #expect(FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_2.jpg").path), "refused by the floor: still only on the card")
+        #expect(
+            !FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_0.jpg").path),
+            "landed, proven, erased on settle"
+        )
+        #expect(
+            !FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_1.jpg").path),
+            "landed, proven, erased on settle"
+        )
+        #expect(
+            FileManager.default.fileExists(atPath: fixture.sourceRoot.appending(path: "IMG_2.jpg").path),
+            "refused by the floor: still only on the card"
+        )
         #expect(!FileManager.default.fileExists(atPath: destination.appending(path: "IMG_2.jpg").path))
     }
 
@@ -1080,7 +1101,12 @@ struct ImportExecutionProgressTests {
                 if source.lastPathComponent == "IMG_1.jpg" {
                     return .failed(errno: ENOSPC)
                 }
-                return CopyfileTransfer.copy(from: source, to: destination, onProgress: onProgress, shouldContinue: shouldContinue)
+                return CopyfileTransfer.copy(
+                    from: source,
+                    to: destination,
+                    onProgress: onProgress,
+                    shouldContinue: shouldContinue
+                )
             }
         )
         let result = await executor.execute(
@@ -1110,7 +1136,8 @@ struct ImportExecutionProgressTests {
         let outside = temp.deletingLastPathComponent().appending(path: "same.jpg")
         #expect(CatalogPath.relativePath(rootPath: root, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
         let trailingSlashRoot = LibraryRootPath(rawValue: root.rawValue + "/")
-        #expect(CatalogPath.relativePath(rootPath: trailingSlashRoot, fileURL: inside) == MediaRelativePath(rawValue: "same.jpg"))
+        #expect(CatalogPath.relativePath(rootPath: trailingSlashRoot, fileURL: inside)
+            == MediaRelativePath(rawValue: "same.jpg"))
         #expect(CatalogPath.relativePath(rootPath: root, fileURL: outside) == nil)
     }
 

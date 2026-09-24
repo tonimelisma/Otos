@@ -18,8 +18,11 @@ actor ControlledImportPlanBuilder {
     }
 
     private var recorded: [RecordedRequest] = []
-    // swiftlint:disable:next line_length
-    private var pending: [LibraryRootPath: [(snapshot: ImportPlanningSnapshot, reserved: Set<MediaRelativePath>, continuation: CheckedContinuation<ImportPlanBuildResult, Never>)]] = [:]
+    private var pending: [LibraryRootPath: [(
+        snapshot: ImportPlanningSnapshot,
+        reserved: Set<MediaRelativePath>,
+        continuation: CheckedContinuation<ImportPlanBuildResult, Never>
+    )]] = [:]
     private var suspendNext: [LibraryRootPath: Int] = [:]
     private(set) var cancelled: Set<LibraryRootPath> = []
 
@@ -51,7 +54,7 @@ actor ControlledImportPlanBuilder {
     func resumeAllPending() async {
         let keys = Array(pending.keys)
         for key in keys {
-            while let q = pending[key], !q.isEmpty {
+            while let queued = pending[key], !queued.isEmpty {
                 await resumePendingBuild(for: key)
             }
         }
@@ -91,13 +94,23 @@ actor ControlledImportPlanBuilder {
         }
         let dummyPlan = MediaOperationPlan(
             generation: entry.snapshot.generation,
-            mode: .import(source: entry.snapshot.sourceRoot, destination: entry.snapshot.destinationRoot, batch: ImportBatchID()),
+            mode: .import(
+                source: entry.snapshot.sourceRoot,
+                destination: entry.snapshot.destinationRoot,
+                batch: ImportBatchID()
+            ),
             sourceNamespaceRevision: entry.snapshot.sourceNamespaceRevision,
             sourceNamingRevision: 0,
             destinationNamespaceRevision: entry.snapshot.destinationNamespaceRevision,
             policy: entry.snapshot.policy,
             entries: [],
-            totals: MediaOperationPlanTotals(copyCount: 0, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+            totals: MediaOperationPlanTotals(
+                copyCount: 0,
+                skipCount: 0,
+                blockedCount: 0,
+                companionCopyCount: 0,
+                copyBytes: 0
+            )
         )
         let dummy = ImportPlanBuildResult(plan: dummyPlan, namespace: .empty, enumerateMs: 0, planMs: 0)
         entry.continuation.resume(returning: dummy)

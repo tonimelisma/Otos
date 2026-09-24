@@ -177,7 +177,8 @@ extension CatalogWindowViewModel {
                 continue
             }
             autoSelectedBatchIDs.insert(batchID)
-            let hasNotNavigatedAway = sidebarSelection == .library(presentation.sourcePath) || sidebarSelection == .allImports
+            let hasNotNavigatedAway = sidebarSelection == .library(presentation.sourcePath) || sidebarSelection ==
+                .allImports
             if hasNotNavigatedAway {
                 selectSidebar(.importBatch(batchID))
             }
@@ -351,7 +352,6 @@ extension CatalogWindowViewModel {
         identityRemapEpoch &+= 1
         let epoch = identityRemapEpoch
         OtosLog.ui.notice(
-            // swiftlint:disable:next line_length
             "op=reorganization.remapUI phase=applied remapCount=\(batch.remaps.count, privacy: .public) epoch=\(epoch, privacy: .public)"
         )
     }

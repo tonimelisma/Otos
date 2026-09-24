@@ -4,7 +4,10 @@ import Testing
 
 struct FilesystemNamespaceSemanticsTests {
     private func key(_ path: String, _ capabilities: VolumeNamespaceCapabilities) -> FilesystemNameKey {
-        FilesystemNamespaceSemantics.nameKey(relativePath: MediaRelativePath(rawValue: path), capabilities: capabilities)
+        FilesystemNamespaceSemantics.nameKey(
+            relativePath: MediaRelativePath(rawValue: path),
+            capabilities: capabilities
+        )
     }
 
     @Test func caseSensitivityIsTheOneCapabilityThatChangesAKey() {

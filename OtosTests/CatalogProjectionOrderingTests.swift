@@ -157,7 +157,10 @@ struct CatalogProjectionOrderingTests {
         let sourceMTime = try #require(asset.contentModifiedAt.map { Int($0.timeIntervalSince1970) })
         let enrichment = EnrichmentResult(
             id: id,
-            metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "Cam"),
+            metadata: AssetMetadata(
+                timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))],
+                cameraModel: "Cam"
+            ),
             thumbnailPath: "thumb.jpg",
             sourceSize: asset.byteSize,
             sourceMTimeSeconds: sourceMTime,

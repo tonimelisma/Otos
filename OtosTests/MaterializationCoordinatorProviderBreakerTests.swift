@@ -42,10 +42,20 @@ struct MaterializationCoordinatorProviderBreakerTests {
 
         // Two files on the same root, both providerUnavailable → streak hits 2 → breaker open.
         async let r1 = coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: root, file: "a.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: root, file: "a.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         async let r2 = coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: root, file: "b.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: root, file: "b.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         _ = await (r1, r2)
         // Give finishOperation → recordProviderBreakerOutcome a turn.
@@ -77,20 +87,30 @@ struct MaterializationCoordinatorProviderBreakerTests {
         let root = "/Library/RootA"
         let callCount = AtomicCounter()
         let coordinator = makeCoordinator { _ in
-            let n = callCount.incrementAndGet()
+            let callNumber = callCount.incrementAndGet()
             // Alternate: providerUnavailable, then success → streak never reaches 2.
-            return n == 1
+            return callNumber == 1
                 ? MaterializationResult(outcome: .providerUnavailable, rerequestCount: 2, elapsedMs: 2000)
                 : MaterializationResult(outcome: .materialized, rerequestCount: 1, elapsedMs: 500)
         }
         await coordinator.start()
 
         _ = await coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: root, file: "a.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: root, file: "a.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         try? await Task.sleep(for: .milliseconds(50))
         _ = await coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: root, file: "b.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: root, file: "b.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         try? await Task.sleep(for: .milliseconds(50))
 
@@ -133,17 +153,32 @@ struct MaterializationCoordinatorProviderBreakerTests {
         await coordinator.start()
 
         async let a1 = coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: "/Library/RootA", file: "a.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: "/Library/RootA", file: "a.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         async let a2 = coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: "/Library/RootA", file: "b.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: "/Library/RootA", file: "b.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         _ = await (a1, a2)
         try? await Task.sleep(for: .milliseconds(50))
 
         // Root B file should still dispatch despite Root A breaker being open.
         let bResult = await coordinator.materialize(
-            MaterializationCoordinator.Request(id: id(root: "/Library/RootB", file: "c.jpg"), sourceSize: 1024, isVideo: false, priority: .background)
+            MaterializationCoordinator.Request(
+                id: id(root: "/Library/RootB", file: "c.jpg"),
+                sourceSize: 1024,
+                isVideo: false,
+                priority: .background
+            )
         )
         #expect(bResult.outcome == .materialized)
         await coordinator.shutdown()

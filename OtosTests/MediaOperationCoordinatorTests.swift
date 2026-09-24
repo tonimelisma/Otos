@@ -311,8 +311,8 @@ struct MediaOperationCoordinatorTests {
         // Deterministically wait until presentation leaves inventory.
         let deadline = ContinuousClock().now + .seconds(2)
         while ContinuousClock().now < deadline {
-            if let p = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .inventory = p.state
+            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
+               case .inventory = presentation.state
             {
                 try await Task.sleep(for: .milliseconds(25))
                 continue
@@ -844,7 +844,12 @@ struct MediaOperationCoordinatorTests {
         // teardown, and a full refreshSources cycle; under full-suite
         // concurrent load this measured 16.9s against a 15s budget (2026-08-17
         // verify.sh study), so the budget carries real margin over that.
-        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: afterPick, timeout: .seconds(30))
+        _ = try await readyGeneration(
+            coordinator,
+            source: fixture.source,
+            greaterThan: afterPick,
+            timeout: .seconds(30)
+        )
         let afterFallback = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
@@ -884,7 +889,11 @@ struct MediaOperationCoordinatorTests {
         )
         let builder = ControlledImportPlanBuilder()
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults, planBuilder: builder)
+        let coordinator = MediaOperationCoordinator(
+            store: fixture.store,
+            preferencesDomain: defaults,
+            planBuilder: builder
+        )
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[2], for: fixture.source)

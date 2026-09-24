@@ -116,10 +116,10 @@ struct FileMaterializationTests {
                 status: { _ in .dataless },
                 request: { _ in },
                 probe: { _ async in
-                    let c = probeCalls.next()
+                    let call = probeCalls.next()
                     // First probe unavailable, second inconclusive (healed), then unavailable again
                     // Never two in a row → should time out, not providerUnavailable
-                    return c == 1 ? .providerUnavailable : .inconclusive
+                    return call == 1 ? .providerUnavailable : .inconclusive
                 }
             )
         )

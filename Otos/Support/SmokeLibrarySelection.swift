@@ -99,7 +99,6 @@
                     guard ContinuousClock().now < deadline else {
                         let registered = sources.map(\.path.rawValue).sorted().joined(separator: ", ")
                         OtosLog.app.error(
-                            // swiftlint:disable:next line_length
                             "op=smoke.select phase=finish outcome=notRegistered requestedPath=\(requested.rawValue, privacy: .public) registeredRoots=[\(registered, privacy: .public)] hint=a smoke run never adds a root; pass one that is already registered"
                         )
                         return

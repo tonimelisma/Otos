@@ -13,6 +13,9 @@ line_length:
   error: 160
   ignores_comments: true
   ignores_urls: true
+  # Interpolated strings are `op=` log lines and user-facing sentences. Both stay
+  # whole on one line so a grep for the literal finds its source.
+  ignores_interpolated_strings: true
 
 # Size limits are soft warnings, not hard errors: cohesion sets file/type
 # boundaries, not an arithmetic cap. Do not re-add `error:` here, and do not split
@@ -25,6 +28,20 @@ file_length:
 
 function_body_length:
   warning: 50
+
+# SwiftFormat's wrapMultilineStatementBraces puts `{` on its own line after a
+# multi-line condition, signature, or type header; accept exactly that shape so the
+# formatter and the linter agree.
+opening_brace:
+  ignore_multiline_statement_conditions: true
+  ignore_multiline_function_signatures: true
+  ignore_multiline_type_headers: true
+
+# Test suites are named `<TypeUnderTest><Aspect>Tests`, which runs past the
+# 40-character default for the longer production type names.
+type_name:
+  max_length:
+    warning: 50
 
 identifier_name:
   min_length:

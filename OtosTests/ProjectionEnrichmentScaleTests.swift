@@ -107,7 +107,6 @@ struct ProjectionEnrichmentScaleTests {
         let afterStormOrderQueries = await projection.orderQueryCount
         #expect(
             afterStormOrderQueries - baselineOrderQueries <= 1,
-            // swiftlint:disable:next line_length
             "baseline=\(baselineOrderQueries) afterStorm=\(afterStormOrderQueries) storm=\(stormBatchCount) detail-only batches must not force a full re-sort"
         )
 

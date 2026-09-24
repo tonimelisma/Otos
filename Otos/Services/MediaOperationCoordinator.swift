@@ -90,7 +90,11 @@ actor MediaOperationCoordinator {
         case ready(ReadyContext)
         case executing(ExecutionContext)
         case completed
-        case executionUnavailable(summary: MediaOperationPlanTotals, generation: UInt64, attentionItems: [MediaAttentionItem])
+        case executionUnavailable(
+            summary: MediaOperationPlanTotals,
+            generation: UInt64,
+            attentionItems: [MediaAttentionItem]
+        )
         case planningFailed(reason: MediaOperationFailureReason)
     }
 
@@ -568,12 +572,20 @@ actor MediaOperationCoordinator {
         publish()
     }
 
-    private func runExecution(source: LibraryRootPath, sourceState: CatalogLibraryState, readyContext: ReadyContext) async {
+    private func runExecution(
+        source: LibraryRootPath,
+        sourceState: CatalogLibraryState,
+        readyContext: ReadyContext
+    ) async {
         guard var session = sourceSessions[source] else { return }
         guard case .ready = session.phase else { return }
 
         let runID = session.activeRunID ?? "missing"
-        OtosLog.catalog.noticeOperation("import.activity", phase: "started", fields: ["rootPath": source.rawValue, "run": runID])
+        OtosLog.catalog.noticeOperation(
+            "import.activity",
+            phase: "started",
+            fields: ["rootPath": source.rawValue, "run": runID]
+        )
         let executor = makeExecutor(source)
         let claims = readyContext.claims
         let plan = readyContext.plan
@@ -662,7 +674,11 @@ actor MediaOperationCoordinator {
     /// carries everything the dropped one did, and the terminal value comes from
     /// `applyExecutionResult` rather than from any sample. This is the newest-value
     /// coalescing the callback always needed and never declared.
-    private func applyExecutionProgress(source: LibraryRootPath, attachment: AttachmentGeneration, progress: MediaOperationProgress) {
+    private func applyExecutionProgress(
+        source: LibraryRootPath,
+        attachment: AttachmentGeneration,
+        progress: MediaOperationProgress
+    ) {
         guard var session = sourceSessions[source],
               session.attachmentGeneration == attachment,
               case .executing = session.phase
@@ -700,7 +716,14 @@ actor MediaOperationCoordinator {
             preconditionFailure("an executing session's plan is always an import plan (mode: \(context.plan.mode))")
         }
         switch result {
-        case let .completed(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems):
+        case let .completed(
+            publishedCount,
+            hasBlockedEntries,
+            hasEntryFailures,
+            skippedForeignCount,
+            failedCount,
+            incompleteItems
+        ):
             session.phase = .completed
             // Stricter than the auto-eject gate just below on purpose: a
             // foreign skip doesn't block physically ejecting the card, but it
@@ -740,7 +763,15 @@ actor MediaOperationCoordinator {
             if context.prefs.autoEjectAfterImport, !hasBlockedEntries, !hasEntryFailures, summary.blockedCount == 0 {
                 await autoEjectIfRequested(sourceRoot)
             }
-        case let .completedWithErase(publishedCount, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems, eraseOutcome):
+        case let .completedWithErase(
+            publishedCount,
+            hasBlockedEntries,
+            hasEntryFailures,
+            skippedForeignCount,
+            failedCount,
+            incompleteItems,
+            eraseOutcome
+        ):
             session.phase = .completed
             session.lastCompletion = AttachmentCompletion(
                 batch: summary.copyCount + summary.companionCopyCount > 0 ? context.batch : nil,
@@ -814,7 +845,11 @@ actor MediaOperationCoordinator {
             sourceSessions[source] = session
             publish()
         }
-        OtosLog.catalog.noticeOperation("import.activity", phase: "finished", fields: ["rootPath": source.rawValue, "run": session.activeRunID ?? "missing"])
+        OtosLog.catalog.noticeOperation(
+            "import.activity",
+            phase: "finished",
+            fields: ["rootPath": source.rawValue, "run": session.activeRunID ?? "missing"]
+        )
         // Terminal settlement releases this source's claims with its phase, so
         // re-plan it against the namespace the run just changed.
         if var current = sourceSessions[source] {
@@ -831,9 +866,10 @@ actor MediaOperationCoordinator {
                 return false
             }
             if !stillExecuting {
-                for (otherSource, dest) in destinationBySource where dest == finishedDestination && otherSource != source {
+                for (otherSource, dest) in destinationBySource
+                    where dest == finishedDestination && otherSource != source
+                {
                     guard scheduleBuildIfNeeded(otherSource) else { continue }
-                    // swiftlint:disable:next line_length
                     OtosLog.catalog.notice("op=import.coordinator phase=flushRebuild source=\(otherSource.rawValue, privacy: .public) destination=\(dest.rawValue, privacy: .public)")
                 }
             }
@@ -982,7 +1018,6 @@ actor MediaOperationCoordinator {
             sess.isDirty = true
             sourceSessions[source] = sess
             if isDestinationUnderExecution {
-                // swiftlint:disable:next line_length
                 OtosLog.catalog.notice("op=import.coordinator phase=suppressRebuild source=\(source.rawValue, privacy: .public) destination=\(destination.rawValue, privacy: .public)")
                 continue
             }
@@ -1171,7 +1206,8 @@ actor MediaOperationCoordinator {
                 var explicitAfterUpdate = isExplicit
                 if !isExecuting {
                     if isExplicit {
-                        let isCurrentValid = currentDestination.map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
+                        let isCurrentValid = currentDestination
+                            .map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
                         if !isCurrentValid {
                             newDestination = fixedAvailable.first?.path
                             explicitAfterUpdate = false
@@ -1288,7 +1324,6 @@ actor MediaOperationCoordinator {
         let attachmentGen = session.attachmentGeneration
         let runID = UUID().uuidString
         let destination = session.destination
-        // swiftlint:disable:next line_length
         OtosLog.catalog.noticeOperation("plan.rebuild", phase: "schedule", fields: ["source": source.rawValue, "destination": destination?.rawValue ?? "none", "generation": "\(buildGen.rawValue)", "attachment": "\(attachmentGen.rawValue)", "run": runID])
         guard let destination else {
             // No destination is state B ("No destination"), not a failure —
@@ -1301,7 +1336,12 @@ actor MediaOperationCoordinator {
         }
         let task = Task { [weak self] in
             guard let self else { return }
-            await runBuild(source: source, destination: destination, generation: buildGen.rawValue, attachment: attachmentGen)
+            await runBuild(
+                source: source,
+                destination: destination,
+                generation: buildGen.rawValue,
+                attachment: attachmentGen
+            )
         }
         session.activeRunID = runID
         session.phase = .building(BuildContext(generation: buildGen, runID: runID, task: task))
@@ -1310,9 +1350,19 @@ actor MediaOperationCoordinator {
         return true
     }
 
-    private func runBuild(source: LibraryRootPath, destination: LibraryRootPath, generation: UInt64, attachment: AttachmentGeneration) async {
+    private func runBuild(
+        source: LibraryRootPath,
+        destination: LibraryRootPath,
+        generation: UInt64,
+        attachment: AttachmentGeneration
+    ) async {
         do {
-            try await buildPlan(source: source, destination: destination, generation: generation, attachment: attachment)
+            try await buildPlan(
+                source: source,
+                destination: destination,
+                generation: generation,
+                attachment: attachment
+            )
         } catch {
             guard let session = sourceSessions[source],
                   session.attachmentGeneration == attachment,
@@ -1337,11 +1387,15 @@ actor MediaOperationCoordinator {
         namingSettledCount: Int,
         result: ImportPlanBuildResult
     ) {
-        // swiftlint:disable:next line_length
         OtosLog.catalog.noticeOperation("import.plan", phase: "finish", fields: ["rootPath": source.rawValue, "run": runID, "sourceCount": "\(sourceCount)", "folders": "\(result.namespace.folderCount)", "namespaceEntries": "\(result.namespace.entryCount)", "enumerateMs": "\(result.enumerateMs)", "planMs": "\(result.planMs)", "copyCount": "\(result.plan.totals.copyCount)", "skipCount": "\(result.plan.totals.skipCount)", "excludedCount": "\(result.plan.totals.excludedCount)", "blockedCount": "\(result.plan.totals.blockedCount)", "unreadableFolders": "\(result.namespace.unreadableFolders.count)", "namingMtimeCount": "\(namingMtimeCount)", "namingSettledCount": "\(namingSettledCount)"])
     }
 
-    private func buildPlan(source: LibraryRootPath, destination: LibraryRootPath, generation: UInt64, attachment: AttachmentGeneration) async throws {
+    private func buildPlan(
+        source: LibraryRootPath,
+        destination: LibraryRootPath,
+        generation: UInt64,
+        attachment: AttachmentGeneration
+    ) async throws {
         guard isStarted, !isShuttingDown else {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=notStarted source=\(source.rawValue, privacy: .public)")
             return
@@ -1373,7 +1427,12 @@ actor MediaOperationCoordinator {
         }
         let prefs = session.preferences
         let policy = ImportPolicy.from(prefs)
-        guard let snapshot = try await store.importPlanningSnapshot(source: source, destination: destination, policy: policy, generation: generation) else {
+        guard let snapshot = try await store.importPlanningSnapshot(
+            source: source,
+            destination: destination,
+            policy: policy,
+            generation: generation
+        ) else {
             let libraries = await store.currentLibraries()
             let reason = MediaOperationFailureReason.forMissingSnapshot(
                 source: source,
@@ -1386,10 +1445,15 @@ actor MediaOperationCoordinator {
             publish()
             return
         }
-        if await shouldWaitForMetadata(source: source, snapshot: snapshot, attachment: attachment, generation: generation, runID: runID) {
+        if await shouldWaitForMetadata(
+            source: source,
+            snapshot: snapshot,
+            attachment: attachment,
+            generation: generation,
+            runID: runID
+        ) {
             return
         }
-        // swiftlint:disable:next line_length
         OtosLog.catalog.noticeOperation("import.plan", phase: "start", fields: ["rootPath": source.rawValue, "destinationPath": destination.rawValue, "sourceCount": "\(snapshot.sourceMedia.count)", "destinationOccupants": "\(snapshot.destinationOccupants.count)", "run": runID])
         let seededClaims = ledgerClaims(for: destination, excluding: source)
         let signpost = OtosSignpost.performance.beginInterval("ImportPlanBuild")
@@ -1448,7 +1512,6 @@ actor MediaOperationCoordinator {
               sourceRevisions?.namingRevision == snapshot.sourceNamingRevision,
               destinationNamespace == snapshot.destinationNamespaceRevision
         else {
-            // swiftlint:disable:next line_length
             OtosLog.catalog.noticeOperation("import.plan", phase: "stale", fields: ["rootPath": source.rawValue, "sourceNamespace": "\(sourceRevisions?.namespaceRevision.description ?? "none")", "snapshotSourceNamespace": "\(snapshot.sourceNamespaceRevision)", "sourceNaming": "\(sourceRevisions?.namingRevision.description ?? "none")", "snapshotSourceNaming": "\(snapshot.sourceNamingRevision)", "destinationNamespace": "\(destinationNamespace.map(String.init) ?? "none")", "snapshotDestinationNamespace": "\(snapshot.destinationNamespaceRevision)", "run": runID])
             var updated = current
             updated.isDirty = true
@@ -1471,7 +1534,6 @@ actor MediaOperationCoordinator {
         let newClaims = planClaims(from: plan, capabilities: snapshot.destinationCapabilities)
         let currentLedger = ledgerClaims(for: destination, excluding: source)
         if !newClaims.isDisjoint(with: currentLedger) {
-            // swiftlint:disable:next line_length
             OtosLog.catalog.noticeOperation("import.plan", phase: "conflict", fields: ["rootPath": source.rawValue, "destination": destination.rawValue, "newClaims": "\(newClaims.count)", "conflictingClaims": "\(newClaims.intersection(currentLedger).count)", "run": runID])
             var updated = current
             updated.isDirty = true
@@ -1497,7 +1559,6 @@ actor MediaOperationCoordinator {
         if updated.attachToReadyMs == nil {
             let elapsed = updated.attachStartedAt.duration(to: ContinuousClock().now)
             updated.attachToReadyMs = DiagnosticsTiming.milliseconds(elapsed)
-            // swiftlint:disable:next line_length
             OtosLog.catalog.notice("op=import.attachToReady phase=ready run=\(runID, privacy: .public) rootPath=\(source.rawValue, privacy: .public) elapsedMs=\(updated.attachToReadyMs ?? 0, privacy: .public) copyCount=\(plan.totals.copyCount, privacy: .public)")
         }
         sourceSessions[source] = updated
@@ -1581,8 +1642,13 @@ actor MediaOperationCoordinator {
         scheduleBuildIfNeeded(source)
     }
 
-    // swiftlint:disable:next line_length
-    private func shouldWaitForMetadata(source: LibraryRootPath, snapshot: ImportPlanningSnapshot, attachment: AttachmentGeneration, generation: UInt64, runID: String) async -> Bool {
+    private func shouldWaitForMetadata(
+        source: LibraryRootPath,
+        snapshot: ImportPlanningSnapshot,
+        attachment: AttachmentGeneration,
+        generation: UInt64,
+        runID: String
+    ) async -> Bool {
         let filesWithNoDateAtAll = snapshot.sourceMedia.filter { !$0.hasAnyDate }.count
         let total = snapshot.sourceMedia.count
         // "Looked at", not "has some date": the honest denominator for state A's
@@ -1627,7 +1693,6 @@ actor MediaOperationCoordinator {
            !liveMedia.contains(where: { $0.namingFactState == .pending && !$0.isSourceUnreadable })
         {
             OtosLog.catalog.notice(
-                // swiftlint:disable:next line_length
                 "op=import.readiness phase=namingSettledDuringBuild run=\(runID, privacy: .public) rootPath=\(source.rawValue, privacy: .public) total=\(liveMedia.count, privacy: .public)"
             )
             session.isDirty = true
@@ -1649,7 +1714,10 @@ actor MediaOperationCoordinator {
         return true
     }
 
-    private func ledgerClaims(for destination: LibraryRootPath, excluding excludedSource: LibraryRootPath? = nil) -> Set<FilesystemNameKey> {
+    private func ledgerClaims(
+        for destination: LibraryRootPath,
+        excluding excludedSource: LibraryRootPath? = nil
+    ) -> Set<FilesystemNameKey> {
         var result: Set<FilesystemNameKey> = []
         for (source, session) in sourceSessions where session.destination == destination && source != excludedSource {
             switch session.phase {
@@ -1668,7 +1736,10 @@ actor MediaOperationCoordinator {
         var claims: Set<FilesystemNameKey> = []
         for entry in plan.entries {
             guard case .copy = entry.disposition else { continue }
-            claims.insert(FilesystemNamespaceSemantics.nameKey(relativePath: entry.finalDestination, capabilities: capabilities))
+            claims.insert(FilesystemNamespaceSemantics.nameKey(
+                relativePath: entry.finalDestination,
+                capabilities: capabilities
+            ))
             for dest in entry.companionDestinations.values {
                 claims.insert(FilesystemNamespaceSemantics.nameKey(relativePath: dest, capabilities: capabilities))
             }
@@ -1790,7 +1861,9 @@ actor MediaOperationCoordinator {
 
     private func completedState(for session: SourceSession) -> MediaOperationSourceState {
         guard let outcome = session.settledOutcome else {
-            preconditionFailure("`.completed` phase always sets `settledOutcome` in the same transaction (applyExecutionResult)")
+            preconditionFailure(
+                "`.completed` phase always sets `settledOutcome` in the same transaction (applyExecutionResult)"
+            )
         }
         return .completed(
             summary: outcome.summary,
@@ -1921,8 +1994,8 @@ actor MediaOperationCoordinator {
         let live = sourceSessions.values.map { presentation(for: $0) }
         let liveBatchIDs = Set(live.compactMap(\.batchID))
         let detached = detachedBatchPresentations.filter { batchID, _ in !liveBatchIDs.contains(batchID) }.values
-        // swiftlint:disable:next line_length
-        return (live + detached).sorted { $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending }
+        return (live + detached)
+            .sorted { $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending }
     }
 
     /// Publishes to every consumer, and logs each source's state **when it changes**.
@@ -1948,7 +2021,6 @@ actor MediaOperationCoordinator {
             let batchID = presentation.batchID.map { String(describing: $0) } ?? "none"
             let runID = sourceSessions[presentation.sourcePath]?.activeRunID ?? "none"
             OtosLog.catalog.notice(
-                // swiftlint:disable:next line_length
                 "op=import.presentation phase=publish run=\(runID, privacy: .public) sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) state=\(String(describing: presentation.state), privacy: .public) completedCount=\(progress?.completedCount ?? 0, privacy: .public) totalCount=\(progress?.totalCount ?? 0, privacy: .public) completedBytes=\(progress?.completedBytes ?? 0, privacy: .public) batchID=\(batchID, privacy: .public)"
             )
         }

@@ -103,7 +103,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         case planFailed(MediaOperationSourceState)
         var description: String {
             switch self {
-            case let .timeout(s): "timeout: \(s)"
+            case let .timeout(detail): "timeout: \(detail)"
             case let .planFailed(st): "plan failed state: \(st)"
             }
         }
@@ -124,9 +124,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:detach-build", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:detach-build",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
@@ -141,7 +148,9 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Detach while build is suspended.
         try await store.detachRemovableSource(identity: "volume:detach-build", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
+        }
         // Give coordinator time to process detach via planning stream.
         try await Task.sleep(for: .milliseconds(100))
         try await waitUntilNoPresentation(coordinator, source: cardPath)
@@ -172,9 +181,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:reattach-A", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:reattach-A",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
@@ -189,14 +205,24 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Detach A while its build is suspended.
         try await store.detachRemovableSource(identity: "volume:reattach-A", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
+        }
         try await Task.sleep(for: .milliseconds(100))
         // Reattach at same mount path with new identity, suspend its build too.
         try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "c.jpg"))
         await builder.suspendNextBuild(for: cardPath)
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:reattach-B", displayName: "Card", isEjectable: true)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
-        // Wait for B's build to be queued. With cancellation-dummy on detach, A's pending is already resolved, so only B is pending.
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:reattach-B",
+            displayName: "Card",
+            isEjectable: true
+        )
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+        // Wait for B's build to be queued. With cancellation-dummy on detach, A's pending is already resolved, so only
+        // B is pending.
         try await waitForPendingBuilderCount(builder, source: cardPath, count: 1)
         let pendingAfterA = await builder.pendingCount(for: cardPath)
         #expect(pendingAfterA == 1, "B's build should be pending")
@@ -225,9 +251,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:clear-new", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:clear-new",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let builder = ControlledImportPlanBuilder()
         await builder.suspendNextBuild(for: cardPath)
@@ -240,17 +273,29 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.start()
         try await waitForPendingBuilder(builder, source: cardPath)
 
-        // Simulate rapid detach/reattach while old build still pending, then detach new build while still pending and ensure it stays cancelled.
+        // Simulate rapid detach/reattach while old build still pending, then detach new build while still pending and
+        // ensure it stays cancelled.
         try await store.detachRemovableSource(identity: "volume:clear-new", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
+        }
         try await Task.sleep(for: .milliseconds(100))
         await builder.suspendNextBuild(for: cardPath)
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:clear-new-B", displayName: "Card", isEjectable: true)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:clear-new-B",
+            displayName: "Card",
+            isEjectable: true
+        )
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
         try await waitForPendingBuilder(builder, source: cardPath)
         // Detach B while its build is still suspended — it should be cancelled.
         try await store.detachRemovableSource(identity: "volume:clear-new-B", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
+        }
         try await Task.sleep(for: .milliseconds(100))
         // Resume the now-stale B build — must not publish.
         await builder.resumePendingBuild(for: cardPath)
@@ -280,9 +325,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:claim-detach-A", displayName: "CardA", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardAURL,
+            identity: "volume:claim-detach-A",
+            displayName: "CardA",
+            isEjectable: true
+        )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardAPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardAPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -295,19 +347,31 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
         // Detach A
         try await store.detachRemovableSource(identity: "volume:claim-detach-A", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available }
+        }
         try await Task.sleep(for: .milliseconds(200))
 
         // Attach B with same filename
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: cardBURL, withIntermediateDirectories: true)
         try Data(repeating: 6, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:claim-detach-B", displayName: "CardB", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardBURL,
+            identity: "volume:claim-detach-B",
+            displayName: "CardB",
+            isEjectable: true
+        )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardBPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardBPath && !$0.isScanning }
+        }
         let planB = try await waitForReady(coordinator, source: cardBPath)
         // After detach, B should get base name, not suffix.
-        #expect(planB.entries.first?.finalDestination.rawValue == "shared.jpg", "Claim should be released on detach, B should get base name")
+        #expect(
+            planB.entries.first?.finalDestination.rawValue == "shared.jpg",
+            "Claim should be released on detach, B should get base name"
+        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -331,9 +395,19 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:cancel-A", displayName: "CardA", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardAURL,
+            identity: "volume:cancel-A",
+            displayName: "CardA",
+            isEjectable: true
+        )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:cancel-B", displayName: "CardB", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardBURL,
+            identity: "volume:cancel-B",
+            displayName: "CardB",
+            isEjectable: true
+        )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.filter { $0.availability == .available }.count == 2
@@ -386,7 +460,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         await builder.suspendNextBuild(for: cardAPath)
         // Now cancel A's execution via coordinator's cancelImport
         await coordinator.cancelImport(for: cardAPath)
-        // Resume A's execution with cancelled result — this simulates executor observing cancel and returning cancelled.
+        // Resume A's execution with cancelled result — this simulates executor observing cancel and returning
+        // cancelled.
         log("STEP resumePending cancelled")
         await execControl.resumePending(
             for: cardAPath,
@@ -411,13 +486,18 @@ struct MediaOperationCoordinatorAdversarialTests {
         var planBAfter: MediaOperationPlan?
         let deadlineB = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < deadlineB {
-            if let p = await coordinator.readyPlan(for: cardBPath), p.entries.first?.finalDestination.rawValue == "shared.jpg" {
-                planBAfter = p
+            if let plan = await coordinator.readyPlan(for: cardBPath),
+               plan.entries.first?.finalDestination.rawValue == "shared.jpg"
+            {
+                planBAfter = plan
                 break
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-        #expect(planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg", "After A's cancel, B should reclaim base name")
+        #expect(
+            planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg",
+            "After A's cancel, B should reclaim base name"
+        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -441,9 +521,19 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:fail-A", displayName: "CardA", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardAURL,
+            identity: "volume:fail-A",
+            displayName: "CardA",
+            isEjectable: true
+        )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:fail-B", displayName: "CardB", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardBURL,
+            identity: "volume:fail-B",
+            displayName: "CardB",
+            isEjectable: true
+        )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.filter { $0.availability == .available }.count == 2
@@ -494,13 +584,18 @@ struct MediaOperationCoordinatorAdversarialTests {
         var planBAfter: MediaOperationPlan?
         let deadlineB2 = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < deadlineB2 {
-            if let p = await coordinator.readyPlan(for: cardBPath), p.entries.first?.finalDestination.rawValue == "shared.jpg" {
-                planBAfter = p
+            if let plan = await coordinator.readyPlan(for: cardBPath),
+               plan.entries.first?.finalDestination.rawValue == "shared.jpg"
+            {
+                planBAfter = plan
                 break
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-        #expect(planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg", "After failure, B should reclaim base name")
+        #expect(
+            planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg",
+            "After failure, B should reclaim base name"
+        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -524,9 +619,19 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:ledger-A", displayName: "CardA", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardAURL,
+            identity: "volume:ledger-A",
+            displayName: "CardA",
+            isEjectable: true
+        )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:ledger-B", displayName: "CardB", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardBURL,
+            identity: "volume:ledger-B",
+            displayName: "CardB",
+            isEjectable: true
+        )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.filter { $0.availability == .available }.count == 2
@@ -551,13 +656,19 @@ struct MediaOperationCoordinatorAdversarialTests {
         await builder.resumePendingBuild(for: cardAPath)
         let planA = try await waitForReady(coordinator, source: cardAPath)
         #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
-        // Resume B — it was built against same namespace snapshot without seeing A's claim, so it will have base name too,
-        // but coordinator's conflict check should detect that its newClaims intersect currentLedger and re-dirty + rebuild.
+        // Resume B — it was built against same namespace snapshot without seeing A's claim, so it will have base name
+        // too,
+        // but coordinator's conflict check should detect that its newClaims intersect currentLedger and re-dirty +
+        // rebuild.
         await builder.resumePendingBuild(for: cardBPath)
         // B's first completion should have been discarded due to conflict, and a second build scheduled.
-        // That second build is not suspended (we only suspended one per source), so it should complete quickly with suffix.
+        // That second build is not suspended (we only suspended one per source), so it should complete quickly with
+        // suffix.
         let planB = try await waitForReady(coordinator, source: cardBPath)
-        #expect(planB.entries.first?.finalDestination.rawValue != "shared.jpg", "B should have suffix after conflict rebuild")
+        #expect(
+            planB.entries.first?.finalDestination.rawValue != "shared.jpg",
+            "B should have suffix after conflict rebuild"
+        )
         #expect(planB.entries.first?.finalDestination.rawValue.contains("shared") == true)
         // Verify A still holds base.
         let planAAfter = await coordinator.readyPlan(for: cardAPath)
@@ -585,7 +696,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:settle-A", displayName: "CardA", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardAURL,
+            identity: "volume:settle-A",
+            displayName: "CardA",
+            isEjectable: true
+        )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available && !$0.isScanning }
@@ -617,7 +733,12 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Attach B only after A has published. This keeps the test about settlement
         // against the real destination file rather than racing two initial claims.
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:settle-B", displayName: "CardB", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardBURL,
+            identity: "volume:settle-B",
+            displayName: "CardB",
+            isEjectable: true
+        )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.contains { $0.path == cardBPath && $0.availability == .available && !$0.isScanning }
@@ -631,16 +752,19 @@ struct MediaOperationCoordinatorAdversarialTests {
         var planB: MediaOperationPlan?
         let deadlineB3 = ContinuousClock().now + .seconds(5)
         while ContinuousClock().now < deadlineB3 {
-            if let p = await coordinator.readyPlan(for: cardBPath),
-               p.entries.first?.finalDestination.rawValue != "shared.jpg",
-               p.entries.first?.finalDestination.rawValue.contains("shared") == true
+            if let plan = await coordinator.readyPlan(for: cardBPath),
+               plan.entries.first?.finalDestination.rawValue != "shared.jpg",
+               plan.entries.first?.finalDestination.rawValue.contains("shared") == true
             {
-                planB = p
+                planB = plan
                 break
             }
             try await Task.sleep(for: .milliseconds(50))
         }
-        #expect(planB?.entries.first?.finalDestination.rawValue != "shared.jpg", "B should still have suffix due to real file, even after A's claim dies")
+        #expect(
+            planB?.entries.first?.finalDestination.rawValue != "shared.jpg",
+            "B should still have suffix due to real file, even after A's claim dies"
+        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -661,9 +785,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:detach-exec", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:detach-exec",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -685,7 +816,9 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Detach while executing
         try await store.detachRemovableSource(identity: "volume:detach-exec", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
+        }
         try await Task.sleep(for: .milliseconds(100))
         try await waitUntilNoPresentation(coordinator, source: cardPath)
 
@@ -738,9 +871,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:batch-id", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:batch-id",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -831,9 +971,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:live-progress", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:live-progress",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -931,9 +1078,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:gone-snapshot", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:gone-snapshot",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -976,7 +1130,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         // fact that matters (`session.lastCompletion`) is set the moment
         // `copiedJustNow` above became non-nil and does not depend on phase.
         try await store.detachRemovableSource(identity: "volume:gone-snapshot", reason: .ejected)
-        _ = try await waitForCatalogStoreState(store) { snap in !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
+        }
 
         // The batch's presentation survives its source session's removal by
         // design (`import-bar.md` state F, "card gone") and keeps the same
@@ -1013,9 +1169,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:immediate-fail", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:immediate-fail",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1073,9 +1236,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:failed-stays", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:failed-stays",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1142,9 +1312,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:try-again", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:try-again",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1202,9 +1379,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:unreadable-defer", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:unreadable-defer",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1275,9 +1459,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:unreadable-persist", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:unreadable-persist",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1337,9 +1528,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:settlement-window", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:settlement-window",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1411,9 +1609,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         let firstPath = try CatalogPath.normalizedDirectoryPath(for: firstURL)
         let secondPath = try CatalogPath.normalizedDirectoryPath(for: secondURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:completion-scope", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:completion-scope",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1430,7 +1635,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.setDestination(firstPath, for: cardPath)
         _ = try await waitForReady(coordinator, source: cardPath, timeout: .seconds(15))
         await coordinator.queueImport(for: cardPath)
-        let settled = try await waitForPresentation(coordinator, source: cardPath, predicate: { $0.copiedJustNow == 1 }, timeout: .seconds(15))
+        let settled = try await waitForPresentation(
+            coordinator,
+            source: cardPath,
+            predicate: { $0.copiedJustNow == 1 },
+            timeout: .seconds(15)
+        )
         #expect(settled.isFullyClean == true)
         let batch = try #require(settled.batchID)
 
@@ -1474,9 +1684,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:space-advisory", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:space-advisory",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1524,9 +1741,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:stopped-run", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:stopped-run",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1594,9 +1818,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:disk-floor", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:disk-floor",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1607,7 +1838,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         /// A volume with room for two of the three files above the floor,
         /// shrinking as copies land — what a real capacity figure does.
         @Sendable func bytesLanded() -> Int64 {
-            guard let enumerator = FileManager.default.enumerator(at: destURL, includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]) else {
+            guard let enumerator = FileManager.default.enumerator(
+                at: destURL,
+                includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+            ) else {
                 return 0
             }
             var total: Int64 = 0
@@ -1650,7 +1884,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         let batch = try #require(rePlanned.batchID)
         #expect(try await store.importBatchAssetCount(batch) == 2)
         for name in ["a.jpg", "b.jpg", "c.jpg"] {
-            #expect(FileManager.default.fileExists(atPath: cardURL.appending(path: name).path), "nothing on the card is erased")
+            #expect(
+                FileManager.default.fileExists(atPath: cardURL.appending(path: name).path),
+                "nothing on the card is erased"
+            )
         }
         log("END")
         await coordinator.shutdown()
@@ -1678,9 +1915,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.libraries.count == 2 && snap.libraries.allSatisfy { !$0.isScanning }
         }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:executing-reorder", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:executing-reorder",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -1770,9 +2014,19 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardAURL, identity: "volume:shutdown-A", displayName: "CardA", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardAURL,
+            identity: "volume:shutdown-A",
+            displayName: "CardA",
+            isEjectable: true
+        )
         let cardAPath = try CatalogPath.normalizedDirectoryPath(for: cardAURL)
-        try await store.attachRemovableVolume(mountURL: cardBURL, identity: "volume:shutdown-B", displayName: "CardB", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardBURL,
+            identity: "volume:shutdown-B",
+            displayName: "CardB",
+            isEjectable: true
+        )
         let cardBPath = try CatalogPath.normalizedDirectoryPath(for: cardBURL)
         _ = try await waitForCatalogStoreState(store) { snap in
             snap.removableSources.filter { $0.availability == .available }.count == 2
@@ -1829,17 +2083,24 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
         try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
-        for i in 0 ..< 4 {
-            try Data(repeating: UInt8(i), count: 1024).write(to: cardURL.appending(path: "h\(i).jpg"))
+        for index in 0 ..< 4 {
+            try Data(repeating: UInt8(index), count: 1024).write(to: cardURL.appending(path: "h\(index).jpg"))
         }
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:repeat-import", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:repeat-import",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         // Ready requires proven naming facts (ARC-057); stand in for the enrichment
         // coordinator these tests do not run.
@@ -1977,7 +2238,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         let store = CatalogStore(location: .inMemory, scanner: scanner, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:metadata-wake-adversarial", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:metadata-wake-adversarial",
+            displayName: "Card",
+            isEjectable: true
+        )
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults)
@@ -2049,10 +2315,14 @@ struct MediaOperationCoordinatorAdversarialTests {
         let destFile = destURL.appending(path: "already.jpg")
         try Data(repeating: 18, count: 1024).write(to: srcFile)
         try Data(repeating: 18, count: 1024).write(to: destFile)
-        // Ensure mtimes match by copying mtime? For test, we can use filesystem namespace live check: it checks live size and expected mtime derived from policy.
-        // For original naming with no folder, expected mtime is source mtime. To make them match, ensure both have same mtime after copy.
+        // Ensure mtimes match by copying mtime? For test, we can use filesystem namespace live check: it checks live
+        // size and expected mtime derived from policy.
+        // For original naming with no folder, expected mtime is source mtime. To make them match, ensure both have same
+        // mtime after copy.
         // We'll set dest's mtime to src's mtime.
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: srcFile.path), let mtime = attrs[.modificationDate] as? Date {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: srcFile.path),
+           let mtime = attrs[.modificationDate] as? Date
+        {
             try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: destFile.path)
         }
 
@@ -2060,9 +2330,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:zero-copy-no-delete", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:zero-copy-no-delete",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default
@@ -2084,8 +2361,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.queueImport(for: cardPath)
         try await Task.sleep(for: .milliseconds(400))
         // Should remain Ready, not executing/completed, and no executor invocation.
-        let pres = try await waitForPresentation(coordinator, source: cardPath, predicate: { p in
-            if case .ready = p.state {
+        let pres = try await waitForPresentation(coordinator, source: cardPath, predicate: { presentation in
+            if case .ready = presentation.state {
                 return true
             }
             return false
@@ -2117,7 +2394,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         let destFile = destURL.appending(path: "already2.jpg")
         try Data(repeating: 19, count: 1024).write(to: srcFile)
         try Data(repeating: 19, count: 1024).write(to: destFile)
-        if let attrs = try? FileManager.default.attributesOfItem(atPath: srcFile.path), let mtime = attrs[.modificationDate] as? Date {
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: srcFile.path),
+           let mtime = attrs[.modificationDate] as? Date
+        {
             try? FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: destFile.path)
         }
 
@@ -2125,9 +2404,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: destURL)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(mountURL: cardURL, identity: "volume:zero-copy-delete", displayName: "Card", isEjectable: true)
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:zero-copy-delete",
+            displayName: "Card",
+            isEjectable: true
+        )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
 
         let defaults = PreferencesDomain.suite(UUID().uuidString)
         var prefs = ImportPreferences.default

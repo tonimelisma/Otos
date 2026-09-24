@@ -9,10 +9,14 @@ struct CatalogStoreEnrichmentTests {
     @Test func needsEnrichmentTracksSizeAndMtimeSignature() {
         let m1000 = Date(timeIntervalSince1970: 1000)
         let m2000 = Date(timeIntervalSince1970: 2000)
-        #expect(makeAsset(size: 100, modifiedAt: m1000, stampSize: nil, stampMtime: nil).needsEnrichment(hashRequired: true))
-        #expect(!makeAsset(size: 100, modifiedAt: m1000, stampSize: 100, stampMtime: 1000).needsEnrichment(hashRequired: true))
-        #expect(makeAsset(size: 200, modifiedAt: m1000, stampSize: 100, stampMtime: 1000).needsEnrichment(hashRequired: true))
-        #expect(makeAsset(size: 100, modifiedAt: m2000, stampSize: 100, stampMtime: 1000).needsEnrichment(hashRequired: true))
+        let unstamped = makeAsset(size: 100, modifiedAt: m1000, stampSize: nil, stampMtime: nil)
+        let current = makeAsset(size: 100, modifiedAt: m1000, stampSize: 100, stampMtime: 1000)
+        let resized = makeAsset(size: 200, modifiedAt: m1000, stampSize: 100, stampMtime: 1000)
+        let touched = makeAsset(size: 100, modifiedAt: m2000, stampSize: 100, stampMtime: 1000)
+        #expect(unstamped.needsEnrichment(hashRequired: true))
+        #expect(!current.needsEnrichment(hashRequired: true))
+        #expect(resized.needsEnrichment(hashRequired: true))
+        #expect(touched.needsEnrichment(hashRequired: true))
     }
 
     @Test func missingOrMismatchedHashSignatureMakesCurrentAssetStale() {
@@ -134,7 +138,11 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(timestamps: [.absolute(instant: captureDate)], cameraModel: "Cam", durationSeconds: 42.5),
+                metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: captureDate)],
+                    cameraModel: "Cam",
+                    durationSeconds: 42.5
+                ),
                 thumbnailPath: "thumb.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -290,7 +298,10 @@ struct CatalogStoreEnrichmentTests {
         await store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: id,
-                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "OldCam"),
+                metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))],
+                    cameraModel: "OldCam"
+                ),
                 thumbnailPath: "old.jpg",
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,

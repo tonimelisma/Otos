@@ -530,11 +530,19 @@ private final class GridSelectionTestHarness {
     }
 
     func mouseDown(_ id: MediaAssetID, modifiers: NSEvent.ModifierFlags) throws {
-        try controller.collectionView.mouseDown(with: mouseEvent(.leftMouseDown, at: windowPoint(for: id), modifiers: modifiers))
+        try controller.collectionView.mouseDown(with: mouseEvent(
+            .leftMouseDown,
+            at: windowPoint(for: id),
+            modifiers: modifiers
+        ))
     }
 
     func mouseUp(_ id: MediaAssetID, modifiers: NSEvent.ModifierFlags) throws {
-        try controller.collectionView.mouseUp(with: mouseEvent(.leftMouseUp, at: windowPoint(for: id), modifiers: modifiers))
+        try controller.collectionView.mouseUp(with: mouseEvent(
+            .leftMouseUp,
+            at: windowPoint(for: id),
+            modifiers: modifiers
+        ))
     }
 
     /// A drag past the threshold from the tile's center.
@@ -544,7 +552,11 @@ private final class GridSelectionTestHarness {
         try controller.collectionView.mouseDragged(with: mouseEvent(.leftMouseDragged, at: point, modifiers: []))
     }
 
-    private func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, modifiers: NSEvent.ModifierFlags) throws -> NSEvent {
+    private func mouseEvent(
+        _ type: NSEvent.EventType,
+        at point: NSPoint,
+        modifiers: NSEvent.ModifierFlags
+    ) throws -> NSEvent {
         try #require(NSEvent.mouseEvent(
             with: type,
             location: point,

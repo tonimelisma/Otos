@@ -129,7 +129,7 @@ actor ControlledExecutionControl {
     func resumeAllPending(with result: MediaImportExecutionResult) {
         let keys = Array(pending.keys)
         for key in keys {
-            while let q = pending[key], !q.isEmpty {
+            while let queued = pending[key], !queued.isEmpty {
                 resumePending(for: key, with: result)
             }
         }
@@ -199,7 +199,10 @@ actor ControlledExecutionControl {
     func suspendAndWait(for source: LibraryRootPath) async -> MediaImportExecutionResult {
         await withTaskCancellationHandler(
             operation: {
-                await withCheckedContinuation { (continuation: CheckedContinuation<MediaImportExecutionResult, Never>) in
+                await withCheckedContinuation { (continuation: CheckedContinuation<
+                    MediaImportExecutionResult,
+                    Never
+                >) in
                     var queue = pending[source] ?? []
                     queue.append(continuation)
                     pending[source] = queue

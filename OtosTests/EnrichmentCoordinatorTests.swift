@@ -645,7 +645,8 @@ struct EnrichmentCoordinatorTests {
         let snapshot = await coordinator.workStateSnapshot()
         // Nothing is discarded: everything offered is either an outstanding demand or
         // still queued for one.
-        #expect(snapshot.materializationPending + snapshot.materializationInFlight + snapshot.deviceSeedsQueued == total)
+        let accounted = snapshot.materializationPending + snapshot.materializationInFlight + snapshot.deviceSeedsQueued
+        #expect(accounted == total)
         #expect(snapshot.deviceSeedsQueued > 0, "a camera larger than the limit must leave seeds queued, not dropped")
         await coordinator.shutdown()
     }

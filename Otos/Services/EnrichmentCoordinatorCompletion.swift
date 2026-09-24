@@ -166,7 +166,6 @@ extension EnrichmentCoordinator {
         if outcome == .insufficientLocalSpace, work.isDeviceStaging {
             let queuedSeeds = pendingDeviceSeeds.count
             OtosLog.fileAccess.notice(
-                // swiftlint:disable:next line_length
                 "op=enrichment.stageDevice phase=blocked reason=insufficientLocalSpace rootPath=\(id.libraryRootPath.rawValue, privacy: .public) queued=\(queuedSeeds, privacy: .public)"
             )
         }

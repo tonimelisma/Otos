@@ -40,8 +40,20 @@ struct CompareView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 1) {
-                pane(position: .left, id: leftID, preview: leftPreview, mediaChoice: leftMediaChoice, isDownloading: leftIsDownloading)
-                pane(position: .right, id: rightID, preview: rightPreview, mediaChoice: rightMediaChoice, isDownloading: rightIsDownloading)
+                pane(
+                    position: .left,
+                    id: leftID,
+                    preview: leftPreview,
+                    mediaChoice: leftMediaChoice,
+                    isDownloading: leftIsDownloading
+                )
+                pane(
+                    position: .right,
+                    id: rightID,
+                    preview: rightPreview,
+                    mediaChoice: rightMediaChoice,
+                    isDownloading: rightIsDownloading
+                )
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             FilmstripResizeHandle(
@@ -70,60 +82,61 @@ struct CompareView: View {
             onChoice: { choice in
                 onPaneActivated(position)
                 onPaneMediaChoice(position, choice)
-            }
-        ) {
-            ZStack {
-                Color.black.opacity(0.92)
-                switch display {
-                case let .full(image):
-                    Image(decorative: image, scale: 1)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .accessibilityElement()
-                        .accessibilityLabel(paneAccessibilityLabel(for: id))
-                        .accessibilityAddTraits(.isImage)
-                case let .thumbnail(paneID):
-                    PaneThumbnailView(
-                        id: paneID,
-                        thumbnailDirectory: thumbnailDirectory,
-                        detailReader: detailReader
-                    )
-                case .video:
-                    // Compare stays poster-only by design; stale video never shows here.
-                    Group {
-                        if let fallbackID = id ?? preview?.id {
-                            PaneThumbnailView(
-                                id: fallbackID,
-                                tileContentStore: tileContentStore,
-                                thumbnailDirectory: thumbnailDirectory,
-                                detailReader: detailReader
-                            )
-                        } else {
-                            ContentUnavailableView("No Photo", systemImage: "photo")
-                                .foregroundStyle(.secondary)
+            },
+            content: {
+                ZStack {
+                    Color.black.opacity(0.92)
+                    switch display {
+                    case let .full(image):
+                        Image(decorative: image, scale: 1)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .accessibilityElement()
+                            .accessibilityLabel(paneAccessibilityLabel(for: id))
+                            .accessibilityAddTraits(.isImage)
+                    case let .thumbnail(paneID):
+                        PaneThumbnailView(
+                            id: paneID,
+                            thumbnailDirectory: thumbnailDirectory,
+                            detailReader: detailReader
+                        )
+                    case .video:
+                        // Compare stays poster-only by design; stale video never shows here.
+                        Group {
+                            if let fallbackID = id ?? preview?.id {
+                                PaneThumbnailView(
+                                    id: fallbackID,
+                                    tileContentStore: tileContentStore,
+                                    thumbnailDirectory: thumbnailDirectory,
+                                    detailReader: detailReader
+                                )
+                            } else {
+                                ContentUnavailableView("No Photo", systemImage: "photo")
+                                    .foregroundStyle(.secondary)
+                            }
                         }
+                    case .empty:
+                        ContentUnavailableView("No Photo", systemImage: "photo")
+                            .foregroundStyle(.secondary)
                     }
-                case .empty:
-                    ContentUnavailableView("No Photo", systemImage: "photo")
-                        .foregroundStyle(.secondary)
+                    // Centered like the loupe pane (DES-086) — one pane idiom for waiting.
+                    if isDownloading {
+                        ProgressView()
+                            .controlSize(.large)
+                            .shadow(radius: 8)
+                            .allowsHitTesting(false)
+                    }
                 }
-                // Centered like the loupe pane (DES-086) — one pane idiom for waiting.
-                if isDownloading {
-                    ProgressView()
-                        .controlSize(.large)
-                        .shadow(radius: 8)
-                        .allowsHitTesting(false)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onPaneActivated(position)
                 }
+                .overlay {
+                    ContextMenuHost(willOpen: { onPaneActivated(position) }, makeMenu: contextMenu)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                onPaneActivated(position)
-            }
-            .overlay {
-                ContextMenuHost(willOpen: { onPaneActivated(position) }, makeMenu: contextMenu)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        )
     }
 
     private func paneAccessibilityLabel(for id: MediaAssetID?) -> String {

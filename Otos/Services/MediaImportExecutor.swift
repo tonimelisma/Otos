@@ -281,7 +281,6 @@ actor MediaImportExecutor {
                     guard !journaledStaging.contains(item.path) else { continue }
                     try? fileManager.removeItem(at: item)
                     OtosLog.catalog.notice(
-                        // swiftlint:disable:next line_length
                         "op=mediaOperation.recover phase=orphanStagingRemoved path=\(item.path, privacy: .public)"
                     )
                 }
@@ -377,16 +376,13 @@ actor MediaImportExecutor {
         let storedBatchCount = await (try? store.importBatchAssetCount(batch)) ?? -1
         let batchIntegrityMismatch = storedBatchCount != entryTotals.publishedCount
         OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
             "op=mediaOperation.batch phase=verified run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public) skippedPreexisting=\(plan.totals.skipCount, privacy: .public) skippedForeign=\(entryTotals.skippedForeignCount, privacy: .public) failed=\(entryTotals.failedCount, privacy: .public) blocked=\(plan.totals.blockedCount, privacy: .public)"
         )
         OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
             "op=mediaOperation.batch phase=overlayReuse run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) metadataCloned=\(entryTotals.overlayReuse.metadataCloned, privacy: .public) thumbnailCopied=\(entryTotals.overlayReuse.thumbnailCopied, privacy: .public) misses=\(entryTotals.overlayReuse.missDescription, privacy: .public)"
         )
         if batchIntegrityMismatch {
             OtosLog.catalog.fault(
-                // swiftlint:disable:next line_length
                 "op=mediaOperation.batch phase=integrityMismatch run=\(runID, privacy: .public) batch=\(batch.unixMilliseconds, privacy: .public) expectedPublished=\(entryTotals.publishedCount, privacy: .public) storedBatchCount=\(storedBatchCount, privacy: .public)"
             )
         }
@@ -439,7 +435,9 @@ actor MediaImportExecutor {
             return .completedWithErase(
                 publishedCount: entryTotals.publishedCount,
                 hasBlockedEntries: hasBlockedEntries,
-                hasEntryFailures: entryTotals.failedCount > 0 || batchIntegrityMismatch || entryTotals.eraseOutcome.failedCount > 0,
+                hasEntryFailures: entryTotals.failedCount > 0
+                    || batchIntegrityMismatch
+                    || entryTotals.eraseOutcome.failedCount > 0,
                 skippedForeignCount: entryTotals.skippedForeignCount,
                 failedCount: entryTotals.failedCount,
                 incompleteItems: entryTotals.incompleteItems,
@@ -765,7 +763,12 @@ actor MediaImportExecutor {
             + "logged=\(logged)"
         OtosLog.mediaIO.notice("\(message, privacy: .public)")
         _ = await store.releaseNamespaceMutationLease(sourceNamespaceLease)
-        return EraseOutcome(deletedCount: deleted, deletedBytes: deletedBytes, skippedCount: skipped, failedCount: failed)
+        return EraseOutcome(
+            deletedCount: deleted,
+            deletedBytes: deletedBytes,
+            skippedCount: skipped,
+            failedCount: failed
+        )
     }
 
     /// One lease per source root for the whole sweep.
@@ -823,7 +826,6 @@ actor MediaImportExecutor {
             // is surfaced rather than retried in silence, and retained rather than
             // deleted on a fact this code could not prove.
             OtosLog.mediaIO.fault(
-                // swiftlint:disable:next line_length
                 "op=import.erase.recover phase=uncontained rootPath=\(operation.sourceRootPath.rawValue, privacy: .public) relativePath=\(operation.sourceRelativePath.rawValue, privacy: .public)"
             )
             return
@@ -994,8 +996,7 @@ actor MediaImportExecutor {
     ) async -> EntryOutcome? {
         let sharedCancel = cancelFlag
         let transfer = transfer
-        let copyOutcome = await withCheckedContinuation {
-            (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
+        let copyOutcome: CopyfileTransfer.Outcome = await withCheckedContinuation { continuation in
             Task.detached {
                 let outcome = transfer(
                     sourceURL,
@@ -1080,7 +1081,6 @@ actor MediaImportExecutor {
                     try? FileManager.default.removeItem(at: stagingURL)
                     try? await store.abandonImportOperation(key: operationKey)
                     OtosLog.catalog.error(
-                        // swiftlint:disable:next line_length
                         "op=mediaOperation.camera phase=companionFailed detail=\(message, privacy: .public)"
                     )
                     return .failed(.other)
@@ -1347,9 +1347,8 @@ actor MediaImportExecutor {
         let hashFinished: ContinuousClock.Instant
     }
 
-    // The publication handoff is one crash boundary: journal gate, exclusive rename,
-    // durable pending-settlement transition, and the single Store settlement transaction.
-    // swiftlint:disable:next function_body_length
+    /// The publication handoff is one crash boundary: journal gate, exclusive rename,
+    /// durable pending-settlement transition, and the single Store settlement transaction.
     private nonisolated static func publishAndSettle(_ request: PublishSettleRequest) async -> EntryOutcome {
         guard await request.store.ownsNamespaceMutationLease(request.namespaceLease) else {
             try? await request.store.abandonImportOperation(key: request.operation.operationKey)
@@ -1636,7 +1635,6 @@ actor MediaImportExecutor {
             }
         }
         OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
             "op=mediaOperation.recover phase=\(operation.phase.rawValue, privacy: .public) key=\(operation.operationKey.rawValue, privacy: .public) stagingExists=\(stagingExists, privacy: .public) finalExists=\(finalExists, privacy: .public)"
         )
         _ = await store.releaseNamespaceMutationLease(lease)

@@ -9,9 +9,9 @@ import Testing
 struct DerivedVideoCaptureWallTests {
     private let zone = TimeZone(secondsFromGMT: 0) ?? .current
     private var calendar: Calendar {
-        var c = Calendar(identifier: .gregorian)
-        c.timeZone = zone
-        return c
+        var gregorian = Calendar(identifier: .gregorian)
+        gregorian.timeZone = zone
+        return gregorian
     }
 
     @Test func derivesTheInstantRecordingStarted() throws {

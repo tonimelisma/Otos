@@ -93,9 +93,33 @@ struct CatalogQueryGatewayTests {
         try CatalogStore.migrator.migrate(dbQueue)
         try await dbQueue.write { db in
             try insertScopeRoot(id: 1, path: "/Library", db: db)
-            try insertScopeAsset(rootID: 1, path: "liked.jpg", kind: "image", format: "JPEG", batchMs: nil, choice: "liked", db: db)
-            try insertScopeAsset(rootID: 1, path: "unrated.jpg", kind: "image", format: "JPEG", batchMs: nil, choice: "notRated", db: db)
-            try insertScopeAsset(rootID: 1, path: "disliked.jpg", kind: "image", format: "JPEG", batchMs: nil, choice: "disliked", db: db)
+            try insertScopeAsset(
+                rootID: 1,
+                path: "liked.jpg",
+                kind: "image",
+                format: "JPEG",
+                batchMs: nil,
+                choice: "liked",
+                db: db
+            )
+            try insertScopeAsset(
+                rootID: 1,
+                path: "unrated.jpg",
+                kind: "image",
+                format: "JPEG",
+                batchMs: nil,
+                choice: "notRated",
+                db: db
+            )
+            try insertScopeAsset(
+                rootID: 1,
+                path: "disliked.jpg",
+                kind: "image",
+                format: "JPEG",
+                batchMs: nil,
+                choice: "disliked",
+                db: db
+            )
         }
         let descriptor = CatalogQueryDescriptor(
             scope: .allMedia,

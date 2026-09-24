@@ -9,8 +9,14 @@ import Testing
 @MainActor
 struct MediaItemContextMenuTests {
     @Test func menuRendersEveryEntryWithEnablement() {
-        let preview = OpenWithApplication(url: URL(fileURLWithPath: "/System/Applications/Preview.app"), displayName: "Preview")
-        let photos = OpenWithApplication(url: URL(fileURLWithPath: "/System/Applications/Photos.app"), displayName: "Photos")
+        let preview = OpenWithApplication(
+            url: URL(fileURLWithPath: "/System/Applications/Preview.app"),
+            displayName: "Preview"
+        )
+        let photos = OpenWithApplication(
+            url: URL(fileURLWithPath: "/System/Applications/Photos.app"),
+            displayName: "Photos"
+        )
         let model = MediaItemMenuModel(
             openTitle: "Open in Preview",
             canOpen: true,
@@ -48,7 +54,10 @@ struct MediaItemContextMenuTests {
     }
 
     @Test func menuItemsRouteToPerform() throws {
-        let photos = OpenWithApplication(url: URL(fileURLWithPath: "/System/Applications/Photos.app"), displayName: "Photos")
+        let photos = OpenWithApplication(
+            url: URL(fileURLWithPath: "/System/Applications/Photos.app"),
+            displayName: "Photos"
+        )
         let model = MediaItemMenuModel(
             openTitle: "Open",
             canOpen: true,

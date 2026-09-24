@@ -98,7 +98,11 @@ struct PreviewImageLoaderTests {
         #expect(max(small.width, small.height) <= 16)
 
         // The full tier decodes at native size and is not served from the smaller cache entry.
-        let full = await loader.preview(for: .init(id: id, detail: nil, targetLongEdge: PreviewImageLoader.fullResolution))
+        let full = await loader.preview(for: .init(
+            id: id,
+            detail: nil,
+            targetLongEdge: PreviewImageLoader.fullResolution
+        ))
         guard case let .image(native, fullNativeSize) = full else {
             Issue.record("Expected full image, got \(String(describing: full))")
             return
@@ -155,14 +159,14 @@ struct PreviewImageLoaderTests {
             }
         )
 
-        async let a = loader.preview(
+        async let firstLoad = loader.preview(
             for: .init(id: id, detail: nil, targetLongEdge: 256)
         )
-        async let b = loader.preview(
+        async let secondLoad = loader.preview(
             for: .init(id: id, detail: nil, targetLongEdge: 256)
         )
-        let (ra, rb) = await (a, b)
-        guard case .image = ra, case .image = rb else {
+        let (firstResult, secondResult) = await (firstLoad, secondLoad)
+        guard case .image = firstResult, case .image = secondResult else {
             Issue.record("Both requests should decode")
             return
         }

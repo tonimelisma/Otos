@@ -340,7 +340,8 @@ struct MediaTransferPlannerTests {
             additionalReserved: Set(firstPlan.entries.map(\.finalDestination))
         )
 
-        #expect(Set(firstPlan.entries.map(\.finalDestination)).isDisjoint(with: secondPlan.entries.map(\.finalDestination)))
+        let firstDestinations = Set(firstPlan.entries.map(\.finalDestination))
+        #expect(firstDestinations.isDisjoint(with: secondPlan.entries.map(\.finalDestination)))
     }
 
     @Test func conflictingPublishReplansAndNeverEvicts() {

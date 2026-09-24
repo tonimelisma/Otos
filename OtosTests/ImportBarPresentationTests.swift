@@ -150,7 +150,11 @@ struct ImportBarPresentationTests {
         #expect(ImportPlanFooter.renderedPrimary(for: drawnHeld).title == "Import")
 
         let ready = Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 42, skipCount: 139, copyBytes: 68_000_000), generation: 1, skippedPackageCount: 0),
+            state: .ready(
+                summary: Self.totals(copyCount: 42, skipCount: 139, copyBytes: 68_000_000),
+                generation: 1,
+                skippedPackageCount: 0
+            ),
             importRequested: true
         )
         let drawnReady = Self.map(ready)
@@ -238,7 +242,11 @@ struct ImportBarPresentationTests {
     /// stays the whole plan — the run copies what fits and stops (ADR 0027).
     @Test func readyAdvisesWhenNotEverythingWillFit() {
         let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 680, copyBytes: 54_757_512_996), generation: 1, skippedPackageCount: 0),
+            state: .ready(
+                summary: Self.totals(copyCount: 680, copyBytes: 54_757_512_996),
+                generation: 1,
+                skippedPackageCount: 0
+            ),
             destinationAvailableBytes: 37_673_455_616
         ))
         #expect(drawn.kind == .ready)
@@ -271,12 +279,20 @@ struct ImportBarPresentationTests {
     /// because it changes what the click will do.
     @Test func theSpaceAdvisoryOutranksTheAlreadyInLibraryClause() {
         let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 10, skipCount: 5, copyBytes: 10_000_000_000), generation: 1, skippedPackageCount: 0),
+            state: .ready(
+                summary: Self.totals(copyCount: 10, skipCount: 5, copyBytes: 10_000_000_000),
+                generation: 1,
+                skippedPackageCount: 0
+            ),
             destinationAvailableBytes: 2_000_000_000
         ))
         #expect(drawn.secondaryLine == .plain("Not everything will fit yet · 2.0 GB available"))
         let roomy = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 10, skipCount: 5, copyBytes: 10000), generation: 1, skippedPackageCount: 0),
+            state: .ready(
+                summary: Self.totals(copyCount: 10, skipCount: 5, copyBytes: 10000),
+                generation: 1,
+                skippedPackageCount: 0
+            ),
             destinationAvailableBytes: FreeSpaceFloor.bytes + 1_000_000
         ))
         #expect(roomy.secondaryLine == .plain("5 already in Summer Photos"))
@@ -319,7 +335,11 @@ struct ImportBarPresentationTests {
         var prefs = ImportPreferences.default
         prefs.deleteSourceAfterImport = true
         let drawn = Self.map(
-            Self.presentation(state: .ready(summary: Self.totals(skipCount: 181), generation: 1, skippedPackageCount: 0)),
+            Self.presentation(state: .ready(
+                summary: Self.totals(skipCount: 181),
+                generation: 1,
+                skippedPackageCount: 0
+            )),
             preferences: prefs
         )
         #expect(drawn.primaryAction == .eraseItems(count: 181))
@@ -395,9 +415,17 @@ struct ImportBarPresentationTests {
 
     @Test func needsAttentionNamesTheNoFreeNameCause() {
         let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
-        let item = MediaAttentionItem(id: itemID, reason: .noFreeDestinationName(destination: MediaRelativePath(rawValue: "a.jpg")))
+        let item = MediaAttentionItem(
+            id: itemID,
+            reason: .noFreeDestinationName(destination: MediaRelativePath(rawValue: "a.jpg"))
+        )
         let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 1, copyBytes: 1000), generation: 1, skippedPackageCount: 0, attentionItems: [item, item])
+            state: .ready(
+                summary: Self.totals(copyCount: 1, copyBytes: 1000),
+                generation: 1,
+                skippedPackageCount: 0,
+                attentionItems: [item, item]
+            )
         ))
         #expect(drawn.secondaryLine == .attention(
             clause: "Otos couldn't find a free name for 2 items in Summer Photos",
@@ -412,12 +440,22 @@ struct ImportBarPresentationTests {
         let itemID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let item = MediaAttentionItem(id: itemID, reason: .noUsableDate)
         let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 0), generation: 1, skippedPackageCount: 0, attentionItems: [item])
+            state: .ready(
+                summary: Self.totals(copyCount: 0),
+                generation: 1,
+                skippedPackageCount: 0,
+                attentionItems: [item]
+            )
         ))
         #expect(drawn.kind == .needsAttention)
         #expect(drawn.primaryAction == .none)
         let some = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 5, copyBytes: 5000), generation: 1, skippedPackageCount: 0, attentionItems: [item])
+            state: .ready(
+                summary: Self.totals(copyCount: 5, copyBytes: 5000),
+                generation: 1,
+                skippedPackageCount: 0,
+                attentionItems: [item]
+            )
         ))
         #expect(some.primaryAction == .importNewItems)
     }
@@ -425,20 +463,24 @@ struct ImportBarPresentationTests {
     @Test func needsAttentionWithMixedCausesNamesNoSingleCause() {
         let aID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
         let bID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "b.jpg"))
-        let a = MediaAttentionItem(id: aID, reason: .noUsableDate)
-        let b = MediaAttentionItem(
+        let itemA = MediaAttentionItem(id: aID, reason: .noUsableDate)
+        let itemB = MediaAttentionItem(
             id: bID,
-            reason: .filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "b.jpg"))
+            reason: .filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "itemB.jpg"))
         )
         let drawn = Self.map(Self.presentation(
             state: .ready(
                 summary: Self.totals(copyCount: 1, copyBytes: 1000),
                 generation: 1,
                 skippedPackageCount: 0,
-                attentionItems: [a, b]
+                attentionItems: [itemA, itemB]
             )
         ))
-        #expect(drawn.secondaryLine == .attention(clause: "2 items need attention", revealLabel: "Show them", itemIDs: [aID, bID]))
+        #expect(drawn.secondaryLine == .attention(
+            clause: "2 items need attention",
+            revealLabel: "Show them",
+            itemIDs: [aID, bID]
+        ))
     }
 
     // MARK: - E · Working (row 8)
@@ -490,7 +532,13 @@ struct ImportBarPresentationTests {
     /// Same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
     /// exercised at state E's own `destinationDisplayName ?? ""` site.
     @Test func workingCaptionWithUnresolvedDestinationNameFallsBackHonestly() {
-        let progress = MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
+        let progress = MediaOperationProgress(
+            completedCount: 1,
+            totalCount: 2,
+            completedBytes: 1,
+            totalBytes: 2,
+            elapsedMs: 0
+        )
         let drawn = Self.map(Self.presentation(destinationDisplayName: nil, state: .executing(progress: progress)))
         #expect(drawn.middleZone == .progress(
             track: .determinate(completed: 1, total: 2),
@@ -501,7 +549,13 @@ struct ImportBarPresentationTests {
     @Test func workingCaptionNamesDestinationAndEjectPolicy() {
         var prefs = ImportPreferences.default
         prefs.autoEjectAfterImport = true
-        let progress = MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
+        let progress = MediaOperationProgress(
+            completedCount: 1,
+            totalCount: 2,
+            completedBytes: 1,
+            totalBytes: 2,
+            elapsedMs: 0
+        )
         let drawn = Self.map(Self.presentation(state: .executing(progress: progress)), preferences: prefs)
         #expect(drawn.middleZone == .progress(
             track: .determinate(completed: 1, total: 2),
@@ -512,9 +566,18 @@ struct ImportBarPresentationTests {
     @Test func workingCaptionOmitsEjectClauseWhenEjectIsOff() {
         var prefs = ImportPreferences.default
         prefs.autoEjectAfterImport = false
-        let progress = MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
+        let progress = MediaOperationProgress(
+            completedCount: 1,
+            totalCount: 2,
+            completedBytes: 1,
+            totalBytes: 2,
+            elapsedMs: 0
+        )
         let drawn = Self.map(Self.presentation(state: .executing(progress: progress)), preferences: prefs)
-        #expect(drawn.middleZone == .progress(track: .determinate(completed: 1, total: 2), caption: "Into Summer Photos"))
+        #expect(drawn.middleZone == .progress(
+            track: .determinate(completed: 1, total: 2),
+            caption: "Into Summer Photos"
+        ))
     }
 
     // MARK: - E · Cancelling (row 9)
@@ -531,7 +594,10 @@ struct ImportBarPresentationTests {
         #expect(drawn.kind == .working)
         #expect(drawn.primaryLine == "Stopping…")
         #expect(drawn.secondaryLine == .plain("Finishing the current item"))
-        #expect(drawn.middleZone == .progress(track: .determinate(completed: 19_000_000, total: 68_000_000), caption: nil))
+        #expect(drawn.middleZone == .progress(
+            track: .determinate(completed: 19_000_000, total: 68_000_000),
+            caption: nil
+        ))
         #expect(drawn.primaryAction == .cancel)
         #expect(drawn.primaryEnabled == false)
     }
@@ -547,7 +613,11 @@ struct ImportBarPresentationTests {
 
     @Test func doneAttachedCleanFromFreshCompletion() {
         let drawn = Self.map(Self.presentation(
-            state: .completed(summary: Self.totals(copyCount: 42, skipCount: 139), skippedForeignCount: 0, failedCount: 0),
+            state: .completed(
+                summary: Self.totals(copyCount: 42, skipCount: 139),
+                skippedForeignCount: 0,
+                failedCount: 0
+            ),
             copiedJustNow: 42
         ))
         #expect(drawn.kind == .done)
@@ -563,7 +633,11 @@ struct ImportBarPresentationTests {
     @Test func doneWithUnresolvedDestinationNameFallsBackHonestly() {
         let drawn = Self.map(Self.presentation(
             destinationDisplayName: nil,
-            state: .completed(summary: Self.totals(copyCount: 42, skipCount: 139), skippedForeignCount: 0, failedCount: 0),
+            state: .completed(
+                summary: Self.totals(copyCount: 42, skipCount: 139),
+                skippedForeignCount: 0,
+                failedCount: 0
+            ),
             copiedJustNow: 42
         ))
         #expect(drawn.secondaryLine == .plain("42 copied just now · 181 items in the library"))
@@ -618,7 +692,11 @@ struct ImportBarPresentationTests {
         // nothing that actually failed to copy — no per-item identity exists
         // for that population here, so no reveal is offered.
         let drawn = Self.map(Self.presentation(
-            state: .completed(summary: Self.totals(copyCount: 10, skipCount: 0, blockedCount: 2), skippedForeignCount: 0, failedCount: 0),
+            state: .completed(
+                summary: Self.totals(copyCount: 10, skipCount: 0, blockedCount: 2),
+                skippedForeignCount: 0,
+                failedCount: 0
+            ),
             copiedJustNow: 10
         ))
         #expect(drawn.primaryBadge == .none)
@@ -658,7 +736,11 @@ struct ImportBarPresentationTests {
         // J4: a card that gains files while attached returns to C, even though
         // `copiedJustNow` is still set from the earlier import.
         let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 1, skipCount: 181, copyBytes: 4_000_000), generation: 3, skippedPackageCount: 0),
+            state: .ready(
+                summary: Self.totals(copyCount: 1, skipCount: 181, copyBytes: 4_000_000),
+                generation: 3,
+                skippedPackageCount: 0
+            ),
             copiedJustNow: 42,
             isFullyClean: true
         ))
@@ -764,14 +846,23 @@ struct ImportBarPresentationTests {
             reason: .noUsableDate
         )
         let drawn = Self.map(Self.presentation(
-            state: .ready(summary: Self.totals(copyCount: 30), generation: 2, skippedPackageCount: 0, attentionItems: [item]),
+            state: .ready(
+                summary: Self.totals(copyCount: 30),
+                generation: 2,
+                skippedPackageCount: 0,
+                attentionItems: [item]
+            ),
             copiedJustNow: 12,
             isFullyClean: false,
             stopReason: .user,
             plannedCount: 42
         ))
         #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
-        #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: false, eraseDisabledReason: "Some items still need attention."))
+        #expect(drawn.middleZone == .choices(
+            track: nil,
+            eraseEnabled: false,
+            eraseDisabledReason: "Some items still need attention."
+        ))
         #expect(drawn.primaryAction == .importNewItems)
     }
 
@@ -779,7 +870,13 @@ struct ImportBarPresentationTests {
         // `lastCompletion` still carries the stop while the retry executes;
         // Working (and a retry's Failed) are the newer fact.
         let working = Self.map(Self.presentation(
-            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 30, completedBytes: 1, totalBytes: 30, elapsedMs: 10)),
+            state: .executing(progress: MediaOperationProgress(
+                completedCount: 1,
+                totalCount: 30,
+                completedBytes: 1,
+                totalBytes: 30,
+                elapsedMs: 10
+            )),
             copiedJustNow: 12,
             isFullyClean: false,
             stopReason: .user,
@@ -836,7 +933,9 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryAction == .tryAgain)
         #expect(drawn.middleZone == .choices(track: nil, eraseEnabled: true, eraseDisabledReason: nil))
 
-        let unexpected = Self.map(Self.presentation(state: .planningFailed(reason: .unexpected(detail: "snapshotUnavailable"))))
+        let unexpected = Self.map(
+            Self.presentation(state: .planningFailed(reason: .unexpected(detail: "snapshotUnavailable")))
+        )
         #expect(unexpected.primaryLine == "Couldn't prepare the import")
         #expect(unexpected.secondaryLine == .none)
     }
@@ -867,7 +966,10 @@ struct ImportBarPresentationTests {
     }
 
     @Test func failedUnexpectedNamesNoCauseAndNeverLeaksDetail() {
-        let drawn = Self.map(Self.presentation(state: .failed(reason: .unexpected(detail: "namespaceLeaseUnavailable"), publishedCount: 0)))
+        let drawn = Self.map(Self.presentation(state: .failed(
+            reason: .unexpected(detail: "namespaceLeaseUnavailable"),
+            publishedCount: 0
+        )))
         #expect(drawn.secondaryLine == .none)
         if case let .plain(text) = drawn.secondaryLine {
             #expect(!text.contains("namespaceLeaseUnavailable"))

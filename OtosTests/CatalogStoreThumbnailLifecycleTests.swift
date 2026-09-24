@@ -10,7 +10,10 @@ struct CatalogStoreThumbnailLifecycleTests {
         let outcome = await fixture.store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: fixture.id,
-                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "Cam"),
+                metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))],
+                    cameraModel: "Cam"
+                ),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -22,7 +25,8 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(outcome == .applied(count: 1))
         #expect(!FileManager.default.fileExists(atPath: fixture.stagedURL(for: generated).path(percentEncoded: false)))
         #expect(FileManager.default.fileExists(atPath: fixture.finalURL(for: generated).path(percentEncoded: false)))
-        let current = try #require(try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id })
+        let storedAssets = try await catalogStoreTestState(fixture.store).testAssets
+        let current = try #require(storedAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == generated.finalRelativePath)
         #expect(!current.needsEnrichment(hashRequired: true))
     }
@@ -46,7 +50,8 @@ struct CatalogStoreThumbnailLifecycleTests {
         #expect(outcome == .applied(count: 0))
         #expect(try Data(contentsOf: finalURL) == Data("old".utf8))
         #expect(!FileManager.default.fileExists(atPath: fixture.stagedURL(for: generated).path(percentEncoded: false)))
-        let current = try #require(try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id })
+        let storedAssets = try await catalogStoreTestState(fixture.store).testAssets
+        let current = try #require(storedAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == finalName)
         #expect(current.needsEnrichment(hashRequired: true))
     }
@@ -89,7 +94,10 @@ struct CatalogStoreThumbnailLifecycleTests {
         let outcome = await fixture.store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: fixture.id,
-                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "Cam"),
+                metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))],
+                    cameraModel: "Cam"
+                ),
                 thumbnailPath: nil,
                 sourceSize: asset.byteSize,
                 sourceMTimeSeconds: MediaAsset.mtimeSeconds(asset.contentModifiedAt),
@@ -117,7 +125,10 @@ struct CatalogStoreThumbnailLifecycleTests {
         let outcome = await fixture.store.applyEnrichmentBatch([
             EnrichmentResult(
                 id: fixture.id,
-                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "AcceptedCam"),
+                metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))],
+                    cameraModel: "AcceptedCam"
+                ),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -126,7 +137,10 @@ struct CatalogStoreThumbnailLifecycleTests {
             ),
             EnrichmentResult(
                 id: fixture.id,
-                metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 900))], cameraModel: "FailedCam"),
+                metadata: AssetMetadata(
+                    timestamps: [.absolute(instant: Date(timeIntervalSince1970: 900))],
+                    cameraModel: "FailedCam"
+                ),
                 thumbnailPath: nil,
                 sourceSize: 100,
                 sourceMTimeSeconds: 1000,
@@ -137,7 +151,8 @@ struct CatalogStoreThumbnailLifecycleTests {
 
         #expect(outcome == .writeFailed)
         #expect(FileManager.default.fileExists(atPath: fixture.finalURL(for: accepted).path(percentEncoded: false)))
-        let current = try #require(try await catalogStoreTestState(fixture.store).testAssets.first { $0.id == fixture.id })
+        let storedAssets = try await catalogStoreTestState(fixture.store).testAssets
+        let current = try #require(storedAssets.first { $0.id == fixture.id })
         #expect(current.thumbnailPath == accepted.finalRelativePath)
         #expect(!current.needsEnrichment(hashRequired: true))
     }
@@ -173,7 +188,10 @@ private struct ThumbnailLifecycleFixture {
     func acceptedResult(thumbnailPath: String) -> EnrichmentResult {
         EnrichmentResult(
             id: id,
-            metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))], cameraModel: "InitialCam"),
+            metadata: AssetMetadata(
+                timestamps: [.absolute(instant: Date(timeIntervalSince1970: 700))],
+                cameraModel: "InitialCam"
+            ),
             thumbnailPath: thumbnailPath,
             sourceSize: 100,
             sourceMTimeSeconds: 1000,
@@ -184,7 +202,10 @@ private struct ThumbnailLifecycleFixture {
     func staleResult(generatedThumbnail: GeneratedThumbnail) -> EnrichmentResult {
         EnrichmentResult(
             id: id,
-            metadata: AssetMetadata(timestamps: [.absolute(instant: Date(timeIntervalSince1970: 900))], cameraModel: "StaleCam"),
+            metadata: AssetMetadata(
+                timestamps: [.absolute(instant: Date(timeIntervalSince1970: 900))],
+                cameraModel: "StaleCam"
+            ),
             thumbnailPath: nil,
             sourceSize: 100,
             sourceMTimeSeconds: 1000,

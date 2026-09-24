@@ -445,7 +445,6 @@ extension EnrichmentCoordinator {
         let queued = pendingDeviceSeeds.count
         let outstanding = materializationDemands.count
         OtosLog.metadata.notice(
-            // swiftlint:disable:next line_length
             "op=enrichment.stageDevice phase=admit offered=\(offered, privacy: .public) admitted=\(admitted, privacy: .public) queued=\(queued, privacy: .public) outstanding=\(outstanding, privacy: .public)"
         )
     }

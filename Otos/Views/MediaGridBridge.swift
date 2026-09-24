@@ -599,12 +599,7 @@ extension MediaGridViewController {
         ) { [weak self] collectionView, indexPath, assetID in
             self?.makeCollectionItem(collectionView: collectionView, indexPath: indexPath, assetID: assetID)
         }
-        dataSource.supplementaryViewProvider = {
-            [weak self] (
-                collectionView: NSCollectionView,
-                kind: NSCollectionView.SupplementaryElementKind,
-                indexPath: IndexPath
-            ) -> (any NSView & NSCollectionViewElement)? in
+        dataSource.supplementaryViewProvider = { [weak self] collectionView, kind, indexPath in
             self?.makeDayHeader(collectionView: collectionView, kind: kind, indexPath: indexPath)
         }
     }
@@ -810,13 +805,13 @@ extension MediaGridViewController {
         if presentation.isStrip {
             let targetX = frame.midX - clip.bounds.width / 2
             let maxX = max(0, collectionView.bounds.width - clip.bounds.width)
-            let x = min(max(0, targetX), maxX)
-            clip.scroll(to: NSPoint(x: x, y: clip.bounds.origin.y))
+            let clampedX = min(max(0, targetX), maxX)
+            clip.scroll(to: NSPoint(x: clampedX, y: clip.bounds.origin.y))
         } else {
             let targetY = frame.midY - clip.bounds.height / 2
             let maxY = max(0, collectionView.bounds.height - clip.bounds.height)
-            let y = min(max(0, targetY), maxY)
-            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+            let clampedY = min(max(0, targetY), maxY)
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: clampedY))
         }
         scrollView.reflectScrolledClipView(clip)
     }

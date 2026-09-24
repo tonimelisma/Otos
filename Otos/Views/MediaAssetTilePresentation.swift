@@ -97,9 +97,9 @@ nonisolated enum MediaAssetTileLayout {
     /// the fixed padding alone.
     static func kindBadgeLabelFrame(badgeWidth: CGFloat, textWidth: CGFloat) -> CGRect {
         let clampedTextWidth = min(max(ceil(textWidth), 0), badgeWidth)
-        let x = max((badgeWidth - clampedTextWidth) / 2, 0)
+        let originX = max((badgeWidth - clampedTextWidth) / 2, 0)
         return CGRect(
-            x: x,
+            x: originX,
             y: badgeTextY,
             width: clampedTextWidth,
             height: badgeTextHeight

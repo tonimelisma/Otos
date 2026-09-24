@@ -555,7 +555,11 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard let entry = inFlightByID.removeValue(forKey: id) else {
             return
         }
-        recordProviderBreakerOutcome(result.outcome, rootPath: id.libraryRootPath, effectivePriority: entry.effectivePriority)
+        recordProviderBreakerOutcome(
+            result.outcome,
+            rootPath: id.libraryRootPath,
+            effectivePriority: entry.effectivePriority
+        )
         removeAccounting(for: entry)
         let deliveredAt = clock.now
         let providerMs = DiagnosticsTiming.milliseconds(from: entry.dispatchedAt, to: providerFinishedAt)

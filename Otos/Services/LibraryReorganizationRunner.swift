@@ -45,7 +45,6 @@ actor LibraryReorganizationRunner {
                 try await store.discardCommittedReorganizationComponent(component.componentKey)
             case .filesystemComplete:
                 OtosLog.catalog.notice(
-                    // swiftlint:disable:next line_length
                     "op=reorganization.recover phase=retrySettlement key=\(component.componentKey.rawValue, privacy: .public)"
                 )
                 do {
@@ -55,13 +54,11 @@ actor LibraryReorganizationRunner {
                     )
                 } catch {
                     OtosLog.catalog.error(
-                        // swiftlint:disable:next line_length
                         "op=reorganization.recover phase=settlementFailed key=\(component.componentKey.rawValue, privacy: .public) error=\(String(describing: error), privacy: .public)"
                     )
                 }
             case .prepared, .moving, .rollingBack, .blocked:
                 OtosLog.catalog.notice(
-                    // swiftlint:disable:next line_length
                     "op=reorganization.recover phase=retainJournal key=\(component.componentKey.rawValue, privacy: .public) componentPhase=\(component.phase.rawValue, privacy: .public)"
                 )
                 _ = await store.acquireNamespaceMutationLease(for: component.libraryRootPath, owner: .reorganization)
@@ -107,10 +104,9 @@ actor LibraryReorganizationRunner {
         }
     }
 
-    /// Executes a confirmed reorganization for one fixed library.
-    // Component loop + lease/settlement is intentionally cohesive.
-    // swiftlint:disable:next function_body_length
-    func run(libraryRoot: LibraryRootPath) async -> Outcome {
+    /// Executes a confirmed reorganization for one fixed library. The component loop
+    /// and its lease/settlement are intentionally one cohesive function.
+    func run(libraryRoot: LibraryRootPath) async -> Outcome { // swiftlint:disable:this function_body_length
         let lease: RootNamespaceMutationLease
         switch await store.acquireNamespaceMutationLease(for: libraryRoot, owner: .reorganization) {
         case let .acquired(acquired):
@@ -242,7 +238,6 @@ actor LibraryReorganizationRunner {
         }
 
         OtosLog.catalog.notice(
-            // swiftlint:disable:next line_length
             "op=reorganization.run phase=finish rootPath=\(libraryRoot.rawValue, privacy: .public) components=\(remapBatches.count, privacy: .public)"
         )
         _ = await store.releaseNamespaceMutationLease(lease)

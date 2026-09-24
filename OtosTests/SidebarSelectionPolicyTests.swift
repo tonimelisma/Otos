@@ -135,7 +135,13 @@ struct SidebarSelectionPolicyTests {
 
     @Test func barOwnsStatusMatchesBatchSelection() {
         let pres = Self.presentation(
-            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            state: .executing(progress: MediaOperationProgress(
+                completedCount: 1,
+                totalCount: 2,
+                completedBytes: 1,
+                totalBytes: 2,
+                elapsedMs: 0
+            )),
             batchID: Self.batchID
         )
         #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .importBatch(Self.batchID), presentation: pres))
@@ -150,24 +156,35 @@ struct SidebarSelectionPolicyTests {
 
     @Test func removableIndicatorShowsIndeterminateBeforeBatchExists() {
         let pres = Self.presentation(state: .inventory)
-        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .indeterminate)
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia)
+            == .indeterminate)
     }
 
     @Test func removableIndicatorShowsDeterminateCountWhilePreparing() {
         let pres = Self.presentation(state: .waitingForMetadata(done: 3, total: 10))
-        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .determinate(completed: 3, total: 10))
+        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia)
+            == .determinate(completed: 3, total: 10))
     }
 
     @Test func removableIndicatorHidesWhenBarOwnsStatus() {
         let pres = Self.presentation(state: .inventory)
-        #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .library(Self.cardPath)) == .none)
+        #expect(SidebarSelectionPolicy.removableIndicator(
+            presentation: pres,
+            sidebarSelection: .library(Self.cardPath)
+        ) == .none)
     }
 
     @Test func removableIndicatorHidesOnceBatchIDExists() {
         // Ownership has moved to the batch row — the removable row shows
         // nothing even though the user is looking elsewhere.
         let pres = Self.presentation(
-            state: .executing(progress: MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            state: .executing(progress: MediaOperationProgress(
+                completedCount: 1,
+                totalCount: 2,
+                completedBytes: 1,
+                totalBytes: 2,
+                elapsedMs: 0
+            )),
             batchID: Self.batchID
         )
         #expect(SidebarSelectionPolicy.removableIndicator(presentation: pres, sidebarSelection: .allMedia) == .none)
@@ -179,7 +196,13 @@ struct SidebarSelectionPolicyTests {
 
     @Test func batchIndicatorShowsDeterminateWhileExecuting() {
         let pres = Self.presentation(
-            state: .executing(progress: MediaOperationProgress(completedCount: 4, totalCount: 9, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            state: .executing(progress: MediaOperationProgress(
+                completedCount: 4,
+                totalCount: 9,
+                completedBytes: 1,
+                totalBytes: 2,
+                elapsedMs: 0
+            )),
             batchID: Self.batchID
         )
         let indicator = SidebarSelectionPolicy.batchIndicator(
@@ -192,7 +215,13 @@ struct SidebarSelectionPolicyTests {
 
     @Test func batchIndicatorHidesWhenBarOwnsStatus() {
         let pres = Self.presentation(
-            state: .executing(progress: MediaOperationProgress(completedCount: 4, totalCount: 9, completedBytes: 1, totalBytes: 2, elapsedMs: 0)),
+            state: .executing(progress: MediaOperationProgress(
+                completedCount: 4,
+                totalCount: 9,
+                completedBytes: 1,
+                totalBytes: 2,
+                elapsedMs: 0
+            )),
             batchID: Self.batchID
         )
         let indicator = SidebarSelectionPolicy.batchIndicator(
@@ -211,7 +240,13 @@ struct SidebarSelectionPolicyTests {
 
     @Test func batchIndicatorHidesForTerminalStates() {
         let pres = Self.presentation(
-            state: .completed(summary: MediaOperationPlanTotals(copyCount: 5, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)),
+            state: .completed(summary: MediaOperationPlanTotals(
+                copyCount: 5,
+                skipCount: 0,
+                blockedCount: 0,
+                companionCopyCount: 0,
+                copyBytes: 0
+            )),
             batchID: Self.batchID
         )
         let indicator = SidebarSelectionPolicy.batchIndicator(

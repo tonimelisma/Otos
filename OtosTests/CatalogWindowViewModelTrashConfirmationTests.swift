@@ -51,7 +51,10 @@ struct CatalogWindowViewModelTrashConfirmationTests {
 
     @Test func titlesCarryNameOrCount() {
         let one = TrashConfirmation(ids: [
-            MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "Trip/IMG_0001.ARW")),
+            MediaAssetID(
+                libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
+                relativePath: MediaRelativePath(rawValue: "Trip/IMG_0001.ARW")
+            ),
         ])
         #expect(one.title == "Move “IMG_0001.ARW” to Trash?")
         #expect(one.message == "The item moves to the Trash and can be put back from Finder.")

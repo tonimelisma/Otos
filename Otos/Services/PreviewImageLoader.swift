@@ -153,7 +153,11 @@ actor PreviewImageLoader: PreviewLoading {
         // that QoS avoids the Thread Performance Checker priority-inversion hang risk
         // that fires when this path runs at .userInitiated.
         let target = request.targetLongEdge
-        let decoded: (CGImage, String, CGSize?)? = await Task.detached(priority: .medium) { () -> (CGImage, String, CGSize?)? in
+        let decoded: (CGImage, String, CGSize?)? = await Task.detached(priority: .medium) { () -> (
+            CGImage,
+            String,
+            CGSize?
+        )? in
             if isMovie {
                 return await Self.decodeVideoPoster(url: url, targetLongEdge: target)
             }

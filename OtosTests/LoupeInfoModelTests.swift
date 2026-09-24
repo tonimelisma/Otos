@@ -36,7 +36,12 @@ struct LoupeInfoModelTests {
             contentModifiedAt: nil
         )
 
-        let model = LoupeInfoModel.make(id: id, asset: asset, kind: .video, nativePixelSize: CGSize(width: 3840, height: 2160))
+        let model = LoupeInfoModel.make(
+            id: id,
+            asset: asset,
+            kind: .video,
+            nativePixelSize: CGSize(width: 3840, height: 2160)
+        )
 
         #expect(model.fileName == "clip.mov")
         #expect(model.dimensions == "3840 × 2160")

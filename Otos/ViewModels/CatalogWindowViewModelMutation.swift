@@ -236,7 +236,6 @@ extension CatalogWindowViewModel {
             do {
                 try await unmount(root.path.url)
                 OtosLog.catalog.notice(
-                    // swiftlint:disable:next line_length
                     "op=catalog.removable.eject phase=finish outcome=ejected attempts=\(attempt + 1, privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
                 )
                 return .ejected
@@ -248,7 +247,6 @@ extension CatalogWindowViewModel {
                 let delay = retryDelays[attempt]
                 attempt += 1
                 OtosLog.catalog.notice(
-                    // swiftlint:disable:next line_length
                     "op=catalog.removable.eject phase=retry reason=busy attempt=\(attempt, privacy: .public) delayMs=\(DiagnosticsTiming.milliseconds(delay), privacy: .public) rootPath=\(root.path.rawValue, privacy: .public)"
                 )
                 try? await Task.sleep(for: delay)

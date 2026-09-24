@@ -23,12 +23,12 @@ nonisolated enum PanePresentation {
 
         static func == (lhs: Self, rhs: Self) -> Bool {
             switch (lhs, rhs) {
-            case let (.full(l), .full(r)):
-                l === r
-            case let (.thumbnail(l), .thumbnail(r)):
-                l == r
-            case let (.video(l), .video(r)):
-                l.id == r.id
+            case let (.full(left), .full(right)):
+                left === right
+            case let (.thumbnail(left), .thumbnail(right)):
+                left == right
+            case let (.video(left), .video(right)):
+                left.id == right.id
             case (.empty, .empty):
                 true
             default:

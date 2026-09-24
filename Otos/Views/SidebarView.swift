@@ -102,7 +102,10 @@ struct SidebarView: View {
     @ViewBuilder
     private func removableTrailingAccessory(for source: CatalogLibraryState) -> some View {
         let presentation = importPresentations.first(where: { $0.sourcePath == source.path })
-        switch SidebarSelectionPolicy.removableIndicator(presentation: presentation, sidebarSelection: sidebarSelection) {
+        switch SidebarSelectionPolicy.removableIndicator(
+            presentation: presentation,
+            sidebarSelection: sidebarSelection
+        ) {
         case .indeterminate:
             ProgressView()
                 .controlSize(.small)

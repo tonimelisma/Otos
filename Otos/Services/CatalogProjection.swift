@@ -10,8 +10,8 @@ import OSLog
 /// policy lives in `CatalogWindowPolicy`; diagnostics values live in
 /// `CatalogProjectionDiagnostics`.
 actor CatalogProjection {
-    // swiftlint:disable:next line_length
-    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async -> CatalogWindowState
+    typealias WindowStateBuilder = @Sendable ([CatalogLibraryState], [MediaAssetID], CatalogQueryRequest) async
+        -> CatalogWindowState
 
     /// Whether the next publication must rebuild the full ordered-asset query. A
     /// detail-only change (enrichment that touched no ordering/scope column) reuses

@@ -226,8 +226,7 @@ final class DeviceStagingRegistry {
         {
             let source = enrichmentURL
             let destination = destinationTempURL
-            let outcome = await withCheckedContinuation {
-                (continuation: CheckedContinuation<CopyfileTransfer.Outcome, Never>) in
+            let outcome: CopyfileTransfer.Outcome = await withCheckedContinuation { continuation in
                 Task.detached {
                     let copyOutcome = CopyfileTransfer.copy(
                         from: source,
@@ -241,7 +240,6 @@ final class DeviceStagingRegistry {
             switch outcome {
             case .completed:
                 OtosLog.fileAccess.notice(
-                    // swiftlint:disable:next line_length
                     "op=mediaOperation.camera phase=reuseEnrichmentStaging path=\(relativePath.rawValue, privacy: .public)"
                 )
                 return .completed

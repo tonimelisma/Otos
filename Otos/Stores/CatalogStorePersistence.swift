@@ -1227,11 +1227,17 @@ extension CatalogStore {
         ).rawValue
         if let existingPath: String = try String.fetchOne(
             db,
-            sql: "SELECT relative_path FROM media_companion WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1",
+            sql: """
+            SELECT relative_path FROM media_companion
+            WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1
+            """,
             arguments: [libraryRootID, pathKey, companion.relativePath.rawValue]
         ) {
             try db.execute(
-                sql: "UPDATE media_companion SET relative_path = ?, relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                sql: """
+                UPDATE media_companion SET relative_path = ?, relative_path_key = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
                 arguments: [companion.relativePath.rawValue, pathKey, libraryRootID, existingPath]
             )
             let message = "op=catalog.scan.reconcile phase=respellCompanion "
@@ -1319,9 +1325,8 @@ extension CatalogStore {
         let paired = MediaCompanionPairing.pair(companions: companions, primaries: primaries)
         var changed = false
         for companion in paired {
-            if try upsertCompanion(companion, libraryRootID: libraryRootID, capabilities: capabilities, db: db) {
-                changed = true
-            }
+            changed = try upsertCompanion(companion, libraryRootID: libraryRootID, capabilities: capabilities, db: db)
+                || changed
         }
         return changed
     }
@@ -1347,9 +1352,13 @@ extension CatalogStore {
                 primaries: primaries
             )
             for companion in paired {
-                if try upsertCompanion(companion, libraryRootID: libraryRootID, capabilities: capabilities, db: db) {
-                    changedCount += 1
-                }
+                let changed = try upsertCompanion(
+                    companion,
+                    libraryRootID: libraryRootID,
+                    capabilities: capabilities,
+                    db: db
+                )
+                changedCount += changed ? 1 : 0
             }
         }
         return changedCount
@@ -1385,9 +1394,8 @@ extension CatalogStore {
             .map(\.value)
         var deleted = 0
         for path in missing {
-            if try deleteCompanionRow(rootRowID: libraryRootID, relativePath: path, db: db) {
-                deleted += 1
-            }
+            let removed = try deleteCompanionRow(rootRowID: libraryRootID, relativePath: path, db: db)
+            deleted += removed ? 1 : 0
         }
         return deleted
     }
@@ -1405,11 +1413,17 @@ extension CatalogStore {
         ).rawValue
         if let existingPath: String = try String.fetchOne(
             db,
-            sql: "SELECT relative_path FROM media_asset WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1",
+            sql: """
+            SELECT relative_path FROM media_asset
+            WHERE library_root_id = ? AND relative_path_key = ? AND relative_path <> ? LIMIT 1
+            """,
             arguments: [libraryRootID, pathKey, file.relativePath.rawValue]
         ) {
             try db.execute(
-                sql: "UPDATE media_asset SET relative_path = ?, relative_path_key = ? WHERE library_root_id = ? AND relative_path = ?",
+                sql: """
+                UPDATE media_asset SET relative_path = ?, relative_path_key = ?
+                WHERE library_root_id = ? AND relative_path = ?
+                """,
                 arguments: [file.relativePath.rawValue, pathKey, libraryRootID, existingPath]
             )
             let message = "op=catalog.scan.reconcile phase=respell "
@@ -1538,8 +1552,11 @@ private nonisolated func addRelativePathKeyColumns(_ db: Database) throws {
     if !companionColumns.isEmpty, !companionColumns.contains("relative_path_key") {
         try db.execute(sql: "ALTER TABLE media_companion ADD COLUMN relative_path_key TEXT NOT NULL DEFAULT ''")
     }
+    // Migration SQL stays byte-for-byte as shipped.
+    // swiftlint:disable:next line_length
     try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_media_asset_relative_path_key ON media_asset(library_root_id, relative_path_key)")
     if !companionColumns.isEmpty {
+        // swiftlint:disable:next line_length
         try db.execute(sql: "CREATE INDEX IF NOT EXISTS idx_media_companion_relative_path_key ON media_companion(library_root_id, relative_path_key)")
     }
 }
@@ -1573,16 +1590,22 @@ private nonisolated func backfillRelativePathKeys(_ db: Database) throws {
             if let existing = owners[key] {
                 let existingImported: Int64? = existing["import_batch_unix_ms"]
                 let currentImported: Int64? = row["import_batch_unix_ms"]
-                let existingEnriched: Bool = existing["enriched_source_size"] != nil && existing["enriched_source_mtime"] != nil
+                let existingEnriched: Bool = existing["enriched_source_size"] != nil &&
+                    existing["enriched_source_mtime"] != nil
                 let currentEnriched: Bool = row["enriched_source_size"] != nil && row["enriched_source_mtime"] != nil
                 let keepCurrent = (currentImported != nil && existingImported == nil)
                     || (currentImported == existingImported && currentEnriched && !existingEnriched)
-                    || (currentImported == existingImported && currentEnriched == existingEnriched && path < (existing["relative_path"] as String))
+                    ||
+                    (currentImported == existingImported && currentEnriched == existingEnriched && path <
+                        (existing["relative_path"] as String))
                 let keeper = keepCurrent ? row : existing
                 let loser = keepCurrent ? existing : row
                 let keeperPath: String = keeper["relative_path"]
                 let loserPath: String = loser["relative_path"]
-                try db.execute(sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?", arguments: [rootID, loserPath])
+                try db.execute(
+                    sql: "DELETE FROM media_asset WHERE library_root_id = ? AND relative_path = ?",
+                    arguments: [rootID, loserPath]
+                )
                 owners[key] = keeper
                 let message = "op=catalog.schema phase=mergePathCollision "
                     + "rootID=\(rootID) "

@@ -67,9 +67,17 @@ struct ThumbnailStoreTests {
             relativePath: MediaRelativePath(rawValue: "2026/destination.jpg")
         )
 
-        let source = try ThumbnailStore.stage(image, finalRelativeName: ThumbnailStore.relativeName(for: sourceID), in: directory)
+        let source = try ThumbnailStore.stage(
+            image,
+            finalRelativeName: ThumbnailStore.relativeName(for: sourceID),
+            in: directory
+        )
         let sourceName = try ThumbnailStore.promote(source, in: directory)
-        let copied = try ThumbnailStore.stageCopy(sourceRelativeName: sourceName, destinationID: destinationID, in: directory)
+        let copied = try ThumbnailStore.stageCopy(
+            sourceRelativeName: sourceName,
+            destinationID: destinationID,
+            in: directory
+        )
         let destinationName = try ThumbnailStore.promote(copied, in: directory)
 
         #expect(destinationName != sourceName)

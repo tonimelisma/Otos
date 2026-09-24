@@ -1,9 +1,5 @@
 import Foundation
 
-// The pure import reservation loop is intentionally cohesive; splitting it only
-// to satisfy arithmetic lint caps would obscure the collision algorithm.
-// swiftlint:disable cyclomatic_complexity function_body_length function_parameter_count
-
 /// Media transfer planner guide
 ///
 /// Nonisolated pure planning for import (and later reorganization). Accepts only
@@ -183,6 +179,9 @@ private nonisolated extension MediaTransferPlanner {
         }
     }
 
+    // The pure import reservation loop is intentionally cohesive; splitting it only
+    // to satisfy arithmetic lint caps would obscure the collision algorithm.
+    // swiftlint:disable:next cyclomatic_complexity function_body_length
     static func planBundle(
         _ bundle: NamingBundle,
         snapshot: ImportPlanningSnapshot,
@@ -393,13 +392,19 @@ private nonisolated extension MediaTransferPlanner {
                 )
                 switch disposition {
                 case .copy, .skipPreexisting:
-                    reserved.insert(FilesystemNamespaceSemantics.nameKey(relativePath: relative, capabilities: snapshot.destinationCapabilities))
+                    reserved.insert(FilesystemNamespaceSemantics.nameKey(
+                        relativePath: relative,
+                        capabilities: snapshot.destinationCapabilities
+                    ))
                 case .blocked, .relocate, .noOp, .excluded:
                     break
                 }
             }
             for path in companionDestinations.values {
-                reserved.insert(FilesystemNamespaceSemantics.nameKey(relativePath: path, capabilities: snapshot.destinationCapabilities))
+                reserved.insert(FilesystemNamespaceSemantics.nameKey(
+                    relativePath: path,
+                    capabilities: snapshot.destinationCapabilities
+                ))
             }
             return planned
         }

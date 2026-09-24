@@ -18,7 +18,10 @@ struct LoupeZoomPolicyTests {
         #expect(LoupeZoomPolicy.clamp(0.1, fit: fit) == 0.5)
 
         // A small image that fills the pane below 100 percent cannot zoom past fit.
-        let small = LoupeZoomPolicy.fitMagnification(documentSize: CGSize(width: 400, height: 300), paneSize: CGSize(width: 1200, height: 1200))
+        let small = LoupeZoomPolicy.fitMagnification(
+            documentSize: CGSize(width: 400, height: 300),
+            paneSize: CGSize(width: 1200, height: 1200)
+        )
         #expect(small == 3)
         #expect(LoupeZoomPolicy.maximumMagnification(fit: small) == 3)
         #expect(LoupeZoomPolicy.toggleTarget(current: small, fit: small) == small)

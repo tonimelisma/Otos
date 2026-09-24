@@ -30,7 +30,12 @@ nonisolated enum MediaGridDragPolicy {
     /// Pointer travel before a mouse-down becomes a drag, in points.
     static let dragThreshold: CGFloat = 4
 
-    static func decision(hasHit: Bool, hitIsSelected: Bool, isPlainClick: Bool, clickCount: Int) -> MediaGridClickDecision {
+    static func decision(
+        hasHit: Bool,
+        hitIsSelected: Bool,
+        isPlainClick: Bool,
+        clickCount: Int
+    ) -> MediaGridClickDecision {
         guard hasHit, isPlainClick else { return .select }
         if clickCount == 2 {
             return .doubleClick
@@ -40,7 +45,11 @@ nonisolated enum MediaGridDragPolicy {
 
     /// The assets a drag from `hit` carries: the whole selection in display order when
     /// the hit is part of it, otherwise the hit alone.
-    static func draggedIDs(hit: MediaAssetID, selection: Set<MediaAssetID>, orderedIDs: [MediaAssetID]) -> [MediaAssetID] {
+    static func draggedIDs(
+        hit: MediaAssetID,
+        selection: Set<MediaAssetID>,
+        orderedIDs: [MediaAssetID]
+    ) -> [MediaAssetID] {
         guard selection.contains(hit) else { return [hit] }
         return orderedIDs.filter { selection.contains($0) }
     }

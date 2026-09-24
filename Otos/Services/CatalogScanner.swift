@@ -202,7 +202,6 @@ private nonisolated enum LiveCatalogScanner {
                     throw CatalogScanError.subtreeNotDirectory
                 }
                 OtosLog.fileAccess.info(
-                    // swiftlint:disable:next line_length
                     "Catalog subtree absent under reachable root root=\(rootPath.rawValue, privacy: .public) subtree=\(subtreeRelativePath.rawValue, privacy: .public)"
                 )
                 return .empty
@@ -368,14 +367,14 @@ private nonisolated enum LiveCatalogScanner {
             let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL)
             if MediaEligibility.shouldSkipDirectory(name: values.name)
                 || relativePath.map(MediaEligibility.shouldSkipRelativePath) == true
-            { // swiftlint:disable:this opening_brace
+            {
                 enumerator.skipDescendants()
             }
             return nil
         }
         if let relativePath = CatalogPath.relativePath(rootPath: rootPath, fileURL: fileURL),
            MediaEligibility.shouldSkipRelativePath(relativePath)
-        { // swiftlint:disable:this opening_brace
+        {
             return nil
         }
         if values.isRegularFile == true {
@@ -447,7 +446,6 @@ private extension LiveCatalogScanner {
         }
         if !skippedPackages.isEmpty {
             OtosLog.catalog.notice(
-                // swiftlint:disable:next line_length
                 "op=catalog.scan.skippedPackageCount phase=summary rootPath=\(rootPath.rawValue, privacy: .public) count=\(skippedPackages.count, privacy: .public)"
             )
         }

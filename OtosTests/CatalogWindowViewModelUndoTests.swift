@@ -106,7 +106,10 @@ struct CatalogWindowViewModelUndoTests {
 
         #expect(result.accepted)
         #expect(result.previous == [ids[0]: .liked, ids[1]: .notRated])
-        let missing = MediaAssetID(libraryRootPath: ids[0].libraryRootPath, relativePath: MediaRelativePath(rawValue: "gone.jpg"))
+        let missing = MediaAssetID(
+            libraryRootPath: ids[0].libraryRootPath,
+            relativePath: MediaRelativePath(rawValue: "gone.jpg")
+        )
         let stale = try await fixture.store.setMediaChoices([missing: .liked])
         #expect(!stale.accepted)
         #expect(stale.previous.isEmpty)

@@ -141,7 +141,10 @@ struct ReorganizationLeaseTests {
         try await store.start(scansSavedLibraries: false)
         try await store.ensureLibrary(url: root)
         let rootPath = LibraryRootPath(rawValue: root.path)
-        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(for: rootPath, owner: .reorganization) else {
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+            for: rootPath,
+            owner: .reorganization
+        ) else {
             Issue.record("expected lease")
             return
         }
@@ -417,9 +420,9 @@ struct ReorganizationExecutorMoveTests {
         #expect(counts.2 == 1)
         #expect(FileManager.default.fileExists(atPath: temp.appending(path: "new.jpg").path))
         #expect(!FileManager.default.fileExists(atPath: source.path))
-        let destinationInode = try #require(
-            FileManager.default.attributesOfItem(atPath: temp.appending(path: "new.jpg").path)[.systemFileNumber] as? NSNumber
-        )
+        let destinationURL = temp.appending(path: "new.jpg")
+        let destinationAttributes = try FileManager.default.attributesOfItem(atPath: destinationURL.path)
+        let destinationInode = try #require(destinationAttributes[.systemFileNumber] as? NSNumber)
         #expect(destinationInode == sourceInode)
     }
 }

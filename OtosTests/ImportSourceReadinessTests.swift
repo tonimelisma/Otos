@@ -33,7 +33,8 @@ struct ImportSourceReadinessTests {
     @Test func unavailableIsUnreachableRegardlessOfActivity() {
         #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .idle)) == .unreachable)
         #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .scanning)) == .unreachable)
-        #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .enumerating)) == .unreachable)
+        #expect(ImportSourceReadiness.evaluate(state(availability: .unavailable, activity: .enumerating))
+            == .unreachable)
     }
 
     @Test func unknownIsUnreachableRegardlessOfActivity() {

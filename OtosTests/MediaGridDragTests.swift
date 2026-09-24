@@ -36,12 +36,18 @@ struct MediaGridDragTests {
     }
 
     @Test func plainClickOnSelectedTileWaitsForMouseUp() {
-        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: true, clickCount: 1) == .deferUntilMouseUp)
-        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: false, isPlainClick: true, clickCount: 1) == .select)
-        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: false, clickCount: 1) == .select)
-        #expect(MediaGridDragPolicy.decision(hasHit: false, hitIsSelected: false, isPlainClick: true, clickCount: 1) == .select)
-        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: true, clickCount: 2) == .doubleClick)
-        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: false, isPlainClick: true, clickCount: 2) == .doubleClick)
+        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: true, clickCount: 1)
+            == .deferUntilMouseUp)
+        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: false, isPlainClick: true, clickCount: 1)
+            == .select)
+        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: false, clickCount: 1)
+            == .select)
+        #expect(MediaGridDragPolicy.decision(hasHit: false, hitIsSelected: false, isPlainClick: true, clickCount: 1)
+            == .select)
+        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: true, isPlainClick: true, clickCount: 2)
+            == .doubleClick)
+        #expect(MediaGridDragPolicy.decision(hasHit: true, hitIsSelected: false, isPlainClick: true, clickCount: 2)
+            == .doubleClick)
     }
 
     @Test func sourceCopiesOutsideAndRefusesInside() {

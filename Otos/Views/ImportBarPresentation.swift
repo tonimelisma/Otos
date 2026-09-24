@@ -146,7 +146,12 @@ nonisolated enum ImportBarPresentation {
         case let .planningFailed(reason):
             return planningFailed(reason: reason, presentation: presentation)
         case let .executing(progress):
-            return working(progress: progress, isCancelling: isCancelling, presentation: presentation, preferences: preferences)
+            return working(
+                progress: progress,
+                isCancelling: isCancelling,
+                presentation: presentation,
+                preferences: preferences
+            )
         default:
             break
         }
@@ -321,7 +326,10 @@ nonisolated enum ImportBarPresentation {
                 eraseConfirmationProvenClean: true
             )
         }
-        let secondary: ImportBarDrawnState.SecondaryLine = if let advisory = spaceAdvisory(summary: summary, presentation: presentation) {
+        let secondary: ImportBarDrawnState.SecondaryLine = if let advisory = spaceAdvisory(
+            summary: summary,
+            presentation: presentation
+        ) {
             .plain(advisory)
         } else if let already = alreadyInLibraryLine(skipCount: summary.skipCount, destinationName: destinationName) {
             .plain(already)

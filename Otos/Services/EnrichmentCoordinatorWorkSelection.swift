@@ -149,7 +149,6 @@ extension EnrichmentCoordinator {
             await recordDispatchedWork(items)
             if !readinessCounts.isEmpty {
                 OtosLog.metadata.notice(
-                    // swiftlint:disable:next line_length
                     "op=catalog.enrichment.readiness phase=route probes=\(totalExamined, privacy: .public) ready=\(readinessCounts["ready", default: 0], privacy: .public) needsMaterialization=\(readinessCounts["needsMaterialization", default: 0], privacy: .public) rangedReady=\(readinessCounts["rangedReady", default: 0], privacy: .public) retryReadiness=\(readinessCounts["retryReadiness", default: 0], privacy: .public) materializationBound=\(readinessCounts["materializationBound", default: 0], privacy: .public)"
                 )
             }

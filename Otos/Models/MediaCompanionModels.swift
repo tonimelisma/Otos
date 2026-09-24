@@ -105,14 +105,14 @@ nonisolated enum MediaCompanionPairing {
         if let raw = matches.first(where: { $0.kind == .raw }) {
             return raw
         }
-        return matches.sorted { left, right in
+        return matches.min { left, right in
             let leftKey = MediaSortKey.naturalKey(left.name ?? left.relativePath.rawValue)
             let rightKey = MediaSortKey.naturalKey(right.name ?? right.relativePath.rawValue)
             if leftKey != rightKey {
                 return leftKey < rightKey
             }
             return left.relativePath.rawValue < right.relativePath.rawValue
-        }.first
+        }
     }
 }
 

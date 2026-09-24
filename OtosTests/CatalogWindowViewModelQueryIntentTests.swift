@@ -123,7 +123,9 @@ private func waitForRequestsReleasingBuilds(
 }
 
 @MainActor
-private func makeQueryIntentModel(temp: PreferencesDomain) -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate) {
+private func makeQueryIntentModel(temp: PreferencesDomain)
+    -> (model: CatalogWindowViewModel, gate: WindowStateBuildGate)
+{
     let store = CatalogStore(location: .inMemory)
     let gate = WindowStateBuildGate()
     let projection = CatalogProjection(

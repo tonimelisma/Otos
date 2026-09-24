@@ -78,7 +78,10 @@ nonisolated enum FilesystemNamespaceSemantics {
                 ? root.url
                 : root.url.appending(path: folder, directoryHint: .isDirectory)
             var isDirectory: ObjCBool = false
-            let exists = fileManager.fileExists(atPath: folderURL.path(percentEncoded: false), isDirectory: &isDirectory)
+            let exists = fileManager.fileExists(
+                atPath: folderURL.path(percentEncoded: false),
+                isDirectory: &isDirectory
+            )
             if !exists {
                 // Absent folder: nothing occupies it, and every candidate is free.
                 enumerated.insert(folder)

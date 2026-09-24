@@ -47,7 +47,13 @@ struct MediaOperationModelsTests {
                 autoEjectAfterImport: false
             ),
             entries: entries,
-            totals: MediaOperationPlanTotals(copyCount: 0, skipCount: 0, blockedCount: 0, companionCopyCount: 0, copyBytes: 0)
+            totals: MediaOperationPlanTotals(
+                copyCount: 0,
+                skipCount: 0,
+                blockedCount: 0,
+                companionCopyCount: 0,
+                copyBytes: 0
+            )
         )
     }
 
@@ -57,10 +63,18 @@ struct MediaOperationModelsTests {
         let noDate = Self.entry(name: "no-date.jpg", disposition: .blocked(.noUsableDate))
         let observation = Self.entry(
             name: "unreadable.jpg",
-            disposition: .blocked(.filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "unreadable.jpg")))
+            disposition: .blocked(
+                .filesystemObservationUnavailable(destination: MediaRelativePath(rawValue: "unreadable.jpg"))
+            )
         )
-        let copied = Self.entry(name: "fine.jpg", disposition: .copy(destination: MediaRelativePath(rawValue: "fine.jpg")))
-        let skipped = Self.entry(name: "dup.jpg", disposition: .skipPreexisting(destination: MediaRelativePath(rawValue: "dup.jpg")))
+        let copied = Self.entry(
+            name: "fine.jpg",
+            disposition: .copy(destination: MediaRelativePath(rawValue: "fine.jpg"))
+        )
+        let skipped = Self.entry(
+            name: "dup.jpg",
+            disposition: .skipPreexisting(destination: MediaRelativePath(rawValue: "dup.jpg"))
+        )
 
         let items = Self.plan(entries: [noDate, copied, observation, skipped]).attentionItems
 
@@ -73,7 +87,10 @@ struct MediaOperationModelsTests {
     }
 
     @Test func attentionItemsIsEmptyWhenNothingIsBlocked() {
-        let copied = Self.entry(name: "fine.jpg", disposition: .copy(destination: MediaRelativePath(rawValue: "fine.jpg")))
+        let copied = Self.entry(
+            name: "fine.jpg",
+            disposition: .copy(destination: MediaRelativePath(rawValue: "fine.jpg"))
+        )
         #expect(Self.plan(entries: [copied]).attentionItems.isEmpty)
     }
 

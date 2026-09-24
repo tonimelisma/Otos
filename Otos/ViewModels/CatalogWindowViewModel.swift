@@ -340,7 +340,7 @@ final class CatalogWindowViewModel {
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
         stripTileEdge = Self.clampedStripTileEdge(storedStrip.map { CGFloat($0) })
         advanceAfterMediaChoice = preferences.bool(forKey: Self.advanceAfterMediaChoiceDefaultsKey)
-        let storedDismissedIdentities = preferences.string(forKey: Self.dismissedCameraBannerIdentitiesDefaultsKey)
+        let storedDismissedIdentities = preferences.string(forKey: Self.dismissedCameraBannersDefaultsKey)
         dismissedCameraBannerIdentities = Set(
             (storedDismissedIdentities ?? "").split(separator: "\n").map(String.init)
         )
@@ -550,8 +550,7 @@ extension CatalogWindowViewModel {
         // so a coordinator started too early could stay idle until some unrelated change.
         // `store.start()` is idempotent and shared, so this awaits the same load
         // `startCatalog` runs.
-        enrichmentStartTask = Task {
-            [coordinator, materializationCoordinator, store = catalogStore] in
+        enrichmentStartTask = Task { [coordinator, materializationCoordinator, store = catalogStore] in
             do {
                 try await store.start()
             } catch {
@@ -954,7 +953,7 @@ extension CatalogWindowViewModel {
     static let gridColumnCountDefaultsKey = "mediaGridColumnCount"
     static let stripTileEdgeDefaultsKey = "mediaStripTileEdge"
     static let advanceAfterMediaChoiceDefaultsKey = "advanceAfterMediaChoice"
-    static let dismissedCameraBannerIdentitiesDefaultsKey = "dismissedCameraConnectionBannerIdentities"
+    static let dismissedCameraBannersDefaultsKey = "dismissedCameraConnectionBannerIdentities"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
     func setGridColumnCount(_ requested: Int) {
@@ -1002,7 +1001,7 @@ extension CatalogWindowViewModel {
         dismissedCameraBannerIdentities.insert(identity)
         preferences.set(
             dismissedCameraBannerIdentities.sorted().joined(separator: "\n"),
-            forKey: Self.dismissedCameraBannerIdentitiesDefaultsKey
+            forKey: Self.dismissedCameraBannersDefaultsKey
         )
     }
 }

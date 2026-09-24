@@ -40,7 +40,10 @@ struct ImportPlanFooterRenderedPrimaryTests {
         for action in Self.allActions {
             let enabled = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: action, primaryEnabled: true))
             #expect(enabled.isEnabled, "\(action) should be enabled when primaryEnabled is true")
-            let disabled = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: action, primaryEnabled: false))
+            let disabled = ImportPlanFooter.renderedPrimary(for: Self.drawn(
+                primaryAction: action,
+                primaryEnabled: false
+            ))
             #expect(!disabled.isEnabled, "\(action) should be disabled when primaryEnabled is false")
         }
     }
@@ -60,16 +63,25 @@ struct ImportPlanFooterRenderedPrimaryTests {
 
     @Test func onlyEraseIsDestructive() {
         for action in Self.allActions where action != .eraseItems(count: 3) {
-            let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: action, primaryEnabled: true))
+            let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(
+                primaryAction: action,
+                primaryEnabled: true
+            ))
             #expect(!rendered.isDestructive, "\(action) should not be destructive")
         }
-        let erase = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: .eraseItems(count: 3), primaryEnabled: true))
+        let erase = ImportPlanFooter.renderedPrimary(for: Self.drawn(
+            primaryAction: .eraseItems(count: 3),
+            primaryEnabled: true
+        ))
         #expect(erase.isDestructive)
     }
 
     @Test func onlyCancelIsNotDefault() {
         for action in Self.allActions where action != .cancel {
-            let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: action, primaryEnabled: true))
+            let rendered = ImportPlanFooter.renderedPrimary(for: Self.drawn(
+                primaryAction: action,
+                primaryEnabled: true
+            ))
             #expect(rendered.isDefault, "\(action) should be the default action")
         }
         let cancel = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: .cancel, primaryEnabled: true))

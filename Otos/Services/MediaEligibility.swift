@@ -110,7 +110,10 @@ nonisolated enum SourceFileClass: Equatable, Sendable {
             .split(separator: "/", omittingEmptySubsequences: true)
             .map { String($0).lowercased() }
         guard let name = components.last else { return .unknown }
-        if name.hasPrefix("._") || components.contains(".trashes") || components.contains(where: { $0.hasPrefix(".trash-") || $0 == "$recycle.bin" }) {
+        if name.hasPrefix("._")
+            || components.contains(".trashes")
+            || components.contains(where: { $0.hasPrefix(".trash-") || $0 == "$recycle.bin" })
+        {
             return .sourceArtifact("cardTrash")
         }
         if components.contains("m4root"), components.contains("thmbnl") {

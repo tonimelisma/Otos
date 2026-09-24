@@ -44,23 +44,34 @@ struct ImportPlanBuilderTests {
             destinationNamespaceRevision: 1,
             sourceMedia: sourceMedia,
             destinationOccupants: occupants,
-            // swiftlint:disable:next line_length
-            policy: ImportPolicy(destinationFolderPolicy: .yearMonth, destinationNamePolicy: .captureDateTime, importSidecarFiles: false, deleteSourceAfterImport: false, autoEjectAfterImport: false),
+            policy: ImportPolicy(
+                destinationFolderPolicy: .yearMonth,
+                destinationNamePolicy: .captureDateTime,
+                importSidecarFiles: false,
+                deleteSourceAfterImport: false,
+                autoEjectAfterImport: false
+            ),
             calendar: Calendar(identifier: .gregorian),
             timeZone: TimeZone(secondsFromGMT: 0) ?? .current
         )
     }
 
     @Test func liveBuilderProducesSameOutputAsDirectEnumerationAndPlanner() async {
-        // swiftlint:disable:next line_length
-        let media = [Self.facts(name: "IMG_001.JPG", captureWallCompact: 20_250_101_120_000), Self.facts(name: "IMG_002.JPG", captureWallCompact: 20_250_102_120_000)]
+        let media = [
+            Self.facts(name: "IMG_001.JPG", captureWallCompact: 20_250_101_120_000),
+            Self.facts(name: "IMG_002.JPG", captureWallCompact: 20_250_102_120_000),
+        ]
         let snapshot = Self.snapshot(sourceMedia: media)
         let live = LiveImportPlanBuilder()
         let viaBuilder = await live.build(snapshot: snapshot, additionalReserved: [])
         // Direct enumeration + planner
         let folders = MediaTransferPlanner.destinationFolders(for: snapshot)
         let namespace = FilesystemNamespaceSemantics.enumerateNamespace(root: Self.destRoot, folders: folders)
-        let directPlan = MediaTransferPlanner.planImport(snapshot: snapshot, namespace: namespace, additionalReserved: [])
+        let directPlan = MediaTransferPlanner.planImport(
+            snapshot: snapshot,
+            namespace: namespace,
+            additionalReserved: []
+        )
         #expect(viaBuilder.plan.entries.count == directPlan.entries.count)
         #expect(viaBuilder.namespace.entryCount == namespace.entryCount)
         #expect(viaBuilder.namespace.folderCount == namespace.folderCount)
@@ -72,10 +83,30 @@ struct ImportPlanBuilderTests {
         let sourceA = LibraryRootPath(rawValue: "/tmp/cardA")
         let sourceB = LibraryRootPath(rawValue: "/tmp/cardB")
         let dest = Self.destRoot
-        // swiftlint:disable:next line_length
-        let mediaA = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceA, relativePath: MediaRelativePath(rawValue: "A1.JPG")), sourceURL: sourceA.url.appending(path: "A1.JPG"), relativePath: MediaRelativePath(rawValue: "A1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_101_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
-        // swiftlint:disable:next line_length
-        let mediaB = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: sourceB, relativePath: MediaRelativePath(rawValue: "B1.JPG")), sourceURL: sourceB.url.appending(path: "B1.JPG"), relativePath: MediaRelativePath(rawValue: "B1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_102_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        let mediaA = [PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: sourceA, relativePath: MediaRelativePath(rawValue: "A1.JPG")),
+            sourceURL: sourceA.url.appending(path: "A1.JPG"),
+            relativePath: MediaRelativePath(rawValue: "A1.JPG"),
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 100),
+            captureWallCompact: 20_250_101_120_000,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )]
+        let mediaB = [PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: sourceB, relativePath: MediaRelativePath(rawValue: "B1.JPG")),
+            sourceURL: sourceB.url.appending(path: "B1.JPG"),
+            relativePath: MediaRelativePath(rawValue: "B1.JPG"),
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 100),
+            captureWallCompact: 20_250_102_120_000,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )]
         let snapA = ImportPlanningSnapshot(
             generation: 1,
             sourceRoot: sourceA,
@@ -142,8 +173,18 @@ struct ImportPlanBuilderTests {
     @Test func cancellingSuspendedBuildRecordsCancelAndReleasesContinuation() async throws {
         let source = LibraryRootPath(rawValue: "/tmp/cardC")
         let dest = Self.destRoot
-        // swiftlint:disable:next line_length
-        let media = [PlanningFileFacts(id: MediaAssetID(libraryRootPath: source, relativePath: MediaRelativePath(rawValue: "C1.JPG")), sourceURL: source.url.appending(path: "C1.JPG"), relativePath: MediaRelativePath(rawValue: "C1.JPG"), byteSize: 10, contentModifiedAt: Date(timeIntervalSince1970: 100), captureWallCompact: 20_250_101_120_000, mediaKind: .image, fileExtension: "JPG", companions: [], contentTypeIdentifier: "public.jpeg")]
+        let media = [PlanningFileFacts(
+            id: MediaAssetID(libraryRootPath: source, relativePath: MediaRelativePath(rawValue: "C1.JPG")),
+            sourceURL: source.url.appending(path: "C1.JPG"),
+            relativePath: MediaRelativePath(rawValue: "C1.JPG"),
+            byteSize: 10,
+            contentModifiedAt: Date(timeIntervalSince1970: 100),
+            captureWallCompact: 20_250_101_120_000,
+            mediaKind: .image,
+            fileExtension: "JPG",
+            companions: [],
+            contentTypeIdentifier: "public.jpeg"
+        )]
         let snap = ImportPlanningSnapshot(
             generation: 1,
             sourceRoot: source,
