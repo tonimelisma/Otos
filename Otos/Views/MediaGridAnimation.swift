@@ -6,7 +6,7 @@ import QuartzCore
 ///
 /// Every tuned duration, timing curve, and geometric constant for the grid's
 /// animated-apply, insert/remove, selection-ring, and thumbnail-arrival polish
-/// (spec 0047) lives here so tests and code review reference one source of exact
+/// lives here so tests and code review reference one source of exact
 /// values instead of magic numbers scattered across the AppKit boundary.
 nonisolated enum MediaGridAnimation {
     /// Duration for a tuned animated diffable apply (small inserts/removes and
@@ -56,7 +56,7 @@ nonisolated enum MediaGridAnimation {
     static let selectionRingInDuration: TimeInterval = 0.12
     static let selectionRingOutDuration: TimeInterval = 0.10
 
-    /// Duration for an animated grid-zoom column-count swap (spec 0048).
+    /// Duration for an animated grid-zoom column-count swap (APP-006).
     static let zoomDuration: TimeInterval = 0.30
     static var zoomTimingFunction: CAMediaTimingFunction {
         CAMediaTimingFunction(name: .easeInEaseOut)

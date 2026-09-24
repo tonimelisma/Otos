@@ -5,7 +5,7 @@ import os
 import Testing
 
 /// Controller-level tests for grid zoom arbitration through `MediaGridMutationGate`
-/// (spec 0048): a zoom requested while a diffable structural apply is in flight must
+/// (APP-006, ARC-023): a zoom requested while a diffable structural apply is in flight must
 /// never run concurrently with that apply, and must install exactly once after it
 /// completes. The controller is driven off-window (`makeController` forces `loadView`
 /// but never adds the view to a window), so `receiveColumnCount` takes the gate's

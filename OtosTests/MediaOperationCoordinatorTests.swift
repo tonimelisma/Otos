@@ -34,7 +34,7 @@ struct MediaOperationCoordinatorTests {
             preferencesDomain: tempDefaults
         )
         await coordinator.start()
-        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: source)
         await coordinator.setDestination(destination, for: source)
@@ -80,7 +80,7 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
-        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: source)
         await coordinator.setDestination(destination, for: source)
@@ -94,7 +94,7 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0064 Stage 4: the coordinator must discover an attached source purely via
+    /// ARC-047: the coordinator must discover an attached source purely via
     /// the store's `RootPlanningChange` stream — no `setDestination`/`queueImport`
     /// intent. This pins the emit → subscribe → refreshSources chain that a field
     /// capture showed silent for six minutes; with the emit/receive diagnostics, a
@@ -130,7 +130,7 @@ struct MediaOperationCoordinatorTests {
             isEjectable: true
         )
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
-        // Plan 0099: Ready requires proven naming facts. Waiting for the card's own
+        // Ready requires proven naming facts (ARC-057). Waiting for the card's own
         // scan in the *store* and standing in for the enrichment coordinator does not
         // defeat this test's point — the coordinator still discovers the source and
         // reaches Ready through the planning-change stream alone, with no
@@ -141,7 +141,7 @@ struct MediaOperationCoordinatorTests {
             }
         }
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
-        // Wider timeout (plan 0095 increment 4): this test's whole point is
+        // Wider timeout: this test's whole point is
         // that `.ready` arrives via the planning-change stream alone, with no
         // precondition wait possible without defeating that — so it carries
         // the full round trip from scan-completion through
@@ -299,7 +299,7 @@ struct MediaOperationCoordinatorTests {
         )
         await coordinator.start()
 
-        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // Ready requires proven naming facts (ARC-057); stand in for the
 
         // enrichment coordinator these tests do not run.
 
@@ -375,7 +375,7 @@ struct MediaOperationCoordinatorTests {
             preferencesDomain: tempDefaults
         )
         await coordinator.start()
-        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -416,21 +416,19 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// ARC-046's enrichment clause, which had no test and regressed in `40261bf`:
-    /// "enrichment overlay writes ... never advance it, so planning settles while a
-    /// large cloud destination keeps enriching."
+    /// ARC-046's enrichment clause: "enrichment overlay writes ... never advance it,
+    /// so planning settles while a large cloud destination keeps enriching."
     ///
     /// Enriching an asset already in the *destination* renames nothing on disk, and
     /// `fetchDestinationOccupants` never reads a capture wall, so a naming write
-    /// there cannot change what the plan copies or where. Before plan 0099 this
-    /// discarded the ready plan and rebuilt it — ~480 ms of enumerate+plan roughly
-    /// once a second, for as long as the library kept enriching, each rebuild
-    /// producing the identical answer.
+    /// there cannot change what the plan copies or where. Rebuilding on it would
+    /// cost ~480 ms of enumerate+plan roughly once a second, for as long as the
+    /// library kept enriching, each rebuild producing the identical answer.
     /// State A means "no plan has ever existed for this attachment", not "a newer
-    /// plan is on its way". Before plan 0099 a rebuild overwrote `phase` with
-    /// `.building`, destroying the `ReadyContext` the user was looking at, so the bar
-    /// fell back to "Checking the card…" on every re-plan — once a second, for as long
-    /// as anything kept invalidating, each cycle ending in the identical count.
+    /// plan is on its way" (ARC-047). A rebuild that overwrote `phase` with
+    /// `.building` would destroy the `ReadyContext` the user is looking at, so the bar
+    /// would fall back to "Checking the card…" on every re-plan — once a second, for
+    /// as long as anything kept invalidating, each cycle ending in the identical count.
     @Test func aRebuildKeepsShowingThePlanItIsReplacing() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -589,7 +587,7 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
-        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -628,7 +626,7 @@ struct MediaOperationCoordinatorTests {
     /// date/time destination name is derived from, so a naming write there must
     /// replan. Without this edge a card planned from filesystem mtime would keep
     /// those names after enrichment supplied the real capture wall — which is how
-    /// 23 videos were imported twice five minutes apart (plan 0099 §1.1).
+    /// 23 videos were imported twice five minutes apart (field evidence).
     @Test func sourceNamingChangeReplansBecauseItRenamesTheCopy() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -659,7 +657,7 @@ struct MediaOperationCoordinatorTests {
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
-        // Plan 0099: Ready requires proven naming facts; stand in for the
+        // Ready requires proven naming facts (ARC-057); stand in for the
         // enrichment coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         await coordinator.setDestination(fixedPath, for: cardPath)
@@ -719,7 +717,7 @@ struct MediaOperationCoordinatorTests {
             displayName: "Card",
             isEjectable: true
         )
-        // See makeDestinationFixture's comment (plan 0095 increment 4).
+        // See makeDestinationFixture's comment.
         _ = try await waitForCatalogStoreState(store) { snapshot in
             snapshot.removableSources.first?.activity == .idle
         }
@@ -862,11 +860,10 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0095 D19: the destination picked for a source used to be
-    /// remembered in `destinationBySource` (Settings displayed it) but was
-    /// never read back — every new attachment, including a reattach of the
-    /// exact same card, unconditionally defaulted to `fixedAvailable.first`.
-    /// A re-attached source now resumes at its remembered destination.
+    /// ARC-047: the destination picked for a source is remembered in
+    /// `destinationBySource` and read back on every new attachment, so a
+    /// re-attached source resumes at its remembered destination rather than
+    /// defaulting to `fixedAvailable.first`.
     ///
     /// Routes the reattach's build through `ControlledImportPlanBuilder`
     /// rather than the live builder: an earlier live-build version of this
@@ -950,7 +947,7 @@ struct MediaOperationCoordinatorTests {
             displayName: "Card",
             isEjectable: true
         )
-        // Plan 0095 increment 4: `.ready` now requires the card's own scan to
+        // `.ready` requires the card's own scan to
         // reach `.idle` (ImportSourceReadiness), not just a plan build
         // completing. Proving that here — before the coordinator ever starts —
         // rather than racing the coordinator's own catalog-change refresh
@@ -962,7 +959,7 @@ struct MediaOperationCoordinatorTests {
         }
         let source = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         let libraries = try libraryURLs.map { try CatalogPath.normalizedDirectoryPath(for: $0) }
-        // Plan 0099 increment 2: Ready also requires every source row's naming fact to
+        // Ready also requires every source row's naming fact (ARC-057) to
         // be proven — enrichment must have read the file. Production's enrichment
         // coordinator does that for an attached card; this store has none.
         await markEnrichmentLookedAtEveryRow(store, root: source)
@@ -972,10 +969,9 @@ struct MediaOperationCoordinatorTests {
     /// Wait for the source to reach `.ready` (optionally with a generation past
     /// `minimum`) and return that generation.
     ///
-    /// Default widened 5s → 15s (plan 0095 increment 4): `.ready` now requires
-    /// `ImportSourceReadiness == .ready`, i.e. the source's *real* filesystem
-    /// scan reaching `.idle` — not just a plan build completing, which used to
-    /// race ahead of it. This suite's tests run unserialized (parallel), so
+    /// Default 15s: `.ready` requires `ImportSourceReadiness == .ready`, i.e. the
+    /// source's *real* filesystem scan reaching `.idle` — not just a plan build
+    /// completing, which can race ahead of it. This suite's tests run unserialized (parallel), so
     /// under full-class concurrent load the real `CatalogScanner` work for
     /// several fixtures competes for the same `.utility`-priority thread pool;
     /// 5s measured as insufficient margin (repeated ReadyPlanTimeout across

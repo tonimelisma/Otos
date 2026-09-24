@@ -385,7 +385,7 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(wall?.precision == "localWithOffset")
     }
 
-    /// Plan 0095 D10 backstop. A persisted removable-volume root whose path
+    /// APP-017 disk-image backstop. A persisted removable-volume root whose path
     /// is *currently* a mounted disk image is removed; one whose path isn't
     /// currently mountable at all is left alone — the migration cannot prove
     /// it a disk image, and the overlay-lifecycle rule treats an unresolvable

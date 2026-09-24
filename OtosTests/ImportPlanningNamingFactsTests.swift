@@ -108,14 +108,13 @@ struct ImportPlanningNamingFactsTests {
         #expect(afterEnrichment.namingFactState == .terminal)
     }
 
-    /// Inverted by plan 0099 (D1). It previously asserted `.terminal`, encoding the
-    /// defect in its own name: a durable mtime was treated as a naming fact *before*
-    /// enrichment had read the file. But "no capture wall" on an unread row means "we
-    /// have not looked", not "there is none" — and naming from mtime there fabricates
+    /// ARC-057: a durable mtime is not a naming fact *before* enrichment has read the
+    /// file. "No capture wall" on an unread row means "we have not looked", not "there
+    /// is none" — and naming from mtime there fabricates
     /// a fact. For video the fabrication is provably wrong by the clip's duration
     /// (mtime is when recording *stopped*), and since the destination name is also the
     /// dedupe key, the next plan looks at a different path, finds nothing, and copies
-    /// again. That is how 23 videos were imported twice five minutes apart.
+    /// again. Field evidence: 23 videos imported twice, five minutes apart.
     ///
     /// A durable mtime becomes an honest fallback the moment enrichment has looked and
     /// found no embedded wall — proven absence, not assumed. That is the next test.

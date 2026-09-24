@@ -2,10 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0065 Stage 4: `ProjectionEnrichmentCoalescingTests` proves the detail/structural
+/// `ProjectionEnrichmentCoalescingTests` proves the detail/structural
 /// skip mechanism at n=2,000, in memory, with 4-byte fixtures. It cannot prove the
-/// mechanism holds under real WAL pressure — the field non-linearity that motivated
-/// plan 0064 Stage 3 (the same query ranging 62 ms -> 7,034 ms) is driven by write
+/// mechanism holds under real WAL pressure — the field non-linearity that motivates
+/// the detail-only path (the same query ranging 62 ms -> 7,034 ms) is driven by write
 /// pressure an in-memory database never reproduces. This test uses an on-disk database
 /// and real enrichment writes at ~25k assets, gated behind `OTOS_SCALE_TEST` because it
 /// is materially slower than the default suite (real disk I/O, not memory).

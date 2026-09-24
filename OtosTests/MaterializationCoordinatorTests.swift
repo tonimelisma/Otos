@@ -327,7 +327,7 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    // MARK: - Plan 0059 review fixes
+    // MARK: - Interactive and background admission
 
     @Test func interactiveJoinBlocksBackgroundWithTruthfulBlockedDiagnostic() async throws {
         var policy = MaterializationAdmissionPolicy.production

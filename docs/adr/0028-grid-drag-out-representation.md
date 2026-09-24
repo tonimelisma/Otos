@@ -14,7 +14,7 @@ attaches at full fidelity for a few bytes; and byte reads must never accidentall
 materialize a dataless cloud placeholder.
 
 Two mechanics are specific to the grid. `MediaGridCollectionView` owns `mouseDown`
-and never calls `super` (spec 0046: AppKit's native mouse selection raced the
+and never calls `super` (APP-011: AppKit's native mouse selection races the
 ViewModel-owned model), so AppKit's own drag initiation never runs and the view must
 detect the drag itself. And the grid applied a plain click on an already-selected tile
 at mouse-down, which would collapse a multi-selection before a drag could carry it.
@@ -63,8 +63,8 @@ export exists.
 
 ### Restoring `super.mouseDown` for drag initiation
 
-Would hand mouse selection back to AppKit's undocumented commit timing, which spec 0046
-measured and rejected. Rejected.
+Would hand mouse selection back to AppKit's undocumented commit timing, which races
+the model APP-011 requires. Rejected.
 
 ## Consequences
 

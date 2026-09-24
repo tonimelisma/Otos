@@ -47,9 +47,8 @@ borrowing that answer held such a source in metadata-waiting permanently, even
 after enrichment had supplied its capture wall. A known capture wall is therefore
 terminal whatever else is outstanding.
 
-**Amended by plan 0099.** This ADR originally also called a durable mtime terminal
-*before enrichment had read the file*, and that half was wrong. On an unread row
-"no capture wall" means "not yet looked at", not "none exists", so naming from the
+A durable mtime is **not** terminal *before enrichment has read the file*. On an
+unread row "no capture wall" means "not yet looked at", not "none exists", so naming from the
 mtime asserts a fact Otos has not established. For video the assertion is provably
 wrong by the clip's own length — a video's mtime is when recording *stopped* — and
 because the destination name is also the dedupe key, a later plan computes a

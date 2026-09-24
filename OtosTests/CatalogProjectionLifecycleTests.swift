@@ -5,11 +5,11 @@ import Testing
 struct CatalogProjectionLifecycleTests {
     /// A projection's publication loop must end when the projection does, not merely
     /// skip a beat. Both long-lived loops hold their owner weakly across an indefinite
-    /// wait; before plan 0099 neither *exited* when that upgrade failed, so a released
-    /// projection left a `while !Task.isCancelled` loop running forever — doing nothing
-    /// each pass, but holding `store` strongly through its closure and so keeping the
-    /// whole `CatalogStore` alive. One orphan per projection accumulated across a test
-    /// run until the process deadlocked mid-suite.
+    /// wait and must *exit* when that upgrade fails. A loop that only skipped would run
+    /// `while !Task.isCancelled` forever — doing nothing each pass, but holding `store`
+    /// strongly through its closure and so keeping the whole `CatalogStore` alive. One
+    /// orphan per projection accumulates across a test run until the process deadlocks
+    /// mid-suite.
     ///
     /// Proven by ownership, not by timing: the store is held weakly here, so if the
     /// loop still retained it the reference could not go nil.

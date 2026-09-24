@@ -1,6 +1,6 @@
 # Catalog schema fixtures
 
-Stage A of plan 0055 starts the checked-in schema-fixture convention. Every
+This directory holds the checked-in schema-fixture convention. Every
 future schema change should add a fixture that the migration tests can open.
 
 Current approach in `CatalogStoreSchemaMigrationTests`:

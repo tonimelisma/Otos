@@ -5,7 +5,7 @@ import Testing
 /// A video's filesystem mtime is when recording *stopped*, so a clip named from it
 /// is wrong by its own length. Where no local-authority embedded timestamp exists —
 /// 100% of two roots' videos in one production catalog — the capture instant is
-/// still computable: `mtime − duration` (plan 0099 D7/O7).
+/// still computable: `mtime − duration` (ENR-012).
 struct DerivedVideoCaptureWallTests {
     private let zone = TimeZone(secondsFromGMT: 0) ?? .current
     private var calendar: Calendar {

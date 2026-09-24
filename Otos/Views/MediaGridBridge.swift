@@ -29,7 +29,7 @@ import UniformTypeIdentifiers
 /// signposts for Instruments; telemetry must not create file-writing tasks or retain
 /// grid state on MainActor.
 ///
-/// Mouse selection is model-owned (spec 0046). The pure `GridSelection` value lives in
+/// Mouse selection is model-owned (APP-011). The pure `GridSelection` value lives in
 /// `CatalogWindowViewModel`; this controller is a renderer. `MediaGridCollectionView`
 /// captures the click at `mouseDown` and does **not** call `super.mouseDown`, so AppKit's
 /// native mouse-selection tracking loop never runs and there is no commit to race. It
@@ -58,7 +58,7 @@ struct MediaGridBridgeView: NSViewControllerRepresentable {
     var detailReader: MediaTileDetailReader?
     var stallMonitor: MainRunLoopStallMonitor?
     var onViewportChanged: ([MediaAssetID]) -> Void = { _ in }
-    /// User-adjustable grid density (spec 0048); the ViewModel is the source of truth,
+    /// User-adjustable grid density (APP-006); the ViewModel is the source of truth,
     /// this representable only round-trips it into `receiveColumnCount(_:)`.
     var columnCount: Int = GridColumnCount.defaultValue
     /// The pinch gesture never mutates the layout itself — it requests a new count

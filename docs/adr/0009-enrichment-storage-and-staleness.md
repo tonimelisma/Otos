@@ -19,15 +19,14 @@ Two load-bearing facts about the architecture constrain the storage choice:
 1. The catalog targets large libraries — anything added to hot `MediaAsset`
    detail rows or grid publication costs that much times the visible/query count.
 2. `CatalogMediaGridState` is deliberately limited to identities plus a scalar
-   detail-refresh generation (FND-031/FND-043). Image bytes and large nested
+   detail-refresh generation (ARC-013/ARC-022). Image bytes and large nested
    metadata must never flow through that publication.
 
 Verified facts feeding the decision: `MediaEligibility` already restricts the
 catalog to `.image`/`.movie` files, so non-media is never a materialization
-target; `FileMaterialization.status(of:)` is ~7 µs/file (spec 0021);
+target; `FileMaterialization.status(of:)` is ~7 µs/file (measured);
 Store-owned indexed enrichment-candidate queries keep scheduling out of UI
-publication; a consumer app cannot reclaim another provider's downloaded bytes
-(spec 0021).
+publication; a consumer app cannot reclaim another provider's downloaded bytes.
 
 This decision supports requirements ENR-001 through ENR-014.
 
@@ -112,7 +111,7 @@ Adjacent decisions requiring separate ADRs or specs:
    unavailable). 256 px is a true grid thumbnail;
    the max-zoom path that loads originals is a separate future decision.
 
-   Spec 0038's no-blank grid invariant is owned by `TileContentStore`: it is the
+   The no-blank grid invariant (APP-015) is owned by `TileContentStore`: it is the
    sole decoded-image owner for the grid, keyed by asset identity and image-
    content key (`thumbnail_path`, source size, and source mtime seconds),
    cost-capped (default 256 MB) with pin-aware LRU image eviction. Visible IDs
@@ -172,7 +171,7 @@ Adjacent decisions requiring separate ADRs or specs:
    never on whether products exist, so a definitive-but-empty outcome (unsupported
    file, icon-only thumbnail) still stamps and is not retried. mtime-only changes
    count, because a real edit can leave the size constant. The always-firing scan-
-   completion notification (FND-062 suppresses only the per-batch projection wake,
+   completion notification (ARC-038 suppresses only the per-batch projection wake,
    not the scan-lifecycle wake) lets the coordinator re-evaluate staleness after
    every rescan. Stamps are stored as integer seconds to avoid floating-point
    epsilon in equality. There is no stored `is_stale` flag.
@@ -301,7 +300,7 @@ Adjacent decisions requiring separate ADRs or specs:
     queries (`EnrichmentLeaseGateway.rootEnrichmentClaimQuery`/
     `globalEnrichmentClaimQuery`) name their partial index explicitly rather than
     letting the planner choose freely. Measured 2026-08-03 against a read-only copy
-    of the live catalog (28,392 assets, plan 0065 Stage 1): for the single-root
+    of the live catalog (28,392 assets): for the single-root
     claim query, the planner already chooses the matching partial index
     unprompted — `INDEXED BY` changes nothing there. For the **global** (multi-root)
     claim query, removing the hint made the planner instead choose the primary-key
@@ -309,8 +308,8 @@ Adjacent decisions requiring separate ADRs or specs:
     with the hint for the same query against 3 roots (~27,000 combined assets) —
     roughly 68× slower. `INDEXED BY` converts that planner *preference* into a hard
     *build-time* dependency (a mismatched predicate fails to prepare rather than
-    silently degrading), which is exactly why plan 0065 Stage 1 froze the v12/v13
-    migration bodies that create these indexes: the hint's safety only holds if the
+    silently degrading), which is exactly why the v12/v13 migration bodies that
+    create these indexes are frozen: the hint's safety only holds if the
     index text a shipped catalog actually has is provably implied by the predicate
     the query builds today.
 
@@ -337,7 +336,7 @@ Failure modes:
 - A future visible-detail query could accidentally pull more cold metadata into
   the grid path.
 
-Rejected for the owner-directed hot duration promotion in spec 0037. Duration is
+Rejected for the owner-directed hot duration promotion. Duration is
 small, scalar, and needed by every visible video; other metadata remains cold.
 
 ### Metadata inline on `MediaAsset` and resident
@@ -359,7 +358,7 @@ Cons:
 
 Failure modes:
 
-- The cheap-grid invariant (ADR 0007/FND-043) erodes; a cold enrichment sweep pegs
+- The cheap-grid invariant (ADR 0007/ARC-022) erodes; a cold enrichment sweep pegs
   the Projection actor.
 
 Rejected: nothing reads full metadata across all assets today, so it must not be
@@ -466,7 +465,7 @@ Pros:
 Cons:
 
 - Scale machinery before measurement says it is needed; the derive-it scan is
-  sub-millisecond (FND-061 context). A partition is a second source of truth that
+  sub-millisecond (ARC-037 context). A partition is a second source of truth that
   the coordinator's own batched writes would thrash; a cursor has position gaps and
   own-write feedback.
 
@@ -475,7 +474,7 @@ Failure modes:
 - The partition drifts from `needsEnrichment` truth; the cursor re-processes or
   skips after a rescan.
 
-Rejected: cursorless derivation is simpler and correct (FND-042/043 precedent for
+Rejected: cursorless derivation is simpler and correct (ARC-022 precedent for
 deriving over maintaining). The current coordinator still derives candidates from
 Store truth, but it batches claimed rows into a small actor-local queue after
 measurement showed writer-queue pressure from many tiny claim transactions. That
@@ -519,7 +518,7 @@ query itself is measured too costly at a real large library.
 This ADR adds enrichment storage; it retires the placeholder-grid framing that the
 grid shows no derived products. Updated, not deleted: requirements APP-001,
 APP-006, APP-009, APP-010 (the grid now renders thumbnails and video badges),
-and FND-057's "bounded" materialization phrasing (eager full-library is now
+and ARC-034's "bounded" materialization phrasing (eager full-library is now
 permitted, owned here). ADR 0008 point 6 is amended to permit eager full-library
 materialization and to point here for the enrichment specifics. No schema or type
 was removed by ADR 0010's clean schema reset; there is no migration compatibility
@@ -531,16 +530,16 @@ path for pre-user enrichment schema changes.
   to permit eager full-library materialization and reference this ADR.
 - `AGENTS.md` — the cloud-materialization baseline paragraph amended the same way.
 - `docs/requirements.md` — add ENR-001…ENR-010 (Current); update APP-001, APP-006,
-  APP-009, APP-010, and FND-057.
+  APP-009, APP-010, and ARC-034.
 -  — the enrichment
   implementation spec this ADR is the decision record for.
 -  — changes the thumbnail
   private file format to JPEG and documents manual old-thumbnail deletion.
   one-second provider re-request cadence and durable result attribution fields.
-- `docs/index.md` — register this ADR and spec 0022.
--  — add the enrichment data flow and the coordinator's role.
-- `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here, in
-  spec 0022, and in requirements).
+- `docs/index.md` — register this ADR.
+- `docs/architecture.md` — add the enrichment data flow and the coordinator's role.
+- `ENRICHMENT-IMPLEMENTATION-PLAN.md` — deleted (its decisions now live here and
+  in requirements).
 
 ## Capture Timestamps: One Stored Truth, Two Projections
 

@@ -306,7 +306,7 @@ struct MediaGridBridgeTests {
         #expect(gate.completeZoomSwap(installed: 4) == [])
     }
 
-    // MARK: - Structural apply policy truth table (plan 0008 Part C)
+    // MARK: - Structural apply policy truth table (ARC-023)
 
     @Test func structuralApplyPolicyAnimatesSmallInserts() {
         let previous = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"]).orderedAssetIDs
@@ -404,7 +404,7 @@ struct MediaGridBridgeTests {
         #expect(gate.receive(sortFlip) == [.apply(sortFlip, descriptorChanged: true)])
     }
 
-    // MARK: - Plan 0009 Part A: retained membership set
+    // MARK: - Retained membership set
 
     @Test func gateRetainsOrderedIDSetConsistentWithArray() {
         let gate = MediaGridMutationGate()

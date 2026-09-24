@@ -3,7 +3,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Intent-level coverage for ViewModel-owned grid selection (plan 0053 Stage A).
+/// Intent-level coverage for ViewModel-owned grid selection (APP-011).
 /// Gesture rules themselves live in `GridSelectionTests`; these tests prove the
 /// ViewModel owns the value, intents update it, and applyState prunes/clears it
 /// before any AppKit renderer sees the new order.

@@ -255,7 +255,7 @@ A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
 against a complete run's to find which tests never reported. Do not paper over a
 hang with a kill-timeout in shared tooling — a wall-clock limit destroys a
 legitimately slow run, and it hides the bug instead of surfacing it. **A suite that
-hangs has a defect; fix the defect.** Plan 0099 traced one to long-lived tasks that
+hangs has a defect; fix the defect.** One such hang traced to long-lived tasks that
 held their owner weakly but never exited when that upgrade failed, so each test left
 an immortal loop holding a whole `CatalogStore` alive.
 
@@ -319,7 +319,7 @@ for confirmation before relying on them.
 - A red `main` blocks merge of anything that could change build or test results,
   except the fix that greens it. A PR that observes a red baseline opens that fix
   first — merging alongside a known-red `main` is exactly when a real regression
-  hides (plan 0065: two PRs landed against a `main` red from five pre-existing
+  hides (two PRs once landed against a `main` red from five pre-existing
   failures; the next PR restored green a day later, and nothing had verified the
   intervening PRs against a working baseline). **A doc-only increment is not
   blocked by a red `main`**: its diff cannot compile, run, or hide anything, and

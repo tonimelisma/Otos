@@ -3,7 +3,7 @@ import Foundation
 /// Grid zoom column-count policy guide
 ///
 /// Pure bounds/validation logic for the media grid's user-adjustable column count
-/// (spec 0048), independent of `UserDefaults` or AppKit so it is directly
+/// (APP-006), independent of `UserDefaults` or AppKit so it is directly
 /// unit-testable. Two distinct rules exist because they answer different
 /// questions: `clamped` answers "what is the nearest valid value to a deliberate
 /// user request" (a zoom-out request one step past the minimum should land on the

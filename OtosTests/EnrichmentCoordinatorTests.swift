@@ -413,7 +413,7 @@ struct EnrichmentCoordinatorTests {
         await materializer.shutdown()
     }
 
-    // MARK: - Plan 0059 review fixes
+    // MARK: - Claim-window release and retry exhaustion
 
     @Test func exhaustedBackgroundRetriesReleaseClaimWindowForFreshCandidate() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
@@ -614,13 +614,13 @@ struct EnrichmentCoordinatorTests {
     }
 
     /// A camera attach offers every catalog item at once, while only
-    /// `globalOutstandingLimit` may be outstanding. `stageDevice` used to take
-    /// `seeds.prefix(available)` and discard the rest, and nothing could recover
-    /// them: the catalog flow runs once per attach, and an unstaged device file
-    /// fails `lstat`, so readiness routing answers `.unknown` and retries readiness
-    /// rather than creating a demand. A camera with more items than the limit
-    /// therefore never fully staged, and so never fully enriched — while ENR-011
-    /// says every connected-source item is staged (plan 0099 D4).
+    /// `globalOutstandingLimit` may be outstanding. `stageDevice` must queue the
+    /// overflow rather than take `seeds.prefix(available)` and discard the rest,
+    /// because nothing would recover them: the catalog flow runs once per attach, and
+    /// an unstaged device file fails `lstat`, so readiness routing answers `.unknown`
+    /// and retries readiness rather than creating a demand. A camera with more items
+    /// than the limit would never fully stage, and so never fully enrich — while
+    /// ENR-011 says every connected-source item is staged.
     @Test func stageDeviceQueuesEverySeedPastTheOutstandingLimit() async {
         let coordinator = EnrichmentCoordinator(
             store: CatalogStore(location: .inMemory),
@@ -1005,13 +1005,11 @@ struct EnrichmentCoordinatorTests {
         await materializer.shutdown()
     }
 
-    /// Plan 0065 Stage 2b: `EnrichWork.shouldHash` must be the value Store's claim
-    /// predicate decided (`ClaimedEnrichmentCandidate.hashRequired`), not a value the
-    /// coordinator re-derives from its own notion of root kind. Before this fix, the
-    /// coordinator refreshed a `removableRootPaths` cache once per dequeue cycle and
-    /// re-derived `shouldHash` from it at dispatch time — two independent owners of the
-    /// same fact that could disagree if a root's kind changed between them. That cache
-    /// no longer exists: this test claims one asset from a `.library` root (hash
+    /// `EnrichWork.shouldHash` must be the value Store's claim predicate decided
+    /// (`ClaimedEnrichmentCandidate.hashRequired`), not a value the coordinator
+    /// re-derives from its own notion of root kind — a coordinator-side cache of root
+    /// kinds would be a second owner of the same fact, able to disagree if a root's
+    /// kind changed between claim and dispatch. This test claims one asset from a `.library` root (hash
     /// required) and one from a `.removableVolume` root (hash not required) in the same
     /// coordinator, and confirms each dispatched `EnrichWork.shouldHash` matches its own
     /// claim rather than a single shared coordinator-wide value.

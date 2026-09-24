@@ -540,7 +540,7 @@ struct MediaTransferPlannerTests {
 
     /// A file whose bytes could not be opened cannot be copied, so it must be blocked
     /// rather than silently skipped — and it must not hold the naming gate open, since
-    /// nothing about it is transient on a removable volume (plan 0099 D9).
+    /// nothing about it is transient on a removable volume (ARC-057).
     /// The verdict must not outlive the attachment that produced it. Without a detach
     /// boundary a single unreadable file stays blocked for the life of the process —
     /// through eject and re-insert, and even once it reads cleanly again — and the set

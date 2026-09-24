@@ -1,7 +1,7 @@
 import Synchronization
 
-/// Concurrency-safe accumulator for test doubles. Replaces nine hand-rolled
-/// unchecked-Sendable + NSLock classes (ARC-042, plan 0072 Stage 4).
+/// Concurrency-safe accumulator for test doubles: one `Mutex`-backed owner instead
+/// of hand-rolled unchecked-Sendable + NSLock classes (ARC-042).
 final class TestRecorder<Value: Sendable>: Sendable {
     private let storage = Mutex<[Value]>([])
     func record(_ value: Value) {

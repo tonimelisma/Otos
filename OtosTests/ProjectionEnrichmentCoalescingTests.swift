@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0064 Stage 3: enrichment that leaves the effective ordering/scope facts
+/// ARC-018: enrichment that leaves the effective ordering/scope facts
 /// (`best_capture`, `best_kind`, `best_format`) unchanged is a detail-only change, and
 /// the projection must refresh visible detail without re-running the full ordered-asset
 /// query. Only an effective order/scope change is structural and triggers a rebuild.

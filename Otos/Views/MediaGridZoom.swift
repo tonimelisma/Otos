@@ -3,7 +3,7 @@ import OSLog
 
 // Grid zoom guide
 //
-// User-adjustable column count (3–9, spec 0048). All zoom surfaces — the View menu,
+// User-adjustable column count (3–9, APP-006). All zoom surfaces — the View menu,
 // the toolbar −/+ buttons, and this file's pinch gesture — drive one ViewModel intent
 // (`CatalogWindowViewModel.setGridColumnCount`). The pinch gesture never mutates
 // column-count truth or the collection view's layout directly: it only calls

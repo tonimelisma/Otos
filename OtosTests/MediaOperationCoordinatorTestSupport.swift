@@ -1,7 +1,7 @@
 import Foundation
 @testable import OtosKit
 
-/// Controlled builder for Stage 3 (plan 0079). It records each request, can
+/// Controlled plan builder. It records each request, can
 /// suspend a selected source build on a continuation, resumes it with a real
 /// planner result, and records cancellation without assuming cancellation ends
 /// the continuation.
@@ -205,7 +205,7 @@ extension ControlledImportPlanBuilder: ImportPlanBuilding {
 }
 
 /// Marks every media row under `root` as one enrichment has *looked at*, the
-/// precondition plan 0099's naming gate puts on offering a plan (ARC-057).
+/// precondition the naming gate puts on offering a plan (ARC-057).
 ///
 /// In production `EnrichmentCoordinator` reads every file on an attached card before
 /// the bar offers Import — a removable volume's bytes are always local, so that read

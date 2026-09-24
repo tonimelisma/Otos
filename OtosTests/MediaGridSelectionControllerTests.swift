@@ -4,7 +4,7 @@ import os
 @testable import OtosKit
 import Testing
 
-/// Controller-level tests for the model-owned mouse selection (spec 0046).
+/// Controller-level tests for the model-owned mouse selection (APP-011).
 ///
 /// These drive the **real** `MediaGridCollectionView.mouseDown(with:)` override — the same
 /// path a real click takes — with synthesized `NSEvent`s positioned at the center of a
@@ -280,7 +280,7 @@ struct MediaGridSelectionControllerTests {
         #expect(harness.selectedIDs() == Set(harness.ids[1 ... 3]))
     }
 
-    // MARK: - Thumbnail-only hit area (spec 0049)
+    // MARK: - Thumbnail-only hit area
 
     @Test func clickInsideLandscapeThumbnailFaceSelects() throws {
         let harness = try makeHarness(itemCount: 8)

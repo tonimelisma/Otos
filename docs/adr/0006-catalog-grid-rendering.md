@@ -67,7 +67,7 @@ Use a narrow `NSViewControllerRepresentable` containing `NSCollectionView`,
 `NSCollectionViewCompositionalLayout`, and `NSCollectionViewDiffableDataSource`.
 The layout has one full-width group with square fractional items sized from the
 current column count, 12-point section insets, and 8-point effective gaps.
-Column count is user-selected, 3–9, default 6 (spec 0048) — not an invariant six
+Column count is user-selected, 3–9, default 6 (APP-006) — not an invariant six
 — owned by `CatalogWindowViewModel.gridColumnCount` and persisted across
 launches; the AppKit controller only ever renders the published value through
 one `receiveColumnCount(_:)` path, whether the request came from the View menu,
@@ -165,8 +165,7 @@ trickle), animate with a tuned duration and ease-out-with-overshoot curve
 `NSAnimationContext` group around the animated apply branch only. While scroll
 bounds have tickled within the last 250 ms, the group still calls
 `apply(animatingDifferences: true)` but sets `duration = 0` — mid-scroll move
-animations are invisible churn that feeds Core Animation commit pressure
-(plan 0009). Never downgrade to `animatingDifferences: false` for that case;
+animations are invisible churn that feeds Core Animation commit pressure. Never downgrade to `animatingDifferences: false` for that case;
 that is the reloadData teardown path. Separately, `MediaGridMutationGate`
 holds same-descriptor structural-apply *adoption* while scroll is live
 (`scrollHold`, released after the same 250 ms quiet threshold): enrichment

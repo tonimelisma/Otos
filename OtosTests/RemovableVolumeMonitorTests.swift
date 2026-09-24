@@ -3,7 +3,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0095 D10: `volumeIsRemovable == true` alone accepts mounted disk
+/// APP-017: `volumeIsRemovable == true` alone accepts mounted disk
 /// images too — production evidence held `/Volumes/Raycast` and
 /// `/Volumes/BoltAI 2`, both app-installer DMGs, as permanent removable
 /// sources. `docs/research/2026-08-19-removable-volume-qualification.md`

@@ -330,7 +330,7 @@ extension MediaGridViewController {
         // a newer grid state (applied next, content-first) and/or a zoom requested during
         // the apply (a `.zoomSwap` the gate emits once the count actually differs). The
         // gate guarantees a layout swap never runs concurrently with a diffable apply in
-        // either direction (spec 0048).
+        // either direction (ARC-023).
         perform(mutationGate.completeStructuralApply(applied: context.grid))
     }
 

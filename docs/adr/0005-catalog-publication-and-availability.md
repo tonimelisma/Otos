@@ -43,7 +43,7 @@ This ADR references but does not own:
 
 Metadata, thumbnails, manual scans, sandboxing, bookmarks, durable scan IDs, and
 media-container import are outside this decision. Coarse running-app FSEvents→rescan
-policy is owned by ADR 0002 and spec 0023.
+policy is owned by ADR 0002.
 
 ## Decision
 
@@ -195,8 +195,8 @@ Failure mode: the UI states a domain fact that is not known.
 
 ## Living Documentation Impact
 
-Specs 0006, 0007, 0009, 0010, and 0011, requirements FND-023, FND-028,
-FND-034, FND-039, and FND-040, and comments at the Store/Projection/ViewModel
+Requirements ARC-005, ARC-010, ARC-016, ARC-020, and ARC-021, and comments at
+the Store/Projection/ViewModel
 boundaries must describe explicit selection delivery and unknown availability.
 Retired selection-generation guards, optimistic availability claims, and ViewModel
 selection `didSet` orchestration must not remain in current docs or comments.

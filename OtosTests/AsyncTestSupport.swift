@@ -50,7 +50,7 @@ func withTestTimeout<Value: Sendable>(
 /// Waits until the projection has no pending or in-flight publication, so a test can
 /// assert on a settled `orderQueryCount` without guessing a sleep duration. Polls actor
 /// state rather than sleeping a fixed interval — a fixed sleep is either flaky under
-/// parallel-suite load or needlessly slow, and usually both (plan 0065 Stage 4).
+/// parallel-suite load or needlessly slow, and usually both.
 func waitForProjectionQuiescence(
     _ projection: CatalogProjection,
     timeout: Duration = .seconds(5)

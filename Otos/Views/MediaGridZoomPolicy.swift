@@ -6,7 +6,7 @@ import Foundation
 /// Pure geometry: given the frames of currently visible tiles and the viewport's
 /// center point, picks the tile whose frame center is nearest that point. The
 /// zoom swap scrolls back to this tile after the layout change so "the middle
-/// row stays" (spec 0048) instead of the viewport drifting to an arbitrary
+/// row stays" (APP-006) instead of the viewport drifting to an arbitrary
 /// scroll offset when tile sizes change. Kept independent of `NSCollectionView`
 /// so it is directly unit-testable.
 nonisolated enum MediaGridZoomPolicy {

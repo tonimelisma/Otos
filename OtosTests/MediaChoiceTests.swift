@@ -13,7 +13,7 @@ struct MediaChoiceTests {
     }
 
     /// DES-068: the item's single accessibility value, not a per-button
-    /// "Selected"/"Not selected" (plan 0095 D22). `MediaChoiceHoverRegion`
+    /// "Selected"/"Not selected". `MediaChoiceHoverRegion`
     /// (Loupe/Compare) and `MediaAssetTilePresentation.accessibilityValue`
     /// (Grid/filmstrip) both read this exact string off `MediaChoice`.
     @Test func accessibilityValuesAreTheDES068Strings() {

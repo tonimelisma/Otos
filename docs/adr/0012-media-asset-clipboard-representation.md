@@ -40,7 +40,7 @@ What this ADR owns: the pasteboard representation written when the user copies
 selected catalog assets from the media grid.
 
 What it references but does not own: the selection model and the copy command
-wiring (owned by spec 0031); asset→URL construction (`MediaAssetID.fileURL`, owned
+wiring (APP-011, APP-012); asset→URL construction (`MediaAssetID.fileURL`, owned
 by the catalog model); enrichment-time byte reading and materialization (owned by
 ADR 0008/0009).
 
@@ -136,9 +136,8 @@ Failure modes:
 ## Retirement Proof
 
 No prior clipboard/copy behavior exists to retire. This ADR introduces the first
-pasteboard write. `EnrichmentCoordinator.url(for:)` is consolidated into
-`MediaAssetID.fileURL` by spec 0031, but that construction change is owned by the
-spec, not this ADR.
+pasteboard write. Asset→URL construction is `MediaAssetID.fileURL`, owned by the
+catalog model, not this ADR.
 
 ## Living Documentation Impact
 

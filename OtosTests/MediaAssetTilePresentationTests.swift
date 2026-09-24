@@ -42,7 +42,7 @@ struct MediaAssetTilePresentationTests {
         )) == "1:02:33")
     }
 
-    // MARK: - Kind badge content table (plan 0009 Part E / 0010 Part B)
+    // MARK: - Kind badge content table (APP-009)
 
     @Test func placeholderTilesNeverShowLowerRightBadge() {
         #expect(MediaAssetTilePresentation.badgeContent(
@@ -183,7 +183,7 @@ struct MediaAssetTilePresentationTests {
         #expect(MediaAssetTilePresentation.contentRect(imagePixelSize: nil, bounds: bounds) == bounds)
     }
 
-    // MARK: - Thumbnail-only hit area (spec 0049)
+    // MARK: - Thumbnail-only hit area
 
     @Test func thumbnailFaceRectMatchesContentRect() {
         let bounds = CGRect(x: 0, y: 0, width: 120, height: 120)
@@ -337,7 +337,7 @@ struct MediaAssetTilePresentationTests {
         )
     }
 
-    // MARK: - Placeholder icon (spec 0047)
+    // MARK: - Placeholder icon
 
     @Test func placeholderIconUsesKindAndBrokenGlyphs() {
         #expect(MediaAssetTilePresentation.placeholderIconSystemName(

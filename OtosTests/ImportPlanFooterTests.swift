@@ -2,11 +2,10 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// `RenderedPrimary` is the render-intent seam plan 0095 increment 8 added to
-/// close the gap that let D11 ship green: `ImportBarPresentation` (the
-/// mapper) was fully covered by tests, but `ImportPlanFooter` (the renderer)
-/// was not, so a `primaryAction` case that forgot `.disabled` rendered a live
-/// button anyway. These tests assert what the renderer actually derives —
+/// `RenderedPrimary` is the render-intent seam that puts the renderer under test,
+/// not only the mapper: covering `ImportBarPresentation` alone cannot catch a
+/// `primaryAction` case in `ImportPlanFooter` that forgets `.disabled` and renders a
+/// live button. These tests assert what the renderer actually derives —
 /// title, enabled state, default-shortcut eligibility, destructive tint — as
 /// a pure value, not a rendered SwiftUI view.
 struct ImportPlanFooterRenderedPrimaryTests {
@@ -34,9 +33,9 @@ struct ImportPlanFooterRenderedPrimaryTests {
         .tryAgain,
     ]
 
-    /// Plan 0095 D11: `drawn.primaryEnabled` was read by only 1 of 7 actions;
-    /// the cancelling state (`primaryEnabled: false`) rendered a live button
-    /// because nothing forced every case through one owner.
+    /// APP-029: every action honors `drawn.primaryEnabled`, so the cancelling state
+    /// (`primaryEnabled: false`) can never render a live button — one owner forces
+    /// every case through the same derivation.
     @Test func everyActionHonorsPrimaryEnabledRegardlessOfCase() {
         for action in Self.allActions {
             let enabled = ImportPlanFooter.renderedPrimary(for: Self.drawn(primaryAction: action, primaryEnabled: true))

@@ -7,7 +7,7 @@ import Foundation
 /// "islands" a ⇧-range unions with. It has no AppKit dependency and no I/O, so every
 /// selection rule is unit-testable without a collection view.
 ///
-/// Why a model owns selection (spec 0046): reading `NSCollectionView.selectionIndexPaths`
+/// Why a model owns selection (APP-011): reading `NSCollectionView.selectionIndexPaths`
 /// as an *input* to the selection computation and then correcting AppKit's result couples
 /// the computation to AppKit's mouseDown/mouseUp commit timing — undocumented and
 /// unstable — so the correction races AppKit's own commit, producing bugs such as "a

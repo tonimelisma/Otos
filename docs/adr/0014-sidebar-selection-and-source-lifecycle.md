@@ -54,8 +54,7 @@ optional "All Media" aggregate. Two problems motivated this decision:
   publication must not latch the default. This is the only automatic jump the app
   makes; a card connected at launch (or already connected when the app starts) is
   what satisfies the camera-import intent.
-- **Attach-time selection hijack is deliberately absent** (plan 0095 increment 11
-  removed `selectionOnAttach(attached:)`, unreferenced dead code by then): attaching
+- **Attach-time selection hijack is deliberately absent**: attaching
   a card *after* the one-time startup default has already applied never moves the
   user, even if they are looking at an unrelated library or All Media. Always
   jumping to a newly-available card was tried and rejected — it interrupted a user

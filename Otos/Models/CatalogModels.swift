@@ -527,7 +527,7 @@ nonisolated struct MediaAsset: Identifiable, Hashable {
 
     /// Whole-seconds form of a filesystem date for the staleness signature. Whole
     /// seconds avoid the `Double` epsilon that would otherwise make a reloaded date
-    /// look different from a freshly scanned one (see FND-062/FND-064).
+    /// look different from a freshly scanned one (see ARC-038/ARC-039).
     static func mtimeSeconds(_ date: Date?) -> Int {
         date.map { Int($0.timeIntervalSince1970.rounded(.down)) } ?? -1
     }

@@ -2,11 +2,11 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0095 D2: device inventory landing must trigger a replan. Before this,
-/// `recordDeviceCatalogBatch`/`completeDeviceCatalogEnumeration` bumped no
-/// occupancy revision and emitted no `RootPlanningChange`, so a plan built the
-/// moment a device root became available (from whatever rows were already
-/// persisted) was never invalidated once the live device inventory landed.
+/// ARC-047: device inventory landing must trigger a replan.
+/// `recordDeviceCatalogBatch`/`completeDeviceCatalogEnumeration` bump the occupancy
+/// revision and emit a `RootPlanningChange`; without that, a plan built the moment a
+/// device root became available (from whatever rows were already persisted) would
+/// never be invalidated once the live device inventory landed.
 struct CatalogStoreDeviceInventoryTests {
     @Test func changedBatchEmitsPlanningChangeForDeviceRoot() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()

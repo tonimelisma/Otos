@@ -247,7 +247,7 @@ struct MediaEnricherTests {
         #expect(checker.callCount == 3)
     }
 
-    /// Plan 0062: a `.removableVolume` source (ADR 0018) is never hashed in place, so
+    /// ENR-013: a `.removableVolume` source (ADR 0018) is never hashed in place, so
     /// its enrichment performs no full-file read. Assert against a spy hasher rather
     /// than elapsed time — a regression that hashes-and-discards would still return a
     /// nil contentHash, so only observing the hash call itself catches it.

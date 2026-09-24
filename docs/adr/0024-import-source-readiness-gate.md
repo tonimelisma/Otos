@@ -15,9 +15,9 @@ almost always fine — a full-root scan is fast and the catalog already reflects
 the true directory listing by the time anyone looks. For an MTP camera it is
 not: `ImageCaptureCore` enumeration can take 15+ seconds, and the catalog
 holds rows from the *previous* session at the same device path (ADR 0008: a
-detached device's rows persist until proven deleted). Plan 0095 D1 traced a
-production run where the plan reached `.ready` 259ms after attach — 14.7
-seconds before enumeration produced a single live row — so the bar offered
+detached device's rows persist until proven deleted). In a traced production
+run the plan reached `.ready` 259ms after attach — 14.7 seconds before
+enumeration produced a single live row — so the bar offered
 Import against a plan built entirely from stale data, and every copy attempt
 failed `staleSource`.
 
@@ -43,7 +43,7 @@ existed to gate the *offer* — the coordinator conflated "a plan was built" wit
 **References but does not own:**
 
 - Occupancy revision bumping and the planning-change stream that wakes the
-  coordinator — plan 0095 increment 3 / this ADR's sibling fix for D2.
+  coordinator — ARC-047.
 - Device enumeration and `ICCameraFile` date derivation — `CameraSourceMonitor.swift`.
 - Import plan namespace resolution and build ownership — ADR 0019.
 - Cross-plan destination reservation — ADR 0021.
@@ -65,7 +65,7 @@ existed to gate the *offer* — the coordinator conflated "a plan was built" wit
   concrete failure this plan traced was a `publish()` fired for an
   unrelated reason (a sibling source's progress tick) resetting a
   currently-executing source's own progress to a fabricated zero, because
-  that second path didn't carry the live value forward (plan 0095 D6).
+  that second path didn't carry the live value forward.
 
 ## Decision
 

@@ -45,7 +45,7 @@ This ADR references, but does not own:
 
 - ADR 0002 media-asset filesystem reconciliation.
 - MED-001 read-only originals policy.
-- FND-017 SwiftUI-first UI policy.
+- ARC-001 SwiftUI-first UI policy.
 
 Separate ADRs or specs must own:
 

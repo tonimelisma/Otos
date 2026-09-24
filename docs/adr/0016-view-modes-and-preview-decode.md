@@ -5,7 +5,7 @@
 
 ## Context
 
-Plan 0052 adds loupe and compare browser modes. Loupe needs a full-size (display
+Otos has loupe and compare browser modes (APP-020, APP-021). Loupe needs a full-size (display
 long-edge) decode of the focused original. The catalog already has a 256 px
 thumbnail overlay produced by `EnrichmentCoordinator` / `MediaEnricher`
 (ADR 0009), but nothing decodes originals for on-screen preview. Byte reads must
@@ -27,14 +27,14 @@ This ADR references, but does not own:
 - Thumbnail enrichment storage and staleness (ADR 0009).
 - Grid rendering, filmstrip parameterization, and selection model (ADR 0006;
   selection ownership on the ViewModel).
-- Compare pair semantics (product requirements / plan 0052; no separate ADR
+- Compare pair semantics (APP-021; no separate ADR
   until persistence or a second owner appears).
 - Compare's active pane is a transient positional keyboard-command target only;
   it is not a Select/Candidate role and never owns a curation value.
 
 ## Decision
 
-Amended by plan 0069: loupe gains `VideoPreviewLoader` (`@MainActor` stateless
+Loupe also has `VideoPreviewLoader` (`@MainActor` stateless
 factory) for click-to-play inline `AVPlayerView` (`controlsStyle=.inline`) with
 the same `SF_DATALESS` gate and interactive `MaterializationCoordinator` demand
 as preview decode; compare stays poster-only.

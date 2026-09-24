@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0095 D1: whether a source's live inventory is trustworthy enough to
+/// ARC-047 / ADR 0024: whether a source's live inventory is trustworthy enough to
 /// offer Import is a pure function of its catalog availability/activity —
 /// covers every combination `CatalogLibraryActivity`/`LibraryAvailability` can
 /// report.

@@ -97,7 +97,7 @@ consumes them; use a log line instead.
   where `script/logs.sh`'s subsystem predicate could never match it. The
   subsystem identifies this code, not the process that loaded it. A test run is
   readable with `script/logs.sh show --last <duration> --process xctest`, which
-  is how the naming-fact and readiness defects in plan 0098 were diagnosed.
+  is how the naming-fact and readiness defects ADR 0026 settles were diagnosed.
 - `script/verify.sh` runs every stage to completion and reports which failed. No
   stage may hide another: the static gates once aborted the script under `set -e`
   before the test suite ran, so a formatting nit and five failing tests were

@@ -8,10 +8,10 @@
 
 /* Begin PBXBuildFile section */
 		031A33F1C0E9C535BFB21219 /* OtosKit.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		E4561C9BD6989749CAF9CC12 /* OtosKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; };
 		3159B8E9FEB7DFB431F9B56E /* MediaMetadata in Frameworks */ = {isa = PBXBuildFile; productRef = 1C8F7A15A3DB3475BAFE398A /* MediaMetadata */; };
 		DE7F62197C13E995EEE9E501 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A07256481F38A90EADD1A61F /* Cocoa.framework */; };
 		E22ED6B0D74682661C2AF3F6 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = C818A507037575021CBE8CAA /* GRDB */; };
+		E4561C9BD6989749CAF9CC12 /* OtosKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; };
 		F6B99F2C261A631FF9367973 /* OtosKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B399849F083A8A241AA47BE2 /* OtosKit.framework */; };
 /* End PBXBuildFile section */
 

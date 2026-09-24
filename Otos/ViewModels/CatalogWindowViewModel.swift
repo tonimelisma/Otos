@@ -57,7 +57,7 @@ final class CatalogWindowViewModel {
     /// rather than a timer's sample of it (B4).
     var lastDrawnSignature: [LibraryRootPath: String] = [:]
     var state: CatalogWindowState = .empty
-    /// User-adjustable grid density (spec 0048), 3–9. `private(set)` so the only way to
+    /// User-adjustable grid density (APP-006), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish
     /// path every zoom surface shares (compiler-enforced single owner). Set in `init`, not a
     /// property default, because its initial value depends on the injected
@@ -943,7 +943,7 @@ extension CatalogWindowViewModel {
 
 // MARK: - Grid zoom intent
 
-/// User-adjustable grid density (spec 0048), 3–9. This is rendering/UI state, not catalog
+/// User-adjustable grid density (APP-006), 3–9. This is rendering/UI state, not catalog
 /// truth, so it never touches the query-descriptor stream or Store/Projection: it is a
 /// plain published property with a persistence side effect. Every zoom surface — the View
 /// menu, toolbar buttons, and AppKit pinch gesture through a callback — calls

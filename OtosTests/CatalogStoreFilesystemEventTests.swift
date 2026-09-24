@@ -43,10 +43,10 @@ struct CatalogStoreFilesystemEventTests {
         #expect(!newInvocations.contains(pathB))
     }
 
-    /// Plan 0064 Stage 2: Otos's own `.otos-import-staging` files are written into the
-    /// watched destination root while importing and must not schedule reconciliation,
-    /// record namespace mutations, or bump occupancy — that self-inflicted churn fired
-    /// a reconcile + replan on every staging write. A real media event still reconciles.
+    /// ARC-041: Otos's own `.otos-import-staging` files are written into the watched
+    /// destination root while importing and must not schedule reconciliation, record
+    /// namespace mutations, or bump occupancy — that self-inflicted churn would fire a
+    /// reconcile + replan on every staging write. A real media event still reconciles.
     @Test func importStagingEventsDoNotTriggerReconciliation() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)

@@ -34,7 +34,7 @@ The import and reorganization journal files remain non-owning SQL/mapping helper
 They execute only inside Store-owned transactions and perform no filesystem work,
 recovery sequencing, notification, or actor coordination.
 
-### Presentation ownership (plan 0092)
+### Presentation ownership
 
 `MediaOperationCoordinator` is also the sole owner of every fact the import bar
 renders (`MediaOperationSourcePresentation`, `docs/design/import-bar.md`), not only

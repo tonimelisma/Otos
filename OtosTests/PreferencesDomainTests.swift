@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Stage 2 (plan 0079): the single `PreferencesDomain` value is the only way to
+/// The single `PreferencesDomain` value is the only way to
 /// select a `UserDefaults` domain. Every construction site requires it; there is
 /// no default that can silently select `.standard`. This suite proves that a
 /// temporary domain persists and isolates, and that reconstructing actors from the

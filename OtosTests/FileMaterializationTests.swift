@@ -7,8 +7,7 @@ import Testing
 /// file is always materialized, and a missing path is unknown. The `.dataless`
 /// result cannot be produced in a unit test because only a File Provider can create
 /// a dataless placeholder; that branch was validated against a real OneDrive library
-/// during the spec's proof of concept (see
-/// `docs/specs/0016-cloud-materialization-detection.md`).
+/// (see `docs/research/2026-07-11-onedrive-materialization-fsevents.md`).
 struct FileMaterializationTests {
     @Test func materializationOutcomeDiagnosticsClassifyTerminalStates() {
         #expect(MaterializationOutcome.alreadyMaterialized.isMaterialized)

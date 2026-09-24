@@ -49,7 +49,7 @@ value from F-1, and
 DES-013 stated that anything a user may need to *read* — as opposed to notice the
 presence of — is L3 or above.
 
-**Retired (plan 0095 increment 11):** the ambient palette entry and DES-013 are deleted.
+**Retired:** the ambient palette entry and DES-013 are deleted.
 No surface ever grew the ambient metadata (tile filename, loupe metadata) DES-013
 was drafted for, so the corrected value had zero real callers — an unused level
 carrying a legibility fix for content that doesn't exist. This finding stays for

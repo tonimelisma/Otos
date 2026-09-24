@@ -303,10 +303,10 @@ struct ImportBarPresentationTests {
         #expect(drawn.eraseConfirmationProvenClean)
     }
 
-    /// Plan 0095 D9: a destination path with no resolved display name yet
+    /// APP-029: a destination path with no resolved display name yet
     /// (`destinationDisplayName == nil` while `destinationPath` is still set)
-    /// used to substitute `""`, building a broken sentence ("already in ").
-    /// A true generic term is substituted instead.
+    /// takes a true generic term, never `""`, which would build a broken
+    /// sentence ("already in ").
     @Test func readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly() {
         let drawn = Self.map(Self.presentation(
             destinationDisplayName: nil,
@@ -487,7 +487,7 @@ struct ImportBarPresentationTests {
         #expect(text.hasSuffix("left"))
     }
 
-    /// Plan 0095 D9: same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
+    /// Same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
     /// exercised at state E's own `destinationDisplayName ?? ""` site.
     @Test func workingCaptionWithUnresolvedDestinationNameFallsBackHonestly() {
         let progress = MediaOperationProgress(completedCount: 1, totalCount: 2, completedBytes: 1, totalBytes: 2, elapsedMs: 0)
@@ -558,7 +558,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.eraseConfirmationProvenClean)
     }
 
-    /// Plan 0095 D9: same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
+    /// Same honest fallback as `readyNothingNewWithUnresolvedDestinationNameFallsBackHonestly`,
     /// exercised at state F's own `destinationDisplayName ?? ""` site.
     @Test func doneWithUnresolvedDestinationNameFallsBackHonestly() {
         let drawn = Self.map(Self.presentation(
@@ -666,7 +666,7 @@ struct ImportBarPresentationTests {
         #expect(drawn.primaryLine == "1 new item · 4 MB")
     }
 
-    // MARK: - F · Stopped (plan 0102 B1, J8)
+    // MARK: - F · Stopped (APP-029, J8)
 
     @Test func stoppedAfterCancelOffersTheRemainderWhileTheCardIsAttached() {
         // J8 step 3–4: the run's own facts at L1, the cause at L3, and the
@@ -874,7 +874,7 @@ struct ImportBarPresentationTests {
         }
     }
 
-    /// The systemic classification from plan 0095 D8 must still land on a true,
+    /// The systemic `.sourceNotReady` classification must still land on a true,
     /// wording-appropriate state G rather than "Done" — camera vs. card wording
     /// follows `sourceKind`, matching the other `[deviation]`-free A-state wording.
     @Test func failedSourceNotReadyReachesFailedWithCameraOrCardWording() {
@@ -903,9 +903,8 @@ struct ImportBarPresentationTests {
         #expect(ImportBarByteFormat.string(bytes: 128_000_000_000) == "128 GB")
     }
 
-    /// Plan 0095 D9: `max(1, …)` used to force `0 bytes` to render as `1 KB` —
-    /// a fabricated non-zero value for a genuinely-zero fact. `0` now renders
-    /// as `0 KB`, and every threshold the formatter switches units at is
+    /// `0` renders as `0 KB` — a `max(1, …)` clamp would fabricate `1 KB`, a
+    /// non-zero value for a genuinely-zero fact — and every threshold the formatter switches units at is
     /// pinned so a future edit can't reintroduce a silent off-by-one.
     @Test func byteFormattingAtEveryUnitBoundaryIsHonest() {
         #expect(ImportBarByteFormat.string(bytes: 0) == "0 KB")

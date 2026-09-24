@@ -2,7 +2,7 @@ import AppKit
 @testable import OtosKit
 import Testing
 
-/// Stage C (plan 0053) / Stage A (plan 0054): horizontal strip scroll loading,
+/// APP-022: horizontal strip scroll loading,
 /// focus centering (including window-attach / layout retry), key consumption,
 /// and first-responder claim after mode switches.
 ///

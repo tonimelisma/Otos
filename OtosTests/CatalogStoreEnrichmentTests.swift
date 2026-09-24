@@ -48,7 +48,7 @@ struct CatalogStoreEnrichmentTests {
         )
     }
 
-    /// Plan 0062: a `.removableVolume` source is never hashed in place (ADR 0018), so
+    /// ENR-007: a `.removableVolume` source is never hashed in place (ADR 0018), so
     /// hash staleness is gated behind `hashRequired` — a metadata-current removable
     /// asset with no digest is fully enriched, while the same asset on a library root
     /// still needs enrichment.
@@ -315,7 +315,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(persisted.needsEnrichment(hashRequired: true))
     }
 
-    /// Plan 0065 Stage 2a: `structureChanged` must compare the STORED generated columns
+    /// `structureChanged` must compare the STORED generated columns
     /// before vs after the write, not a Swift-side prediction of what the write will
     /// produce. Fixture: the asset scans with `created_at_unix = 500`; a first
     /// enrichment sets `ts_original_unix = 700`, so `best_capture_unix` becomes 700. A
@@ -629,7 +629,7 @@ struct CatalogStoreEnrichmentTests {
         #expect(detail.enrichedSourceMTimeSeconds == 1000)
     }
 
-    /// Plan 0062 (Stage 4): a `.removableVolume` source is never hashed in place, so
+    /// ARC-053: a `.removableVolume` source is never hashed in place, so
     /// import settlement must short-circuit overlay reuse to a typed miss instead of
     /// comparing digests that cannot both exist. The destination still settles with the
     /// digest computed from its local staged copy and needs enrichment until ordinary

@@ -2,7 +2,7 @@ import AppKit
 @testable import OtosKit
 import Testing
 
-/// Tests the pure update-tracking bookkeeping (spec 0047). `NSCollectionViewUpdateItem`
+/// Tests the pure update-tracking bookkeeping. `NSCollectionViewUpdateItem`
 /// has no public initializer, so this exercises `MediaGridAnimatedLayoutPolicy` through
 /// the plain `MediaGridUpdateItem` mirror rather than real AppKit update items —
 /// `MediaGridAnimatedLayout` itself only ever maps real update items into that mirror.

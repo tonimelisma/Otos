@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Stage 3 (plan 0079): the plan-building boundary is a real substitution seam.
+/// The plan-building boundary is a real substitution seam.
 /// The live builder remains `Sendable`, performs work off the coordinator actor,
 /// and returns plan plus namespace counts and timing. The controlled builder
 /// records requests, suspends selected builds, resumes with real results, and

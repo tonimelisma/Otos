@@ -233,8 +233,6 @@ Updated by the implementing increment:
 - `docs/requirements.md`
 - ADRs 0002, 0004, 0005, 0006, 0007, and 0009
 - `docs/index.md`
-- specs 0017, 0018, 0022, and 0024 if they retain current-state claims that are
-  superseded
 - file guides in `CatalogModels.swift`, `CatalogStore.swift`,
   `CatalogStorePersistence.swift`, `CatalogProjection.swift`,
   `CatalogWindowViewModel.swift`, `MediaGridBridge.swift`,

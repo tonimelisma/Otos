@@ -16,7 +16,7 @@ line_length:
 
 # Size limits are soft warnings, not hard errors: cohesion sets file/type
 # boundaries, not an arithmetic cap. Do not re-add `error:` here, and do not split
-# a cohesive type only to satisfy these (docs/plans/0001-docs-and-process-reset.md).
+# a cohesive type only to satisfy these (AGENTS.md, Boundaries).
 type_body_length:
   warning: 400
 

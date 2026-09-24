@@ -457,7 +457,7 @@ struct ImportExecutionProgressTests {
         _ = try await waitForCatalogStoreState(store) { state in
             !state.isScanning && state.removableSources.first?.activity == .idle
         }
-        // Plan 0099: Ready requires proven naming facts; stand in for the enrichment
+        // Ready requires proven naming facts (ARC-057); stand in for the enrichment
         // coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: source)
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
@@ -506,7 +506,7 @@ struct ImportExecutionProgressTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0095 D8: when every attempted entry fails `sourceStillMatches` for the
+    /// APP-029: when every attempted entry fails `sourceStillMatches` for the
     /// same non-per-file reason — no `cameraImport` gateway wired up, matching a
     /// device session that never opened — the run must report itself as a failure,
     /// not a misleadingly-labeled `.completed(failedCount: N of N)`.
@@ -572,7 +572,7 @@ struct ImportExecutionProgressTests {
 
     /// A per-file staleness failure alongside a successful entry must stay
     /// `.completed(failedCount:)` — only a run where every attempted entry fails
-    /// the *same* `.sourceNotReady` way is systemic (plan 0095 D8).
+    /// the *same* `.sourceNotReady` way is systemic.
     @Test func mixedFailureReasonsStayCompletedNotSystemic() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -650,12 +650,11 @@ struct ImportExecutionProgressTests {
         #expect(hasEntryFailures)
     }
 
-    /// Plan 0095 D12: state F-incomplete's "Show them" reveal selects from
-    /// the batch row's destination-keyed grid, but `incompleteItems` used to
-    /// record `entry.source.id` — the source card's identity, which never
-    /// matches anything there, so the reveal selected nothing. A
-    /// `.skippedForeign` entry now records the destination identity — the
-    /// one thing actually sitting at that path for the reveal to select.
+    /// APP-029: state F-incomplete's "Show them" reveal selects from the batch
+    /// row's destination-keyed grid, so a `.skippedForeign` entry records the
+    /// destination identity — the one thing actually sitting at that path for the
+    /// reveal to select. The source card's identity would never match anything
+    /// there, and the reveal would select nothing.
     @Test func incompleteItemsCarryDestinationIdentityNotSourceIdentity() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)

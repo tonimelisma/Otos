@@ -2,7 +2,7 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Plan 0092 increment 6, `import-bar.md` "Where the user is standing": the
+/// APP-029, `import-bar.md` "Where the user is standing": the
 /// sidebar selection follows a new import batch once, and only if the user
 /// hasn't already navigated elsewhere. These tests exercise the ViewModel's
 /// public `applyImportPresentations`/`applyState` entry points rather than the
@@ -149,13 +149,11 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .allMedia)
     }
 
-    /// Plan 0095 D7: `sessionPreferences` used to live in a second
-    /// ViewModel-owned dictionary (`sessionPreferencesBySource`) that a
-    /// per-frame `Task` wholesale-replaced from the coordinator on every
-    /// presentation, racing an optimistic write from `setSessionPreferences`
-    /// and reverting an in-flight toggle. Now `sessionPreferences(for:)` reads
-    /// straight off the live presentation — there is no second dictionary left
-    /// to race, so an interleaved frame that still carries the old value (the
+    /// APP-029: `sessionPreferences(for:)` reads straight off the live
+    /// presentation. A second ViewModel-owned copy, wholesale-replaced from the
+    /// coordinator on every frame, would race an optimistic write from
+    /// `setSessionPreferences` and revert an in-flight toggle. With one owner there
+    /// is nothing to race, so an interleaved frame that still carries the old value (the
     /// coordinator hasn't processed the toggle yet) cannot overwrite a
     /// confirmation that already landed, and a frame carrying the toggled
     /// value is reflected immediately once it does land.
@@ -336,7 +334,7 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.sidebarSelection == .library(Self.cardPath))
     }
 
-    // MARK: - Plan 0102 C: a batch is followed only once it has something to show
+    // MARK: - A batch is followed only once it has something to show (APP-029)
 
     /// A run refused before any copy still carries its batch — identity, for
     /// state G and detach — but its row has nothing in it. Moving the user

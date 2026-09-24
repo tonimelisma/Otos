@@ -3,7 +3,7 @@ import CoreGraphics
 @testable import OtosKit
 import Testing
 
-/// Regression for APP-015 / plan 0001 F3–F4: a painted visible tile must keep its
+/// Regression for APP-015: a painted visible tile must keep its
 /// image across detail-query merges and structural recycle of other IDs. The
 /// invariant lives in `TileContentStore` (pin + cost budget); the tile is a pure
 /// renderer, so these tests assert through the controller → store → tile path.

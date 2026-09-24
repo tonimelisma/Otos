@@ -3,7 +3,7 @@ import OSLog
 @testable import OtosKit
 import Testing
 
-/// Adversarial lifecycle tests for MediaOperationCoordinator (plan 0079 Stage 4).
+/// Adversarial lifecycle tests for MediaOperationCoordinator.
 /// These prove stale-completion rejection, ledger release, and deterministic
 /// execution boundaries via the controlled plan-builder and execution controls.
 @Suite(.serialized)
@@ -720,8 +720,8 @@ struct MediaOperationCoordinatorAdversarialTests {
     /// `.bufferingNewest(1)` can drop any number of intermediate frames
     /// (trap #5); this proves the fact survives that by construction rather
     /// than by having watched every frame. `.executing`'s own `batchID` is
-    /// gated on a real published asset (plan 0095 step 7, owner decision:
-    /// "move batch selection to first-asset") — this controlled executor
+    /// gated on a real published asset (APP-029: the sidebar follows a batch only
+    /// once it has one) — this controlled executor
     /// never journals one, so `batchID` legitimately stays hidden throughout
     /// `.executing` here; the durability claim is proven from settlement
     /// onward instead.
@@ -811,13 +811,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0095 D6: `presentation(for:)` used to synthesize a zero-progress
-    /// literal for `.executing` every time it was derived — real progress only
-    /// ever reached the one private splice-and-yield path inside
-    /// `applyExecutionProgress`, so any other re-derivation (a `publish()` for
-    /// an unrelated reason, or simply re-reading the current snapshot, as here)
-    /// showed zeros even after real progress had landed. `session.lastProgress`
-    /// is what that same shared derivation reads now, so `currentPresentations()`
+    /// APP-029: `presentation(for:)` derives `.executing` from `session.lastProgress`,
+    /// never a zero-progress literal, so every re-derivation — a `publish()` for an
+    /// unrelated reason, or simply re-reading the current snapshot, as here — shows
+    /// the progress that has landed, not only the private splice-and-yield path
+    /// inside `applyExecutionProgress`. `currentPresentations()`
     /// — which exercises the identical `sortedPresentations()` path any
     /// `publish()` uses — reflects the live value regardless of what triggered it.
     @Test func executingPresentationCarriesLiveProgressNotZero() async throws {
@@ -994,12 +992,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0092 increment 6: a failure before any copy never sets
+    /// APP-029: a failure before any copy never sets
     /// `lastCompletion`, so without `lastAttemptedBatch` the presentation's
     /// `batchID` would go nil the instant `.executing` becomes `.failed` —
     /// right when the sidebar-follow feature and state G ("never
     /// auto-dismisses") most need it to stay identified by batch.
-    /// `lastAttemptedBatch`'s fallback is unaffected by plan 0095 step 7's
+    /// `lastAttemptedBatch`'s fallback is unaffected by the
     /// `.executing`-only gate (below): a failed run still needs its batch
     /// pinned regardless of whether anything ever published.
     @Test func batchIDSurvivesAnImmediateFailureBeforeAnyCopy() async throws {
@@ -1043,7 +1041,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // The failure is recorded beside the completion, not held as a phase,
         // so the rebuild that follows settlement cannot erase it — the test
         // polls for it with the destination still present, as production
-        // would present it (plan 0102 A; `import-bar.md` state G).
+        // would present it (`import-bar.md` state G).
         await execControl.resumePending(for: cardPath, with: .failed(reason: .unexpected(detail: "test")))
         await queueTask.value
 
@@ -1058,7 +1056,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0102 A: a failed run stays Failed after the rebuild it schedules
+    /// APP-029: a failed run stays Failed after the rebuild it schedules
     /// lands. The failure is a recorded fact about the last run; the rebuild
     /// replaces the *phase* and finds a Ready plan, which the presentation
     /// keeps behind state G until the user presses Try Again.
@@ -1128,7 +1126,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0102 A: `Try Again` is what leaves state G — it clears the
+    /// APP-029: `Try Again` is what leaves state G — it clears the
     /// recorded failure and re-plans, and the Ready the rebuild already found
     /// is what the user sees next.
     @Test func tryAgainLeavesTheFailedState() async throws {
@@ -1506,7 +1504,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// Plan 0102 B1: a run that stops early settles as a partial success whose
+    /// APP-029: a run that stops early settles as a partial success whose
     /// facts — why it stopped, what it copied, of what it planned — are
     /// published as state and survive the post-settlement re-plan, so state F's
     /// Stopped variant can render from them on either sidebar row. Never fully
@@ -1781,7 +1779,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 && snap.removableSources.allSatisfy { !$0.isScanning }
         }
 
-        // Plan 0099: Ready requires proven naming facts; stand in for the enrichment
+        // Ready requires proven naming facts (ARC-057); stand in for the enrichment
 
         // coordinator these tests do not run.
 
@@ -1843,7 +1841,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
         _ = try await waitForCatalogStoreState(store) { snap in snap.removableSources.contains { $0.path == cardPath && !$0.isScanning } }
 
-        // Plan 0099: Ready requires proven naming facts; stand in for the enrichment
+        // Ready requires proven naming facts (ARC-057); stand in for the enrichment
         // coordinator these tests do not run.
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
         let defaults = PreferencesDomain.suite(UUID().uuidString)
@@ -2167,7 +2165,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    // MARK: - 14. Device inventory triggers a replan (plan 0095 D2)
+    // MARK: - 14. Device inventory triggers a replan (ARC-047)
 
     @Test func deviceInventoryLandingAfterAttachTriggersReplan() async throws {
         log("START deviceInventoryLandingAfterAttachTriggersReplan")
@@ -2211,7 +2209,7 @@ struct MediaOperationCoordinatorAdversarialTests {
             ),
         ], scan: scan)
         try await store.completeDeviceCatalogEnumeration(scan: scan, observedPaths: [relativePath])
-        // Plan 0099 increment 4: a camera is gated on proven naming facts exactly like
+        // ARC-057: a camera is gated on proven naming facts exactly like
         // a card, and its bytes are staged locally so enrichment can supply them.
         // Nothing runs enrichment in this test, so stand in for it.
         await markEnrichmentLookedAtEveryRow(store, root: rootPath)
@@ -2233,7 +2231,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    // MARK: - 15. Import refused while still enumerating (plan 0095 D1, ImportSourceReadiness)
+    // MARK: - 15. Import refused while still enumerating (ADR 0024, ImportSourceReadiness)
 
     @Test func importIsRefusedWhileDeviceIsStillEnumerating() async throws {
         log("START importIsRefusedWhileDeviceIsStillEnumerating")
@@ -2273,7 +2271,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 contentModifiedAt: Date(timeIntervalSince1970: 1000)
             ),
         ], scan: scan)
-        // Plan 0099 increment 4: a camera is gated on proven naming facts like a card.
+        // ARC-057: a camera is gated on proven naming facts like a card.
         // This test's subject is the *readiness* gate (ADR 0024) — that a plan built
         // from an unstable inventory is withheld — so satisfy the earlier naming gate
         // and let the readiness gate be what withholds it.

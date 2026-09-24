@@ -15,8 +15,7 @@ an eligibility gate and then discarded. `CatalogProjection` also reused the last
 ordered-ID query for detail-only enrichment changes because enrichment could not
 affect membership or order.
 
-`docs/plans/0030-toolbar-sort-filter-query-surface-plan.md` was explicitly requested as the implementation blueprint for this
-increment and records user-confirmed requirements: the titlebar is the only
+The user-confirmed requirements behind this decision: the titlebar is the only
 library-name surface, no item count is shown, sort/filter live in native toolbar
 and menu commands, best date/kind/format are Store-owned query facts, sort/filter
 are session-only, direct user intents publish immediately, and background work
@@ -237,8 +236,6 @@ Update:
 - `docs/requirements.md`
 - `docs/index.md`
 - ADRs 0002, 0005, 0009, and 0010
-- specs 0004, 0007, 0009, 0011, 0012, 0014, 0022, and 0025 where they describe
-  current cadence, ordering, enrichment hot columns, or future sort/filter status
 - source file guides and focused comments in `CatalogModels`,
   `CatalogStorePersistence`, `CatalogStore`, `CatalogProjection`,
   `CatalogWindowViewModel`, `EnrichmentCoordinator`, `MediaEnricher`,

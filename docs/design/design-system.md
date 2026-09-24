@@ -65,7 +65,7 @@ Three levels. Every user-facing string is assigned to one. Level is expressed by
 **size and color together** — never by size alone, and never by weight alone.
 **[deviation from an earlier draft: an ambient level was retired —
 `DesignPalette` had zero real callers for it and no current surface shows ambient
-metadata a user merely notices rather than reads (plan 0095 increment 11);
+metadata a user merely notices rather than reads;
 inventing a caller for the unused level would have been a feature this app
 doesn't have, not a design rule.]**
 

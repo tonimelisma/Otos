@@ -3,8 +3,8 @@ import GRDB
 @testable import OtosKit
 import Testing
 
-/// Guards the freeze plan 0065 Stage 1 introduced: the v12/v13 migration bodies in
-/// `CatalogStorePersistence.swift` now inline literal, frozen `CREATE INDEX` SQL rather
+/// Guards the frozen claim indexes: the v12/v13 migration bodies in
+/// `CatalogStorePersistence.swift` inline literal, frozen `CREATE INDEX` SQL rather
 /// than calling `EnrichmentLeaseGateway.stalenessSQLPredicate` at migration time, so a
 /// fresh install's stored index text can never silently diverge from an existing
 /// catalog's just because the predicate builder was edited. These tests assert the

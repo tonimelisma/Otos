@@ -16,7 +16,7 @@ unchanged, and to materialize a scoped value map so changes outside the selected
 scope stayed equality-suppressed. That decision assumed re-sorting was expensive.
 
 Measurement overturned the assumption. With the precomputed per-asset sort key
-(`MediaSortKey`, FND-061), sorting 25k assets dropped from ~500 ms of localized
+(`MediaSortKey`, ARC-037), sorting 25k assets dropped from ~500 ms of localized
 collation to ~140 ms of plain key comparison, and a real-library trace showed the
 order cache's O(n) membership validation (~56 ms) and the scoped-map rebuild
 (~68 ms) cost more per publication than the cheap re-sort they were avoiding. The
@@ -37,7 +37,7 @@ It references but does not own:
 - coalesced publication and availability: ADR 0005
 - descriptor query ownership and generated best values: ADR 0011
 - collection rendering and diffable application: ADR 0006
-- the precomputed sort key itself: spec 0017
+- the precomputed sort key itself: ARC-037
 
 User sort modes, metadata ordering, and selection of individual media assets are
 outside this decision. Scan-time media eligibility is owned by ADR 0002.
@@ -108,14 +108,14 @@ Removed in the implementing increment: `cachedOrderedAssetIDs` and its validatio
 the scoped-map helper, the `assetOrderCacheHit` / `assetOrderSorted` /
 `assetMembershipChanged` / `membershipUs` / `scopedBuildUs` diagnostic fields, the
 matching unified-log `op=` boundaries, and the tests that asserted
-cache-hit reuse. FND-043 is rewritten. Git history owns the prior cache decision.
+cache-hit reuse. ARC-022 is rewritten. Git history owns the prior cache decision.
 
 ## Living Documentation Impact
 
-- FND-043 rewritten to the sort-every-publication, full-map contract.
+- ARC-022 rewritten to the sort-every-publication, full-map contract.
 - `CatalogProjection` file guide and comments updated.
 - `CatalogMediaGridState` comment updated (full map, not scoped).
-  increment; spec 0017 introduced the sort key this decision depends on.
+- The precomputed sort key this decision depends on is `MediaSortKey` (ARC-037).
 
 ## Verification
 

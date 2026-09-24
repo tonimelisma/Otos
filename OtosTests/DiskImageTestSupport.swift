@@ -3,7 +3,7 @@ import Foundation
 /// Mounts a scratch APFS disk image so a test can observe real
 /// `DiskArbitration` behavior against an actual disk image rather than a
 /// mocked resource-value fixture — the qualification predicate this supports
-/// (plan 0095 D10/increment 9) is specifically about a live system fact
+/// (APP-017) is specifically about a live system fact
 /// (`kDADiskDescriptionDeviceProtocolKey`), not one `URLResourceValues` alone
 /// can answer, so a real mount is what proves the code path, not a stand-in.
 enum DiskImageTestSupportError: Error {

@@ -125,7 +125,7 @@ struct CatalogStoreTests {
         #expect(reloaded.testAssets.map(\.name) == ["a.jpg"])
     }
 
-    /// Plan 0092 increment 4: library order is a stored property of the root,
+    /// APP-003: library order is a stored property of the root,
     /// user-owned via `moveLibrary(from:to:)` — not derived, and not a parallel
     /// list in preferences that would drift when a root is removed.
     @Test func moveLibraryReordersAndSurvivesReload() async throws {

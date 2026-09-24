@@ -137,8 +137,8 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
 
 ### P2. Liked, Not Rated, And Disliked
 
-- Liked/Not Rated/Disliked comes after Grid, Image, and Compare and is specified
-  by active Plan 0091.
+- Liked/Not Rated/Disliked comes after Grid, Image, and Compare and is
+  implemented as APP-024.
 - The mutually exclusive curation state is persisted in the Otos catalog.
 - Hover reveals heart, minus, and X direct controls; media has no curation chrome
   at rest. `P/U/X`, menus, and accessibility actions remain equivalent paths.
@@ -195,5 +195,5 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
   [user interface responsiveness](https://developer.apple.com/documentation/xcode/understanding-user-interface-responsiveness),
   [SwiftUI performance](https://developer.apple.com/documentation/xcode/understanding-and-improving-swiftui-performance).
 
-- Video playback in loupe — shipped as loupe click-to-play poster→player swap (plan 0069, APP-020).
-- Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped in plan 0052.
+- Video playback in loupe — shipped as loupe click-to-play poster→player swap (APP-020).
+- Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped (APP-020).

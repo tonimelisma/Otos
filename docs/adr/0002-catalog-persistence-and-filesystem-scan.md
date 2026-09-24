@@ -26,10 +26,9 @@ Verified repo facts:
 - The current app is a SwiftUI macOS app with an instrumentation facade in
   `Otos/Support/Instrumentation.swift`.
 - `docs/requirements.md` is the current implemented-requirements registry only;
-  unimplemented catalog behavior belongs in specs and ADRs until it lands.
-- Relevant current requirements include FND-001, FND-002, FND-006, FND-007,
-  FND-008, FND-009, FND-011, FND-014, FND-015, FND-019, FND-020, FND-024,
-  FND-025, FND-026, MED-001, MED-002, APP-001, and APP-006.
+  unimplemented catalog behavior belongs in ADRs and plans until it lands.
+- Relevant current requirements include ARC-003, ARC-004, ARC-006, ARC-008,
+  MED-001, MED-002, APP-001, and APP-006.
 
 Verified macOS API facts from the configured Xcode 27 beta SDK:
 
@@ -134,7 +133,7 @@ Separate ADRs or specs must own:
 - Camera package, AVCHD, XAVC, or other compound media-container import
   workflows.
 - Preview, render, edit, export, analysis, embedding, or search-index storage.
-- Per-path incremental filesystem-event catalog updates (V2; see spec 0023).
+- Per-path incremental filesystem-event catalog updates (V2).
 - Scan diagnostics stored in SQLite as product state.
 - Any decision to make filesystem-provided identifiers durable media identity.
 

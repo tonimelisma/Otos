@@ -168,7 +168,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(stillClaimed == 2)
     }
 
-    /// Plan 0062: `.removableVolume` roots claim with the metadata-only predicate and
+    /// ARC-037: `.removableVolume` roots claim with the metadata-only predicate and
     /// index. Assert the index choice on EXPLAIN QUERY PLAN — a correctness-only
     /// assertion would not catch a narrow query silently planning against the broad
     /// index.
@@ -208,7 +208,7 @@ struct CatalogStoreQueryPlanTests {
         #expect(plans.global.contains(EnrichmentLeaseGateway.metadataOnlyGlobalIndexName))
     }
 
-    /// Plan 0062 regression guard: a metadata-current asset with no digest is claimed by
+    /// Regression guard: a metadata-current asset with no digest is claimed by
     /// the metadata-only claim (a `.removableVolume` root) never, and by the broad claim
     /// (a library root) still — the wiring that must hold or removable enrichment spins
     /// forever.
