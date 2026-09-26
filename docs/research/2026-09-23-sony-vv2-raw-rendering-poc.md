@@ -17,10 +17,12 @@ SDR color and tone, not identical full-resolution detail or subjective preferenc
 
 The model is specific to the alpha 6700, Sony VV2, and the defined Apple RAW v8
 base development. It is not a universal look for arbitrary JPEGs or other cameras.
-The next useful investigation is the remaining illuminant/white-balance and
-high-ISO discrepancy, followed by broader capture-day and full-resolution
-validation. These results do not establish a need for a neural network or local
-adaptive processing.
+The [native-detail follow-up](2026-09-23-sony-vv2-native-detail.md) now records
+full-resolution crop comparisons and noise/sharpening experiments. The
+[portable algorithm package](sony-vv2-reference/README.md) preserves coefficients,
+native reference listings, fitting math, and synthetic tests without media.
+Broader capture-day and illuminant coverage remains a limit; these results do
+not establish a need for a neural network or local adaptive processing.
 
 ## Data and cloud-file admission
 

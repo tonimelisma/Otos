@@ -1,0 +1,142 @@
+{
+  "attemptedPairs": 312,
+  "missing": 0,
+  "scoredImages": 312,
+  "zeroAcceptedImages": 0,
+  "acceptedPatches": 2658,
+  "rejectedPatches": 150,
+  "measuredPixelsPerSetting": 300077568,
+  "settings": {
+    "none": {
+      "highpassMSE": 4.610383674471075e-05,
+      "rgbMSE": 0.00042898857479109134,
+      "rgbMAE": 0.013405592010430496
+    },
+    "r1s1": {
+      "highpassMSE": 6.824736891835847e-05,
+      "rgbMSE": 0.0005159984153292234,
+      "rgbMAE": 0.014229851871171144
+    },
+    "r1s05": {
+      "highpassMSE": 4.906948660119431e-05,
+      "rgbMSE": 0.00045161862432146013,
+      "rgbMAE": 0.013545237354056331
+    },
+    "r1s025": {
+      "highpassMSE": 4.555173219923753e-05,
+      "rgbMSE": 0.00043504888827337174,
+      "rgbMAE": 0.0134012711617787
+    },
+    "r2s05": {
+      "highpassMSE": 5.7936425128719075e-05,
+      "rgbMSE": 0.0005268931271643054,
+      "rgbMAE": 0.014349507129777487
+    },
+    "r2s025": {
+      "highpassMSE": 4.687316723254797e-05,
+      "rgbMSE": 0.0004544530524413251,
+      "rgbMAE": 0.013548953028036624
+    },
+    "r05s05": {
+      "highpassMSE": 4.57997835862025e-05,
+      "rgbMSE": 0.00043294430541470144,
+      "rgbMAE": 0.013396378335690122
+    },
+    "r05s025": {
+      "highpassMSE": 4.5536606427456644e-05,
+      "rgbMSE": 0.00043012785837025013,
+      "rgbMAE": 0.013389502139063527
+    }
+  },
+  "sessionHoldouts": [
+    {
+      "group": 0,
+      "images": 7,
+      "selected": "r05s025",
+      "baseline": 5.09636301672726e-05,
+      "selectedMSE": 5.0226342788851344e-05
+    },
+    {
+      "group": 1,
+      "images": 1,
+      "selected": "r05s025",
+      "baseline": 1.8266439596583233e-05,
+      "selectedMSE": 1.8094165666346096e-05
+    },
+    {
+      "group": 2,
+      "images": 51,
+      "selected": "r05s025",
+      "baseline": 2.9050041181428616e-05,
+      "selectedMSE": 2.8733717477174055e-05
+    },
+    {
+      "group": 3,
+      "images": 160,
+      "selected": "r1s025",
+      "baseline": 4.3265069142781785e-05,
+      "selectedMSE": 4.3092570508066766e-05
+    },
+    {
+      "group": 4,
+      "images": 18,
+      "selected": "r05s025",
+      "baseline": 0.0001646755326382519,
+      "selectedMSE": 0.00016014946074125998
+    },
+    {
+      "group": 5,
+      "images": 9,
+      "selected": "r1s025",
+      "baseline": 4.2926597317141124e-05,
+      "selectedMSE": 4.6552272734715384e-05
+    },
+    {
+      "group": 6,
+      "images": 34,
+      "selected": "r1s025",
+      "baseline": 2.1767931764652126e-05,
+      "selectedMSE": 2.233413003337548e-05
+    },
+    {
+      "group": 7,
+      "images": 30,
+      "selected": "r05s025",
+      "baseline": 4.7429110329094354e-05,
+      "selectedMSE": 4.6889665363894296e-05
+    },
+    {
+      "group": 8,
+      "images": 2,
+      "selected": "r05s025",
+      "baseline": 4.5970048635256015e-05,
+      "selectedMSE": 4.55128587241315e-05
+    }
+  ],
+  "heldoutDetailSelection": {
+    "baseline": 4.610383674471075e-05,
+    "selected": 4.579694322201872e-05,
+    "imagesImproved": 212
+  },
+  "highISO": {
+    "count": 16,
+    "means": {
+      "none": 0.00017956336622678318,
+      "r1s1": 0.00016427293471824123,
+      "r1s05": 0.00016406003021846483,
+      "r1s025": 0.0001698456337858035,
+      "r2s05": 0.00016525647565421653,
+      "r2s025": 0.00016842844715863963,
+      "r05s05": 0.00017012192756262037,
+      "r05s025": 0.00017438757847966092
+    }
+  },
+  "globalPreviewMSE": {
+    "median": 0.00037935828185850306,
+    "max": 0.004140595493029061
+  },
+  "secondsPerImage": {
+    "median": 3.706077456474304,
+    "max": 16.83523201942444
+  }
+}
