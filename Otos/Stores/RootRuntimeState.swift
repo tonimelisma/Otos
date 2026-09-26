@@ -18,6 +18,10 @@ nonisolated struct RootRuntimeState: Equatable {
     /// in `CatalogStore.activity(for:)` and is not written here.
     var activity: CatalogLibraryActivity
     var isEjectable: Bool
+    /// Process-local attachment generation for removable roots. It advances on
+    /// every attach, including a reconnect at the same path, so consumers can
+    /// distinguish a new connection even when detach and attach are coalesced.
+    var attachmentGeneration: UInt64
     /// Probed comparison rules for this root's filesystem namespace. Unknown or
     /// detached roots use the shared conservative fallback.
     var capabilities: VolumeNamespaceCapabilities
@@ -73,6 +77,7 @@ nonisolated struct RootRuntimeState: Equatable {
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
         isEjectable: Bool,
+        attachmentGeneration: UInt64 = 0,
         capabilities: VolumeNamespaceCapabilities = .unknown,
         skippedPackageCount: Int = 0,
         planRevision: UInt64 = 0,
@@ -86,6 +91,7 @@ nonisolated struct RootRuntimeState: Equatable {
         self.availability = availability
         self.activity = activity
         self.isEjectable = isEjectable
+        self.attachmentGeneration = attachmentGeneration
         self.capabilities = capabilities
         self.skippedPackageCount = skippedPackageCount
         self.planRevision = planRevision

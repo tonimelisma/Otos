@@ -1862,6 +1862,7 @@ extension CatalogStore {
         state.availability = .available
         state.activity = attachment.activity
         state.isEjectable = attachment.isEjectable
+        state.attachmentGeneration &+= 1
         state.capabilities = attachment.capabilities
         upsert(state)
         if attachment.kind == .removableVolume {
@@ -1897,6 +1898,7 @@ extension CatalogStore {
             availability: previous?.availability ?? .unknown,
             activity: previous?.activity ?? .idle,
             isEjectable: previous?.isEjectable ?? false,
+            attachmentGeneration: previous?.attachmentGeneration ?? 0,
             capabilities: previous?.capabilities ?? .unknown,
             skippedPackageCount: previous?.skippedPackageCount ?? 0,
             planRevision: (previous?.planRevision ?? 0) &+ 1,
@@ -2615,7 +2617,8 @@ private extension CatalogStore {
             sortIndex: state.sortIndex,
             availability: state.availability,
             activity: activity(for: state.path),
-            isEjectable: state.isEjectable
+            isEjectable: state.isEjectable,
+            attachmentGeneration: state.attachmentGeneration
         )
     }
 

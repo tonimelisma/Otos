@@ -341,9 +341,9 @@ items, and the card's acts belong on the card's row.
 so the sentence is about the result instead: L1 ✓ `42 items copied and verified` · L3
 `In Summer Photos · card ejected — safe to remove`, and **both** the choices zone and
 the act are omitted — their subject no longer exists (DES-053 exception). Reachable only
-from `.importBatch(new)`, since the removable row is gone, and drawn there only after a
-run that was not fully clean; a clean run has nothing this row's grid does not already
-show, so the bar leaves the moment it settles.
+from `.importBatch(new)`, since the removable row is gone, and drawn there only while
+an unresolved outcome exists: a non-clean completion, a stopped run, or a source-removal
+failure. A fully clean detached completion has no status left to report and is discarded.
 
 Two properties keep the attached case honest rather than a stale banner: it is produced
 by the re-plan, so a card that gains a file returns to **C** with `1 new item`; and the
@@ -462,10 +462,11 @@ matching on its spelling, which is the stringly-typed smell.
 `problem` becomes a typed reason whose cases are the causes the user can act on —
 source removed and destination unavailable — with one case reserved for the
 unexpected, whose clause names no cause and whose detail goes to the log rather than
-the bar. Both clauses above have no producer
-today: nothing fails with "card removed" (pulling a card removes the session and the
-row instead) and nothing fails with "destination unavailable" mid-execution. Those
-producers are part of the work, not an assumption.
+the bar. Both clauses have typed producers: a run whose source disappears is retained
+as `failed(.sourceRemoved, publishedCount:)` under its batch, and a destination failure
+uses the existing typed destination-unavailable reason. The source-removal result is
+settled by the owned execution task after detach, so a later result cannot recreate a
+live card presentation for a replacement attachment at the same path.
 
 ## What the presentation must carry
 
@@ -490,9 +491,9 @@ presentation has to carry the facts the states need. It currently carries four:
 | F, Stopped | Typed **stop reason** | No — a cancelled run reaches the completion as `isFullyClean: false` and nothing more, indistinguishable from a run that attempted everything and lost some. |
 | F, Stopped | The run's own **planned count**, for "12 of 42" | No — the re-plan's `copyCount` is the remainder, not the run's total, and moves if the card gains files. |
 
-Nothing here is a new subsystem: each is a fact the coordinator already knows and
-does not publish. Add them to the presentation rather than letting the view re-derive
-them, or the "one owner per fact" rule is lost at the last hop.
+These are coordinator-owned lifecycle facts. The presentation carries them rather than
+letting the view re-derive them, preserving the "one owner per fact" rule at the last
+hop.
 
 ## Where the user is standing
 
@@ -510,9 +511,9 @@ Two consequences that shape the journeys:
 - **A card and a library are the same kind of selection.** So the import bar is not a
   mode; it is what the content pane shows when the selected root happens to be
   removable. Nothing about the grid changes (DES-065).
-- **The batch row cannot pre-exist the import.** The real `ImportBatchID()` is minted
-  inside `MediaImportExecutor` when execution starts
-  (`MediaImportExecutor.swift:141`), and the row appears in the sidebar only once
+- **The batch row cannot pre-exist the import.** The coordinator mints the real
+  `ImportBatchID()` when execution starts and carries it through the executor
+  (`MediaOperationCoordinator.swift`); the row appears in the sidebar only once
   assets are journaled against it. So "select the new batch" is possible at execution
   start, but the row is empty for the first moment and fills as items land.
 - **Do not read the batch ID off the plan.** `MediaTransferPlanner.swift:77` mints a
@@ -520,10 +521,10 @@ Two consequences that shape the journeys:
   not the batch the assets land in, it changes on every re-plan, and using it would
   select a row that never exists.
 
-**Required change.** Today nothing moves the selection on import: the user presses
-Import and stays on `.library(card)`. The intended behaviour — the view follows the
-work to the new batch — needs `selectSidebar(.importBatch(batchID))` called once,
-at execution start.
+**Selection behavior.** The view follows a batch once when a live presentation proves
+that it has published assets. An unresolved detached outcome may follow only when no
+replacement live card presentation exists for that path. A zero-published failure,
+including a source-removal failure, never navigates to an empty batch row.
 
 **Carry the batch ID as state, not as an event.** The obvious implementation — watch
 the presentation stream for the moment a source turns `executing` and move the
@@ -553,12 +554,13 @@ looking at and did not ask for. The batch is the continuation of what they *were
 looking at, and it is what makes F's card-gone bar honest with no act on it — the items
 it is reporting are on screen.
 
-The ViewModel remembers the last batch each removable source produced
-(`lastBatchBySourcePath`) rather than reading it off the live presentation at removal
-time: the coordinator's presentation stream and the catalog publish that drops the row
-are independent, so which arrives first must not decide where the user lands. The move
-fires only when that batch is actually in the sidebar, so a card that imported nothing
-falls back exactly as before.
+The ViewModel remembers the last batch and attachment generation for each live
+removable source rather than reading it from a detached presentation at removal time:
+the coordinator's presentation stream and the catalog publish that drops the row are
+independent, so which arrives first must not decide where the user lands. Reattaching
+the same path invalidates the previous record, and the move fires only when that batch
+is actually in the sidebar, so a card that imported nothing falls back exactly as
+before.
 
 ## Journeys
 

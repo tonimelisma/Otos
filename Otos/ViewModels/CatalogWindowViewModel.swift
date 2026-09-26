@@ -261,7 +261,12 @@ final class CatalogWindowViewModel {
     /// `detachedBatchPresentations` before dropping a session. Written only
     /// from live sessions (`applyImportPresentations`), UI-only, same tier as
     /// `autoSelectedBatchIDs`.
-    var lastBatchBySourcePath: [LibraryRootPath: ImportBatchID] = [:]
+    struct AttachmentBatchRecord: Equatable {
+        let generation: MediaOperationAttachmentGeneration
+        let batch: ImportBatchID?
+    }
+
+    var lastBatchBySourcePath: [LibraryRootPath: AttachmentBatchRecord] = [:]
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
@@ -667,6 +672,7 @@ extension CatalogWindowViewModel {
             nextState.mediaEmptyState = .catalogIncompatible(catalogCompatibilityProblem)
         }
         let previousState = state
+        invalidateAttachmentDeliveryRecords(for: nextState.removableSources)
         applySidebarSelectionPolicy(previous: previousState, next: nextState)
         if let batchID = batchToFollowAfterSourceRemoved(nextState) {
             applyAutomaticSidebarSelection(.importBatch(batchID))
@@ -877,6 +883,20 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// A catalog attachment generation is authoritative for the source row.
+    /// Clearing a delivery record here handles a detach/reattach that is
+    /// coalesced before the operation stream delivers the fresh presentation.
+    private func invalidateAttachmentDeliveryRecords(for sources: [CatalogLibraryState]) {
+        for source in sources where source.attachmentGeneration != 0 {
+            guard let record = lastBatchBySourcePath[source.path],
+                  record.generation.rawValue != source.attachmentGeneration
+            else {
+                continue
+            }
+            lastBatchBySourcePath.removeValue(forKey: source.path)
+        }
+    }
+
     /// The batch to follow when the removable row the user is standing on
     /// stops existing — ejected after an import, or pulled — and that source's
     /// run produced a batch that is in the sidebar. `nil` whenever the current
@@ -899,7 +919,8 @@ extension CatalogWindowViewModel {
         guard case let .library(path) = queryDescriptor.scope,
               !nextState.libraries.contains(where: { $0.path == path }),
               !nextState.removableSources.contains(where: { $0.path == path }),
-              let batchID = lastBatchBySourcePath[path],
+              let record = lastBatchBySourcePath[path],
+              let batchID = record.batch,
               nextState.importBatches.contains(where: { $0.batchID == batchID })
         else {
             return nil

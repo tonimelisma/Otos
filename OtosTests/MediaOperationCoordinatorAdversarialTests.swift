@@ -819,28 +819,15 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
-        try await Task.sleep(for: .milliseconds(100))
-        try await waitUntilNoPresentation(coordinator, source: cardPath)
-
-        // Late execution completion must not recreate presentation
-        await execControl.resumePending(
-            for: cardPath,
-            with: .completed(
-                publishedCount: 1,
-                hasBlockedEntries: false,
-                hasEntryFailures: false,
-                skippedForeignCount: 0,
-                failedCount: 0,
-                incompleteItems: []
-            )
-        )
-        try await Task.sleep(for: .milliseconds(200))
+        // Cancellation settles the old batch as a source-removal failure, but
+        // it must not recreate a live presentation for the missing card.
         await queueTask3.value
-        let has = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
-        #expect(!has, "Late execution result after detach must not recreate presentation")
-        // Verify executor was asked to cancel on detach
-        // Controlled executor's cancel is observed via task cancellation; check control's cancelled set?
-        // At least ensure no crash.
+        let failed = try await waitForPresentation(coordinator, source: cardPath) { presentation in
+            guard presentation.cardStillExists == false else { return false }
+            guard case let .failed(reason, publishedCount) = presentation.state else { return false }
+            return reason == .sourceRemoved && publishedCount == 0
+        }
+        #expect(failed.batchID != nil)
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -1060,13 +1047,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// `import-bar.md` state F ("card gone"): the batch row outlives the
-    /// source session. A settled (not executing) attachment's final
-    /// presentation must still be findable by `batchID` after its source
-    /// detaches, with `cardStillExists` now false, so the bar can keep
-    /// rendering on `.importBatch(id)` after the removable row disappears.
-    @Test func batchPresentationSurvivesDetachAfterCleanSettle() async throws {
-        log("START batchPresentationSurvivesDetachAfterCleanSettle")
+    /// A fully clean settled attachment has no unresolved status to carry after
+    /// its source detaches. The journaled batch remains the source of truth for
+    /// the imported assets, but the transient clean bar is discarded.
+    @Test func cleanBatchPresentationIsDiscardedAfterDetach() async throws {
+        log("START cleanBatchPresentationIsDiscardedAfterDetach")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -1124,26 +1109,16 @@ struct MediaOperationCoordinatorAdversarialTests {
         let batchID = try #require(settled.batchID)
         #expect(settled.cardStillExists)
 
-        // Detach races the post-settlement re-plan on purpose: the detach
-        // path snapshots the batch's last presentation regardless of whether
-        // it catches the session `.completed`, `.building`, or `.ready` — the
-        // fact that matters (`session.lastCompletion`) is set the moment
-        // `copiedJustNow` above became non-nil and does not depend on phase.
         try await store.detachRemovableSource(identity: "volume:gone-snapshot", reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
 
-        // The batch's presentation survives its source session's removal by
-        // design (`import-bar.md` state F, "card gone") and keeps the same
-        // `sourcePath` — it is a fact about that batch, not a live session —
-        // so the oracle here is `cardStillExists` flipping to false under the
-        // stable `batchID`, never "no presentation for this source" (that
-        // would never resolve, since the snapshot is the intended survivor).
-        let afterDetach = try await waitForPresentation(coordinator, source: cardPath) { pres in
-            pres.batchID == batchID && pres.cardStillExists == false
-        }
-        #expect(afterDetach.copiedJustNow == 1)
+        try await waitUntilNoPresentation(coordinator, source: cardPath)
+        #expect(
+            await !(coordinator.currentPresentations().contains { $0.batchID == batchID }),
+            "Clean detached outcomes must not leave a transient batch presentation"
+        )
         log("END")
         await coordinator.shutdown()
     }

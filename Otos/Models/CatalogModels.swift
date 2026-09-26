@@ -386,6 +386,10 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
     let availability: LibraryAvailability
     let activity: CatalogLibraryActivity
     let isEjectable: Bool
+    /// Store-owned process-local identity of the current removable attachment.
+    /// It is never persisted and is zero for roots constructed outside the live
+    /// attachment owner.
+    let attachmentGeneration: UInt64
 
     var id: LibraryRootPath {
         root.id
@@ -428,13 +432,15 @@ nonisolated struct CatalogLibraryState: Identifiable, Hashable {
         sortIndex: Int64 = 0,
         availability: LibraryAvailability,
         activity: CatalogLibraryActivity,
-        isEjectable: Bool = false
+        isEjectable: Bool = false,
+        attachmentGeneration: UInt64 = 0
     ) {
         self.root = root
         self.sortIndex = sortIndex
         self.availability = availability
         self.activity = activity
         self.isEjectable = isEjectable
+        self.attachmentGeneration = attachmentGeneration
     }
 }
 

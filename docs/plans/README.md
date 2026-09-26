@@ -3,10 +3,6 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
-- [0104: Import status belongs to one attachment and one run](0104-import-status-lifecycle.md)
-  — planned; discard clean detached status, isolate unresolved run outcomes, and
-  make card replacement, eject navigation, and execution cleanup deterministic.
-
 Plan 0103 (Share, Open With, context menus, drag-out, curation undo, loupe zoom and
 info, trash confirmation) is complete across eight increments A–H and was removed at
 closure. It opened 2026-09-13 from an ideation pass on the macOS Share button and

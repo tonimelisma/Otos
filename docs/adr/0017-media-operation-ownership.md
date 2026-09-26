@@ -48,13 +48,15 @@ owns no facts of its own.
 A source's `SourceSession` does not outlive its source, so a batch selected from
 the sidebar's Imports row — which does outlive the source, by design — needs a
 presentation from somewhere once the session is gone. The coordinator owns that
-too: at detach, a settled (non-executing) session with a completed attachment is
-snapshotted under its batch ID into a small side table
-(`detachedBatchPresentations`) that `sortedPresentations()` folds in alongside live
-sessions. This keeps the invariant intact — one owner publishes every presentation
-fact — rather than letting the ViewModel reconstruct a "the card is gone" fact from
-the *absence* of a session, which is exactly the kind of re-derivation `import-bar.md`
-identifies as the failure mode this presentation exists to avoid.
+too: unresolved settled outcomes are snapshotted under their batch ID into a small
+side table (`detachedBatchPresentations`) that `sortedPresentations()` folds in
+alongside live sessions. Clean detached completions are discarded. If execution was
+still active, its actual task moves through `drainingExecutions`; the eventual result
+settles the old batch as a source-removal failure without mutating a replacement
+session at the same path. This keeps the invariant intact — one owner publishes every
+presentation fact — rather than letting the ViewModel reconstruct a "the card is gone"
+fact from the *absence* of a session, which is exactly the kind of re-derivation
+`import-bar.md` identifies as the failure mode this presentation exists to avoid.
 
 One fact is deliberately *not* coordinator-owned: whether a Cancel is currently in
 flight for a source (the bar's transient "Stopping…" state). Nothing about it
@@ -104,9 +106,8 @@ make because it is the one that removed the session and knows why.
 - The bar's mapper (`ImportBarPresentation.map`) needs no store, coordinator, or
   ViewModel reference; every fact it draws from is already on the presentation it
   is handed, including after the source session that produced it is gone.
-- A card pulled mid-execution (rather than ejected after settling) does not yet
-  produce a named Failed cause on the batch row — the cancel-vs-detach race is
-  unresolved follow-up, not a claim this ADR makes.
+- A card pulled mid-execution settles as a named source-removal failure under the
+  old batch; the live replacement attachment, if any, remains independent.
 
 Import workers hash their completed primary staging file before publication. The
 optional canonical digest is a field on `ActiveFileOperation`, is persisted before

@@ -499,8 +499,16 @@ nonisolated struct MediaOperationProgress: Equatable, Sendable {
     }
 }
 
+/// Process-local identity of one removable-source attachment. It is owned by
+/// `CatalogStore` and carried through operation publication; it is not durable
+/// media identity and never becomes a card fingerprint or sidecar value.
+nonisolated struct MediaOperationAttachmentGeneration: Equatable, Hashable, Sendable {
+    let rawValue: UInt64
+}
+
 nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identifiable {
     let sourcePath: LibraryRootPath
+    let attachmentGeneration: MediaOperationAttachmentGeneration
     /// Chooses "the camera" vs. "the card" wording while preparing
     /// (`import-bar.md` state A) without the mapper re-deriving it.
     let sourceKind: LibraryRootKind
@@ -610,6 +618,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
 
     init(
         sourcePath: LibraryRootPath,
+        attachmentGeneration: MediaOperationAttachmentGeneration = .init(rawValue: 0),
         sourceKind: LibraryRootKind,
         destinationPath: LibraryRootPath?,
         destinationDisplayName: String?,
@@ -629,6 +638,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         eraseOutcome: EraseOutcome? = nil
     ) {
         self.sourcePath = sourcePath
+        self.attachmentGeneration = attachmentGeneration
         self.sourceKind = sourceKind
         self.destinationPath = destinationPath
         self.destinationDisplayName = destinationDisplayName
@@ -649,7 +659,10 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     }
 
     var id: String {
-        sourcePath.rawValue
+        let attachment = attachmentGeneration.rawValue
+        let state = cardStillExists ? "live" : "detached"
+        let batch = batchID.map { String(describing: $0) } ?? "none"
+        return "\(sourcePath.rawValue)#\(attachment)#\(state)#\(batch)"
     }
 }
 

@@ -211,11 +211,9 @@ struct CatalogWindowViewModelMediaOperationsTests {
         #expect(model.selectedImportPresentation != nil)
     }
 
-    /// A fully clean settle leaves the batch row the moment it lands, card
-    /// gone or attached, with no timer: the user is looking at exactly what
-    /// they just imported, and the batch stays selected. Nothing is
-    /// remembered about the dismissal, so the very same frame still shows the
-    /// bar on the card's own row, where `Eject Card` and Erase live.
+    /// A fully clean live settle leaves the batch row immediately. A clean
+    /// detached snapshot is not an unresolved outcome and must not navigate to
+    /// that transient row.
     @Test func cleanSettleLeavesTheBatchRowImmediatelyAndKeepsTheCardRow() {
         for cardStillExists in [false, true] {
             let model = makeModel()
@@ -235,7 +233,10 @@ struct CatalogWindowViewModelMediaOperationsTests {
                 isFullyClean: true
             )
             model.applyImportPresentations([settled])
-            #expect(model.sidebarSelection == .importBatch(Self.batchID))
+            #expect(
+                model.sidebarSelection == (cardStillExists ? .importBatch(Self.batchID) : .library(Self.cardPath)),
+                "cardStillExists=\(cardStillExists)"
+            )
             #expect(model.selectedImportPresentation == nil, "cardStillExists=\(cardStillExists)")
 
             guard cardStillExists else { continue }
@@ -364,6 +365,21 @@ struct CatalogWindowViewModelMediaOperationsTests {
         model.applyImportPresentations([Self.presentation(
             batchID: Self.batchID,
             state: .failed(reason: .destinationUnavailable, publishedCount: 0),
+            batchHasPublishedAssets: false
+        )])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+    }
+
+    /// A source-removal failure with no published assets keeps its batch-level
+    /// facts available to an already selected batch, but never navigates from
+    /// the vanished card to an empty batch row.
+    @Test func detachedZeroPublishedFailureDoesNotFollowAnEmptyBatch() {
+        let model = makeModel()
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(
+            batchID: Self.batchID,
+            state: .failed(reason: .sourceRemoved, publishedCount: 0),
+            cardStillExists: false,
             batchHasPublishedAssets: false
         )])
         #expect(model.sidebarSelection == .library(Self.cardPath))

@@ -30,7 +30,7 @@ extension CatalogWindowViewModel {
             guard state.removableSources.contains(where: { $0.path == path }) else {
                 return nil
             }
-            return importPresentations.first { $0.sourcePath == path }
+            return importPresentations.first { $0.sourcePath == path && $0.cardStillExists }
         case let .importBatch(batchID):
             guard let presentation = importPresentations.first(where: { $0.batchID == batchID }),
                   presentation.isFullyClean != true
@@ -135,14 +135,14 @@ extension CatalogWindowViewModel {
             cancellingImportSources.formIntersection(stillExecuting)
         }
         // Live sessions only (`cardStillExists`): a detached snapshot carries
-        // the *previous* attachment's batch under the same `sourcePath`, and
-        // would otherwise resurrect it over the fresh session's honest `nil`.
-        // Assigning the optional straight through is what makes this
-        // self-clearing — re-inserting a card starts a session with no batch,
-        // which removes the key, so ejecting it again without importing falls
-        // back normally instead of following a stale batch.
+        // the previous attachment's batch under the same source path. The
+        // generation makes the handoff explicit, so a replacement attachment
+        // cannot inherit the old batch even if its fresh frame is delayed.
         for presentation in presentations where presentation.cardStillExists {
-            lastBatchBySourcePath[presentation.sourcePath] = presentation.batchID
+            lastBatchBySourcePath[presentation.sourcePath] = AttachmentBatchRecord(
+                generation: presentation.attachmentGeneration,
+                batch: presentation.batchID
+            )
         }
         followNewBatchesOnce(presentations)
         Task {
@@ -170,7 +170,12 @@ extension CatalogWindowViewModel {
     /// Media — is a real navigation choice and is respected.
     private func followNewBatchesOnce(_ presentations: [MediaOperationSourcePresentation]) {
         for presentation in presentations {
+            let replacementIsLive = presentations.contains {
+                $0.sourcePath == presentation.sourcePath && $0.cardStillExists
+            }
             guard let batchID = presentation.batchID,
+                  presentation.cardStillExists || !replacementIsLive,
+                  presentation.cardStillExists || presentation.isFullyClean != true,
                   presentation.batchHasPublishedAssets,
                   !autoSelectedBatchIDs.contains(batchID)
             else {
@@ -189,7 +194,7 @@ extension CatalogWindowViewModel {
     /// `SourceSession.preferences` — rather than a second ViewModel-owned
     /// dictionary kept in sync by a per-frame refresh.
     func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
-        importPresentations.first { $0.sourcePath == source }?.sessionPreferences ?? importPreferences
+        importPresentations.first { $0.sourcePath == source && $0.cardStillExists }?.sessionPreferences ?? importPreferences
     }
 
     /// Writes only to the coordinator; the next `publish()` carrying the new

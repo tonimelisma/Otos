@@ -86,6 +86,15 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 | `MaterializationCoordinator` | actor | bounded consumer-fed interactive/device/background queues, per-id waiter coalescing and effective priority, 16-transfer admission, one-background-per-root fairness, known-materialization suppression, per-root `providerUnavailable` circuit breaker (2 consecutive ETIMEDOUT at device/background → 60s `providerBreakerOpen` suppression, never for interactive), truthful blocked/unblocked admission diagnostics during effective interactive demand, per-waiter-priority scoping of `activeRequestCount(under:)` so eject drain sees only enrichment-originated demand | gives every deliberate provider request one scheduling and lifecycle owner; its supervisor is the only dispatcher |
 | `PreviewImageLoader` | actor | loupe/compare full-size decode, live byte-read gate, per-id decode coalesce + small LRU | serializes decode/cache state off MainActor and delegates interactive materialization |
 | `VideoPreviewLoader` | `@MainActor` final class | loupe video stateless factory: live `SF_DATALESS` gate, interactive materialization, AVPlayer creation, synchronous cleanup | player is `@MainActor` UI object (AVFoundation 27); single owner is ViewModel's `loupeVideoState`, loader holds no `currentState` — no duplication, no unsafe |
+
+Import attachment lifecycle: `CatalogStore` assigns a process-local generation when a
+removable root is attached. `MediaOperationCoordinator` carries that generation through
+the live session and presentation, owns the actual execution task, and transfers an
+executing task to a batch-keyed drain when the source disappears. Clean detached
+completions are discarded; unresolved completions and source-removal failures remain
+detached presentations until the batch is superseded. `CatalogWindowViewModel` uses only
+the current live generation for source-row lookup, preferences, and eject-follow, so a
+reattached card at the same path cannot inherit the previous batch.
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;

@@ -67,7 +67,7 @@ nonisolated enum SidebarSelectionPolicy {
     ) -> Bool {
         switch sidebarSelection {
         case let .library(path):
-            path == presentation.sourcePath
+            path == presentation.sourcePath && presentation.cardStillExists
         case let .importBatch(batchID):
             batchID == presentation.batchID
         default:
