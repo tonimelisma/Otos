@@ -4,6 +4,10 @@ Experiments performed September 23, 2026; documentation finalized September 26.
 This completes the media-independent reference for the measured Sony VV2 look.
 It does not implement an Otos editor or claim bit-identical Sony processing.
 
+The [subsequent failure analysis](2026-09-26-sony-lens-and-indoor-color.md)
+qualifies readiness: the recipe is reproducible, but indoor color and edge
+geometry remain imperfect. It preserves improved, narrowly validated candidates.
+
 ## Decision
 
 Preserve the trained color model and its original RAW boundary: decoder 8,

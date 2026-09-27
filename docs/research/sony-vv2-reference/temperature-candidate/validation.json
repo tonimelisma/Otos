@@ -1,0 +1,114 @@
+{
+  "originalSessionHoldouts": {
+    "images": 344,
+    "baselineMeanCIE76": 2.3684481019582244,
+    "candidateMeanCIE76": 2.178329252839946,
+    "imagesImproved": 290,
+    "sessions": [
+      {
+        "group": 0,
+        "images": 9,
+        "baseline": 3.2095760277252126,
+        "candidate": 3.1332868893021466
+      },
+      {
+        "group": 1,
+        "images": 2,
+        "baseline": 2.706760827635332,
+        "candidate": 2.5332610270051488
+      },
+      {
+        "group": 2,
+        "images": 56,
+        "baseline": 2.54031018570484,
+        "candidate": 2.4189322112419664
+      },
+      {
+        "group": 3,
+        "images": 176,
+        "baseline": 1.9225086918376895,
+        "candidate": 1.7978547817953359
+      },
+      {
+        "group": 4,
+        "images": 18,
+        "baseline": 4.822467167445914,
+        "candidate": 3.6153583233933673
+      },
+      {
+        "group": 5,
+        "images": 10,
+        "baseline": 2.0152685909483647,
+        "candidate": 2.015632404809505
+      },
+      {
+        "group": 6,
+        "images": 38,
+        "baseline": 2.5000535506682318,
+        "candidate": 2.1905553322125852
+      },
+      {
+        "group": 7,
+        "images": 33,
+        "baseline": 2.8440048504678224,
+        "candidate": 2.7730027365824235
+      },
+      {
+        "group": 8,
+        "images": 2,
+        "baseline": 2.0081255457931113,
+        "candidate": 2.1067733466043324
+      }
+    ]
+  },
+  "newDates": {
+    "requestedPairs": 51,
+    "decodedAndEvaluated": 19,
+    "dates": 19,
+    "baselineMeanCIE76": 3.0586755016328904,
+    "candidateMeanCIE76": 2.803772534047347,
+    "imagesImproved": 15,
+    "warmBelow4500Kelvin": [
+      {
+        "temperature": 3577.110595703125,
+        "baseline": 1.963717515831798,
+        "candidate": 1.8950298186438728
+      },
+      {
+        "temperature": 3312.599609375,
+        "baseline": 5.296604801029371,
+        "candidate": 3.3869268857865658
+      },
+      {
+        "temperature": 4141.34130859375,
+        "baseline": 2.05763237572961,
+        "candidate": 1.6839979167461934
+      }
+    ]
+  },
+  "materialization": {
+    "totalRequestedIncludingDiagnosis": 55,
+    "decoded": 19,
+    "unavailable": 36,
+    "plannedBytes": 2382700544,
+    "decodedPairBytes": 794390528,
+    "scope": "Initial 55-pair batch; three targeted geometry pairs subsequently materialized, one overlapping the initial batch."
+  },
+  "nativeVerification": {
+    "syntheticCases": 448,
+    "maximumAbsoluteError": 3.3306690738754696e-16,
+    "invalidTemperaturesRejected": true,
+    "malformedModelsRejected": true,
+    "invalidRGBRejected": true,
+    "mediaAccessDeniedDuringVerification": true
+  },
+  "lens": {
+    "allOriginal344ReportedSupportedAndEnabled": true,
+    "newPairsWithNonzeroOnOffDifference": 19,
+    "onOffMAERange": [
+      0.0062269088241098496,
+      0.08862200376301589
+    ],
+    "isSonyLensCalibration": false
+  }
+}

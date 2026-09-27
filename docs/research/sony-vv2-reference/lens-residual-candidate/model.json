@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "referenceWidth": 2048,
+  "referenceHeight": 1366,
+  "coefficients": [
+    -0.017572138316005178,
+    0.022215805668243487,
+    -1.1172178092224254,
+    -1.040799560910212,
+    3.2124359612897795,
+    -0.6152171654466562
+  ],
+  "camera": "ILCE-6700",
+  "reportedLensModel": "Sony E 18-50mm F2.8",
+  "focalLengthMM": 18,
+  "rawDecoder": "8",
+  "requiresAppleLensCorrection": true,
+  "scope": "Experimental residual for tested landscape previews; other sizes, orientations, lens settings and native-resolution quality are unvalidated."
+}

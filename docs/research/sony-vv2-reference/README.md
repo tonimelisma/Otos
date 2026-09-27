@@ -1,8 +1,14 @@
 # Sony VV2 algorithm reference — no media required
 
+The original fixed model has known indoor-color and edge-geometry failures.
+The [failure analysis](../2026-09-26-sony-lens-and-indoor-color.md) preserves an
+improved [temperature-conditioned candidate](temperature-candidate/README.md)
+and a narrow [18 mm lens residual](lens-residual-candidate/README.md). These are
+separate experimental supplements, not replacements silently applied below.
+
 This package preserves the learned algorithm and numerical data needed to
 implement it later, without retaining any training media. It contains no photo,
-thumbnail, image crop, per-photo metadata, sampled photo pixels, or private path
+thumbnail, image crop, capture metadata manifests, sampled photo pixels, or private path
 manifest. There are no third-party runtime dependencies.
 
 - `model.json`: exact final channel curves and residual LUT, with format version.
