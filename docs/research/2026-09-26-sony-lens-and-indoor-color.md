@@ -7,6 +7,10 @@ match. User review exposed poor indoor color and a systematic edge mismatch in
 original gallery photos 2, 3 and 6. This pass preserves two improved candidates
 with explicit limits. Neither is silently promoted into the original model.
 
+The [subsequent methods review](2026-09-27-sony-matching-methods.md) compares
+calibration, metadata/image adaptation, preview-assisted matching and validation
+practices. Its proposed experiments have not yet been executed.
+
 ## Outcome
 
 - A temperature-conditioned residual color model improves the original session
