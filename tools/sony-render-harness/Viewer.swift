@@ -1,8 +1,8 @@
 import Foundation
 
-// The research viewer reads only PNGs emitted by the same evaluation run. Its
-// images remain in native output geometry; measurement registration is never
-// applied to these visual comparisons. All files stay in the private output dir.
+/// The research viewer reads only PNGs emitted by the same evaluation run. Its
+/// images remain in native output geometry; measurement registration is never
+/// applied to these visual comparisons. All files stay in the private output dir.
 func viewerHTML(ids: [String]) throws -> String {
     let data = try JSONSerialization.data(withJSONObject: ids)
     let pairIDs = String(data: data, encoding: .utf8)!

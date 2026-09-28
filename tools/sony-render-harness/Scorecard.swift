@@ -27,8 +27,8 @@ enum ScorecardError: Error {
     case insufficientValidPixels
 }
 
-// Fixed Gaussian sigma, with explicit kernel support and edge extension. Core
-// Image's blur radius is not used as an undocumented substitute for sigma.
+/// Fixed Gaussian sigma, with explicit kernel support and edge extension. Core
+/// Image's blur radius is not used as an undocumented substitute for sigma.
 func gaussianBlur(_ frame: RGBFrame, sigma: Double = 1.2) -> RGBFrame {
     let radius = Int(ceil(3 * sigma))
     let weights = (-radius ... radius).map { offset in
@@ -102,7 +102,9 @@ func colorScore(candidate: RGBFrame, target: RGBFrame, inset: Int = 8) throws ->
             if (0 ..< 3).contains(where: {
                 raw[index + $0] <= 0 || raw[index + $0] >= 1
                     || reference[index + $0] <= 0 || reference[index + $0] >= 1
-            }) { clipped += 1 }
+            }) {
+                clipped += 1
+            }
             lowErrors.append(ciede2000(lab(candidateLow.rgba, index), lab(targetLow.rgba, index)))
             highErrors.append(ciede2000(lab(raw, index), lab(reference, index)))
         }
@@ -112,8 +114,12 @@ func colorScore(candidate: RGBFrame, target: RGBFrame, inset: Int = 8) throws ->
     }
     lowErrors.sort()
     highErrors.sort()
-    func mean(_ values: [Double]) -> Double { values.reduce(0, +) / Double(values.count) }
-    func p95(_ values: [Double]) -> Double { values[Int(ceil(Double(values.count) * 0.95)) - 1] }
+    func mean(_ values: [Double]) -> Double {
+        values.reduce(0, +) / Double(values.count)
+    }
+    func p95(_ values: [Double]) -> Double {
+        values[Int(ceil(Double(values.count) * 0.95)) - 1]
+    }
     return ColorScore(
         validFraction: Double(lowErrors.count) / Double(totalPixels),
         clippedFraction: Double(clipped) / Double(lowErrors.count),

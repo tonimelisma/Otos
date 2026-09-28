@@ -21,17 +21,17 @@ if [[ ! -s "$output/NativeReference.swift" ]]; then
 fi
 
 xcrun swiftc -O -module-cache-path "$output/swift-cache" \
-    "$root/script/sony-render-harness/ColorDifference.swift" \
-    "$root/script/sony-render-harness/Scorecard.swift" \
-    "$root/script/sony-render-harness/Geometry.swift" \
-    "$root/script/sony-render-harness/Viewer.swift" \
+    "$root/tools/sony-render-harness/ColorDifference.swift" \
+    "$root/tools/sony-render-harness/Scorecard.swift" \
+    "$root/tools/sony-render-harness/Geometry.swift" \
+    "$root/tools/sony-render-harness/Viewer.swift" \
     "$output/NativeReference.swift" \
-    "$root/script/sony-render-harness/main.swift" \
+    "$root/tools/sony-render-harness/main.swift" \
     -o "$output/sony-render-harness"
 
 xcrun swiftc -O -parse-as-library -module-cache-path "$output/swift-cache" \
-    "$root/script/sony-render-harness/Materialize.swift" \
+    "$root/tools/sony-render-harness/Materialize.swift" \
     -o "$output/sony-render-materialize"
 
 "$output/sony-render-harness" self-test \
-    "$root/script/sony-render-harness/ciede2000-reference.txt"
+    "$root/tools/sony-render-harness/ciede2000-reference.txt"

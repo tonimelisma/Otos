@@ -1,8 +1,8 @@
 import Foundation
 
-// Numerical D65 sRGB/CIELAB and CIEDE2000 reference for the plan-0105 scorecard.
-// Input RGB is encoded sRGB in [0, 1]. Clipping is counted by the caller, before
-// this conversion; it must not be hidden by this function.
+/// Numerical D65 sRGB/CIELAB and CIEDE2000 reference for the plan-0105 scorecard.
+/// Input RGB is encoded sRGB in [0, 1]. Clipping is counted by the caller, before
+/// this conversion; it must not be hidden by this function.
 struct Lab: Equatable {
     let l: Double
     let a: Double
@@ -25,8 +25,8 @@ struct Lab: Equatable {
     }
 }
 
-// Sharma, Wu & Dalal, Color Research & Application 30(1), 2005, equations 2–22.
-// Parametric factors are all one. Hue is expressed in degrees until trig use.
+/// Sharma, Wu & Dalal, Color Research & Application 30(1), 2005, equations 2–22.
+/// Parametric factors are all one. Hue is expressed in degrees until trig use.
 func ciede2000(_ lhs: Lab, _ rhs: Lab) -> Double {
     let c1 = hypot(lhs.a, lhs.b), c2 = hypot(rhs.a, rhs.b)
     let meanC = (c1 + c2) / 2
@@ -35,7 +35,9 @@ func ciede2000(_ lhs: Lab, _ rhs: Lab) -> Double {
     let a1 = (1 + g) * lhs.a, a2 = (1 + g) * rhs.a
     let cp1 = hypot(a1, lhs.b), cp2 = hypot(a2, rhs.b)
     func hue(_ a: Double, _ b: Double) -> Double {
-        if a == 0 && b == 0 { return 0 }
+        if a == 0 && b == 0 {
+            return 0
+        }
         let angle = atan2(b, a) * 180 / .pi
         return angle < 0 ? angle + 360 : angle
     }
@@ -52,17 +54,18 @@ func ciede2000(_ lhs: Lab, _ rhs: Lab) -> Double {
     let dH = 2 * sqrt(cp1 * cp2) * sin(dh * .pi / 360)
     let meanL = (lhs.l + rhs.l) / 2
     let meanCp = (cp1 + cp2) / 2
-    let meanH: Double
-    if cp1 * cp2 == 0 {
-        meanH = h1 + h2
+    let meanH: Double = if cp1 * cp2 == 0 {
+        h1 + h2
     } else if abs(h1 - h2) <= 180 {
-        meanH = (h1 + h2) / 2
+        (h1 + h2) / 2
     } else if h1 + h2 < 360 {
-        meanH = (h1 + h2 + 360) / 2
+        (h1 + h2 + 360) / 2
     } else {
-        meanH = (h1 + h2 - 360) / 2
+        (h1 + h2 - 360) / 2
     }
-    func cosine(_ angle: Double) -> Double { cos(angle * .pi / 180) }
+    func cosine(_ angle: Double) -> Double {
+        cos(angle * .pi / 180)
+    }
     let t = 1 - 0.17 * cosine(meanH - 30) + 0.24 * cosine(2 * meanH)
         + 0.32 * cosine(3 * meanH + 6) - 0.20 * cosine(4 * meanH - 63)
     let theta = 30 * exp(-pow((meanH - 275) / 25, 2))

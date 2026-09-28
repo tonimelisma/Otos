@@ -1,9 +1,9 @@
 import Darwin
 import Foundation
 
-// Deliberate research provisioning, separate from the evaluation byte-read path.
-// `request` issues File Provider downloads without faulting on media bytes;
-// `status` observes only inode flags. Neither command opens originals for writing.
+/// Deliberate research provisioning, separate from the evaluation byte-read path.
+/// `request` issues File Provider downloads without faulting on media bytes;
+/// `status` observes only inode flags. Neither command opens originals for writing.
 private struct Item: Decodable {
     let id: String
     let raw: String
@@ -40,7 +40,7 @@ private struct Materialize {
             throw ErrorKind.usage
         }
         let manifest = try JSONDecoder().decode(Manifest.self,
-            from: Data(contentsOf: URL(fileURLWithPath: args[2])))
+                                                from: Data(contentsOf: URL(fileURLWithPath: args[2])))
         var local = 0, dataless = 0, unknown = 0, requested = 0, errors = 0
         var localBytes: Int64 = 0
         for pair in manifest.pairs {
@@ -48,7 +48,8 @@ private struct Materialize {
                 let url = URL(fileURLWithPath: path)
                 var info = stat()
                 guard lstat(url.path(percentEncoded: false), &info) == 0,
-                      info.st_mode & S_IFMT == S_IFREG else {
+                      info.st_mode & S_IFMT == S_IFREG
+                else {
                     unknown += 1
                     continue
                 }
@@ -72,9 +73,9 @@ private struct Materialize {
             }
         }
         let report = Report(files: manifest.pairs.count * 2, localFiles: local,
-            datalessFiles: dataless, unknownFiles: unknown,
-            localLogicalBytes: localBytes, requestedFiles: requested,
-            requestErrors: errors)
+                            datalessFiles: dataless, unknownFiles: unknown,
+                            localLogicalBytes: localBytes, requestedFiles: requested,
+                            requestErrors: errors)
         let encoded = try JSONEncoder().encode(report)
         try encoded.write(to: URL(fileURLWithPath: args[3]))
         print(String(data: encoded, encoding: .utf8)!)

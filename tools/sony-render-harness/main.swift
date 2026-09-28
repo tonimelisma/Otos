@@ -44,7 +44,8 @@ func localData(_ path: String) throws -> Data {
 
 func zeroOrigin(_ image: CIImage) -> CIImage {
     image.transformed(by: CGAffineTransform(
-        translationX: -image.extent.minX, y: -image.extent.minY))
+        translationX: -image.extent.minX, y: -image.extent.minY
+    ))
 }
 
 func scaled(_ image: CIImage, longEdge: CGFloat = 768) -> CIImage {
@@ -57,11 +58,12 @@ func scaled(_ image: CIImage, longEdge: CGFloat = 768) -> CIImage {
 
 func encodedImage(_ image: CIImage) throws -> CIImage {
     guard image.extent.width.isFinite, image.extent.height.isFinite,
-          !image.extent.isEmpty else {
+          !image.extent.isEmpty
+    else {
         throw HarnessError.decodeFailed("invalid extent \(image.extent)")
     }
     guard let cg = colorContext.createCGImage(image, from: image.extent,
-                                               format: .RGBAh, colorSpace: encodedSpace)
+                                              format: .RGBAh, colorSpace: encodedSpace)
     else { throw HarnessError.decodeFailed("encoded image conversion") }
     return CIImage(cgImage: cg, options: [.colorSpace: NSNull()])
 }
@@ -85,21 +87,22 @@ func image(_ pixels: RGBFrame) -> CIImage {
 
 func registrationImage(_ image: CIImage) throws -> CGImage {
     guard let cg = numericContext.createCGImage(image, from: image.extent,
-                                                 format: .RGBA8, colorSpace: displaySpace)
+                                                format: .RGBA8, colorSpace: displaySpace)
     else { throw HarnessError.decodeFailed("registration image conversion") }
     return cg
 }
 
-// Vision reports a homography in its image-coordinate convention. Test its two
-// directions and y-axis conventions against the same fixed interior; record the
-// selected orientation rather than allowing a silent registration fallback.
+/// Vision reports a homography in its image-coordinate convention. Test its two
+/// directions and y-axis conventions against the same fixed interior; record the
+/// selected orientation rather than allowing a silent registration fallback.
 func perspective(_ image: CIImage, matrix: simd_float3x3,
-                 size: CGSize, flipY: Bool) -> CIImage {
+                 size: CGSize, flipY: Bool) -> CIImage
+{
     let width = image.extent.width, height = image.extent.height
     func point(_ x: CGFloat, _ y: CGFloat) -> CIVector {
         let py = flipY ? height - y : y
         let v = matrix * SIMD3<Float>(Float(x / width * size.width),
-                                       Float(py / height * size.height), 1)
+                                      Float(py / height * size.height), 1)
         let mappedX = CGFloat(v.x / v.z) / size.width * width
         let mappedY = CGFloat(v.y / v.z) / size.height * height
         return CIVector(x: mappedX, y: flipY ? height - mappedY : mappedY)
@@ -129,9 +132,11 @@ func interiorMSE(_ a: RGBFrame, _ b: RGBFrame) -> Double {
 }
 
 func register(_ source: CIImage, to target: CIImage, width: Int, height: Int)
-    throws -> (image: CIImage, mse: Double, matrix: simd_float3x3, inverse: Bool, flipY: Bool) {
-    let request = VNHomographicImageRegistrationRequest(
-        targetedCGImage: try registrationImage(source), options: [:])
+    throws -> (image: CIImage, mse: Double, matrix: simd_float3x3, inverse: Bool, flipY: Bool)
+{
+    let request = try VNHomographicImageRegistrationRequest(
+        targetedCGImage: registrationImage(source), options: [:]
+    )
     try VNImageRequestHandler(cgImage: registrationImage(target), options: [:])
         .perform([request])
     guard let matrix = request.results?.first?.warpTransform else {
@@ -144,7 +149,9 @@ func register(_ source: CIImage, to target: CIImage, width: Int, height: Int)
             let aligned = perspective(source, matrix: inverse ? matrix.inverse : matrix,
                                       size: CGSize(width: width, height: height), flipY: flip)
             let error = interiorMSE(frame(aligned, width: width, height: height), targetFrame)
-            if best == nil || error < best!.1 { best = (aligned, error, inverse, flip) }
+            if best == nil || error < best!.1 {
+                best = (aligned, error, inverse, flip)
+            }
         }
     }
     guard let best, best.1.isFinite else { throw HarnessError.registrationFailed }
@@ -153,23 +160,25 @@ func register(_ source: CIImage, to target: CIImage, width: Int, height: Int)
 
 func writePNG(_ image: CIImage, to url: URL) throws {
     try numericContext.writePNGRepresentation(of: image, to: url,
-                                               format: .RGBA8, colorSpace: displaySpace)
+                                              format: .RGBA8, colorSpace: displaySpace)
 }
 
-// Four unregistered, native-resolution corners. These reveal real detail and
-// geometry errors instead of magnifying the 768-pixel evaluation previews.
+/// Four unregistered, native-resolution corners. These reveal real detail and
+/// geometry errors instead of magnifying the 768-pixel evaluation previews.
 func writeNativeCorners(rawData: Data, target: CIImage, decoder: CIRAWDecoderVersion,
                         neutralRaw: CIRAWFilter, model: LookModel, directory: URL)
-    throws -> (width: Int, height: Int) {
+    throws -> (width: Int, height: Int)
+{
     guard let defaultRaw = CIRAWFilter(imageData: rawData,
                                        identifierHint: "com.sony.arw-raw-image"),
-          defaultRaw.supportedDecoderVersions.contains(decoder)
+        defaultRaw.supportedDecoderVersions.contains(decoder)
     else { throw HarnessError.decoderUnavailable }
     defaultRaw.decoderVersion = decoder
     defaultRaw.scaleFactor = 1
     neutralRaw.scaleFactor = 1
     guard let defaultImage = defaultRaw.outputImage,
-          let neutralImage = neutralRaw.outputImage else {
+          let neutralImage = neutralRaw.outputImage
+    else {
         throw HarnessError.decodeFailed("native RAW output")
     }
     let apple = zeroOrigin(defaultImage), neutral = zeroOrigin(neutralImage)
@@ -192,7 +201,7 @@ func writeNativeCorners(rawData: Data, target: CIImage, decoder: CIRAWDecoderVer
         let neutralCrop = try encodedImage(zeroOrigin(neutral.cropped(to: rect)))
         let sonyCrop = try encodedImage(zeroOrigin(reference.cropped(to: rect)))
         let neutralFrame = frame(neutralCrop, width: size, height: size)
-        let fixedCrop = image(try apply(model, to: neutralFrame))
+        let fixedCrop = try image(apply(model, to: neutralFrame))
         try writePNG(appleCrop, to: cropDirectory.appendingPathComponent("apple.png"))
         try writePNG(neutralCrop, to: cropDirectory.appendingPathComponent("neutral.png"))
         try writePNG(fixedCrop, to: cropDirectory.appendingPathComponent("fixed-model.png"))
@@ -248,7 +257,7 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
           Int(apple.extent.height.rounded()) == height
     else { throw HarnessError.incompatibleDimensions }
     let neutralFrame = frame(neutral, width: width, height: height)
-    let filtered = image(try apply(model, to: neutralFrame))
+    let filtered = try image(apply(model, to: neutralFrame))
     let registration = try register(filtered, to: target, width: width, height: height)
     let matrixTarget = registration.image
     // These are measurement-only coordinates. Viewer images below remain in each
@@ -266,10 +275,10 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
     let geometry = try geometryScore(candidate: alignedFixedPixels, target: targetPixels,
                                      nativeLongEdge: Int(max(raw.nativeSize.width,
                                                              raw.nativeSize.height)))
-    let scores = [
-        "apple": try colorScore(candidate: frame(alignedApple, width: width, height: height), target: targetPixels),
-        "neutral": try colorScore(candidate: frame(alignedNeutral, width: width, height: height), target: targetPixels),
-        "fixedModel": try colorScore(candidate: alignedFixedPixels, target: targetPixels),
+    let scores = try [
+        "apple": colorScore(candidate: frame(alignedApple, width: width, height: height), target: targetPixels),
+        "neutral": colorScore(candidate: frame(alignedNeutral, width: width, height: height), target: targetPixels),
+        "fixedModel": colorScore(candidate: alignedFixedPixels, target: targetPixels),
     ]
     let pairDirectory = output.appendingPathComponent(pair.id)
     try FileManager.default.createDirectory(at: pairDirectory, withIntermediateDirectories: true)
@@ -316,7 +325,7 @@ func selfTest(_ path: String) throws {
     let gray = Lab.srgb(0.5, 0.5, 0.5)
     guard abs(gray.a) < 0.01, abs(gray.b) < 0.01 else { throw HarnessError.malformedReferenceData }
     let constant = RGBFrame(width: 32, height: 32,
-                            rgba: Array(repeating: [Float(0.5), 0.5, 0.5, 1], count: 32 * 32).flatMap { $0 })
+                            rgba: Array(repeating: [Float(0.5), 0.5, 0.5, 1], count: 32 * 32).flatMap(\.self))
     let score = try colorScore(candidate: constant, target: constant)
     guard score.meanLowFrequencyDE00 == 0, score.validFraction == 1 else {
         throw HarnessError.malformedReferenceData
@@ -325,8 +334,10 @@ func selfTest(_ path: String) throws {
     var state: UInt32 = 0x6172_7738
     for i in 0 ..< 128 * 96 {
         state = 1_664_525 &* state &+ 1_013_904_223
-        let value = Float(state & 0xffff) / 65535
-        for channel in 0 ..< 3 { pattern[i * 4 + channel] = value }
+        let value = Float(state & 0xFFFF) / 65535
+        for channel in 0 ..< 3 {
+            pattern[i * 4 + channel] = value
+        }
         pattern[i * 4 + 3] = 1
     }
     let patterned = RGBFrame(width: 128, height: 96, rgba: pattern)
@@ -334,7 +345,7 @@ func selfTest(_ path: String) throws {
                                               nativeLongEdge: 128)
     let flat = RGBFrame(width: 128, height: 96,
                         rgba: Array(repeating: [Float(0.5), 0.5, 0.5, 1],
-                                    count: 128 * 96).flatMap { $0 })
+                                    count: 128 * 96).flatMap(\.self))
     let flatGeometry = try geometryScore(candidate: flat, target: flat,
                                          nativeLongEdge: 128)
     guard identicalGeometry.reliable > 20,
@@ -396,12 +407,12 @@ func run() throws {
                 completedIDs.append(pair.id)
                 print("evaluated \(pair.id) \(pair.role.rawValue) \(pair.session)")
             } catch {
-                let status: String
-                if let harnessError = error as? HarnessError,
-                   case .unavailableOriginal = harnessError {
-                    status = "unavailable"
+                let status = if let harnessError = error as? HarnessError,
+                                case .unavailableOriginal = harnessError
+                {
+                    "unavailable"
                 } else {
-                    status = "failed"
+                    "failed"
                 }
                 failures.append(["id": pair.id, "status": status,
                                  "reason": String(describing: error)])
@@ -416,7 +427,9 @@ func run() throws {
         try summary.write(to: output.appendingPathComponent("summary.json"))
         try viewerHTML(ids: completedIDs).write(to: output.appendingPathComponent("index.html"),
                                                 atomically: true, encoding: .utf8)
-        if !failures.isEmpty { throw HarnessError.partialEvaluation }
+        if !failures.isEmpty {
+            throw HarnessError.partialEvaluation
+        }
     } else {
         throw HarnessError.usage
     }
