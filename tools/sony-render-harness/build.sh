@@ -24,6 +24,7 @@ xcrun swiftc -O -module-cache-path "$output/swift-cache" \
     "$root/tools/sony-render-harness/ColorDifference.swift" \
     "$root/tools/sony-render-harness/Scorecard.swift" \
     "$root/tools/sony-render-harness/Geometry.swift" \
+    "$root/tools/sony-render-harness/NativeGeometry.swift" \
     "$root/tools/sony-render-harness/Viewer.swift" \
     "$output/NativeReference.swift" \
     "$root/tools/sony-render-harness/main.swift" \
