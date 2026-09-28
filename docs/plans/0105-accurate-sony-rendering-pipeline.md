@@ -3,6 +3,9 @@
 Status: active implementation plan; no stage below is newly completed by writing
 this document. Opened September 27, 2026. The user requests a staged plan from
 simple to complex that ends in an actually accurate, implemented transformation.
+The [September 27 harness result](../research/2026-09-27-sony-render-harness.md)
+froze private splits and reproduced color/geometry failures. Stage 1 remains open
+for native correspondence, detail and viewer checks; no model tuning has begun.
 
 ## Objective and completion boundary
 
