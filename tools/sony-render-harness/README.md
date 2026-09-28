@@ -64,8 +64,17 @@ only those same outputs. It is a private local page, never a public gallery.
   p95 residual in native-pixel units. It is a diagnostic on a downscaled image,
   so it cannot alone certify the plan's half-native-pixel geometry target.
 - The native crops provide visual detail/noise/halo evidence but no automated
-  native detail pass yet. Geometry and color failures remain separate. Do not fit
-  or select a model using `acceptance` images before the final pipeline is frozen.
+  native detail pass yet. A separate native geometry diagnostic reads the same
+  full-resolution RAW and Sony images at 15 fixed frame locations, selecting a
+  textured subpatch inside each tile from the Sony image alone. It matches
+  gradient patches without using the preview homography. Flat, ambiguous and
+  search-boundary tiles are counted. Its p95 displacement is withheld below 8/15
+  reliable tiles; 8/15 is a reporting floor, not release certification. The
+  private JSON retains each matched position, displacement and correlation.
+  `prepare-geometry-probe.py` selects the focal extremes of each verified
+  training session before results are inspected. Geometry and color failures
+  remain separate. Do not fit or select a model using `acceptance` images before
+  the final pipeline is frozen.
 
 The browser-based A/B controls could not be agent-validated in this environment:
 automatic approval review denied opening the private derived-media page. PNG

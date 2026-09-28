@@ -167,7 +167,7 @@ func writePNG(_ image: CIImage, to url: URL) throws {
 /// geometry errors instead of magnifying the 768-pixel evaluation previews.
 func writeNativeCorners(rawData: Data, target: CIImage, decoder: CIRAWDecoderVersion,
                         neutralRaw: CIRAWFilter, model: LookModel, directory: URL)
-    throws -> (width: Int, height: Int)
+    throws -> (width: Int, height: Int, geometry: NativeGeometryScore)
 {
     guard let defaultRaw = CIRAWFilter(imageData: rawData,
                                        identifierHint: "com.sony.arw-raw-image"),
@@ -188,6 +188,10 @@ func writeNativeCorners(rawData: Data, target: CIImage, decoder: CIRAWDecoderVer
           reference.extent.width >= 1024, reference.extent.height >= 1024
     else { throw HarnessError.incompatibleDimensions }
     let width = Int(reference.extent.width), height = Int(reference.extent.height)
+    let geometry = try nativeGeometryScore(source: neutral, target: reference) { crop in
+        let encoded = try encodedImage(zeroOrigin(crop))
+        return frame(encoded, width: 192, height: 192)
+    }
     let size = 512
     let corners: [(String, Int, Int)] = [
         ("tl", 0, height - size), ("tr", width - size, height - size),
@@ -207,7 +211,7 @@ func writeNativeCorners(rawData: Data, target: CIImage, decoder: CIRAWDecoderVer
         try writePNG(fixedCrop, to: cropDirectory.appendingPathComponent("fixed-model.png"))
         try writePNG(sonyCrop, to: cropDirectory.appendingPathComponent("sony.png"))
     }
-    return (width, height)
+    return (width, height, geometry)
 }
 
 func apply(_ model: LookModel, to source: RGBFrame) throws -> RGBFrame {
@@ -292,6 +296,9 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
     let scoreData = try JSONEncoder().encode(scores)
     let scoreObject = try JSONSerialization.jsonObject(with: scoreData)
     let geometryObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(geometry))
+    let nativeGeometryObject = try JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(native.geometry)
+    )
     return [
         "id": pair.id, "session": pair.session, "role": pair.role.rawValue,
         "width": width, "height": height, "decoder": raw.decoderVersion.rawValue,
@@ -300,6 +307,7 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
         "materialization": "alreadyLocal",
         "scores": scoreObject, "registrationMSE": registration.mse,
         "geometry": geometryObject,
+        "nativeGeometry": nativeGeometryObject,
         "registrationInverse": registration.inverse,
         "registrationFlipY": registration.flipY,
     ]
@@ -351,6 +359,7 @@ func selfTest(_ path: String) throws {
     guard identicalGeometry.reliable > 20,
           (identicalGeometry.p95ResidualNativePixels ?? .infinity) < 0.05,
           flatGeometry.reliable == 0 else { throw HarnessError.malformedReferenceData }
+    try nativeGeometrySelfTest()
     print("34 published CIEDE2000 pairs, scorecard and geometry fixtures: pass")
 }
 
