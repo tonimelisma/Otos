@@ -10,6 +10,10 @@ The [native geometry audit](../research/2026-09-27-sony-native-geometry-audit.md
 confirms a large 18 mm edge pattern, but high-ISO correspondence and a native
 lens correction remain unsolved. Its profile fits are diagnostics, not a new
 rendering model.
+The [Apple RAW lens-switch audit](../research/2026-09-28-sony-lens-switch-audit.md)
+found lens correction supported and enabled by default in the measured pairs;
+disabling it loses reliable Sony correspondences, while the enabled 18 mm output
+still differs by roughly 24 native pixels at p95. Stage 2 remains open.
 
 ## Objective and completion boundary
 

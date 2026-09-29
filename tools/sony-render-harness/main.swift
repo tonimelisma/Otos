@@ -398,6 +398,34 @@ func run() throws {
     guard arguments.count >= 3 else { throw HarnessError.usage }
     if arguments[1] == "self-test", arguments.count == 3 {
         try selfTest(arguments[2])
+    } else if arguments[1] == "lens-audit", arguments.count == 4 {
+        let manifest = try JSONDecoder().decode(Manifest.self,
+                                                from: Data(contentsOf: URL(fileURLWithPath: arguments[2])))
+        let output = URL(fileURLWithPath: arguments[3])
+        try validate(manifest, output: output)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        var failures = [[String: String]]()
+        for pair in manifest.pairs {
+            do {
+                let record = try lensAudit(pair)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                try encoder.encode(record).write(to: output.appendingPathComponent(pair.id + ".json"))
+                print("audited \(pair.id) \(pair.role.rawValue) \(pair.session)")
+            } catch {
+                failures.append(["id": pair.id, "reason": String(describing: error)])
+                fputs("failed: \(pair.id)\n", stderr)
+            }
+        }
+        let summary = try JSONSerialization.data(withJSONObject: [
+            "planned": manifest.pairs.count,
+            "completed": manifest.pairs.count - failures.count,
+            "failures": failures,
+        ], options: [.prettyPrinted, .sortedKeys])
+        try summary.write(to: output.appendingPathComponent("summary.json"))
+        if !failures.isEmpty {
+            throw HarnessError.partialEvaluation
+        }
     } else if arguments[1] == "evaluate", arguments.count == 5 {
         let manifest = try JSONDecoder().decode(Manifest.self,
                                                 from: Data(contentsOf: URL(fileURLWithPath: arguments[2])))

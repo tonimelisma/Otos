@@ -76,6 +76,15 @@ only those same outputs. It is a private local page, never a public gallery.
   remain separate. Do not fit or select a model using `acceptance` images before
   the final pipeline is frozen.
 
+Run `sony-render-harness lens-audit verified-development.json /private/output-dir`
+to compare Apple neutral RAW development with its documented lens correction
+explicitly enabled and disabled. This command uses the same native tile matcher
+and writes one private JSON record per pair plus a completion summary. It also
+records whether the correction is supported and enabled by default. Neither
+output is registered to the Sony target; low match coverage is reported, not
+treated as a large measured error. Use only development/regression manifests
+while the acceptance set remains untouched.
+
 The browser-based A/B controls could not be agent-validated in this environment:
 automatic approval review denied opening the private derived-media page. PNG
 assets can be inspected locally. That limitation keeps the visual acceptance
