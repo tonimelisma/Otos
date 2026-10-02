@@ -7,6 +7,8 @@ import simd
 /// Native training for the explicit look. Sampling is an initializer: only actual
 /// native HEIFs can establish photographic acceptance or exact-export capacity.
 enum AuthoredCalibration {
+    enum DiagnosticScope: String { case withheldRegions, wholeImageExpression }
+
     private struct Sample {
         let input: SIMD3<Double>
         let target: SIMD3<Double>
@@ -194,10 +196,10 @@ enum AuthoredCalibration {
     }
 
     /// Per-image coefficients are offline diagnostic artifacts only. Appearance
-    /// regions plus a 12-evaluation-pixel support buffer are excluded from fitting;
-    /// the ordinary native renderer then validates those regions in actual HEIFs.
+    /// regions plus a support buffer are excluded in withheld mode. Whole-image
+    /// expression mode reports fitted evidence without a validation claim.
     static func capacity(_ manifest: Manifest, samplesRoot: URL, input: NativeRAWRecipe,
-                         mode: AuthoredLook.ToneMode, card: AppearanceLookCard, destination: URL) throws
+                         mode: AuthoredLook.ToneMode, card: AppearanceLookCard, scope: DiagnosticScope = .withheldRegions, destination: URL) throws
     {
         try card.validate()
         guard input != .appleDefault, !manifest.pairs.isEmpty,
@@ -210,13 +212,15 @@ enum AuthoredCalibration {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         for pair in manifest.pairs {
+            let excluded = scope == .withheldRegions ? card.regions[pair.id]! : []
             let observations = try readSamples(pair, root: samplesRoot, input: input,
-                                               excluding: card.regions[pair.id]!, minimumSamples: 48)
+                                               excluding: excluded, minimumSamples: 48)
             let (look, loss) = try solve(observations.samples, input: input, mode: mode)
             try encoder.encode(look).write(to: destination.appendingPathComponent(pair.id + ".json"), options: .withoutOverwriting)
-            let report: [String: Any] = ["kind": "offline per-image initialization; actual held-out-region native HEIF validation required",
+            let report: [String: Any] = ["kind": scope == .withheldRegions ? "offline per-image initialization; actual held-out-region native HEIF validation required" : "whole-image tone expression initializer; fitted pixels are not validation",
+                                         "scope": scope.rawValue, "validationEvidence": false,
                                          "id": pair.id, "samples": observations.samples.count, "supportBufferEvaluationPixels": 12,
-                                         "excludedRegions": card.regions[pair.id]!.map(\.name), "weightedRGBLoss": loss,
+                                         "excludedRegions": excluded.map(\.name), "weightedRGBLoss": loss,
                                          "targetResamplingOutOfRangeSamples": observations.clampedTargets]
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: destination.appendingPathComponent(pair.id + ".fit.json"), options: .withoutOverwriting)
@@ -280,11 +284,11 @@ enum AuthoredCalibration {
         print("op=authored.colour.fit images=\(manifest.pairs.count) samples=\(sampleCount) bounded=\(bounded) seconds=\(Date().timeIntervalSince(start))")
     }
 
-    /// Diagnostic colour capacity uses only pixels outside the frozen appearance
-    /// regions and their support buffer. These per-image coefficients are never
-    /// loaded by an inference selector. Actual native HEIFs validate the held-out regions.
+    /// Diagnostic colour fitting has explicit withheld-region or whole-image
+    /// expression scope. These coefficients never enter an inference selector.
+    /// Only actual native HEIFs can validate withheld regions.
     static func colourCapacity(_ manifest: Manifest, samplesRoot: URL, base: AuthoredLook,
-                               card: AppearanceLookCard, regularization: Double = 0.00003, destination: URL) throws
+                               card: AppearanceLookCard, regularization: Double = 0.00003, scope: DiagnosticScope = .withheldRegions, objectiveSpace: DisplayColourObjective = .encodedRGB, destination: URL) throws
     {
         try base.validate()
         try card.validate()
@@ -297,7 +301,8 @@ enum AuthoredCalibration {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         for pair in manifest.pairs {
-            let observations = try readSamples(pair, root: samplesRoot, input: base.input, excluding: card.regions[pair.id]!, minimumSamples: 48, colourLook: base)
+            let excluded = scope == .withheldRegions ? card.regions[pair.id]! : []
+            let observations = try readSamples(pair, root: samplesRoot, input: base.input, excluding: excluded, minimumSamples: 48, colourLook: base)
             var matrix = [Double](repeating: 0, count: 125 * 125), rhs = [Double](repeating: 0, count: 375)
             let samples = observations.samples.map { sample -> DisplayColourObservation in
                 let x = base.displayLinear(sample.input)
@@ -321,12 +326,13 @@ enum AuthoredCalibration {
             var object = try JSONSerialization.jsonObject(with: encoder.encode(base)) as! [String: Any]
             object["colourCorrection"] = ["dimension": 5, "coefficients": initial.coefficients]
             let initialized = try AuthoredLook(json: JSONSerialization.data(withJSONObject: object))
-            let result = try refineDisplayColour(samples, initial: initialized, regularization: regularization)
+            let result = try refineDisplayColour(samples, initial: initialized, regularization: regularization, objectiveSpace: objectiveSpace)
             object["colourCorrection"] = ["dimension": 5, "coefficients": result.coefficients]
             let look = try AuthoredLook(json: JSONSerialization.data(withJSONObject: object))
             try encoder.encode(look).write(to: destination.appendingPathComponent(pair.id + ".json"), options: .withoutOverwriting)
-            let report: [String: Any] = ["kind": "withheld-region colour capacity initializer; actual native validation required", "id": pair.id,
-                                         "samples": samples.count, "excludedRegions": card.regions[pair.id]!.map(\.name), "supportBufferEvaluationPixels": 12,
+            let report: [String: Any] = ["kind": scope == .withheldRegions ? "withheld-region colour capacity initializer; actual native validation required" : "whole-image expression fit; fitted pixels are not validation", "id": pair.id,
+                                         "scope": scope.rawValue, "objectiveSpace": objectiveSpace.rawValue, "validationEvidence": false,
+                                         "samples": samples.count, "excludedRegions": excluded.map(\.name), "supportBufferEvaluationPixels": 12,
                                          "initialObjective": result.initialLoss, "finalObjective": result.loss, "regularization": regularization, "coefficientBound": 0.5]
             try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
                 .write(to: destination.appendingPathComponent(pair.id + ".fit.json"), options: .withoutOverwriting)
@@ -334,8 +340,8 @@ enum AuthoredCalibration {
         }
     }
 
-    /// Author one shared style from explicit anchors and broad training. These
-    /// anchors define appearance and never masquerade as held-out validation.
+    /// Fit one shared camera-render recipe from explicitly weighted paired
+    /// examples and broad training. Weighted examples are training evidence.
     static func authorLook(_ manifest: Manifest, samplesRoot: URL, base: AuthoredLook,
                            card: AppearanceLookCard, training: Manifest, trainingRoot: URL, mixture: Double, objectiveSpace: DisplayColourObjective, regularization: Double = 0.00003, destination: URL) throws
     {

@@ -1,18 +1,19 @@
 # Standalone vivid RAW 9 pipeline: photographic validation
 
 Date: 2026-10-01. Scope: Sony ILCE-6700 sensor RAW, macOS Core Image decoder 9,
-native-resolution 10-bit SDR sRGB HEIF. This is an authored vivid appearance outside
-Otos, using Sony VV2 HEIFs as offline style examples. It does not reconstruct every
-camera rendering decision or claim calibrated physical colour accuracy.
+native-resolution 10-bit SDR sRGB HEIF outside Otos. The objective is matching
+the user's Sony VV2 camera HEIFs from RAW alone. The current recipe is a working
+baseline, not an accepted matching pipeline. This report preserves measured export
+and fitting evidence; it does not establish completion of Plan 0105.
 
-## Accepted fixed recipe and responsibilities
+## Current candidate recipe and responsibilities
 
 The [recipe](authored-raw9-reference/recipe.json) is format 5, fitted with 55% equal
 mass for the six explicit authoring examples and 45% broad training mass, minimizing
 normalized D65 Lab squared error through the final display transform. Training has
 152 captures from 28 dates; authoring has six captures from three other dates;
-selection has 18 captures from 18 separate dates. Authoring scores define the look,
-not unseen generalization. Canonical encoded recipe SHA256:
+selection has 18 captures from 18 separate dates. Fitted-example scores are training diagnostics,
+not unseen generalization or a replacement for matching acceptance. Canonical encoded recipe SHA256:
 `25bfc59a18a64cc18538efac06f52180e7dba9dfa56efbce9ee9b6e2cb0c6c08`.
 
 Native development owns sensor decoding, capture white balance/baseline exposure,
@@ -25,7 +26,10 @@ metadata/orientation and no-overwrite atomic publication. No per-photo selector,
 preview statistics, companion dependency, automatic local adjustment or custom
 lens profile enters rendering.
 
-## Appearance evidence and remaining measurement limits
+## Fitted-region evidence and remaining measurement limits
+
+These median-colour limits are supplementary diagnostics. They do not establish
+the original mean-pixel DE00 <=2 difficult-region gate, which remains required.
 
 Brightness |delta L| <=2, median-colour DE00 <=3 and |delta chroma| <=3 remain the
 frozen [look-card](authored-raw9-reference/look-card.json) nominal limits. Actual
@@ -50,12 +54,12 @@ actual visible defects independently block acceptance.
 
 The 75% author-priority variant was rejected: it closes nominal anchors but creates
 three new combined selection failures. A bounded estimate between 50% and 75%
-identified 55% as one final experiment. The accepted 55% candidate closes the last
+identified 55% as one final experiment. The 55% candidate closes the last
 nominal warm-shirt chroma discrepancy with zero new combined passing-case failures
 on the 18 selection images. Mean DE00 changes from 1.869291 to 1.885875; the worst
-per-image mean increase is +0.04531. This small average tradeoff was accepted to
-satisfy the explicit material/skin look, with native visual review of the three
-largest regressions. No arbitrary fraction sweep, larger field or adaptation was
+per-image mean increase is +0.04531. Seven of the 18 selection images still fail the original whole-image mean <=2
+and p95 <=5 limits. Zero new failures does not mean zero failures. Native review
+of three regressions and improvement of fitted regions do not establish acceptance. No arbitrary fraction sweep, larger field or adaptation was
 added. The 18 selection images influenced adoption and are not fresh acceptance.
 
 ## Native photographic ablations
@@ -93,10 +97,10 @@ decoder/export checks across four source/date groups and four other lenses. They
 have no intended vivid-look reference and are not evidence that the desired look
 has been achieved. Their rendered appearance did not select or tune the recipe.
 Further online sample collection stopped when the user questioned its relevance.
-The former 50-image/ten-unseen-shoot quota is replaced by explicit appearance and
-operation coverage above: a count of arbitrary RAW files cannot certify this look.
-This changes the framework openly, not the frozen colour tolerances or failure
-reporting. New cameras or materially different lighting require new validation.
+The original 50-pair/ten-independent-unseen-shoot matching acceptance remains open.
+RAW-only export checks cannot replace it. The prior claim that appearance/operation
+coverage replaced this gate was unjustified. The paired collection must be audited
+and assigned honest training, development and untouched roles.
 
 Across all 99 files, independent FFprobe inspection verifies HEVC Main 10,
 yuv420p10le, sRGB transfer and BT.709 primaries; capture metadata and native dimensions

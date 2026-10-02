@@ -614,7 +614,7 @@ but the gallery HTML request returns HTTP403 here; no access bypass is attempted
 Public photos/derived outputs are not redistributed in Git or the PR.
 
 
-## Final photographic decision
+## Current photographic candidate
 
 The 55% author-priority normalized-Lab recipe supersedes the 50% working comparator.
 The [final validation](2026-10-01-vivid-raw9-pipeline-validation.md) records the bounded
@@ -622,6 +622,7 @@ selection decision, actual stage ablations, 14 reliable region passes/three unkn
 comparisons, final native review and 94 fresh private RAW exports. Five public RAWs
 were used only for decoder/export verification; the user questioned their relevance
 to the vivid filter, and further online collection stopped. They do not certify
-the authored appearance. The appearance-focused coverage contract openly replaces
-the arbitrary ten-shoot quota while retaining numerical limits, all failures and
-honest dependency reporting. No new aesthetic preference was inferred.
+matching accuracy. The previous appearance-focused completion claim was unjustified:
+the original paired matching and ten-independent-shoot gates remain open. Seven
+whole-image development failures and three uncertain regions prevent acceptance.
+See the restored Plan 0105 and paired-data research for continuation.

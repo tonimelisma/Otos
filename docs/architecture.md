@@ -283,7 +283,10 @@ you touch two layers, the boundary is probably wrong — move the responsibility
 `AuthoredLook` / `MetalAuthoredLook` own the versioned normalization, tone, creative
 colour and display pixel function; `SonySensorRAWHEIFRenderer` owns native HEIF
 encoding and atomic publication. Calibration/region measurement alone read offline
-appearance anchors. See [ADR 0029](adr/0029-standalone-authored-raw-look-boundary.md)
+camera HEIF training/evaluation targets. `ComparisonCalibration` owns development-only
+perturbation audits; pixelwise matching and median diagnostics remain distinct.
+Supplementary FLIP is an external offline tool (ADR 0031), absent from rendering
+and fitting. See [ADR 0029](adr/0029-standalone-authored-raw-look-boundary.md)
 and the [vivid recipe validation](research/2026-10-01-vivid-raw9-pipeline-validation.md).
-The fixed standalone recipe has photographic and native-output evidence; these
-tools do not implement an app editing/export feature.
+The fixed recipe is a working baseline: photographic matching acceptance remains
+open in Plan 0105. These tools do not implement an app editing/export feature.
