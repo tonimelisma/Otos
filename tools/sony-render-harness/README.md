@@ -1,11 +1,12 @@
 # Standalone Sony RAW rendering and measurement harness
 
 This standalone tool develops Sony ILCE-6700 sensor RAWs into native-resolution
-10-bit SDR sRGB HEIFs with a fixed authored vivid look. It runs outside Otos.
+10-bit SDR sRGB HEIFs to match the user's Sony VV2 camera rendering. It runs outside
+Otos. The checked-in fixed recipe is a baseline; matching acceptance remains open.
 Rendering takes sensor RAW, capture metadata and a versioned recipe only; embedded
 previews, camera companions and fitting data never enter inference. Apple's native
-lens correction is independently owned and reported. Offline HEIF anchors define
-the appearance. See [ADR 0029](../../docs/adr/0029-standalone-authored-raw-look-boundary.md)
+lens correction is independently owned and reported. Camera HEIFs are paired
+training/evaluation targets. See [ADR 0029](../../docs/adr/0029-standalone-authored-raw-look-boundary.md)
 and the [photographic validation and feedback contract](../../docs/research/2026-10-01-vivid-raw9-pipeline-validation.md).
 Keep all photo manifests, output PNGs and model fitting data
 outside Git. The tool reads originals but never writes to their directories.
@@ -37,6 +38,46 @@ verified manifest. Keep its report and the SHA256 of each frozen private manifes
 The look audit requests Sony's namespace explicitly and checks CreativeStyle,
 PictureProfile, DRO, contrast, saturation, sharpness, clarity, highlights,
 shadows, fade and sharpness range on both files.
+
+### Calibrate the comparison before selecting renderer changes
+
+```text
+sony-render-harness comparison-calibrate development.json capture_name /private/audit-whole.json
+sony-render-harness comparison-calibrate development.json capture_name /private/audit-native.json native-crop
+```
+
+Only `selection` or `regression` roles are accepted; acceptance data is rejected.
+The command reads the camera target with its colour profile/orientation, uses a
+768-long-edge whole view or an unresized central native crop, and produces known
+colour/detail/shift perturbations, DE00 maps and a numerical response report.
+Identity and colour round-trip must score zero; known integer shifts must recover
+zero local error when the supplied correspondence is correct. All perturbations
+use the same display-clamped reference. Extended-range decoded values and the
+historical effect of clamping are reported separately. The ordinary linear-light
+Gaussian alternative is explicitly not S-CIELAB. PNGs are visual diagnostics;
+actual HEIF colour measurements retain floating-point inputs.
+
+Region reports name pixelwise matching outcomes separately from
+`diagnosticOutcome` / `diagnosticPasses` for median-colour diagnostics. Whole-image
+historical scores are unregistered; separately measured geometry does not itself
+make them aligned. Use reliable fixed RAW-derived region correspondence and report
+unknown coverage before attributing a failure to colour. See the
+[comparison research](../../docs/research/2026-10-01-camera-match-comparison-method.md).
+Optional offline FLIP measurement follows
+[ADR 0031](../../docs/adr/0031-offline-camera-match-perceptual-diagnostic.md);
+it has no app/renderer dependency or accepted release threshold.
+
+### Offline expression diagnostics
+
+`matching-colour-diagnostic-fit` accepts the existing capacity arguments followed
+by an explicit `withheldRegions` / `wholeImageExpression` scope and `encodedRGB` /
+`normalizedLab` objective. `matching-tone-diagnostic-fit` accepts the existing
+`authored-capacity-fit` arguments followed by the same scope. Both call the existing
+fitting owner, reject non-regression roles and existing output directories, and
+mark expression reports as non-validation evidence. Whole-image expression fits
+sampled target pixels; it cannot establish held-out accuracy or global incapacity
+when an initializer fails. Actual native HEIFs and independent RAW geometry are
+required for checking. No per-photo recipe lookup enters inference.
 
 ### Reproduce the fixed baseline
 
@@ -237,14 +278,15 @@ regularizer and runtime recipe remain unchanged. These experimental objectives r
 native regression and selection evidence; they are not accepted presets.
 
 
-### Reproduce the authored vivid look
+### Reproduce the current matching baseline
 
 `authored-look-fit training.json training-samples authoring.json authoring-samples
 base-recipe.json look-card.json authoring-fraction encodedRGB|normalizedLab output-directory` fits one shared
 bounded field. Authoring inputs have role `authoring`; selection, regression and
 acceptance roles are rejected. Training and authoring capture-date groups must be
-disjoint. Authoring regions define the style and are never reported as holdouts.
-The selected 0.55 `normalizedLab` recipe is checked in as
+disjoint. These fitted regions are training controls and are never reported as
+holdouts or proof that the camera rendering is matched.
+The working 0.55 `normalizedLab` recipe is checked in as
 [`recipe.json`](../../docs/research/authored-raw9-reference/recipe.json).
 It is reproducible byte-for-byte in canonical encoded form. Its photographic
 evidence and limitations are recorded in the validation report. It is not an exact

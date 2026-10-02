@@ -26,6 +26,7 @@ xcrun swiftc -O -swift-version 6 -strict-concurrency=complete -Xcc -DACCELERATE_
     "$root/tools/sony-render-harness/AuthoredCalibrationExport.swift" \
     "$root/tools/sony-render-harness/ColorDifference.swift" \
     "$root/tools/sony-render-harness/Scorecard.swift" \
+    "$root/tools/sony-render-harness/ComparisonCalibration.swift" \
     "$root/tools/sony-render-harness/Geometry.swift" \
     "$root/tools/sony-render-harness/NativeGeometry.swift" \
     "$root/tools/sony-render-harness/LensAudit.swift" \

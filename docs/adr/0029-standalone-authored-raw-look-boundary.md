@@ -1,4 +1,4 @@
-# 0029 — Standalone authored RAW look boundary
+# 0029 — Standalone RAW camera-render matching boundary
 
 Status: accepted for the standalone implementation. Photographic evidence and
 reopening rules live in the [vivid recipe validation](../research/2026-10-01-vivid-raw9-pipeline-validation.md).
@@ -6,10 +6,10 @@ reopening rules live in the [vivid recipe validation](../research/2026-10-01-viv
 ## Context
 
 The requested algorithm develops sensor RAWs into ready HEIFs outside the Otos app.
-A versioned authored appearance must work without a camera-rendered companion or
-embedded preview. Camera-rendered HEIFs are offline appearance anchors; they are
-neither inference inputs nor physical colour ground truth. Native lens correction
-and authored colour/tone must have independent ownership and diagnostics.
+The target is the visible rendering of the user's Sony VV2 camera HEIFs. Camera
+HEIFs provide paired training/evaluation targets; rendering must work from sensor
+RAW and its capture metadata without any camera image or embedded preview. Native
+lens correction and colour/tone have independent ownership and diagnostics.
 
 ## Decision
 
@@ -42,16 +42,21 @@ observed. Named signposts and structured stage logs expose development, colour
 application, encoding and publication without adding media content to diagnostics.
 
 Offline calibration owns reference access, role/date-group validation, bounded
-fitting, explicit authored-anchor priorities and diagnostic capacity recipes.
-Authoring and broad training have disjoint capture-date groups; fitted anchors
-define appearance and never count as independent validation. Reduced aligned observations initialize
-models; actual native HEIFs validate photographic claims. Capacity recipes exclude
-frozen appearance regions from both spatial and palette sampling. They are not
-runtime selectors. Offline final-display fitting names encoded-RGB or normalized D65 CIELAB error
+fitting, explicit fitted-example weights and diagnostic capacity recipes.
+Fitted examples and broad training have disjoint capture-date groups; fitted
+examples are training evidence and never count as independent validation. Reduced aligned observations initialize
+models; actual native HEIFs validate photographic claims. Withheld-region capacity recipes exclude frozen appearance regions from both
+spatial and palette sampling. Whole-image expression diagnostics explicitly fit
+all sampled areas, mark their reports as non-validation evidence, and cannot
+establish automatic inference. Neither is a runtime selector. Offline final-display fitting names encoded-RGB or normalized D65 CIELAB error
 coordinates explicitly; neither replaces actual native-output validation. Region
 measurement requires a fixed RAW-derived geometry baseline independent of candidate
 colour and reports unregistered colour, measured local correspondence/support and
-inconclusive facts separately. Confident native-detail matches are retained;
+inconclusive facts separately. Pixelwise mean/p95 establish colour matching;
+median-colour outcomes are explicitly named diagnostics. Development-only
+comparison calibration owns known perturbations and alternate preparation,
+separately from renderer fitting. Supplementary offline perceptual evaluation is
+owned by ADR 0031. Confident native-detail matches are retained;
 ambiguous matches get one fixed Gaussian-scale retry under the same confidence
 rules. Relative correspondence uncertainty is a gate; moving both colour patches
 together is a spatial-residual diagnostic. This preserves the distinction between
@@ -62,8 +67,8 @@ registration never becomes a deployed lens correction.
 
 - App integration: rejected for this increment because the task is algorithm
   development outside the app; no catalog/window/export owner is changed.
-- Camera-preview-assisted matching: rejected because it cannot create the authored
-  look when the camera has not produced a render and violates the input boundary.
+- Camera-preview-assisted matching: rejected because rendering must use RAW alone
+  and access to a camera image violates that input boundary.
 - Reusing the saved encoded-RGB curve/LUT as the final architecture: retained only
   as a named comparator; it combines tone and colour without independent controls.
 - Automatically adding local correction or predicting per-image coefficients:
@@ -76,6 +81,8 @@ registration never becomes a deployed lens correction.
 The toolchain is Swift 6 with complete strict concurrency. The standalone harness
 is independently buildable and testable; it shares only the repository's logging
 facade with the app. Numerical conformance does not certify a photographic recipe.
-Current research records the accepted fixed recipe, rejected candidates, three
-inconclusive regional comparisons and the limits of fresh-shoot independence. This ADR owns implementation boundaries, not the final
+Current research records the working candidate, seven whole-image development
+failures, three inconclusive regional comparisons and incomplete independent
+paired acceptance. Implementation acceptance in this ADR does not certify recipe
+accuracy or completion of Plan 0105. This ADR owns implementation boundaries, not the final
 look, camera profiling, custom lens profiles, app integration or future automation.

@@ -30,9 +30,10 @@ struct AppearanceLookCard: Decodable {
     }
 }
 
-/// Measurement format 6 retains fixed geometry and identifies the two-scale matcher.
+/// Pixelwise mean DE00 is the matching gate. Median-colour diagnostics cannot
+/// detect differences that cancel across a region.
 struct AppearanceRegionReport: Encodable {
-    let formatVersion = 6
+    let formatVersion = 7
     let correspondencePolicy = "native-gradient-NCC; ambiguous-only Gaussian sigma 1.2 retry"
     let geometryBaselineSHA256: String
     let scores: [AppearanceRegionScore]
@@ -47,12 +48,18 @@ struct AppearanceRegionScore: Encodable {
     let deltaMedianB: Double
     let deltaMedianChroma: Double
     let medianLabDE00: Double
+    let meanLowFrequencyDE00: Double
+    let p95LowFrequencyDE00: Double
+    let unregisteredMeanLowFrequencyDE00: Double
+    let meanDE00Sensitivity: Double?
+    let matchingOutcome: String
+    let matchingPasses: Bool
     let sensitivityDE00: Double?
     let placementSensitivityDE00: Double
     let unregisteredMedianLabDE00: Double
     let correspondence: RegionCorrespondence
-    let outcome: String
-    let passes: Bool
+    let diagnosticOutcome: String
+    let diagnosticPasses: Bool
 }
 
 func appearanceRegionScores(candidate: RGBFrame, target: RGBFrame,
@@ -103,6 +110,34 @@ func appearanceRegionScores(candidate: RGBFrame, target: RGBFrame,
         guard valid > 0 else { throw ScorecardError.insufficientValidPixels }
         return (Lab(l: median(lightness), a: median(redGreen), b: median(yellowBlue)), count, Double(valid) / Double(count))
     }
+    func meanError(_ region: AppearanceLookCard.Region, dx: Double, dy: Double) throws -> (mean: Double, p95: Double, coverage: Double) {
+        let q = region.rectangle
+        let x0 = max(0, Int(q[0] * Double(a.width))), x1 = min(a.width, Int(q[2] * Double(a.width)))
+        let y0 = max(0, Int(q[1] * Double(a.height))), y1 = min(a.height, Int(q[3] * Double(a.height)))
+        var errors = [Double]()
+        for y in y0 ..< y1 {
+            for x in x0 ..< x1 {
+                let u = Double(x) + dx, v = Double(y) + dy
+                guard u >= 0, v >= 0, u <= Double(a.width - 1), v <= Double(a.height - 1) else { continue }
+                let ix = Int(u), iy = Int(v), fx = u - Double(ix), fy = v - Double(iy)
+                var rgba = SIMD4<Double>(repeating: 0)
+                for (ox, oy, weight) in [(0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)] {
+                    let i = (min(a.height - 1, iy + oy) * a.width + min(a.width - 1, ix + ox)) * 4
+                    for c in 0 ..< 4 {
+                        rgba[c] += Double(a.rgba[i + c]) * weight
+                    }
+                }
+                let j = (y * b.width + x) * 4
+                guard (0 ..< 4).allSatisfy({ rgba[$0].isFinite && b.rgba[j + $0].isFinite }), rgba.w > 0.999, b.rgba[j + 3] > 0.999 else { continue }
+                let ca = Lab.srgb(min(1, max(0, rgba.x)), min(1, max(0, rgba.y)), min(1, max(0, rgba.z)))
+                let cb = Lab.srgb(min(1, max(0, Double(b.rgba[j]))), min(1, max(0, Double(b.rgba[j + 1]))), min(1, max(0, Double(b.rgba[j + 2]))))
+                errors.append(ciede2000(ca, cb))
+            }
+        }
+        guard !errors.isEmpty else { throw ScorecardError.insufficientValidPixels }
+        errors.sort()
+        return (errors.reduce(0, +) / Double(errors.count), errors[Int(ceil(Double(errors.count) * 0.95)) - 1], Double(errors.count) / Double((x1 - x0) * (y1 - y0)))
+    }
     return try regions.enumerated().map { index, region in
         let correspondence = correspondences?[index] ?? .unknown
         let (unregistered, count, _) = try patch(a, region, dx: 0, dy: 0)
@@ -110,6 +145,21 @@ func appearanceRegionScores(candidate: RGBFrame, target: RGBFrame,
         let dx = correspondence.dx ?? 0, dy = correspondence.dy ?? 0
         let (ca, _, validA) = try patch(a, region, dx: dx, dy: dy)
         let de = ciede2000(ca, cb)
+        let pixelError = try meanError(region, dx: dx, dy: dy)
+        let unregisteredError = try meanError(region, dx: 0, dy: 0)
+        var meanSensitivity: Double?
+        if let radius = correspondence.supportRadius {
+            var maximum = 0.0
+            for sx in [-radius, 0, radius] {
+                for sy in [-radius, 0, radius] {
+                    let error = try meanError(region, dx: dx + sx, dy: dy + sy)
+                    maximum = error.coverage == 1 ? max(maximum, abs(error.mean - pixelError.mean)) : .infinity
+                }
+            }
+            meanSensitivity = maximum.isFinite ? maximum : nil
+        }
+        let matchingPasses = pixelError.coverage == 1 && pixelError.mean <= 2
+            && meanSensitivity != nil && meanSensitivity! <= card.maximumSensitivityDE00
         var sensitivity: Double?
         if let radius = correspondence.supportRadius {
             var maximum = 0.0
@@ -141,9 +191,14 @@ func appearanceRegionScores(candidate: RGBFrame, target: RGBFrame,
         return AppearanceRegionScore(name: region.name, pixelCount: count, validFraction: valid,
                                      deltaMedianLightness: deltaL, deltaMedianA: ca.a - cb.a,
                                      deltaMedianB: ca.b - cb.b, deltaMedianChroma: deltaC,
-                                     medianLabDE00: de, sensitivityDE00: sensitivity, placementSensitivityDE00: placementSensitivity,
+                                     medianLabDE00: de, meanLowFrequencyDE00: pixelError.mean, p95LowFrequencyDE00: pixelError.p95,
+                                     unregisteredMeanLowFrequencyDE00: unregisteredError.mean,
+                                     meanDE00Sensitivity: meanSensitivity,
+                                     matchingOutcome: meanSensitivity == nil ? "inconclusive" : matchingPasses ? "pass" : "fail",
+                                     matchingPasses: matchingPasses,
+                                     sensitivityDE00: sensitivity, placementSensitivityDE00: placementSensitivity,
                                      unregisteredMedianLabDE00: ciede2000(unregistered, cb), correspondence: correspondence,
-                                     outcome: sensitivity == nil ? "inconclusive" : passes ? "pass" : "fail", passes: passes)
+                                     diagnosticOutcome: sensitivity == nil ? "inconclusive" : passes ? "pass" : "fail", diagnosticPasses: passes)
     }
 }
 
@@ -165,17 +220,31 @@ func appearanceRegionSelfTest() throws {
     }
     let image = RGBFrame(width: 64, height: 64, rgba: pixels)
     let same = try appearanceRegionScores(candidate: image, target: image, regions: [region], card: card, correspondences: [.identity])
-    guard same[0].passes, same[0].medianLabDE00 == 0, same[0].pixelCount == 1024 else {
+    guard same[0].diagnosticPasses, same[0].medianLabDE00 == 0, same[0].pixelCount == 1024 else {
         throw ReferenceError.invalidPixels
     }
+    guard same[0].matchingPasses, same[0].meanLowFrequencyDE00 == 0 else { throw ReferenceError.invalidPixels }
+    // Matching median colours can conceal a reversed colour arrangement. The
+    // per-pixel gate must reject this despite identical median Lab coordinates.
+    let whole = AppearanceLookCard.Region(name: "whole", rectangle: [0, 0, 1, 1])
+    let leftRight = RGBFrame(width: 64, height: 64, rgba: (0 ..< 4096).flatMap { i -> [Float] in
+        i % 64 < 32 ? [0.8, 0.1, 0.1, 1] : [0.1, 0.1, 0.8, 1]
+    })
+    let reversed = RGBFrame(width: 64, height: 64, rgba: (0 ..< 4096).flatMap { i -> [Float] in
+        i % 64 < 32 ? [0.1, 0.1, 0.8, 1] : [0.8, 0.1, 0.1, 1]
+    })
+    let cancellation = try appearanceRegionScores(candidate: reversed, target: leftRight, regions: [whole], card: card, correspondences: [.identity])[0]
+    print("op=regions.cancellation median=\(cancellation.medianLabDE00) mean=\(cancellation.meanLowFrequencyDE00) pass=\(cancellation.matchingPasses)")
+    guard cancellation.medianLabDE00 < 1e-4, cancellation.meanLowFrequencyDE00 > 20,
+          !cancellation.matchingPasses else { throw ReferenceError.invalidPixels }
     let unknown = try appearanceRegionScores(candidate: image, target: image, regions: [region], card: card)
-    guard !unknown[0].passes, unknown[0].sensitivityDE00 == nil, unknown[0].correspondence.status == .inconclusive else { throw ReferenceError.invalidPixels }
+    guard !unknown[0].diagnosticPasses, !unknown[0].matchingPasses, unknown[0].sensitivityDE00 == nil, unknown[0].correspondence.status == .inconclusive else { throw ReferenceError.invalidPixels }
     // A steep photographic gradient must pass a proven identity correspondence.
     let gradient = RGBFrame(width: 64, height: 64, rgba: (0 ..< 4096).flatMap { i -> [Float] in
         let v = Float(i % 64) / 63
         return [v, v * v, 1 - v, 1]
     })
-    guard try appearanceRegionScores(candidate: gradient, target: gradient, regions: [region], card: card, correspondences: [.identity])[0].passes else { throw ReferenceError.invalidPixels }
+    guard try appearanceRegionScores(candidate: gradient, target: gradient, regions: [region], card: card, correspondences: [.identity])[0].diagnosticPasses else { throw ReferenceError.invalidPixels }
     var altered = pixels
     for y in 0 ..< 32 {
         for x in 0 ..< 32 {
@@ -185,7 +254,7 @@ func appearanceRegionSelfTest() throws {
         }
     }
     let different = try appearanceRegionScores(candidate: RGBFrame(width: 64, height: 64, rgba: altered), target: image, regions: [region], card: card, correspondences: [.identity])
-    guard !different[0].passes, different[0].deltaMedianLightness > 20 else { throw ReferenceError.invalidPixels }
+    guard !different[0].diagnosticPasses, different[0].deltaMedianLightness > 20 else { throw ReferenceError.invalidPixels }
     let interior = AppearanceLookCard.Region(name: "interior", rectangle: [0.25, 0.25, 0.75, 0.75])
     let ramp = RGBFrame(width: 64, height: 64, rgba: (0 ..< 4096).flatMap { i -> [Float] in
         let v = Float(0.2 + 0.6 * Double(i % 64) / 63)
@@ -198,7 +267,7 @@ func appearanceRegionSelfTest() throws {
     let placed = try appearanceRegionScores(candidate: contrast, target: ramp, regions: [interior], card: card, correspondences: [.identity])
     let uncertain = RegionCorrespondence(status: .measuredLocal, dx: 0, dy: 0, supportRadius: 4, reliableMatches: 1, supportPaddingNativePixels: 0)
     let relative = try appearanceRegionScores(candidate: contrast, target: ramp, regions: [interior], card: card, correspondences: [uncertain])
-    guard placed[0].passes, placed[0].placementSensitivityDE00 > 1,
-          !relative[0].passes, (relative[0].sensitivityDE00 ?? 0) > 1 else { throw ReferenceError.invalidPixels }
+    guard placed[0].diagnosticPasses, placed[0].placementSensitivityDE00 > 1,
+          !relative[0].diagnosticPasses, (relative[0].sensitivityDE00 ?? 0) > 1 else { throw ReferenceError.invalidPixels }
     print("Appearance regions: coordinates, identity, visible-lightness rejection and separate placement/relative-uncertainty fixtures pass")
 }

@@ -413,7 +413,14 @@ func validate(_ manifest: Manifest, output: URL) throws {
 func run() throws {
     let arguments = CommandLine.arguments
     guard arguments.count >= 3 else { throw HarnessError.usage }
-    if arguments[1] == "authored-look-fit", arguments.count == 11 {
+    if arguments[1] == "comparison-calibrate", arguments.count == 5 || arguments.count == 6 {
+        guard arguments.count == 5 || arguments[5] == "native-crop" else { throw HarnessError.usage }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[4])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        try comparisonCalibration(pair, destination: output, nativeCrop: arguments.count == 6)
+    } else if arguments[1] == "authored-look-fit", arguments.count == 11 {
         let training = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let anchors = try JSONDecoder().decode(Manifest.self, from: localData(arguments[4]))
         let base = try AuthoredLook(json: localData(arguments[6]))
@@ -471,6 +478,23 @@ func run() throws {
         guard let regularization = Double(arguments[7]) else { throw HarnessError.usage }
         try AuthoredCalibration.colourCapacity(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), base: base,
                                                card: card, regularization: regularization, destination: URL(fileURLWithPath: arguments[5]))
+    } else if arguments[1] == "matching-colour-diagnostic-fit", arguments.count == 10 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let base = try AuthoredLook(json: localData(arguments[4]))
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[6]))
+        guard let regularization = Double(arguments[7]),
+              let scope = AuthoredCalibration.DiagnosticScope(rawValue: arguments[8]),
+              let objective = DisplayColourObjective(rawValue: arguments[9]) else { throw HarnessError.usage }
+        try AuthoredCalibration.colourCapacity(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), base: base,
+                                               card: card, regularization: regularization, scope: scope, objectiveSpace: objective,
+                                               destination: URL(fileURLWithPath: arguments[5]))
+    } else if arguments[1] == "matching-tone-diagnostic-fit", arguments.count == 9 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        guard let input = NativeRAWRecipe(rawValue: arguments[4]), let mode = AuthoredLook.ToneMode(rawValue: arguments[5]),
+              let scope = AuthoredCalibration.DiagnosticScope(rawValue: arguments[8]) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[7]))
+        try AuthoredCalibration.capacity(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), input: input, mode: mode,
+                                         card: card, scope: scope, destination: URL(fileURLWithPath: arguments[6]))
     } else if arguments[1] == "authored-capacity-fit", arguments.count == 8 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         guard let input = NativeRAWRecipe(rawValue: arguments[4]), let mode = AuthoredLook.ToneMode(rawValue: arguments[5]) else { throw HarnessError.invalidManifest }

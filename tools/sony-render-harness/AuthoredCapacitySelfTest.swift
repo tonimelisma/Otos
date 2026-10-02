@@ -38,6 +38,13 @@ func authoredCapacitySelfTest() throws {
     let first = root.appendingPathComponent("first"), second = root.appendingPathComponent("second")
     try AuthoredCalibration.capacity(Manifest(pairs: [pair]), samplesRoot: samples, input: .mapped,
                                      mode: .perChannel, card: card, destination: first)
+    let expressionFirst = root.appendingPathComponent("expression-first")
+    try AuthoredCalibration.capacity(Manifest(pairs: [pair]), samplesRoot: samples, input: .mapped,
+                                     mode: .perChannel, card: card, scope: .wholeImageExpression, destination: expressionFirst)
+    let expressionReport = try JSONSerialization.jsonObject(with: localData(expressionFirst.appendingPathComponent(id + ".fit.json").path)) as! [String: Any]
+    guard expressionReport["validationEvidence"] as? Bool == false,
+          expressionReport["excludedRegions"] as? [String] == [],
+          expressionReport["scope"] as? String == "wholeImageExpression" else { throw ReferenceError.invalidPixels }
     for y in 0 ..< height / 2 {
         for x in 0 ..< width / 2 {
             let i = (y * width + x) * 4
@@ -48,6 +55,14 @@ func authoredCapacitySelfTest() throws {
     try AuthoredCalibration.capacity(Manifest(pairs: [pair]), samplesRoot: samples, input: .mapped,
                                      mode: .perChannel, card: card, destination: second)
     guard try localData(first.appendingPathComponent(id + ".json").path) == localData(second.appendingPathComponent(id + ".json").path) else {
+        throw ReferenceError.invalidPixels
+    }
+    let expressionSecond = root.appendingPathComponent("expression-second")
+    try AuthoredCalibration.capacity(Manifest(pairs: [pair]), samplesRoot: samples, input: .mapped,
+                                     mode: .perChannel, card: card, scope: .wholeImageExpression, destination: expressionSecond)
+    let expressionA = try AuthoredLook(json: localData(expressionFirst.appendingPathComponent(id + ".json").path))
+    let expressionB = try AuthoredLook(json: localData(expressionSecond.appendingPathComponent(id + ".json").path))
+    guard simd_length(expressionA.evaluate(SIMD3(repeating: 0.25)) - expressionB.evaluate(SIMD3(repeating: 0.25))) > 1e-5 else {
         throw ReferenceError.invalidPixels
     }
     let acceptance = Pair(id: id, raw: pair.raw, target: pair.target, session: pair.session, role: .acceptance)
