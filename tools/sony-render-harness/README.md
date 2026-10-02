@@ -321,3 +321,21 @@ squared D65 CIELAB differences divided by 100 (a DE76 proxy); it does not claim 
 optimize CIEDE2000 exactly. Only final nonlinear colour-field fitting changes;
 RAW input, tone, sampler, bounds and regularization stay fixed. Actual native HEIF
 measurement uses the independent CIEDE2000 scorecard.
+
+### Native processing-order diagnosis
+
+`matching-native-order-audit manifest.json capture recipe.json exported.heic report.json`
+compares the full-resolution shared Metal look, followed by colour-managed
+reduction, with the actual HEIF and the reduced-linear initializer. Selection or
+regression data only; unregistered results diagnose processing order and encoding,
+not matching acceptance.
+
+`matching-native-order-refine regression.json capture recipe.json grid.card.json frozen-grid.json output-directory`
+performs at most 17 native evaluations of existing contrast, pivot, skew and
+saturation controls. It freezes independently established baseline grid
+correspondences and excludes inconclusive/high-sensitivity areas before fitting.
+Equal-region normalized Lab loss samples every eight evaluation pixels after the
+historical blur. The field, normalization, decoder and lens settings stay fixed.
+This local expression diagnostic does not establish convergence or generalization;
+its fitted recipe must go through actual native HEIF and the original scorecards.
+No diagnostic target or per-image fitted recipe enters automatic inference.

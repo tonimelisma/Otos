@@ -413,7 +413,22 @@ func validate(_ manifest: Manifest, output: URL) throws {
 func run() throws {
     let arguments = CommandLine.arguments
     guard arguments.count >= 3 else { throw HarnessError.usage }
-    if arguments[1] == "comparison-calibrate", arguments.count == 5 || arguments.count == 6 {
+    if arguments[1] == "matching-native-order-refine", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[7])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let recipe = try AuthoredLook(json: localData(arguments[4]))
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
+        try refineNativeOrder(pair, base: recipe, card: card, geometryReport: localData(arguments[6]), destination: output)
+    } else if arguments[1] == "matching-native-order-audit", arguments.count == 7 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[6])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let recipe = try AuthoredLook(json: localData(arguments[4]))
+        try nativeOrderDiagnostic(pair, recipe: recipe, candidateURL: URL(fileURLWithPath: arguments[5]), destination: output)
+    } else if arguments[1] == "comparison-calibrate", arguments.count == 5 || arguments.count == 6 {
         guard arguments.count == 5 || arguments[5] == "native-crop" else { throw HarnessError.usage }
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[4])

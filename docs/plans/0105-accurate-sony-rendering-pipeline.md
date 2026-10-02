@@ -160,7 +160,11 @@ matrix/tone/global-field diagnostic only if necessary. Separate spatial fit/chec
 areas with support buffers, audit colour coverage and convergence, and inspect
 signed residuals. Fitted regions measure expression only, not generalization. Reduced-linear-input
 fitting is an initializer: verify native-order loss and sampling/convergence before
-treating its failure as insufficient global capacity. The completed bounded colour
+treating its failure as insufficient global capacity. The native-order audit now
+confirms material order differences; bounded four-control native fits still fail
+the original whole-image gates. Continue colour-field sampling/convergence diagnosis
+with good controls before adding prediction or local capacity. See
+[native-order evidence](../research/2026-10-02-native-order-fitting-diagnostic.md). The completed bounded colour
 and sequential-tone diagnostics are recorded in
 [expression research](../research/2026-10-01-global-expression-and-tone-diagnostics.md).
 
