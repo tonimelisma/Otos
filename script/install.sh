@@ -74,19 +74,40 @@ if pgrep -fx "$INSTALLED_EXECUTABLE" >/dev/null; then
   done
 fi
 
-# Swap by rename so /Applications never holds a half-copied bundle.
+# Swap by rename so /Applications never holds a half-copied bundle. The built
+# bundle is moved, not copied: /Applications/Otos.app must be the only bundle on
+# disk with the product identity, or LaunchServices can launch the other one by
+# bundle id (Dock, Spotlight, a card-insert handler) against the same catalog.
+# lldb is unaffected — the debug map points at object files, not the bundle.
 incoming="/Applications/.Otos.app.incoming.$$"
 previous="/Applications/.Otos.app.previous.$$"
-/usr/bin/ditto "$BUILT_APP" "$incoming"
+mv "$BUILT_APP" "$incoming"
 if [[ -e "$INSTALLED_APP" ]]; then
   mv "$INSTALLED_APP" "$previous"
 fi
 mv "$incoming" "$INSTALLED_APP"
 rm -rf "$previous"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$INSTALLED_APP"
+
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -f "$INSTALLED_APP"
+
+# Registrations left by builds from before ADR 0030 still carry the product
+# identity. On 2026-10-01 a Sep 22 Xcode build launched beside the installed
+# app and its import hit `database is locked` on the shared catalog. Unregister
+# every other path with the product identity; this touches only the
+# LaunchServices database, never a bundle.
+unregistered=0
+while IFS= read -r stray; do
+  [[ -n "$stray" && "$stray" != "$INSTALLED_APP" ]] || continue
+  "$LSREGISTER" -u "$stray" 2>/dev/null || true
+  unregistered=$((unregistered + 1))
+done < <("$LSREGISTER" -dump 2>/dev/null | awk -v id="$BUNDLE_ID" '
+  /^path:/ { sub(/^path:[ \t]*/, ""); sub(/ \(0x[0-9a-f]+\)$/, ""); path = $0 }
+  /^identifier:/ && $2 == id { print path }
+' | sort -u)
 
 if [[ "$was_running" == 1 ]]; then
   /usr/bin/open -g "$INSTALLED_APP"
 fi
 
-echo "op=install phase=finish revision=$REVISION path=$INSTALLED_APP relaunched=$was_running"
+echo "op=install phase=finish revision=$REVISION path=$INSTALLED_APP relaunched=$was_running unregisteredStrays=$unregistered"

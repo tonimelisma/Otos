@@ -41,6 +41,12 @@ catalog would also give one database two `CatalogStore` owners.
   predicate), the install stops and reports `phase=pending`. Otherwise it sends a
   normal Quit, waits for exit, swaps the bundle by rename, registers it with
   LaunchServices, and relaunches it in the background. It never kills the app.
+- **One bundle carries the product identity.** The install moves the built
+  bundle into `/Applications` rather than copying it, and unregisters every other
+  LaunchServices registration of `net.melisma.Otos`. Otherwise a launch by bundle
+  id can start a stale build against the installed app's catalog: on 2026-10-01 a
+  Sep 22 Xcode build did, and its import failed with `database is locked` beside
+  the running installed app.
 - **Every app-changing increment installs.** The Definition of Done runs
   `script/install.sh` from `main` after merge.
 
