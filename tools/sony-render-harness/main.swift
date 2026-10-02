@@ -413,14 +413,26 @@ func validate(_ manifest: Manifest, output: URL) throws {
 func run() throws {
     let arguments = CommandLine.arguments
     guard arguments.count >= 3 else { throw HarnessError.usage }
-    if arguments[1] == "matching-native-order-refine", arguments.count == 8 {
+    if arguments[1] == "matching-native-profile-fit", arguments.count == 8 || arguments.count == 9 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[7])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[4]))
+        let solve = arguments.count == 9 ? NativeProfileSolve(rawValue: arguments[8]) : .sequential
+        guard let solve else { throw HarnessError.usage }
+        try nativeProfileCapacity(pair, card: card, geometryReport: localData(arguments[5]), geometryBaseline: localData(arguments[6]), solve: solve, destination: output)
+    } else if arguments[1] == "matching-native-order-refine", (8 ... 10).contains(arguments.count) {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[7])
         try validate(manifest, output: output)
         guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
         let recipe = try AuthoredLook(json: localData(arguments[4]))
         let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
-        try refineNativeOrder(pair, base: recipe, card: card, geometryReport: localData(arguments[6]), destination: output)
+        let controls = arguments.count >= 9 ? NativeRefinementControls(rawValue: arguments[8]) : .toneOnly
+        let objective = arguments.count == 10 ? NativeRefinementObjective(rawValue: arguments[9]) : .normalizedLab
+        guard let controls, let objective else { throw HarnessError.usage }
+        try refineNativeOrder(pair, base: recipe, card: card, geometryReport: localData(arguments[6]), controls: controls, objective: objective, destination: output)
     } else if arguments[1] == "matching-native-order-audit", arguments.count == 7 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[6])
@@ -582,7 +594,7 @@ func run() throws {
         encoder.outputFormatting = [.sortedKeys]
         try print(String(data: encoder.encode(result), encoding: .utf8)!)
     } else if arguments[1] == "sensor-model-heif", arguments.count == 6 {
-        let model = try LookModel(json: Data(contentsOf: URL(fileURLWithPath: arguments[5])))
+        let model = try LookModel(json: localData(arguments[5]))
         let result = try SonySensorRAWHEIFRenderer.render(
             rawURL: URL(fileURLWithPath: arguments[2]),
             destinationURL: URL(fileURLWithPath: arguments[3]),

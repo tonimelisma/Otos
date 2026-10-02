@@ -339,3 +339,34 @@ historical blur. The field, normalization, decoder and lens settings stay fixed.
 This local expression diagnostic does not establish convergence or generalization;
 its fitted recipe must go through actual native HEIF and the original scorecards.
 No diagnostic target or per-image fitted recipe enters automatic inference.
+
+The refinement command optionally accepts `toneAndNormalization` after the output
+directory (25 evaluations rather than 17), followed by an explicit objective:
+`normalizedLab` or `meanAndTailDE00`. Normalization varies existing red/blue gains
+in linear BT.2020; green and exposure stay fixed. It is an input colour-balance
+diagnostic, not reconstruction of sensor white balance. The direct DE00 objective
+is the equal-region mean plus 0.25 times the mean of the worst five percent of
+weighted corresponding samples. It is an optimization experiment; original
+mean/p95 acceptance gates and native output checks remain unchanged. Reports
+explicitly identify controls, objective and all evaluated parameters.
+
+### Native camera-profile expression and solver audit
+
+`matching-native-profile-fit regression.json capture grid.card.json frozen-grid.json geometry-baseline.heic output-directory [sequential|jointProjected]`
+uses the existing saved-profile runtime input: full native RAW 9 mapped output,
+encoded extended sRGB, clamped to [0,1.25]. It verifies that the report's SHA256
+matches the declared baseline image. Only regression roles are accepted; existing
+outputs and outputs under original media directories are rejected. It samples a
+24-by-24 native lattice within each fixed reliable region, with an eight-evaluation-
+pixel inset. Source-only nine-point variation above 0.03 excludes edge/noise
+samples from fitting; all excluded areas remain in output measurement.
+
+`sequential` preserves the historical binned isotonic curves followed by smooth
+9-cubed LUT fitting. `jointProjected` jointly solves the same runtime interpolation
+coefficients using monotone projected least squares, curve identity weight 1,
+LUT ridge 2 and neighbor smoothness 10. It reports its finite iteration budget,
+projected gradient and convergence for the regularized RGB surrogate. This is
+not optimization of HEIF CIEDE2000 and is not proof of photographic incapacity.
+Fitted target-assisted models are private expression witnesses, never automatic
+inference recipes or independent validation. Actual native HEIF and unchanged
+whole-image/fixed-region limits determine the diagnostic outcome.

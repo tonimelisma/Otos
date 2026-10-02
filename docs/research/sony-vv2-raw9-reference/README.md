@@ -14,7 +14,8 @@ neighboring `sony-vv2-reference` directory for historical comparison only.
 2. Retain the camera's white balance and baseline exposure. Set boost, local
    tone mapping, contrast and sharpness to zero. Do not set RAW 9's unsupported
    detail/moire properties or ineffective color-noise property.
-3. Require and enable Apple's native lens correction. Keep lens behavior out
+3. Enable Apple's native lens correction when supported; report unavailable
+   correction separately. The historical training export required support. Keep lens behavior out
    of the camera-wide look parameters.
 4. Convert the developed image to float extended-sRGB-encoded RGB. Clamp
    look *input* to [0, 1.25], linearly interpolate each 49-knot channel curve
@@ -65,12 +66,12 @@ On six predeclared regressions, the encoded fixed-look HEIF passes two of six
 broad-colour comparator gates. It passes 16 of 18 development-selection captures,
 with mean image low-frequency DE00 1.494 and worst p95 6.009. On the subsequently
 frozen 64-pair RAW 9 set, 64/64 HEIFs were produced and 42/64 met those gates.
-These are development results, not fresh acceptance or a completed authored look.
+These are development results, not fresh matching acceptance.
 Historical camera-guided results are excluded; all guide extraction, controls and
 JPEG comparator code have been removed from the standalone tool. Camera previews
 and companions are not inference inputs. The active
 [framework](../../plans/0105-accurate-sony-rendering-pipeline.md) retains these
-Sony-match scores as offline diagnostics, with separate authored-appearance,
-technical and automatic-reliability acceptance. The
+Sony HEIFs as the required paired matching targets, with independent matching,
+native-detail and export-reliability acceptance. The
 [pipeline comparison](../2026-09-29-raw-processing-pipeline-comparison.md)
 records the earlier split, lens geometry and high-ISO strata.

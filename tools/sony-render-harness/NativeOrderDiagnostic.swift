@@ -72,11 +72,16 @@ private func nativeOrderReducedFrame(_ pixels: RGBFrame) throws -> RGBFrame {
     return try matchingReducedFrame(tagged)
 }
 
+enum NativeRefinementControls: String { case toneOnly, toneAndNormalization }
+
+enum NativeRefinementObjective: String { case normalizedLab, meanAndTailDE00 }
+
 /// Bounded whole-image expression diagnostic, not an inference recipe. Geometry
-/// and reliability come from the unchanged RAW baseline report. Only four current
-/// global controls vary; all target-dependent fitting remains offline.
+/// and reliability come from the unchanged RAW baseline report. Existing tone
+/// controls and optionally two input colour-balance gains vary offline.
 func refineNativeOrder(_ pair: Pair, base: AuthoredLook, card: AppearanceLookCard,
-                       geometryReport: Data, destination: URL) throws
+                       geometryReport: Data, controls: NativeRefinementControls = .toneOnly,
+                       objective: NativeRefinementObjective = .normalizedLab, destination: URL) throws
 {
     try card.validate()
     guard pair.role == .regression, pair.session == String(pair.id.prefix(8)),
@@ -133,11 +138,14 @@ func refineNativeOrder(_ pair: Pair, base: AuthoredLook, card: AppearanceLookCar
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let baseObject = try JSONSerialization.jsonObject(with: encoder.encode(base)) as! [String: Any]
     let names = ["contrast", "tonePivot", "skew", "saturation"]
-    let bounds = [0.5 ... 2.5, 0.01 ... 8, 0.3 ... 3, 0.5 ... 1.5]
+    let bounds = [0.5 ... 2.5, 0.01 ... 8, 0.3 ... 3, 0.5 ... 1.5, 0.5 ... 2, 0.5 ... 2]
     func recipe(_ parameters: [Double]) throws -> AuthoredLook {
         var object = baseObject
         for (i, name) in names.enumerated() {
             object[name] = min(bounds[i].upperBound, max(bounds[i].lowerBound, exp(parameters[i])))
+        }
+        if controls == .toneAndNormalization {
+            object["whiteBalanceRGB"] = [min(2, max(0.5, exp(parameters[4]))), base.whiteBalanceRGB[1], min(2, max(0.5, exp(parameters[5])))]
         }
         return try AuthoredLook(json: JSONSerialization.data(withJSONObject: object))
     }
@@ -147,6 +155,7 @@ func refineNativeOrder(_ pair: Pair, base: AuthoredLook, card: AppearanceLookCar
         let transformed = try MetalAuthoredLook(look).apply(full.rgba)
         let pixels = try gaussianBlur(nativeOrderReducedFrame(RGBFrame(width: full.width, height: full.height, rgba: transformed)))
         var total = 0.0
+        var errors = [(distance: Double, weight: Double)]()
         for sample in observations {
             let x = Int(sample.x), y = Int(sample.y), fx = sample.x - Double(x), fy = sample.y - Double(y)
             var rgb = SIMD3<Double>(repeating: 0)
@@ -156,24 +165,46 @@ func refineNativeOrder(_ pair: Pair, base: AuthoredLook, card: AppearanceLookCar
             }
             let bounded = SIMD3(min(1, max(0, rgb.x)), min(1, max(0, rgb.y)), min(1, max(0, rgb.z)))
             let e = DisplayColourObjective.normalizedLab.coordinates(bounded) - sample.target
-            total += sample.weight * (e.x * e.x + e.y * e.y + e.z * e.z)
+            if objective == .normalizedLab {
+                total += sample.weight * (e.x * e.x + e.y * e.y + e.z * e.z)
+            } else {
+                let prediction = DisplayColourObjective.normalizedLab.coordinates(bounded) * 100
+                let reference = sample.target * 100
+                let distance = ciede2000(Lab(l: prediction.x, a: prediction.y, b: prediction.z),
+                                         Lab(l: reference.x, a: reference.y, b: reference.z))
+                errors.append((distance, sample.weight / Double(reliable.count)))
+            }
         }
-        total /= Double(reliable.count)
-        evaluations.append(["loss": total, "contrast": look.contrast, "tonePivot": look.tonePivot, "skew": look.skew, "saturation": look.saturation])
-        print("op=matching.nativeOrderRefine id=\(pair.id) evaluation=\(evaluations.count) loss=\(total)")
+        if objective == .normalizedLab {
+            total /= Double(reliable.count)
+        } else {
+            let mean = errors.reduce(0) { $0 + $1.distance * $1.weight }
+            var remaining = 0.05, tail = 0.0
+            for error in errors.sorted(by: { $0.distance > $1.distance }) where remaining > 0 {
+                let mass = min(remaining, error.weight)
+                tail += mass * error.distance
+                remaining -= mass
+            }
+            total = mean + 0.25 * tail / 0.05
+        }
+        evaluations.append(["loss": total, "contrast": look.contrast, "tonePivot": look.tonePivot, "skew": look.skew, "saturation": look.saturation, "whiteBalanceRGB": look.whiteBalanceRGB])
+        print("op=matching.nativeOrderRefine id=\(pair.id) controls=\(controls.rawValue) objective=\(objective.rawValue) evaluation=\(evaluations.count) loss=\(total)")
         return total
     }
     var parameters = [log(base.contrast), log(base.tonePivot), log(base.skew), log(base.saturation)]
+    if controls == .toneAndNormalization {
+        parameters += [log(base.whiteBalanceRGB[0]), log(base.whiteBalanceRGB[2])]
+    }
     var best = try loss(base)
     let initial = best
-    // Two fixed passes and both directions: at most 17 native evaluations.
+    // Two fixed passes and both directions: 17 or 25 native evaluations.
     // This is a local correction diagnostic, not a claim of global convergence.
     for step in [0.08, 0.04] {
-        for c in 0 ..< 4 {
+        for c in parameters.indices {
             let current = parameters
             for direction in [-1.0, 1.0] {
                 var trial = current
-                trial[c] += direction * step
+                trial[c] += direction * step * (c < 4 ? 1 : 0.5)
                 let measured = try loss(recipe(trial))
                 if measured < best {
                     best = measured
@@ -183,7 +214,7 @@ func refineNativeOrder(_ pair: Pair, base: AuthoredLook, card: AppearanceLookCar
         }
     }
     let fitted = try recipe(parameters)
-    let result: [String: Any] = ["contractVersion": 1, "id": pair.id, "validationEvidence": false,
+    let result: [String: Any] = ["contractVersion": 2, "id": pair.id, "validationEvidence": false, "controls": controls.rawValue, "objective": objective.rawValue,
                                  "scope": "whole-image expression; fitted targets are not validation",
                                  "geometryBaselineSHA256": digest, "reliableRegions": reliable,
                                  "samples": observations.count, "initialLoss": initial, "loss": best,
@@ -194,6 +225,6 @@ func refineNativeOrder(_ pair: Pair, base: AuthoredLook, card: AppearanceLookCar
         .write(to: destination.appendingPathComponent("fit.json"), options: .withoutOverwriting)
     try encoder.encode(fitted).write(to: destination.appendingPathComponent("recipe.json"), options: .withoutOverwriting)
     OtosLog.rendering.noticeOperation("matching.nativeOrderRefine", phase: "complete", fields: [
-        "id": pair.id, "evaluations": String(evaluations.count), "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
+        "id": pair.id, "controls": controls.rawValue, "objective": objective.rawValue, "evaluations": String(evaluations.count), "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
     ])
 }

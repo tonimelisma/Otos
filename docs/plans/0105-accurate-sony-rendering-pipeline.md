@@ -42,7 +42,7 @@ Git and media folders. No new third-party dependency without the required ADR.
 | Colour/tone | Frozen format-5 baseline; native comparison of 204 development pairs; 283 training exports available | 77 fail historical unregistered whole-image limits; attributed region failures remain; no accepted matching recipe |
 | Region measurement | Pixelwise mean/p95 gate, separate median diagnostics, fixed RAW geometry; six perturbation views and seven-image grid audit | Original hard regions include a warm-face colour failure, a correspondence-sensitivity failure and three inconclusive regions |
 | Export reliability | 99 guarded RAW exports, format/metadata/original-integrity/cancellation evidence | That batch did not test matching to camera targets |
-| Independent acceptance | 3,768 candidate pairs inventoried; 487 local pairs capture/VV2 verified; prior-use audit | Current 72 temporal groups all have prior pixel use; independently checked shoot reserve remains uncertified |
+| Independent acceptance | 3,768 candidate pairs inventoried; 487 local pairs capture/VV2 verified; prior-use audit | Original 72 temporal groups have prior pixel use; 229 new candidates frozen before pixel use, 208 metadata verified and 21 unavailable; seven temporal candidates across six dates remain below the ten independently checked shoot gate |
 
 The checked-in recipe is a frozen comparison baseline, not a release-quality
 matching result. Its training priority on six examples is not an acceptance rule.
@@ -162,8 +162,15 @@ signed residuals. Fitted regions measure expression only, not generalization. Re
 fitting is an initializer: verify native-order loss and sampling/convergence before
 treating its failure as insufficient global capacity. The native-order audit now
 confirms material order differences; bounded four-control native fits still fail
-the original whole-image gates. Continue colour-field sampling/convergence diagnosis
-with good controls before adding prediction or local capacity. See
+the original whole-image gates. Native direct-DE00 tone/normalization fits improve whole-image results on five
+of seven failures, but every failure still has reliable-region failures. A native
+per-image channel-curve/9-cubed profile with joint monotone RGB fitting also fails;
+the high-ISO surrogate converges without passing HEIF matching. Other channel
+solves remain bounded, not globally certified. Sparse source-edge/noise sampling
+and a point-RGB objective do not establish insufficient global capacity. Continue
+with a native-order low-frequency fitting-objective and sampling audit before
+adding prediction or local capacity. See
+[normalization and solver evidence](../research/2026-10-02-native-normalization-and-profile-capacity.md). See
 [native-order evidence](../research/2026-10-02-native-order-fitting-diagnostic.md). The completed bounded colour
 and sequential-tone diagnostics are recorded in
 [expression research](../research/2026-10-01-global-expression-and-tone-diagnostics.md).
@@ -218,9 +225,19 @@ and delivery both succeed. Document-only corrections use the lightweight gates.
 
 ## Immediate execution
 
-Restore accurate status without changing coefficients. Audit the full available
-paired collection and prior-use groups; freeze candidate reserve roles before
-further pixel fitting. Reuse existing verified samples/results where valid, then
-produce broader baseline failures and original region scores. Complete the
-Milestone 2 comparison calibration and correspondence audit before selecting new
-coefficients. Then resume bounded capacity diagnosis from attributed failures. This document itself completes no milestone.
+Keep the frozen inference recipes unchanged. The comparison/order and bounded
+normalization/profile diagnostics are documented; none establishes acceptance.
+Next freeze a development experiment comparing the current point-RGB fitting
+objective with low-frequency observations produced after the actual native look,
+using the same source, model capacity, correspondences and good controls. Audit
+source-only sample retention and colour coverage; retain excluded areas in checks.
+Use high ISO and unresolved daylight cases first, then original skin/warm/indoor
+controls. Report objective reduction, numerical convergence and actual native HEIF
+whole/region/detail outcomes separately. If objective/sampling fixes work, resume
+shared training and RAW-only automatic selection; if they fail, attribute clipping,
+input/detail or genuinely spatial residuals before escalating model capacity.
+
+Keep the new acceptance reserve pixel-untouched. Metadata verification alone does
+not make its seven temporal groups ten independently checked shoots. Complete the
+shoot-independence audit and obtain additional eligible groups before final
+acceptance; do not manufacture subdivisions or lower that gate.

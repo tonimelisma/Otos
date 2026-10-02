@@ -76,5 +76,25 @@ func lookCalibrationSelfTest() throws {
     guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(pair.id).path) else {
         throw HarnessError.malformedReferenceData
     }
+    let diagnosticID = "20260101_120000"
+    let diagnosticCard = AppearanceLookCard(formatVersion: 5, maximumLightnessDifference: 2, maximumMedianDE00: 3,
+                                            maximumChromaDifference: 3, maximumSensitivityDE00: 1,
+                                            regions: [diagnosticID: [.init(name: "fixed", rectangle: [0, 0, 1, 1])]])
+    let diagnosticReport = try JSONSerialization.data(withJSONObject: ["formatVersion": 7,
+                                                                       "scores": [["name": "fixed"]],
+                                                                       "geometryBaselineSHA256": "wrong baseline hash"])
+    let diagnosticDestination = root.appendingPathComponent("native-profile")
+    for role in [PairRole.acceptance, .regression] {
+        let diagnosticPair = Pair(id: diagnosticID, raw: "/synthetic-calibration-originals/missing.arw",
+                                  target: "/synthetic-calibration-originals/unread.heif", session: "20260101", role: role)
+        do {
+            try nativeProfileCapacity(diagnosticPair, card: diagnosticCard, geometryReport: diagnosticReport,
+                                      geometryBaseline: Data("declared baseline".utf8), destination: diagnosticDestination)
+            throw HarnessError.malformedReferenceData
+        } catch LookCalibrationError.invalidTrainingManifest {}
+        guard !FileManager.default.fileExists(atPath: diagnosticDestination.path) else { throw HarnessError.malformedReferenceData }
+    }
+    print("Native profile: acceptance and wrong-baseline rejection precede nonexistent original reads")
+    try nativeProfileSolverSelfTest()
     print("Calibration holdout-role, malformed/non-finite sample, unsupported original and no-overwrite fixtures: pass")
 }
