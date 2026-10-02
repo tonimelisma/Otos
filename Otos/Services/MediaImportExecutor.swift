@@ -237,7 +237,10 @@ actor MediaImportExecutor {
     }
 
     /// Journal-row recovery. Runs at coordinator start and again before each
-    /// execution. Does not walk library trees — orphan staging cleanup is
+    /// execution. The coordinator start pass may precede `CatalogStore.start()`;
+    /// each row's namespace lease awaits the Store's initial load, so persisted
+    /// roots are registered by the time a row is judged. Does not walk library
+    /// trees — orphan staging cleanup is
     /// destination-parent scoped via `removeOrphanedDestinationTemps(near:)`.
     func recoverJournal() async {
         let signpost = OtosSignpost.catalog.beginInterval("ImportJournalRecovery")
@@ -332,6 +335,10 @@ actor MediaImportExecutor {
                 namespaceLease = lease
             case .rootNotRegistered:
                 return .failed(reason: .destinationUnavailable)
+            case .catalogUnavailable:
+                // Not `.destinationUnavailable`: the catalog never loaded, so
+                // whether the library is there is unknown.
+                return .failed(reason: .unexpected(detail: "catalogUnavailable"))
             case let .busy(owner):
                 // The library *is* available; another namespace mutation owns it.
                 // Saying "isn't available" would be false, and the bar has no
@@ -668,7 +675,8 @@ actor MediaImportExecutor {
         // state. It must never fail the import, and must never claim the card is
         // gone when another owner merely holds the lease.
         let sourceNamespaceLease: RootNamespaceMutationLease
-        switch await store.acquireNamespaceMutationLease(for: sourceRoot, owner: .sourceErase) {
+        let acquisition = await store.acquireNamespaceMutationLease(for: sourceRoot, owner: .sourceErase)
+        switch acquisition {
         case let .acquired(lease):
             sourceNamespaceLease = lease
         case let .busy(owner):
@@ -685,10 +693,10 @@ actor MediaImportExecutor {
                 skippedCount: 0,
                 failedCount: candidates.count
             )
-        case .rootNotRegistered:
+        case .rootNotRegistered, .catalogUnavailable:
             OtosLog.mediaIO.errorOperation("import.erase", phase: "blocked", fields: [
                 "run": context.runID,
-                "reason": "rootNotRegistered",
+                "reason": acquisition.logReason,
                 "rootPath": sourceRoot.rawValue,
                 "unerasedCount": "\(candidates.count)",
             ])
@@ -783,7 +791,8 @@ actor MediaImportExecutor {
         let byRoot = Dictionary(grouping: operations, by: \.sourceRootPath)
         for (root, rootOperations) in byRoot.sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
             let lease: RootNamespaceMutationLease
-            switch await store.acquireNamespaceMutationLease(for: root, owner: .sourceErase) {
+            let acquisition = await store.acquireNamespaceMutationLease(for: root, owner: .sourceErase)
+            switch acquisition {
             case let .acquired(acquired):
                 lease = acquired
             case let .busy(owner):
@@ -796,9 +805,9 @@ actor MediaImportExecutor {
                     "pendingCount": "\(rootOperations.count)",
                 ])
                 continue
-            case .rootNotRegistered:
+            case .rootNotRegistered, .catalogUnavailable:
                 OtosLog.mediaIO.noticeOperation("import.erase.recover", phase: "deferred", fields: [
-                    "reason": "rootNotRegistered",
+                    "reason": acquisition.logReason,
                     "rootPath": root.rawValue,
                     "pendingCount": "\(rootOperations.count)",
                 ])
@@ -1544,10 +1553,11 @@ actor MediaImportExecutor {
 
     private func recover(_ operation: ActiveFileOperation) async {
         let lease: RootNamespaceMutationLease
-        switch await store.acquireNamespaceMutationLease(
+        let acquisition = await store.acquireNamespaceMutationLease(
             for: operation.destinationRootPath,
             owner: .importPublication
-        ) {
+        )
+        switch acquisition {
         case let .acquired(acquired):
             lease = acquired
         case let .busy(owner):
@@ -1557,9 +1567,9 @@ actor MediaImportExecutor {
                 "rootPath": operation.destinationRootPath.rawValue,
             ])
             return
-        case .rootNotRegistered:
+        case .rootNotRegistered, .catalogUnavailable:
             OtosLog.catalog.noticeOperation("mediaOperation.recover", phase: "blocked", fields: [
-                "reason": "rootNotRegistered",
+                "reason": acquisition.logReason,
                 "rootPath": operation.destinationRootPath.rawValue,
             ])
             return

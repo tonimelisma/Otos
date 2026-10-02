@@ -345,6 +345,44 @@ struct ImportRecoveryTests {
         #expect(try await store.activeImportOperations().isEmpty)
         #expect(try await store.importBatches().isEmpty)
     }
+
+    /// Launch order: the coordinator starts on its own task, independent of
+    /// `CatalogStore.start()`, so its startup recovery can reach the Store before
+    /// the persisted roots are loaded. The registered destination root must still
+    /// be recognized and the interrupted copy recovered in that same pass.
+    @Test func coordinatorStartRecoversJournalBeforeStoreLoadsRoots() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let destination = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let staging = destination.appending(path: ".stage.otos-import-staging")
+        try Data("partial".utf8).write(to: staging)
+        let databaseURL = temp.appending(path: "db/catalog.sqlite")
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: destination)
+
+        let previousLaunch = CatalogStore(location: .databaseFile(databaseURL))
+        try await previousLaunch.start(scansSavedLibraries: false)
+        try await previousLaunch.addLibrary(url: destination)
+        _ = try await waitForCatalogStoreState(previousLaunch) { !$0.isScanning }
+        try await previousLaunch.beginImportOperation(operation(
+            rootPath: rootPath,
+            stagingPath: staging.path,
+            digest: .empty,
+            byteSize: 7,
+            modifiedAt: Date(),
+            phase: .copying
+        ))
+
+        let relaunched = CatalogStore(location: .databaseFile(databaseURL))
+        let coordinator = MediaOperationCoordinator(
+            store: relaunched,
+            preferencesDomain: PreferencesDomain.suite(UUID().uuidString)
+        )
+        await coordinator.start()
+
+        #expect(try await relaunched.activeImportOperations().isEmpty)
+        #expect(!FileManager.default.fileExists(atPath: staging.path))
+        await coordinator.shutdown()
+    }
 }
 
 struct CameraImportAccessTests {

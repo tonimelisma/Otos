@@ -189,6 +189,23 @@ struct CatalogStoreSchemaMigrationTests {
         #expect(applied.contains("v999_future_history"))
     }
 
+    /// A refused catalog cannot say whether a persisted root is registered, so a
+    /// namespace lease for that root reports the catalog, never the root, as missing.
+    @Test func refusedCatalogDeniesNamespaceLeaseAsCatalogUnavailable() async throws {
+        let fixture = try await Self.makeFutureSchemaFixture()
+        let persistedRoot = try await DatabaseQueue(path: fixture.databaseURL.path(percentEncoded: false)).read { db in
+            try String.fetchOne(db, sql: "SELECT path FROM library_root")
+        }
+        let store = CatalogStore(location: .databaseFile(fixture.databaseURL))
+
+        let acquisition = try await store.acquireNamespaceMutationLease(
+            for: LibraryRootPath(rawValue: #require(persistedRoot)),
+            owner: .importPublication
+        )
+
+        #expect(acquisition == .catalogUnavailable)
+    }
+
     @Test func unrecognizedLegacySchemaIsRefusedWithoutErase() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let databaseURL = temp.appending(path: "db/catalog.sqlite")
