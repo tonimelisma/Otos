@@ -55,7 +55,7 @@ struct MediaGridZoomTests {
             orderedAssetIDs: ids + [makeAssetID(path: "extra.jpg")]
         )
         // Mark a structural apply in flight on the gate (differing identities).
-        guard controller.mutationGate.receive(newGrid) == [.apply(newGrid, descriptorChanged: false)]
+        guard controller.mutationGate.receive(newGrid) == [.apply(newGrid, change: .unchanged)]
         else {
             Issue.record("Expected the differing grid to start a structural apply")
             return
@@ -72,7 +72,7 @@ struct MediaGridZoomTests {
 
         let context = MediaGridViewController.StructuralApplyCompletionContext(
             grid: newGrid,
-            resetScroll: false,
+            change: .unchanged,
             applyStart: Date(),
             applyCallStart: Date(),
             diffPolicyMs: 0,

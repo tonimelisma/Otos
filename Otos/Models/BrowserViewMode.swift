@@ -94,9 +94,9 @@ nonisolated enum BrowserModePolicy {
         return orderedIDs[next]
     }
 
-    /// When a structural apply removes the focused asset, move focus to the nearest
-    /// survivor by prior index (prefer the item that slid into the same slot, else the
-    /// previous survivor).
+    /// When a structural apply or a filter/sort change removes the focused asset, move
+    /// focus to its nearest survivor (`nearestSurvivor`); with no prior focus, or none
+    /// that survives, the first surviving item.
     static func pruneFocus(
         previous: MediaAssetID?,
         previousOrderedIDs: [MediaAssetID],
@@ -105,18 +105,34 @@ nonisolated enum BrowserModePolicy {
         guard let previous else {
             return survivingOrderedIDs.first
         }
-        if survivingOrderedIDs.contains(previous) {
-            return previous
+        return nearestSurvivor(
+            of: previous,
+            previousOrderedIDs: previousOrderedIDs,
+            surviving: Set(survivingOrderedIDs)
+        ) ?? survivingOrderedIDs.first
+    }
+
+    /// The item itself if it survives, else the closest survivor in the order the user
+    /// was looking at: the first later survivor, else the closest earlier one.
+    ///
+    /// The *previous* order is the frame of reference, not the surviving one. After a
+    /// deletion the two agree; after a filter the surviving list is a different, much
+    /// shorter sequence, so an index carried into it lands somewhere unrelated to where
+    /// the user was. Walking the old order finds what was physically next to them.
+    static func nearestSurvivor(
+        of id: MediaAssetID,
+        previousOrderedIDs: [MediaAssetID],
+        surviving: Set<MediaAssetID>
+    ) -> MediaAssetID? {
+        if surviving.contains(id) {
+            return id
         }
-        guard let priorIndex = previousOrderedIDs.firstIndex(of: previous) else {
-            return survivingOrderedIDs.first
+        guard let priorIndex = previousOrderedIDs.firstIndex(of: id) else {
+            return nil
         }
-        if survivingOrderedIDs.indices.contains(priorIndex) {
-            return survivingOrderedIDs[priorIndex]
+        if let later = previousOrderedIDs[(priorIndex + 1)...].first(where: surviving.contains) {
+            return later
         }
-        if priorIndex > 0, survivingOrderedIDs.indices.contains(priorIndex - 1) {
-            return survivingOrderedIDs[priorIndex - 1]
-        }
-        return survivingOrderedIDs.last
+        return previousOrderedIDs[..<priorIndex].last(where: surviving.contains)
     }
 }

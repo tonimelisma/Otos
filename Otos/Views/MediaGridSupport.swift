@@ -24,7 +24,8 @@ nonisolated struct MediaGridStructuralApplyPolicy: Equatable {
     /// - Same-descriptor same-membership reorder (enrichment trickle): animate —
     ///   moves surviving items instead of recreating them.
     /// - Descriptor-changed reorder (sort/scope/filter flip): reloadData fallback;
-    ///   scroll resets anyway and whole-list moves hit the quadratic cliff.
+    ///   the position is reset or re-anchored rather than animated, and whole-list
+    ///   moves hit the quadratic cliff.
     /// - Large insert/remove (`n ≥ 1000`): reloadData fallback.
     /// - Small insert/remove: animate (existing behavior).
     ///

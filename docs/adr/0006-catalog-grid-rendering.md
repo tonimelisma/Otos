@@ -207,7 +207,9 @@ reporting, visible detail queries, and preheat look-ahead coalesce on a trailing
 ~16 ms edge and skip a new detail query when the visible identity list is unchanged,
 matching the enrichment viewport's newest-value delivery and avoiding per-bounds-tick
 Store cancellation. Permit one structural apply at a time and retain only the latest
-pending grid state. Reset scroll and selection only when the query descriptor changes; same-descriptor
+pending grid state. Reset scroll and selection only when the sidebar scope changes; a filter or
+sort change keeps the user's place by anchoring on a visible selected tile or the top tile's
+nearest survivor (APP-042); same-descriptor
 structural applies restore surviving selected identities through the minimal
 selection delta (`MediaGridSelection.selectionDelta`), so a surviving tile's
 selection state is never reassigned and its animated ring never blinks on a

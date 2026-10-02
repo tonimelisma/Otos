@@ -11,12 +11,12 @@ struct MediaGridBridgeTests {
         let intermediate = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
         let newest = makeGrid(scope: .allMedia, paths: ["c.jpg"])
 
-        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
         #expect(gate.receive(intermediate) == [.pending(replacedExisting: false)])
         #expect(gate.receive(newest) == [.pending(replacedExisting: true)])
         #expect(
             gate.completeStructuralApply(applied: first)
-                == [.apply(newest, descriptorChanged: false)]
+                == [.apply(newest, change: .unchanged)]
         )
     }
 
@@ -24,32 +24,32 @@ struct MediaGridBridgeTests {
         let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
 
-        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: first) == [])
         #expect(
             gate.receive(first)
-                == [.refreshVisible(first, resetScroll: false, resetSelection: false)]
+                == [.refreshVisible(first, change: .unchanged)]
         )
     }
 
     @Test func descriptorChangeResetsScrollAndSelectionAndSameDescriptorStructurePreservesThem() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(allMedia) == [.apply(allMedia, descriptorChanged: false)])
+        #expect(gate.receive(allMedia) == [.apply(allMedia, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: allMedia) == [])
 
         let sameDescriptor = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
-        #expect(gate.receive(sameDescriptor) == [.apply(sameDescriptor, descriptorChanged: false)])
+        #expect(gate.receive(sameDescriptor) == [.apply(sameDescriptor, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: sameDescriptor) == [])
 
         let differentScope = makeGrid(scope: .library(LibraryRootPath(rawValue: "/Pictures")), paths: ["a.jpg"])
-        #expect(gate.receive(differentScope) == [.apply(differentScope, descriptorChanged: true)])
+        #expect(gate.receive(differentScope) == [.apply(differentScope, change: .scope)])
     }
 
     @Test func descriptorChangeWithSameIDsRefreshClearsSelection() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(allMedia) == [.apply(allMedia, descriptorChanged: false)])
+        #expect(gate.receive(allMedia) == [.apply(allMedia, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: allMedia) == [])
 
         let sameIDsInLibraryScope = makeGrid(
@@ -58,7 +58,7 @@ struct MediaGridBridgeTests {
         )
         #expect(
             gate.receive(sameIDsInLibraryScope)
-                == [.refreshVisible(sameIDsInLibraryScope, resetScroll: true, resetSelection: true)]
+                == [.refreshVisible(sameIDsInLibraryScope, change: .scope)]
         )
     }
 
@@ -67,7 +67,7 @@ struct MediaGridBridgeTests {
     @Test func scrollHoldParksSameDescriptorAndDrainsNewestOnRelease() {
         let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: first) == [])
 
         gate.beginScrollHold()
@@ -76,7 +76,7 @@ struct MediaGridBridgeTests {
         #expect(gate.receive(intermediate) == [.pending(replacedExisting: false)])
         #expect(gate.receive(newest) == [.pending(replacedExisting: true)])
         #expect(gate.scrollHold)
-        #expect(gate.endScrollHold() == [.apply(newest, descriptorChanged: false)])
+        #expect(gate.endScrollHold() == [.apply(newest, change: .unchanged)])
         #expect(!gate.scrollHold)
         #expect(gate.lastDrainedHeldDuringScroll)
     }
@@ -84,7 +84,7 @@ struct MediaGridBridgeTests {
     @Test func scrollHoldBypassesDescriptorChangedAndClearsParkedPending() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(allMedia) == [.apply(allMedia, descriptorChanged: false)])
+        #expect(gate.receive(allMedia) == [.apply(allMedia, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: allMedia) == [])
 
         gate.beginScrollHold()
@@ -98,7 +98,7 @@ struct MediaGridBridgeTests {
         )
         #expect(
             gate.receive(library)
-                == [.refreshVisible(library, resetScroll: true, resetSelection: true)]
+                == [.refreshVisible(library, change: .scope)]
         )
         #expect(gate.endScrollHold() == [])
         #expect(!gate.lastDrainedHeldDuringScroll)
@@ -114,14 +114,14 @@ struct MediaGridBridgeTests {
             scope: .library(LibraryRootPath(rawValue: "/Other")),
             paths: ["z.jpg"]
         )
-        #expect(gate.receive(otherLibrary) == [.apply(otherLibrary, descriptorChanged: true)])
+        #expect(gate.receive(otherLibrary) == [.apply(otherLibrary, change: .scope)])
         #expect(gate.endScrollHold() == [])
     }
 
     @Test func scrollHoldDuringInFlightKeepsNewestWinsUntilBothClear() {
         let gate = MediaGridMutationGate()
         let first = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
 
         gate.beginScrollHold()
         let intermediate = makeGrid(scope: .allMedia, paths: ["b.jpg"])
@@ -131,14 +131,14 @@ struct MediaGridBridgeTests {
 
         #expect(gate.completeStructuralApply(applied: first) == [])
         #expect(gate.scrollHold)
-        #expect(gate.endScrollHold() == [.apply(newest, descriptorChanged: false)])
+        #expect(gate.endScrollHold() == [.apply(newest, change: .unchanged)])
         #expect(gate.lastDrainedHeldDuringScroll)
     }
 
     @Test func descriptorChangeParkedDuringApplyBypassesScrollHoldOnCompletion() {
         let gate = MediaGridMutationGate()
         let initial = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(initial) == [.apply(initial, descriptorChanged: false)])
+        #expect(gate.receive(initial) == [.apply(initial, change: .unchanged)])
 
         gate.beginScrollHold()
         let library = makeGrid(
@@ -148,7 +148,7 @@ struct MediaGridBridgeTests {
         #expect(gate.receive(library) == [.pending(replacedExisting: false)])
         #expect(
             gate.completeStructuralApply(applied: initial)
-                == [.apply(library, descriptorChanged: true)]
+                == [.apply(library, change: .scope)]
         )
         #expect(gate.scrollHold)
     }
@@ -168,7 +168,7 @@ struct MediaGridBridgeTests {
         #expect(gate.receive(library) == [.pending(replacedExisting: false)])
         #expect(
             gate.completeZoomSwap(installed: 5)
-                == [.apply(library, descriptorChanged: true)]
+                == [.apply(library, change: .scope)]
         )
         #expect(gate.scrollHold)
     }
@@ -176,7 +176,7 @@ struct MediaGridBridgeTests {
     @Test func zoomSwapIgnoresScrollHold() {
         let gate = MediaGridMutationGate(columnCount: 6)
         let base = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(base) == [.apply(base, descriptorChanged: false)])
+        #expect(gate.receive(base) == [.apply(base, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: base) == [])
 
         gate.beginScrollHold()
@@ -230,7 +230,7 @@ struct MediaGridBridgeTests {
 
         #expect(
             gate.completeZoomSwap(installed: 4)
-                == [.apply(gridPrime, descriptorChanged: false)]
+                == [.apply(gridPrime, change: .unchanged)]
         )
     }
 
@@ -251,7 +251,7 @@ struct MediaGridBridgeTests {
 
         #expect(
             gate.completeZoomSwap(installed: 4) == [
-                .refreshVisible(sameIDsNewScope, resetScroll: true, resetSelection: true),
+                .refreshVisible(sameIDsNewScope, change: .scope),
                 .zoomSwap(columnCount: 5),
             ]
         )
@@ -270,7 +270,7 @@ struct MediaGridBridgeTests {
         #expect(swapGate.receive(secondGrid) == [.pending(replacedExisting: true)])
         #expect(
             swapGate.completeZoomSwap(installed: 4)
-                == [.apply(secondGrid, descriptorChanged: false)]
+                == [.apply(secondGrid, change: .unchanged)]
         )
 
         let applyInFlightGate = MediaGridMutationGate(columnCount: 6)
@@ -290,7 +290,7 @@ struct MediaGridBridgeTests {
         _ = gate.completeStructuralApply(applied: base)
 
         let second = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg"])
-        #expect(gate.receive(second) == [.apply(second, descriptorChanged: false)])
+        #expect(gate.receive(second) == [.apply(second, change: .unchanged)])
 
         #expect(gate.receiveColumnCount(4) == []) // parked
         let third = makeGrid(scope: .allMedia, paths: ["a.jpg", "b.jpg", "c.jpg"])
@@ -299,7 +299,7 @@ struct MediaGridBridgeTests {
         // The parked grid applies first (content correctness); the zoom stays deferred.
         #expect(
             gate.completeStructuralApply(applied: second)
-                == [.apply(third, descriptorChanged: false)]
+                == [.apply(third, change: .unchanged)]
         )
         // Only once that apply completes does the parked zoom drain.
         #expect(gate.completeStructuralApply(applied: third) == [.zoomSwap(columnCount: 4)])
@@ -381,16 +381,16 @@ struct MediaGridBridgeTests {
         #expect(policy.usesReloadDataFallback)
     }
 
-    @Test func gateApplyCarriesDescriptorChangedFact() {
+    @Test func gateApplyCarriesQueryChangeFact() {
         let gate = MediaGridMutationGate()
         let allMedia = makeGrid(scope: .allMedia, paths: ["a.jpg"])
-        #expect(gate.receive(allMedia) == [.apply(allMedia, descriptorChanged: false)])
+        #expect(gate.receive(allMedia) == [.apply(allMedia, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: allMedia) == [])
 
         let sameDescriptorReorder = makeGrid(scope: .allMedia, paths: ["b.jpg", "a.jpg"])
         #expect(
             gate.receive(sameDescriptorReorder)
-                == [.apply(sameDescriptorReorder, descriptorChanged: false)]
+                == [.apply(sameDescriptorReorder, change: .unchanged)]
         )
         #expect(gate.completeStructuralApply(applied: sameDescriptorReorder) == [])
 
@@ -401,7 +401,7 @@ struct MediaGridBridgeTests {
             ),
             orderedAssetIDs: ["a.jpg", "b.jpg"].map { makeAssetID(path: $0) }
         )
-        #expect(gate.receive(sortFlip) == [.apply(sortFlip, descriptorChanged: true)])
+        #expect(gate.receive(sortFlip) == [.apply(sortFlip, change: .filterOrSort)])
     }
 
     // MARK: - Retained membership set
@@ -412,13 +412,13 @@ struct MediaGridBridgeTests {
         #expect(gate.displayedOrderedIDs.isEmpty)
         #expect(gate.displayedOrderedIDSet.isEmpty)
 
-        #expect(gate.receive(first) == [.apply(first, descriptorChanged: false)])
+        #expect(gate.receive(first) == [.apply(first, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: first) == [])
         #expect(gate.displayedOrderedIDs == first.orderedAssetIDs)
         #expect(gate.displayedOrderedIDSet == Set(first.orderedAssetIDs))
 
         let reordered = makeGrid(scope: .allMedia, paths: ["c.jpg", "a.jpg", "b.jpg"])
-        #expect(gate.receive(reordered) == [.apply(reordered, descriptorChanged: false)])
+        #expect(gate.receive(reordered) == [.apply(reordered, change: .unchanged)])
         #expect(gate.completeStructuralApply(applied: reordered) == [])
         #expect(gate.displayedOrderedIDs == reordered.orderedAssetIDs)
         #expect(gate.displayedOrderedIDSet == Set(reordered.orderedAssetIDs))

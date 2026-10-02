@@ -226,7 +226,7 @@ struct MediaGridSelectionControllerTests {
         )
         let context = MediaGridViewController.StructuralApplyCompletionContext(
             grid: grid,
-            resetScroll: true,
+            change: .scope,
             applyStart: Date(),
             applyCallStart: Date(),
             diffPolicyMs: 0,

@@ -5,7 +5,7 @@ import OSLog
 extension MediaGridViewController {
     struct StructuralApplyCompletionContext {
         let grid: CatalogMediaGridState
-        let resetScroll: Bool
+        let change: MediaGridMutationGate.QueryChange
         let applyStart: Date
         let applyCallStart: Date
         let diffPolicyMs: Int
@@ -23,8 +23,7 @@ extension MediaGridViewController {
 
     func applyStructure(
         _ grid: CatalogMediaGridState,
-        resetScroll: Bool,
-        descriptorChanged: Bool
+        change: MediaGridMutationGate.QueryChange
     ) {
         let operation = stallMonitor?.beginOperation("MediaGridViewController.applyStructure")
         let applyStart = Date()
@@ -33,7 +32,7 @@ extension MediaGridViewController {
             previousOrderedIDs: mutationGate.displayedOrderedIDs,
             previousOrderedIDSet: mutationGate.displayedOrderedIDSet,
             nextOrderedIDs: grid.orderedAssetIDs,
-            descriptorChanged: descriptorChanged
+            descriptorChanged: change != .unchanged
         )
         let diffPolicyMs = DiagnosticsTiming.milliseconds(since: policyStart)
 
@@ -46,9 +45,9 @@ extension MediaGridViewController {
         let snapshot = mediaSnapshot(for: grid)
         let snapshotBuildMs = DiagnosticsTiming.milliseconds(since: snapshotStart)
 
-        let scrollAnchor = captureScrollAnchor(resetScroll: resetScroll)
+        let scrollAnchor = captureScrollAnchor(change: change, nextOrderedIDs: grid.orderedAssetIDs)
         let signpost = OtosSignpost.ui.beginInterval("MediaGridStructuralApply")
-        logStartedStructuralApply(grid, resetScroll: resetScroll, summary: summary)
+        logStartedStructuralApply(grid, change: change, anchor: scrollAnchor, summary: summary)
         let stallMonitor = stallMonitor
         let applyCallStart = Date()
         let animationSuppressed = summary.animatingDifferences
@@ -58,7 +57,7 @@ extension MediaGridViewController {
                 ))
         let context = StructuralApplyCompletionContext(
             grid: grid,
-            resetScroll: resetScroll,
+            change: change,
             applyStart: applyStart,
             applyCallStart: applyCallStart,
             diffPolicyMs: diffPolicyMs,
@@ -97,14 +96,16 @@ extension MediaGridViewController {
 
     private func logStartedStructuralApply(
         _ grid: CatalogMediaGridState,
-        resetScroll: Bool,
+        change: MediaGridMutationGate.QueryChange,
+        anchor: ScrollAnchor?,
         summary: MediaGridStructuralApplyPolicy
     ) {
         OtosLog.ui.debug(
             """
             Media grid structural apply started items=\(grid.orderedAssetIDs.count, privacy: .public) \
             scope=\(grid.scope.diagnosticDescription, privacy: .public) \
-            resetScroll=\(resetScroll, privacy: .public) \
+            change=\(String(describing: change), privacy: .public) \
+            anchor=\(anchor?.source.rawValue ?? "none", privacy: .public) \
             reorderOnly=\(summary.reorderOnly, privacy: .public) \
             largeApply=\(summary.largeApply, privacy: .public) \
             animating=\(summary.animatingDifferences, privacy: .public) \
@@ -120,6 +121,17 @@ extension MediaGridViewController {
     struct ScrollAnchor {
         let id: MediaAssetID
         let offsetFromViewportLeadingEdge: CGFloat
+        let source: ScrollAnchorSource
+    }
+
+    /// Which on-screen fact chose a `ScrollAnchor` (diagnostics).
+    enum ScrollAnchorSource: String {
+        /// The leading item, unchanged by the apply.
+        case leading
+        /// The first visible item still selected after a filter or sort change.
+        case selected
+        /// The leading item's nearest survivor after a filter removed it.
+        case survivor
     }
 
     /// Below this the grid counts as being at the top. One point, not a row height: the
@@ -144,28 +156,76 @@ extension MediaGridViewController {
     /// showing, so arrivals at its leading edge would push that tile off screen. It is
     /// always anchored. `scrollToFocusTarget` still owns the strip's position when focus
     /// *changes*; the anchor only keeps the position it already has across an apply.
-    /// Anchoring is skipped for a deliberate `resetScroll`.
-    func captureScrollAnchor(resetScroll: Bool) -> ScrollAnchor? {
-        guard !resetScroll else {
+    /// Anchoring is skipped for a new scope, which starts at the top.
+    ///
+    /// A filter or sort change keeps the user's place in the same collection (APP-042).
+    /// A visible tile that is still selected is what they were working on — in the strip,
+    /// the focused tile — so it holds its on-screen position, even at the top of the grid:
+    /// a sort would otherwise carry it away. Without one, the leading tile holds its
+    /// position, and if the filter removed it, its nearest survivor in the order the user
+    /// was looking at takes its place.
+    func captureScrollAnchor(
+        change: MediaGridMutationGate.QueryChange,
+        nextOrderedIDs: [MediaAssetID]
+    ) -> ScrollAnchor? {
+        guard change != .scope, let layout = collectionView.collectionViewLayout else {
             return nil
         }
         let isStrip = presentation.isStrip
         let viewport = scrollView.documentVisibleRect
+        let visible = itemsInScrollOrder(in: viewport, layout: layout, isStrip: isStrip)
+        if change == .filterOrSort {
+            // Already pruned to the survivors by `ViewModel.applyState`.
+            let selected = selectionHandlers.currentSelection().selection
+            if let item = visible.first(where: { selected.contains($0.id) }) {
+                return ScrollAnchor(
+                    id: item.id,
+                    offsetFromViewportLeadingEdge: item.offset,
+                    source: .selected
+                )
+            }
+        }
         guard isStrip || viewport.minY > Self.scrollAnchorTopThreshold,
-              let layout = collectionView.collectionViewLayout
+              let leading = visible.first
         else {
             return nil
         }
-        // Ask the *layout* what occupies the viewport, not the collection view which cells
-        // it has realized. `indexPathsForVisibleItems()` reports realized cells, which is a
-        // rendering fact rather than a geometric one: it answered "index 0" for a grid
-        // scrolled 600 points down, because nothing had been realized yet. Anchoring on
-        // that pins the wrong item — and pins it silently, since index 0 is a plausible
-        // answer. The layout's own attributes are a pure function of geometry.
+        guard change == .filterOrSort else {
+            return ScrollAnchor(id: leading.id, offsetFromViewportLeadingEdge: leading.offset, source: .leading)
+        }
+        guard let survivor = BrowserModePolicy.nearestSurvivor(
+            of: leading.id,
+            previousOrderedIDs: mutationGate.displayedOrderedIDs,
+            surviving: Set(nextOrderedIDs)
+        ) else {
+            return nil
+        }
+        return ScrollAnchor(
+            id: survivor,
+            offsetFromViewportLeadingEdge: leading.offset,
+            source: survivor == leading.id ? .leading : .survivor
+        )
+    }
+
+    /// The items intersecting `viewport` in scroll order (the grid: top-to-bottom, then
+    /// left-to-right; the strip: left-to-right), each with its leading edge's offset from
+    /// the viewport's leading edge.
+    ///
+    /// Asks the *layout* what occupies the viewport, not the collection view which cells
+    /// it has realized. `indexPathsForVisibleItems()` reports realized cells, which is a
+    /// rendering fact rather than a geometric one: it answered "index 0" for a grid
+    /// scrolled 600 points down, because nothing had been realized yet. Anchoring on
+    /// that pins the wrong item — and pins it silently, since index 0 is a plausible
+    /// answer. The layout's own attributes are a pure function of geometry.
+    private func itemsInScrollOrder(
+        in viewport: NSRect,
+        layout: NSCollectionViewLayout,
+        isStrip: Bool
+    ) -> [(id: MediaAssetID, offset: CGFloat)] {
         _ = layout.collectionViewContentSize
-        let leading = layout.layoutAttributesForElements(in: viewport)
+        return layout.layoutAttributesForElements(in: viewport)
             .filter { $0.representedElementCategory == .item }
-            .min { lhs, rhs in
+            .sorted { lhs, rhs in
                 if isStrip {
                     return lhs.frame.minX < rhs.frame.minX
                 }
@@ -173,16 +233,17 @@ extension MediaGridViewController {
                     ? lhs.frame.minX < rhs.frame.minX
                     : lhs.frame.minY < rhs.frame.minY
             }
-        guard let leading,
-              let indexPath = leading.indexPath,
-              let id = dataSource.itemIdentifier(for: indexPath)
-        else {
-            return nil
-        }
-        let offset = isStrip
-            ? leading.frame.minX - viewport.minX
-            : leading.frame.minY - viewport.minY
-        return ScrollAnchor(id: id, offsetFromViewportLeadingEdge: offset)
+            .compactMap { attributes in
+                guard let indexPath = attributes.indexPath,
+                      let id = dataSource.itemIdentifier(for: indexPath)
+                else {
+                    return nil
+                }
+                let offset = isStrip
+                    ? attributes.frame.minX - viewport.minX
+                    : attributes.frame.minY - viewport.minY
+                return (id, offset)
+            }
     }
 
     /// Puts the anchored item back where it was on screen.
@@ -237,8 +298,8 @@ extension MediaGridViewController {
     /// semantics stay identical without feeding CA commit pressure.
     ///
     /// Unanimated branch (`false`): descriptor-changed reorders and large
-    /// membership applies — AppKit's reloadData-class path. Scroll resets on
-    /// descriptor change anyway; large membership diffs stay off the quadratic
+    /// membership applies — AppKit's reloadData-class path. The position resets or is
+    /// re-anchored on a descriptor change anyway; large membership diffs stay off the quadratic
     /// true-diff cliff (research harness: ~23–28 ms call-to-return for K = 1–3
     /// moves at n = 23k; cliff above ~1k movers).
     private func applySnapshot(
@@ -308,7 +369,7 @@ extension MediaGridViewController {
         OtosSignpost.ui.endInterval("MediaGridStructuralApply", context.signpost)
         stallMonitor?.completeIntentToPaint(appliedScope: context.grid.scope)
 
-        if context.resetScroll {
+        if context.change == .scope {
             scrollToTop()
         }
         // Reorder-only applies keep identical membership by definition; prune's

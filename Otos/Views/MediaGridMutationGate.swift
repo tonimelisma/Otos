@@ -32,8 +32,8 @@ import Foundation
 /// mutation, so it never occupies `inFlight` and may precede an exclusive action in the
 /// same drain.
 ///
-/// A query-descriptor change is a user context change, so it resets scroll and selection
-/// even when the same identities survive. Lives beside `MediaGridBridgeView` (its
+/// A scope change is a user context change, so it resets scroll even when the same
+/// identities survive; a filter or sort change keeps the user's place (APP-042). Lives beside `MediaGridBridgeView` (its
 /// only owner) but in its own file so the collection bridge stays focused and the gate
 /// can be unit-tested directly (`MediaGridBridgeTests`).
 @MainActor
@@ -55,19 +55,42 @@ final class MediaGridMutationGate {
         }
     }
 
+    /// How a grid's query relates to the one on screen, which decides what happens to the
+    /// user's place in it (APP-042).
+    enum QueryChange: Equatable {
+        /// Same scope, filter and sort: content churn only.
+        case unchanged
+        /// Same scope, new filter or sort: the same collection narrowed or reordered, so
+        /// the controller anchors on what the user was looking at and re-renders the
+        /// ViewModel's pruned selection.
+        case filterOrSort
+        /// A different collection: the old position means nothing there, so the grid
+        /// starts at the top and re-renders the ViewModel's cleared selection.
+        case scope
+
+        init(from displayed: CatalogQueryDescriptor, to next: CatalogQueryDescriptor) {
+            if displayed.scope != next.scope {
+                self = .scope
+            } else if displayed != next {
+                self = .filterOrSort
+            } else {
+                self = .unchanged
+            }
+        }
+    }
+
     enum Action: Equatable {
         /// Diagnostics only: an update arrived while a mutation was in flight and was
         /// stashed as the newest pending grid. `replacedExisting` reports whether it
         /// displaced an earlier pending grid.
         case pending(replacedExisting: Bool)
-        /// Same identities, so no structural apply: re-read visible details and apply the
-        /// descriptor-change resets. Not exclusive — never occupies `inFlight`.
-        case refreshVisible(CatalogMediaGridState, resetScroll: Bool, resetSelection: Bool)
+        /// Same identities, so no structural apply: re-read visible details and realize
+        /// `change` (`QueryChange`). Not exclusive — never occupies `inFlight`.
+        case refreshVisible(CatalogMediaGridState, change: QueryChange)
         /// Exclusive: run one diffable structural apply for a new identity order.
-        /// `descriptorChanged` is the single fact that drives scroll/selection reset
-        /// and the apply-policy choice (same-descriptor reorders animate; descriptor
-        /// flips keep the reloadData-class path).
-        case apply(CatalogMediaGridState, descriptorChanged: Bool)
+        /// `change` drives the apply-policy choice (same-query reorders animate; a query
+        /// change keeps the reloadData-class path) and how the position is kept.
+        case apply(CatalogMediaGridState, change: QueryChange)
         /// Exclusive: install a new column-count layout (animated swap).
         case zoomSwap(columnCount: Int)
 
@@ -212,17 +235,13 @@ final class MediaGridMutationGate {
     /// exclusive `.apply` (new identity order), marking `inFlight = .structuralApply` in
     /// the apply case. Shared by `receive`'s idle path and `drain`.
     private func idleGridAction(_ grid: CatalogMediaGridState) -> Action {
-        let descriptorChanged = grid.descriptor != displayedDescriptor
+        let change = QueryChange(from: displayedDescriptor, to: grid.descriptor)
         if grid.orderedAssetIDs == displayedOrderedIDs {
             displayedDescriptor = grid.descriptor
-            return .refreshVisible(
-                grid,
-                resetScroll: descriptorChanged,
-                resetSelection: descriptorChanged
-            )
+            return .refreshVisible(grid, change: change)
         }
         inFlight = .structuralApply
-        return .apply(grid, descriptorChanged: descriptorChanged)
+        return .apply(grid, change: change)
     }
 
     /// Runs after every completion, in order: parked grid first (content correctness),

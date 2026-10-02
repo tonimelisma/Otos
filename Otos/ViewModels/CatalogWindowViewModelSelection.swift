@@ -108,7 +108,7 @@ extension CatalogWindowViewModel {
         return gridSelection
     }
 
-    /// Descriptor-change clear. Resets selection, anchor, and base unconditionally.
+    /// Scope-change clear. Resets selection, anchor, and base unconditionally.
     func clearGridSelection(reason: String) {
         guard gridSelection != .empty else {
             return

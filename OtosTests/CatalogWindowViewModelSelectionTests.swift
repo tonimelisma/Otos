@@ -162,7 +162,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.gridSelection.base == [ids[1]])
     }
 
-    @Test func descriptorChangeClearsAtApplyState() {
+    @Test func scopeChangeClearsAtApplyState() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 3)
         model.applyState(makeWindowState(orderedIDs: ids))
@@ -177,6 +177,56 @@ struct CatalogWindowViewModelSelectionTests {
         model.applyState(makeWindowState(orderedIDs: ids, descriptor: libraryScope))
 
         #expect(model.gridSelection == .empty)
+    }
+
+    /// A filter narrows the same collection, so what the user selected and is still in
+    /// it stays selected (APP-042). Only a new scope clears.
+    @Test func filterChangeKeepsSurvivingSelection() {
+        let model = makeSelectionViewModel()
+        let ids = makeIDs(count: 5)
+        model.applyState(makeWindowState(orderedIDs: ids))
+        _ = model.applyGridClick(hit: ids[1], modifiers: [], orderedIDs: ids)
+        _ = model.applyGridClick(hit: ids[3], modifiers: [.command], orderedIDs: ids)
+
+        let imagesOnly = CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(kinds: [.image]))
+        model.applyState(makeWindowState(orderedIDs: [ids[0], ids[3], ids[4]], descriptor: imagesOnly))
+
+        #expect(model.gridSelection.selection == [ids[3]])
+    }
+
+    /// A sort reorders the same collection: membership is unchanged, so the whole
+    /// selection survives.
+    @Test func sortChangeKeepsSelection() {
+        let model = makeSelectionViewModel()
+        let ids = makeIDs(count: 4)
+        model.applyState(makeWindowState(orderedIDs: ids))
+        _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
+
+        let oldestFirst = CatalogQueryDescriptor(
+            scope: .allMedia,
+            sort: MediaSortOrder(field: .bestDate, direction: .ascending)
+        )
+        model.applyState(makeWindowState(orderedIDs: ids.reversed(), descriptor: oldestFirst))
+
+        #expect(model.gridSelection.selection == [ids[2]])
+    }
+
+    /// The loupe stays on the photo the user is looking at when a filter keeps it, and
+    /// moves to its nearest survivor in the old order when the filter drops it — not to
+    /// the first item, which is where a new scope starts.
+    @Test func filterChangeKeepsLoupeFocusOrMovesToNearestSurvivor() {
+        let model = makeSelectionViewModel()
+        let ids = makeIDs(count: 6)
+        model.applyState(makeWindowState(orderedIDs: ids))
+        model.openLoupe(id: ids[3])
+
+        let keepsFocus = CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(kinds: [.image]))
+        model.applyState(makeWindowState(orderedIDs: [ids[0], ids[3], ids[5]], descriptor: keepsFocus))
+        #expect(model.focusedAssetID == ids[3])
+
+        let dropsFocus = CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(kinds: [.video]))
+        model.applyState(makeWindowState(orderedIDs: [ids[0], ids[5]], descriptor: dropsFocus))
+        #expect(model.focusedAssetID == ids[5])
     }
 
     @Test func focusReconcileRunsOnGridChange() {
