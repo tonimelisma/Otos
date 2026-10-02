@@ -4179,10 +4179,27 @@ extension CatalogStore {
     /// mutation owns it. Reorganization recovery remains idempotent through its
     /// original API; Trash uses this atomic variant so two destructive commands
     /// cannot both believe they own one root between separate actor awaits.
+    ///
+    /// Registration is catalog truth, so this awaits the shared initial load like
+    /// every mutation entry point: startup journal recovery reaches here from its
+    /// own task, independent of `start()`, and before the load `roots` is empty
+    /// for every persisted root. The load is the only suspension; the registry
+    /// check and the lease install below stay atomic.
     func acquireNamespaceMutationLease(
         for rootPath: LibraryRootPath,
         owner: RootNamespaceMutationOwner
-    ) -> RootNamespaceLeaseAcquisition {
+    ) async -> RootNamespaceLeaseAcquisition {
+        do {
+            try await ensureStartedForMutation()
+        } catch {
+            OtosLog.catalog.noticeOperation("namespaceMutation.lease", phase: "denied", fields: [
+                "reason": "catalogUnavailable",
+                "rootPath": rootPath.rawValue,
+                "owner": owner.rawValue,
+                "error": String(describing: error),
+            ])
+            return .catalogUnavailable
+        }
         guard roots[rootPath] != nil else {
             OtosLog.catalog.noticeOperation("namespaceMutation.lease", phase: "denied", fields: [
                 "reason": "rootNotRegistered",

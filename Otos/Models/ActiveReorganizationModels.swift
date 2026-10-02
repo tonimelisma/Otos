@@ -105,8 +105,22 @@ nonisolated enum RootNamespaceLeaseAcquisition: Equatable, Sendable {
     /// A different namespace mutation owns this root right now. Transient: the
     /// root is present and the work is usually retryable.
     case busy(owner: RootNamespaceMutationOwner)
-    /// No such root in the catalog. Not transient for this operation.
+    /// No such root in the loaded catalog. Not transient for this operation.
     case rootNotRegistered
+    /// The catalog could not load, so whether the root is registered is unknown.
+    /// Never reported as `rootNotRegistered`: an empty pre-load registry is not
+    /// evidence that a persisted root is absent.
+    case catalogUnavailable
+
+    /// The `reason=` value a denied caller logs, one spelling per outcome.
+    var logReason: String {
+        switch self {
+        case .acquired: "acquired"
+        case .busy: "namespaceBusy"
+        case .rootNotRegistered: "rootNotRegistered"
+        case .catalogUnavailable: "catalogUnavailable"
+        }
+    }
 }
 
 nonisolated struct RootNamespaceMutationLease: Equatable, Sendable {
