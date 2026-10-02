@@ -691,12 +691,11 @@ struct ImportExecutionProgressTests {
         #expect(hasEntryFailures)
     }
 
-    /// APP-029: state F-incomplete's "Show them" reveal selects from the batch
-    /// row's destination-keyed grid, so a `.skippedForeign` entry records the
-    /// destination identity — the one thing actually sitting at that path for the
-    /// reveal to select. The source card's identity would never match anything
-    /// there, and the reveal would select nothing.
-    @Test func incompleteItemsCarryDestinationIdentityNotSourceIdentity() async throws {
+    /// APP-029: state F-incomplete's "Show them" reveal selects from the card
+    /// row's grid — the only row the bar is drawn on — so a `.skippedForeign`
+    /// entry records the card's own identity. The destination path holds a
+    /// foreign file that is not this item, and the item never landed there.
+    @Test func incompleteItemsCarrySourceIdentityNotDestinationIdentity() async throws {
         let temp = try makeCatalogStoreTemporaryDirectory()
         let sourceRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
         let destinationRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
@@ -769,9 +768,9 @@ struct ImportExecutionProgressTests {
             return
         }
         #expect(skippedForeignCount == 1)
-        let expectedDestinationID = MediaAssetID(libraryRootPath: destinationPath, relativePath: finalDestination)
-        #expect(incompleteItems == [expectedDestinationID])
-        #expect(!incompleteItems.contains(plan.entries[0].source.id))
+        let destinationID = MediaAssetID(libraryRootPath: destinationPath, relativePath: finalDestination)
+        #expect(incompleteItems == [plan.entries[0].source.id])
+        #expect(!incompleteItems.contains(destinationID))
     }
 
     @Test func zeroCopyPlanWithDeleteRequestedExecutesDeletion() async throws {

@@ -241,32 +241,6 @@ final class CatalogWindowViewModel {
     /// `cancelImport` is called and cleared once that source's presentation
     /// leaves `.executing` (`applyImportPresentations`).
     var cancellingImportSources: Set<LibraryRootPath> = []
-    /// Batch IDs already offered the once-only automatic sidebar move
-    /// (`import-bar.md` "Where the user is standing").
-    /// UI-only ViewModel state, same tier as `cancellingImportSources` — the
-    /// coordinator publishes the batch ID as state and has no notion of
-    /// "have we already followed it."
-    var autoSelectedBatchIDs: Set<ImportBatchID> = []
-    /// The batch produced by each removable source's **current** attachment,
-    /// remembered so the selection can follow the user's items to that batch
-    /// when the source's own row disappears (ejected, or pulled). Absent until
-    /// that attachment imports something, and cleared when the card comes back
-    /// as a fresh session — so a re-inserted card that imports nothing never
-    /// drags the user to the previous attachment's batch.
-    ///
-    /// The presentation carrying that batch ID and the catalog publish that
-    /// removes the row arrive on two independent streams, so reading the batch
-    /// ID off `importPresentations` at removal time would be an ordering bet;
-    /// this is the same reason `MediaOperationCoordinator` snapshots
-    /// `detachedBatchPresentations` before dropping a session. Written only
-    /// from live sessions (`applyImportPresentations`), UI-only, same tier as
-    /// `autoSelectedBatchIDs`.
-    struct AttachmentBatchRecord: Equatable {
-        let generation: MediaOperationAttachmentGeneration
-        let batch: ImportBatchID?
-    }
-
-    var lastBatchBySourcePath: [LibraryRootPath: AttachmentBatchRecord] = [:]
     var showsReorganizationConfirmation = false
     var reorganizationSummaryText: String?
     var reorganizationAlertMessage: String?
@@ -672,11 +646,7 @@ extension CatalogWindowViewModel {
             nextState.mediaEmptyState = .catalogIncompatible(catalogCompatibilityProblem)
         }
         let previousState = state
-        invalidateAttachmentDeliveryRecords(for: nextState.removableSources)
         applySidebarSelectionPolicy(previous: previousState, next: nextState)
-        if let batchID = batchToFollowAfterSourceRemoved(nextState) {
-            applyAutomaticSidebarSelection(.importBatch(batchID))
-        }
 
         let updateID = stallMonitor.reserveUpdateID()
         let applyStart = Date()
@@ -690,7 +660,7 @@ extension CatalogWindowViewModel {
         // A -> B -> A toggles that equality alone cannot distinguish.
         if nextState.queryGeneration == queryGeneration {
             queryDescriptor = nextState.queryDescriptor
-            sidebarSelection = resolvedSidebarSelectionKeepingFreshBatch(nextState)
+            sidebarSelection = nextState.resolvedSidebarSelection
         } else if currentSelectionWasRemoved(in: nextState) {
             applyAutomaticSidebarSelection(
                 SidebarSelectionPolicy.selectionOnSelectedSourceRemoved(
@@ -883,51 +853,6 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// A catalog attachment generation is authoritative for the source row.
-    /// Clearing a delivery record here handles a detach/reattach that is
-    /// coalesced before the operation stream delivers the fresh presentation.
-    private func invalidateAttachmentDeliveryRecords(for sources: [CatalogLibraryState]) {
-        for source in sources where source.attachmentGeneration != 0 {
-            guard let record = lastBatchBySourcePath[source.path],
-                  record.generation.rawValue != source.attachmentGeneration
-            else {
-                continue
-            }
-            lastBatchBySourcePath.removeValue(forKey: source.path)
-        }
-    }
-
-    /// The batch to follow when the removable row the user is standing on
-    /// stops existing — ejected after an import, or pulled — and that source's
-    /// run produced a batch that is in the sidebar. `nil` whenever the current
-    /// scope is not a vanished source, or nothing was imported from it.
-    ///
-    /// `import-bar.md` "Where the user is standing" rule 2 forbids moving the
-    /// user twice, with one forced exception: a selection whose subject stopped
-    /// existing must resolve somewhere. This resolves it to the batch holding
-    /// the items that source just produced, rather than to
-    /// `SidebarSelectionPolicy.defaultSelection`, which would answer with an
-    /// unrelated card, a library, or All Media — none of which is what the user
-    /// was looking at. It is also what makes state F's card-gone bar honest
-    /// without a `Show These Items` button: the items are already on screen.
-    ///
-    /// Reads `lastBatchBySourcePath`, not `importPresentations`, because the
-    /// coordinator's presentation stream and the catalog publish that removes
-    /// the row are independent; requiring a live presentation at this exact
-    /// frame would make the behaviour depend on which arrives first.
-    func batchToFollowAfterSourceRemoved(_ nextState: CatalogWindowState) -> ImportBatchID? {
-        guard case let .library(path) = queryDescriptor.scope,
-              !nextState.libraries.contains(where: { $0.path == path }),
-              !nextState.removableSources.contains(where: { $0.path == path }),
-              let record = lastBatchBySourcePath[path],
-              let batchID = record.batch,
-              nextState.importBatches.contains(where: { $0.batchID == batchID })
-        else {
-            return nil
-        }
-        return batchID
-    }
-
     func currentSelectionWasRemoved(in nextState: CatalogWindowState) -> Bool {
         switch queryDescriptor.scope {
         case let .library(path):
@@ -938,26 +863,6 @@ extension CatalogWindowViewModel {
         case .allMedia, .allImports:
             false
         }
-    }
-
-    /// `CatalogWindowPolicy.resolvedSidebarSelection` only accepts a batch that
-    /// already has a journaled asset — correct for the pure Store-side policy,
-    /// which has no reason to know about media operations. But a batch is
-    /// selected (`followNewBatchesOnce`) the moment execution starts, before
-    /// any asset has copied, so trusting the resolved value unconditionally
-    /// here would bounce that selection away again on this very publish cycle,
-    /// almost every time. Keep the optimistic selection instead while the
-    /// coordinator still has a live presentation for that batch — it will
-    /// stop needing this exception the moment the batch gets its first asset,
-    /// because `resolvedSidebarSelection` then agrees on its own.
-    func resolvedSidebarSelectionKeepingFreshBatch(_ nextState: CatalogWindowState) -> SidebarSelection {
-        if case let .importBatch(id) = sidebarSelection,
-           !nextState.importBatches.contains(where: { $0.batchID == id }),
-           importPresentations.contains(where: { $0.batchID == id })
-        {
-            return sidebarSelection
-        }
-        return nextState.resolvedSidebarSelection
     }
 }
 

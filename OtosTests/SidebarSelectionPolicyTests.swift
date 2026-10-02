@@ -116,8 +116,6 @@ struct SidebarSelectionPolicyTests {
             state: state,
             attachToReadyMs: nil,
             batchID: batchID,
-            batchHasPublishedAssets: batchID != nil,
-            cardStillExists: true,
             copiedJustNow: nil,
             isFullyClean: nil,
             stopReason: nil,
@@ -133,7 +131,7 @@ struct SidebarSelectionPolicyTests {
         #expect(!SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .allMedia, presentation: pres))
     }
 
-    @Test func barOwnsStatusMatchesBatchSelection() {
+    @Test func barOwnsStatusIgnoresBatchSelection() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
                 completedCount: 1,
@@ -144,14 +142,10 @@ struct SidebarSelectionPolicyTests {
             )),
             batchID: Self.batchID
         )
-        #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .importBatch(Self.batchID), presentation: pres))
-        // A batch row's presentation shares its source's sourcePath, so the
-        // removable-row selection form also matches — one operation, either row.
+        // The bar is drawn only on the card's row: selecting the run's own
+        // batch row leaves it off screen.
+        #expect(!SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .importBatch(Self.batchID), presentation: pres))
         #expect(SidebarSelectionPolicy.barOwnsStatus(sidebarSelection: .library(Self.cardPath), presentation: pres))
-        #expect(!SidebarSelectionPolicy.barOwnsStatus(
-            sidebarSelection: .importBatch(ImportBatchID(unixMilliseconds: 999)),
-            presentation: pres
-        ))
     }
 
     @Test func removableIndicatorShowsIndeterminateBeforeBatchExists() {
@@ -174,9 +168,9 @@ struct SidebarSelectionPolicyTests {
         ) == .none)
     }
 
-    @Test func removableIndicatorHidesOnceBatchIDExists() {
-        // Ownership has moved to the batch row — the removable row shows
-        // nothing even though the user is looking elsewhere.
+    @Test func removableIndicatorHidesWhileExecuting() {
+        // A run's progress is the batch row's indicator — the removable row
+        // shows nothing even though the user is looking elsewhere.
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
                 completedCount: 1,
@@ -213,7 +207,7 @@ struct SidebarSelectionPolicyTests {
         #expect(indicator == .determinate(completed: 4, total: 9))
     }
 
-    @Test func batchIndicatorHidesWhenBarOwnsStatus() {
+    @Test func batchIndicatorHidesOnlyWhenTheCardRowIsSelected() {
         let pres = Self.presentation(
             state: .executing(progress: MediaOperationProgress(
                 completedCount: 4,
@@ -224,12 +218,14 @@ struct SidebarSelectionPolicyTests {
             )),
             batchID: Self.batchID
         )
+        // Standing on the batch row itself, the bar is off screen, so the row
+        // carries its own progress.
         let indicator = SidebarSelectionPolicy.batchIndicator(
             batchID: Self.batchID,
             presentations: [pres],
             sidebarSelection: .importBatch(Self.batchID)
         )
-        #expect(indicator == .none)
+        #expect(indicator == .determinate(completed: 4, total: 9))
         let indicatorFromLibraryRow = SidebarSelectionPolicy.batchIndicator(
             batchID: Self.batchID,
             presentations: [pres],

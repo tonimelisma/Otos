@@ -7,40 +7,19 @@ import OSLog
 /// The coordinator actor owns plan lifecycle; this MainActor bridge only assigns
 /// SwiftUI-visible presentation, destination intents, and queued Import starts.
 extension CatalogWindowViewModel {
-    /// The bar is reachable from two sidebar rows once execution starts — the
-    /// removable row and the batch row — both views onto the same operation
-    /// (`import-bar.md` "Where the user is standing"). A batch row can outlive
-    /// its source's session (card ejected or pulled), which is why matching by
-    /// `batchID` also has to see `detachedBatchPresentations` on the
-    /// coordinator — `applyImportPresentations` already folds those into
-    /// `importPresentations`.
-    ///
-    /// The batch row shows the bar only while there is something the grid
-    /// cannot say: the run in flight, or a settled run that was not fully
-    /// clean (its `Show them` reveal lives here). A fully clean settle has
-    /// nothing left to report on this row — the user is looking at exactly
-    /// what they just imported — so the bar leaves the moment it settles, with
-    /// no timer and no remembered dismissal (`import-bar.md` state F,
-    /// "Dismissal"). The card's own row is unaffected: it keeps `Eject Card`
-    /// and Erase for as long as the card is attached, derived from the plan
-    /// on every frame.
+    /// The bar is drawn only while a removable source's own row is selected
+    /// (`import-bar.md` "Where the user is standing"). An import batch row
+    /// shows that batch and nothing else, whatever state its run is in: the
+    /// grid is the report there. The card's row keeps the bar — `Eject Card`,
+    /// Erase, a Stopped run's remainder — for as long as the card is attached,
+    /// derived from the plan on every frame.
     var selectedImportPresentation: MediaOperationSourcePresentation? {
-        switch sidebarSelection {
-        case let .library(path):
-            guard state.removableSources.contains(where: { $0.path == path }) else {
-                return nil
-            }
-            return importPresentations.first { $0.sourcePath == path && $0.cardStillExists }
-        case let .importBatch(batchID):
-            guard let presentation = importPresentations.first(where: { $0.batchID == batchID }),
-                  presentation.isFullyClean != true
-            else {
-                return nil
-            }
-            return presentation
-        default:
+        guard case let .library(path) = sidebarSelection,
+              state.removableSources.contains(where: { $0.path == path })
+        else {
             return nil
         }
+        return importPresentations.first { $0.sourcePath == path }
     }
 
     // ImportPlanDetailReader and the Details sheet are deleted (ADR 0021): the
@@ -134,59 +113,8 @@ extension CatalogWindowViewModel {
             })
             cancellingImportSources.formIntersection(stillExecuting)
         }
-        // Live sessions only (`cardStillExists`): a detached snapshot carries
-        // the previous attachment's batch under the same source path. The
-        // generation makes the handoff explicit, so a replacement attachment
-        // cannot inherit the old batch even if its fresh frame is delayed.
-        for presentation in presentations where presentation.cardStillExists {
-            lastBatchBySourcePath[presentation.sourcePath] = AttachmentBatchRecord(
-                generation: presentation.attachmentGeneration,
-                batch: presentation.batchID
-            )
-        }
-        followNewBatchesOnce(presentations)
         Task {
             await refreshRemovableDestinations()
-        }
-    }
-
-    /// Moves the sidebar selection to a batch the first time a presentation
-    /// shows it has something in it, and never again for that batch
-    /// (`import-bar.md` "Where the user is standing", "Required change").
-    /// `batchID` is carried as state rather than an event specifically so this
-    /// can't miss a dropped intermediate frame — the check is "have we seen
-    /// this ID," not "did we just observe a transition."
-    ///
-    /// A batch with nothing in it is skipped *and not marked seen*: a run
-    /// refused before any copy still pins its batch for state G, but moving
-    /// the user to an empty row leaves the sidebar and the grid disagreeing,
-    /// and once the next run mints a new batch the footer has nothing to match
-    /// and unmounts. Leaving the ID unmarked means the first frame that proves
-    /// the batch non-empty still gets the once-only move.
-    ///
-    /// `.allImports` counts as not having navigated away (J12: "that list is a
-    /// navigation surface, not a place to watch work from"); any other
-    /// selection — a different library, a different removable source, All
-    /// Media — is a real navigation choice and is respected.
-    private func followNewBatchesOnce(_ presentations: [MediaOperationSourcePresentation]) {
-        for presentation in presentations {
-            let replacementIsLive = presentations.contains {
-                $0.sourcePath == presentation.sourcePath && $0.cardStillExists
-            }
-            guard let batchID = presentation.batchID,
-                  presentation.cardStillExists || !replacementIsLive,
-                  presentation.cardStillExists || presentation.isFullyClean != true,
-                  presentation.batchHasPublishedAssets,
-                  !autoSelectedBatchIDs.contains(batchID)
-            else {
-                continue
-            }
-            autoSelectedBatchIDs.insert(batchID)
-            let hasNotNavigatedAway = sidebarSelection == .library(presentation.sourcePath) || sidebarSelection ==
-                .allImports
-            if hasNotNavigatedAway {
-                selectSidebar(.importBatch(batchID))
-            }
         }
     }
 
@@ -194,7 +122,7 @@ extension CatalogWindowViewModel {
     /// `SourceSession.preferences` — rather than a second ViewModel-owned
     /// dictionary kept in sync by a per-frame refresh.
     func sessionPreferences(for source: LibraryRootPath) -> ImportPreferences {
-        importPresentations.first { $0.sourcePath == source && $0.cardStillExists }?.sessionPreferences ?? importPreferences
+        importPresentations.first { $0.sourcePath == source }?.sessionPreferences ?? importPreferences
     }
 
     /// Writes only to the coordinator; the next `publish()` carrying the new

@@ -159,9 +159,8 @@ actor MediaOperationCoordinator {
         /// What this run had landed before it failed — state G states it when
         /// nonzero. Every present producer fails before any copy.
         let publishedCount: Int
-        /// The run's batch, pinned on state G and carried into detach whether
-        /// or not anything ever published (identity — navigation is
-        /// `batchHasPublishedAssets`, and this run has none).
+        /// The run's batch, named in the settlement log when the card is
+        /// removed while state G stands.
         let batch: ImportBatchID
         let destination: LibraryRootPath
     }
@@ -258,14 +257,10 @@ actor MediaOperationCoordinator {
         /// re-plan cannot accidentally join an older run.
         var activeRunID: String?
         /// Whether the executing batch has at least one durably-published
-        /// asset yet, per `store.importBatchAssetCount`. Gates `.executing`'s
-        /// own `batchID` exposure so `followNewBatchesOnce` never navigates
-        /// to a batch row before there is anything in it to show (owner
-        /// decision: "move batch selection to first-asset"). Reset to
-        /// `false` at the start of every new attempt in
-        /// `runExecution`. Terminal-state batch visibility
-        /// (`.completed`/`.stopped`/`.failed`) is unaffected — that fallback
-        /// already has its own reason to stay eager (state G pinning).
+        /// asset yet, per `store.importBatchAssetCount`. Gates the
+        /// presentation's `batchID` so the batch row's progress indicator is
+        /// keyed only once that row exists in the sidebar. Reset to `false`
+        /// at the start of every new attempt in `runExecution`.
         var batchAssetCountConfirmed = false
     }
 
@@ -273,12 +268,6 @@ actor MediaOperationCoordinator {
     /// Last state logged per source, so `publish()` records transitions rather than a
     /// sample of whatever a timer happened to catch (B3).
     private var lastLoggedState: [LibraryRootPath: MediaOperationSourceState] = [:]
-    /// The last presentation for an unresolved settled attachment, keyed by
-    /// batch rather than source path. Clean completions are discarded; a
-    /// source removed during execution settles through `drainingExecutions`
-    /// before it can become a detached presentation. Kept for the app
-    /// session's lifetime, the same as other in-memory coordinator facts.
-    private var detachedBatchPresentations: [ImportBatchID: MediaOperationSourcePresentation] = [:]
     /// Execution contexts whose source disappeared while the executor was still
     /// running. The task is the actual executor lifetime, so the result can settle
     /// the old batch without ever being eligible to mutate a replacement source
@@ -641,7 +630,7 @@ actor MediaOperationCoordinator {
         // it before execution starts, carried on the phase while executing and
         // on the recorded outcome afterward (`import-bar.md` "Where the user
         // is standing"). The presentation's own `batchID` field is not
-        // exposed this eagerly — see `exposedBatch(for:)`.
+        // exposed this eagerly — see `executingBatchID(for:)`.
         let batch = ImportBatchID()
 
         let ctx = ExecutionContext(
@@ -995,10 +984,10 @@ actor MediaOperationCoordinator {
         }
     }
 
-    /// Removes a source session while preserving only an unresolved outcome.
-    /// Clean completion is intentionally disposable status; a live card's
-    /// imported assets and journal remain in Store. Executing work transfers its
-    /// existing task to the batch-keyed drain instead of creating a second task.
+    /// Removes a source session. Its outcome is status for the card's row, which
+    /// no longer exists, so it is logged and dropped; the imported assets and
+    /// journal remain in Store. Executing work transfers its existing task to
+    /// the batch-keyed drain instead of creating a second task.
     private func disposeDetachedSession(
         path: LibraryRootPath,
         session: SourceSession,
@@ -1020,66 +1009,35 @@ actor MediaOperationCoordinator {
                 "op=import.execution phase=draining reason=\(reason, privacy: .public) sourcePath=\(path.rawValue, privacy: .public) batchID=\(String(describing: context.batch), privacy: .public) attachment=\(session.attachmentGeneration.rawValue, privacy: .public)"
             )
         default:
-            retainDetachedOutcome(session)
+            logDetachedOutcome(session)
         }
     }
 
-    private func retainDetachedOutcome(_ session: SourceSession) {
+    /// The import bar is drawn only on a live card's row (`import-bar.md`
+    /// "Where the user is standing"), so a settled outcome has nowhere to be
+    /// shown once its card is gone: the batch row's grid is the report. The
+    /// outcome is logged, not kept.
+    private func logDetachedOutcome(_ session: SourceSession) {
         if let failure = session.lastFailure {
-            var snapshot = session
-            snapshot.destination = failure.destination
-            detachedBatchPresentations[failure.batch] = makePresentation(
-                session: snapshot,
-                state: .failed(reason: failure.reason, publishedCount: failure.publishedCount),
-                cardStillExists: false
+            logDetachedSettlement(
+                source: session.root.path,
+                batch: failure.batch,
+                outcome: "failed",
+                publishedCount: failure.publishedCount
             )
-            OtosLog.catalog.notice(
-                "op=import.outcome phase=retain reason=unresolvedFailure batchID=\(String(describing: failure.batch), privacy: .public) publishedCount=\(failure.publishedCount, privacy: .public)"
+        } else if let completion = session.lastCompletion, let batch = completion.batch {
+            logDetachedSettlement(
+                source: session.root.path,
+                batch: batch,
+                outcome: completion.isFullyClean ? "clean" : "incomplete",
+                publishedCount: completion.publishedCount
             )
-            return
         }
-        guard let completion = session.lastCompletion,
-              !completion.isFullyClean,
-              let batch = completion.batch
-        else {
-            if session.lastCompletion?.isFullyClean == true {
-                OtosLog.catalog.notice(
-                    "op=import.outcome phase=discard reason=cleanDetached sourcePath=\(session.root.path.rawValue, privacy: .public)"
-                )
-            }
-            return
-        }
-        var snapshot = session
-        snapshot.destination = completion.destination
-        detachedBatchPresentations[batch] = makePresentation(
-            session: snapshot,
-            state: .completed(
-                summary: MediaOperationPlanTotals(
-                    copyCount: completion.plannedCount,
-                    skipCount: 0,
-                    blockedCount: 0,
-                    companionCopyCount: 0,
-                    copyBytes: 0
-                ),
-                incompleteItems: completion.incompleteItems
-            ),
-            cardStillExists: false
-        )
-        OtosLog.catalog.notice(
-            "op=import.outcome phase=retain reason=unresolvedCompletion batchID=\(String(describing: batch), privacy: .public) publishedCount=\(completion.publishedCount, privacy: .public)"
-        )
     }
 
-    private struct DetachedPresentationFacts {
-        let state: MediaOperationSourceState
-        let publishedCount: Int
-        let isFullyClean: Bool
-        let stopReason: ImportStopReason?
-        let plannedCount: Int?
-        let incompleteItems: [MediaAssetID]
-        let eraseOutcome: EraseOutcome?
-    }
-
+    /// Settles an execution whose card went away while it ran. The executor
+    /// lifetime ends here and the outcome is logged; there is no card row
+    /// left to draw it on.
     private func settleDetachedExecution(
         _ result: MediaImportExecutionResult,
         source: LibraryRootPath,
@@ -1087,106 +1045,16 @@ actor MediaOperationCoordinator {
     ) async {
         let context = draining.context
         let publishedCount = await publishedCount(for: result, batch: context.batch)
-        if context.interruption == .sourceRemoved {
-            detachedBatchPresentations[context.batch] = detachedPresentation(
-                facts: DetachedPresentationFacts(
-                    state: .failed(reason: .sourceRemoved, publishedCount: publishedCount),
-                    publishedCount: publishedCount,
-                    isFullyClean: false,
-                    stopReason: nil,
-                    plannedCount: context.summary.copyCount,
-                    incompleteItems: [],
-                    eraseOutcome: nil
-                ),
-                source: source,
-                context: context
-            )
-            logDetachedSettlement(source: source, batch: context.batch, outcome: "sourceRemoved", publishedCount: publishedCount)
-            publish()
-            return
-        }
-        switch result {
-        case let .completed(_, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems):
-            guard hasBlockedEntries || hasEntryFailures || skippedForeignCount > 0 || failedCount > 0
-                || context.summary.blockedCount > 0
-            else {
-                logDetachedSettlement(source: source, batch: context.batch, outcome: "cleanDiscarded", publishedCount: publishedCount)
-                return
+        let outcome = if context.interruption == .sourceRemoved {
+            "sourceRemoved"
+        } else {
+            switch result {
+            case .completed, .completedWithErase: "completed"
+            case .stopped: "stopped"
+            case .failed: "failed"
             }
-            detachedBatchPresentations[context.batch] = detachedPresentation(
-                facts: DetachedPresentationFacts(
-                    state: .completed(
-                        summary: context.summary,
-                        skippedForeignCount: skippedForeignCount,
-                        failedCount: failedCount,
-                        incompleteItems: incompleteItems
-                    ),
-                    publishedCount: publishedCount,
-                    isFullyClean: false,
-                    stopReason: nil,
-                    plannedCount: context.summary.copyCount,
-                    incompleteItems: incompleteItems,
-                    eraseOutcome: nil
-                ),
-                source: source,
-                context: context
-            )
-        case let .completedWithErase(_, hasBlockedEntries, hasEntryFailures, skippedForeignCount, failedCount, incompleteItems, eraseOutcome):
-            let clean = !hasBlockedEntries && !hasEntryFailures && skippedForeignCount == 0
-                && failedCount == 0 && context.summary.blockedCount == 0 && eraseOutcome.failedCount == 0
-            guard !clean else {
-                logDetachedSettlement(source: source, batch: context.batch, outcome: "cleanDiscarded", publishedCount: publishedCount)
-                return
-            }
-            detachedBatchPresentations[context.batch] = detachedPresentation(
-                facts: DetachedPresentationFacts(
-                    state: .completed(
-                        summary: context.summary,
-                        skippedForeignCount: skippedForeignCount,
-                        failedCount: failedCount,
-                        incompleteItems: incompleteItems
-                    ),
-                    publishedCount: publishedCount,
-                    isFullyClean: false,
-                    stopReason: nil,
-                    plannedCount: context.summary.copyCount,
-                    incompleteItems: incompleteItems,
-                    eraseOutcome: eraseOutcome
-                ),
-                source: source,
-                context: context
-            )
-        case let .stopped(reason, _, _, _, _, _):
-            detachedBatchPresentations[context.batch] = detachedPresentation(
-                facts: DetachedPresentationFacts(
-                    state: .completed(summary: context.summary),
-                    publishedCount: publishedCount,
-                    isFullyClean: false,
-                    stopReason: reason,
-                    plannedCount: context.summary.copyCount,
-                    incompleteItems: [],
-                    eraseOutcome: nil
-                ),
-                source: source,
-                context: context
-            )
-        case let .failed(reason):
-            detachedBatchPresentations[context.batch] = detachedPresentation(
-                facts: DetachedPresentationFacts(
-                    state: .failed(reason: reason, publishedCount: publishedCount),
-                    publishedCount: publishedCount,
-                    isFullyClean: false,
-                    stopReason: nil,
-                    plannedCount: context.summary.copyCount,
-                    incompleteItems: [],
-                    eraseOutcome: nil
-                ),
-                source: source,
-                context: context
-            )
         }
-        logDetachedSettlement(source: source, batch: context.batch, outcome: "retained", publishedCount: publishedCount)
-        publish()
+        logDetachedSettlement(source: source, batch: context.batch, outcome: outcome, publishedCount: publishedCount)
     }
 
     private func publishedCount(
@@ -1202,33 +1070,6 @@ actor MediaOperationCoordinator {
             let count = try? await store.importBatchAssetCount(batch)
             return count ?? 0
         }
-    }
-
-    private func detachedPresentation(
-        facts: DetachedPresentationFacts,
-        source: LibraryRootPath,
-        context: ExecutionContext
-    ) -> MediaOperationSourcePresentation {
-        MediaOperationSourcePresentation(
-            sourcePath: source,
-            attachmentGeneration: context.attachment,
-            sourceKind: context.sourceKind,
-            destinationPath: context.plan.mode.importDestination,
-            destinationDisplayName: context.plan.mode.importDestination.flatMap { librariesByPath[$0]?.displayName },
-            state: facts.state,
-            importRequested: false,
-            attachToReadyMs: nil,
-            batchID: context.batch,
-            batchHasPublishedAssets: facts.publishedCount > 0,
-            cardStillExists: false,
-            copiedJustNow: facts.publishedCount,
-            isFullyClean: facts.isFullyClean,
-            stopReason: facts.stopReason,
-            plannedCount: facts.plannedCount,
-            sessionPreferences: context.prefs,
-            incompleteItems: facts.incompleteItems,
-            eraseOutcome: facts.eraseOutcome
-        )
     }
 
     private func logDetachedSettlement(
@@ -1404,7 +1245,7 @@ actor MediaOperationCoordinator {
 
     /// Confirms, for every still-executing session that hasn't proven itself
     /// yet, whether its batch now has at least one durably-published asset —
-    /// the fact `exposedBatch` gates `.executing`'s own `batchID` exposure
+    /// the fact `executingBatchID` gates the presentation's `batchID` exposure
     /// on. Piggybacks on the catalog-change notification
     /// this coordinator already consumes for every attached source rather
     /// than adding a second, dedicated polling loop: an import's own
@@ -2234,48 +2075,22 @@ actor MediaOperationCoordinator {
         )
     }
 
-    /// The batch a presentation exposes, with the one fact the ViewModel needs
-    /// before moving the user to its row: whether anything is in it.
-    private struct ExposedBatch {
-        let id: ImportBatchID
-        let hasPublishedAssets: Bool
-    }
-
-    /// The batch this attachment is currently working on or last worked on:
-    /// the live execution's batch while executing (once it has proven itself
-    /// non-empty — see `batchAssetCountConfirmed`), else the batch of the run
-    /// being presented: the recorded failure's while state G stands, else the
-    /// most recent *settled* execution's, else `nil` before any execution has
-    /// started (`import-bar.md` "Where the user is standing").
-    ///
-    /// Identity and navigation are answered separately. The `.executing`
-    /// branch withholds the identity itself until the first asset lands; the
-    /// terminal fallbacks always expose it, because a *failed* run still needs
-    /// its batch pinned and visible on state G regardless of whether anything
-    /// ever published — and say alongside it whether the row has anything to
-    /// show. A run's batch has assets exactly when that run published some.
-    /// The ViewModel reads that fact rather than inferring it from
-    /// `copiedJustNow`, which belongs to the last *settled* run and can
-    /// describe a different batch than the one pinned here.
-    private func exposedBatch(for session: SourceSession) -> ExposedBatch? {
-        if case let .executing(ctx) = session.phase {
-            return session.batchAssetCountConfirmed ? ExposedBatch(id: ctx.batch, hasPublishedAssets: true) : nil
+    /// The batch this attachment's run is copying into, exposed only while
+    /// it executes and only once it has proven itself non-empty (see
+    /// `batchAssetCountConfirmed`): the sidebar's batch row exists only once it
+    /// has an asset, and that row's progress indicator is the one consumer
+    /// (`import-bar.md` "Ownership of status").
+    private func executingBatchID(for session: SourceSession) -> ImportBatchID? {
+        guard case let .executing(ctx) = session.phase, session.batchAssetCountConfirmed else {
+            return nil
         }
-        if let failure = session.lastFailure {
-            return ExposedBatch(id: failure.batch, hasPublishedAssets: failure.publishedCount > 0)
-        }
-        if let completion = session.lastCompletion, let batch = completion.batch {
-            return ExposedBatch(id: batch, hasPublishedAssets: completion.publishedCount > 0)
-        }
-        return nil
+        return ctx.batch
     }
 
     private func makePresentation(
         session: SourceSession,
-        state: MediaOperationSourceState,
-        cardStillExists: Bool? = nil
+        state: MediaOperationSourceState
     ) -> MediaOperationSourcePresentation {
-        let exposedBatch = exposedBatch(for: session)
         // Sampled only where the bar can compare it against a plan: a `stat`
         // per Ready publish, never per progress tick.
         let availableBytes: Int64? = switch state {
@@ -2288,8 +2103,7 @@ actor MediaOperationCoordinator {
         // a destination change the bar measures the card against a different
         // library, so the outcome is withheld and the plan speaks for itself
         // ("Nothing new on this card" or "181 new items"); pick the original
-        // library again and the outcome returns. Identity (`exposedBatch`) is
-        // not gated — the batch row still needs its pin.
+        // library again and the outcome returns.
         let completion = session.lastCompletion.flatMap { $0.destination == session.destination ? $0 : nil }
         return MediaOperationSourcePresentation(
             sourcePath: session.root.path,
@@ -2300,9 +2114,7 @@ actor MediaOperationCoordinator {
             state: state,
             importRequested: session.importRequested,
             attachToReadyMs: session.attachToReadyMs,
-            batchID: exposedBatch?.id,
-            batchHasPublishedAssets: exposedBatch?.hasPublishedAssets ?? false,
-            cardStillExists: cardStillExists ?? (session.root.availability == .available),
+            batchID: executingBatchID(for: session),
             copiedJustNow: completion?.publishedCount,
             isFullyClean: completion?.isFullyClean,
             stopReason: completion?.stopReason,
@@ -2315,18 +2127,8 @@ actor MediaOperationCoordinator {
     }
 
     private func sortedPresentations() -> [MediaOperationSourcePresentation] {
-        let live = sourceSessions.values.map { presentation(for: $0) }
-        let liveBatchIDs = Set(live.compactMap(\.batchID))
-        let detached = detachedBatchPresentations.filter { batchID, _ in !liveBatchIDs.contains(batchID) }.values
-        return (live + detached)
-            .sorted {
-                let pathOrder = $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue)
-                guard pathOrder == .orderedSame else { return pathOrder == .orderedAscending }
-                if $0.cardStillExists != $1.cardStillExists {
-                    return $0.cardStillExists
-                }
-                return $0.attachmentGeneration.rawValue > $1.attachmentGeneration.rawValue
-            }
+        sourceSessions.values.map { presentation(for: $0) }
+            .sorted { $0.sourcePath.rawValue.localizedStandardCompare($1.sourcePath.rawValue) == .orderedAscending }
     }
 
     /// Publishes to every consumer, and logs each source's state **when it changes**.
@@ -2352,7 +2154,7 @@ actor MediaOperationCoordinator {
             let batchID = presentation.batchID.map { String(describing: $0) } ?? "none"
             let runID = sourceSessions[presentation.sourcePath]?.activeRunID ?? "none"
             OtosLog.catalog.notice(
-                "op=import.presentation phase=publish run=\(runID, privacy: .public) sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) attachment=\(presentation.attachmentGeneration.rawValue, privacy: .public) cardStillExists=\(presentation.cardStillExists, privacy: .public) state=\(String(describing: presentation.state), privacy: .public) completedCount=\(progress?.completedCount ?? 0, privacy: .public) totalCount=\(progress?.totalCount ?? 0, privacy: .public) completedBytes=\(progress?.completedBytes ?? 0, privacy: .public) batchID=\(batchID, privacy: .public)"
+                "op=import.presentation phase=publish run=\(runID, privacy: .public) sourcePath=\(presentation.sourcePath.rawValue, privacy: .public) attachment=\(presentation.attachmentGeneration.rawValue, privacy: .public) state=\(String(describing: presentation.state), privacy: .public) completedCount=\(progress?.completedCount ?? 0, privacy: .public) totalCount=\(progress?.totalCount ?? 0, privacy: .public) completedBytes=\(progress?.completedBytes ?? 0, privacy: .public) batchID=\(batchID, privacy: .public)"
             )
         }
         for continuation in continuations.values {

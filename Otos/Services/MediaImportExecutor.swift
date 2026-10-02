@@ -154,9 +154,12 @@ actor MediaImportExecutor {
         let publishedBytes: Int64
         let failedCount: Int
         let skippedForeignCount: Int
-        /// Identities of entries that started this run but did not land —
-        /// failed or skipped as foreign — for state F's "couldn't be copied ·
-        /// Show them" (`import-bar.md` state F). Blocked entries never reach
+        /// Source (card-side) identities of entries that started this run but
+        /// did not land — failed or skipped as foreign — for state F's
+        /// "couldn't be copied · Show them" (`import-bar.md` state F). The bar
+        /// is drawn only on the card's row, and an item that did not land
+        /// exists only there, so the reveal selects the card's own asset —
+        /// the same identity state D's attention items use. Blocked entries never reach
         /// execution, so they are not included; they carry their own reveal
         /// via `MediaOperationPlan.attentionItems`.
         let incompleteItems: [MediaAssetID]
@@ -181,12 +184,10 @@ actor MediaImportExecutor {
         let sourceDeviceIdentity: String?
         let allowSourceDeletion: Bool
         let namespaceLease: RootNamespaceMutationLease?
-        /// Where an incomplete entry's `finalDestination` resolves — the
-        /// identity `runPlanEntries` records for state F-incomplete's reveal,
-        /// since the user selects it from the destination-keyed batch row,
-        /// not the source card. `execute()` is the one place
-        /// that already proved `plan.mode` is `.import` and extracted this;
-        /// re-deriving it here would just re-run an already-answered guard.
+        /// The library the run copies into, for the disk-floor capacity reads.
+        /// `execute()` is the one place that already proved `plan.mode` is
+        /// `.import` and extracted this; re-deriving it here would just re-run
+        /// an already-answered guard.
         let destinationRoot: LibraryRootPath
     }
 
@@ -482,17 +483,6 @@ actor MediaImportExecutor {
         return Array(parents)
     }
 
-    /// The identity state F-incomplete's "Show them" reveal must select: the
-    /// user is on the batch row when they tap it, whose grid holds
-    /// destination-keyed rows, not the source card's. `entry.source.id`
-    /// never matched anything there.
-    private nonisolated func destinationAssetID(
-        for entry: MediaOperationPlanEntry,
-        context: EntryExecutionContext
-    ) -> MediaAssetID {
-        MediaAssetID(libraryRootPath: context.destinationRoot, relativePath: entry.finalDestination)
-    }
-
     private func runPlanEntries(
         context: EntryExecutionContext,
         totalCount: Int,
@@ -601,7 +591,7 @@ actor MediaImportExecutor {
                     byteProgress.finish(index: result.index, resolvedItem: false, publishedBytes: 0)
                 case .skippedForeign:
                     skippedForeignCount += 1
-                    incompleteItems.append(destinationAssetID(for: copyEntries[result.index], context: context))
+                    incompleteItems.append(copyEntries[result.index].source.id)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 case .failed(.outOfSpace):
                     // The floor reached the hard way. Not a failed entry — it
@@ -620,7 +610,7 @@ actor MediaImportExecutor {
                 case let .failed(failure):
                     failedCount += 1
                     failureReasons.append(failure)
-                    incompleteItems.append(destinationAssetID(for: copyEntries[result.index], context: context))
+                    incompleteItems.append(copyEntries[result.index].source.id)
                     byteProgress.finish(index: result.index, resolvedItem: true, publishedBytes: 0)
                 }
                 onProgress(byteProgress.current())

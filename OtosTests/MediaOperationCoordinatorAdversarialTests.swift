@@ -820,33 +820,25 @@ struct MediaOperationCoordinatorAdversarialTests {
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
         // Cancellation settles the old batch as a source-removal failure, but
-        // it must not recreate a live presentation for the missing card.
+        // it must not recreate a presentation for the missing card: the bar is
+        // drawn only on a live card's row.
         await queueTask3.value
-        let failed = try await waitForPresentation(coordinator, source: cardPath) { presentation in
-            guard presentation.cardStillExists == false else { return false }
-            guard case let .failed(reason, publishedCount) = presentation.state else { return false }
-            return reason == .sourceRemoved && publishedCount == 0
-        }
-        #expect(failed.batchID != nil)
+        try await waitUntilNoPresentation(coordinator, source: cardPath)
         log("END")
         log("END")
         await coordinator.shutdown()
     }
 
-    /// `import-bar.md` "Where the user is standing": the batch ID is carried as
-    /// state on the presentation, so a consumer never needs to have observed
-    /// the frame that first set it — only the current snapshot — to know
-    /// which batch this attachment landed in. `presentationsStream()`'s
+    /// A settled run's outcome is carried as state on the presentation, so a
+    /// consumer never needs to have observed the frame that first set it —
+    /// only the current snapshot. `presentationsStream()`'s
     /// `.bufferingNewest(1)` can drop any number of intermediate frames
-    /// (trap #5); this proves the fact survives that by construction rather
-    /// than by having watched every frame. `.executing`'s own `batchID` is
-    /// gated on a real published asset (APP-029: the sidebar follows a batch only
-    /// once it has one) — this controlled executor
-    /// never journals one, so `batchID` legitimately stays hidden throughout
-    /// `.executing` here; the durability claim is proven from settlement
-    /// onward instead.
-    @Test func batchIDIsStateThatSurvivesADroppedIntermediateFrame() async throws {
-        log("START batchIDIsStateThatSurvivesADroppedIntermediateFrame")
+    /// (trap #5); this proves the fact survives that by construction. The
+    /// batch ID is exposed only while executing, and only once a real asset
+    /// has published — this controlled executor never journals one, so it
+    /// stays hidden throughout.
+    @Test func completionIsStateThatSurvivesADroppedIntermediateFrame() async throws {
+        log("START completionIsStateThatSurvivesADroppedIntermediateFrame")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -887,9 +879,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         let queueTask = Task { await coordinator.queueImport(for: cardPath) }
         try await waitForPendingExecution(execControl, source: cardPath)
 
-        // `.executing`'s own batchID is gated on a real published asset (plan
-        // 0095 step 7) — this controlled executor never journals one, so
-        // batchID legitimately stays nil throughout `.executing` here.
+        // `.executing`'s batchID is gated on a real published asset — this
+        // controlled executor never journals one, so it stays nil here.
         let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         guard case .executing = executing.state else {
             Issue.record("Expected .executing, got \(executing.state)")
@@ -917,12 +908,10 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         let deadline = ContinuousClock().now + Duration.seconds(5)
         var sawCompletion = false
-        var mintedBatch: ImportBatchID?
         while ContinuousClock().now < deadline {
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
                pres.copiedJustNow != nil
             {
-                mintedBatch = pres.batchID
                 #expect(pres.copiedJustNow == 1)
                 sawCompletion = true
                 break
@@ -933,7 +922,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         // A second, independent snapshot read finds the same value without
         // having observed the transition that set it — state, not an event.
         let again = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
-        #expect(again.batchID == mintedBatch)
+        #expect(again.copiedJustNow == 1)
+        #expect(again.batchID == nil, "a settled run exposes no batch")
         log("END")
         await coordinator.shutdown()
     }
@@ -1047,11 +1037,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
-    /// A fully clean settled attachment has no unresolved status to carry after
-    /// its source detaches. The journaled batch remains the source of truth for
-    /// the imported assets, but the transient clean bar is discarded.
-    @Test func cleanBatchPresentationIsDiscardedAfterDetach() async throws {
-        log("START cleanBatchPresentationIsDiscardedAfterDetach")
+    /// A settled attachment's status belongs to the card's row, so it leaves
+    /// when the card does. The journaled batch remains the source of truth for
+    /// the imported assets.
+    @Test func settledPresentationIsDiscardedAfterDetach() async throws {
+        log("START settledPresentationIsDiscardedAfterDetach")
         let temp = try makeTempRoot()
         let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
         let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
@@ -1105,9 +1095,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
         await queueTask.value
 
-        let settled = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
-        let batchID = try #require(settled.batchID)
-        #expect(settled.cardStillExists)
+        _ = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
 
         try await store.detachRemovableSource(identity: "volume:gone-snapshot", reason: .ejected)
         _ = try await waitForCatalogStoreState(store) { snap in
@@ -1115,81 +1103,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
 
         try await waitUntilNoPresentation(coordinator, source: cardPath)
-        #expect(
-            await !(coordinator.currentPresentations().contains { $0.batchID == batchID }),
-            "Clean detached outcomes must not leave a transient batch presentation"
-        )
-        log("END")
-        await coordinator.shutdown()
-    }
-
-    /// APP-029: a failure before any copy never sets
-    /// `lastCompletion`, so without `lastAttemptedBatch` the presentation's
-    /// `batchID` would go nil the instant `.executing` becomes `.failed` —
-    /// right when the sidebar-follow feature and state G ("never
-    /// auto-dismisses") most need it to stay identified by batch.
-    /// `lastAttemptedBatch`'s fallback is unaffected by the
-    /// `.executing`-only gate (below): a failed run still needs its batch
-    /// pinned regardless of whether anything ever published.
-    @Test func batchIDSurvivesAnImmediateFailureBeforeAnyCopy() async throws {
-        log("START batchIDSurvivesAnImmediateFailureBeforeAnyCopy")
-        let temp = try makeTempRoot()
-        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
-        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
-        try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "h.jpg"))
-
-        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
-        try await store.start(scansSavedLibraries: false)
-        try await store.addLibrary(url: destURL)
-        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
-        try await store.attachRemovableVolume(
-            mountURL: cardURL,
-            identity: "volume:immediate-fail",
-            displayName: "Card",
-            isEjectable: true
-        )
-        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
-        _ = try await waitForCatalogStoreState(store) { snap in
-            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
-        }
-
-        let defaults = PreferencesDomain.suite(UUID().uuidString)
-        var prefs = ImportPreferences.default
-        prefs.destinationFolderPolicy = .none
-        prefs.destinationNamePolicy = .original
-        ImportPreferencesStore.save(prefs, defaults: defaults.makeDefaults())
-
-        let execControl = ControlledExecutionControl()
-        await execControl.suspendNextExecution(for: cardPath)
-        let coordinator = MediaOperationCoordinator(
-            store: store,
-            preferencesDomain: defaults,
-            makeExecutor: { _ in ControlledImportExecutor(control: execControl) }
-        )
-        await coordinator.start()
-        _ = try await waitForReady(coordinator, source: cardPath)
-        let queueTask = Task { await coordinator.queueImport(for: cardPath) }
-        try await waitForPendingExecution(execControl, source: cardPath)
-
-        let executing = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
-        #expect(executing.batchID == nil, "batchID must stay hidden during .executing until a real asset has published")
-
-        // The failure is recorded beside the completion, not held as a phase,
-        // so the rebuild that follows settlement cannot erase it — the test
-        // polls for it with the destination still present, as production
-        // would present it (`import-bar.md` state G).
-        await execControl.resumePending(for: cardPath, with: .failed(reason: .unexpected(detail: "test")))
-        await queueTask.value
-
-        let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
-            if case .failed = pres.state {
-                return true
-            }
-            return false
-        }
-        #expect(failed.batchID != nil, "The batch minted for this attempt must survive into the Failed presentation")
+        #expect(await coordinator.currentPresentations().isEmpty, "a settled outcome leaves with its card")
         log("END")
         await coordinator.shutdown()
     }
@@ -1242,13 +1156,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         await execControl.resumePending(for: cardPath, with: .failed(reason: .destinationUnavailable))
         await queueTask.value
 
-        let failed = try await waitForPresentation(coordinator, source: cardPath) { pres in
+        _ = try await waitForPresentation(coordinator, source: cardPath) { pres in
             if case .failed = pres.state {
                 return true
             }
             return false
         }
-        #expect(failed.batchID != nil)
         // Let the post-settlement rebuild land — it does, and the plan is Ready
         // underneath — and the presentation is still Failed.
         var rebuilt: MediaOperationPlan?
@@ -1617,7 +1530,6 @@ struct MediaOperationCoordinatorAdversarialTests {
             timeout: .seconds(15)
         )
         #expect(settled.isFullyClean == true)
-        let batch = try #require(settled.batchID)
 
         await coordinator.setDestination(secondPath, for: cardPath)
         let elsewhere = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
@@ -1628,7 +1540,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         }, timeout: .seconds(15))
         #expect(elsewhere.copiedJustNow == nil)
         #expect(elsewhere.isFullyClean == nil)
-        #expect(elsewhere.batchID == batch)
 
         await coordinator.setDestination(firstPath, for: cardPath)
         let back = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
@@ -1768,7 +1679,6 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(rePlanned.copiedJustNow == 1)
         #expect(rePlanned.plannedCount == 3)
         #expect(rePlanned.isFullyClean == false)
-        #expect(rePlanned.batchID != nil, "a stopped run's partial batch stays pinned")
         log("END")
         await coordinator.shutdown()
     }
@@ -1856,8 +1766,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         if case let .ready(summary, _, _, _) = rePlanned.state {
             #expect(summary.skipCount == 2, "the two that landed are skips now")
         }
-        let batch = try #require(rePlanned.batchID)
-        #expect(try await store.importBatchAssetCount(batch) == 2)
+        #expect(try await store.importBatches().map(\.assetCount) == [2], "the stopped run's partial batch is real")
         for name in ["a.jpg", "b.jpg", "c.jpg"] {
             #expect(
                 FileManager.default.fileExists(atPath: cardURL.appending(path: name).path),

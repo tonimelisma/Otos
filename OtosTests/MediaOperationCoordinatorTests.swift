@@ -90,7 +90,6 @@ struct MediaOperationCoordinatorTests {
             await coordinator.currentPresentations().first { $0.sourcePath == source }
         )
         #expect(presentation.destinationDisplayName == "Pictures")
-        #expect(presentation.cardStillExists)
         await coordinator.shutdown()
     }
 
