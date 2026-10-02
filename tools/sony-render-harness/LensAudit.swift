@@ -20,7 +20,7 @@ struct LensAuditRecord: Encodable {
 func lensAudit(_ pair: Pair) throws -> LensAuditRecord {
     let rawData = try localData(pair.raw)
     let targetData = try localData(pair.target)
-    let decoder = CIRAWDecoderVersion(rawValue: "8")
+    let decoder = CIRAWDecoderVersion(rawValue: "9")
     func neutralFilter(correction: Bool?) throws -> CIRAWFilter {
         guard let filter = CIRAWFilter(imageData: rawData,
                                        identifierHint: "com.sony.arw-raw-image"),
@@ -32,7 +32,6 @@ func lensAudit(_ pair: Pair) throws -> LensAuditRecord {
         filter.localToneMapAmount = 0
         filter.contrastAmount = 0
         filter.sharpnessAmount = 0
-        filter.detailAmount = 0
         if let correction {
             filter.isLensCorrectionEnabled = correction
         }

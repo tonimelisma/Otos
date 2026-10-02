@@ -7,7 +7,7 @@ import Foundation
 private struct Item: Decodable {
     let id: String
     let raw: String
-    let target: String
+    let target: String?
 }
 
 private struct Manifest: Decodable { let pairs: [Item] }
@@ -22,7 +22,7 @@ private struct Report: Encodable {
     let requestErrors: Int
 }
 
-private enum ErrorKind: Error { case usage, nonRegularFile }
+private enum ErrorKind: Error { case usage, unavailableManifest, invalidOutput }
 
 @main
 private struct Materialize {
@@ -39,12 +39,26 @@ private struct Materialize {
         guard args.count == 4, args[1] == "request" || args[1] == "status" else {
             throw ErrorKind.usage
         }
-        let manifest = try JSONDecoder().decode(Manifest.self,
-                                                from: Data(contentsOf: URL(fileURLWithPath: args[2])))
-        var local = 0, dataless = 0, unknown = 0, requested = 0, errors = 0
+        let manifestURL = URL(fileURLWithPath: args[2])
+        var manifestInfo = stat()
+        guard lstat(manifestURL.path(percentEncoded: false), &manifestInfo) == 0,
+              manifestInfo.st_mode & S_IFMT == S_IFREG, manifestInfo.st_flags & 0x4000_0000 == 0
+        else { throw ErrorKind.unavailableManifest }
+        let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: manifestURL))
+        let reportURL = URL(fileURLWithPath: args[3]).standardizedFileURL.resolvingSymlinksInPath()
+        let originalPaths = manifest.pairs.flatMap { [$0.raw] + ($0.target.map { [$0] } ?? []) }
+        guard !originalPaths.isEmpty, args[3].hasPrefix("/"),
+              !FileManager.default.fileExists(atPath: reportURL.path),
+              originalPaths.allSatisfy({ path in
+                  let root = URL(fileURLWithPath: path).deletingLastPathComponent().standardizedFileURL.resolvingSymlinksInPath().path
+                  return reportURL.path != root && !reportURL.path.hasPrefix(root + "/")
+              }) else { throw ErrorKind.invalidOutput }
+        var files = 0, local = 0, dataless = 0, unknown = 0, requested = 0, errors = 0
         var localBytes: Int64 = 0
         for pair in manifest.pairs {
-            for (kind, path) in [("raw", pair.raw), ("target", pair.target)] {
+            let paths = [("raw", pair.raw)] + (pair.target.map { [("target", $0)] } ?? [])
+            for (kind, path) in paths {
+                files += 1
                 let url = URL(fileURLWithPath: path)
                 var info = stat()
                 guard lstat(url.path(percentEncoded: false), &info) == 0,
@@ -72,12 +86,12 @@ private struct Materialize {
                 }
             }
         }
-        let report = Report(files: manifest.pairs.count * 2, localFiles: local,
+        let report = Report(files: files, localFiles: local,
                             datalessFiles: dataless, unknownFiles: unknown,
                             localLogicalBytes: localBytes, requestedFiles: requested,
                             requestErrors: errors)
         let encoded = try JSONEncoder().encode(report)
-        try encoded.write(to: URL(fileURLWithPath: args[3]))
+        try encoded.write(to: reportURL, options: .withoutOverwriting)
         print(String(data: encoded, encoding: .utf8)!)
     }
 }

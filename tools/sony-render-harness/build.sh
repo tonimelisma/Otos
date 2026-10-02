@@ -10,30 +10,42 @@ root="$(cd "$(dirname "$0")/../.." && pwd)"
 output="$1"
 mkdir -p "$output/swift-cache"
 
-# The preserved numerical model is the one source for the baseline algorithm.
-# Extract its Swift listing into the private build directory; never fork it here.
-awk '/^```swift$/{inside=1;next}/^```$/{inside=0}inside' \
-    "$root/docs/research/sony-vv2-reference/NativeReference.swift.md" \
-    > "$output/NativeReference.swift"
-if [[ ! -s "$output/NativeReference.swift" ]]; then
-    echo "missing native reference listing" >&2
-    exit 1
-fi
+python3 -B "$root/tools/sony-render-harness/verify_capture_test.py"
 
-xcrun swiftc -O -module-cache-path "$output/swift-cache" \
+xcrun swiftc -O -swift-version 6 -strict-concurrency=complete -Xcc -DACCELERATE_NEW_LAPACK -module-cache-path "$output/swift-cache" \
+    "$root/Otos/Support/Instrumentation.swift" \
+    "$root/tools/sony-render-harness/NativeRAWDevelopment.swift" \
+    "$root/tools/sony-render-harness/AuthoredLook.swift" \
+    "$root/tools/sony-render-harness/CreativeColour.swift" \
+    "$root/tools/sony-render-harness/BoundedColourSolve.swift" \
+    "$root/tools/sony-render-harness/DisplayColourCalibration.swift" \
+    "$root/tools/sony-render-harness/AuthoredLookSelfTest.swift" \
+    "$root/tools/sony-render-harness/LookRegions.swift" \
+    "$root/tools/sony-render-harness/AuthoredCalibration.swift" \
+    "$root/tools/sony-render-harness/AuthoredCapacitySelfTest.swift" \
+    "$root/tools/sony-render-harness/AuthoredCalibrationExport.swift" \
     "$root/tools/sony-render-harness/ColorDifference.swift" \
     "$root/tools/sony-render-harness/Scorecard.swift" \
     "$root/tools/sony-render-harness/Geometry.swift" \
     "$root/tools/sony-render-harness/NativeGeometry.swift" \
     "$root/tools/sony-render-harness/LensAudit.swift" \
     "$root/tools/sony-render-harness/Viewer.swift" \
-    "$output/NativeReference.swift" \
+    "$root/tools/sony-render-harness/SensorRAWHEIFRenderer.swift" \
+    "$root/tools/sony-render-harness/SensorRAWHEIFSelfTest.swift" \
+    "$root/tools/sony-render-harness/SensorRAWHEIFEvaluation.swift" \
+    "$root/tools/sony-render-harness/LookModel.swift" \
+    "$root/tools/sony-render-harness/LookCalibration.swift" \
+    "$root/tools/sony-render-harness/LookCalibrationSelfTest.swift" \
+    "$root/tools/sony-render-harness/LookModelSelfTest.swift" \
     "$root/tools/sony-render-harness/main.swift" \
     -o "$output/sony-render-harness"
 
-xcrun swiftc -O -parse-as-library -module-cache-path "$output/swift-cache" \
+xcrun swiftc -O -swift-version 6 -strict-concurrency=complete -parse-as-library -module-cache-path "$output/swift-cache" \
     "$root/tools/sony-render-harness/Materialize.swift" \
     -o "$output/sony-render-materialize"
 
 "$output/sony-render-harness" self-test \
     "$root/tools/sony-render-harness/ciede2000-reference.txt"
+"$output/sony-render-harness" look-self-test \
+    "$root/docs/research/sony-vv2-raw9-reference/model.json" \
+    "$root/docs/research/sony-vv2-raw9-reference/test-vectors.json"

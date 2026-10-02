@@ -1,11 +1,12 @@
 import CoreImage
+import CryptoKit
 import Darwin
 import Foundation
 import ImageIO
 import simd
 import Vision
 
-enum PairRole: String, Decodable { case training, selection, regression, acceptance }
+enum PairRole: String, Decodable { case training, authoring, selection, regression, acceptance }
 
 struct Pair: Decodable {
     let id: String
@@ -166,16 +167,24 @@ func writePNG(_ image: CIImage, to url: URL) throws {
 /// Four unregistered, native-resolution corners. These reveal real detail and
 /// geometry errors instead of magnifying the 768-pixel evaluation previews.
 func writeNativeCorners(rawData: Data, target: CIImage, decoder: CIRAWDecoderVersion,
-                        neutralRaw: CIRAWFilter, model: LookModel, directory: URL)
+                        model: LookModel, directory: URL)
     throws -> (width: Int, height: Int, geometry: NativeGeometryScore)
 {
     guard let defaultRaw = CIRAWFilter(imageData: rawData,
                                        identifierHint: "com.sony.arw-raw-image"),
-        defaultRaw.supportedDecoderVersions.contains(decoder)
+        let neutralRaw = CIRAWFilter(imageData: rawData,
+                                     identifierHint: "com.sony.arw-raw-image"),
+        defaultRaw.supportedDecoderVersions.contains(decoder),
+        neutralRaw.supportedDecoderVersions.contains(decoder)
     else { throw HarnessError.decoderUnavailable }
     defaultRaw.decoderVersion = decoder
     defaultRaw.scaleFactor = 1
+    neutralRaw.decoderVersion = decoder
     neutralRaw.scaleFactor = 1
+    neutralRaw.boostAmount = 0
+    neutralRaw.localToneMapAmount = 0
+    neutralRaw.contrastAmount = 0
+    neutralRaw.sharpnessAmount = 0
     guard let defaultImage = defaultRaw.outputImage,
           let neutralImage = neutralRaw.outputImage
     else {
@@ -237,7 +246,7 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
     guard let targetOriginal = CIImage(data: targetData,
                                        options: [.applyOrientationProperty: true])
     else { throw HarnessError.decodeFailed("Sony target") }
-    let decoder = CIRAWDecoderVersion(rawValue: "8")
+    let decoder = CIRAWDecoderVersion(rawValue: "9")
     guard raw.supportedDecoderVersions.contains(decoder) else {
         throw HarnessError.decoderUnavailable
     }
@@ -245,12 +254,20 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
     raw.scaleFactor = Float(768 / max(raw.nativeSize.width, raw.nativeSize.height))
     guard let appleOutput = raw.outputImage else { throw HarnessError.decodeFailed("Apple RAW output") }
     let apple = try encodedImage(scaled(appleOutput))
-    raw.boostAmount = 0
-    raw.localToneMapAmount = 0
-    raw.contrastAmount = 0
-    raw.sharpnessAmount = 0
-    raw.detailAmount = 0
-    guard let neutralOutput = raw.outputImage else { throw HarnessError.decodeFailed("neutral RAW output") }
+    // A fresh RAW filter owns each development. On this host, reusing a scaled
+    // RAW 9 filter after rendering can change its next output's extent, even
+    // without changing controls. Never derive a comparator from that state.
+    guard let neutralRaw = CIRAWFilter(imageData: rawData,
+                                       identifierHint: "com.sony.arw-raw-image"),
+        neutralRaw.supportedDecoderVersions.contains(decoder)
+    else { throw HarnessError.decoderUnavailable }
+    neutralRaw.decoderVersion = decoder
+    neutralRaw.scaleFactor = Float(768 / max(neutralRaw.nativeSize.width, neutralRaw.nativeSize.height))
+    neutralRaw.boostAmount = 0
+    neutralRaw.localToneMapAmount = 0
+    neutralRaw.contrastAmount = 0
+    neutralRaw.sharpnessAmount = 0
+    guard let neutralOutput = neutralRaw.outputImage else { throw HarnessError.decodeFailed("neutral RAW output") }
     let neutral = try encodedImage(scaled(neutralOutput))
     let target = try encodedImage(scaled(targetOriginal))
     let width = Int(target.extent.width.rounded())
@@ -291,7 +308,7 @@ func evaluate(_ pair: Pair, model: LookModel, output: URL) throws -> [String: An
     try writePNG(filtered, to: pairDirectory.appendingPathComponent("fixed-model.png"))
     try writePNG(target, to: pairDirectory.appendingPathComponent("sony.png"))
     let native = try writeNativeCorners(rawData: rawData, target: targetOriginal,
-                                        decoder: decoder, neutralRaw: raw, model: model,
+                                        decoder: decoder, model: model,
                                         directory: pairDirectory)
     let scoreData = try JSONEncoder().encode(scores)
     let scoreObject = try JSONSerialization.jsonObject(with: scoreData)
@@ -396,8 +413,201 @@ func validate(_ manifest: Manifest, output: URL) throws {
 func run() throws {
     let arguments = CommandLine.arguments
     guard arguments.count >= 3 else { throw HarnessError.usage }
-    if arguments[1] == "self-test", arguments.count == 3 {
+    if arguments[1] == "authored-look-fit", arguments.count == 11 {
+        let training = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let anchors = try JSONDecoder().decode(Manifest.self, from: localData(arguments[4]))
+        let base = try AuthoredLook(json: localData(arguments[6]))
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[7]))
+        guard let mixture = Double(arguments[8]), let objective = DisplayColourObjective(rawValue: arguments[9]) else { throw HarnessError.usage }
+        try AuthoredCalibration.authorLook(anchors, samplesRoot: URL(fileURLWithPath: arguments[5]), base: base,
+                                           card: card, training: training, trainingRoot: URL(fileURLWithPath: arguments[3]), mixture: mixture, objectiveSpace: objective,
+                                           destination: URL(fileURLWithPath: arguments[10]))
+    } else if arguments[1] == "self-test", arguments.count == 3 {
         try selfTest(arguments[2])
+        try sensorRAWHEIFSelfTest()
+        try authoredLookSelfTest()
+        try displayColourRefinementSelfTest()
+        try appearanceRegionSelfTest()
+        try AuthoredCalibration.selfTest()
+        try authoredCapacitySelfTest()
+        try lookCalibrationSelfTest()
+    } else if arguments[1] == "look-self-test", arguments.count == 4 {
+        try lookModelSelfTest(modelPath: arguments[2], vectorsPath: arguments[3])
+    } else if arguments[1] == "calibration-export-one", arguments.count == 5 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[4])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else {
+            throw HarnessError.invalidManifest
+        }
+        try exportLookCalibrationPair(pair, output: output)
+    } else if arguments[1] == "authored-calibration-export-one", arguments.count == 7 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[4])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }),
+              let input = NativeRAWRecipe(rawValue: arguments[6]) else { throw HarnessError.invalidManifest }
+        let registrationLook = try LookModel(json: localData(arguments[5]))
+        try exportAuthoredCalibration(pair, input: input, registrationLook: registrationLook, output: output)
+    } else if ["authored-colour-fit", "authored-colour-palette-fit", "authored-colour-palette-bound-fit"].contains(arguments[1]), arguments.count == (arguments[1].contains("bound") ? 8 : 7) {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let base = try AuthoredLook(json: localData(arguments[4]))
+        guard let regularization = Double(arguments[5]) else { throw HarnessError.usage }
+        let hasBound = arguments[1].contains("bound")
+        guard let bound = hasBound ? Double(arguments[6]) : 0.5 else { throw HarnessError.usage }
+        try AuthoredCalibration.fitColour(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), base: base,
+                                          regularization: regularization, paletteBalanced: arguments[1].contains("palette"), coefficientBound: bound, destination: URL(fileURLWithPath: arguments[hasBound ? 7 : 6]))
+    } else if arguments[1] == "authored-colour-display-fit", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let initial = try AuthoredLook(json: localData(arguments[4]))
+        guard let regularization = Double(arguments[5]), ["grid", "palette", "balanced-palette", "global-palette"].contains(arguments[6]) else { throw HarnessError.usage }
+        try AuthoredCalibration.refineColour(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), initial: initial,
+                                             regularization: regularization, paletteBalanced: arguments[6] != "grid",
+                                             colourBalance: arguments[6] == "global-palette" ? 1 : arguments[6] == "balanced-palette" ? 0.5 : 0, destination: URL(fileURLWithPath: arguments[7]))
+    } else if arguments[1] == "authored-colour-capacity-fit", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let base = try AuthoredLook(json: localData(arguments[4]))
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[6]))
+        guard let regularization = Double(arguments[7]) else { throw HarnessError.usage }
+        try AuthoredCalibration.colourCapacity(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), base: base,
+                                               card: card, regularization: regularization, destination: URL(fileURLWithPath: arguments[5]))
+    } else if arguments[1] == "authored-capacity-fit", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        guard let input = NativeRAWRecipe(rawValue: arguments[4]), let mode = AuthoredLook.ToneMode(rawValue: arguments[5]) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[7]))
+        try AuthoredCalibration.capacity(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), input: input, mode: mode,
+                                         card: card, destination: URL(fileURLWithPath: arguments[6]))
+    } else if arguments[1] == "authored-fit", arguments.count == 7 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        guard let input = NativeRAWRecipe(rawValue: arguments[4]), let mode = AuthoredLook.ToneMode(rawValue: arguments[5]) else { throw HarnessError.invalidManifest }
+        try AuthoredCalibration.fit(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), input: input,
+                                    mode: mode, destination: URL(fileURLWithPath: arguments[6]))
+    } else if arguments[1] == "calibration-fit", arguments.count == 5 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        try fitLookCalibration(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]),
+                               destination: URL(fileURLWithPath: arguments[4]))
+    } else if arguments[1] == "score-regions", arguments.count == 7 {
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
+        try card.validate()
+        let candidateData = try localData(arguments[2]), targetData = try localData(arguments[3]), geometryData = try localData(arguments[4])
+        guard let regions = card.regions[arguments[6]],
+              let candidate = CIImage(data: candidateData, options: [.applyOrientationProperty: true]),
+              let target = CIImage(data: targetData, options: [.applyOrientationProperty: true]),
+              let geometry = CIImage(data: geometryData, options: [.applyOrientationProperty: true]),
+              geometry.extent.size == candidate.extent.size
+        else { throw HarnessError.invalidManifest }
+        let a = try encodedImage(scaled(candidate)), b = try encodedImage(scaled(target))
+        let correspondence = geometryData == targetData ? regions.map { _ in RegionCorrespondence.identity } :
+            try nativeRegionCorrespondence(source: zeroOrigin(geometry), target: zeroOrigin(target), regions: regions, evaluationWidth: Int(a.extent.width)) { crop in
+                let encoded = try encodedImage(crop)
+                return frame(encoded, width: Int(encoded.extent.width), height: Int(encoded.extent.height))
+            }
+        let scores = try appearanceRegionScores(
+            candidate: frame(a, width: Int(a.extent.width), height: Int(a.extent.height)),
+            target: frame(b, width: Int(b.extent.width), height: Int(b.extent.height)), regions: regions, card: card, correspondences: correspondence
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try print(String(data: encoder.encode(AppearanceRegionReport(geometryBaselineSHA256: SHA256.hash(data: geometryData).description, scores: scores)), encoding: .utf8)!)
+    } else if arguments[1] == "score-images", arguments.count == 4 {
+        guard let candidate = try CIImage(data: localData(arguments[2]),
+                                          options: [.applyOrientationProperty: true]),
+            let target = try CIImage(data: localData(arguments[3]),
+                                     options: [.applyOrientationProperty: true])
+        else { throw HarnessError.decodeFailed("score input") }
+        let a = try encodedImage(scaled(candidate))
+        let b = try encodedImage(scaled(target))
+        guard a.extent.size == b.extent.size else { throw HarnessError.incompatibleDimensions }
+        let width = Int(a.extent.width), height = Int(a.extent.height)
+        let score = try colorScore(
+            candidate: frame(a, width: width, height: height),
+            target: frame(b, width: width, height: height)
+        )
+        try print(String(data: JSONEncoder().encode(score), encoding: .utf8)!)
+    } else if arguments[1] == "sensor-raw-heif", arguments.count == 5 {
+        let result = try SonySensorRAWHEIFRenderer.render(
+            rawURL: URL(fileURLWithPath: arguments[2]),
+            destinationURL: URL(fileURLWithPath: arguments[3]),
+            mediaRoots: [URL(fileURLWithPath: arguments[4])]
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try print(String(data: encoder.encode(result), encoding: .utf8)!)
+    } else if arguments[1] == "authored-heif", arguments.count == 6 {
+        let look = try AuthoredLook(json: localData(arguments[5]))
+        let result = try SonySensorRAWHEIFRenderer.render(
+            rawURL: URL(fileURLWithPath: arguments[2]), destinationURL: URL(fileURLWithPath: arguments[3]),
+            mediaRoots: [URL(fileURLWithPath: arguments[4])], look: .authored(look)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try print(String(data: encoder.encode(result), encoding: .utf8)!)
+    } else if arguments[1] == "sensor-model-heif", arguments.count == 6 {
+        let model = try LookModel(json: Data(contentsOf: URL(fileURLWithPath: arguments[5])))
+        let result = try SonySensorRAWHEIFRenderer.render(
+            rawURL: URL(fileURLWithPath: arguments[2]),
+            destinationURL: URL(fileURLWithPath: arguments[3]),
+            mediaRoots: [URL(fileURLWithPath: arguments[4])], look: .saved(model)
+        )
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        try print(String(data: encoder.encode(result), encoding: .utf8)!)
+    } else if ["sensor-raw-evaluate", "sensor-model-evaluate", "authored-evaluate"].contains(
+        arguments[1].replacingOccurrences(of: "-one", with: "")
+    ), arguments.count == (arguments[1].contains("raw-evaluate") ? 4 : 5) +
+        (arguments[1].hasSuffix("-one") ? 1 : 0)
+    {
+        let action = arguments[1].replacingOccurrences(of: "-one", with: "")
+        let singlePair = arguments[1].hasSuffix("-one")
+        let manifest = try JSONDecoder().decode(Manifest.self,
+                                                from: Data(contentsOf: URL(fileURLWithPath: arguments[2])))
+        let look: SensorRenderingLook = switch action {
+        case "sensor-raw-evaluate": .nativeDefault
+        case "sensor-model-evaluate": try .saved(LookModel(json: localData(arguments[3])))
+        default: try .authored(AuthoredLook(json: localData(arguments[3])))
+        }
+        let output = URL(fileURLWithPath: arguments[action == "sensor-raw-evaluate" ? 3 : 4])
+        try validate(manifest, output: output)
+        try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+        if singlePair {
+            guard let pair = manifest.pairs.first(where: { $0.id == arguments.last! }) else {
+                throw HarnessError.invalidManifest
+            }
+            let record = try evaluateSensorRAWHEIF(
+                pair, output: output, look: look
+            )
+            try JSONSerialization.data(withJSONObject: record, options: [.prettyPrinted, .sortedKeys])
+                .write(to: output.appendingPathComponent(pair.id + ".json"))
+            print("evaluated \(pair.id) \(pair.role.rawValue) \(pair.session)")
+        } else {
+            // Each image gets a fresh process so Core Image, Metal and Image I/O
+            // release their native allocations before the next large RAW.
+            var failures = [[String: String]]()
+            for pair in manifest.pairs {
+                let child = Process()
+                child.executableURL = URL(fileURLWithPath: arguments[0])
+                child.arguments = [action + "-one"] + Array(arguments[2...]) + [pair.id]
+                do {
+                    try child.run()
+                    child.waitUntilExit()
+                    if child.terminationStatus != 0 {
+                        failures.append(["id": pair.id,
+                                         "reason": "child exit \(child.terminationStatus)"])
+                    }
+                } catch {
+                    failures.append(["id": pair.id, "reason": String(describing: error)])
+                }
+            }
+            let summary = try JSONSerialization.data(withJSONObject: [
+                "planned": manifest.pairs.count,
+                "completed": manifest.pairs.count - failures.count,
+                "failures": failures,
+            ], options: [.prettyPrinted, .sortedKeys])
+            try summary.write(to: output.appendingPathComponent("summary.json"))
+            if !failures.isEmpty {
+                throw HarnessError.partialEvaluation
+            }
+        }
     } else if arguments[1] == "lens-audit", arguments.count == 4 {
         let manifest = try JSONDecoder().decode(Manifest.self,
                                                 from: Data(contentsOf: URL(fileURLWithPath: arguments[2])))

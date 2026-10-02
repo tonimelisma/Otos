@@ -274,3 +274,16 @@ Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main
 thread stays free of database/scan/sort/decode work. If answering one question makes
 you touch two layers, the boundary is probably wrong — move the responsibility.
+
+
+## Standalone RAW look research
+
+`tools/sony-render-harness` develops guarded sensor RAWs outside the app and catalog.
+`NativeRAWDevelopment` owns RAW 9 and independently records native lens correction;
+`AuthoredLook` / `MetalAuthoredLook` own the versioned normalization, tone, creative
+colour and display pixel function; `SonySensorRAWHEIFRenderer` owns native HEIF
+encoding and atomic publication. Calibration/region measurement alone read offline
+appearance anchors. See [ADR 0029](adr/0029-standalone-authored-raw-look-boundary.md)
+and the [vivid recipe validation](research/2026-10-01-vivid-raw9-pipeline-validation.md).
+The fixed standalone recipe has photographic and native-output evidence; these
+tools do not implement an app editing/export feature.

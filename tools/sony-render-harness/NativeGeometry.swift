@@ -32,11 +32,24 @@ private enum NativeMatchResult {
 /// two-pixel search finds the likely displacement; one-pixel refinement and a
 /// local quadratic peak estimate keep the measurement independent of the
 /// 768-pixel Vision homography used only by the color scorecard.
-private func matchNativeTile(_ source: RGBFrame, _ target: RGBFrame) -> NativeMatchResult {
+private func matchNativeTile(_ source: RGBFrame, _ target: RGBFrame, anchorBounds: CGRect? = nil) -> NativeMatchResult {
+    // Preserve confident native-detail matches. Different denoise/sharpening can
+    // obscure the same geometry at high frequencies; a fixed Gaussian scale
+    // gets one retry under the identical confidence and reciprocity rules.
+    let fine = matchNativeTileAtScale(source, target, anchorBounds: anchorBounds, sigma: 0)
+    switch fine {
+    case .reliable, .flat, .searchBoundary: return fine
+    case .ambiguous:
+        return matchNativeTileAtScale(source, target, anchorBounds: anchorBounds, sigma: 1.2)
+    }
+}
+
+private func matchNativeTileAtScale(_ source: RGBFrame, _ target: RGBFrame, anchorBounds: CGRect?, sigma: Double) -> NativeMatchResult {
     let width = target.width, height = target.height
     precondition(source.width == width && source.height == height && width == 192 && height == 192)
 
     func gradient(_ frame: RGBFrame) -> [Double] {
+        let frame = sigma > 0 ? gaussianBlur(frame, sigma: sigma) : frame
         var gray = [Double](repeating: 0, count: width * height)
         for index in 0 ..< gray.count {
             let pixel = index * 4
@@ -65,6 +78,9 @@ private func matchNativeTile(_ source: RGBFrame, _ target: RGBFrame) -> NativeMa
     for oy in [-36, -18, 0, 18, 36] {
         for ox in [-36, -18, 0, 18, 36] {
             let cx = width / 2 + ox, cy = height / 2 + oy
+            if let anchorBounds, !anchorBounds.contains(CGRect(x: cx - radius, y: cy - radius, width: radius * 2 + 1, height: radius * 2 + 1)) {
+                continue
+            }
             var sum = 0.0, squares = 0.0, samples = 0.0
             for y in Swift.stride(from: -radius, through: radius, by: 2) {
                 for x in Swift.stride(from: -radius, through: radius, by: 2) {
@@ -105,9 +121,11 @@ private func matchNativeTile(_ source: RGBFrame, _ target: RGBFrame) -> NativeMa
         return (sumAB - sumA * sumB / n) / sqrt(varianceA * varianceB)
     }
     var best = (dx: 0, dy: 0, value: -Double.infinity)
+    var coarse = [(Int, Int, Double)]()
     for dy in -limit ... limit {
         for dx in -limit ... limit {
             let value = correlation(dx, dy, stride: 2)
+            coarse.append((dx, dy, value))
             if value > best.value {
                 best = (dx, dy, value)
             }
@@ -130,7 +148,8 @@ private func matchNativeTile(_ source: RGBFrame, _ target: RGBFrame) -> NativeMa
     let rival = alternatives.filter {
         abs($0.0 - fine.dx) > 1 || abs($0.1 - fine.dy) > 1
     }.map(\.2).max() ?? -.infinity
-    guard fine.value - rival >= 0.02 else { return .ambiguous }
+    let distantRival = coarse.filter { abs($0.0 - fine.dx) > 2 || abs($0.1 - fine.dy) > 2 }.map(\.2).max() ?? -.infinity
+    guard fine.value - rival >= 0.02, best.value - distantRival >= 0.02 else { return .ambiguous }
     func subpixel(_ before: Double, _ center: Double, _ after: Double) -> Double? {
         let curvature = before - 2 * center + after
         guard before.isFinite, after.isFinite, curvature < -0.0001 else { return nil }
@@ -153,8 +172,8 @@ func nativeGeometryScore(source: CIImage, target: CIImage,
     guard source.extent.size == target.extent.size, width >= 1000, height >= 1000 else {
         throw HarnessError.incompatibleDimensions
     }
-    let fractionsX = [0.04, 0.27, 0.5, 0.73, 0.96]
-    let fractionsY = [0.06, 0.5, 0.94]
+    let fractionsX = [0.04, 0.19, 0.34, 0.5, 0.66, 0.81, 0.96]
+    let fractionsY = [0.06, 0.28, 0.5, 0.72, 0.94]
     let tileSize = 192
     var matches = [NativeGeometryPoint]()
     var flat = 0, ambiguous = 0, boundary = 0
@@ -203,8 +222,8 @@ func nativeGeometryScore(source: CIImage, target: CIImage,
     func residual(_ match: NativeGeometryPoint) -> Double {
         hypot(match.dx - translationX, match.dy - translationY)
     }
-    let enough = matches.count >= 8
     let edge = matches.filter { $0.x < 0.1 || $0.x > 0.9 || $0.y < 0.1 || $0.y > 0.9 }
+    let enough = matches.count >= 18 && edge.count >= 6
     return NativeGeometryScore(attempted: attempted, reliable: matches.count,
                                sufficientCoverage: enough,
                                medianResidualPixels: enough ? median(matches.map(residual)) : nil,
@@ -248,5 +267,98 @@ func nativeGeometrySelfTest() throws {
                                     count: size * size).flatMap(\.self))
     guard case .flat = matchNativeTile(flat, flat) else {
         throw HarnessError.malformedReferenceData
+    }
+    // Repeated texture must not promote an arbitrary distant correlation peak.
+    let periodic = RGBFrame(width: size, height: size, rgba: (0 ..< size * size).flatMap { i -> [Float] in
+        let v = Float(((i % size) % 4) * 7 + ((i / size) % 4) * 3) / 30
+        return [v, v, v, 1]
+    })
+    if case .reliable = matchNativeTile(periodic, periodic) {
+        throw HarnessError.malformedReferenceData
+    }
+    let large = 768
+    var pixels = [Float](repeating: 0, count: large * large * 4)
+    for i in 0 ..< large * large {
+        seed = 1_664_525 &* seed &+ 1_013_904_223
+        let v = Float(seed & 0xFFFF) / 65535
+        for c in 0 ..< 3 {
+            pixels[i * 4 + c] = v
+        }
+        pixels[i * 4 + 3] = 1
+    }
+    var displaced = pixels
+    for y in 0 ..< large {
+        for x in 0 ..< large {
+            let from = (min(large - 1, max(0, y + 2)) * large + min(large - 1, max(0, x - 3))) * 4
+            for c in 0 ..< 4 {
+                displaced[(y * large + x) * 4 + c] = pixels[from + c]
+            }
+        }
+    }
+    let region = AppearanceLookCard.Region(name: "interior", rectangle: [0.3, 0.3, 0.7, 0.7])
+    let measured = try nativeRegionCorrespondence(source: image(RGBFrame(width: large, height: large, rgba: displaced)),
+                                                  target: image(RGBFrame(width: large, height: large, rgba: pixels)),
+                                                  regions: [region], evaluationWidth: 768)
+    { crop in
+        frame(zeroOrigin(crop), width: 192, height: 192)
+    }
+    guard measured[0].status == .measuredLocal, let dx = measured[0].dx, let dy = measured[0].dy,
+          abs(dx - 3) < 0.1, abs(dy + 2) < 0.1, measured[0].reliableMatches >= 3 else { throw HarnessError.malformedReferenceData }
+    print("Native correspondence: known displacement, flat-region rejection, distant ambiguity and local-coordinate fixtures pass")
+}
+
+/// Measured local displacement in evaluation pixels. The envelope includes one
+/// native pixel of integer-search discretization, spatial spread, and forward /
+/// reverse disagreement. It is an empirical support bound, not a confidence interval.
+struct RegionCorrespondence: Encodable {
+    enum Status: String, Encodable { case knownIdentity = "known-identity", measuredLocal = "measured-local", inconclusive }
+    let status: Status
+    let dx: Double?
+    let dy: Double?
+    let supportRadius: Double?
+    let reliableMatches: Int
+    let supportPaddingNativePixels: Int
+
+    static let identity = RegionCorrespondence(status: .knownIdentity, dx: 0, dy: 0, supportRadius: 0, reliableMatches: 0, supportPaddingNativePixels: 0)
+    static let unknown = RegionCorrespondence(status: .inconclusive, dx: nil, dy: nil, supportRadius: nil, reliableMatches: 0, supportPaddingNativePixels: 0)
+}
+
+func nativeRegionCorrespondence(source: CIImage, target: CIImage,
+                                regions: [AppearanceLookCard.Region], evaluationWidth: Int,
+                                render: (CIImage) throws -> RGBFrame) throws -> [RegionCorrespondence]
+{
+    guard source.extent.size == target.extent.size else { throw HarnessError.incompatibleDimensions }
+    let width = target.extent.width, height = target.extent.height, tile = 192.0
+    guard width >= tile, height >= tile else { return regions.map { _ in .unknown } }
+    let scale = Double(evaluationWidth) / width
+    return try regions.map { region in
+        let r = region.rectangle
+        let bounds = CGRect(x: r[0] * width, y: (1 - r[3]) * height,
+                            width: (r[2] - r[0]) * width, height: (r[3] - r[1]) * height)
+        var matches = [(Double, Double, Double)]()
+        var visited = Set<String>()
+        for (u, v) in [(0.5, 0.5), (0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
+            let x = max(tile / 2, min(width - tile / 2, (bounds.minX + bounds.width * u).rounded()))
+            let y = max(tile / 2, min(height - tile / 2, (bounds.minY + bounds.height * v).rounded()))
+            guard visited.insert("\(x),\(y)").inserted else { continue }
+            let crop = CGRect(x: x - tile / 2, y: y - tile / 2, width: tile, height: tile)
+            // Frame coordinates are top-left; CI crop coordinates are bottom-left.
+            // A flat colour patch can be located from immediately surrounding
+            // texture. The 64-native-pixel support pad is fixed, reported, and
+            // contributes spatial spread to the envelope; it never changes colour.
+            let support = bounds.insetBy(dx: -64, dy: -64)
+            let localBounds = CGRect(x: support.minX - crop.minX, y: crop.maxY - support.maxY,
+                                     width: support.width, height: support.height)
+            let a = try render(source.cropped(to: crop)), b = try render(target.cropped(to: crop))
+            guard case let .reliable(dx, dy, _, _, _) = matchNativeTile(a, b, anchorBounds: localBounds),
+                  case let .reliable(rx, ry, _, _, _) = matchNativeTile(b, a, anchorBounds: localBounds),
+                  hypot(dx + rx, dy + ry) <= 1 else { continue }
+            matches.append((dx, dy, hypot(dx + rx, dy + ry)))
+        }
+        guard !matches.isEmpty else { return .unknown }
+        let dx = matches.map(\.0).sorted()[matches.count / 2], dy = matches.map(\.1).sorted()[matches.count / 2]
+        let spread = matches.map { hypot($0.0 - dx, $0.1 - dy) + $0.2 }.max()!
+        return RegionCorrespondence(status: .measuredLocal, dx: dx * scale, dy: dy * scale,
+                                    supportRadius: (1 + spread) * scale, reliableMatches: matches.count, supportPaddingNativePixels: 64)
     }
 }

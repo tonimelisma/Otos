@@ -19,10 +19,8 @@ from pathlib import Path
 DATALESS = 0x40000000
 FIELDS = [
     "Model", "DateTimeOriginal", "SubSecTimeOriginal", "ExposureTime",
-    "FNumber", "ISO", "CreativeStyle", "PictureProfile",
-    "DynamicRangeOptimizer", "WhiteBalance", "ColorTemperature",
-    "ColorCompensationFilter", "Contrast", "Saturation", "Sharpness",
-    "Clarity", "Highlights", "Shadows", "ColorPrimaries",
+    "FNumber", "ISO", "WhiteBalance", "ColorTemperature",
+    "ColorCompensationFilter", "ColorPrimaries",
     "TransferCharacteristics", "ImageWidth", "ImageHeight",
     "Orientation", "LensModel", "FocalLength",
 ]
@@ -34,7 +32,19 @@ LOOK = {
     "CreativeStyle": 16,
     "PictureProfile": 38,
     "DynamicRangeOptimizer": 0,
+    "Contrast": 0,
+    "Saturation": 0,
+    "Sharpness": 0,
+    "Clarity": 0,
+    "Highlights": 0,
+    "Shadows": 0,
+    "Fade": 0,
+    "SharpnessRange": 1,
 }
+# Sony's authored look settings differ from similarly named standardized EXIF
+# descriptions. Request this namespace alone so duplicate names cannot replace
+# the calibration facts (e.g. EXIF Sharpness 1 versus Sony Sharpness 0).
+FIELDS += ["Sony:" + field for field in LOOK]
 
 
 def local_regular(path):
@@ -70,7 +80,9 @@ def verify(pair):
     capture_date = raw.get("DateTimeOriginal", "").replace(":", "")[:8]
     if capture_date != pair["id"][:8]:
         reasons.append("captureDate")
-    if pair["session"] != capture_date and not pair["session"].startswith("original-"):
+    if (pair["session"] != capture_date
+            and not pair["session"].startswith(capture_date + "_")
+            and not pair["session"].startswith("original-")):
         reasons.append("sessionDate")
     for field, expected in LOOK.items():
         if raw.get(field) != expected or target.get(field) != expected:
