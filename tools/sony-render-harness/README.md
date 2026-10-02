@@ -370,3 +370,26 @@ not optimization of HEIF CIEDE2000 and is not proof of photographic incapacity.
 Fitted target-assisted models are private expression witnesses, never automatic
 inference recipes or independent validation. Actual native HEIF and unchanged
 whole-image/fixed-region limits determine the diagnostic outcome.
+
+### Native profile objective and residual localization
+
+`matching-native-profile-refine regression.json capture model.json grid.card.json frozen-grid.json geometry-baseline.heic output-directory [affine|affineAndCurves]`
+keeps the existing format-2 model and its native input. `affine` varies three gains
+and three constant-LUT offsets before the existing output clamp (25 trials).
+`affineAndCurves` adds three bounded channel-curve bends (37 trials), adding
+`delta * 4*t*(1-t)` at each original curve knot, with `t` clamped to [0,1].
+Gain bounds [0.5,2] and bend bounds [-0.1,0.1] preserve a monotone base curve.
+Two passes use gain-log/bend steps0.04,0.02 and offset steps0.01,0.005. The shared
+native observation/loss owner evaluates the actual Metal look before managed
+reduction and Gaussian sigma1.2, using direct mean/tail DE00 on fixed corresponding
+regions. Reports identify every trial, base-model and baseline-image hashes.
+This is a finite subspace diagnostic, not a global capacity or convergence proof.
+
+`matching-residual-audit development.json capture candidate.heic grid.card.json frozen-grid.json geometry-baseline.heic output-directory`
+localizes actual exported-HEIF residuals. It writes unregistered and fixed-region
+DE00 previews (red intensityDE00/10; gray means unknown), the candidate/target
+previews, and signed Lab/error summaries in fixed target-lightness bins below25,
+25<=L<60, and at least60. It reports how many whole-image errors aboveDE00five
+lie inside reliable regions. These summaries diagnose residuals; they replace no
+whole-image, region, sensitivity or native-detail gate. Selection/regression roles
+only, baseline SHA256 verified, guarded original reads and no overwrite.

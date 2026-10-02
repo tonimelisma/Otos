@@ -225,17 +225,23 @@ and delivery both succeed. Document-only corrections use the lightweight gates.
 
 ## Immediate execution
 
-Keep the frozen inference recipes unchanged. The comparison/order and bounded
-normalization/profile diagnostics are documented; none establishes acceptance.
-Next freeze a development experiment comparing the current point-RGB fitting
-objective with low-frequency observations produced after the actual native look,
-using the same source, model capacity, correspondences and good controls. Audit
-source-only sample retention and colour coverage; retain excluded areas in checks.
-Use high ISO and unresolved daylight cases first, then original skin/warm/indoor
-controls. Report objective reduction, numerical convergence and actual native HEIF
-whole/region/detail outcomes separately. If objective/sampling fixes work, resume
-shared training and RAW-only automatic selection; if they fail, attribute clipping,
-input/detail or genuinely spatial residuals before escalating model capacity.
+Keep frozen inference recipes unchanged. The native affine/curve-direction audit
+produced no new passing failure; stop adding scalar knobs. See
+[observation feedback](../research/2026-10-02-native-profile-observation-feedback.md).
+Next fit a coupled coarse3-cubed colour correction within the existing9-cubed
+profile against actual native-order observations, retaining curves, source,
+geometry and original gates. Calibrate finite-difference quantization/steps,
+bounded joint solve and line search; report finite-budget convergence and actual
+HEIF outcomes. Start with highISO and the passing control, then remaining original
+hard cases. A successful fit proceeds to shared RAW-only training/selection.
+
+Separately attribute the daylight tail to known colour, correspondence and
+optical/detail coverage rather than treating unregistered p95 as pure colour.
+Audit negative versus above-domain clipping and its error association; measure
+noise/detail independently. Do not fit lens defects into colour or change RAW9.
+A failed numerical/measurement witness returns to its responsible boundary before
+adding local processing or prediction. The unchanged whole-image failures remain
+visible and no diagnostic subset replaces acceptance.
 
 Keep the new acceptance reserve pixel-untouched. Metadata verification alone does
 not make its seven temporal groups ten independently checked shoots. Complete the

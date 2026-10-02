@@ -413,7 +413,25 @@ func validate(_ manifest: Manifest, output: URL) throws {
 func run() throws {
     let arguments = CommandLine.arguments
     guard arguments.count >= 3 else { throw HarnessError.usage }
-    if arguments[1] == "matching-native-profile-fit", arguments.count == 8 || arguments.count == 9 {
+    if arguments[1] == "matching-residual-audit", arguments.count == 9 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[8])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
+        try matchingResidualAudit(pair, candidateURL: URL(fileURLWithPath: arguments[4]), card: card,
+                                  geometryReport: localData(arguments[6]), geometryBaseline: localData(arguments[7]), destination: output)
+    } else if arguments[1] == "matching-native-profile-refine", arguments.count == 9 || arguments.count == 10 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[8])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
+        let controls = arguments.count == 10 ? NativeProfileRefinementControls(rawValue: arguments[9]) : .affine
+        guard let controls else { throw HarnessError.usage }
+        try refineNativeProfileOrder(pair, baseData: localData(arguments[4]), card: card,
+                                     geometryReport: localData(arguments[6]), geometryBaseline: localData(arguments[7]), controls: controls, destination: output)
+    } else if arguments[1] == "matching-native-profile-fit", arguments.count == 8 || arguments.count == 9 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[7])
         try validate(manifest, output: output)
@@ -465,6 +483,7 @@ func run() throws {
         try AuthoredCalibration.selfTest()
         try authoredCapacitySelfTest()
         try lookCalibrationSelfTest()
+        try nativeProfileObservationSelfTest()
     } else if arguments[1] == "look-self-test", arguments.count == 4 {
         try lookModelSelfTest(modelPath: arguments[2], vectorsPath: arguments[3])
     } else if arguments[1] == "calibration-export-one", arguments.count == 5 {

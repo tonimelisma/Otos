@@ -1,4 +1,5 @@
 import CoreImage
+import CryptoKit
 import Foundation
 
 /// Offline evaluator calibration on already-used development images. Deliberate
@@ -149,4 +150,143 @@ func comparisonCalibration(_ pair: Pair, destination: URL, nativeCrop: Bool = fa
                                      "inputOutOfGamutChannels": decodedFrame.rgba.enumerated().filter { $0.offset % 4 != 3 && ($0.element < 0 || $0.element > 1) }.count,
                                      "results": results]
     try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: destination, options: .atomic)
+}
+
+/// Locate residuals on actual HEIF pixels with previously frozen RAW geometry.
+/// Unknown coverage is gray in the registered map and remains in the separately
+/// reported whole-image score. Brightness bins and signed Lab means are diagnostic.
+func matchingResidualAudit(_ pair: Pair, candidateURL: URL, card: AppearanceLookCard,
+                           geometryReport: Data, geometryBaseline: Data, destination: URL) throws
+{
+    try card.validate()
+    guard pair.role == .regression || pair.role == .selection,
+          !FileManager.default.fileExists(atPath: destination.path), let regions = card.regions[pair.id],
+          let report = try JSONSerialization.jsonObject(with: geometryReport) as? [String: Any],
+          report["formatVersion"] as? Int == 7,
+          let rows = report["scores"] as? [[String: Any]], rows.count == regions.count,
+          let digest = report["geometryBaselineSHA256"] as? String,
+          digest == SHA256.hash(data: geometryBaseline).description
+    else { throw HarnessError.invalidManifest }
+    try validate(Manifest(pairs: [pair]), output: destination)
+    try Task.checkCancellation()
+    let span = OtosSignpost.rendering.beginInterval("MatchingResidualAudit")
+    defer { OtosSignpost.rendering.endInterval("MatchingResidualAudit", span) }
+    let started = Date()
+    guard let candidateImage = try CIImage(data: localData(candidateURL.path), options: [.applyOrientationProperty: true]),
+          let targetImage = try CIImage(data: localData(pair.target), options: [.applyOrientationProperty: true]),
+          candidateImage.extent.size == targetImage.extent.size else { throw HarnessError.incompatibleDimensions }
+    func reduced(_ input: CIImage) throws -> RGBFrame {
+        let small = try encodedImage(scaled(input))
+        return frame(small, width: Int(small.extent.width.rounded()), height: Int(small.extent.height.rounded()))
+    }
+    let candidate = try reduced(candidateImage), target = try reduced(targetImage)
+    guard candidate.width == target.width, candidate.height == target.height,
+          candidate.width > 16, candidate.height > 16,
+          candidate.rgba.allSatisfy(\.isFinite), target.rgba.allSatisfy(\.isFinite)
+    else { throw HarnessError.malformedReferenceData }
+    // Lanczos extends fractional edge pixels. Opacity is required only inside
+    // the scorecard's fixed eight-pixel inset, not on that resampling border.
+    for y in 8 ..< candidate.height - 8 {
+        for x in 8 ..< candidate.width - 8 {
+            let i = (y * candidate.width + x) * 4 + 3
+            guard candidate.rgba[i] > 0.999, target.rgba[i] > 0.999 else { throw HarnessError.malformedReferenceData }
+        }
+    }
+    let a = gaussianBlur(candidate), b = gaussianBlur(target)
+    var rawMap = a.rgba, registeredMap = [Float](repeating: 0.25, count: a.rgba.count)
+    var covered = Set<Int>(), highCovered = Set<Int>(), highWhole = 0, statistics = [[String: Any]]()
+    func lab(_ rgb: SIMD3<Double>) -> Lab {
+        Lab.srgb(min(1, max(0, rgb.x)), min(1, max(0, rgb.y)), min(1, max(0, rgb.z)))
+    }
+    func pixel(_ source: RGBFrame, _ x: Int, _ y: Int) -> SIMD3<Double> {
+        let i = (y * source.width + x) * 4
+        return SIMD3(Double(source.rgba[i]), Double(source.rgba[i + 1]), Double(source.rgba[i + 2]))
+    }
+    for y in 0 ..< a.height {
+        for x in 0 ..< a.width {
+            let index = (y * a.width + x) * 4
+            let distance = ciede2000(lab(pixel(a, x, y)), lab(pixel(b, x, y)))
+            rawMap[index] = Float(min(1, distance / 10))
+            rawMap[index + 1] = 0
+            rawMap[index + 2] = 0
+            rawMap[index + 3] = 1
+            registeredMap[index + 3] = 1
+            if x >= 8, y >= 8, x < a.width - 8, y < a.height - 8, distance > 5 {
+                highWhole += 1
+            }
+        }
+    }
+    for (region, row) in zip(regions, rows) {
+        guard row["name"] as? String == region.name else { throw HarnessError.invalidManifest }
+        guard let sensitivity = row["meanDE00Sensitivity"] as? Double, sensitivity.isFinite, sensitivity >= 0,
+              sensitivity <= card.maximumSensitivityDE00,
+              let correspondence = row["correspondence"] as? [String: Any], correspondence["status"] as? String == "measured-local",
+              let dx = correspondence["dx"] as? Double, let dy = correspondence["dy"] as? Double,
+              dx.isFinite, dy.isFinite
+        else {
+            statistics.append(["name": region.name, "coverage": "unknown-or-sensitive"])
+            continue
+        }
+        let q = region.rectangle
+        let x0 = max(8, Int(q[0] * Double(a.width))), x1 = min(a.width - 8, Int(q[2] * Double(a.width)))
+        let y0 = max(8, Int(q[1] * Double(a.height))), y1 = min(a.height - 8, Int(q[3] * Double(a.height)))
+        guard x1 > x0, y1 > y0 else {
+            statistics.append(["name": region.name, "coverage": "empty-after-inset"])
+            continue
+        }
+        var errors = [[Double]](repeating: [], count: 3), signed = [SIMD3<Double>](repeating: .zero, count: 3)
+        for y in y0 ..< y1 {
+            for x in x0 ..< x1 {
+                let u = Double(x) + dx, v = Double(y) + dy
+                guard u >= 0, v >= 0, u < Double(a.width - 1), v < Double(a.height - 1) else { continue }
+                let ix = Int(u), iy = Int(v), fx = u - Double(ix), fy = v - Double(iy)
+                var rgb = SIMD3<Double>.zero
+                for (ox, oy, weight) in [(0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)] {
+                    rgb += pixel(a, ix + ox, iy + oy) * weight
+                }
+                let ca = lab(rgb), cb = lab(pixel(b, x, y)), distance = ciede2000(ca, cb)
+                let bin = cb.l < 25 ? 0 : cb.l < 60 ? 1 : 2
+                errors[bin].append(distance)
+                signed[bin] += SIMD3(ca.l - cb.l, ca.a - cb.a, ca.b - cb.b)
+                let index = y * a.width + x
+                covered.insert(index)
+                if ciede2000(lab(pixel(a, x, y)), cb) > 5 {
+                    highCovered.insert(index)
+                }
+                registeredMap[index * 4] = Float(min(1, distance / 10))
+                registeredMap[index * 4 + 1] = 0
+                registeredMap[index * 4 + 2] = 0
+            }
+        }
+        let bins: [[String: Any]] = (0 ..< 3).map { bin in
+            let values = errors[bin].sorted(), count = values.count
+            guard count > 0 else { return ["name": ["dark", "middle", "bright"][bin], "pixels": 0] }
+            let mean = signed[bin] / Double(count)
+            return ["name": ["dark", "middle", "bright"][bin], "pixels": count,
+                    "meanDE00": values.reduce(0, +) / Double(count), "p95DE00": values[Int(ceil(Double(count) * 0.95)) - 1],
+                    "signedMeanLab": [mean.x, mean.y, mean.z]]
+        }
+        statistics.append(["name": region.name, "coverage": "fixed-reliable", "brightnessBins": bins])
+    }
+    let result: [String: Any] = try ["contractVersion": 1, "id": pair.id, "validationEvidence": false,
+                                     "geometryBaselineSHA256": digest,
+                                     "scope": "residual localization diagnostic; original whole and region gates unchanged",
+                                     "whole": JSONSerialization.jsonObject(with: JSONEncoder().encode(colorScore(candidate: candidate, target: target))),
+                                     "reliableCoveredPixels": covered.count, "wholePixelsAboveDE00Five": highWhole,
+                                     "wholeHighErrorPixelsInsideReliableRegions": highCovered.count,
+                                     "mapLegend": "red is DE00/10 clipped at10; gray is unknown; PNG preview only",
+                                     "brightnessBins": "target D65 Lab L below25,25<=L<60,and at least60; diagnosis only",
+                                     "regions": statistics]
+    try Task.checkCancellation()
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    try writePNG(image(candidate), to: destination.appendingPathComponent("candidate.png"))
+    try writePNG(image(target), to: destination.appendingPathComponent("target.png"))
+    try writePNG(image(RGBFrame(width: a.width, height: a.height, rgba: rawMap)), to: destination.appendingPathComponent("unregistered-DE00.png"))
+    try writePNG(image(RGBFrame(width: a.width, height: a.height, rgba: registeredMap)), to: destination.appendingPathComponent("fixed-region-DE00.png"))
+    try JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
+        .write(to: destination.appendingPathComponent("report.json"), options: .withoutOverwriting)
+    OtosLog.rendering.noticeOperation("matching.residualAudit", phase: "complete", fields: [
+        "id": pair.id, "coveredPixels": String(covered.count), "highErrorPixels": String(highWhole),
+        "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
+    ])
 }
