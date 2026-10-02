@@ -33,8 +33,9 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
     }
 
     /// The bar's middle column. Exactly one of these per state — `.hidden` is the
-    /// DES-053 exception for a control whose subject no longer exists (empty card,
-    /// card gone), never an empty `.choices`.
+    /// DES-053 exception for a control whose subject no longer exists (an empty
+    /// or erased card) or that has nothing to decide (F-incomplete), never an
+    /// empty `.choices`.
     ///
     /// `.choices` carries the Preparing track above its two control rows while
     /// the card is being checked: the destination and the per-run checkboxes are
@@ -52,9 +53,10 @@ nonisolated struct ImportBarDrawnState: Equatable, Sendable {
 
     /// The bar's act. `.none` is the DES-053 exception applied to the act
     /// zone: a state that has no act left renders an empty zone rather than a
-    /// button whose subject is gone or whose effect is already on screen. It is
-    /// reached only by state F, and only where the user is by construction
-    /// already looking at the items the bar is talking about.
+    /// button whose effect is already on screen. It is reached only by state
+    /// F-incomplete, whose act is the L3 `Show them` reveal: it selects the
+    /// items that did not land in the card's own grid, which is where the
+    /// user is standing.
     ///
     /// `.importNewItems` is one case whether or not it is enabled: its title is
     /// `Import` either way and `primaryEnabled` says which (DES-053, "a disabled
@@ -157,8 +159,7 @@ nonisolated enum ImportBarPresentation {
         }
         // A stopped run outranks everything below: the re-plan's Ready would
         // otherwise swallow the fact that a run just ended early (J8 as
-        // written today falls through to plain Ready), and the detached
-        // snapshot's `.completed` would report it as an ordinary Done. A new
+        // written today falls through to plain Ready). A new
         // run's `.executing`/`.failed` above still win — they are the newer
         // fact about this attachment.
         if let stopReason = presentation.stopReason,
@@ -603,8 +604,7 @@ nonisolated enum ImportBarPresentation {
     /// lands — never the pre-run plan's count, which the coordinator drops on
     /// a stop because that run has just made it false. This is the one F
     /// variant with a prominent act: its subject exists, the items are still
-    /// on an attached card (`import-bar.md` state F, Stopped; J8). Identical
-    /// on the card row and the batch row.
+    /// on an attached card (`import-bar.md` state F, Stopped; J8).
     private static func stopped(
         reason: ImportStopReason,
         copiedCount: Int,
@@ -615,21 +615,6 @@ nonisolated enum ImportBarPresentation {
     ) -> ImportBarDrawnState {
         let destinationName = presentation.destinationDisplayName ?? "the library"
         let primaryLine = "Stopped — \(copiedCount) of \(plannedCount) \(plannedCount == 1 ? "item" : "items") copied"
-        // Card gone: the sentence is about the result, and both the choices
-        // and the act are omitted — their subject no longer exists (DES-053
-        // exception), exactly as F's own card-gone variant does.
-        guard presentation.cardStillExists else {
-            return ImportBarDrawnState(
-                kind: .done,
-                primaryLine: primaryLine,
-                primaryBadge: .none,
-                secondaryLine: .plain("In \(destinationName) · card ejected — safe to remove"),
-                middleZone: .hidden,
-                primaryAction: .none,
-                primaryEnabled: true,
-                eraseConfirmationProvenClean: false
-            )
-        }
         let clause: String? = switch reason {
         case .user:
             copiedCount > 0 ? "They're in \(destinationName)" : nil
@@ -686,12 +671,11 @@ nonisolated enum ImportBarPresentation {
     ) -> ImportBarDrawnState {
         let destinationName = presentation.destinationDisplayName ?? "the library"
         // F, incomplete (some items couldn't be copied): its own copy and
-        // badge regardless of whether the card is still attached — neither
-        // eject nor erase decides anything further here, just go look
+        // badge — neither eject nor erase decides anything further here, just
+        // go look
         // (`import-bar.md` state F, mockup "F incomplete"). The looking is the
-        // L3 `Show them` reveal, which selects the failed items in place; the
-        // act zone is empty because a second, whole-batch "show" would only
-        // navigate to what is already on screen.
+        // L3 `Show them` reveal, which selects the failed items in the card's
+        // grid; the act zone is empty because there is nothing else to do.
         if !isFullyClean, !incompleteItems.isEmpty {
             return ImportBarDrawnState(
                 kind: .done,
@@ -708,45 +692,10 @@ nonisolated enum ImportBarPresentation {
                 eraseConfirmationProvenClean: false
             )
         }
-        // F, card gone. Both variants below have an empty act zone: eject and
-        // erase address a card that no longer exists (DES-053's "subject no
-        // longer exists" exception, the same one that hides the choices zone
-        // here), and the batch the bar is reporting on is what the user is
-        // already standing on — the selection followed the work there at
-        // execution start, and follows it there on eject if they had walked
-        // back to the card's row (`import-bar.md` "Where the user is standing").
-        guard presentation.cardStillExists else {
-            if isFullyClean {
-                return ImportBarDrawnState(
-                    kind: .done,
-                    primaryLine: "\(copiedCount) \(copiedCount == 1 ? "item" : "items") copied and verified",
-                    primaryBadge: .checkmark,
-                    secondaryLine: .plain("In \(destinationName) · card ejected — safe to remove"),
-                    middleZone: .hidden,
-                    primaryAction: .none,
-                    primaryEnabled: true,
-                    eraseConfirmationProvenClean: false
-                )
-            }
+        if !isFullyClean {
             // Not fully clean, but nothing failed to copy — items are still
             // blocked from an earlier plan (state D) rather than incomplete
-            // from this run. The card is already gone, so just report what
-            // landed; there is no reveal to offer without a copy failure, and
-            // no act either — the card the act would have addressed is gone.
-            return ImportBarDrawnState(
-                kind: .done,
-                primaryLine: "\(copiedCount) \(copiedCount == 1 ? "item" : "items") copied",
-                primaryBadge: .none,
-                secondaryLine: .plain("In \(destinationName) · card ejected — safe to remove"),
-                middleZone: .hidden,
-                primaryAction: .none,
-                primaryEnabled: true,
-                eraseConfirmationProvenClean: false
-            )
-        }
-        if !isFullyClean {
-            // Same "still blocked, nothing failed to copy" case as above,
-            // card still attached: eject/erase remain meaningful acts.
+            // from this run: eject/erase remain meaningful acts.
             let eraseChecked = preferences.deleteSourceAfterImport
             let action: ImportBarDrawnState.PrimaryAction = eraseChecked
                 ? .eraseItems(count: itemsInLibrary)

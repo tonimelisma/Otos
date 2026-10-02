@@ -90,11 +90,11 @@ view exists. To answer "where does X happen," find the one layer that owns X.
 Import attachment lifecycle: `CatalogStore` assigns a process-local generation when a
 removable root is attached. `MediaOperationCoordinator` carries that generation through
 the live session and presentation, owns the actual execution task, and transfers an
-executing task to a batch-keyed drain when the source disappears. Clean detached
-completions are discarded; unresolved completions and source-removal failures remain
-detached presentations until the batch is superseded. `CatalogWindowViewModel` uses only
-the current live generation for source-row lookup, preferences, and eject-follow, so a
-reattached card at the same path cannot inherit the previous batch.
+executing task to a batch-keyed drain when the source disappears. A presentation
+exists only for a live attachment: on detach the session's outcome is logged
+(`op=import.outcome phase=settled`) and discarded, because the import bar is drawn only
+on the card's own row. A reattached card at the same path starts a fresh session and
+cannot inherit the previous run's outcome.
 | `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
@@ -145,10 +145,10 @@ everything expensive happens on an actor off the main thread.
   collection-view layout; it coalesces deferred work and performs the one next-turn retry.
 - **Sidebar/sources**: `SidebarSelectionPolicy` (pure) decides default/attach
   selection and All-Media visibility; eject is unmount-driven and honest (ADR 0014).
-  One case needs media-operation knowledge the pure policy does not have, so
-  `CatalogWindowViewModel` owns it: when the selected removable row stops existing
-  and that source produced an import batch, the selection resolves to that batch
-  instead of the policy default (`batchToFollowAfterSourceRemoved`).
+  An import never moves the selection, and a selected removable row that stops
+  existing resolves to the policy default. `barOwnsStatus` places the import bar on
+  the card's row only, and decides which sidebar row carries the progress indicator
+  when the bar is off screen.
 - **Materialization** has one path: preview submits interactive demand and enrichment
   submits device/background demand to `MaterializationCoordinator`, which calls the
   one-URL `FileMaterialization` mechanism. The coordinator owns the bounded physical

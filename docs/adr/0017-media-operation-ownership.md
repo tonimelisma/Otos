@@ -40,23 +40,18 @@ recovery sequencing, notification, or actor coordination.
 renders (`MediaOperationSourcePresentation`, `docs/design/import-bar.md`), not only
 of execution itself: the typed failure reason (`MediaOperationFailureReason`,
 replacing a raw `String` the view used to print verbatim), the destination display
-name, the batch ID as state from execution start onward, whether the card still
-exists, and the settled attachment's copied count / clean flag / incomplete-item
-identities. `ImportBarPresentation.map` is a pure function of that presentation; it
-owns no facts of its own.
+name, the executing batch's ID (for the batch row's sidebar indicator), and the
+settled attachment's copied count / clean flag / incomplete-item identities.
+`ImportBarPresentation.map` is a pure function of that presentation; it owns no facts
+of its own.
 
-A source's `SourceSession` does not outlive its source, so a batch selected from
-the sidebar's Imports row — which does outlive the source, by design — needs a
-presentation from somewhere once the session is gone. The coordinator owns that
-too: unresolved settled outcomes are snapshotted under their batch ID into a small
-side table (`detachedBatchPresentations`) that `sortedPresentations()` folds in
-alongside live sessions. Clean detached completions are discarded. If execution was
-still active, its actual task moves through `drainingExecutions`; the eventual result
-settles the old batch as a source-removal failure without mutating a replacement
-session at the same path. This keeps the invariant intact — one owner publishes every
-presentation fact — rather than letting the ViewModel reconstruct a "the card is gone"
-fact from the *absence* of a session, which is exactly the kind of re-derivation
-`import-bar.md` identifies as the failure mode this presentation exists to avoid.
+A presentation lives exactly as long as its `SourceSession`, which does not outlive
+its source. The bar is drawn only on the card's own sidebar row (`import-bar.md`
+"Where the user is standing"), so once the card is gone there is no surface for its
+outcome: the coordinator logs it (`op=import.outcome phase=settled`) and discards it.
+If execution was still active, its actual task moves through `drainingExecutions`;
+the eventual result settles the old batch in the journal and the log without mutating
+a replacement session at the same path.
 
 One fact is deliberately *not* coordinator-owned: whether a Cancel is currently in
 flight for a source (the bar's transient "Stopping…" state). Nothing about it
@@ -86,15 +81,13 @@ There is one concrete catalog owner and no second production implementation.
 Protocols would add an abstraction without changing ownership or reducing current
 complexity.
 
-### Let the view infer "card gone" from a missing presentation
+### Keep a detached outcome to draw on the batch row
 
-The ViewModel already knows the removable-source list, so it could treat "no
-presentation for this batch's source" as the card-gone signal instead of the
-coordinator publishing one. Rejected: that reintroduces the re-derivation
-`import-bar.md`'s presentation table exists to prevent, and it cannot distinguish
-"the card was ejected after a clean import" from "this batch never had a session in
-this process at all" (e.g. after a relaunch) — a distinction the coordinator can
-make because it is the one that removed the session and knows why.
+The coordinator could snapshot an unresolved outcome under its batch ID when the card
+goes, so the batch row could keep drawing the bar. Rejected (2026-10-01): a batch row
+shows that batch and nothing else. The snapshot would be a second, batch-keyed
+presentation lifetime beside the session's, and its only consumer would be a bar the
+user asked not to see there; the batch row's grid already shows what landed.
 
 ## Consequences
 
@@ -105,9 +98,9 @@ make because it is the one that removed the session and knows why.
 - Operation APIs describe state transitions rather than exposing journal-table CRUD.
 - The bar's mapper (`ImportBarPresentation.map`) needs no store, coordinator, or
   ViewModel reference; every fact it draws from is already on the presentation it
-  is handed, including after the source session that produced it is gone.
-- A card pulled mid-execution settles as a named source-removal failure under the
-  old batch; the live replacement attachment, if any, remains independent.
+  is handed.
+- A card pulled mid-execution settles its old batch through the owned execution
+  task and is logged; the live replacement attachment, if any, remains independent.
 
 Import workers hash their completed primary staging file before publication. The
 optional canonical digest is a field on `ActiveFileOperation`, is persisted before

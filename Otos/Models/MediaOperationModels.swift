@@ -527,36 +527,12 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// is refused.
     let importRequested: Bool
     let attachToReadyMs: Int?
-    /// State rather than an event `presentationsStream()`'s dropping buffer
-    /// could lose (`import-bar.md` "Where the user is standing"). Present
-    /// once set, not from execution start: `.executing` withholds it until
-    /// the batch has at least one durably-published asset. A terminal
-    /// `.failed`/`.completed` state's own fallback is unaffected by that gate
-    /// — those keep the run's batch pinned and visible regardless of whether
-    /// anything ever published, per `MediaOperationCoordinator`'s
-    /// `exposedBatch(for:)`. This is the batch's *identity*; whether the user
-    /// should be taken to its row is `batchHasPublishedAssets`.
+    /// The batch this attachment's run is copying into, present only while it
+    /// executes and once the batch holds at least one durably-published asset
+    /// — the moment its sidebar row exists. The batch row's progress indicator
+    /// reads it (`import-bar.md` "Ownership of status"); the bar itself is drawn
+    /// only on the card's row and never needs it.
     let batchID: ImportBatchID?
-    /// Whether the batch `batchID` names holds at least one durably-published
-    /// asset — the fact `followNewBatchesOnce` needs before moving the user to
-    /// its row. Carrying an identity and choosing to navigate to it are two
-    /// different questions: a run refused before any copy still pins its batch
-    /// (identity, for state G and detach), but its row has nothing to show, and
-    /// a selection moved there leaves the sidebar and the grid disagreeing.
-    /// `false` whenever `batchID` is `nil`.
-    let batchHasPublishedAssets: Bool
-    /// Whether this source is still attached and available, read fresh from the
-    /// catalog rather than inferred from session existence — a fact about the
-    /// world, not about where the user is standing (`import-bar.md` state F).
-    /// `true` for every live source session (the coordinator removes a session
-    /// outright the moment its source drops out of the catalog's available
-    /// set, rather than keeping it around long enough to observe it
-    /// unavailable). `false` only on the detached-batch snapshot
-    /// `MediaOperationCoordinator` keeps under the batch's own identity after
-    /// its source session is gone (`refreshSources`'s detach path) — that
-    /// snapshot is what lets state F's "card gone" variant render from the
-    /// batch row once the removable row itself has disappeared.
-    let cardStillExists: Bool
     /// Count copied by the most recent *settled* (completed or cancelled)
     /// execution in this attachment, and whether that run was fully clean (no
     /// skips, failures, or blocked entries) — the auto-dismiss gate. Both
@@ -572,11 +548,8 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     /// attempt's own count separately (`import-bar.md` state G: "nothing
     /// already copied is lost").
     let copiedJustNow: Int?
-    /// Whether that same settled run was fully clean. On the batch row this
-    /// is also the dismissal gate: a fully clean settle has nothing left to
-    /// report where the user is already looking at the items, so the bar
-    /// leaves that row the moment it settles (`import-bar.md` state F,
-    /// "Dismissal"). The card's own row never dismisses.
+    /// Whether that same settled run was fully clean — the choice between
+    /// state F's clean wording and its incomplete or still-blocked variants.
     let isFullyClean: Bool?
     /// Why that same settled execution stopped before attempting everything it
     /// planned, or `nil` for a run that attempted every entry (whether or not
@@ -626,8 +599,6 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         importRequested: Bool = false,
         attachToReadyMs: Int?,
         batchID: ImportBatchID?,
-        batchHasPublishedAssets: Bool,
-        cardStillExists: Bool,
         copiedJustNow: Int?,
         isFullyClean: Bool?,
         stopReason: ImportStopReason?,
@@ -646,8 +617,6 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
         self.importRequested = importRequested
         self.attachToReadyMs = attachToReadyMs
         self.batchID = batchID
-        self.batchHasPublishedAssets = batchHasPublishedAssets
-        self.cardStillExists = cardStillExists
         self.copiedJustNow = copiedJustNow
         self.isFullyClean = isFullyClean
         self.stopReason = stopReason
@@ -659,10 +628,7 @@ nonisolated struct MediaOperationSourcePresentation: Equatable, Sendable, Identi
     }
 
     var id: String {
-        let attachment = attachmentGeneration.rawValue
-        let state = cardStillExists ? "live" : "detached"
-        let batch = batchID.map { String(describing: $0) } ?? "none"
-        return "\(sourcePath.rawValue)#\(attachment)#\(state)#\(batch)"
+        "\(sourcePath.rawValue)#\(attachmentGeneration.rawValue)"
     }
 }
 

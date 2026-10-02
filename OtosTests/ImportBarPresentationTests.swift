@@ -16,7 +16,6 @@ struct ImportBarPresentationTests {
         state: MediaOperationSourceState,
         importRequested: Bool = false,
         batchID: ImportBatchID? = nil,
-        cardStillExists: Bool = true,
         copiedJustNow: Int? = nil,
         isFullyClean: Bool? = nil,
         incompleteItems: [MediaAssetID] = [],
@@ -36,8 +35,6 @@ struct ImportBarPresentationTests {
             importRequested: importRequested,
             attachToReadyMs: nil,
             batchID: batchID,
-            batchHasPublishedAssets: batchID != nil && (copiedJustNow ?? 1) > 0,
-            cardStillExists: cardStillExists,
             copiedJustNow: copiedJustNow,
             isFullyClean: isFullyClean,
             stopReason: stopReason,
@@ -670,23 +667,6 @@ struct ImportBarPresentationTests {
         #expect(drawn.eraseConfirmationProvenClean == false)
     }
 
-    @Test func doneIncompleteVariantSurvivesCardGoneToo() {
-        let failedID = MediaAssetID(libraryRootPath: Self.source, relativePath: MediaRelativePath(rawValue: "a.jpg"))
-        let drawn = Self.map(Self.presentation(
-            state: .completed(
-                summary: Self.totals(copyCount: 1, skipCount: 0),
-                skippedForeignCount: 0,
-                failedCount: 1,
-                incompleteItems: [failedID]
-            ),
-            cardStillExists: false,
-            copiedJustNow: 0
-        ))
-        #expect(drawn.primaryLine == "0 of 1 item copied")
-        #expect(drawn.primaryBadge == .attention)
-        #expect(drawn.primaryAction == .none)
-    }
-
     @Test func doneNotFullyCleanWithNoIncompleteItemsFallsBackWithoutReveal() {
         // Blocked items alone can leave a completion not-fully-clean with
         // nothing that actually failed to copy — no per-item identity exists
@@ -704,18 +684,6 @@ struct ImportBarPresentationTests {
             Issue.record("Expected no reveal without incomplete-item identities")
         }
         #expect(drawn.eraseConfirmationProvenClean == false)
-    }
-
-    @Test func doneCardGoneOmitsChoicesAndShowsResult() {
-        let drawn = Self.map(Self.presentation(
-            state: .completed(summary: Self.totals(copyCount: 42), skippedForeignCount: 0, failedCount: 0),
-            cardStillExists: false
-        ))
-        #expect(drawn.primaryLine == "42 items copied and verified")
-        #expect(drawn.primaryBadge == .checkmark)
-        #expect(drawn.secondaryLine == .plain("In Summer Photos · card ejected — safe to remove"))
-        #expect(drawn.middleZone == .hidden)
-        #expect(drawn.primaryAction == .none)
     }
 
     @Test func doneKeepsShowingAfterRebuildViaCopiedJustNow() {
@@ -792,23 +760,6 @@ struct ImportBarPresentationTests {
         #expect(held.primaryLine == "Stopped — 12 of 42 items copied")
         #expect(held.primaryAction == .importNewItems)
         #expect(!held.primaryEnabled)
-    }
-
-    @Test func stoppedWithTheCardGoneHasNoChoicesAndNoAct() {
-        // The detached snapshot carries `.completed`; the stop still outranks
-        // Done, and the card-gone rule applies (DES-053 exception).
-        let drawn = Self.map(Self.presentation(
-            state: .completed(summary: Self.totals(copyCount: 12)),
-            cardStillExists: false,
-            copiedJustNow: 12,
-            isFullyClean: false,
-            stopReason: .user,
-            plannedCount: 42
-        ))
-        #expect(drawn.primaryLine == "Stopped — 12 of 42 items copied")
-        #expect(drawn.secondaryLine == .plain("In Summer Photos · card ejected — safe to remove"))
-        #expect(drawn.middleZone == .hidden)
-        #expect(drawn.primaryAction == .none)
     }
 
     @Test func stoppedWithNothingCopiedStatesTheCountAndNoDestinationClause() {

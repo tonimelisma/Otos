@@ -4,7 +4,7 @@
 
 Accepted. Implemented in `Otos/Services/ImportSourceReadiness.swift` and
 `MediaOperationCoordinator` (`readyState(for:ctx:)`, `beginExecutionIfPossible`,
-`presentation(for:)`, `makePresentation(session:state:cardStillExists:)`).
+`presentation(for:)`, `makePresentation(session:state:)`).
 
 ## Context
 
@@ -52,7 +52,7 @@ existed to gate the *offer* — the coordinator conflated "a plan was built" wit
 
 - The single presentation-writer rule: every `MediaOperationSourcePresentation`
   the coordinator ever yields is built by exactly one function,
-  `makePresentation(session:state:cardStillExists:)`. `presentation(for:)`
+  `makePresentation(session:state:)`. `presentation(for:)`
   derives a `MediaOperationSourceState` purely from `session.phase` (the
   session's own durable state) and hands it to `makePresentation`;
   `markExecutionUnavailable`'s one-shot `.executionUnavailable` override
