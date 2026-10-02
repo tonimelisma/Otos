@@ -73,6 +73,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				main.swift,
+				Otos.icon,
 				Support/OtosXXH3.c,
 				Support/OtosXXH3.h,
 				"Vendor/xxHash-0.8.3/LICENSE",
@@ -276,6 +277,7 @@
 				Models/ReorganizationModels.swift,
 				Models/TrashConfirmation.swift,
 				Models/XXH3Digest128.swift,
+				Otos.icon,
 				OtosApp.swift,
 				Services/CameraByteSource.swift,
 				Services/CameraMetadataReader.swift,
@@ -862,7 +864,7 @@
 		3B44EB802FCEBA59007E4158 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = Otos;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -899,7 +901,7 @@
 		3B44EB812FCEBA59007E4158 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_APPICON_NAME = Otos;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;

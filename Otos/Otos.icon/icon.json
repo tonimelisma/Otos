@@ -1,0 +1,54 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-gray:1.00000,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "image-name": "blade-yellow.svg",
+          "name": "blade-yellow",
+          "glass": true
+        },
+        {
+          "image-name": "blade-orange.svg",
+          "name": "blade-orange",
+          "glass": true
+        },
+        {
+          "image-name": "blade-red.svg",
+          "name": "blade-red",
+          "glass": true
+        },
+        {
+          "image-name": "blade-purple.svg",
+          "name": "blade-purple",
+          "glass": true
+        },
+        {
+          "image-name": "blade-blue.svg",
+          "name": "blade-blue",
+          "glass": true
+        },
+        {
+          "image-name": "blade-green.svg",
+          "name": "blade-green",
+          "glass": true
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}
