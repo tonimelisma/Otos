@@ -231,6 +231,12 @@ emit no heartbeat, which is how a hung run is mistaken for a slow one. Read logs
 `script/profile.sh "<Template>" 10s` and `script/profile-export.sh <trace>`.
 See `docs/adr/0015-observability.md`.
 
+Dev builds (scripts, Xcode ▸ Run) are `net.melisma.Otos.dev` with their own
+Application Support data; `/Applications/Otos.app` is the installed
+`net.melisma.Otos`, built by `script/install.sh` (ADR 0030). The installed app is
+a Debug build: attach with `lldb -p` or `xcrun xctrace record --attach <pid>`, and
+read its logs with `script/logs.sh` — `.info`/`.debug` persist for it.
+
 ### Supervising long checks
 
 `script/check.sh` takes roughly 4 minutes to build plus 3 to run the suite. It runs
@@ -349,6 +355,13 @@ There is **one** DoD report per increment, and it is the final report — never 
 partial, pre-merge, or ready-for-review DoD. An increment is done only when the
 work has landed on `main`, the branch/worktree/stashes are cleaned up, and the tree
 is clean on the next-start branch.
+
+An increment that changes the app (`Otos/`, `Otos.xcodeproj/`, `Config/`) also
+updates the installed app: after the merge, run `script/install.sh` from the
+primary checkout on `main` and include its `op=install` line in the DoD report.
+It quits a running installed Otos only when no import or reorganization is in
+flight, and relaunches it; a `phase=pending` result is reported, not retried
+around (ADR 0030).
 
 Verification is **agent-owned**: never require the user to launch the app, operate
 the UI, or inspect visuals as a condition of DoD. Run every check available to the

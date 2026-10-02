@@ -8,7 +8,9 @@ Accepted.
 
 Otos is an unsandboxed macOS app whose product data — the SQLite catalog, the
 thumbnail/metadata overlay, and `UserDefaults` — lives at one well-known place per
-install. Two developer workflows run the same code against that place:
+install. Dev builds and the installed app are separate installs with separate
+places (`net.melisma.Otos.dev` and `net.melisma.Otos`, ADR 0030); smoke runs use
+the dev install's catalog, which registers the same real libraries. Two developer workflows run the same code against that place:
 
 - **The test suite.** `OtosTests` is a hosted test bundle: `TEST_HOST` launches
   `Otos.app`, so `@main struct OtosApp` runs inside every test process.

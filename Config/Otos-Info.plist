@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	Merged with the generated Info.plist (GENERATE_INFOPLIST_FILE = YES).
+	OSLogPreferences is the app-bundled logging profile (man 5 os_log): without
+	it macOS keeps .info only in memory and drops .debug, so a session launched
+	from /Applications with no `log stream` attached would leave only .notice
+	and above to read after the fact (ADR 0015, ADR 0030).
+	-->
+	<key>OSLogPreferences</key>
+	<dict>
+		<key>net.melisma.Otos</key>
+		<dict>
+			<key>DEFAULT-OPTIONS</key>
+			<dict>
+				<key>Level</key>
+				<dict>
+					<key>Enable</key>
+					<string>Debug</string>
+					<key>Persist</key>
+					<string>Debug</string>
+				</dict>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

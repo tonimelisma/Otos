@@ -29,7 +29,10 @@ solely as Instruments annotations.**
   agent must be able to find in a capture taken after the fact — is therefore
   emitted at `.notice` or above; `.debug` is only for chatter the agent accepts
   losing (per-frame/per-asset volume) and is willing to read solely via a live
-  `log stream` session.
+  `log stream` session. The app bundle now carries that profile
+  (`OSLogPreferences` in `Config/Otos-Info.plist`, ADR 0030), so `.info`/`.debug`
+  from the app process persist; the rule above still holds because the unhosted
+  test process (`xctest`) carries no profile.
 - Structured `op=`/`phase=` boundary lines go exclusively through
   `Logger.noticeOperation`/`errorOperation`/`debugOperation`
   (`Otos/Support/Instrumentation.swift`) — never a hand-rolled

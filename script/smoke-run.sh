@@ -7,7 +7,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/script/lib/run-context.sh"
 source "$ROOT_DIR/script/lib/operational-busy.sh"
 LOG_DIR="$(otos_logs_dir "$ROOT_DIR")"
-CATALOG_DB="$HOME/Library/Application Support/$SUBSYSTEM/Catalog/catalog.sqlite"
+# Dev builds carry the .dev bundle identity and its own Application Support
+# folder; the installed app owns net.melisma.Otos (ADR 0030).
+CATALOG_DB="$HOME/Library/Application Support/net.melisma.Otos.dev/Catalog/catalog.sqlite"
 
 MODE="${1:---jank}"
 if [[ "$MODE" == "--help" || "$MODE" == "help" ]]; then
