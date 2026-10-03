@@ -99,6 +99,23 @@ Fitting uses native Accelerate, with the saved reference's equal-image weights,
 isotonic curves, ridge and neighbor smoothness. The exporter retains the original
 calibration blur-radius recipe; this is separate from the release scorecard's
 Gaussian sigma. Its calibration sample exclusions never change scoring masks.
+The explicit `calibration-export-domain-one`, `calibration-fit-domain` and
+`calibration-joint-fit-domain` modes retain finite, opaque training samples at
+model-domain endpoints. Source samples use the runtime [0,1.25] input clamp and
+target samples use [0,1] display limits. Contract 3 records `modelDomain`; ordinary
+baseline reproduction retains contract 2 and its interior-only sampler. Fits
+reject mismatched sample contracts. This changes training support only: scoring
+masks, thresholds, native decoder and runtime capacity are unchanged. The RGB
+sample fit remains a surrogate and must pass actual native HEIF evaluation.
+
+`calibration-joint-fit training.json samples initial-model.json output-directory`
+reuses the constrained joint curve/LUT solver for one shared training candidate.
+It requires at least 100 training-role pairs, rejects existing output directories,
+and writes model.json plus coefficient/objective/convergence provenance in fit.json.
+Its RGB surrogate is not the native photographic gate. Compare with the sequential
+fit on the same frozen samples and evaluate actual HEIFs on date-disjoint
+selection captures before promoting either. No per-image fitted model enters runtime.
+
 Native fitting reproduces the saved model to numerical precision. See the
 [calibration investigation](../../docs/research/2026-09-30-raw9-calibration-boundaries.md)
 for the remaining accuracy gap and rejected candidates.

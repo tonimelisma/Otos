@@ -4,6 +4,10 @@ import Foundation
 /// media. The only bytes here are synthetic sampled-pixel fixtures in a private
 /// temporary directory; the declared originals do not exist.
 func lookCalibrationSelfTest() throws {
+    guard calibrationPairValues(input: [-0.1, 0.6, 1.4], target: [0, 0.8, 1], sampling: .interior) == nil,
+          calibrationPairValues(input: [-0.1, 0.6, 1.4], target: [0, 0.8, 1], sampling: .modelDomain) == [0, 0.6, 1.25, 0, 0.8, 1],
+          calibrationPairValues(input: [.nan, 0, 0], target: [0, 0, 0], sampling: .modelDomain) == nil
+    else { throw HarnessError.malformedReferenceData }
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("sony-calibration-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -21,6 +25,12 @@ func lookCalibrationSelfTest() throws {
     } catch LookCalibrationError.invalidTrainingManifest {}
     guard !FileManager.default.fileExists(atPath: destination.path) else {
         throw HarnessError.malformedReferenceData
+    }
+    for role in [PairRole.acceptance, .selection, .regression] {
+        do {
+            try fitJointLookCalibration(manifest(role), samplesRoot: root, initialData: Data(), destination: destination)
+            throw HarnessError.malformedReferenceData
+        } catch LookCalibrationError.invalidTrainingManifest {}
     }
     let input = root.appendingPathComponent("sample0")
     try FileManager.default.createDirectory(at: input, withIntermediateDirectories: true)
@@ -55,6 +65,19 @@ func lookCalibrationSelfTest() throws {
     try JSONSerialization.data(withJSONObject: wrongRecipe).write(to: recipePath)
     do {
         try fitLookCalibration(manifest(.training), samplesRoot: root, destination: destination)
+        throw HarnessError.malformedReferenceData
+    } catch LookCalibrationError.invalidSamples {}
+    var domainRecipe = recipe
+    domainRecipe["contractVersion"] = 3
+    domainRecipe["samplingPolicy"] = "modelDomain"
+    try JSONSerialization.data(withJSONObject: domainRecipe).write(to: recipePath)
+    do {
+        try fitLookCalibration(manifest(.training), samplesRoot: root, destination: destination)
+        throw HarnessError.malformedReferenceData
+    } catch LookCalibrationError.invalidSamples {}
+    try JSONSerialization.data(withJSONObject: recipe).write(to: recipePath)
+    do {
+        try fitLookCalibration(manifest(.training), samplesRoot: root, destination: destination, sampling: .modelDomain)
         throw HarnessError.malformedReferenceData
     } catch LookCalibrationError.invalidSamples {}
     let existing = Data("preserve calibration".utf8)

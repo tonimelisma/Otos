@@ -509,14 +509,19 @@ func run() throws {
         try nativeInputRangeSelfTest()
     } else if arguments[1] == "look-self-test", arguments.count == 4 {
         try lookModelSelfTest(modelPath: arguments[2], vectorsPath: arguments[3])
-    } else if arguments[1] == "calibration-export-one", arguments.count == 5 {
+    } else if ["calibration-joint-fit", "calibration-joint-fit-domain"].contains(arguments[1]), arguments.count == 6 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        try fitJointLookCalibration(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]),
+                                    initialData: localData(arguments[4]), destination: URL(fileURLWithPath: arguments[5]),
+                                    sampling: arguments[1].hasSuffix("-domain") ? .modelDomain : .interior)
+    } else if ["calibration-export-one", "calibration-export-domain-one"].contains(arguments[1]), arguments.count == 5 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[4])
         try validate(manifest, output: output)
         guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else {
             throw HarnessError.invalidManifest
         }
-        try exportLookCalibrationPair(pair, output: output)
+        try exportLookCalibrationPair(pair, output: output, sampling: arguments[1].contains("-domain-") ? .modelDomain : .interior)
     } else if arguments[1] == "authored-calibration-export-one", arguments.count == 7 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[4])
@@ -575,10 +580,10 @@ func run() throws {
         guard let input = NativeRAWRecipe(rawValue: arguments[4]), let mode = AuthoredLook.ToneMode(rawValue: arguments[5]) else { throw HarnessError.invalidManifest }
         try AuthoredCalibration.fit(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]), input: input,
                                     mode: mode, destination: URL(fileURLWithPath: arguments[6]))
-    } else if arguments[1] == "calibration-fit", arguments.count == 5 {
+    } else if ["calibration-fit", "calibration-fit-domain"].contains(arguments[1]), arguments.count == 5 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         try fitLookCalibration(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]),
-                               destination: URL(fileURLWithPath: arguments[4]))
+                               destination: URL(fileURLWithPath: arguments[4]), sampling: arguments[1].hasSuffix("-domain") ? .modelDomain : .interior)
     } else if arguments[1] == "score-regions", arguments.count == 7 {
         let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
         try card.validate()

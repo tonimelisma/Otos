@@ -232,15 +232,22 @@ and delivery both succeed. Document-only corrections use the lightweight gates.
 
 ## Immediate execution
 
-First finish the broad frozen shared-profile baseline on the 204 locally copied
-development pairs, then report failures by shooting conditions, tone/colour,
-detail and lens coverage. The 283 training pairs must also be pinned locally
-before new byte-reading runs. Historical embedded-camera comparisons and
+The broad frozen shared-profile baseline has finished: 204/204 exports,
+173 whole-image colour passes and 31 failures. Old hard regions remain failing
+or inconclusive; whole-image success does not replace them. Report shooting
+conditions, tone/colour, detail and lens coverage separately. The temporary training manifest was lost; a newly frozen date-disjoint list
+contains 263 candidates, of which 262 are locally copied and capture verified.
+Use that explicitly versioned training split rather than claim exact recovery. Historical embedded-camera comparisons and
 preview-guided models are excluded; retained RAW-only results require explicit
 provenance. See [input audit](../research/2026-10-02-input-provenance-and-local-corpus.md).
 
 The next delivery is a shared RAW-only candidate checked across development
-shoots, not another collection of target-assisted individual fits. Keep only a
+shoots. Sequential/joint fits on 147 and 262 training captures leave the known
+failures. Endpoint-inclusive training improves cyan error but still fails; all
+four 262-image candidates pass only three of the nine screen captures. Next
+compare constant and RAW-WB/ISO-conditioned shared corrections on date-disjoint
+development captures, retaining native-order/solver caveats and every hard region; see
+[shared-fitting evidence](../research/2026-10-02-shared-training-and-domain-coverage.md). Keep only a
 bounded solver audit needed to decide that candidate; stop expanding small-set
 diagnostics without a stated decision and stopping condition. Broader fitting
 uses training roles only; development roles select candidates; untouched
