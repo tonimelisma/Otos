@@ -418,8 +418,11 @@ only, baseline SHA256 verified, guarded original reads and no overwrite.
 fits a bounded3-cubed RGB additive field represented in the existing9-cubed LUT.
 Curves and native RAW9 input stay fixed. The pure solver uses central native-distance
 derivatives with a half-step stability check, bounded coupled quadratic steps,
-fixed smoothness/ridge priors and actual-loss line search (six iterations maximum).
-Report contract 2 retains coefficients, derivative checks, line-search trials,
+fixed smoothness/ridge priors and actual-loss line search (six iterations maximum,
+at most twenty halving trials per step). Stabilized curvature retains a0.1norm
+floor; the bounded quadratic rhs is H*x-g using the declared-objective gradient,
+so stabilization does not replace that first derivative.
+Report contract 3 retains coefficients, derivative checks, line-search trials,
 baseline/model hashes, sample/region counts, full-region sampling policy and
 explicit termination status. These per-image
 models are private target-assisted diagnostics, not inference or acceptance.
