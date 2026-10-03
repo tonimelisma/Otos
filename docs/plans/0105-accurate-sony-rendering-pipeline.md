@@ -260,12 +260,14 @@ expanded training results are recorded in
 
 Next actions and feedback loops:
 
-1. Audit the actual-objective finite-difference gradient, including tail membership,
-   against the solver's projected surrogate gradient. Retain source, field,
-   full-region geometry and acceptance limits. Inspect each reliable region's loss
-   and support. A numerical mismatch returns to the solver; an objective that
-   conceals a region returns to fitting loss. Stop the bounded audit at its named
-   decision; do not simply extend iteration budgets.
+1. The bounded gradient audit and reproduced small-residual solver repair are
+   complete. Actual cyan HEIF outcomes are unchanged, so close that investigation;
+   do not extend iterations or floor/step sweeps. Residual derivative uncertainty
+   remains a limitation. Next audit fitting loss against each reliable region's
+   feasibility, retaining full support, fixed geometry and photographic limits.
+   Pooled mean/tail plus a prior is not an every-region constraint. A named bounded
+   objective comparison may diagnose that mismatch without claiming global capacity.
+   See [gradient and curvature evidence](../research/2026-10-03-native-objective-gradient-and-curvature.md).
 2. Separately attribute daylight tails to colour, fixed correspondence and optical/
    detail coverage. Publish unregistered results and reliable corresponding-area
    results together. Unknown geometry stays unknown; deferred lens work cannot be

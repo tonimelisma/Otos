@@ -97,13 +97,15 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
         }
         return distances
     }
-    let output: [String: Any] = ["contractVersion": 2, "id": pair.id, "validationEvidence": false,
+    let output: [String: Any] = ["contractVersion": 3, "id": pair.id, "validationEvidence": false,
                                  "samplingPolicy": "full scored region, uniform budget1024",
                                  "scope": "target-assisted coupled directions inside existing profile", "curvature": curvature.rawValue,
                                  "baseModelSHA256": SHA256.hash(data: baseData).description, "geometryBaselineSHA256": digest,
                                  "reliableRegions": reliable, "samples": observations.count,
                                  "coarseDimension": 3, "coefficientBound": 0.25, "differenceStep": 0.001, "observationFormat": "RGBAf; exported HEIF gates unchanged",
-                                 "maximumIterations": 6, "edgePenalty": 1, "ridgePenalty": 0.1,
+                                 "maximumIterations": 6, "maximumLineSearchTrials": 20,
+                                 "quadraticStep": "stabilized curvature with declared-objective gradient; rhs H*x-g", "curvatureNormFloor": 0.1,
+                                 "edgePenalty": 1, "ridgePenalty": 0.1,
                                  "derivativeRelativeRMSLimit": 0.25, "derivativeFullBoundDE00Floor": 0.05,
                                  "derivativeChecks": result.derivativeChecks,
                                  "status": result.status, "initialLoss": result.initialLoss, "loss": result.loss,
@@ -128,6 +130,14 @@ func nativeProfileFieldSelfTest() throws {
           result.coefficients.allSatisfy({ abs($0) <= 0.25 }),
           result.coefficients.enumerated().allSatisfy({ $0.offset % 3 == 0 || abs($0.element) < 1e-10 })
     else { throw HarnessError.malformedReferenceData }
+    // A regularized quadratic step must still optimize the declared distance
+    // objective when the required correction is much smaller than 0.1 DE00.
+    let small = try solveNativeField(weights: [1]) { coefficients in [SIMD3(0.01 - coefficients[0], 0, 0)] }
+    guard abs(small.coefficients[0] - 0.01) < 1e-5 else {
+        print("Native field small-residual objective failed: error=\(abs(small.coefficients[0] - 0.01))")
+        throw HarnessError.malformedReferenceData
+    }
+    print("Native field small-residual: error=\(abs(small.coefficients[0] - 0.01)) status=\(small.status)")
     let curve = (0 ..< 49).map { Double($0) * 1.25 / 48 }
     let base: [String: Any] = ["formatVersion": 2, "decoder": "9", "dimension": 9, "domain": [0, 1.25],
                                "curveKnots": curve, "curvesRGB": [curve, curve, curve],

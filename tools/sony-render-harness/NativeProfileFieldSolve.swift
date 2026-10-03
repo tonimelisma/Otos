@@ -94,13 +94,12 @@ func solveNativeField(weights: [Double], observe: ([Double]) throws -> [SIMD3<Do
     for iteration in 0 ..< 6 {
         let jacobian = try (0 ..< n).map { try derivative(x, column: $0, h: step) }
         let effective = nativeFieldMeanTail(errors.map(nativeResidualNorm), weights: weights).effectiveWeights
+        // Stabilize curvature near zero, but retain the actual objective's
+        // first derivative in the quadratic. Flooring both the step's residual
+        // and curvature would change its fixed point and stall small corrections.
         let weighted = errors.indices.map { effective[$0] / max(nativeResidualNorm(errors[$0]), 0.1) }
         var matrix = penalty, rhs = [Double](repeating: 0, count: n)
-        let linearResidual = errors.indices.map { i in
-            (0 ..< n).reduce(-errors[i]) { $0 + jacobian[$1][i] * x[$1] }
-        }
         for column in 0 ..< n {
-            rhs[column] = errors.indices.reduce(0) { $0 + weighted[$1] * nativeResidualDot(jacobian[column][$1], linearResidual[$1]) }
             for row in 0 ... column {
                 let value = errors.indices.reduce(0) { $0 + weighted[$1] * nativeResidualDot(jacobian[row][$1], jacobian[column][$1]) }
                 matrix[row + n * column] += value
@@ -119,9 +118,18 @@ func solveNativeField(weights: [Double], observe: ([Double]) throws -> [SIMD3<Do
             iterations.append(["iteration": iteration, "loss": best, "projectedGradientInfinity": projected])
             break
         }
+        // Solve for an absolute bounded position: H * proposed = H * x - g.
+        // The stabilized Hessian controls step length; g remains the declared
+        // mean/tail distance plus prior gradient, including current tail weights.
+        rhs = (0 ..< n).map { row in
+            (0 ..< n).reduce(-gradient[row]) { $0 + matrix[row + n * $1] * x[$1] }
+        }
         let proposed = try boundedColourSolution(matrix, rhs, bound: bound)
         var trials = [[String: Double]](), accepted = false
-        for fraction in [1.0, 0.5, 0.25, 0.125, 0.0625] {
+        // Twenty bounded halvings can resolve a small correction rather than
+        // declaring failure because all five coarse trial fractions overshoot.
+        for halving in 0 ..< 20 {
+            let fraction = pow(0.5, Double(halving))
             let trial = zip(x, proposed).map { $0 + fraction * ($1 - $0) }
             let candidate = try observed(trial), value = loss(candidate, trial)
             trials.append(["fraction": fraction, "loss": value])
