@@ -59,7 +59,7 @@ func nativeOrderDiagnostic(_ pair: Pair, recipe: AuthoredLook,
     print("op=matching.nativeOrderAudit id=\(pair.id) native=\(full.width)x\(full.height) output=\(destination.path)")
 }
 
-private func matchingReducedFrame(_ source: CIImage) throws -> RGBFrame {
+func matchingReducedFrame(_ source: CIImage) throws -> RGBFrame {
     let reduced = try encodedImage(scaled(source))
     return frame(reduced, width: Int(reduced.extent.width.rounded()),
                  height: Int(reduced.extent.height.rounded()))
@@ -77,7 +77,7 @@ enum NativeRefinementControls: String { case toneOnly, toneAndNormalization }
 
 enum NativeRefinementObjective: String { case normalizedLab, meanAndTailDE00 }
 
-private struct NativeMatchingObservation {
+struct NativeMatchingObservation {
     let x: Double
     let y: Double
     let target: SIMD3<Double>
@@ -86,8 +86,8 @@ private struct NativeMatchingObservation {
 
 /// Shared fixed correspondence and equal-region sampling for native-order fitting.
 /// No source-noise or target-error exclusion changes these observations.
-private func nativeMatchingObservations(regions: [AppearanceLookCard.Region], rows: [[String: Any]],
-                                        target: RGBFrame, maximumSensitivity: Double) throws
+func nativeMatchingObservations(regions: [AppearanceLookCard.Region], rows: [[String: Any]],
+                                target: RGBFrame, maximumSensitivity: Double) throws
     -> (samples: [NativeMatchingObservation], regions: [String])
 {
     var observations = [NativeMatchingObservation](), reliable = [String]()
@@ -128,18 +128,12 @@ private func nativeMatchingLoss(_ pixels: RGBFrame, observations: [NativeMatchin
     var total = 0.0
     var errors = [(distance: Double, weight: Double)]()
     for sample in observations {
-        let x = Int(sample.x), y = Int(sample.y), fx = sample.x - Double(x), fy = sample.y - Double(y)
-        var rgb = SIMD3<Double>(repeating: 0)
-        for (ox, oy, weight) in [(0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)] {
-            let i = ((y + oy) * pixels.width + x + ox) * 4
-            rgb += SIMD3(Double(pixels.rgba[i]), Double(pixels.rgba[i + 1]), Double(pixels.rgba[i + 2])) * weight
-        }
-        let bounded = SIMD3(min(1, max(0, rgb.x)), min(1, max(0, rgb.y)), min(1, max(0, rgb.z)))
-        let e = DisplayColourObjective.normalizedLab.coordinates(bounded) - sample.target
+        let coordinates = nativeMatchingCoordinates(pixels, sample: sample)
+        let e = coordinates - sample.target
         if objective == .normalizedLab {
             total += sample.weight * (e.x * e.x + e.y * e.y + e.z * e.z)
         } else {
-            let prediction = DisplayColourObjective.normalizedLab.coordinates(bounded) * 100
+            let prediction = coordinates * 100
             let reference = sample.target * 100
             let distance = ciede2000(Lab(l: prediction.x, a: prediction.y, b: prediction.z),
                                      Lab(l: reference.x, a: reference.y, b: reference.z))
@@ -159,6 +153,40 @@ private func nativeMatchingLoss(_ pixels: RGBFrame, observations: [NativeMatchin
         total = mean + 0.25 * tail / 0.05
     }
     return total
+}
+
+/// One interpolation/clamp/Lab boundary for scalar loss and distance Jacobians.
+private func nativeMatchingCoordinates(_ pixels: RGBFrame, sample: NativeMatchingObservation) -> SIMD3<Double> {
+    let x = Int(sample.x), y = Int(sample.y), fx = sample.x - Double(x), fy = sample.y - Double(y)
+    var rgb = SIMD3<Double>(repeating: 0)
+    for (ox, oy, weight) in [(0, 0, (1 - fx) * (1 - fy)), (1, 0, fx * (1 - fy)), (0, 1, (1 - fx) * fy), (1, 1, fx * fy)] {
+        let i = ((y + oy) * pixels.width + x + ox) * 4
+        rgb += SIMD3(Double(pixels.rgba[i]), Double(pixels.rgba[i + 1]), Double(pixels.rgba[i + 2])) * weight
+    }
+    let bounded = SIMD3(min(1, max(0, rgb.x)), min(1, max(0, rgb.y)), min(1, max(0, rgb.z)))
+    return DisplayColourObjective.normalizedLab.coordinates(bounded)
+}
+
+/// Same frozen samples and interpolation as the scalar native loss. The solver
+/// differentiates observed distances, never reduced-input look parameters.
+func nativeMatchingDistances(_ pixels: RGBFrame, observations: [NativeMatchingObservation]) -> [Double] {
+    var errors = [Double]()
+    for sample in observations {
+        let prediction = nativeMatchingCoordinates(pixels, sample: sample) * 100
+        let reference = sample.target * 100
+        errors.append(ciede2000(Lab(l: prediction.x, a: prediction.y, b: prediction.z),
+                                Lab(l: reference.x, a: reference.y, b: reference.z)))
+    }
+    return errors
+}
+
+/// Signed metric components share the same correspondence and colour boundary.
+func nativeMatchingResiduals(_ pixels: RGBFrame, observations: [NativeMatchingObservation]) -> [SIMD3<Double>] {
+    observations.map { sample in
+        let prediction = nativeMatchingCoordinates(pixels, sample: sample) * 100, reference = sample.target * 100
+        return ciede2000Residual(Lab(l: prediction.x, a: prediction.y, b: prediction.z),
+                                 Lab(l: reference.x, a: reference.y, b: reference.z))
+    }
 }
 
 /// Bounded whole-image expression diagnostic, not an inference recipe. Geometry

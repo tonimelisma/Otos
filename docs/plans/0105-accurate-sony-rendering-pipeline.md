@@ -225,20 +225,29 @@ and delivery both succeed. Document-only corrections use the lightweight gates.
 
 ## Immediate execution
 
-Keep frozen inference recipes unchanged. The native affine/curve-direction audit
-produced no new passing failure; stop adding scalar knobs. See
-[observation feedback](../research/2026-10-02-native-profile-observation-feedback.md).
-Next fit a coupled coarse3-cubed colour correction within the existing9-cubed
-profile against actual native-order observations, retaining curves, source,
-geometry and original gates. Calibrate finite-difference quantization/steps,
-bounded joint solve and line search; report finite-budget convergence and actual
-HEIF outcomes. Start with highISO and the passing control, then remaining original
-hard cases. A successful fit proceeds to shared RAW-only training/selection.
+Keep frozen inference recipes unchanged. Coupled native colour-field fitting
+inside the existing profile produces seven of eight whole-image passes and seven
+frozen-region mean passes, with two new correspondence-sensitivity failures. Five
+clear those colour diagnostics together. Indoor retains seven region failures;
+daylight retains a p95 failure. Signed DE00 component curvature reaches similar
+indoor loss sooner without removing those failures. Every fit exhausts its budget.
+See [coupled field evidence](../research/2026-10-02-native-coupled-colour-field.md).
+
+Next compare the solver's projected gradient with direct actual-objective finite
+differences, including changing tail membership, and audit whether the objective
+aligns with every-region gates. Do not infer global incapacity from a coarse
+subspace, limited budget or apparent loss plateau. Keep source, field capacity,
+fixed geometry and original gates unchanged for that numerical diagnostic. Then
+quantify indoor native texture/noise separately and inspect daylight correspondence
+and unsampled coverage. Successful justified fits proceed to shared RAW-only
+training/selection and the broader development collection, including old hard
+regions; no target-assisted per-image model becomes an inference recipe.
 
 Separately attribute the daylight tail to known colour, correspondence and
 optical/detail coverage rather than treating unregistered p95 as pure colour.
-Audit negative versus above-domain clipping and its error association; measure
-noise/detail independently. Do not fit lens defects into colour or change RAW9.
+The completed native range audit found negative channels but no values above1.25;
+several indoor failures have nearly no clamped input. Retain source-range/error
+associations without asserting cause, and measure noise/detail independently. Do not fit lens defects into colour or change RAW9.
 A failed numerical/measurement witness returns to its responsible boundary before
 adding local processing or prediction. The unchanged whole-image failures remain
 visible and no diagnostic subset replaces acceptance.

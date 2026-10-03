@@ -141,7 +141,7 @@ synthetic HEIF. The originals stay read-only.
 `sensor-raw-evaluate verified.json /private/output-dir`,
 `sensor-model-evaluate verified.json model.json /private/output-dir` render
 actual HEIF files and score their decoded pixels against the separate camera
-companions. Each pair gets a JSON result, a full-frame preview and native
+HEIF targets. Each pair gets a JSON result, a full-frame preview and native
 corner crops. These commands do not register away native lens differences.
 Use development and regression roles while a fresh RAW 9 acceptance set remains
 frozen and untouched. The earlier 72-pair set influenced the RAW 9 design.
@@ -393,3 +393,25 @@ previews, and signed Lab/error summaries in fixed target-lightness bins below25,
 lie inside reliable regions. These summaries diagnose residuals; they replace no
 whole-image, region, sensitivity or native-detail gate. Selection/regression roles
 only, baseline SHA256 verified, guarded original reads and no overwrite.
+
+### Coupled native profile field
+
+`matching-native-profile-field regression.json capture model.json grid.card.json frozen-grid.json geometry-baseline.heic output-directory [distance|components]`
+fits a bounded3-cubed RGB additive field represented in the existing9-cubed LUT.
+Curves and native RAW9 input stay fixed. The pure solver uses central native-distance
+derivatives with a half-step stability check, bounded coupled quadratic steps,
+fixed smoothness/ridge priors and actual-loss line search (six iterations maximum).
+Reports retain coefficients, derivative checks, line-search trials, baseline/model
+hashes, sample/region counts and explicit termination status. These per-image
+models are private target-assisted diagnostics, not inference or acceptance.
+
+`components` (default) uses three signed DE00 residuals with the same scalar norm;
+`distance` reproduces the initial scalar-distance curvature experiment. Both keep
+the measured mean/tail objective and photographic gates. Budget exhaustion is
+reported, not treated as convergence.
+
+`matching-native-input-range regression.json capture grid.card.json frozen-grid.json geometry-baseline.heic output.json`
+reads only the native RAW source, then reports per-channel negative, above1.25 and
+above-display-one counts plus affected-pixel unions. Fixed corresponding native
+rectangles retain baseline eligibility. No camera target pixel read is needed;
+counts diagnose association, not causation or photographic acceptance.

@@ -341,6 +341,9 @@ func selfTest(_ path: String) throws {
         let second = Lab(l: values[3], a: values[4], b: values[5])
         for (a, b) in [(first, second), (second, first)] {
             let error = ciede2000(a, b)
+            guard abs(nativeResidualNorm(ciede2000Residual(a, b)) - error) < 1e-12 else {
+                throw HarnessError.malformedReferenceData
+            }
             guard abs(error - values[6]) < 0.000051 else {
                 throw NSError(domain: "CIEDE2000 reference row \(index + 1)",
                               code: 1, userInfo: ["actual": error, "expected": values[6]])
@@ -421,6 +424,24 @@ func run() throws {
         let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
         try matchingResidualAudit(pair, candidateURL: URL(fileURLWithPath: arguments[4]), card: card,
                                   geometryReport: localData(arguments[6]), geometryBaseline: localData(arguments[7]), destination: output)
+    } else if arguments[1] == "matching-native-input-range", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[7])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[4]))
+        try nativeInputRangeAudit(pair, card: card, geometryReport: localData(arguments[5]),
+                                  geometryBaseline: localData(arguments[6]), destination: output)
+    } else if arguments[1] == "matching-native-profile-field", arguments.count == 9 || arguments.count == 10 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[8])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
+        let curvature = arguments.count == 10 ? NativeFieldCurvature(rawValue: arguments[9]) : .components
+        guard let curvature else { throw HarnessError.usage }
+        try refineNativeProfileField(pair, baseData: localData(arguments[4]), card: card,
+                                     geometryReport: localData(arguments[6]), geometryBaseline: localData(arguments[7]), curvature: curvature, destination: output)
     } else if arguments[1] == "matching-native-profile-refine", arguments.count == 9 || arguments.count == 10 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[8])
@@ -484,6 +505,8 @@ func run() throws {
         try authoredCapacitySelfTest()
         try lookCalibrationSelfTest()
         try nativeProfileObservationSelfTest()
+        try nativeProfileFieldSelfTest()
+        try nativeInputRangeSelfTest()
     } else if arguments[1] == "look-self-test", arguments.count == 4 {
         try lookModelSelfTest(modelPath: arguments[2], vectorsPath: arguments[3])
     } else if arguments[1] == "calibration-export-one", arguments.count == 5 {
