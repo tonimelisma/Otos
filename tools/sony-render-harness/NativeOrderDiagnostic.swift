@@ -82,6 +82,7 @@ struct NativeMatchingObservation {
     let y: Double
     let target: SIMD3<Double>
     let weight: Double
+    let regionIndex: Int
 }
 
 /// Shared fixed correspondence and equal-region sampling for native-order fitting.
@@ -118,12 +119,12 @@ func nativeMatchingObservations(regions: [AppearanceLookCard.Region], rows: [[St
                 let rgb = SIMD3(Double(target.rgba[i]), Double(target.rgba[i + 1]), Double(target.rgba[i + 2]))
                 guard (0 ..< 3).allSatisfy({ rgb[$0].isFinite }) else { throw HarnessError.malformedReferenceData }
                 let bounded = SIMD3(min(1, max(0, rgb.x)), min(1, max(0, rgb.y)), min(1, max(0, rgb.z)))
-                samples.append(NativeMatchingObservation(x: u, y: v, target: DisplayColourObjective.normalizedLab.coordinates(bounded), weight: 1))
+                samples.append(NativeMatchingObservation(x: u, y: v, target: DisplayColourObjective.normalizedLab.coordinates(bounded), weight: 1, regionIndex: reliable.count))
             }
         }
         guard !samples.isEmpty else { continue }
         reliable.append(region.name)
-        observations += samples.map { NativeMatchingObservation(x: $0.x, y: $0.y, target: $0.target, weight: 1 / Double(samples.count)) }
+        observations += samples.map { NativeMatchingObservation(x: $0.x, y: $0.y, target: $0.target, weight: 1 / Double(samples.count), regionIndex: $0.regionIndex) }
     }
     guard reliable.count >= 8, observations.count >= 128 else { throw HarnessError.registrationFailed }
     return (observations, reliable)
