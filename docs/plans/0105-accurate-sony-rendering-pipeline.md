@@ -230,6 +230,50 @@ checks, self-review fidelity/architecture, update current-state docs, integrate
 through PRs, and complete cleanup. Delete this plan only after matching acceptance
 and delivery both succeed. Document-only corrections use the lightweight gates.
 
+## Execution contracts after the October 3 research synthesis
+
+Follow [pipeline and improvement-loop research](../research/2026-10-03-camera-match-improvement-loop-synthesis.md).
+Retain RAW9, separate lens ownership, all old difficult controls and current limits.
+Reduced guidance may predict native transforms; reduced point-RGB fitting must
+prove that it predicts actual native improvements. Separate ownership permits
+joint fitting of interacting tone/colour stages.
+
+1. **Native source:** finish verification and integration of the existing source
+   contract. Its matched100-capture pilot cleared no failure; do not rerun463
+   exports for source scale alone or promote that pilot model.
+2. **Objective audit:** freeze existing green/cyan/foliage/daylight failures and good
+   controls, one model family and at most two variants. Compare fitting predictions
+   with actual native look-before-reduction and emitted HEIF colour/region outcomes.
+   Isolate source preparation, blur and loss/prior effects. Report signed residuals,
+   loss ranking, resolved/introduced failures and unchanged optical coverage. Repair
+   only demonstrated mismatches; a changed metric or lower surrogate is not acceptance.
+3. **Expression by class:** obtain bounded native diagnostic evidence for unresolved
+   green/foliage and other classes. Successful individual fits permit shared inference
+   work for that class. Nonconvergence/budget exhaustion reopens numerical diagnosis;
+   reliable failures with adequate fits reopen representation/input boundaries.
+4. **RAW-only selection:** compare declared exposure, colour-distribution, clipping
+   and gradient summaries plus existing metadata against metadata-only conditioning,
+   retaining the bounded correction field. Use training groups and group-held-out
+   validation; no target features at inference. A learned thumbnail-to-basis-LUT
+   selector is an escalation only when this experiment and residuals justify it.
+5. **Local/detail:** add edge-aware local processing only for reliably spatial errors
+   surviving adequate global expression. Inspect native edges, texture, halos,
+   fringes and flat-region noise separately; retain noise-realization tolerance.
+6. **Broad/final:** a screen candidate must resolve a declared image/region failure
+   while preserving old passes before full204 expansion. Report every regression,
+   group/worst case and native crop. Freeze the complete candidate before consuming
+   >=50 unused verified pairs from >=10 independently checked shoots. Acceptance
+   failure becomes development evidence and requires fresh final-test material.
+
+Every cycle has a written hypothesis, allowed inputs, unchanged stages, named
+failure group, at most two variants, compute budget, fit/check groups and frozen
+regression rules before fitting. End with adopt/reject/inconclusive and the one
+next action supported by evidence. Distinguish photographic progress from numerical
+or infrastructure repairs. Keep actual HEIF, pixelwise mean/p95, fixed regions,
+unregistered/reliable-correspondence views and native detail; median diagnostics
+and offline LDR-FLIP do not replace acceptance. An unsuccessful fixed screen ends
+that bounded experiment rather than starting a knot, prior or iteration sweep.
+
 ## Immediate execution
 
 Continue the plan; photographic acceptance remains open. The original static
@@ -244,8 +288,9 @@ The training corpus now contains 463 capture-verified pairs on the same 36 assig
 training dates. The added 201 were selected by materialized-file availability
 before pixel reads; the revised split is explicit and is not an exact recovery of
 the lost temporary manifest. Development dates and the new reserve stay excluded.
-WB/tint substitution, equal-date 262/463 fits and capped source-colour weighting
-failed the fixed nine-control screen or removed no failures. Reject those variants;
+WB/tint substitution, equal-date 262/463 fits, capped source-colour weighting,
+combined WB/ISO/tint and a five-cube colour field failed the fixed nine-control
+screen or removed no failures. Reject those variants;
 do not continue weighting or knot sweeps without a new measured cause.
 
 The native sampler previously erased the original eight-by-eighteen-pixel cyan
@@ -258,6 +303,16 @@ budget exhaustion is not global incapacity. RAW-only source/preparation audits a
 expanded training results are recorded in
 [source coverage and region support](../research/2026-10-03-source-coverage-and-native-region-support.md).
 
+A matched100-capture native-input pilot corrects reduced-decoder training input
+and a reproduced opacity/sample-support defect. It still passes five of nine:
+no failed case becomes a pass. Keep the consistent native source contract but
+reject the model as a promoted camera match. Close source-scale consistency as a
+sufficient explanation; do not export the entire corpus for that hypothesis.
+The shared-learning gap remains. The next step is to validate shared fitting against actual native output, then
+obtain expression evidence for each unresolved failure class. RAW-derived image
+context is a subsequent conditioning hypothesis, not a demonstrated cause. See
+[shared models and native source](../research/2026-10-03-shared-model-and-native-source-pilot.md).
+
 Next actions and feedback loops:
 
 1. The bounded gradient audit and reproduced small-residual solver repair are
@@ -266,9 +321,9 @@ Next actions and feedback loops:
    remains a limitation. The bounded region-feasibility fit now passes the original
    cyan/face/white regions and whole native HEIF within the existing field. One
    reliable grid colour failure and unknown/sensitive areas remain. Close that
-   original-cyan expression investigation without more sweeps. Proceed to shared
-   RAW-only adaptation/training, retaining this target-assisted witness as expression
-   evidence only. All old hard regions, native detail and full204 regression remain
+   original-cyan expression investigation without more sweeps. Validate the shared
+   objective against native HEIF outcomes before another predictor, retaining this
+   target-assisted witness as expression evidence only. All old hard regions, native detail and full204 regression remain
    gates. See [gradient evidence](../research/2026-10-03-native-objective-gradient-and-curvature.md)
    and [region feasibility](../research/2026-10-03-native-region-feasibility.md).
 2. Separately attribute daylight tails to colour, fixed correspondence and optical/

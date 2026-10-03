@@ -279,7 +279,8 @@ you touch two layers, the boundary is probably wrong — move the responsibility
 ## Standalone RAW look research
 
 `tools/sony-render-harness` develops guarded sensor RAWs outside the app and catalog.
-`NativeRAWDevelopment` owns RAW 9 and independently records native lens correction;
+`NativeRAWDevelopment` owns full-resolution RAW 9 for rendering and shared
+calibration export, and independently records native lens correction;
 `AuthoredLook` / `MetalAuthoredLook` own the versioned normalization, tone, creative
 colour and display pixel function; `SonySensorRAWHEIFRenderer` owns native HEIF
 encoding and atomic publication. `ConditionalProfile` owns experimental shared

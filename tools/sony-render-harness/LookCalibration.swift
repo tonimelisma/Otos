@@ -17,18 +17,20 @@ enum LookCalibrationError: Error {
 private struct CalibrationRecipe: Codable {
     let contractVersion: Int
     let decoder: String
+    let sourcePreparation: String
+    let nativeLensCorrectionSupported: Bool
     let samples: Int
     let nativeLensCorrectionEnabled: Bool
     let calibrationBlurRadius: Double
     let evaluationLongEdge: Int
     let neutralSettings: [String: Double]
-    let samplingPolicy: String?
+    let samplingPolicy: String
 }
 
 enum CalibrationSampling: String {
     case interior, modelDomain
     var contractVersion: Int {
-        self == .interior ? 2 : 3
+        self == .interior ? 3 : 4
     }
 }
 
@@ -44,36 +46,44 @@ func calibrationPairValues(input: [Float], target: [Float], sampling: Calibratio
     return input.map { min(1.25, max(0, $0)) } + target.map { min(1, max(0, $0)) }
 }
 
+/// Runtime look application emits opaque pixels. Native half-float conversion
+/// can round opaque alpha just below one; retain RGB and mark only a verified
+/// opaque frame before resampling. Registration still creates excluded borders.
+func nativeCalibrationImage(_ pixels: RGBFrame) throws -> CIImage {
+    guard pixels.width > 0, pixels.height > 0,
+          pixels.rgba.count == pixels.width * pixels.height * 4,
+          pixels.rgba.allSatisfy(\.isFinite),
+          stride(from: 3, to: pixels.rgba.count, by: 4).allSatisfy({ pixels.rgba[$0] > 0.999 })
+    else { throw LookCalibrationError.invalidSamples }
+    let tagged = CIImage(bitmapData: pixels.rgba.withUnsafeBytes { Data($0) },
+                         bytesPerRow: pixels.width * 16,
+                         size: CGSize(width: pixels.width, height: pixels.height),
+                         format: .RGBAf, colorSpace: encodedSpace)
+    return tagged.settingAlphaOne(in: tagged.extent)
+}
+
 func exportLookCalibrationPair(_ pair: Pair, output: URL, sampling: CalibrationSampling = .interior) throws {
     guard pair.role == .training else { throw LookCalibrationError.invalidTrainingManifest }
     let directory = output.appendingPathComponent(pair.id)
     guard !FileManager.default.fileExists(atPath: directory.path) else {
         throw LookCalibrationError.existingOutput
     }
+    let span = OtosSignpost.rendering.beginInterval("NativeCalibrationExport")
+    defer { OtosSignpost.rendering.endInterval("NativeCalibrationExport", span) }
+    let started = Date()
     let rawBytes = try localData(pair.raw)
-    // In-memory ARW data can otherwise be recognized as generic TIFF, losing
-    // the camera metadata used to enforce this calibration's supported body.
-    let sourceOptions = [kCGImageSourceTypeIdentifierHint: "com.sony.arw-raw-image"] as CFDictionary
-    guard let rawSource = CGImageSourceCreateWithData(rawBytes as CFData, sourceOptions),
-          let properties = CGImageSourceCopyPropertiesAtIndex(rawSource, 0, nil) as? [String: Any],
-          let tiff = properties[kCGImagePropertyTIFFDictionary as String] as? [String: Any],
-          tiff[kCGImagePropertyTIFFModel as String] as? String == "ILCE-6700"
-    else { throw SonySensorRAWHEIFRenderer.Failure.unsupportedOriginal }
+    let development = try NativeRAWDevelopment.develop(rawBytes, recipe: .mapped)
     let targetBytes = try localData(pair.target)
-    guard let raw = CIRAWFilter(imageData: rawBytes, identifierHint: "com.sony.arw-raw-image"),
-          let original = CIImage(data: targetBytes, options: [.applyOrientationProperty: true]),
-          raw.supportedDecoderVersions.contains(CIRAWDecoderVersion(rawValue: "9")),
-          raw.isLensCorrectionSupported
-    else { throw HarnessError.decoderUnavailable }
-    raw.decoderVersion = CIRAWDecoderVersion(rawValue: "9")
-    raw.isLensCorrectionEnabled = true
-    raw.scaleFactor = Float(768 / max(raw.nativeSize.width, raw.nativeSize.height))
-    raw.boostAmount = 0
-    raw.localToneMapAmount = 0
-    raw.contrastAmount = 0
-    raw.sharpnessAmount = 0
-    guard let developed = raw.outputImage else { throw HarnessError.decodeFailed("calibration RAW") }
-    let source = try encodedImage(scaled(developed)), target = try encodedImage(scaled(original))
+    guard let original = CIImage(data: targetBytes, options: [.applyOrientationProperty: true])
+    else { throw HarnessError.decodeFailed("calibration HEIF") }
+    // encodedImage forces native sensor development before Lanczos can reduce
+    // it. Tag those encoded numbers for the same colour-managed reduction used
+    // by evaluation; no reduced CIRAWFilter tap participates in fitting.
+    let native = try encodedImage(development.image)
+    let pixels = frame(native, width: Int(native.extent.width), height: Int(native.extent.height))
+    let tagged = try nativeCalibrationImage(pixels)
+    let source = try encodedImage(scaled(tagged))
+    let target = try encodedImage(scaled(original))
     guard source.extent.size == target.extent.size else { throw HarnessError.incompatibleDimensions }
     let width = Int(target.extent.width.rounded()), height = Int(target.extent.height.rounded())
     let aligned = try register(source, to: target, width: width, height: height)
@@ -86,6 +96,11 @@ func exportLookCalibrationPair(_ pair: Pair, output: URL, sampling: CalibrationS
         return frame(blurred, width: width, height: height)
     }
     let input = samples(aligned.image), reference = samples(target)
+    func alphaRange(_ values: [Float]) -> String {
+        let alpha = stride(from: 3, to: values.count, by: 4).map { values[$0] }
+        return "\(alpha.min() ?? .nan):\(alpha.max() ?? .nan)"
+    }
+    print("op=calibration.sampleSupport nativeAlpha=\(alphaRange(pixels.rgba)) inputAlpha=\(alphaRange(input.rgba)) targetAlpha=\(alphaRange(reference.rgba))")
     var values = [Float]()
     for row in 0 ..< 50 {
         for column in 0 ..< 50 {
@@ -99,7 +114,10 @@ func exportLookCalibrationPair(_ pair: Pair, output: URL, sampling: CalibrationS
             values += retained
         }
     }
-    guard values.count >= 500 * 6 else { throw LookCalibrationError.invalidSamples }
+    guard values.count >= 500 * 6 else {
+        print("op=calibration.insufficientSamples retained=\(values.count / 6) registrationMSE=\(aligned.mse)")
+        throw LookCalibrationError.invalidSamples
+    }
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     var bytes = Data(capacity: values.count * 4)
     for value in values {
@@ -109,14 +127,23 @@ func exportLookCalibrationPair(_ pair: Pair, output: URL, sampling: CalibrationS
     try bytes.write(to: directory.appendingPathComponent("samples.f32"), options: .withoutOverwriting)
     let recipe: [String: Any] = [
         "contractVersion": sampling.contractVersion, "samplingPolicy": sampling.rawValue, "decoder": "9", "samples": values.count / 6,
-        "nativeLensCorrectionEnabled": true, "registrationMSE": aligned.mse,
+        "sourcePreparation": "native-encoded-srgb-before-reduction",
+        "nativeLensCorrectionSupported": development.lensCorrectionSupported,
+        "nativeLensCorrectionEnabled": development.lensCorrectionEnabled, "registrationMSE": aligned.mse,
         "calibrationBlurRadius": 1.2, "evaluationLongEdge": 768,
         "neutralSettings": ["boostAmount": 0, "localToneMapAmount": 0, "contrastAmount": 0, "sharpnessAmount": 0],
-        "temperature": raw.neutralTemperature, "tint": raw.neutralTint,
-        "baselineExposure": raw.baselineExposure, "shadowBias": raw.shadowBias,
+        "temperature": development.temperature, "tint": development.tint,
+        "baselineExposure": development.baselineExposure, "shadowBias": development.shadowBias,
     ]
     try JSONSerialization.data(withJSONObject: recipe, options: [.sortedKeys])
         .write(to: directory.appendingPathComponent("recipe.json"), options: .withoutOverwriting)
+    OtosLog.rendering.noticeOperation("calibration.export", phase: "complete", fields: [
+        "sourcePreparation": "native-encoded-srgb-before-reduction",
+        "samples": String(values.count / 6), "decoder": "9",
+        "nativeLensSupported": String(development.lensCorrectionSupported),
+        "nativeLensEnabled": String(development.lensCorrectionEnabled),
+        "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
+    ])
     print("op=calibration.export id=\(pair.id) samples=\(values.count / 6) decoder=9")
 }
 
@@ -138,8 +165,10 @@ func calibrationSamples(_ manifest: Manifest, root: URL, sampling: CalibrationSa
         guard let recipeData = try? localData(recipePath.path),
               let recipe = try? JSONDecoder().decode(CalibrationRecipe.self, from: recipeData),
               recipe.contractVersion == sampling.contractVersion, recipe.decoder == "9",
-              sampling == .interior || recipe.samplingPolicy == sampling.rawValue,
-              recipe.samples == data.count / 24, recipe.nativeLensCorrectionEnabled,
+              recipe.samplingPolicy == sampling.rawValue,
+              recipe.samples == data.count / 24,
+              recipe.sourcePreparation == "native-encoded-srgb-before-reduction",
+              recipe.nativeLensCorrectionEnabled == recipe.nativeLensCorrectionSupported,
               recipe.calibrationBlurRadius == 1.2, recipe.evaluationLongEdge == 768,
               recipe.neutralSettings == ["boostAmount": 0, "localToneMapAmount": 0, "contrastAmount": 0, "sharpnessAmount": 0]
         else { throw LookCalibrationError.invalidSamples }
