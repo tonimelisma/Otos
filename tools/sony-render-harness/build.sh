@@ -18,6 +18,9 @@ xcrun swiftc -O -swift-version 6 -strict-concurrency=complete -Xcc -DACCELERATE_
     "$root/tools/sony-render-harness/AuthoredLook.swift" \
     "$root/tools/sony-render-harness/CreativeColour.swift" \
     "$root/tools/sony-render-harness/BoundedColourSolve.swift" \
+    "$root/tools/sony-render-harness/NativeProfileFieldSolve.swift" \
+    "$root/tools/sony-render-harness/NativeProfileField.swift" \
+    "$root/tools/sony-render-harness/NativeInputRangeAudit.swift" \
     "$root/tools/sony-render-harness/DisplayColourCalibration.swift" \
     "$root/tools/sony-render-harness/AuthoredLookSelfTest.swift" \
     "$root/tools/sony-render-harness/LookRegions.swift" \

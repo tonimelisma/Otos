@@ -27,7 +27,7 @@ struct Lab: Equatable {
 
 /// Sharma, Wu & Dalal, Color Research & Application 30(1), 2005, equations 2–22.
 /// Parametric factors are all one. Hue is expressed in degrees until trig use.
-func ciede2000(_ lhs: Lab, _ rhs: Lab) -> Double {
+private func ciede2000Terms(_ lhs: Lab, _ rhs: Lab) -> (light: Double, chroma: Double, hue: Double, rotation: Double) {
     let c1 = hypot(lhs.a, lhs.b), c2 = hypot(rhs.a, rhs.b)
     let meanC = (c1 + c2) / 2
     let seventh = pow(meanC, 7)
@@ -76,5 +76,26 @@ func ciede2000(_ lhs: Lab, _ rhs: Lab) -> Double {
     let sh = 1 + 0.015 * meanCp * t
     let rt = -rc * sin(2 * theta * .pi / 180)
     let light = dL / sl, chroma = dC / sc, hueTerm = dH / sh
+    return (light, chroma, hueTerm, rt)
+}
+
+func ciede2000(_ lhs: Lab, _ rhs: Lab) -> Double {
+    let (light, chroma, hueTerm, rt) = ciede2000Terms(lhs, rhs)
     return sqrt(light * light + chroma * chroma + hueTerm * hueTerm + rt * chroma * hueTerm)
+}
+
+/// Factor the chroma/hue rotation cross-term into three signed residuals.
+/// Their Euclidean norm equals DE00; preserving directions gives the nonlinear
+/// solver colour curvature that a single distance Jacobian discards.
+func ciede2000Residual(_ lhs: Lab, _ rhs: Lab) -> SIMD3<Double> {
+    let (light, chroma, hue, rotation) = ciede2000Terms(lhs, rhs)
+    return SIMD3(light, chroma + rotation * hue / 2, sqrt(max(0, 1 - rotation * rotation / 4)) * hue)
+}
+
+func nativeResidualNorm(_ value: SIMD3<Double>) -> Double {
+    sqrt(nativeResidualDot(value, value))
+}
+
+func nativeResidualDot(_ a: SIMD3<Double>, _ b: SIMD3<Double>) -> Double {
+    a.x * b.x + a.y * b.y + a.z * b.z
 }
