@@ -52,8 +52,7 @@ func calibrationPairValues(input: [Float], target: [Float], sampling: Calibratio
 func nativeCalibrationImage(_ pixels: RGBFrame) throws -> CIImage {
     guard pixels.width > 0, pixels.height > 0,
           pixels.rgba.count == pixels.width * pixels.height * 4,
-          pixels.rgba.allSatisfy(\.isFinite),
-          stride(from: 3, to: pixels.rgba.count, by: 4).allSatisfy({ pixels.rgba[$0] > 0.999 })
+          isFiniteOpaqueNativeFrame(pixels)
     else { throw LookCalibrationError.invalidSamples }
     let tagged = CIImage(bitmapData: pixels.rgba.withUnsafeBytes { Data($0) },
                          bytesPerRow: pixels.width * 16,

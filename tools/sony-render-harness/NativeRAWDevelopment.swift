@@ -85,3 +85,14 @@ struct NativeRAWDevelopment {
         return pixels
     }
 }
+
+/// Saved looks operate on opaque sensor RGB. Reject genuine transparency before
+/// the numeric colour transform; converting it to opaque would conceal a source
+/// defect and premultiplied RGB would masquerade as a brightness change. The
+/// tolerance admits native half-float rounding of an otherwise opaque source.
+func isFiniteOpaqueNativeFrame(_ pixels: RGBFrame) -> Bool {
+    pixels.rgba.allSatisfy(\.isFinite)
+        && stride(from: 3, to: pixels.rgba.count, by: 4).allSatisfy {
+            pixels.rgba[$0] > 0.999 && pixels.rgba[$0] <= 1.001
+        }
+}

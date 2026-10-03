@@ -10,6 +10,19 @@ func lookCalibrationSelfTest() throws {
           calibrationPairValues(input: [.nan, 0, 0], target: [0, 0, 0], sampling: .modelDomain) == nil
     else { throw HarnessError.malformedReferenceData }
     let opaque = RGBFrame(width: 128, height: 96, rgba: Array(repeating: [Float(0.3), 0.5, 0.7, 0.9995117], count: 128 * 96).flatMap(\.self))
+    guard isFiniteOpaqueNativeFrame(opaque) else { throw HarnessError.malformedReferenceData }
+    for invalid in [Float(0.95), 1.1, .nan, .infinity] {
+        var values = opaque.rgba
+        values[3] = invalid
+        guard !isFiniteOpaqueNativeFrame(RGBFrame(width: 128, height: 96, rgba: values)) else {
+            throw HarnessError.malformedReferenceData
+        }
+    }
+    var nonfiniteRGB = opaque.rgba
+    nonfiniteRGB[0] = .nan
+    guard !isFiniteOpaqueNativeFrame(RGBFrame(width: 128, height: 96, rgba: nonfiniteRGB)) else {
+        throw HarnessError.malformedReferenceData
+    }
     let prepared = try nativeCalibrationImage(opaque)
     let reduced = try encodedImage(scaled(prepared, longEdge: 32))
     let reducedPixels = frame(reduced, width: 32, height: 24)

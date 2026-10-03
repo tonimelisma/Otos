@@ -38,6 +38,7 @@ nonisolated enum SonySensorRAWHEIFRenderer {
         case invalidDestination
         case destinationExists
         case decodeFailed
+        case invalidSourceSupport
         case modelApplyFailed(String)
         case encodeFailed(String)
     }
@@ -61,7 +62,7 @@ nonisolated enum SonySensorRAWHEIFRenderer {
         let nativeGamutMappingEnabled: Bool
     }
 
-    static let contractVersion = 4
+    static let contractVersion = 5
     private static let datalessFlag: UInt32 = 0x4000_0000
     private static let maximumRAWBytes: Int64 = 256 * 1024 * 1024
 
@@ -122,6 +123,11 @@ nonisolated enum SonySensorRAWHEIFRenderer {
                 }
                 let encoded = try encodedImage(normalized)
                 let pixels = frame(encoded, width: Int(encoded.extent.width), height: Int(encoded.extent.height))
+                guard isFiniteOpaqueNativeFrame(pixels) else {
+                    OtosLog.rendering.noticeOperation("sensor.sourceSupport", phase: "rejected",
+                                                      fields: ["reason": "nonfiniteOrNonopaque"])
+                    throw Failure.invalidSourceSupport
+                }
                 try Task.checkCancellation()
                 let transformed = try MetalLook(model: model).apply(pixels.rgba)
                 try Task.checkCancellation()

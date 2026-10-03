@@ -492,3 +492,9 @@ the current point-RGB initializer. These commands read RAW and the optional froz
 shared model; neither reads a camera target. Their display-clamped DE00 and signed
 RGB differences diagnose preparation consistency, not actual HEIF matching. They
 fail for training/acceptance roles, invalid inputs and existing output paths.
+
+Saved/conditional HEIF receipt contract 5 rejects nonfinite or genuinely
+nonopaque native source pixels before numeric look application. Calibration uses
+the same source predicate. Alpha tolerance (0.999, 1.001] admits native rounding;
+it does not repair or unpremultiply a transparent source. Native decoder noise
+controls remain at their existing image-dependent Apple defaults.

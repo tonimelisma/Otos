@@ -290,6 +290,27 @@ correspondence/detail attribution, and demonstrated original-cyan expression to
 shared RAW-only prediction. See
 [order and class evidence](../research/2026-10-03-native-objective-order-and-class-expression.md).
 
+### Completed native-opacity and RAW-context checkpoint
+
+The existing native source includes image-dependent Apple denoising. A guarded
+zero-luminance-denoising comparison on green produces invalid native encoded alpha
+before the look, including at a full-float tap. Its grain/brightness comparison is
+invalid; retain default controls. Saved/conditional rendering and calibration now
+share finite/opaque source validation. Invalid source support stops publication;
+valid green HEIF scores are unchanged. This is a reliability repair, not a look gain.
+
+One frozen RAW-context centroid selector retains six bounded fields and uses
+RAW-only brightness/chroma/clipping/gradient features. Matched77-capture fits,
+23 group-excluded checks and nine actual-HEIF controls complete: both models pass
+23/23 and5/9, with no resolved failure. Context worsens held-out equal-image and
+equal-date means. Reject this selector; do not expand it, tune affinity parameters,
+or infer that all image-context learning fails. Next, test the fixed field bank's
+native blending against the demonstrated original-cyan witness before investing
+in another selector. Target-assisted weights measure expression only; successful
+blending proceeds to supervised RAW-guide selection, inadequate numerical evidence
+to solver diagnosis, and reliable residual to bank/native-training investigation.
+See [native opacity and RAW-context evidence](../research/2026-10-03-native-opacity-and-raw-context.md).
+
 ## Immediate execution
 
 Continue the plan; photographic acceptance remains open. The original static
@@ -324,9 +345,10 @@ and a reproduced opacity/sample-support defect. It still passes five of nine:
 no failed case becomes a pass. Keep the consistent native source contract but
 reject the model as a promoted camera match. Close source-scale consistency as a
 sufficient explanation; do not export the entire corpus for that hypothesis.
-The shared-learning gap remains. The next step is to validate shared fitting against actual native output, then
-obtain expression evidence for each unresolved failure class. RAW-derived image
-context is a subsequent conditioning hypothesis, not a demonstrated cause. See
+The shared-learning gap remains. The native order/class audit and bounded
+RAW-context cycle are completed above. Test fixed-bank native blending for the
+demonstrated original-cyan witness; keep green representation/spatial attribution
+and foliage correspondence/detail attribution open. See
 [shared models and native source](../research/2026-10-03-shared-model-and-native-source-pilot.md).
 
 Next actions and feedback loops:
@@ -337,9 +359,9 @@ Next actions and feedback loops:
    remains a limitation. The bounded region-feasibility fit now passes the original
    cyan/face/white regions and whole native HEIF within the existing field. One
    reliable grid colour failure and unknown/sensitive areas remain. Close that
-   original-cyan expression investigation without more sweeps. Validate the shared
-   objective against native HEIF outcomes before another predictor, retaining this
-   target-assisted witness as expression evidence only. All old hard regions, native detail and full204 regression remain
+   original-cyan expression investigation without more sweeps. The shared objective audit and first RAW-context cycle are complete. Test native
+   blending inside the fixed shared field bank before another predictor; retain
+   this target-assisted witness as expression evidence only. All old hard regions, native detail and full204 regression remain
    gates. See [gradient evidence](../research/2026-10-03-native-objective-gradient-and-curvature.md)
    and [region feasibility](../research/2026-10-03-native-region-feasibility.md).
 2. Separately attribute daylight tails to colour, fixed correspondence and optical/
