@@ -1,3 +1,4 @@
+import CoreImage
 import Foundation
 
 /// Invalid calibration inputs must stop before producing a model or reading
@@ -8,6 +9,19 @@ func lookCalibrationSelfTest() throws {
           calibrationPairValues(input: [-0.1, 0.6, 1.4], target: [0, 0.8, 1], sampling: .modelDomain) == [0, 0.6, 1.25, 0, 0.8, 1],
           calibrationPairValues(input: [.nan, 0, 0], target: [0, 0, 0], sampling: .modelDomain) == nil
     else { throw HarnessError.malformedReferenceData }
+    let opaque = RGBFrame(width: 128, height: 96, rgba: Array(repeating: [Float(0.3), 0.5, 0.7, 0.9995117], count: 128 * 96).flatMap(\.self))
+    let prepared = try nativeCalibrationImage(opaque)
+    let reduced = try encodedImage(scaled(prepared, longEdge: 32))
+    let reducedPixels = frame(reduced, width: 32, height: 24)
+    guard stride(from: 3, to: reducedPixels.rgba.count, by: 4).allSatisfy({ reducedPixels.rgba[$0] > 0.999 }) else {
+        throw HarnessError.malformedReferenceData
+    }
+    var transparent = opaque.rgba
+    transparent[3] = 0.9
+    do {
+        _ = try nativeCalibrationImage(RGBFrame(width: 128, height: 96, rgba: transparent))
+        throw HarnessError.malformedReferenceData
+    } catch LookCalibrationError.invalidSamples {}
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("sony-calibration-test-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -42,7 +56,9 @@ func lookCalibrationSelfTest() throws {
     } catch LookCalibrationError.invalidSamples {}
     var invalid = [Float](repeating: 0.5, count: 500 * 6)
     let recipe: [String: Any] = [
-        "contractVersion": 2, "decoder": "9", "samples": 500,
+        "contractVersion": 3, "decoder": "9", "samples": 500, "samplingPolicy": "interior",
+        "sourcePreparation": "native-encoded-srgb-before-reduction",
+        "nativeLensCorrectionSupported": true,
         "nativeLensCorrectionEnabled": true, "calibrationBlurRadius": 1.2,
         "evaluationLongEdge": 768,
         "neutralSettings": ["boostAmount": 0, "localToneMapAmount": 0, "contrastAmount": 0, "sharpnessAmount": 0],
@@ -67,8 +83,32 @@ func lookCalibrationSelfTest() throws {
         try fitLookCalibration(manifest(.training), samplesRoot: root, destination: destination)
         throw HarnessError.malformedReferenceData
     } catch LookCalibrationError.invalidSamples {}
+    for change in ["contractVersion", "sourcePreparation", "nativeLensCorrectionEnabled"] {
+        var mismatched = recipe
+        switch change {
+        case "contractVersion": mismatched[change] = 2
+        case "sourcePreparation": mismatched[change] = "reduced-decoder"
+        default: mismatched[change] = false
+        }
+        try JSONSerialization.data(withJSONObject: mismatched).write(to: recipePath)
+        do {
+            _ = try calibrationSamples(manifest(.training), root: root)
+            throw HarnessError.malformedReferenceData
+        } catch LookCalibrationError.invalidSamples {}
+    }
+    try JSONSerialization.data(withJSONObject: recipe).write(to: recipePath)
+    guard try calibrationSamples(Manifest(pairs: [manifest(.training).pairs[0]]), root: root).count == 500 else {
+        throw HarnessError.malformedReferenceData
+    }
+    var unsupportedLensRecipe = recipe
+    unsupportedLensRecipe["nativeLensCorrectionSupported"] = false
+    unsupportedLensRecipe["nativeLensCorrectionEnabled"] = false
+    try JSONSerialization.data(withJSONObject: unsupportedLensRecipe).write(to: recipePath)
+    guard try calibrationSamples(Manifest(pairs: [manifest(.training).pairs[0]]), root: root).count == 500 else {
+        throw HarnessError.malformedReferenceData
+    }
     var domainRecipe = recipe
-    domainRecipe["contractVersion"] = 3
+    domainRecipe["contractVersion"] = 4
     domainRecipe["samplingPolicy"] = "modelDomain"
     try JSONSerialization.data(withJSONObject: domainRecipe).write(to: recipePath)
     do {

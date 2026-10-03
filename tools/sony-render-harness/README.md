@@ -100,13 +100,17 @@ isotonic curves, ridge and neighbor smoothness. The exporter retains the origina
 calibration blur-radius recipe; this is separate from the release scorecard's
 Gaussian sigma. Its calibration sample exclusions never change scoring masks.
 The explicit `calibration-export-domain-one`, `calibration-fit-domain` and
-`calibration-joint-fit-domain` modes retain finite, opaque training samples at
-model-domain endpoints. Source samples use the runtime [0,1.25] input clamp and
-target samples use [0,1] display limits. Contract 3 records `modelDomain`; ordinary
-baseline reproduction retains contract 2 and its interior-only sampler. Fits
-reject mismatched sample contracts. This changes training support only: scoring
-masks, thresholds, native decoder and runtime capacity are unchanged. The RGB
-sample fit remains a surrogate and must pass actual native HEIF evaluation.
+`calibration-joint-fit-domain` commands retain model-domain endpoints. Shared
+exports use contract4; interior exports use contract3. Source samples retain the
+runtime [0,1.25] clamp and target samples the [0,1] display limits. Both develop full native
+RAW9 through `NativeRAWDevelopment` before colour-managed reduction, then register
+against the separate HEIF and retain the existing Gaussian radius and point grid.
+The source-preparation stamp and independent lens-supported/enabled facts are
+mandatory. Old reduced-decoder exports are rejected; historical results remain
+controls produced by their original executable. Native half-float opacity rounding
+is normalized only for a verified opaque sensor frame, before registration;
+registration borders remain excluded. Applying a nonlinear look to averaged RGB
+is still an approximate initializer, not the complete native fitting objective.
 
 `calibration-joint-fit training.json samples initial-model.json output-directory`
 reuses the constrained joint curve/LUT solver for one shared training candidate.
@@ -450,7 +454,7 @@ counts diagnose association, not causation or photographic acceptance.
 ## Shared RAW metadata colour-field experiment
 
 `conditional-profile-fit training.json samples-dir capture-audit.json base-model.json constant|wb|iso|wbISO output-dir`
-fits only training-role, endpoint-inclusive contract-3 samples (at least 100
+fits only training-role, endpoint-inclusive contract-4 samples (at least 100
 captures). The RAW-derived capture audit supplies ISO; the sample recipe supplies
 native decoder white-balance temperature. Neither lens nor focal length is a
 predictor. All variants retain the same frozen base profile, bounded 3-cubed

@@ -50,7 +50,13 @@ training can read separate HEIF targets; rendering reads only RAW and a frozen
 shared model. This is a measured experiment, not an accepted replacement recipe.
 
 Offline calibration owns reference access, role/date-group validation, bounded
-fitting, explicit fitted-example weights and diagnostic capacity recipes.
+fitting, explicit fitted-example weights and diagnostic capacity recipes. Shared
+sample export uses the same `NativeRAWDevelopment` full-resolution RAW9 owner as
+inference, then explicitly reduces the forced encoded sensor pixels. Reduced RAW
+filter taps are rejected as training input. Versioned sample contracts and a
+source-preparation stamp prevent mixing their outputs. The point-RGB initializer
+still approximates nonlinear look-before-reduction order; native output remains
+its photographic oracle. Lens-supported/enabled facts remain independent.
 `NativeRegionPalette` owns source-only full-region palette and native/reduced
 preparation diagnostics. It reads no camera target and cannot certify matching.
 Native objective fitting samples entire reliably corresponding scored rectangles
