@@ -11,7 +11,9 @@ Develop Sony ILCE-6700 sensor RAW into native-resolution 10-bit SDR sRGB HEIF wi
 the same visible rendering as the user's verified Sony VV2 camera HEIFs. Those
 HEIFs are the training/evaluation targets. Inference uses only sensor RAW, capture
 metadata available from RAW and the frozen recipe/model; never target HEIFs,
-camera JPEGs, embedded previews, their pixels or their statistics.
+camera JPEGs, embedded previews, their pixels or their statistics. Embedded camera
+images are also excluded from fitting, evaluation and visual inspection; use the
+separate verified HEIF targets for supervised work.
 
 Keep macOS Core Image decoder 9 as the foundation. Run outside the Otos app.
 Separate normalization, tone, colour, local/detail processing where justified,
@@ -31,7 +33,12 @@ outside scope. GitHub CI is outside the user's requested work; local checks rema
 Originals remain read-only. Check SF_DATALESS immediately before every byte read;
 use deliberate non-blocking provision requests when needed. Existing authorization
 covers OneDrive provisioning. Keep private manifests, pixels and outputs outside
-Git and media folders. No new third-party dependency without the required ADR.
+Git and media folders. The user-authorized working corpus lives in the primary
+checkout’s ignored `build/sony-paired-corpus/`, independent of OneDrive and
+worktree cleanup. Copy only after the immediate materialization gate, verify
+SHA256 and size, preserve source provenance and assigned roles in private manifests,
+and use the local paths for subsequent runs. Never commit media or private manifests.
+No new third-party dependency without the required ADR.
 
 ## Current evidence and limits
 
@@ -224,6 +231,21 @@ through PRs, and complete cleanup. Delete this plan only after matching acceptan
 and delivery both succeed. Document-only corrections use the lightweight gates.
 
 ## Immediate execution
+
+First finish the broad frozen shared-profile baseline on the 204 locally copied
+development pairs, then report failures by shooting conditions, tone/colour,
+detail and lens coverage. The 283 training pairs must also be pinned locally
+before new byte-reading runs. Historical embedded-camera comparisons and
+preview-guided models are excluded; retained RAW-only results require explicit
+provenance. See [input audit](../research/2026-10-02-input-provenance-and-local-corpus.md).
+
+The next delivery is a shared RAW-only candidate checked across development
+shoots, not another collection of target-assisted individual fits. Keep only a
+bounded solver audit needed to decide that candidate; stop expanding small-set
+diagnostics without a stated decision and stopping condition. Broader fitting
+uses training roles only; development roles select candidates; untouched
+acceptance remains closed until the candidate is frozen.
+
 
 Keep frozen inference recipes unchanged. Coupled native colour-field fitting
 inside the existing profile produces seven of eight whole-image passes and seven
