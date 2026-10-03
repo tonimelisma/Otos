@@ -41,6 +41,14 @@ owned temporary output. Synchronous Apple work may finish before cancellation is
 observed. Named signposts and structured stage logs expose development, colour
 application, encoding and publication without adding media content to diagnostics.
 
+`ConditionalProfile` owns an experimental shared colour-field selector over native
+RAW neutral temperature and EXIF ISO. Constant, WB-only, ISO-only and combined
+ablations share bounded fields and the saved-profile pixel owner. Its convex
+metadata interpolation is continuous and capped; invalid required metadata fails.
+Neither camera-image access nor lens identity belongs to selection. Offline
+training can read separate HEIF targets; rendering reads only RAW and a frozen
+shared model. This is a measured experiment, not an accepted replacement recipe.
+
 Offline calibration owns reference access, role/date-group validation, bounded
 fitting, explicit fitted-example weights and diagnostic capacity recipes.
 Fitted examples and broad training have disjoint capture-date groups; fitted
@@ -71,8 +79,12 @@ registration never becomes a deployed lens correction.
   and access to a camera image violates that input boundary.
 - Reusing the saved encoded-RGB curve/LUT as the final architecture: retained only
   as a named comparator; it combines tone and colour without independent controls.
-- Automatically adding local correction or predicting per-image coefficients:
-  deferred until valid native capacity and unseen-group benefit demonstrate need.
+- Automatically adding local correction: deferred until reliable native residuals
+  demonstrate need. A bounded shared RAW metadata predictor is retained as an
+  experiment after combined native fits cleared five hard controls and shared
+  conditioning improved two date-disjoint cases; broad regression and independent
+  acceptance remain mandatory before promotion. No per-photo target fitting is
+  used by the predictor.
 - A third-party runtime/training library: unnecessary for the implemented compact
   family; Core Image, Metal and Accelerate provide the required concrete owners.
 

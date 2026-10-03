@@ -9,12 +9,13 @@ import ImageIO
 enum SensorRenderingLook {
     case nativeDefault
     case saved(LookModel)
+    case conditional(ConditionalProfile)
     case authored(AuthoredLook, stages: AuthoredLook.Stages = .init())
 
     var recipe: NativeRAWRecipe {
         switch self {
         case .nativeDefault: .appleDefault
-        case .saved: .mapped
+        case .saved, .conditional: .mapped
         case let .authored(look, _): look.input
         }
     }
@@ -23,6 +24,7 @@ enum SensorRenderingLook {
         switch self {
         case .nativeDefault: "apple-raw9-default-baseline"
         case .saved: "saved-raw9-model-baseline"
+        case .conditional: "raw-wb-iso-field-prototype"
         case .authored: "authored-raw9-v5"
         }
     }
@@ -111,7 +113,13 @@ nonisolated enum SonySensorRAWHEIFRenderer {
             defer { OtosSignpost.rendering.endInterval("ApplyLook", lookSpan) }
             switch look {
             case .nativeDefault: break
-            case let .saved(model):
+            case .saved, .conditional:
+                let model: LookModel
+                switch look {
+                case let .saved(fixed): model = fixed
+                case let .conditional(conditioned): model = try conditioned.model(development: development)
+                default: throw Failure.decodeFailed
+                }
                 let encoded = try encodedImage(normalized)
                 let pixels = frame(encoded, width: Int(encoded.extent.width), height: Int(encoded.extent.height))
                 try Task.checkCancellation()
