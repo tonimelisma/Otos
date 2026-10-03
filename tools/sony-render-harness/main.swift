@@ -341,7 +341,9 @@ func selfTest(_ path: String) throws {
         let second = Lab(l: values[3], a: values[4], b: values[5])
         for (a, b) in [(first, second), (second, first)] {
             let error = ciede2000(a, b)
-            guard abs(nativeResidualNorm(ciede2000Residual(a, b)) - error) < 1e-12 else {
+            guard abs(nativeResidualNorm(ciede2000Residual(a, b)) - error) < 1e-12,
+                  abs(nativeResidualNorm(ciede2000CartesianResidual(a, b)) - error) < 1e-12
+            else {
                 throw HarnessError.malformedReferenceData
             }
             guard abs(error - values[6]) < 0.000051 else {

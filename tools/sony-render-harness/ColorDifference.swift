@@ -99,3 +99,13 @@ func nativeResidualNorm(_ value: SIMD3<Double>) -> Double {
 func nativeResidualDot(_ a: SIMD3<Double>, _ b: SIMD3<Double>) -> Double {
     a.x * b.x + a.y * b.y + a.z * b.z
 }
+
+/// Keep DE00 length while expressing direction in Cartesian Lab. Polar hue
+/// residuals have square-root sensitivity when source chroma approaches zero;
+/// that artificial direction instability need not enter the fit's curvature.
+func ciede2000CartesianResidual(_ lhs: Lab, _ rhs: Lab) -> SIMD3<Double> {
+    let delta = SIMD3(rhs.l - lhs.l, rhs.a - lhs.a, rhs.b - lhs.b)
+    let length = nativeResidualNorm(delta)
+    guard length > 0 else { return .zero }
+    return delta * (ciede2000(lhs, rhs) / length)
+}
