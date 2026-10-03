@@ -97,7 +97,8 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
         }
         return distances
     }
-    let output: [String: Any] = ["contractVersion": 1, "id": pair.id, "validationEvidence": false,
+    let output: [String: Any] = ["contractVersion": 2, "id": pair.id, "validationEvidence": false,
+                                 "samplingPolicy": "full scored region, uniform budget1024",
                                  "scope": "target-assisted coupled directions inside existing profile", "curvature": curvature.rawValue,
                                  "baseModelSHA256": SHA256.hash(data: baseData).description, "geometryBaselineSHA256": digest,
                                  "reliableRegions": reliable, "samples": observations.count,

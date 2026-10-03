@@ -23,6 +23,7 @@ xcrun swiftc -O -swift-version 6 -strict-concurrency=complete -Xcc -DACCELERATE_
     "$root/tools/sony-render-harness/ConditionalProfile.swift" \
     "$root/tools/sony-render-harness/ConditionalProfileSelfTest.swift" \
     "$root/tools/sony-render-harness/NativeInputRangeAudit.swift" \
+    "$root/tools/sony-render-harness/NativeRegionPalette.swift" \
     "$root/tools/sony-render-harness/DisplayColourCalibration.swift" \
     "$root/tools/sony-render-harness/AuthoredLookSelfTest.swift" \
     "$root/tools/sony-render-harness/LookRegions.swift" \
