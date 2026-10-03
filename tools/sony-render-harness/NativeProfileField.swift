@@ -39,7 +39,7 @@ func nativeFieldProfile(_ data: Data, coefficients: [Double]) throws -> Data {
 enum NativeFieldCurvature: String { case distance, components }
 
 func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLookCard,
-                              geometryReport: Data, geometryBaseline: Data, curvature: NativeFieldCurvature = .components, destination: URL) throws
+                              geometryReport: Data, geometryBaseline: Data, curvature: NativeFieldCurvature = .components, objective: NativeFieldObjective = .meanTail, destination: URL) throws
 {
     try card.validate()
     _ = try LookModel(json: baseData)
@@ -69,7 +69,9 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
         .workingFormat: CIFormat.RGBAf, .cacheIntermediates: false,
     ])
     var evaluations = 0
-    let result = try solveNativeField(weights: observations.map { $0.weight / Double(reliable.count) }) { parameters in
+    let result = try solveNativeField(weights: observations.map { $0.weight / Double(reliable.count) },
+                                      objective: objective, groups: observations.map(\.regionIndex))
+    { parameters in
         try Task.checkCancellation()
         // Each evaluation owns its temporary Metal/CI/CG resources. Repeated
         // native renders otherwise retain autoreleased buffers until process exit.
@@ -97,12 +99,16 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
         }
         return distances
     }
-    let output: [String: Any] = ["contractVersion": 3, "id": pair.id, "validationEvidence": false,
+    let output: [String: Any] = ["contractVersion": 4, "id": pair.id, "validationEvidence": false,
                                  "samplingPolicy": "full scored region, uniform budget1024",
                                  "scope": "target-assisted coupled directions inside existing profile", "curvature": curvature.rawValue,
                                  "baseModelSHA256": SHA256.hash(data: baseData).description, "geometryBaselineSHA256": digest,
                                  "reliableRegions": reliable, "samples": observations.count,
                                  "coarseDimension": 3, "coefficientBound": 0.25, "differenceStep": 0.001, "observationFormat": "RGBAf; exported HEIF gates unchanged",
+                                 "fittingObjective": objective.rawValue,
+                                 "regionFittingTarget": objective == .regionFeasibility ? 1.9 as Any : NSNull(),
+                                 "finalFitRegionMeanDE00": Dictionary(uniqueKeysWithValues: zip(reliable, result.regionMeans)),
+                                 "priorRole": objective == .regionFeasibility ? "step curvature only; feasibility first" : "absolute profile penalty",
                                  "maximumIterations": 6, "maximumLineSearchTrials": 20,
                                  "quadraticStep": "stabilized curvature with declared-objective gradient; rhs H*x-g", "curvatureNormFloor": 0.1,
                                  "edgePenalty": 1, "ridgePenalty": 0.1,
@@ -123,6 +129,25 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
 }
 
 func nativeProfileFieldSelfTest() throws {
+    let regional = try nativeFieldRegionalLoss([1, 4], weights: [0.5, 0.5], groups: [0, 1])
+    let feasible = try nativeFieldRegionalLoss([1.8, 1.9], weights: [0.5, 0.5], groups: [0, 1])
+    guard abs(regional.loss - 2.205) < 1e-12, regional.effectiveWeights == [0, 2.1],
+          feasible.loss == 0, feasible.effectiveWeights == [0, 0] else { throw HarnessError.malformedReferenceData }
+    for groups in [[0], [0, 2], [-1, 0]] {
+        do {
+            _ = try nativeFieldRegionalLoss([1, 4], weights: [0.5, 0.5], groups: groups)
+            throw HarnessError.malformedReferenceData
+        } catch HarnessError.invalidManifest {}
+    }
+    do {
+        _ = try nativeFieldRegionalLoss([1e200], weights: [1], groups: [0])
+        throw HarnessError.malformedReferenceData
+    } catch HarnessError.invalidManifest {}
+    let satisfied = try solveNativeField(weights: [0.5, 0.5], objective: .regionFeasibility, groups: [0, 1]) { _ in
+        [SIMD3(1.8, 0, 0), SIMD3(1.9, 0, 0)]
+    }
+    guard satisfied.status == "sampled-region-targets-satisfied", satisfied.regionMeans == [1.8, 1.9],
+          satisfied.coefficients.allSatisfy({ $0 == 0 }) else { throw HarnessError.malformedReferenceData }
     let tail = nativeFieldMeanTail([1, 10], weights: [0.9, 0.1])
     guard abs(tail.loss - 4.4) < 1e-12, tail.effectiveWeights == [0.9, 0.35] else { throw HarnessError.malformedReferenceData }
     let result = try solveNativeField(weights: [1]) { coefficients in [SIMD3(1 - coefficients[0], 0, 0)] }

@@ -414,7 +414,7 @@ only, baseline SHA256 verified, guarded original reads and no overwrite.
 
 ### Coupled native profile field
 
-`matching-native-profile-field regression.json capture model.json grid.card.json frozen-grid.json geometry-baseline.heic output-directory [distance|components]`
+`matching-native-profile-field regression.json capture model.json grid.card.json frozen-grid.json geometry-baseline.heic output-directory [distance|components] [meanTail|regionFeasibility]`
 fits a bounded3-cubed RGB additive field represented in the existing9-cubed LUT.
 Curves and native RAW9 input stay fixed. The pure solver uses central native-distance
 derivatives with a half-step stability check, bounded coupled quadratic steps,
@@ -422,7 +422,7 @@ fixed smoothness/ridge priors and actual-loss line search (six iterations maximu
 at most twenty halving trials per step). Stabilized curvature retains a0.1norm
 floor; the bounded quadratic rhs is H*x-g using the declared-objective gradient,
 so stabilization does not replace that first derivative.
-Report contract 3 retains coefficients, derivative checks, line-search trials,
+Report contract 4 retains coefficients, derivative checks, line-search trials,
 baseline/model hashes, sample/region counts, full-region sampling policy and
 explicit termination status. These per-image
 models are private target-assisted diagnostics, not inference or acceptance.
@@ -431,6 +431,15 @@ models are private target-assisted diagnostics, not inference or acceptance.
 `distance` reproduces the initial scalar-distance curvature experiment. Both keep
 the measured mean/tail objective and photographic gates. Budget exhaustion is
 reported, not treated as convergence.
+
+`regionFeasibility` uses equal-region squared positive excess above fitting mean
+DE001.9, a stricter target than photographic acceptance2.0. Every reliable region
+has explicit sample identity. The same positive prior matrix stabilizes steps;
+there is no absolute model penalty competing with feasibility. Reports name the
+objective, prior role, fitting target and final sampled-region means. Sampled-target
+satisfaction is a fit status, never HEIF or independent acceptance. `meanTail`
+retains the pooled objective and absolute prior as the experimental control.
+
 
 `matching-native-input-range regression.json capture grid.card.json frozen-grid.json geometry-baseline.heic output.json`
 reads only the native RAW source, then reports per-channel negative, above1.25 and

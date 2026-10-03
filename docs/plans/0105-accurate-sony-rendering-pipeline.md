@@ -46,10 +46,10 @@ No new third-party dependency without the required ADR.
 | --- | --- | --- |
 | Native input/output | RAW 9, explicit floating-point colour boundaries, shared native owner, native 10-bit SDR HEIF | Retest photographic/detail effects after changes |
 | Input independence | Denied camera-image reads and changed embedded previews yield identical output pixels | Preserve for every final implementation |
-| Colour/tone | Frozen format-5 baseline; native comparison of 204 development pairs; 262 verified training captures with endpoint-inclusive exports available | Historical authored baseline failed 77; current static profile fails 31/204 whole-image limits; attributed region failures remain; no accepted matching recipe |
+| Colour/tone | Frozen format-5 baseline; native comparison of 204 development pairs; 463 verified training captures with endpoint-inclusive exports available | Historical authored baseline failed 77; current static profile fails 31/204 whole-image limits; attributed region failures remain; no accepted matching recipe |
 | Region measurement | Pixelwise mean/p95 gate, separate median diagnostics, fixed RAW geometry; six perturbation views and seven-image grid audit | Original hard regions include a warm-face colour failure, a correspondence-sensitivity failure and three inconclusive regions |
 | Export reliability | 99 guarded RAW exports, format/metadata/original-integrity/cancellation evidence | That batch did not test matching to camera targets |
-| Independent acceptance | 3,768 candidate pairs inventoried; 487 local pairs capture/VV2 verified; prior-use audit | Original 72 temporal groups have prior pixel use; 229 new candidates frozen before pixel use, 208 metadata verified and 21 unavailable; seven temporal candidates across six dates remain below the ten independently checked shoot gate |
+| Independent acceptance | 3,768 candidate pairs inventoried; 463 training and204 development pairs locally capture/VV2 verified; prior-use audit | Original 72 temporal groups have prior pixel use; 229 new candidates frozen before pixel use, 208 metadata verified and 21 unavailable; seven temporal candidates across six dates remain below the ten independently checked shoot gate |
 
 The checked-in recipe is a frozen comparison baseline, not a release-quality
 matching result. Its training priority on six examples is not an acceptance rule.
@@ -263,11 +263,14 @@ Next actions and feedback loops:
 1. The bounded gradient audit and reproduced small-residual solver repair are
    complete. Actual cyan HEIF outcomes are unchanged, so close that investigation;
    do not extend iterations or floor/step sweeps. Residual derivative uncertainty
-   remains a limitation. Next audit fitting loss against each reliable region's
-   feasibility, retaining full support, fixed geometry and photographic limits.
-   Pooled mean/tail plus a prior is not an every-region constraint. A named bounded
-   objective comparison may diagnose that mismatch without claiming global capacity.
-   See [gradient and curvature evidence](../research/2026-10-03-native-objective-gradient-and-curvature.md).
+   remains a limitation. The bounded region-feasibility fit now passes the original
+   cyan/face/white regions and whole native HEIF within the existing field. One
+   reliable grid colour failure and unknown/sensitive areas remain. Close that
+   original-cyan expression investigation without more sweeps. Proceed to shared
+   RAW-only adaptation/training, retaining this target-assisted witness as expression
+   evidence only. All old hard regions, native detail and full204 regression remain
+   gates. See [gradient evidence](../research/2026-10-03-native-objective-gradient-and-curvature.md)
+   and [region feasibility](../research/2026-10-03-native-region-feasibility.md).
 2. Separately attribute daylight tails to colour, fixed correspondence and optical/
    detail coverage. Publish unregistered results and reliable corresponding-area
    results together. Unknown geometry stays unknown; deferred lens work cannot be

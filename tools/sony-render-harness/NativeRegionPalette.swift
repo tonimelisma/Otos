@@ -190,7 +190,7 @@ func nativeRegionPaletteSelfTest() throws {
     let rows: [[String: Any]] = regions.map { ["name": $0.name, "meanDE00Sensitivity": 0.0, "correspondence": ["status": "measured-local", "dx": 0.0, "dy": 0.0]] }
     let support = try nativeMatchingObservations(regions: regions, rows: rows, target: frame, maximumSensitivity: 1)
     let tiny = support.samples.filter { $0.y > 550 }
-    guard support.regions.contains("tiny cyan"), tiny.count == 144, abs(tiny.reduce(0) { $0 + $1.weight } - 1) < 1e-12,
+    guard support.regions.contains("tiny cyan"), tiny.count == 144, tiny.allSatisfy({ $0.regionIndex == 8 }), abs(tiny.reduce(0) { $0 + $1.weight } - 1) < 1e-12,
           support.samples.count <= 9 * 1024 else { throw HarnessError.malformedReferenceData }
     let id = "20260101_120000"
     let card = AppearanceLookCard(formatVersion: 5, maximumLightnessDifference: 2, maximumMedianDE00: 3,
