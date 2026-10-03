@@ -36,7 +36,7 @@ func nativeFieldProfile(_ data: Data, coefficients: [Double]) throws -> Data {
     return result
 }
 
-enum NativeFieldCurvature: String { case distance, components }
+enum NativeFieldCurvature: String { case distance, components, cartesian }
 
 func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLookCard,
                               geometryReport: Data, geometryBaseline: Data, curvature: NativeFieldCurvature = .components, objective: NativeFieldObjective = .meanTail, destination: URL) throws
@@ -91,6 +91,9 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
             if curvature == .distance {
                 return nativeMatchingDistances(pixels, observations: observations).map { SIMD3($0, 0, 0) }
             }
+            if curvature == .cartesian {
+                return nativeMatchingCartesianResiduals(pixels, observations: observations)
+            }
             return nativeMatchingResiduals(pixels, observations: observations)
         }
         evaluations += 1
@@ -124,11 +127,32 @@ func refineNativeProfileField(_ pair: Pair, baseData: Data, card: AppearanceLook
     try nativeFieldProfile(baseData, coefficients: result.coefficients)
         .write(to: destination.appendingPathComponent("model.json"), options: .withoutOverwriting)
     OtosLog.rendering.noticeOperation("matching.nativeField", phase: result.status, fields: [
-        "id": pair.id, "evaluations": String(evaluations), "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
+        "id": pair.id, "curvature": curvature.rawValue, "objective": objective.rawValue,
+        "evaluations": String(evaluations), "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
     ])
 }
 
 func nativeProfileFieldSelfTest() throws {
+    for pair in [(Lab(l: 50, a: 0, b: 0), Lab(l: 50, a: 1, b: 0)),
+                 (Lab(l: 40, a: -30, b: 70), Lab(l: 45, a: 60, b: -40)),
+                 (Lab(l: 0, a: 0, b: 0), Lab(l: 0, a: 0, b: 0))]
+    {
+        guard abs(nativeResidualNorm(ciede2000CartesianResidual(pair.0, pair.1)) - ciede2000(pair.0, pair.1)) < 1e-12 else {
+            throw HarnessError.malformedReferenceData
+        }
+    }
+    let target = Lab(l: 50, a: 1, b: 0)
+    func poleDerivative(_ h: Double, cartesian: Bool) -> SIMD3<Double> {
+        let plus = Lab(l: 50, a: 0, b: h), minus = Lab(l: 50, a: 0, b: -h)
+        return cartesian ? (ciede2000CartesianResidual(plus, target) - ciede2000CartesianResidual(minus, target)) / (2 * h) :
+            (ciede2000Residual(plus, target) - ciede2000Residual(minus, target)) / (2 * h)
+    }
+    let polar = poleDerivative(0.001, cartesian: false), polarHalf = poleDerivative(0.0005, cartesian: false)
+    let cart = poleDerivative(0.001, cartesian: true), cartHalf = poleDerivative(0.0005, cartesian: true)
+    let polarDifference = nativeResidualNorm(polar - polarHalf) / nativeResidualNorm(polarHalf)
+    let cartDifference = nativeResidualNorm(cart - cartHalf) / nativeResidualNorm(cartHalf)
+    guard polarDifference > 0.25, cartDifference < 0.01 else { throw HarnessError.malformedReferenceData }
+    print("Cartesian DE00 residual: exact norm and low-chroma derivative fixture pass; polarHalfDifference=\(polarDifference) cartesianHalfDifference=\(cartDifference)")
     let regional = try nativeFieldRegionalLoss([1, 4], weights: [0.5, 0.5], groups: [0, 1])
     let feasible = try nativeFieldRegionalLoss([1.8, 1.9], weights: [0.5, 0.5], groups: [0, 1])
     guard abs(regional.loss - 2.205) < 1e-12, regional.effectiveWeights == [0, 2.1],

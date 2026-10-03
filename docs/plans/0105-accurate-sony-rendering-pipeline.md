@@ -274,6 +274,22 @@ unregistered/reliable-correspondence views and native detail; median diagnostics
 and offline LDR-FLIP do not replace acceptance. An unsuccessful fixed screen ends
 that bounded experiment rather than starting a knot, prior or iteration sweep.
 
+### Completed order/class checkpoint
+
+The frozen nine-control data-loss audit finds one point/native RGB ranking
+reversal and three RGB/actual-HEIF perceptual-mean ranking disagreements. No shared
+model is changed or promoted. Green's component residual failed derivative
+calibration; one Cartesian-direction residual preserves exact DE00 and passes that
+numerical gate. Its bounded native fit improves whole mean/p95 to2.053/4.264,
+but still fails mean and four declared regions; six remain inconclusive. Foliage's
+eight eligible regions already pass while whole HEIF and excluded sunlit foliage
+fail. Neither provides universal global expression. Close these bounded fits
+without iteration/target/floor sweeps. Keep explicit numerical diagnostics and
+route green failures to representation/spatial attribution, foliage to independent
+correspondence/detail attribution, and demonstrated original-cyan expression to
+shared RAW-only prediction. See
+[order and class evidence](../research/2026-10-03-native-objective-order-and-class-expression.md).
+
 ## Immediate execution
 
 Continue the plan; photographic acceptance remains open. The original static

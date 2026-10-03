@@ -199,6 +199,16 @@ func nativeMatchingResiduals(_ pixels: RGBFrame, observations: [NativeMatchingOb
     }
 }
 
+/// Same samples and exact metric norm; Cartesian direction avoids a polar
+/// residual basis singularity at achromatic pixels. Photographic gates are fixed.
+func nativeMatchingCartesianResiduals(_ pixels: RGBFrame, observations: [NativeMatchingObservation]) -> [SIMD3<Double>] {
+    observations.map { sample in
+        let prediction = nativeMatchingCoordinates(pixels, sample: sample) * 100, reference = sample.target * 100
+        return ciede2000CartesianResidual(Lab(l: prediction.x, a: prediction.y, b: prediction.z),
+                                          Lab(l: reference.x, a: reference.y, b: reference.z))
+    }
+}
+
 /// Bounded whole-image expression diagnostic, not an inference recipe. Geometry
 /// and reliability come from the unchanged RAW baseline report. Existing tone
 /// controls and optionally two input colour-balance gains vary offline.
