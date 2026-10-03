@@ -432,3 +432,23 @@ reads only the native RAW source, then reports per-channel negative, above1.25 a
 above-display-one counts plus affected-pixel unions. Fixed corresponding native
 rectangles retain baseline eligibility. No camera target pixel read is needed;
 counts diagnose association, not causation or photographic acceptance.
+
+## Shared RAW metadata colour-field experiment
+
+`conditional-profile-fit training.json samples-dir capture-audit.json base-model.json constant|wb|iso|wbISO output-dir`
+fits only training-role, endpoint-inclusive contract-3 samples (at least 100
+captures). The RAW-derived capture audit supplies ISO; the sample recipe supplies
+native decoder white-balance temperature. Neither lens nor focal length is a
+predictor. All variants retain the same frozen base profile, bounded 3-cubed
+colour fields and fixed ridge/colour/metadata neighbour priors. Temperature uses
+reciprocal-temperature knots 125/200/400 mired; ISO uses log2(ISO/100) endpoints
+0/7. Convex interpolation caps outside that range. Reports name the RGB surrogate;
+only separately rendered HEIFs establish photographic results.
+
+`sensor-conditional-heif original.arw output.heic media-root model.json` uses
+only guarded RAW and a frozen shared model. `sensor-conditional-evaluate
+verified.json model.json output-dir` uses the same renderer, then scores against
+separate HEIF targets. There is no per-photo lookup or target input to rendering.
+Missing/invalid required metadata and malformed models fail explicitly. These
+models remain experiments until every development and independent acceptance
+gate passes; a useful subset cannot promote a model.

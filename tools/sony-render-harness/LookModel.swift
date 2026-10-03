@@ -53,11 +53,11 @@ struct LookModel: Decodable {
         }
     }
 
-    func evaluateRGB(_ input: [Double]) throws -> [Double] {
+    func evaluateRGB(_ input: [Double], clampOutput: Bool = true) throws -> [Double] {
         guard input.count == 3, input.allSatisfy(\.isFinite) else {
             throw ReferenceError.invalidPixels
         }
-        return value(input)
+        return value(input, clampOutput: clampOutput)
     }
 
     private func value(_ input: [Double], clampOutput: Bool = true) -> [Double] {

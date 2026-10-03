@@ -120,13 +120,13 @@ func exportLookCalibrationPair(_ pair: Pair, output: URL, sampling: CalibrationS
     print("op=calibration.export id=\(pair.id) samples=\(values.count / 6) decoder=9")
 }
 
-private struct CalibrationSample {
+struct CalibrationSample {
     let input: SIMD3<Double>
     let target: SIMD3<Double>
     let weight: Double
 }
 
-private func calibrationSamples(_ manifest: Manifest, root: URL, sampling: CalibrationSampling = .interior) throws -> [CalibrationSample] {
+func calibrationSamples(_ manifest: Manifest, root: URL, sampling: CalibrationSampling = .interior) throws -> [CalibrationSample] {
     var result = [CalibrationSample]()
     for pair in manifest.pairs {
         let path = root.appendingPathComponent(pair.id).appendingPathComponent("samples.f32")

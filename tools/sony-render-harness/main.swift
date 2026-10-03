@@ -506,9 +506,15 @@ func run() throws {
         try lookCalibrationSelfTest()
         try nativeProfileObservationSelfTest()
         try nativeProfileFieldSelfTest()
+        try conditionalProfileSelfTest()
         try nativeInputRangeSelfTest()
     } else if arguments[1] == "look-self-test", arguments.count == 4 {
         try lookModelSelfTest(modelPath: arguments[2], vectorsPath: arguments[3])
+    } else if arguments[1] == "conditional-profile-fit", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        guard let kind = ConditionalProfile.Kind(rawValue: arguments[6]) else { throw HarnessError.invalidManifest }
+        try fitConditionalProfile(manifest, root: URL(fileURLWithPath: arguments[3]), metadata: localData(arguments[4]),
+                                  baseData: localData(arguments[5]), kind: kind, destination: URL(fileURLWithPath: arguments[7]))
     } else if ["calibration-joint-fit", "calibration-joint-fit-domain"].contains(arguments[1]), arguments.count == 6 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         try fitJointLookCalibration(manifest, samplesRoot: URL(fileURLWithPath: arguments[3]),
@@ -640,17 +646,19 @@ func run() throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         try print(String(data: encoder.encode(result), encoding: .utf8)!)
-    } else if arguments[1] == "sensor-model-heif", arguments.count == 6 {
-        let model = try LookModel(json: localData(arguments[5]))
+    } else if ["sensor-model-heif", "sensor-conditional-heif"].contains(arguments[1]), arguments.count == 6 {
+        let look: SensorRenderingLook = arguments[1] == "sensor-conditional-heif"
+            ? try .conditional(ConditionalProfile(data: localData(arguments[5])))
+            : try .saved(LookModel(json: localData(arguments[5])))
         let result = try SonySensorRAWHEIFRenderer.render(
             rawURL: URL(fileURLWithPath: arguments[2]),
             destinationURL: URL(fileURLWithPath: arguments[3]),
-            mediaRoots: [URL(fileURLWithPath: arguments[4])], look: .saved(model)
+            mediaRoots: [URL(fileURLWithPath: arguments[4])], look: look
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         try print(String(data: encoder.encode(result), encoding: .utf8)!)
-    } else if ["sensor-raw-evaluate", "sensor-model-evaluate", "authored-evaluate"].contains(
+    } else if ["sensor-raw-evaluate", "sensor-model-evaluate", "sensor-conditional-evaluate", "authored-evaluate"].contains(
         arguments[1].replacingOccurrences(of: "-one", with: "")
     ), arguments.count == (arguments[1].contains("raw-evaluate") ? 4 : 5) +
         (arguments[1].hasSuffix("-one") ? 1 : 0)
@@ -662,6 +670,7 @@ func run() throws {
         let look: SensorRenderingLook = switch action {
         case "sensor-raw-evaluate": .nativeDefault
         case "sensor-model-evaluate": try .saved(LookModel(json: localData(arguments[3])))
+        case "sensor-conditional-evaluate": try .conditional(ConditionalProfile(data: localData(arguments[3])))
         default: try .authored(AuthoredLook(json: localData(arguments[3])))
         }
         let output = URL(fileURLWithPath: arguments[action == "sensor-raw-evaluate" ? 3 : 4])

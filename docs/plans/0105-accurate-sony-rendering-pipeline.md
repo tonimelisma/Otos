@@ -46,7 +46,7 @@ No new third-party dependency without the required ADR.
 | --- | --- | --- |
 | Native input/output | RAW 9, explicit floating-point colour boundaries, shared native owner, native 10-bit SDR HEIF | Retest photographic/detail effects after changes |
 | Input independence | Denied camera-image reads and changed embedded previews yield identical output pixels | Preserve for every final implementation |
-| Colour/tone | Frozen format-5 baseline; native comparison of 204 development pairs; 283 training exports available | 77 fail historical unregistered whole-image limits; attributed region failures remain; no accepted matching recipe |
+| Colour/tone | Frozen format-5 baseline; native comparison of 204 development pairs; 262 verified training captures with endpoint-inclusive exports available | Historical authored baseline failed 77; current static profile fails 31/204 whole-image limits; attributed region failures remain; no accepted matching recipe |
 | Region measurement | Pixelwise mean/p95 gate, separate median diagnostics, fixed RAW geometry; six perturbation views and seven-image grid audit | Original hard regions include a warm-face colour failure, a correspondence-sensitivity failure and three inconclusive regions |
 | Export reliability | 99 guarded RAW exports, format/metadata/original-integrity/cancellation evidence | That batch did not test matching to camera targets |
 | Independent acceptance | 3,768 candidate pairs inventoried; 487 local pairs capture/VV2 verified; prior-use audit | Original 72 temporal groups have prior pixel use; 229 new candidates frozen before pixel use, 208 metadata verified and 21 unavailable; seven temporal candidates across six dates remain below the ten independently checked shoot gate |
@@ -244,8 +244,7 @@ provenance. See [input audit](../research/2026-10-02-input-provenance-and-local-
 The next delivery is a shared RAW-only candidate checked across development
 shoots. Sequential/joint fits on 147 and 262 training captures leave the known
 failures. Endpoint-inclusive training improves cyan error but still fails; all
-four 262-image candidates pass only three of the nine screen captures. Next
-compare constant and RAW-WB/ISO-conditioned shared corrections on date-disjoint
+four 262-image candidates pass only three of the nine screen captures. The first constant and RAW-WB/ISO-conditioned shared correction screen is complete: combined conditioning passes five of nine images versus three for the constant control, with warm-face/towel region improvements but green regressions and persistent cyan/foliage failures. White-balance-only and ISO-only ablations pass four and three respectively. The frozen 204-pair combined check is complete: 186 passes versus 173 for the static baseline, thirteen resolved failures and zero new whole-image failures; 80 captures nevertheless have higher mean error. Eighteen whole-image failures and hard regions still block promotion. Diagnose the omitted WB tint axis and cyan coverage before the next bounded variant; see [conditioning evidence](../research/2026-10-02-raw-metadata-conditioning.md). Continue diagnostic shared corrections on date-disjoint
 development captures, retaining native-order/solver caveats and every hard region; see
 [shared-fitting evidence](../research/2026-10-02-shared-training-and-domain-coverage.md). Keep only a
 bounded solver audit needed to decide that candidate; stop expanding small-set
