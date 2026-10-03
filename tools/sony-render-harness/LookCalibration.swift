@@ -22,9 +22,29 @@ private struct CalibrationRecipe: Codable {
     let calibrationBlurRadius: Double
     let evaluationLongEdge: Int
     let neutralSettings: [String: Double]
+    let samplingPolicy: String?
 }
 
-func exportLookCalibrationPair(_ pair: Pair, output: URL) throws {
+enum CalibrationSampling: String {
+    case interior, modelDomain
+    var contractVersion: Int {
+        self == .interior ? 2 : 3
+    }
+}
+
+/// Change training support explicitly without changing runtime clamping or scoring.
+/// Domain endpoints are valid inputs to the model and must not disappear simply
+/// because a saturated source channel is zero or the camera output is clipped.
+func calibrationPairValues(input: [Float], target: [Float], sampling: CalibrationSampling) -> [Float]? {
+    guard input.count == 3, target.count == 3, (input + target).allSatisfy(\.isFinite) else { return nil }
+    if sampling == .interior {
+        guard input.allSatisfy({ $0 > 0.005 && $0 < 1.245 }), target.allSatisfy({ $0 > 0.005 && $0 < 0.99 }) else { return nil }
+        return input + target
+    }
+    return input.map { min(1.25, max(0, $0)) } + target.map { min(1, max(0, $0)) }
+}
+
+func exportLookCalibrationPair(_ pair: Pair, output: URL, sampling: CalibrationSampling = .interior) throws {
     guard pair.role == .training else { throw LookCalibrationError.invalidTrainingManifest }
     let directory = output.appendingPathComponent(pair.id)
     guard !FileManager.default.fileExists(atPath: directory.path) else {
@@ -75,12 +95,8 @@ func exportLookCalibrationPair(_ pair: Pair, output: URL) throws {
             guard input.rgba[i + 3] > 0.999, reference.rgba[i + 3] > 0.999 else { continue }
             let sourceRGB = Array(input.rgba[i ..< i + 3])
             let targetRGB = Array(reference.rgba[i ..< i + 3])
-            // Calibration omits near-black/clipped samples under the baseline
-            // contract. Photographic scoring does not omit those colors.
-            guard sourceRGB.allSatisfy({ $0.isFinite && $0 > 0.005 && $0 < 1.245 }),
-                  targetRGB.allSatisfy({ $0.isFinite && $0 > 0.005 && $0 < 0.99 })
-            else { continue }
-            values += sourceRGB + targetRGB
+            guard let retained = calibrationPairValues(input: sourceRGB, target: targetRGB, sampling: sampling) else { continue }
+            values += retained
         }
     }
     guard values.count >= 500 * 6 else { throw LookCalibrationError.invalidSamples }
@@ -92,7 +108,7 @@ func exportLookCalibrationPair(_ pair: Pair, output: URL) throws {
     }
     try bytes.write(to: directory.appendingPathComponent("samples.f32"), options: .withoutOverwriting)
     let recipe: [String: Any] = [
-        "contractVersion": 2, "decoder": "9", "samples": values.count / 6,
+        "contractVersion": sampling.contractVersion, "samplingPolicy": sampling.rawValue, "decoder": "9", "samples": values.count / 6,
         "nativeLensCorrectionEnabled": true, "registrationMSE": aligned.mse,
         "calibrationBlurRadius": 1.2, "evaluationLongEdge": 768,
         "neutralSettings": ["boostAmount": 0, "localToneMapAmount": 0, "contrastAmount": 0, "sharpnessAmount": 0],
@@ -110,7 +126,7 @@ private struct CalibrationSample {
     let weight: Double
 }
 
-private func calibrationSamples(_ manifest: Manifest, root: URL) throws -> [CalibrationSample] {
+private func calibrationSamples(_ manifest: Manifest, root: URL, sampling: CalibrationSampling = .interior) throws -> [CalibrationSample] {
     var result = [CalibrationSample]()
     for pair in manifest.pairs {
         let path = root.appendingPathComponent(pair.id).appendingPathComponent("samples.f32")
@@ -121,7 +137,8 @@ private func calibrationSamples(_ manifest: Manifest, root: URL) throws -> [Cali
         let recipePath = root.appendingPathComponent(pair.id).appendingPathComponent("recipe.json")
         guard let recipeData = try? localData(recipePath.path),
               let recipe = try? JSONDecoder().decode(CalibrationRecipe.self, from: recipeData),
-              recipe.contractVersion == 2, recipe.decoder == "9",
+              recipe.contractVersion == sampling.contractVersion, recipe.decoder == "9",
+              sampling == .interior || recipe.samplingPolicy == sampling.rawValue,
               recipe.samples == data.count / 24, recipe.nativeLensCorrectionEnabled,
               recipe.calibrationBlurRadius == 1.2, recipe.evaluationLongEdge == 768,
               recipe.neutralSettings == ["boostAmount": 0, "localToneMapAmount": 0, "contrastAmount": 0, "sharpnessAmount": 0]
@@ -134,9 +151,12 @@ private func calibrationSamples(_ manifest: Manifest, root: URL) throws -> [Cali
         for i in stride(from: 0, to: values.count, by: 6) {
             let x = SIMD3(values[i], values[i + 1], values[i + 2])
             let y = SIMD3(values[i + 3], values[i + 4], values[i + 5])
-            guard (0 ..< 3).allSatisfy({
-                x[$0].isFinite && x[$0] > 0.005 && x[$0] < 1.245
-                    && y[$0].isFinite && y[$0] > 0.005 && y[$0] < 0.99
+            guard (0 ..< 3).allSatisfy({ c in
+                guard x[c].isFinite, y[c].isFinite else { return false }
+                if sampling == .interior {
+                    return x[c] > 0.005 && x[c] < 1.245 && y[c] > 0.005 && y[c] < 0.99
+                }
+                return (0 ... 1.25).contains(x[c]) && (0 ... 1).contains(y[c])
             }) else { throw LookCalibrationError.invalidSamples }
             result.append(CalibrationSample(input: x, target: y, weight: 2500 / Double(data.count / 24)))
         }
@@ -169,7 +189,7 @@ private func isotonic(_ values: [Double], weights: [Double]) -> [Double] {
     return result
 }
 
-func fitLookCalibration(_ manifest: Manifest, samplesRoot: URL, destination: URL) throws {
+func fitLookCalibration(_ manifest: Manifest, samplesRoot: URL, destination: URL, sampling: CalibrationSampling = .interior) throws {
     guard manifest.pairs.count >= 100, manifest.pairs.allSatisfy({ $0.role == .training }) else {
         throw LookCalibrationError.invalidTrainingManifest
     }
@@ -178,10 +198,47 @@ func fitLookCalibration(_ manifest: Manifest, samplesRoot: URL, destination: URL
     guard !FileManager.default.fileExists(atPath: destination.path) else {
         throw LookCalibrationError.existingOutput
     }
-    let started = Date(), samples = try calibrationSamples(manifest, root: samplesRoot)
+    let started = Date(), samples = try calibrationSamples(manifest, root: samplesRoot, sampling: sampling)
     let data = try calibrationModel(samples, note: "RAW 9 encoded-sRGB baseline; fitted only from verified private training captures.")
     try data.write(to: destination, options: .withoutOverwriting)
     print("op=calibration.fit images=\(manifest.pairs.count) samples=\(samples.count) seconds=\(Date().timeIntervalSince(started))")
+}
+
+/// Reuse the constrained profile solver for a camera-wide training candidate.
+/// The training manifest owns eligibility; held-out photographs never enter this
+/// owner. Native HEIF scoring must select the result before runtime promotion.
+func fitJointLookCalibration(_ manifest: Manifest, samplesRoot: URL, initialData: Data, destination: URL, sampling: CalibrationSampling = .interior) throws {
+    guard manifest.pairs.count >= 100, manifest.pairs.allSatisfy({ $0.role == .training }) else {
+        throw LookCalibrationError.invalidTrainingManifest
+    }
+    try validate(manifest, output: samplesRoot)
+    try validate(manifest, output: destination)
+    guard !FileManager.default.fileExists(atPath: destination.path) else {
+        throw LookCalibrationError.existingOutput
+    }
+    let initial = try LookModel(json: initialData)
+    let started = Date(), samples = try calibrationSamples(manifest, root: samplesRoot, sampling: sampling)
+    let fitted = try jointProfileCalibration(samples, initial: initial)
+    var model = try JSONSerialization.jsonObject(with: fitted.data) as! [String: Any]
+    model["note"] = "Shared RAW 9 training candidate; separate verified HEIF targets; native held-out evaluation required."
+    let data = try JSONSerialization.data(withJSONObject: model, options: [.prettyPrinted, .sortedKeys])
+    let report: [String: Any] = ["contractVersion": 1, "validationEvidence": false,
+                                 "scope": "shared training-only joint curve and residual profile", "samplingPolicy": sampling.rawValue,
+                                 "images": manifest.pairs.count, "shootDateGroups": Set(manifest.pairs.map(\.session)).count,
+                                 "samples": samples.count, "initialModelSHA256": SHA256.hash(data: initialData).description,
+                                 "modelSHA256": SHA256.hash(data: data).description,
+                                 "equalImageWeight": 2500, "curveIdentityWeight": 1, "residualRidge": 2, "neighborSmoothness": 10,
+                                 "objective": "RGB least-squares surrogate; not native HEIF DE00", "channels": fitted.diagnostics,
+                                 "elapsedMs": Date().timeIntervalSince(started) * 1000]
+    try Task.checkCancellation()
+    try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+    try data.write(to: destination.appendingPathComponent("model.json"), options: .withoutOverwriting)
+    try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys])
+        .write(to: destination.appendingPathComponent("fit.json"), options: .withoutOverwriting)
+    OtosLog.rendering.noticeOperation("calibration.sharedJoint", phase: "complete", fields: [
+        "images": String(manifest.pairs.count), "samples": String(samples.count),
+        "elapsedMs": String(Date().timeIntervalSince(started) * 1000),
+    ])
 }
 
 /// The same curve/LUT solve serves reproducible baseline fitting and explicitly
