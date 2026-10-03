@@ -232,55 +232,59 @@ and delivery both succeed. Document-only corrections use the lightweight gates.
 
 ## Immediate execution
 
-The broad frozen shared-profile baseline has finished: 204/204 exports,
-173 whole-image colour passes and 31 failures. Old hard regions remain failing
-or inconclusive; whole-image success does not replace them. Report shooting
-conditions, tone/colour, detail and lens coverage separately. The temporary training manifest was lost; a newly frozen date-disjoint list
-contains 263 candidates, of which 262 are locally copied and capture verified.
-Use that explicitly versioned training split rather than claim exact recovery. Historical embedded-camera comparisons and
-preview-guided models are excluded; retained RAW-only results require explicit
-provenance. See [input audit](../research/2026-10-02-input-provenance-and-local-corpus.md).
+Continue the plan; photographic acceptance remains open. The original static
+profile passes 173/204 development images. The frozen shared RAW-WB/ISO candidate
+passes 186/204, resolves thirteen whole-image failures and introduces none; eighty
+captures nevertheless have higher mean error. Eighteen whole-image failures,
+original hard-region failures, native detail and independent acceptance remain
+open. No experimental model is promoted. See
+[conditioning evidence](../research/2026-10-02-raw-metadata-conditioning.md).
 
-The next delivery is a shared RAW-only candidate checked across development
-shoots. Sequential/joint fits on 147 and 262 training captures leave the known
-failures. Endpoint-inclusive training improves cyan error but still fails; all
-four 262-image candidates pass only three of the nine screen captures. The first constant and RAW-WB/ISO-conditioned shared correction screen is complete: combined conditioning passes five of nine images versus three for the constant control, with warm-face/towel region improvements but green regressions and persistent cyan/foliage failures. White-balance-only and ISO-only ablations pass four and three respectively. The frozen 204-pair combined check is complete: 186 passes versus 173 for the static baseline, thirteen resolved failures and zero new whole-image failures; 80 captures nevertheless have higher mean error. Eighteen whole-image failures and hard regions still block promotion. Diagnose the omitted WB tint axis and cyan coverage before the next bounded variant; see [conditioning evidence](../research/2026-10-02-raw-metadata-conditioning.md). Continue diagnostic shared corrections on date-disjoint
-development captures, retaining native-order/solver caveats and every hard region; see
-[shared-fitting evidence](../research/2026-10-02-shared-training-and-domain-coverage.md). Keep only a
-bounded solver audit needed to decide that candidate; stop expanding small-set
-diagnostics without a stated decision and stopping condition. Broader fitting
-uses training roles only; development roles select candidates; untouched
-acceptance remains closed until the candidate is frozen.
+The training corpus now contains 463 capture-verified pairs on the same 36 assigned
+training dates. The added 201 were selected by materialized-file availability
+before pixel reads; the revised split is explicit and is not an exact recovery of
+the lost temporary manifest. Development dates and the new reserve stay excluded.
+WB/tint substitution, equal-date 262/463 fits and capped source-colour weighting
+failed the fixed nine-control screen or removed no failures. Reject those variants;
+do not continue weighting or knot sweeps without a new measured cause.
 
+The native sampler previously erased the original eight-by-eighteen-pixel cyan
+region with its inset. Full scored-region support corrects that omission. A bounded
+six-iteration native field fit now passes the whole image (mean/p95 1.738/4.759),
+face (1.030) and white shirt (0.910), but cyan remains a measured failure at 2.108
+and one reliable grid region fails at 2.043. Five of twenty declared regions fail
+and three remain inconclusive. This target-assisted witness is not inference;
+budget exhaustion is not global incapacity. RAW-only source/preparation audits and
+expanded training results are recorded in
+[source coverage and region support](../research/2026-10-03-source-coverage-and-native-region-support.md).
 
-Keep frozen inference recipes unchanged. Coupled native colour-field fitting
-inside the existing profile produces seven of eight whole-image passes and seven
-frozen-region mean passes, with two new correspondence-sensitivity failures. Five
-clear those colour diagnostics together. Indoor retains seven region failures;
-daylight retains a p95 failure. Signed DE00 component curvature reaches similar
-indoor loss sooner without removing those failures. Every fit exhausts its budget.
-See [coupled field evidence](../research/2026-10-02-native-coupled-colour-field.md).
+Next actions and feedback loops:
 
-Next compare the solver's projected gradient with direct actual-objective finite
-differences, including changing tail membership, and audit whether the objective
-aligns with every-region gates. Do not infer global incapacity from a coarse
-subspace, limited budget or apparent loss plateau. Keep source, field capacity,
-fixed geometry and original gates unchanged for that numerical diagnostic. Then
-quantify indoor native texture/noise separately and inspect daylight correspondence
-and unsampled coverage. Successful justified fits proceed to shared RAW-only
-training/selection and the broader development collection, including old hard
-regions; no target-assisted per-image model becomes an inference recipe.
+1. Audit the actual-objective finite-difference gradient, including tail membership,
+   against the solver's projected surrogate gradient. Retain source, field,
+   full-region geometry and acceptance limits. Inspect each reliable region's loss
+   and support. A numerical mismatch returns to the solver; an objective that
+   conceals a region returns to fitting loss. Stop the bounded audit at its named
+   decision; do not simply extend iteration budgets.
+2. Separately attribute daylight tails to colour, fixed correspondence and optical/
+   detail coverage. Publish unregistered results and reliable corresponding-area
+   results together. Unknown geometry stays unknown; deferred lens work cannot be
+   absorbed into the colour recipe or hidden through registration.
+3. Quantify native texture, edge/halo and flat-region noise against separate HEIF
+   targets. Source ranges are association diagnostics, not a reason to alter RAW9.
+   Change detail processing only for a demonstrated defect; re-export derived
+   training data if native development changes.
+4. Successful expression witnesses proceed to shared RAW-only prediction/training,
+   fixed development screens and the full 204-image regression collection. Every
+   old difficult region remains a gate. Add capacity or local processing only when
+   reliable residuals and numerical evidence justify it.
+5. Keep the reserve pixel-untouched until a candidate and measurement contract are
+   frozen. Its seven provisional groups are below ten independently checked shoots.
+   Complete the independence/coverage audit and obtain eligible additional groups;
+   neither date subdivisions nor development results may replace final acceptance.
 
-Separately attribute the daylight tail to known colour, correspondence and
-optical/detail coverage rather than treating unregistered p95 as pure colour.
-The completed native range audit found negative channels but no values above1.25;
-several indoor failures have nearly no clamped input. Retain source-range/error
-associations without asserting cause, and measure noise/detail independently. Do not fit lens defects into colour or change RAW9.
-A failed numerical/measurement witness returns to its responsible boundary before
-adding local processing or prediction. The unchanged whole-image failures remain
-visible and no diagnostic subset replaces acceptance.
-
-Keep the new acceptance reserve pixel-untouched. Metadata verification alone does
-not make its seven temporal groups ten independently checked shoots. Complete the
-shoot-independence audit and obtain additional eligible groups before final
-acceptance; do not manufacture subdivisions or lower that gate.
+Historical embedded-camera comparisons and preview-guided recipes remain excluded.
+Private media/provenance remain in the user-authorized ignored persistent corpus;
+see [input audit](../research/2026-10-02-input-provenance-and-local-corpus.md). No
+app integration or custom lens profile work is introduced. Delete this plan only
+after every matching, native-quality, generalization and operation gate succeeds.

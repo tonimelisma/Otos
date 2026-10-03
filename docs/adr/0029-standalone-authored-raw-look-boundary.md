@@ -51,6 +51,14 @@ shared model. This is a measured experiment, not an accepted replacement recipe.
 
 Offline calibration owns reference access, role/date-group validation, bounded
 fitting, explicit fitted-example weights and diagnostic capacity recipes.
+`NativeRegionPalette` owns source-only full-region palette and native/reduced
+preparation diagnostics. It reads no camera target and cannot certify matching.
+Native objective fitting samples entire reliably corresponding scored rectangles
+uniformly, with at most 1024 points per region and equal total region weight.
+An inset is rejected because it can omit a small saturated object entirely;
+Gaussian support comes from the already blurred full frame. Unknown geometry
+remains excluded from fitting and reported in output evaluation.
+
 Fitted examples and broad training have disjoint capture-date groups; fitted
 examples are training evidence and never count as independent validation. Reduced aligned observations initialize
 models; actual native HEIFs validate photographic claims. Withheld-region capacity recipes exclude frozen appearance regions from both

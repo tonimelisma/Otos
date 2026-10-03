@@ -282,7 +282,11 @@ you touch two layers, the boundary is probably wrong — move the responsibility
 `NativeRAWDevelopment` owns RAW 9 and independently records native lens correction;
 `AuthoredLook` / `MetalAuthoredLook` own the versioned normalization, tone, creative
 colour and display pixel function; `SonySensorRAWHEIFRenderer` owns native HEIF
-encoding and atomic publication. Calibration/region measurement alone read offline
+encoding and atomic publication. `ConditionalProfile` owns experimental shared
+RAW-WB/ISO colour-field selection over the saved-profile pixel owner.
+`NativeRegionPalette` owns RAW-only source-coverage and native/reduced preparation
+diagnostics; fixed correspondence comes from independent RAW geometry.
+Calibration/region measurement alone read offline
 camera HEIF training/evaluation targets. `ComparisonCalibration` owns development-only
 perturbation audits; pixelwise matching and median diagnostics remain distinct.
 Supplementary FLIP is an external offline tool (ADR 0031), absent from rendering

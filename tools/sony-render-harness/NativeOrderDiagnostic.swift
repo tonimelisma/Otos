@@ -85,7 +85,9 @@ struct NativeMatchingObservation {
 }
 
 /// Shared fixed correspondence and equal-region sampling for native-order fitting.
-/// No source-noise or target-error exclusion changes these observations.
+/// Full scored regions have up to1024 uniform points each. An inset would erase
+/// small saturated objects. No source-noise or target-error exclusion changes
+/// these observations; Gaussian support comes from the already blurred full frame.
 func nativeMatchingObservations(regions: [AppearanceLookCard.Region], rows: [[String: Any]],
                                 target: RGBFrame, maximumSensitivity: Double) throws
     -> (samples: [NativeMatchingObservation], regions: [String])
@@ -101,8 +103,15 @@ func nativeMatchingObservations(regions: [AppearanceLookCard.Region], rows: [[St
               dx.isFinite, dy.isFinite else { continue }
         let q = region.rectangle
         var samples = [NativeMatchingObservation]()
-        for y in stride(from: Int(q[1] * Double(target.height)) + 8, to: Int(q[3] * Double(target.height)) - 8, by: 8) {
-            for x in stride(from: Int(q[0] * Double(target.width)) + 8, to: Int(q[2] * Double(target.width)) - 8, by: 8) {
+        let x0 = Int(q[0] * Double(target.width)), x1 = Int(q[2] * Double(target.width))
+        let y0 = Int(q[1] * Double(target.height)), y1 = Int(q[3] * Double(target.height))
+        guard x1 > x0, y1 > y0 else { continue }
+        var step = max(1, Int(ceil(sqrt(Double((x1 - x0) * (y1 - y0)) / 1024))))
+        while ((x1 - x0 + step - 1) / step) * ((y1 - y0 + step - 1) / step) > 1024 {
+            step += 1
+        }
+        for y in stride(from: y0, to: y1, by: step) {
+            for x in stride(from: x0, to: x1, by: step) {
                 let u = Double(x) + dx, v = Double(y) + dy
                 guard u >= 0, v >= 0, u < Double(target.width - 1), v < Double(target.height - 1) else { continue }
                 let i = (y * target.width + x) * 4

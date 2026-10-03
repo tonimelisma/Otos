@@ -351,8 +351,9 @@ not matching acceptance.
 performs at most 17 native evaluations of existing contrast, pivot, skew and
 saturation controls. It freezes independently established baseline grid
 correspondences and excludes inconclusive/high-sensitivity areas before fitting.
-Equal-region normalized Lab loss samples every eight evaluation pixels after the
-historical blur. The field, normalization, decoder and lens settings stay fixed.
+Equal-region normalized Lab loss uses full scored rectangles after the
+historical blur, with a uniform budget of at most 1024 points per region. Small
+regions retain all eligible pixels; no inset removes small saturated objects. The field, normalization, decoder and lens settings stay fixed.
 This local expression diagnostic does not establish convergence or generalization;
 its fitted recipe must go through actual native HEIF and the original scorecards.
 No diagnostic target or per-image fitted recipe enters automatic inference.
@@ -418,8 +419,9 @@ fits a bounded3-cubed RGB additive field represented in the existing9-cubed LUT.
 Curves and native RAW9 input stay fixed. The pure solver uses central native-distance
 derivatives with a half-step stability check, bounded coupled quadratic steps,
 fixed smoothness/ridge priors and actual-loss line search (six iterations maximum).
-Reports retain coefficients, derivative checks, line-search trials, baseline/model
-hashes, sample/region counts and explicit termination status. These per-image
+Report contract 2 retains coefficients, derivative checks, line-search trials,
+baseline/model hashes, sample/region counts, full-region sampling policy and
+explicit termination status. These per-image
 models are private target-assisted diagnostics, not inference or acceptance.
 
 `components` (default) uses three signed DE00 residuals with the same scalar norm;
@@ -452,3 +454,22 @@ separate HEIF targets. There is no per-photo lookup or target input to rendering
 Missing/invalid required metadata and malformed models fail explicitly. These
 models remain experiments until every development and independent acceptance
 gate passes; a useful subset cannot promote a model.
+
+## Native source coverage and preparation diagnostics
+
+`matching-native-region-palette development.json capture look-card.json frozen-regions.json geometry-baseline.heic output.json`
+exports at most 4096 uniform native source colours per reliable full region, with
+separate signed range counts and samples projected onto the runtime [0,1.25]
+domain. It verifies fixed RAW geometry and its SHA256. Selection/regression roles
+only; no target image is read. Nearest training-colour distances describe coverage,
+not photographic acceptance or proof that colour support is sufficient.
+
+`matching-calibration-source-audit development.json capture look-card.json output.json`
+compares full native RAW development followed by reduction with the reduced RAW
+decoder tap used for shared fitting. Both retain the calibration Gaussian radius
+1.2. `matching-calibration-look-audit development.json capture look-card.json conditional-model.json output.json`
+also compares native look-before-reduction against reduced look-before-blur and
+the current point-RGB initializer. These commands read RAW and the optional frozen
+shared model; neither reads a camera target. Their display-clamped DE00 and signed
+RGB differences diagnose preparation consistency, not actual HEIF matching. They
+fail for training/acceptance roles, invalid inputs and existing output paths.

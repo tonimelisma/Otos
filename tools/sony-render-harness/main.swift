@@ -424,6 +424,28 @@ func run() throws {
         let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[5]))
         try matchingResidualAudit(pair, candidateURL: URL(fileURLWithPath: arguments[4]), card: card,
                                   geometryReport: localData(arguments[6]), geometryBaseline: localData(arguments[7]), destination: output)
+    } else if arguments[1] == "matching-calibration-look-audit", arguments.count == 7 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[6])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[4]))
+        let profile = try ConditionalProfile(data: localData(arguments[5]))
+        try auditNativeCalibrationSource(pair, card: card, profile: profile, destination: output)
+    } else if arguments[1] == "matching-calibration-source-audit", arguments.count == 6 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[5])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[4]))
+        try auditNativeCalibrationSource(pair, card: card, destination: output)
+    } else if arguments[1] == "matching-native-region-palette", arguments.count == 8 {
+        let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
+        let output = URL(fileURLWithPath: arguments[7])
+        try validate(manifest, output: output)
+        guard let pair = manifest.pairs.first(where: { $0.id == arguments[3] }) else { throw HarnessError.invalidManifest }
+        let card = try JSONDecoder().decode(AppearanceLookCard.self, from: localData(arguments[4]))
+        try exportNativeRegionPalette(pair, card: card, geometryReport: localData(arguments[5]), geometryBaseline: localData(arguments[6]), destination: output)
     } else if arguments[1] == "matching-native-input-range", arguments.count == 8 {
         let manifest = try JSONDecoder().decode(Manifest.self, from: localData(arguments[2]))
         let output = URL(fileURLWithPath: arguments[7])
@@ -508,6 +530,7 @@ func run() throws {
         try nativeProfileFieldSelfTest()
         try conditionalProfileSelfTest()
         try nativeInputRangeSelfTest()
+        try nativeRegionPaletteSelfTest()
     } else if arguments[1] == "look-self-test", arguments.count == 4 {
         try lookModelSelfTest(modelPath: arguments[2], vectorsPath: arguments[3])
     } else if arguments[1] == "conditional-profile-fit", arguments.count == 8 {
