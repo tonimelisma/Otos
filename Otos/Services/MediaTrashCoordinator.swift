@@ -284,7 +284,13 @@ actor MediaTrashCoordinator {
                 ? .waitingForSpace
                 : (waitingOnRetry && downloads.isEmpty ? .waitingForDownload : nil)
         )
-        if let next = retryAt.values.min() {
+        // One timer serves both waits: the earliest download retry, and a periodic
+        // free-space recheck while items wait at the floor (nothing else would wake the
+        // queue when space is freed outside Otos).
+        let spaceRecheck = waitingForSpace.isEmpty
+            ? nil
+            : clock.now.advanced(by: retryPolicy.delays.last ?? .seconds(300))
+        if let next = ([retryAt.values.min(), spaceRecheck].compactMap(\.self)).min() {
             scheduleWake(at: next)
         }
     }

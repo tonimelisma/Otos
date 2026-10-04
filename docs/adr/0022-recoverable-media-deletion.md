@@ -15,25 +15,39 @@ second lease.
 
 ## Decision
 
-`MediaTrashCoordinator` is the lossless serial actor for this command. Store
-supplies a snapshot of one cataloged primary plus its cataloged useful
-companions, excluding device/MTP roots. The coordinator acquires a
-`RootNamespaceMutationLease` for the root, revalidates ownership before each
-filesystem await, calls `FileManager.trashItem` off the MainActor, and moves
-companions before the primary. It never calls `removeItem` or unlinks.
+Move to Trash is a durable intent drained by a queue, not a blocking command.
+Confirming hides the targets by recording `pending_trash_batch_unix_ms` on their
+catalog rows (ARC-058); every user-facing media query excludes those rows, while
+the files, rows and overlay stay until the files are proven gone. The intent
+survives relaunch, and a scan that sees a file vanish ends it by deleting the row.
 
-A dataless cloud placeholder cannot leave its File Provider domain:
+`MediaTrashCoordinator` owns the queue. Store supplies each pending item as one
+cataloged primary plus its cataloged useful companions, excluding device/MTP
+roots. A dataless cloud placeholder cannot leave its File Provider domain:
 `trashItem` refuses it with `NSFeatureUnsupportedError` (Cocoa 3328), while the
 same file trashes normally once local (`docs/research/trash-dataless-placeholders.md`).
-So immediately before each member's trash call the coordinator checks
-`FileMaterialization.status`; a dataless member is deliberately materialized
-through the shared `MaterializationCoordinator` at `command` priority
-(user-commanded, off-screen work: ahead of enrichment, behind on-screen work, and
-under the bounded background persistence, so a stuck provider fails the member
-instead of holding the lease and the serial command indefinitely), and the
-lease is revalidated after that await. A member that does not become local fails that path without a trash
-call. Every per-path failure logs its reason with the error domain/code or the
-materialization outcome.
+So the coordinator first materializes an item's dataless members through the
+shared `MaterializationCoordinator` at `command` priority (user-commanded,
+off-screen work: ahead of enrichment, behind on-screen work, and under the
+bounded background persistence). Downloads run without the root lease. Once
+every member is local, the coordinator acquires the `RootNamespaceMutationLease`
+for the root, revalidates ownership and rechecks that each member is still local
+(a provider may evict again), calls `FileManager.trashItem` off the MainActor,
+companions before the primary, and releases the lease. The lease is never held
+across a download.
+
+Download outcomes split three ways. Transient ones (timeout, provider unavailable,
+cancellation) leave the item pending and retry with backoff. A definitive refusal
+(`requestFailed`), or a download that would leave the volume below the 5 GB
+`FreeSpaceFloor` measured at the attempt (ADR 0027), asks the user whether to
+delete the items immediately. Only a `Delete` answer to that per-occurrence
+question reaches `FileManager.removeItem`; Otos never deletes permanently on its
+own. `Cancel` re-shows a failed download's items, and at the floor keeps them
+pending, asking nothing more until a later pass finds room. Deleting a dataless
+placeholder with `removeItem` succeeds immediately without a download (probed
+2026-10-04); whether the provider keeps a cloud recycle-bin copy is its own
+behavior, and the prompt promises nothing about it. Every per-path failure logs
+its reason with the error domain/code or the materialization outcome.
 
 Each path returns an independent success result. Store reconciliation removes
 only catalog rows for paths the filesystem operation reports as moved. A
@@ -52,7 +66,9 @@ against a root currently being trashed or reorganized.
 
 | Alternative | Why rejected |
 | --- | --- |
-| Permanent deletion or an `removeItem` fallback | Violates recoverability and the explicit system-Trash contract. |
+| Automatic permanent deletion or a silent `removeItem` fallback | Violates recoverability; permanent deletion exists only behind an explicit per-occurrence user answer. |
+| Trash as one blocking serial command (the previous design) | Holds the lease and the user's command across arbitrarily long downloads, and loses the intent on quit. |
+| An in-memory pending set or a separate pending table | Loses the intent on quit, or adds a second identity for a fact that belongs to the asset row. |
 | Delete a dataless placeholder in place through the provider (its cloud recycle bin) | Not recoverable from this Mac's Trash, and provider-specific; materializing first keeps one recoverable path for every root. |
 | Refuse dataless members with an explanatory message | Most library media is dataless, so Move to Trash would fail for most items. |
 | Delete every same-basename sidecar | Invents physical membership and can destroy an unrelated user file. |

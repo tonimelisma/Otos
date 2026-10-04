@@ -923,25 +923,15 @@ extension CatalogStore {
         let changed = try await dbWriter.write { db in
             var changed: [MediaAssetID] = []
             for (id, rootID) in eligible {
-                if let batch {
-                    try db.execute(
-                        sql: """
-                        UPDATE media_asset SET pending_trash_batch_unix_ms = ?
-                        WHERE library_root_id = ? AND relative_path = ?
-                          AND pending_trash_batch_unix_ms IS NULL
-                        """,
-                        arguments: [batch.unixMilliseconds, rootID, id.relativePath.rawValue]
-                    )
-                } else {
-                    try db.execute(
-                        sql: """
-                        UPDATE media_asset SET pending_trash_batch_unix_ms = NULL
-                        WHERE library_root_id = ? AND relative_path = ?
-                          AND pending_trash_batch_unix_ms IS NOT NULL
-                        """,
-                        arguments: [rootID, id.relativePath.rawValue]
-                    )
-                }
+                // Mark touches only visible rows; clear touches only pending ones.
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET pending_trash_batch_unix_ms = ?
+                    WHERE library_root_id = ? AND relative_path = ?
+                      AND (pending_trash_batch_unix_ms IS NULL) = ?
+                    """,
+                    arguments: [batch?.unixMilliseconds, rootID, id.relativePath.rawValue, batch != nil]
+                )
                 if db.changesCount > 0 {
                     changed.append(id)
                 }
