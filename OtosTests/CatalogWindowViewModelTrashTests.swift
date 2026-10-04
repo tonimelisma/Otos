@@ -84,6 +84,45 @@ struct CatalogWindowViewModelTrashTests {
         #expect(model.largeTrashDownloadPrompt == nil)
     }
 
+    @Test func loupeTrashingTheLastItemFocusesThePreviousOne() async throws {
+        let fixture = try await makeTrashFixture(count: 3)
+        defer { fixture.removeRoot() }
+        let model = makeTrashModel(store: fixture.store)
+        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+        model.openLoupe(id: fixture.ids[2])
+
+        model.moveTargetedMediaToTrash()
+
+        try await waitForTrash("focus moved") { model.focusedAssetID != fixture.ids[2] }
+        #expect(model.focusedAssetID == fixture.ids[1])
+        #expect(model.gridSelection.selection == [fixture.ids[1]])
+    }
+
+    @Test func loupeTrashingAMiddleItemFocusesTheNextOne() async throws {
+        let fixture = try await makeTrashFixture(count: 3)
+        defer { fixture.removeRoot() }
+        let model = makeTrashModel(store: fixture.store)
+        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+        model.openLoupe(id: fixture.ids[1])
+
+        model.moveTargetedMediaToTrash()
+
+        try await waitForTrash("focus moved") { model.focusedAssetID != fixture.ids[1] }
+        #expect(model.focusedAssetID == fixture.ids[2])
+    }
+
+    @Test func gridTrashingTheTrailingItemsSelectsTheOneBeforeThem() async throws {
+        let fixture = try await makeTrashFixture(count: 3)
+        defer { fixture.removeRoot() }
+        let model = makeTrashModel(store: fixture.store)
+        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+        model.selectAssets([fixture.ids[1], fixture.ids[2]])
+
+        model.moveTargetedMediaToTrash()
+
+        try await waitForTrash("selection moved") { model.gridSelection.selection == [fixture.ids[0]] }
+    }
+
     @Test func noTargetDoesNothing() {
         let model = makeTrashModel(store: CatalogStore(location: .inMemory))
         model.moveTargetedMediaToTrash()
