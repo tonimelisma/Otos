@@ -47,6 +47,55 @@ extension CatalogWindowViewModel {
             return
         }
         let ids = mediaChoiceTargetIDs(.current)
+        guard asksBeforeLargeTrashDownload else {
+            performMoveToTrash(ids)
+            return
+        }
+        // Sizing reads member status off the MainActor; `mediaTrashTask` keeps a second
+        // command from starting until this one has either asked or moved.
+        let coordinator = mediaTrashCoordinator
+        mediaTrashTask = Task { [weak self, coordinator] in
+            let bytes = await coordinator.downloadBytes(for: ids)
+            guard let self else { return }
+            mediaTrashTask = nil
+            if LargeTrashDownloadPrompt.asks(bytes: bytes, preference: asksBeforeLargeTrashDownload) {
+                largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes)
+                OtosLog.ui.notice(
+                    "op=mediaTrash.prompt phase=shown count=\(ids.count, privacy: .public) bytes=\(bytes, privacy: .public)"
+                )
+            } else {
+                performMoveToTrash(ids)
+            }
+        }
+    }
+
+    /// `Download and Move to Trash`: the items the user was asked about are moved.
+    func confirmLargeTrashDownload() {
+        guard let prompt = largeTrashDownloadPrompt else { return }
+        largeTrashDownloadPrompt = nil
+        OtosLog.ui.notice("op=mediaTrash.prompt phase=confirmed count=\(prompt.ids.count, privacy: .public)")
+        performMoveToTrash(prompt.ids)
+    }
+
+    func cancelLargeTrashDownload() {
+        guard let prompt = largeTrashDownloadPrompt else { return }
+        largeTrashDownloadPrompt = nil
+        OtosLog.ui.notice("op=mediaTrash.prompt phase=cancelled count=\(prompt.ids.count, privacy: .public)")
+    }
+
+    /// The one writer of the large-download preference: Settings ▸ General and the
+    /// prompt's `Do not ask again` both call it.
+    func setAsksBeforeLargeTrashDownload(_ asks: Bool) {
+        guard asksBeforeLargeTrashDownload != asks else { return }
+        asksBeforeLargeTrashDownload = asks
+        preferences.set(asks, forKey: Self.asksBeforeLargeTrashDownloadDefaultsKey)
+        OtosLog.ui.notice("op=mediaTrash.prompt phase=\(asks ? "enabled" : "suppressed", privacy: .public)")
+    }
+
+    private func performMoveToTrash(_ ids: [MediaAssetID]) {
+        guard mediaTrashTask == nil, !ids.isEmpty else {
+            return
+        }
         let orderedIDs = state.mediaGrid.orderedAssetIDs
         let removed = Set(ids)
         let successor = ids

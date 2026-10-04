@@ -15,6 +15,8 @@ struct SettingsView: View {
     let setImportPreferences: (ImportPreferences) -> Void
     let advanceAfterMediaChoice: Bool
     let setAdvanceAfterMediaChoice: (Bool) -> Void
+    let asksBeforeLargeTrashDownload: Bool
+    let setAsksBeforeLargeTrashDownload: (Bool) -> Void
 
     var body: some View {
         TabView {
@@ -24,6 +26,13 @@ struct SettingsView: View {
                     isOn: Binding(
                         get: { advanceAfterMediaChoice },
                         set: { value in setAdvanceAfterMediaChoice(value) }
+                    )
+                )
+                Toggle(
+                    "Ask before downloading more than 100 MB to move items to the Trash",
+                    isOn: Binding(
+                        get: { asksBeforeLargeTrashDownload },
+                        set: { value in setAsksBeforeLargeTrashDownload(value) }
                     )
                 )
             }
@@ -379,7 +388,9 @@ private struct LibrariesSettingsView: View {
         importPreferences: .default,
         setImportPreferences: { _ in },
         advanceAfterMediaChoice: false,
-        setAdvanceAfterMediaChoice: { _ in }
+        setAdvanceAfterMediaChoice: { _ in },
+        asksBeforeLargeTrashDownload: true,
+        setAsksBeforeLargeTrashDownload: { _ in }
     )
 }
 

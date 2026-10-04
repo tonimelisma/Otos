@@ -64,7 +64,11 @@ struct TrashStatusPresentationTests {
 
         let floor = TrashDecisionPrompt(decision: .diskFloor([one, two]))
         #expect(floor.title == "Delete 2 Items Immediately?")
-        #expect(floor.message == "There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this.")
+        #expect(
+            floor.message
+                == "There isn’t enough free space to download them so they can be moved to the Trash. "
+                + "You can’t undo this."
+        )
         #expect(TrashDecisionPrompt.deleteTitle == "Delete")
     }
 
@@ -75,6 +79,31 @@ struct TrashStatusPresentationTests {
         let merged = MediaTrashCoordinator.Decision.downloadFailed([one]).merging(.downloadFailed([one, two]))
         #expect(merged == .downloadFailed([one, two]))
         #expect(!MediaTrashCoordinator.Decision.downloadFailed([one]).isSameKind(as: .diskFloor([one])))
+    }
+}
+
+/// The large-download question (Plan 0104): asked only above 100 MB of downloads and
+/// only while the preference allows it.
+struct LargeTrashDownloadPromptTests {
+    @Test func asksOnlyAboveTheThresholdWhileThePreferenceIsOn() {
+        #expect(LargeTrashDownloadPrompt.asks(bytes: 100_000_001, preference: true))
+        #expect(!LargeTrashDownloadPrompt.asks(bytes: 100_000_000, preference: true))
+        #expect(!LargeTrashDownloadPrompt.asks(bytes: 5_000_000_000, preference: false))
+    }
+
+    @Test func titleNamesSizeAndCount() {
+        let root = LibraryRootPath(rawValue: "/Pictures")
+        let one = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "Trip/clip.mov"))
+        let two = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "b.jpg"))
+        #expect(
+            LargeTrashDownloadPrompt(ids: [one], bytes: 1_200_000_000).title
+                == "Download 1.2 GB to Move “clip.mov” to Trash?"
+        )
+        #expect(
+            LargeTrashDownloadPrompt(ids: [one, two], bytes: 340_000_000).title
+                == "Download 0.3 GB to Move 2 Items to Trash?"
+        )
+        #expect(LargeTrashDownloadPrompt.confirmTitle == "Download and Move to Trash")
     }
 }
 

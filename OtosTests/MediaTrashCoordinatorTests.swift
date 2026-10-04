@@ -490,6 +490,19 @@ extension MediaTrashCoordinatorTests {
         await coordinator.shutdown()
         await relaunched.shutdown()
     }
+
+    @Test func downloadBytesCountOnlyCloudOnlyMembers() async throws {
+        let fixture = try await TrashFixture.make(primaryBytes: 1000)
+        let local = LocalFiles(dataless: ["a.jpg"])
+        let coordinator = MediaTrashCoordinator(
+            store: fixture.store,
+            materializationRequester: nil,
+            status: { local.status($0) }
+        )
+        #expect(await coordinator.downloadBytes(for: [fixture.id]) == 1000)
+        local.materialize("a.jpg")
+        #expect(await coordinator.downloadBytes(for: [fixture.id]) == 0)
+    }
 }
 
 private struct TrashFixture {

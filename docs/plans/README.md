@@ -3,6 +3,19 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0104 (recoverable Move to Trash for cloud-only media, with undo) is complete
+across four increments and was removed at closure. It opened 2026-10-04 when Move
+to Trash failed for every cloud-only OneDrive item (`trashItem` refuses a dataless
+placeholder, Cocoa 3328). Its decisions live in ENR-008 (the bounded `command`
+materialization priority), ARC-058 (pending trash as a durable fact on the asset
+row), APP-027 (the queue, the delete-immediately questions at a definitive download
+failure or the 5 GB floor), APP-039 (trash on the undo stack), APP-045 and DES-090
+(the over-100 MB download question and its setting), DES-089 and
+`docs/design/trash-status-bar.md` (the trash status bar), DES-076, MED-001 and ADR
+0022. Its research is `docs/research/trash-dataless-placeholders.md`. One question
+stays open there: whether Finder's own Move to Trash downloads a large cloud-only
+file, which only a manual Finder test can settle.
+
 Plan 0103 (Share, Open With, context menus, drag-out, curation undo, loupe zoom and
 info, trash confirmation) is complete across eight increments A–H and was removed at
 closure. It opened 2026-09-13 from an ideation pass on the macOS Share button and

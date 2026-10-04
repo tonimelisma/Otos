@@ -16,6 +16,38 @@ import SwiftUI
 struct ContentView: View {
     @Bindable var viewModel: CatalogWindowViewModel
 
+    /// The large-download question (Plan 0104): the suppression checkbox writes the same
+    /// preference as Settings ▸ General.
+    private var largeTrashDownloadAlertHost: some View {
+        Color.clear
+            .alert(
+                viewModel.largeTrashDownloadPrompt?.title ?? "",
+                isPresented: Binding(
+                    get: { viewModel.largeTrashDownloadPrompt != nil },
+                    // Buttons answer; Escape triggers Cancel.
+                    set: { _ in }
+                )
+            ) {
+                Button(LargeTrashDownloadPrompt.confirmTitle) {
+                    viewModel.confirmLargeTrashDownload()
+                }
+                .keyboardShortcut(.defaultAction)
+                Button("Cancel", role: .cancel) {
+                    viewModel.cancelLargeTrashDownload()
+                }
+            } message: {
+                if let prompt = viewModel.largeTrashDownloadPrompt {
+                    Text(prompt.message)
+                }
+            }
+            .dialogSuppressionToggle(
+                isSuppressed: Binding(
+                    get: { !viewModel.asksBeforeLargeTrashDownload },
+                    set: { suppressed in viewModel.setAsksBeforeLargeTrashDownload(!suppressed) }
+                )
+            )
+    }
+
     var body: some View {
         NavigationSplitView {
             SidebarView(
@@ -81,6 +113,8 @@ struct ContentView: View {
                     TrashStatusBar(presentation: trashStatus)
                 }
             }
+            // Hosted on its own view so `Do not ask again` applies to this alert only.
+            .background { largeTrashDownloadAlertHost }
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {

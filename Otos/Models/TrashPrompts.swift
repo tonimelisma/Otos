@@ -36,9 +36,43 @@ nonisolated struct TrashDecisionPrompt: Equatable, Sendable {
         case .diskFloor:
             return one
                 ? "There isn’t enough free space to download it so it can be moved to the Trash. You can’t undo this."
-                : "There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this."
+                : "There isn’t enough free space to download them so they can be moved to the Trash. "
+                + "You can’t undo this."
         }
     }
 
     static let deleteTitle = "Delete"
+}
+
+/// The question a Move to Trash asks when it must download more than
+/// `thresholdBytes` of cloud-only items first (Plan 0104). Downloading is what keeps
+/// them restorable from the Trash. Only bytes that need downloading count: the cost the
+/// user is being told about. The title names the act with its size and count (DES-036);
+/// the act is the user's own, so its button is not destructive-styled.
+nonisolated struct LargeTrashDownloadPrompt: Equatable, Sendable {
+    static let thresholdBytes: Int64 = 100_000_000
+
+    let ids: [MediaAssetID]
+    let bytes: Int64
+
+    /// Whether a command needing `bytes` of downloads must ask first.
+    static func asks(bytes: Int64, preference: Bool) -> Bool {
+        preference && bytes > thresholdBytes
+    }
+
+    var title: String {
+        let size = ImportBarByteFormat.string(bytes: bytes)
+        if ids.count == 1, let only = ids.first {
+            let name = URL(fileURLWithPath: only.relativePath.rawValue).lastPathComponent
+            return "Download \(size) to Move “\(name)” to Trash?"
+        }
+        return "Download \(size) to Move \(ids.count) Items to Trash?"
+    }
+
+    var message: String {
+        "Cloud-only items are downloaded first so you can restore them from the Trash. "
+            + "They’re hidden in Otos until they’re moved."
+    }
+
+    static let confirmTitle = "Download and Move to Trash"
 }

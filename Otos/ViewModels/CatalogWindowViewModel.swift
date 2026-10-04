@@ -155,6 +155,12 @@ final class CatalogWindowViewModel {
     /// order. The preference is read and written here so grid, loupe, compare, keyboard,
     /// and menu commands share one behavior owner.
     var advanceAfterMediaChoice: Bool
+    /// Whether a Move to Trash that must download more than
+    /// `LargeTrashDownloadPrompt.thresholdBytes` asks first (Plan 0104). One preference
+    /// with two editors: the prompt's `Do not ask again` and Settings ▸ General.
+    var asksBeforeLargeTrashDownload: Bool
+    /// The large-download question awaiting an answer; nil when none.
+    var largeTrashDownloadPrompt: LargeTrashDownloadPrompt?
     /// Full-size decodes keyed by pane slot and bound to the asset they belong to.
     /// Views render `image` only when `id` matches the pane's expected asset.
     var panePreviews: [PaneSlot: PanePreview] = [:]
@@ -336,6 +342,8 @@ final class CatalogWindowViewModel {
         let storedStrip = preferences.object(forKey: Self.stripTileEdgeDefaultsKey) as? Double
         stripTileEdge = Self.clampedStripTileEdge(storedStrip.map { CGFloat($0) })
         advanceAfterMediaChoice = preferences.bool(forKey: Self.advanceAfterMediaChoiceDefaultsKey)
+        asksBeforeLargeTrashDownload = preferences.object(forKey: Self.asksBeforeLargeTrashDownloadDefaultsKey)
+            as? Bool ?? true
         let storedDismissedIdentities = preferences.string(forKey: Self.dismissedCameraBannersDefaultsKey)
         dismissedCameraBannerIdentities = Set(
             (storedDismissedIdentities ?? "").split(separator: "\n").map(String.init)
@@ -951,6 +959,7 @@ extension CatalogWindowViewModel {
     static let gridColumnCountDefaultsKey = "mediaGridColumnCount"
     static let stripTileEdgeDefaultsKey = "mediaStripTileEdge"
     static let advanceAfterMediaChoiceDefaultsKey = "advanceAfterMediaChoice"
+    static let asksBeforeLargeTrashDownloadDefaultsKey = "trash.asksBeforeLargeDownload"
     static let dismissedCameraBannersDefaultsKey = "dismissedCameraConnectionBannerIdentities"
 
     /// Clamps into 3–9, persists, and publishes; a no-op re-request does not re-persist.
