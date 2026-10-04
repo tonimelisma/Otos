@@ -452,7 +452,7 @@ extension MediaTrashCoordinatorTests {
         let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
 
         #expect(outcome.failed == [fixture.id])
-        #expect(try String(contentsOf: fixture.root.appending(path: "a.jpg"), encoding: .utf8) == "newer")
+        #expect(try Data(contentsOf: fixture.root.appending(path: "a.jpg")) == Data("newer".utf8))
         await coordinator.shutdown()
     }
 }
