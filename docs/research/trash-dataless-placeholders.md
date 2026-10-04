@@ -98,4 +98,3 @@ These shape Plan 0104.
 - HIG: [Alerts](https://developer.apple.com/design/human-interface-guidelines/alerts),
   [Settings](https://developer.apple.com/design/human-interface-guidelines/settings);
   [`NSAlert.showsSuppressionButton`](https://developer.apple.com/documentation/appkit/nsalert/showssuppressionbutton)
-
