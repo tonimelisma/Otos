@@ -375,6 +375,88 @@ struct MediaTrashCoordinatorTests {
     }
 }
 
+extension MediaTrashCoordinatorTests {
+    /// A trash stand-in that really moves files into a scratch folder and reports where,
+    /// so undo can be exercised without touching the user's Trash.
+    private static func scratchTrash() throws -> (URL, MediaTrashCoordinator.TrashExecutor) {
+        let trash = try makeCatalogStoreTemporaryDirectory()
+        return (trash, { url in
+            let destination = trash.appending(path: UUID().uuidString + "-" + url.lastPathComponent)
+            try FileManager.default.moveItem(at: url, to: destination)
+            return destination
+        })
+    }
+
+    @Test func undoPutsATrashedItemBackWithItsCurationChoice() async throws {
+        let fixture = try await TrashFixture.make()
+        _ = try await fixture.store.setMediaChoice(.liked, for: [fixture.id])
+        let (_, executor) = try Self.scratchTrash()
+        let coordinator = MediaTrashCoordinator(
+            store: fixture.store,
+            materializationRequester: nil,
+            trashExecutor: executor
+        )
+        let batch = MediaTrashBatchID()
+        _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
+        await coordinator.start()
+        try await waitUntil("trashed") { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
+        #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "a.jpg").path))
+
+        let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
+
+        #expect(outcome == MediaTrashCoordinator.UndoResult(restored: [fixture.id], failed: []))
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "a.jpg").path))
+        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "a.xmp").path))
+        let restored = try await fixture.store.mediaAssets(for: [fixture.id])
+        #expect(restored[fixture.id]?.mediaChoice == .liked)
+        #expect(try await catalogStoreTestState(fixture.store).testAssets.map(\.id) == [fixture.id])
+        await coordinator.shutdown()
+    }
+
+    @Test func undoOfAStillPendingItemWithdrawsIt() async throws {
+        let fixture = try await TrashFixture.make()
+        let local = LocalFiles(dataless: ["a.jpg"])
+        let coordinator = MediaTrashCoordinator(
+            store: fixture.store,
+            materializationRequester: FakeRequester { _ in
+                do { try await Task.sleep(for: .seconds(60)) } catch { return .cancelled }
+                return result(.materialized)
+            },
+            status: { local.status($0) },
+            trashExecutor: { _ in nil }
+        )
+        let batch = MediaTrashBatchID()
+        _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
+        await coordinator.start()
+
+        let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
+        #expect(outcome.restored == [fixture.id])
+        #expect(try await fixture.store.pendingTrashItems().isEmpty)
+        await coordinator.shutdown()
+    }
+
+    @Test func undoNeverOverwritesAFileThatNowHasThePath() async throws {
+        let fixture = try await TrashFixture.make()
+        let (_, executor) = try Self.scratchTrash()
+        let coordinator = MediaTrashCoordinator(
+            store: fixture.store,
+            materializationRequester: nil,
+            trashExecutor: executor
+        )
+        let batch = MediaTrashBatchID()
+        _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
+        await coordinator.start()
+        try await waitUntil("trashed") { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
+        try writeCatalogStoreFile(fixture.root.appending(path: "a.jpg"), contents: "newer")
+
+        let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
+
+        #expect(outcome.failed == [fixture.id])
+        #expect(try String(contentsOf: fixture.root.appending(path: "a.jpg"), encoding: .utf8) == "newer")
+        await coordinator.shutdown()
+    }
+}
+
 private struct TrashFixture {
     let store: CatalogStore
     let root: URL

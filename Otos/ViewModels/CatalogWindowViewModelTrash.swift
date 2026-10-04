@@ -10,42 +10,21 @@ import OSLog
 /// Navigation after hiding is rejected when the user changed mode, query, or pane
 /// ownership while the mark was suspended.
 ///
-/// Every surface — Photo menu, ⌘⌫, context menu — calls `requestMoveTargetedMediaToTrash()`,
-/// which publishes a `TrashConfirmation` the window renders as a confirmation dialog;
-/// only its confirm action runs `moveTargetedMediaToTrash()`. The targets are resolved
-/// again at confirmation so a selection changed under an open dialog is never trashed.
+/// Every surface — Photo menu, ⌘⌫, context menu, toolbar Action menu — calls
+/// `moveTargetedMediaToTrash()`, which acts at once: the act is undoable, so it asks
+/// nothing first (HIG: no alerts for common, undoable actions; Plan 0104 D1).
+///
+/// Undo (APP-039). Once the Store has hidden the items, `Undo Move to Trash` is
+/// registered on the window's one undo manager. Undo and redo register their opposite
+/// entry synchronously at fire time, as curation's do, then hand the work to the
+/// queue: undo asks `MediaTrashCoordinator.undo` to withdraw what is still pending and
+/// put back what is in the Trash; redo marks the restored items pending again under a
+/// new command identity.
 ///
 /// The queue reports back through one event stream consumed here: its state feeds the
 /// bottom status bar, its decisions queue as prompts (D3/D4 of Plan 0104), and a move
-/// that failed after download re-shows the existing failure alert.
+/// that failed after download re-shows the failure alert.
 extension CatalogWindowViewModel {
-    /// Photo ▸ Move to Trash, ⌘⌫, and the context menu item.
-    func requestMoveTargetedMediaToTrash() {
-        guard canMoveTargetedMediaToTrash else {
-            return
-        }
-        let ids = mediaChoiceTargetIDs(.current)
-        pendingTrashConfirmation = TrashConfirmation(ids: ids)
-        OtosLog.ui.notice("op=trash.confirm phase=ask count=\(ids.count, privacy: .public)")
-    }
-
-    func confirmMoveToTrash() {
-        guard let pending = pendingTrashConfirmation else {
-            return
-        }
-        pendingTrashConfirmation = nil
-        OtosLog.ui.notice("op=trash.confirm phase=confirmed count=\(pending.count, privacy: .public)")
-        moveTargetedMediaToTrash()
-    }
-
-    func cancelMoveToTrash() {
-        guard let pending = pendingTrashConfirmation else {
-            return
-        }
-        pendingTrashConfirmation = nil
-        OtosLog.ui.notice("op=trash.confirm phase=cancelled count=\(pending.count, privacy: .public)")
-    }
-
     var canMoveTargetedMediaToTrash: Bool {
         guard mediaTrashTask == nil else {
             return false
@@ -85,6 +64,7 @@ extension CatalogWindowViewModel {
         )
         startMediaTrash()
         let coordinator = mediaTrashCoordinator
+        OtosLog.ui.notice("op=trash.move phase=start count=\(ids.count, privacy: .public)")
         mediaTrashTask = Task { [weak self, store = catalogStore, coordinator] in
             let batch = MediaTrashBatchID()
             let hidden = await (try? store.markPendingTrash(ids, batch: batch)) ?? []
@@ -97,8 +77,70 @@ extension CatalogWindowViewModel {
                 requested=\(ids.count, privacy: .public) hidden=\(hidden.count, privacy: .public)
                 """
             )
+            if !hidden.isEmpty {
+                registerTrashUndo(batch: batch, ids: hidden)
+            }
             navigateAfterHiding(Set(hidden), originalIDs: ids, context: context)
             mediaTrashTask = nil
+        }
+    }
+
+    // MARK: - Undo
+
+    static let moveToTrashActionName = "Move to Trash"
+
+    private func registerTrashUndo(batch: MediaTrashBatchID, ids: [MediaAssetID]) {
+        // Explicit group: registration happens after a Store await, outside any event.
+        curationUndoManager.beginUndoGrouping()
+        curationUndoManager.registerUndo(withTarget: self) { model in
+            model.undoMoveToTrash(batch: batch, ids: ids)
+        }
+        curationUndoManager.setActionName(Self.moveToTrashActionName)
+        curationUndoManager.endUndoGrouping()
+        publishUndoState()
+    }
+
+    /// Runs inside `UndoManager.undo()`: files redo synchronously, then asks the queue
+    /// to withdraw or put back the command's items.
+    private func undoMoveToTrash(batch: MediaTrashBatchID, ids: [MediaAssetID]) {
+        curationUndoManager.registerUndo(withTarget: self) { model in
+            model.redoMoveToTrash(ids: ids)
+        }
+        curationUndoManager.setActionName(Self.moveToTrashActionName)
+        let coordinator = mediaTrashCoordinator
+        OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
+        Task { [weak self] in
+            let outcome = await coordinator.undo(batch: batch, ids: ids)
+            guard let self else { return }
+            OtosLog.ui.notice(
+                """
+                op=trash.undo phase=finish restored=\(outcome.restored.count, privacy: .public) \
+                failed=\(outcome.failed.count, privacy: .public)
+                """
+            )
+            if !outcome.failed.isEmpty {
+                trashFailedIDs = outcome.failed
+                trashAlertDetail = TrashAlertCopy.putBackDetail
+                trashAlertMessage = outcome.failed.count == 1
+                    ? TrashAlertCopy.putBackFailedOne
+                    : TrashAlertCopy.putBackFailedMany
+            }
+        }
+    }
+
+    /// Runs inside `UndoManager.redo()`: files undo synchronously under a new command
+    /// identity, then hides the items again for the queue.
+    private func redoMoveToTrash(ids: [MediaAssetID]) {
+        let batch = MediaTrashBatchID()
+        curationUndoManager.registerUndo(withTarget: self) { model in
+            model.undoMoveToTrash(batch: batch, ids: ids)
+        }
+        curationUndoManager.setActionName(Self.moveToTrashActionName)
+        let coordinator = mediaTrashCoordinator
+        OtosLog.ui.notice("op=trash.redo phase=start count=\(ids.count, privacy: .public)")
+        Task { [store = catalogStore] in
+            _ = try? await store.markPendingTrash(ids, batch: batch)
+            coordinator.kick()
         }
     }
 
@@ -126,9 +168,8 @@ extension CatalogWindowViewModel {
             enqueueTrashDecision(decision)
         case let .moveFailed(ids):
             trashFailedIDs = ids
-            trashAlertMessage = ids.count == 1
-                ? "This Item Couldn't Be Moved to Trash"
-                : "Some Items Couldn't Be Moved to Trash"
+            trashAlertDetail = TrashAlertCopy.moveDetail
+            trashAlertMessage = ids.count == 1 ? TrashAlertCopy.moveFailedOne : TrashAlertCopy.moveFailedMany
             selectAssets(ids)
         }
     }

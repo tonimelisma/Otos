@@ -218,7 +218,7 @@ public struct OtosApp: App {
                 .disabled(!catalogViewModel.hasMediaChoiceTarget)
                 Divider()
                 Button("Move to Trash", role: .destructive) {
-                    catalogViewModel.requestMoveTargetedMediaToTrash()
+                    catalogViewModel.moveTargetedMediaToTrash()
                 }
                 .keyboardShortcut(.delete, modifiers: .command)
                 .disabled(!catalogViewModel.canMoveTargetedMediaToTrash)
