@@ -247,12 +247,19 @@ final class CatalogWindowViewModel {
     var reorganizationAlertMessage: String?
     var trashAlertMessage: String?
     var trashFailedIDs: [MediaAssetID] = []
+    /// The trash queue as the bottom status bar reports it (DES-089); idle when nothing
+    /// is waiting to move to the Trash.
+    var trashQueueState = MediaTrashCoordinator.QueueState.idle
+    /// Questions the trash queue needs answered, oldest first; the window presents the
+    /// first (Plan 0104 D3/D4).
+    var trashDecisions: [MediaTrashCoordinator.Decision] = []
     /// The Move to Trash the user has been asked to confirm (APP-027); nil when none.
     var pendingTrashConfirmation: TrashConfirmation?
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
     @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
-    @ObservationIgnored var mediaTrashCoordinator: MediaTrashCoordinator?
+    @ObservationIgnored let mediaTrashCoordinator: MediaTrashCoordinator
+    @ObservationIgnored var mediaTrashEventTask: Task<Void, Never>?
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
@@ -363,6 +370,10 @@ final class CatalogWindowViewModel {
             }
         )
         self.materializationCoordinator = materializationCoordinator
+        mediaTrashCoordinator = MediaTrashCoordinator(
+            store: catalogStore,
+            materializationRequester: materializationCoordinator
+        )
         self.enrichmentCoordinator = enrichmentCoordinator ?? (
             startsEnrichment
                 ? EnrichmentCoordinator(
@@ -420,6 +431,7 @@ final class CatalogWindowViewModel {
         mutationForwardingTask?.cancel()
         mediaChoiceForwardingTask?.cancel()
         mediaTrashTask?.cancel()
+        mediaTrashEventTask?.cancel()
         openWithMenuTask?.cancel()
         loupeInfoTask?.cancel()
         currentTargetChoiceTask?.cancel()
@@ -446,6 +458,8 @@ final class CatalogWindowViewModel {
         if let mediaOps = mediaOperationCoordinator {
             Task { await mediaOps.shutdown() }
         }
+        let mediaTrash = mediaTrashCoordinator
+        Task { await mediaTrash.shutdown() }
         if let coordinator = enrichmentCoordinator {
             // The coordinator's supervisor strongly retains the coordinator, so it must be
             // told to stop or it (and the store) would outlive this window. shutdown() is
@@ -507,6 +521,7 @@ extension CatalogWindowViewModel {
             initialRequest: initialRequest
         )
         startCatalog(store: store)
+        startMediaTrash()
         if startsSourceMonitoring {
             startRemovableVolumeMonitoring()
             startDeviceStagingSweepThenCameraMonitoring()

@@ -880,11 +880,123 @@ extension CatalogStore {
                     .filter { $0.primaryRelativePath == id.relativePath }
             }
             let members = companions.map {
-                MediaTrashMember(relativePath: $0.relativePath, role: .companion)
-            } + [MediaTrashMember(relativePath: id.relativePath, role: .primary)]
+                MediaTrashMember(relativePath: $0.relativePath, role: .companion, byteSize: $0.byteSize)
+            } + [MediaTrashMember(relativePath: id.relativePath, role: .primary, byteSize: assets[id]?.byteSize)]
             items.append(MediaTrashItem(id: id, root: rootState.root, members: members))
         }
         return items
+    }
+
+    /// Hides the requested items behind one pending Move to Trash. Only existing,
+    /// non-device rows that are not already pending are marked; the returned IDs are
+    /// exactly the rows this call hid, in request order.
+    func markPendingTrash(
+        _ ids: [MediaAssetID],
+        batch: MediaTrashBatchID
+    ) async throws -> [MediaAssetID] {
+        try await setPendingTrash(ids, batch: batch, operation: "mark")
+    }
+
+    /// Ends a pending Move to Trash without moving anything: the items reappear.
+    /// Returns exactly the rows this call un-hid.
+    func clearPendingTrash(_ ids: [MediaAssetID]) async throws -> [MediaAssetID] {
+        try await setPendingTrash(ids, batch: nil, operation: "clear")
+    }
+
+    private func setPendingTrash(
+        _ ids: [MediaAssetID],
+        batch: MediaTrashBatchID?,
+        operation: String
+    ) async throws -> [MediaAssetID] {
+        var seen = Set<MediaAssetID>()
+        let requested = ids.filter { seen.insert($0).inserted }
+        let eligible = requested.compactMap { id -> (MediaAssetID, Int64)? in
+            guard let rootState = roots[id.libraryRootPath], rootState.root.kind != .deviceMTP else {
+                return nil
+            }
+            return (id, rootState.rowID)
+        }
+        guard !eligible.isEmpty else {
+            return []
+        }
+        let dbWriter = try database()
+        let changed = try await dbWriter.write { db in
+            var changed: [MediaAssetID] = []
+            for (id, rootID) in eligible {
+                if let batch {
+                    try db.execute(
+                        sql: """
+                        UPDATE media_asset SET pending_trash_batch_unix_ms = ?
+                        WHERE library_root_id = ? AND relative_path = ?
+                          AND pending_trash_batch_unix_ms IS NULL
+                        """,
+                        arguments: [batch.unixMilliseconds, rootID, id.relativePath.rawValue]
+                    )
+                } else {
+                    try db.execute(
+                        sql: """
+                        UPDATE media_asset SET pending_trash_batch_unix_ms = NULL
+                        WHERE library_root_id = ? AND relative_path = ?
+                          AND pending_trash_batch_unix_ms IS NOT NULL
+                        """,
+                        arguments: [rootID, id.relativePath.rawValue]
+                    )
+                }
+                if db.changesCount > 0 {
+                    changed.append(id)
+                }
+            }
+            return changed
+        }
+        if !changed.isEmpty {
+            notifyCatalogChanged()
+        }
+        OtosLog.catalog.noticeOperation(
+            "catalog.pendingTrash",
+            phase: operation,
+            fields: [
+                "batch": batch.map { "\($0.unixMilliseconds)" } ?? "none",
+                "requested": "\(requested.count)",
+                "changed": "\(changed.count)",
+            ]
+        )
+        return changed
+    }
+
+    /// Every item still waiting to move to the Trash, oldest command first, each
+    /// with its catalog-proven members. The durable queue `MediaTrashCoordinator`
+    /// drains, including after relaunch.
+    func pendingTrashItems() async throws -> [PendingTrashItem] {
+        let dbWriter = try database()
+        let pathsByRowID = roots.pathsByRowID
+        let rows = try await dbWriter.read { db in
+            try Row.fetchAll(
+                db,
+                sql: """
+                SELECT library_root_id, relative_path, pending_trash_batch_unix_ms
+                FROM media_asset INDEXED BY idx_media_asset_pending_trash
+                WHERE pending_trash_batch_unix_ms IS NOT NULL
+                ORDER BY pending_trash_batch_unix_ms, library_root_id, relative_path
+                """
+            )
+        }
+        var batches: [MediaAssetID: MediaTrashBatchID] = [:]
+        var ordered: [MediaAssetID] = []
+        for row in rows {
+            let rootID: Int64 = row["library_root_id"]
+            guard let rootPath = pathsByRowID[rootID] else {
+                continue
+            }
+            let id = MediaAssetID(
+                libraryRootPath: rootPath,
+                relativePath: MediaRelativePath(rawValue: row["relative_path"])
+            )
+            batches[id] = MediaTrashBatchID(unixMilliseconds: row["pending_trash_batch_unix_ms"])
+            ordered.append(id)
+        }
+        return try await mediaTrashItems(for: ordered).compactMap { item in
+            batches[item.id].map { PendingTrashItem(batch: $0, item: item) }
+        }
     }
 
     /// Changes the authored choice for every existing requested asset in one SQLite

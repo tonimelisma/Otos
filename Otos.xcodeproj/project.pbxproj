@@ -244,6 +244,7 @@
 				Views/SharePickerPresenter.swift,
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
+				Views/TrashStatusBar.swift,
 			);
 			target = 3B44EB5D2FCEBA57007E4158 /* Otos */;
 		};
@@ -406,6 +407,7 @@
 				Views/SharePickerPresenter.swift,
 				Views/SidebarView.swift,
 				Views/TileContentStore.swift,
+				Views/TrashStatusBar.swift,
 			);
 			target = 5980D4726503709D9D7F52EB /* OtosXXH3 */;
 		};
