@@ -20,8 +20,18 @@ supplies a snapshot of one cataloged primary plus its cataloged useful
 companions, excluding device/MTP roots. The coordinator acquires a
 `RootNamespaceMutationLease` for the root, revalidates ownership before each
 filesystem await, calls `FileManager.trashItem` off the MainActor, and moves
-companions before the primary. It never calls `removeItem`, unlinks, reads
-media bytes, or requests materialization.
+companions before the primary. It never calls `removeItem` or unlinks.
+
+A dataless cloud placeholder cannot leave its File Provider domain:
+`trashItem` refuses it with `NSFeatureUnsupportedError` (Cocoa 3328), while the
+same file trashes normally once local (`docs/research/trash-dataless-placeholders.md`).
+So immediately before each member's trash call the coordinator checks
+`FileMaterialization.status`; a dataless member is deliberately materialized
+through the shared `MaterializationCoordinator` at interactive priority (the
+user is waiting on this command), and the lease is revalidated after that
+await. A member that does not become local fails that path without a trash
+call. Every per-path failure logs its reason with the error domain/code or the
+materialization outcome.
 
 Each path returns an independent success result. Store reconciliation removes
 only catalog rows for paths the filesystem operation reports as moved. A
@@ -41,6 +51,8 @@ against a root currently being trashed or reorganized.
 | Alternative | Why rejected |
 | --- | --- |
 | Permanent deletion or an `removeItem` fallback | Violates recoverability and the explicit system-Trash contract. |
+| Delete a dataless placeholder in place through the provider (its cloud recycle bin) | Not recoverable from this Mac's Trash, and provider-specific; materializing first keeps one recoverable path for every root. |
+| Refuse dataless members with an explanatory message | Most library media is dataless, so Move to Trash would fail for most items. |
 | Delete every same-basename sidecar | Invents physical membership and can destroy an unrelated user file. |
 | Change Disliked into deletion or hiding | Curation state and filesystem mutation answer different user questions. |
 | Rollback after a partial move | System Trash has already changed filesystem truth; pretending rollback succeeded would be false. |
@@ -55,4 +67,4 @@ filesystem move would be a competing owner of the same fact.
 - Successful moves have no confirmation or success alert because system Trash is recoverable.
 - Partial failures retain truthful catalog rows and selected failed identities and expose Show in Finder/Dismiss with bounded counts and no raw paths.
 - Device/MTP media remains outside this filesystem mutation path.
-- Production provider behavior for a dataless placeholder must remain verified by runtime evidence; this implementation performs no deliberate byte read or materialization request.
+- Trashing a dataless member downloads it first; the local-disk cost lands in the system Trash until it is emptied. A slow provider holds the root lease and the serial trash command for the duration of the download.
