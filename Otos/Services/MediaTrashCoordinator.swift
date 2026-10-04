@@ -156,7 +156,14 @@ actor MediaTrashCoordinator {
     private var trashed: [MediaTrashBatchID: [TrashedItem]] = [:]
     /// Undo requests run inside the drain task, between passes, so an undo never
     /// interleaves with a move that is part-way through.
-    private var undoRequests: [(MediaTrashBatchID, Set<MediaAssetID>, CheckedContinuation<UndoResult, Never>)] = []
+    private var undoRequests: [UndoRequest] = []
+
+    private struct UndoRequest {
+        let batch: MediaTrashBatchID
+        let ids: Set<MediaAssetID>
+        let continuation: CheckedContinuation<UndoResult, Never>
+    }
+
     private var lastState = QueueState.idle
 
     init(
@@ -223,8 +230,8 @@ actor MediaTrashCoordinator {
         await drainTask?.value
         let unanswered = undoRequests
         undoRequests.removeAll()
-        for (_, ids, continuation) in unanswered {
-            continuation.resume(returning: UndoResult(failed: Array(ids)))
+        for request in unanswered {
+            request.continuation.resume(returning: UndoResult(failed: Array(request.ids)))
         }
         eventContinuation.finish()
     }
@@ -302,7 +309,7 @@ actor MediaTrashCoordinator {
         }
         start()
         return await withCheckedContinuation { continuation in
-            undoRequests.append((batch, Set(ids), continuation))
+            undoRequests.append(UndoRequest(batch: batch, ids: Set(ids), continuation: continuation))
             kick()
         }
     }
@@ -311,10 +318,7 @@ actor MediaTrashCoordinator {
 
     private func drain() async {
         guard !isShuttingDown else { return }
-        while !undoRequests.isEmpty {
-            let (batch, ids, continuation) = undoRequests.removeFirst()
-            await continuation.resume(returning: performUndo(batch: batch, ids: ids))
-        }
+        await answerUndoRequests()
         let items = await pendingItems()
         let now = clock.now
         var floorBlocked: [MediaAssetID] = []
@@ -365,6 +369,13 @@ actor MediaTrashCoordinator {
             : clock.now.advanced(by: retryPolicy.delays.last ?? .seconds(300))
         if let next = ([retryAt.values.min(), spaceRecheck].compactMap(\.self)).min() {
             scheduleWake(at: next)
+        }
+    }
+
+    private func answerUndoRequests() async {
+        while !undoRequests.isEmpty {
+            let request = undoRequests.removeFirst()
+            await request.continuation.resume(returning: performUndo(batch: request.batch, ids: request.ids))
         }
     }
 
@@ -549,23 +560,40 @@ actor MediaTrashCoordinator {
         }
         _ = await store.releaseNamespaceMutationLease(lease)
         await store.reconcileTrashedPaths(results.filter(\.succeeded))
+        await settleMove(
+            TrashedItem(item: item, members: moved, overlay: overlay),
+            batch: batch,
+            evicted: evicted,
+            allSucceeded: !results.contains { !$0.succeeded }
+        )
+    }
+
+    /// Records the outcome of one move: re-download an item evicted mid-move, re-show a
+    /// failed one, or keep a moved one for undo.
+    private func settleMove(
+        _ trashedItem: TrashedItem,
+        batch: MediaTrashBatchID,
+        evicted: Bool,
+        allSucceeded: Bool
+    ) async {
+        let id = trashedItem.item.id
         if evicted {
             OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "evictedBeforeMove", fields: [
-                "path": item.id.relativePath.rawValue,
+                "path": id.relativePath.rawValue,
             ])
             kick()
             return
         }
-        if results.contains(where: { !$0.succeeded }) {
-            _ = try? await store.clearPendingTrash([item.id])
-            eventContinuation.yield(.moveFailed([item.id]))
+        guard allSucceeded else {
+            _ = try? await store.clearPendingTrash([id])
+            eventContinuation.yield(.moveFailed([id]))
             return
         }
         movedInRun += 1
-        trashed[batch, default: []].append(TrashedItem(item: item, members: moved, overlay: overlay))
-        forget([item.id])
+        trashed[batch, default: []].append(trashedItem)
+        forget([id])
         OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "trashed", fields: [
-            "path": item.id.relativePath.rawValue, "members": "\(results.count)",
+            "path": id.relativePath.rawValue, "members": "\(trashedItem.members.count)",
         ])
     }
 
