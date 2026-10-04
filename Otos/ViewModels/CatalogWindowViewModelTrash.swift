@@ -73,7 +73,10 @@ extension CatalogWindowViewModel {
         let descriptor = queryDescriptor
         let pair = comparePair
         let pane = activeComparePane
-        let coordinator = mediaTrashCoordinator ?? MediaTrashCoordinator(store: catalogStore)
+        let coordinator = mediaTrashCoordinator ?? MediaTrashCoordinator(
+            store: catalogStore,
+            materializationRequester: materializationCoordinator
+        )
         mediaTrashCoordinator = coordinator
         mediaTrashTask = Task { [weak self, store = catalogStore, coordinator] in
             do {

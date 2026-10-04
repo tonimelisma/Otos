@@ -1,23 +1,41 @@
 import Foundation
 import OSLog
+import UniformTypeIdentifiers
 
 /// System-Trash coordinator guide.
 ///
 /// This actor owns the lossless serial filesystem command lifecycle. It snapshots
 /// catalog-proven members, acquires the Store's root namespace lease, moves companions
 /// before primaries with `FileManager.trashItem`, and returns per-path truth. It never
-/// deletes permanently, reads bytes, or guesses companion membership. The injected
-/// executor is the test boundary for fault injection; production uses system Trash.
+/// deletes permanently or guesses companion membership. The injected status, requester,
+/// and executor are the test boundary for fault injection; production uses system Trash.
+///
+/// A dataless cloud placeholder cannot leave its File Provider domain, so `trashItem`
+/// refuses it (`NSFeatureUnsupportedError`). Each dataless member is therefore
+/// deliberately materialized through the shared `MaterializationCoordinator` at
+/// interactive priority first — the user is waiting on this command — and the lease is
+/// revalidated after that await. A member that does not become local fails truthfully;
+/// there is no permanent-delete fallback.
 actor MediaTrashCoordinator {
     typealias TrashExecutor = @Sendable (URL) throws -> Void
+    typealias StatusReader = @Sendable (URL) -> FileMaterializationStatus
 
     private let store: CatalogStore
+    private let materializationRequester: (any MaterializationRequesting)?
+    private let status: StatusReader
     private let trashExecutor: TrashExecutor
 
-    init(store: CatalogStore, trashExecutor: @escaping TrashExecutor = { url in
-        try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-    }) {
+    init(
+        store: CatalogStore,
+        materializationRequester: (any MaterializationRequesting)?,
+        status: @escaping StatusReader = { FileMaterialization.status(of: $0) },
+        trashExecutor: @escaping TrashExecutor = { url in
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        }
+    ) {
         self.store = store
+        self.materializationRequester = materializationRequester
+        self.status = status
         self.trashExecutor = trashExecutor
     }
 
@@ -85,27 +103,8 @@ actor MediaTrashCoordinator {
             }
 
             for member in item.members.sorted(by: Self.memberOrder) {
-                guard await store.ownsNamespaceMutationLease(lease) else {
-                    results.append(MediaTrashPathResult(
-                        id: item.id,
-                        rootPath: item.root.path,
-                        relativePath: member.relativePath,
-                        role: member.role,
-                        succeeded: false
-                    ))
-                    continue
-                }
                 let url = item.root.path.url.appending(path: member.relativePath.rawValue)
-                let succeeded: Bool
-                do {
-                    try trashExecutor(url)
-                    succeeded = true
-                } catch {
-                    succeeded = false
-                    OtosLog.catalog.error(
-                        "op=mediaTrash.path failed role=\(String(describing: member.role), privacy: .public)"
-                    )
-                }
+                let succeeded = await moveMember(member, of: item, at: url, lease: lease)
                 results.append(MediaTrashPathResult(
                     id: item.id,
                     rootPath: item.root.path,
@@ -119,6 +118,93 @@ actor MediaTrashCoordinator {
             _ = await store.releaseNamespaceMutationLease(lease)
         }
         return MediaTrashBatchResult(items: items, paths: results)
+    }
+
+    /// Materializes a dataless member, then trashes it. The lease is revalidated after
+    /// the materialization await: the actor suspended, and the lease can end meanwhile
+    /// (for example when the root is removed), which must stop the move.
+    private func moveMember(
+        _ member: MediaTrashMember,
+        of item: MediaTrashItem,
+        at url: URL,
+        lease: RootNamespaceMutationLease
+    ) async -> Bool {
+        let path = member.relativePath.rawValue
+        guard await materializeIfDataless(member, of: item, at: url) else {
+            return false
+        }
+        guard await store.ownsNamespaceMutationLease(lease) else {
+            OtosLog.catalog.error(
+                """
+                op=mediaTrash.path failed reason=leaseLost \
+                role=\(String(describing: member.role), privacy: .public) path=\(path, privacy: .public)
+                """
+            )
+            return false
+        }
+        do {
+            try trashExecutor(url)
+            return true
+        } catch {
+            let nsError = error as NSError
+            let underlying = (nsError.userInfo[NSUnderlyingErrorKey] as? NSError)
+                .map { "\($0.domain)/\($0.code)" } ?? "none"
+            OtosLog.catalog.error(
+                """
+                op=mediaTrash.path failed reason=trashItem \
+                errorDomain=\(nsError.domain, privacy: .public) errorCode=\(nsError.code, privacy: .public) \
+                underlying=\(underlying, privacy: .public) \
+                role=\(String(describing: member.role), privacy: .public) path=\(path, privacy: .public)
+                """
+            )
+            return false
+        }
+    }
+
+    /// Deliberately materializes a dataless member through the shared coordinator.
+    /// Returns true when the member is local (or already was) and may be trashed.
+    private func materializeIfDataless(
+        _ member: MediaTrashMember,
+        of item: MediaTrashItem,
+        at url: URL
+    ) async -> Bool {
+        guard status(url) == .dataless else {
+            return true
+        }
+        let path = member.relativePath.rawValue
+        guard let materializationRequester else {
+            OtosLog.catalog.error(
+                """
+                op=mediaTrash.path failed reason=noMaterializer \
+                role=\(String(describing: member.role), privacy: .public) path=\(path, privacy: .public)
+                """
+            )
+            return false
+        }
+        OtosLog.catalog.notice(
+            """
+            op=mediaTrash.path phase=materialize \
+            role=\(String(describing: member.role), privacy: .public) path=\(path, privacy: .public)
+            """
+        )
+        let result = await materializationRequester.materialize(MaterializationCoordinator.Request(
+            id: MediaAssetID(libraryRootPath: item.root.path, relativePath: member.relativePath),
+            sourceSize: nil,
+            isVideo: UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true,
+            priority: .interactive
+        ))
+        guard result.isMaterialized else {
+            OtosLog.catalog.error(
+                """
+                op=mediaTrash.path failed reason=notMaterialized \
+                outcome=\(result.outcome.diagnosticDescription, privacy: .public) \
+                elapsedMs=\(result.elapsedMs, privacy: .public) \
+                role=\(String(describing: member.role), privacy: .public) path=\(path, privacy: .public)
+                """
+            )
+            return false
+        }
+        return true
     }
 
     private static func memberOrder(
