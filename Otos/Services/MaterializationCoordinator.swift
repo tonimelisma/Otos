@@ -19,10 +19,22 @@ nonisolated protocol MaterializationRequesting: Sendable {
 /// interactive demand raises an active background transfer's effective priority without
 /// pretending that the provider itself can reprioritize the already-issued request.
 actor MaterializationCoordinator: MaterializationRequesting {
+    /// `command` is user-commanded work nobody is watching on screen (Move to Trash
+    /// downloading a dataless member). It outranks device and background so a library's
+    /// enrichment backlog cannot starve it, is exempt from the background per-root cap,
+    /// yields to interactive work, and — unlike interactive — runs under the bounded
+    /// background `Persistence`, because no on-screen demand will ever cancel it.
     enum Priority: Int, Sendable, Comparable, CaseIterable {
         case background
         case device
+        case command
         case interactive
+
+        /// Demand-bounded priorities stop their transfer when the last waiter leaves.
+        /// Background and device keep polling on purpose (ENR-008 wants those bytes).
+        var cancelsWhenUnwaited: Bool {
+            self == .interactive || self == .command
+        }
 
         static func < (lhs: Priority, rhs: Priority) -> Bool {
             lhs.rawValue < rhs.rawValue
@@ -41,6 +53,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         let rejections: [MaterializationAdmissionPolicy.Rejection: Int]
         let admitted: Int
         let pendingInteractive: Int
+        let pendingCommand: Int
         let pendingDevice: Int
         let pendingBackground: Int
         let inFlight: Int
@@ -99,6 +112,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
 
     private var pendingByID: [MediaAssetID: PendingEntry] = [:]
     private var interactiveQueue: [MediaAssetID] = []
+    private var commandQueue: [MediaAssetID] = []
     private var deviceQueue: [MediaAssetID] = []
     private var backgroundQueue: [MediaAssetID] = []
     private var inFlightByID: [MediaAssetID: InFlightEntry] = [:]
@@ -203,6 +217,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         }
         pendingByID.removeAll()
         interactiveQueue.removeAll()
+        commandQueue.removeAll()
         deviceQueue.removeAll()
         backgroundQueue.removeAll()
 
@@ -381,13 +396,14 @@ actor MaterializationCoordinator: MaterializationRequesting {
         adjustEffectiveInteractive(from: previous, to: active.effectivePriority)
         // An interactive transfer polls without a deadline, so the last waiter leaving is
         // the only thing that ends it. Without this the poll outlives every consumer and
-        // runs for the life of the process.
+        // runs for the life of the process. A command transfer is bounded, but its waiter
+        // leaving means the command was withdrawn (an undone Move to Trash), so it stops too.
         //
         // Nothing is lost by stopping: the provider download continues regardless (we hold
         // no handle on it, research 2026-07-14), and the next request finds the file either
         // materialized or worth watching again. Background entries keep polling on purpose —
         // ENR-008 wants those bytes whether or not anyone is still asking.
-        if active.waiters.isEmpty, previous == .interactive, active.request.priority == .interactive {
+        if active.waiters.isEmpty, previous.cancelsWhenUnwaited, active.request.priority == previous {
             // Cancel only. The entry stays: the cancelled task still unwinds through
             // `finishOperation`, which is the one place that closes the Store
             // known-materialization suppression window (ARC-036), releases admission
@@ -460,7 +476,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             // deferred by design. Record that truthfully instead of falling through
             // to publishUnblockedIfNeeded, which would clear the blocked diagnostic
             // during exactly the starvation window it exists to expose.
-            let deferred = deviceQueue.count + backgroundQueue.count
+            let deferred = commandQueue.count + deviceQueue.count + backgroundQueue.count
             if deferred > 0 {
                 rejections[.interactivePriority] = deferred
             }
@@ -474,6 +490,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
         }
         if effectiveInteractiveCount > 0 {
             return nil
+        }
+        if !commandQueue.isEmpty {
+            return .command
         }
         if !deviceQueue.isEmpty {
             return .device
@@ -738,6 +757,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
             rejections: rejections,
             admitted: admitted,
             pendingInteractive: interactiveQueue.count,
+            pendingCommand: commandQueue.count,
             pendingDevice: deviceQueue.count,
             pendingBackground: backgroundQueue.count,
             inFlight: inFlightCount,
@@ -748,6 +768,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         )
         if admitted > 0 {
             let pendingInteractive = interactiveQueue.count
+            let pendingCommand = commandQueue.count
             let pendingDevice = deviceQueue.count
             let pendingBackground = backgroundQueue.count
             let currentInFlight = inFlightCount
@@ -757,7 +778,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 op=materialization.admission phase=dispatched \
                 priority=\(priority?.description ?? "none", privacy: .public) \
                 admitted=\(admitted, privacy: .public) pendingInteractive=\(pendingInteractive, privacy: .public) \
-                pendingDevice=\(pendingDevice, privacy: .public) \
+                pendingCommand=\(pendingCommand, privacy: .public) pendingDevice=\(pendingDevice, privacy: .public) \
                 pendingBackground=\(pendingBackground, privacy: .public) \
                 inFlight=\(currentInFlight, privacy: .public) bytes=\(currentBytes, privacy: .public)
                 """
@@ -773,6 +794,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         lastBlockedSnapshot = snapshot
         diagnosticSink?(snapshot)
         let pendingInteractive = interactiveQueue.count
+        let pendingCommand = commandQueue.count
         let pendingDevice = deviceQueue.count
         let pendingBackground = backgroundQueue.count
         let currentInFlight = inFlightCount
@@ -785,7 +807,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
                 priority=\(priority?.description ?? "none", privacy: .public) \
                 reason=\(reason.rawValue, privacy: .public) rejected=\(count, privacy: .public) \
                 admitted=\(admitted, privacy: .public) pendingInteractive=\(pendingInteractive, privacy: .public) \
-                pendingDevice=\(pendingDevice, privacy: .public) \
+                pendingCommand=\(pendingCommand, privacy: .public) pendingDevice=\(pendingDevice, privacy: .public) \
                 pendingBackground=\(pendingBackground, privacy: .public) \
                 inFlight=\(currentInFlight, privacy: .public) bytes=\(currentBytes, privacy: .public) \
                 effectiveInteractive=\(currentInteractive, privacy: .public)
@@ -813,6 +835,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private func queue(for priority: Priority) -> [MediaAssetID] {
         switch priority {
         case .interactive: interactiveQueue
+        case .command: commandQueue
         case .device: deviceQueue
         case .background: backgroundQueue
         }
@@ -821,6 +844,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private func appendToQueue(_ id: MediaAssetID, priority: Priority) {
         switch priority {
         case .interactive: interactiveQueue.append(id)
+        case .command: commandQueue.append(id)
         case .device: deviceQueue.append(id)
         case .background: backgroundQueue.append(id)
         }
@@ -829,6 +853,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private func removeFromQueue(_ id: MediaAssetID, priority: Priority) {
         switch priority {
         case .interactive: interactiveQueue.removeAll { $0 == id }
+        case .command: commandQueue.removeAll { $0 == id }
         case .device: deviceQueue.removeAll { $0 == id }
         case .background: backgroundQueue.removeAll { $0 == id }
         }
@@ -865,6 +890,7 @@ private extension MaterializationCoordinator.Priority {
     nonisolated var description: String {
         switch self {
         case .interactive: "interactive"
+        case .command: "command"
         case .device: "device"
         case .background: "background"
         }

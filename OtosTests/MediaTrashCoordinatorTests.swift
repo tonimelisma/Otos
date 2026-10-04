@@ -52,7 +52,7 @@ struct MediaTrashCoordinatorTests {
         #expect(await store.hasNamespaceMutationLease(for: item.root.path) == false)
     }
 
-    @Test func datalessMembersMaterializeInteractivelyBeforeEachTrash() async throws {
+    @Test func datalessMembersMaterializeAtCommandPriorityBeforeEachTrash() async throws {
         let (store, item) = try await makeCatalogedPairWithCompanion()
         let events = TrashCallRecorder()
         let local = Mutex<Set<String>>([])
@@ -72,7 +72,7 @@ struct MediaTrashCoordinatorTests {
         let result = await coordinator.moveToTrash([item])
 
         #expect(events.paths == ["materialize a.xmp", "trash a.xmp", "materialize a.jpg", "trash a.jpg"])
-        #expect(requester.priorities == [.interactive, .interactive])
+        #expect(requester.priorities == [.command, .command])
         #expect(result.failedItems.isEmpty)
         #expect(result.movedItemCount == 1)
         #expect(await store.hasNamespaceMutationLease(for: item.root.path) == false)

@@ -13,8 +13,9 @@ import UniformTypeIdentifiers
 /// A dataless cloud placeholder cannot leave its File Provider domain, so `trashItem`
 /// refuses it (`NSFeatureUnsupportedError`). Each dataless member is therefore
 /// deliberately materialized through the shared `MaterializationCoordinator` at
-/// interactive priority first — the user is waiting on this command — and the lease is
-/// revalidated after that await. A member that does not become local fails truthfully;
+/// `command` priority first — ahead of enrichment, behind on-screen work, and under the
+/// bounded persistence so a stuck provider fails the member instead of holding the lease
+/// and the serial trash command forever — and the lease is revalidated after that await. A member that does not become local fails truthfully;
 /// there is no permanent-delete fallback.
 actor MediaTrashCoordinator {
     typealias TrashExecutor = @Sendable (URL) throws -> Void
@@ -191,7 +192,7 @@ actor MediaTrashCoordinator {
             id: MediaAssetID(libraryRootPath: item.root.path, relativePath: member.relativePath),
             sourceSize: nil,
             isVideo: UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true,
-            priority: .interactive
+            priority: .command
         ))
         guard result.isMaterialized else {
             OtosLog.catalog.error(

@@ -27,9 +27,11 @@ A dataless cloud placeholder cannot leave its File Provider domain:
 same file trashes normally once local (`docs/research/trash-dataless-placeholders.md`).
 So immediately before each member's trash call the coordinator checks
 `FileMaterialization.status`; a dataless member is deliberately materialized
-through the shared `MaterializationCoordinator` at interactive priority (the
-user is waiting on this command), and the lease is revalidated after that
-await. A member that does not become local fails that path without a trash
+through the shared `MaterializationCoordinator` at `command` priority
+(user-commanded, off-screen work: ahead of enrichment, behind on-screen work, and
+under the bounded background persistence, so a stuck provider fails the member
+instead of holding the lease and the serial command indefinitely), and the
+lease is revalidated after that await. A member that does not become local fails that path without a trash
 call. Every per-path failure logs its reason with the error domain/code or the
 materialization outcome.
 
