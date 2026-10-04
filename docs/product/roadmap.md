@@ -197,13 +197,3 @@ P0/P1 items through Import Into User Libraries are now largely shipped; current 
 
 - Video playback in loupe — shipped as loupe click-to-play poster→player swap (APP-020).
 - Bare-key G/E/C view shortcuts — deferred; ⌘1/2/3 shipped (APP-020).
-
-
-## Independent RAW development library integration
-
-The [raw-development library](https://github.com/tonimelisma/raw-development) lives
-in its own repository and owns RAW processing, learned looks, SDR/HDR development,
-API, training, evaluation and releases. Its roadmap is maintained there, not in
-Otos. Otos may later consume a pinned library/model release through the public
-interface. The library imports no Otos source, catalog/UI types, logging or build
-helpers. This is an integration idea, not an implemented app feature.

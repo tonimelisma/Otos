@@ -1,8 +1,5 @@
 # Active Plans
 
-No active RAW-processing plan lives in this repository. The independent library
-owns its plan at [NeuralImageKit](https://github.com/tonimelisma/NeuralImageKit).
-
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 

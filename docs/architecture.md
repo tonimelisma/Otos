@@ -274,12 +274,3 @@ Never violate the non-negotiables in `AGENTS.md`: the filesystem is the truth,
 originals are read-only, nothing is written into the user's folders, and the main
 thread stays free of database/scan/sort/decode work. If answering one question makes
 you touch two layers, the boundary is probably wrong — move the responsibility.
-
-
-## Independent RAW development library
-
-RAW development research, models, training/evaluation tools and private working
-media belong to [NeuralImageKit](https://github.com/tonimelisma/NeuralImageKit),
-not this repository. Otos has no implemented dependency or integration. Future
-integration consumes a versioned public library API; no renderer source, build
-helper, catalog state or logging facade is shared between repositories.
