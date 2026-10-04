@@ -48,6 +48,42 @@ struct CatalogWindowViewModelTrashTests {
         #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
     }
 
+    @Test func theLargeDownloadPreferenceDefaultsOnAndPersists() {
+        let domain = PreferencesDomain.suite(UUID().uuidString)
+        let model = CatalogWindowViewModel(
+            catalogStore: CatalogStore(location: .inMemory),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: domain
+        )
+        #expect(model.asksBeforeLargeTrashDownload)
+        model.setAsksBeforeLargeTrashDownload(false)
+        let reloaded = CatalogWindowViewModel(
+            catalogStore: CatalogStore(location: .inMemory),
+            startsStallMonitor: false,
+            startsEnrichment: false,
+            startsSourceMonitoring: false,
+            preferencesDomain: domain
+        )
+        #expect(!reloaded.asksBeforeLargeTrashDownload)
+    }
+
+    @Test func localItemsMoveWithoutTheLargeDownloadQuestion() async throws {
+        let fixture = try await makeTrashFixture(count: 1)
+        defer { fixture.removeRoot() }
+        let model = makeTrashModel(store: fixture.store)
+        #expect(model.asksBeforeLargeTrashDownload)
+        model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
+        model.selectAll()
+
+        model.moveTargetedMediaToTrash()
+
+        let path = fixture.path(fixture.ids[0])
+        try await waitForTrash("file moved") { !FileManager.default.fileExists(atPath: path) }
+        #expect(model.largeTrashDownloadPrompt == nil)
+    }
+
     @Test func noTargetDoesNothing() {
         let model = makeTrashModel(store: CatalogStore(location: .inMemory))
         model.moveTargetedMediaToTrash()

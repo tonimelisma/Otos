@@ -314,6 +314,13 @@ actor MediaTrashCoordinator {
         }
     }
 
+    /// Bytes the requested items still need downloaded before they can be trashed:
+    /// catalog sizes of members that are cloud-only right now. Reads no file bytes.
+    func downloadBytes(for ids: [MediaAssetID]) async -> Int64 {
+        let items = await (try? store.mediaTrashItems(for: ids)) ?? []
+        return items.reduce(Int64(0)) { $0 + datalessBytes(of: $1) }
+    }
+
     // MARK: - Drain
 
     private func drain() async {

@@ -78,6 +78,31 @@ struct TrashStatusPresentationTests {
     }
 }
 
+/// The large-download question (Plan 0104): asked only above 100 MB of downloads and
+/// only while the preference allows it.
+struct LargeTrashDownloadPromptTests {
+    @Test func asksOnlyAboveTheThresholdWhileThePreferenceIsOn() {
+        #expect(LargeTrashDownloadPrompt.asks(bytes: 100_000_001, preference: true))
+        #expect(!LargeTrashDownloadPrompt.asks(bytes: 100_000_000, preference: true))
+        #expect(!LargeTrashDownloadPrompt.asks(bytes: 5_000_000_000, preference: false))
+    }
+
+    @Test func titleNamesSizeAndCount() {
+        let root = LibraryRootPath(rawValue: "/Pictures")
+        let one = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "Trip/clip.mov"))
+        let two = MediaAssetID(libraryRootPath: root, relativePath: MediaRelativePath(rawValue: "b.jpg"))
+        #expect(
+            LargeTrashDownloadPrompt(ids: [one], bytes: 1_200_000_000).title
+                == "Download 1.2 GB to Move “clip.mov” to Trash?"
+        )
+        #expect(
+            LargeTrashDownloadPrompt(ids: [one, two], bytes: 340_000_000).title
+                == "Download 0.3 GB to Move 2 Items to Trash?"
+        )
+        #expect(LargeTrashDownloadPrompt.confirmTitle == "Download and Move to Trash")
+    }
+}
+
 /// DES-018/DES-053: the bar keeps one height in every state. Each state is also
 /// rendered in light and dark to `$TMPDIR/OtosDesignEvidence/trash-status-bar/` as the
 /// design check's screenshots (DES-022).

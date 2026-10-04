@@ -316,7 +316,9 @@ public struct OtosApp: App {
                 importPreferences: catalogViewModel.importPreferences,
                 setImportPreferences: catalogViewModel.setImportPreferences,
                 advanceAfterMediaChoice: catalogViewModel.advanceAfterMediaChoice,
-                setAdvanceAfterMediaChoice: catalogViewModel.setAdvanceAfterMediaChoice
+                setAdvanceAfterMediaChoice: catalogViewModel.setAdvanceAfterMediaChoice,
+                asksBeforeLargeTrashDownload: catalogViewModel.asksBeforeLargeTrashDownload,
+                setAsksBeforeLargeTrashDownload: catalogViewModel.setAsksBeforeLargeTrashDownload
             )
         }
     }
