@@ -64,7 +64,10 @@ struct TrashStatusPresentationTests {
 
         let floor = TrashDecisionPrompt(decision: .diskFloor([one, two]))
         #expect(floor.title == "Delete 2 Items Immediately?")
-        #expect(floor.message == "There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this.")
+        #expect(
+            floor.message
+                == "There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this."
+        )
         #expect(TrashDecisionPrompt.deleteTitle == "Delete")
     }
 

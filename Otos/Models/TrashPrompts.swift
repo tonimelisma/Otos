@@ -36,7 +36,8 @@ nonisolated struct TrashDecisionPrompt: Equatable, Sendable {
         case .diskFloor:
             return one
                 ? "There isn’t enough free space to download it so it can be moved to the Trash. You can’t undo this."
-                : "There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this."
+                : "There isn’t enough free space to download them so they can be moved to the Trash. "
+                + "You can’t undo this."
         }
     }
 
