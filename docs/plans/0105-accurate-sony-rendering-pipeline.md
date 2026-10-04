@@ -1,388 +1,279 @@
-# 0105 — Accurate Sony RAW to vivid HEIF rendering
+# 0105 — Sony RAW to vivid HEIF through direct image learning
 
-Status: active; photographic matching is not accepted. Original plan opened
-September 27, 2026. This revision restores its target after an unjustified change
-to independent authored-look acceptance. The framework remains iterative: measured
-failures determine the next operation and escalation, not a predetermined model.
+Status: active, not implemented or photographically accepted. Rewritten October 3,
+2026 following the user's decision to train an image-to-image network on separate
+Sony RAW/HEIF pairs. This document replaces the previous execution instructions.
+It is the current plan, not an account of past increments.
 
-## Objective and supported scope
+## Objective and scope
 
-Develop Sony ILCE-6700 sensor RAW into native-resolution 10-bit SDR sRGB HEIF with
-the same visible rendering as the user's verified Sony VV2 camera HEIFs. Those
-HEIFs are the training/evaluation targets. Inference uses only sensor RAW, capture
-metadata available from RAW and the frozen recipe/model; never target HEIFs,
-camera JPEGs, embedded previews, their pixels or their statistics. Embedded camera
-images are also excluded from fitting, evaluation and visual inspection; use the
-separate verified HEIF targets for supervised work.
+Produce native-resolution 10-bit SDR sRGB HEIF from Sony ILCE-6700 sensor RAW,
+matching the visible appearance of the user's separate, verified Sony VV2 HEIFs.
+Use Apple Core Image RAW decoder 9 for sensor development. Work outside the Otos
+app. JPEG, other cameras/looks and app integration are outside this plan.
 
-Keep macOS Core Image decoder 9 as the foundation. Run outside the Otos app.
-Separate normalization, tone, colour, local/detail processing where justified,
-and display/encoding. Separately owned adjustments can interact and be jointly
-fitted; separate ownership is not evidence of independent effects. Lens correction
-has independent controls and diagnostics: retain supported Apple correction,
-report unsupported/residual correction, and defer custom profiles as requested.
-Do not learn lens defects into the shared colour recipe.
+Training and evaluation may use separate target HEIFs. Embedded camera JPEGs,
+HEIFs, previews and their pixels/statistics are forbidden in training, evaluation,
+manual inspection and inference. Inference receives only sensor RAW, permitted
+RAW metadata and the frozen development configuration/network. No target lookup,
+per-photo target-fitted recipe or target-derived registration at inference.
 
-The objective is image rendering, not identical compressed-file bytes or recovery
-of Sony's proprietary implementation. Existing difficult indoor, skin, cyan,
-warm-clothing and green-tent cases remain in scope. Successful exports alone,
-fitted examples alone, lower average error or plausible vivid appearance do not
-complete this plan. Other cameras, looks, JPEG output and app integration are
-outside scope. GitHub CI is outside the user's requested work; local checks remain.
+The goal is matching photographs, not compressed-file identity or reproducing
+Sony's proprietary internals. Existing difficult faces, indoor light, cyan,
+greens, warm clothing and highlights remain in scope. Export success, lower
+average error and small-set fitting alone do not complete this plan.
 
-Originals remain read-only. Check SF_DATALESS immediately before every byte read;
-use deliberate non-blocking provision requests when needed. Existing authorization
-covers OneDrive provisioning. Keep private manifests, pixels and outputs outside
-Git and media folders. The user-authorized working corpus lives in the primary
-checkout’s ignored `build/sony-paired-corpus/`, independent of OneDrive and
-worktree cleanup. Copy only after the immediate materialization gate, verify
-SHA256 and size, preserve source provenance and assigned roles in private manifests,
-and use the local paths for subsequent runs. Never commit media or private manifests.
-No new third-party dependency without the required ADR.
+## One end-to-end approach
 
-## Current evidence and limits
+1. Read sensor RAW with guarded file access.
+2. Develop it through an explicitly configured Apple RAW9 pipeline, with lens
+   correction separately controlled and diagnosed.
+3. Pass the developed image to one trained image-to-image appearance network.
+4. Convert and encode through native colour-managed 10-bit SDR HEIF output.
+5. Decode the actual output for photographic evaluation.
 
-| Area | Verified progress | Remaining gate |
+Use a compact established encoder-decoder with whole-image context and local
+image detail. First assess a narrow NAFNet configuration; its Sony suitability,
+whole-image context, component licenses and deployment support are not established.
+A small residual U-Net is the bounded alternative if that assessment rejects NAFNet.
+See [network and Core AI research](../research/2026-10-03-neural-renderers-and-core-ai.md).
+The network predicts the corrected image directly, initially as a correction to
+its input. Train against output images, not fitted adjustment coefficients.
+Do not introduce image categories, preset templates, LUT selectors or independent
+white-balance/exposure/noise-selection networks.
+
+Apple combines operations internally. The numbered outline describes ownership,
+not an assertion that every RAW operation is accessible or reorderable. Technical
+processing stays supplied by Apple; the network learns the remaining Sony
+appearance from the data we actually have. Native geometry is not its job.
+
+## What is fixed and what is learned
+
+| Part | Initial policy | When it may change |
 | --- | --- | --- |
-| Native input/output | RAW 9, explicit floating-point colour boundaries, shared native owner, native 10-bit SDR HEIF | Retest photographic/detail effects after changes |
-| Input independence | Denied camera-image reads and changed embedded previews yield identical output pixels | Preserve for every final implementation |
-| Colour/tone | Frozen format-5 baseline; native comparison of 204 development pairs; 463 verified training captures with endpoint-inclusive exports available | Historical authored baseline failed 77; current static profile fails 31/204 whole-image limits; attributed region failures remain; no accepted matching recipe |
-| Region measurement | Pixelwise mean/p95 gate, separate median diagnostics, fixed RAW geometry; six perturbation views and seven-image grid audit | Original hard regions include a warm-face colour failure, a correspondence-sensitivity failure and three inconclusive regions |
-| Export reliability | 99 guarded RAW exports, format/metadata/original-integrity/cancellation evidence | That batch did not test matching to camera targets |
-| Independent acceptance | 3,768 candidate pairs inventoried; 463 training and204 development pairs locally capture/VV2 verified; prior-use audit | Original 72 temporal groups have prior pixel use; 229 new candidates frozen before pixel use, 208 metadata verified and 21 unavailable; seven temporal candidates across six dates remain below the ten independently checked shoot gate |
+| Decoder | Explicit RAW9; require support, no silent fallback | A demonstrated platform defect; decoder substitution is a scope decision |
+| White balance | Verify and retain camera-recorded balance as interpreted by Apple | Evidence of incorrect interpretation or lost usable colour information |
+| Exposure | Apple baseline interpretation, additional exposure offset zero; no new automatic exposure selector | Demonstrated clipping/crushed data or other input limitation |
+| Highlight recovery | Retain supported native default; record effective support/enabled state | A measured input-information limitation |
+| Noise | RAW9 supplied processing and default supported controls | Demonstrated loss of required texture or unacceptable noise |
+| Sharpening/local contrast/tone | Record and retain native defaults initially; no extra selector | Demonstrated artifacts or information loss |
+| Other RAW controls | Inventory every exposed control, support and effective value; explicitly retain default policy | A named defect, not an open parameter sweep |
+| Lens | Validate supported native correction independently; custom profiles deferred | A validated ready profile option, separately investigated |
+| Colour/precision | Explicit floating-point working boundary; choose a supported wide range without premature clipping | A verified colour-boundary defect |
+| Appearance | One shared supervised image-to-image network | Controlled architecture/training experiments below |
+| Output | Native-resolution 10-bit SDR sRGB HEIF, explicit encoding settings | Demonstrated output defect |
 
-The checked-in recipe is a frozen comparison baseline, not a release-quality
-matching result. Its training priority on six examples is not an acceptance rule.
-The complete user collection must be used in assigned roles, rather than limiting
-learning/evaluation to a small convenience set. Known prior use disqualifies an
-image/group from untouched acceptance; it remains useful development material.
-See [current evidence](../research/2026-10-01-vivid-raw9-pipeline-validation.md),
-[original methods](../research/2026-09-27-sony-matching-methods.md) and
-[paired-data research](../research/2026-10-01-paired-vivid-camera-learning.md) and
-[comparison-method research](../research/2026-10-01-camera-match-comparison-method.md).
+Defaults can vary with input metadata. Freeze our policy and record effective
+per-input settings, OS/Xcode versions and decoder support; do not force the same
+numbers onto every RAW or assume OS defaults never change. RAW9 handles colour
+noise internally; do not tune unsupported/no-effect controls. Read API support
+rather than treating every exposed property as an effective independent knob.
 
-## Acceptance contract
+Stage settings are independently controlled, but their photographic effects can
+interact. The network's internal weights are not independent exposure, saturation
+or contrast knobs. Brightness, colour and detail are separately measured and their
+training penalties explicitly weighted; this does not create independent artistic
+controls. Such controls are not required for this single-look task.
 
-Retain the original colour/detail/generalization gates. Later median-region
-limits are supplementary diagnostics, not substitutes. These are project
-engineering limits, not universal perceptual guarantees. Any necessary measurement
-revision requires demonstrated invalidity, an explicit reason/version and fresh
-acceptance; observed failures cannot justify relaxing a target.
+## Reuse and evidence boundary
 
-| Aspect | Gate |
+Reuse verified pairing, safe local corpus storage, colour/geometry measurements,
+actual HEIF evaluation and resource supervision where their contracts remain valid.
+Do not reopen retired model paths or continue coefficient/selector experiments.
+A direct image-to-image network has not been trained or accepted at this checkpoint.
+Numerical/infrastructure repairs are not photographic gains.
+
+The latest source checkpoint is local commit 367cd30 on
+research/native-field-learning; it is not integrated into main. Inspect which
+bounded-execution and evaluation changes need integration before implementation;
+never assume that checkpoint exists on the next-start branch. Preserve its work.
+See [native capabilities](../research/2026-10-03-macos-imaging-capabilities.md) and
+[paired learning research](../research/2026-10-01-paired-vivid-camera-learning.md).
+
+## Milestone 1 — Freeze pairs, roles and comparisons
+
+The user reports 8,294 RAW/HEIF pairs available for training and validation.
+Treat this as the available collection, not a claim that every pair has already
+been independently capture/look/alignment verified. Plan learning around the full
+collection, allocating eligible whole shoots to training, development and untouched
+acceptance; the small pilot is a training check, not the eventual dataset limit.
+
+Inventory all 8,294 reported pairs using filesystem facts first. Guard metadata reads;
+verify camera, capture identity and VV2 settings. Audit all prior fitting, scoring,
+selection and inspection. Group actual shoots/bursts; dates/time gaps are clues,
+not proof of independent scenes. Retain training, development and untouched final
+shoots. Repeatedly used validation is development, not untouched acceptance.
+
+Verify orientation, crop, colour interpretation and independent correspondence.
+Retain unregistered views and native lens diagnostics. Exclude unreliable alignment,
+never high error alone. Record excluded coverage and motion/lens differences.
+Freeze difficult regions before scoring; keep every previous failure reported.
+No exposure, white-balance or saturation matching during evaluation.
+
+Deliver: private versioned manifests, prior-use ledger, coverage and shoot roles,
+alignment/mask contract, target decoding check and representative paired overlays.
+Feedback: identity/colour-round-trip checks and existing known-perturbation tests.
+Reuse validated measurements; repair only reproduced defects.
+Gate: trustworthy training observations, no cross-role shoot leakage. Missing
+reserve coverage leaves final acceptance open but need not stop training.
+
+## Milestone 2 — Freeze the complete native input configuration
+
+Inventory the current native renderer's controls against API documentation and
+runtime support. Produce an explicit policy/value receipt for every exposed
+control. Verify camera white-balance interpretation rather than assuming it.
+Choose and validate working colour space, range and precision. Source alpha,
+finite values, crop and full-resolution decoding remain checked boundaries.
+
+Use a small, varied development set covering low/high ISO, faces, saturated colour,
+indoor/mixed light, bright highlights and dark texture. Inspect whether input
+processing destroys information: clipping, crushed shadows, excessive smoothing,
+halos or gamut clipping. Do not require the input to already match the vivid look.
+
+If an input defect is observed, change only the responsible native setting with
+all others fixed. At most two predeclared variants per defect. Test actual native
+renders and reject unsupported/invalid outputs; do not keep exploring controls
+merely because target colour differs. If no defect is established, retain defaults.
+
+Deliver: versioned development configuration, effective-value receipts, saved
+floating-point inputs and native crops. Network training does not start until this
+boundary is explicit and suitable. Input changes invalidate derived data and the
+claim that a previously trained network was evaluated on the current pipeline.
+
+## Milestone 3 — Prove direct training on a small collection
+
+Select a small varied training subset before inspecting candidate results; retain
+hard examples. Deliberately overfit it. Choose one established architecture with
+whole-image context plus detailed patches; preserve the target's precision and
+avoid premature 8-bit conversion. Training patches alone must not remove the
+whole-image information used at inference. Define native-resolution inference
+and seam-free reconstruction before committing to an architecture.
+
+Start with supervised image reconstruction, multi-scale brightness and colour
+penalties, plus an edge/detail penalty. Specify colour domain, correspondence
+masking, weights and sample weighting before a run. Match prediction directly to
+separate target images; fitted per-photo coefficients are not supervision. Assess
+encoded HEIF alongside floating-point output. Do not train against unreliable
+pixel correspondence, lens shifts or exact random noise realizations.
+
+Before a heavy run, write architecture/version, initialization, optimizer/rate,
+steps, sampling, loss weights, checkpoint cadence, maximum elapsed time and memory
+budget. These implementation choices remain open here; resolve them once in the
+pilot contract rather than silently varying them. Verify a tiny batch loads,
+backpropagates, reduces training loss and round-trips through output first.
+
+Deliver: trained checkpoint, repeatable command/configuration and paired outputs
+for every pilot image; separate brightness, colour and native-detail findings.
+Gate: convincingly reproduce the training examples without new artifacts under
+the unchanged photographic limits below. A lower training loss is insufficient.
+
+Failure loop: classify alignment, information loss, numerical/training defect or
+model limitation. Permit one repair or at most two declared variants for the
+named cause, then report success/rejection/inconclusive. Do not expand a failed
+pilot or silently spend days increasing capacity. Exhausted compute is not proof
+that the model family cannot work. A blocked pilot requires a concrete revised
+experiment, evidence and a progress report before further heavy work.
+
+## Milestone 4 — Learn transferable behaviour across the collection
+
+After pilot fidelity, train across the eligible training allocation from the
+8,294-pair collection, deliberately provisioning more pairs where needed. Preserve the
+input configuration and withheld roles. Balance independent shoots/lighting/ISO,
+not just abundant neighbouring frames. Measure benefits of additional data using
+fixed development shoots; inventoried pairs are not verified independent examples.
+
+Explore only a named cause: training duration, sampling, network capacity or
+brightness/colour/detail loss balance. At most two variants in one cycle. Use
+checkpoint selection on development only. No target-derived features at inference.
+
+Feedback: per-image and per-region results, error maps, native crops, worst cases,
+lighting/ISO groups and adjacent-frame consistency. Good training/poor excluded
+results sends work to generalization/coverage; poor results on both sends work to
+training/representation. A specific input limitation reopens Milestone 2, not an
+extra automatic selector beside the network.
+
+Gate: excluded-shoot benefit, difficult controls meet limits and detail remains
+sound. Do not promote a model based on averages or training reproduction. Close
+an unsuccessful bounded experiment before choosing the next evidence-backed action.
+
+## Milestone 5 — Full-resolution native inference and HEIF
+
+Run one complete frozen configuration at native resolution. Initially retain the
+chosen input detail policy with no extra sharpening. Add a separately controlled
+native output operation only for a demonstrated defect; compare fixed variants,
+avoid duplicating RAW9/network processing and rerun development after any change.
+
+Verify actual HEIF bit depth, codec, SDR transfer/primaries/profile, dimensions,
+orientation and decoded appearance. Test full-image/patch inference agreement,
+seams/borders, highlights, faces, texture, noise and halos. If reduced-resolution
+training does not transfer, revise training scale/detail sampling explicitly.
+Prefer PyTorch for training and Core AI for native inference. Test an early
+representative export before broad training; compare training-runtime and deployed
+outputs before claiming equivalence, with measured tolerances and malformed/input
+fixtures. Core ML is an alternative only for a demonstrated Core AI limitation.
+Do not require a CPU implementation of Apple Neural Engine internals.
+
+Deliver: one reproducible RAW-only export path, versioned model/configuration and
+native photographic/latency/memory evidence. An inference backend or preprocessing
+change requires renewed comparison, not presumed equivalence.
+
+## Milestone 6 — Untouched acceptance and completion
+
+Freeze source, model, native controls, output and comparison contract before using
+the final reserve. Require at least 50 verified unused pairs across at least 10
+independently checked shoots, using more eligible pairs when available. Report
+coverage and every failure. Previously inspected/fitted/scored groups are ineligible.
+
+| Aspect | Acceptance |
 | --- | --- |
-| Whole-image colour/tone | Each acceptance image: valid low-frequency mean CIEDE2000 <= 2.0 and p95 <= 5.0; also report unblurred errors |
-| Difficult regions | Every preselected region: mean low-frequency pixel CIEDE2000 <= 2.0; no visible broad cast, brightness mismatch or new artifact |
-| Native detail | No systematic halos, softened texture, fringes or excess noise; report edges, texture and flat-region noise. Matching individual random noise realizations is not required |
-| Generalization | At least 50 untouched verified RAW/HEIF pairs across at least 10 independently checked shoots, separate from training/development; use more eligible pairs when available and report coverage |
-| Regressions | Every failed image/region and excluded/uncertain area remains reported; include worst cases and lighting/ISO/lens groups; averages cannot buy failures |
-| Reproducibility | One versioned pipeline/model for CPU/Metal evaluation, actual native HEIF and comparison assets; boundary/malformed-model fixtures |
-| Operation | Guarded reads, no silent decoder/model substitution, no original writes, complete no-overwrite publication, cancellation and measured latency/memory |
+| Whole-photo colour/brightness | Each image: valid low-frequency mean CIEDE2000 <= 2.0 and p95 <= 5.0; report unblurred errors too |
+| Difficult regions | Every frozen reliable region: low-frequency mean pixel CIEDE2000 <= 2.0; no visible broad mismatch or new artifact |
+| Native detail | No systematic halos, lost texture, fringes, excess noise or inference seams; random noise identity is not required |
+| Geometry | Independently reported; unsupported/residual lens correction remains an explicit limitation, never absorbed or hidden |
+| Independence | Sensor RAW and allowed metadata only at inference; embedded camera images excluded everywhere |
+| Operation | Guarded reads, read-only originals, no-overwrite output, complete publication, cancellation, measured memory/latency and no silent fallback |
 
-Colour scoring retains 768-pixel long edge and Gaussian sigma 1.2, identical
-profile/crop/transfer/resampling, validated D65 Lab/DE00 and separately reported
-valid fraction/clipping. Exclude unreliable correspondence, never high error alone.
-The original half-native-pixel geometry gate cannot be claimed satisfied: custom
-lens work was explicitly deferred. Report native geometry independently, use only
-reliable correspondence for colour, and keep that scope limitation explicit.
-No target-specific registration becomes a runtime lens correction.
+Retain the existing 768-pixel long-edge, Gaussian sigma 1.2 comparison contract,
+validated D65 Lab/DE00 and identical colour/crop/resampling. Report valid fractions
+and clipping. These numerical limits are engineering gates, not guarantees of
+visual identity. They supplement native visual/detail inspection. Do not relax
+limits after a failure or substitute median colours for pixel comparisons.
 
-## Feedback and escalation rule
+A failed reserve becomes development evidence; diagnose it and obtain fresh final
+acceptance material. No accepted matching model or independent reserve sufficiency
+is currently claimed. Delete this plan only after photographic, operational and
+independent acceptance plus delivery are complete.
 
-Every experiment records baseline, named failure group, one hypothesis, expected
-residual change, allowed inputs, at most two variants, fitting/checking groups,
-predeclared pass/regression rules, actual native outputs, adopt/reject/inconclusive,
-and the next stage supported by evidence. Freeze comparison masks and unchanged
-stages. Numerical solver or coverage failure is not proof of model incapacity.
-No open-ended sweep, silent target change or promotion based only on an average.
+## Resource, media and execution rules
 
-## Milestone 1 — Verified collection and honest split
+Keep originals read-only. Check SF_DATALESS immediately before every original byte
+read. Authorized deliberate OneDrive provisioning/copying continues through the
+existing safeguards. Store private copies, manifests, source tensors, targets,
+checkpoints and diagnostics in the primary checkout's ignored
+build/sony-paired-corpus/, outside media folders and Git. Preserve source provenance
+and verify copy size/hash. Worktree cleanup must not delete the corpus.
 
-Inventory all candidate RAW/HEIF pairs using filesystem facts first. Verify camera,
-capture identity and VV2 settings through guarded metadata reads. Record unavailable,
-rejected and unknown cases. Audit all prior training, fitting, selection and visual
-inspection. Group whole bursts/shoots; time gaps/dates are clues, not independent
-scene proof. Freeze final reserve before new fitting. Assign remaining eligible
-shoots to training/development with lighting/ISO/lens/exposure coverage. Do not
-train on everything and then reuse those pairs as an independent test.
+Integrate/verify the existing bounded-execution owner before heavy work. One heavy
+job at a time; no overlap with compilation/full repository checks. Initially retain
+4096 MiB summed process-tree RSS and physical-footprint limits, 25% system memory
+availability and one-second sampling. Include training workers and native/GPU
+allocations in resource observations; these limits are safeguards, not exact total
+GPU memory guarantees. Validate accelerator/resource observation before expansion.
+Stop the owned process group on breach, record incomplete work and halt the batch;
+no silent retry. Use bounded batches and fresh processes where needed. Never load
+the whole native-resolution collection into RAM. Record per-run memory and time.
 
-Deliver: private manifests, prior-use ledger, group/coverage counts and split rules.
-Gate: no cross-role shoot leakage; actual reserve independence verified. If reserve
-coverage is insufficient, continue development and keep final acceptance open.
+Each experiment has one hypothesis, unchanged stages, at most two variants,
+predeclared data roles and stopping/regression rules. Report adopt/reject/inconclusive,
+actual photographic changes, infrastructure repairs separately, resource cost and
+one next action. Communicate meaningful progress during work; do not replace failed
+experiments with unreported sweeps. A failed bounded experiment is not plan completion.
 
-## Milestone 2 — Broad frozen-baseline failure report
-
-Run the current recipe against development camera HEIFs using actual native output.
-Retain old hard controls; extend evaluation across the verified collection.
-Report whole-image/region gates, residual maps, clipping, geometry uncertainty,
-native crops and grouped/worst-case failures. Establish repeatability and a
-self-comparison error floor before tuning. Audit the metric with known colour,
-geometry, clipping, noise and detail perturbations at fixed viewing scales. Compare
-linear-light/spatial preparation and an explicitly supplementary LDR-FLIP candidate
-without silently changing old scores or gates. Add original mean-region scoring where
-current median diagnostics cannot establish it.
-
-### Required comparison contract
-
-1. Compare actual final HEIFs in the same colour space, orientation, crop and
-   scale. Never compensate exposure, white balance or saturation during scoring.
-2. Measure alignment independently of the candidate recipe. Publish both the
-   unregistered output and colour scores over reliably corresponding locations;
-   report excluded/unknown coverage explicitly. Alignment cannot hide lens errors.
-3. Compute colour differences at corresponding pixels before pooling. Report
-   mean, p95, error maps and every frozen difficult region. Independently pooled
-   median colours are diagnostic only and cannot pass matching acceptance.
-4. Check native detail separately using identical crops and edge/halo/noise
-   measurements. Test LDR-FLIP as a supplementary perceptual map under declared
-   viewing conditions; adoption requires calibration and the dependency ADR.
-5. Report every image's outcome, worst cases and equal-shoot summaries. Neither
-   an overall mean nor a median can conceal an image or region that fails.
-
-### Measurement feedback loop
-
-Freeze a development-only calibration set and known perturbations before running
-it. Test identity, colour round-trip, known shifts, exposure/saturation changes,
-local casts, opposing local errors, clipping, blur/halos and noise. Record which
-measurement detects each change, its geometry sensitivity and numerical floor.
-Compare historical encoded-space blur with linear-light/spatial preparation while
-retaining both scores; changed measurement values are not algorithm improvements.
-
-Deliver: a versioned comparison contract, perturbation response report, colour
-error maps, native crops and baseline failure attribution with coverage. A metric
-that misses a deliberately introduced relevant defect returns to measurement work.
-Unknown correspondence returns to alignment work. Neither outcome authorizes
-increasing recipe complexity.
-
-Gate: the comparison reliably detects the declared defects and distinguishes
-colour, alignment and detail failures on development material. Keep original
-engineering thresholds until a demonstrated measurement defect justifies a
-versioned revision. Do not adopt new rendering coefficients while this audit is
-open. Research identifies candidates; only measured calibration selects them.
-
-## Milestone 3 — Capacity versus automatic selection
-
-For representative recurring failures and good controls, fit individual settings
-against targets offline. Begin with existing explicit stages; expand the compact
-matrix/tone/global-field diagnostic only if necessary. Separate spatial fit/check
-areas with support buffers, audit colour coverage and convergence, and inspect
-signed residuals. Fitted regions measure expression only, not generalization. Reduced-linear-input
-fitting is an initializer: verify native-order loss and sampling/convergence before
-treating its failure as insufficient global capacity. The native-order audit now
-confirms material order differences; bounded four-control native fits still fail
-the original whole-image gates. Native direct-DE00 tone/normalization fits improve whole-image results on five
-of seven failures, but every failure still has reliable-region failures. A native
-per-image channel-curve/9-cubed profile with joint monotone RGB fitting also fails;
-the high-ISO surrogate converges without passing HEIF matching. Other channel
-solves remain bounded, not globally certified. Sparse source-edge/noise sampling
-and a point-RGB objective do not establish insufficient global capacity. Continue
-with a native-order low-frequency fitting-objective and sampling audit before
-adding prediction or local capacity. See
-[normalization and solver evidence](../research/2026-10-02-native-normalization-and-profile-capacity.md). See
-[native-order evidence](../research/2026-10-02-native-order-fitting-diagnostic.md). The completed bounded colour
-and sequential-tone diagnostics are recorded in
-[expression research](../research/2026-10-01-global-expression-and-tone-diagnostics.md).
-
-Branches: individual fits work/shared recipe fails -> Milestone 4 parameter
-prediction; both fail -> inspect native input/clipping/representation/solver before
-adding capacity; reliable spatial residual persists -> Milestone 5. Diagnose each
-failure class; six fitted controls do not prove capacity everywhere.
-
-## Milestone 4 — Shared fit and justified RAW-only adaptation
-
-Fit with the eligible training collection and balanced shoot/condition sampling.
-Keep natural-distribution evaluation unchanged. Compare increasing training sizes
-against fixed development groups to identify data versus model limits.
-If justified by Milestone 3, compare a compact metadata/statistics parameter
-predictor with the fixed baseline. Allowed features come only from RAW. Basis-LUT
-blending is an escalation when current controls cannot represent successful global
-fits. Use ablations and neighbouring frames to reject unnecessary inputs and abrupt
-changes. Fit interacting stages jointly where necessary.
-
-Gate: all development limits and old hard controls pass, native quality is retained,
-and unseen-shoot benefit supports the added complexity. Failures return to their
-measured cause; do not merely increase model size or weight a few anchors harder.
-
-## Milestone 5 — Local processing and native detail, only as needed
-
-Prove a spatially varying residual that global per-image fits cannot remove before
-adding bounded edge-aware local tone/colour processing. Fit/check separated areas
-and inspect halos/skin boundaries/highlights. Handle denoise/sharpening as separate
-native-detail operations, with ISO and neighbour stability checks. Retain technical
-and lens ownership. Changing native development invalidates derived training data.
-
-Gate: actual native HEIF passes colour and detail checks on development groups;
-otherwise reopen the responsible boundary with a bounded diagnostic.
-
-## Milestone 6 — Frozen independent paired acceptance and delivery
-
-Freeze source, decoder controls, recipe/predictor, output and measurement contract.
-Test untouched paired targets against every acceptance gate. Camera HEIFs are
-mandatory matching targets here; RAW-only/public files supply additional export
-reliability checks only. Run final input-independence, cancellation, metadata,
-format, CPU/Metal and resource checks on the same final tree.
-
-A failed test becomes development data and reopens the measured failure stage;
-obtain fresh independent acceptance. Unavailable data/API limits are limitations,
-not completion. Keep reproducible calibration and verification instructions.
-
-Run the repository's monitored script/check.sh for source changes and standalone
-checks, self-review fidelity/architecture, update current-state docs, integrate
-through PRs, and complete cleanup. Delete this plan only after matching acceptance
-and delivery both succeed. Document-only corrections use the lightweight gates.
-
-## Execution contracts after the October 3 research synthesis
-
-Follow [pipeline and improvement-loop research](../research/2026-10-03-camera-match-improvement-loop-synthesis.md).
-Retain RAW9, separate lens ownership, all old difficult controls and current limits.
-Reduced guidance may predict native transforms; reduced point-RGB fitting must
-prove that it predicts actual native improvements. Separate ownership permits
-joint fitting of interacting tone/colour stages.
-
-1. **Native source:** finish verification and integration of the existing source
-   contract. Its matched100-capture pilot cleared no failure; do not rerun463
-   exports for source scale alone or promote that pilot model.
-2. **Objective audit:** freeze existing green/cyan/foliage/daylight failures and good
-   controls, one model family and at most two variants. Compare fitting predictions
-   with actual native look-before-reduction and emitted HEIF colour/region outcomes.
-   Isolate source preparation, blur and loss/prior effects. Report signed residuals,
-   loss ranking, resolved/introduced failures and unchanged optical coverage. Repair
-   only demonstrated mismatches; a changed metric or lower surrogate is not acceptance.
-3. **Expression by class:** obtain bounded native diagnostic evidence for unresolved
-   green/foliage and other classes. Successful individual fits permit shared inference
-   work for that class. Nonconvergence/budget exhaustion reopens numerical diagnosis;
-   reliable failures with adequate fits reopen representation/input boundaries.
-4. **RAW-only selection:** compare declared exposure, colour-distribution, clipping
-   and gradient summaries plus existing metadata against metadata-only conditioning,
-   retaining the bounded correction field. Use training groups and group-held-out
-   validation; no target features at inference. A learned thumbnail-to-basis-LUT
-   selector is an escalation only when this experiment and residuals justify it.
-5. **Local/detail:** add edge-aware local processing only for reliably spatial errors
-   surviving adequate global expression. Inspect native edges, texture, halos,
-   fringes and flat-region noise separately; retain noise-realization tolerance.
-6. **Broad/final:** a screen candidate must resolve a declared image/region failure
-   while preserving old passes before full204 expansion. Report every regression,
-   group/worst case and native crop. Freeze the complete candidate before consuming
-   >=50 unused verified pairs from >=10 independently checked shoots. Acceptance
-   failure becomes development evidence and requires fresh final-test material.
-
-Every cycle has a written hypothesis, allowed inputs, unchanged stages, named
-failure group, at most two variants, compute budget, fit/check groups and frozen
-regression rules before fitting. End with adopt/reject/inconclusive and the one
-next action supported by evidence. Distinguish photographic progress from numerical
-or infrastructure repairs. Keep actual HEIF, pixelwise mean/p95, fixed regions,
-unregistered/reliable-correspondence views and native detail; median diagnostics
-and offline LDR-FLIP do not replace acceptance. An unsuccessful fixed screen ends
-that bounded experiment rather than starting a knot, prior or iteration sweep.
-
-### Completed order/class checkpoint
-
-The frozen nine-control data-loss audit finds one point/native RGB ranking
-reversal and three RGB/actual-HEIF perceptual-mean ranking disagreements. No shared
-model is changed or promoted. Green's component residual failed derivative
-calibration; one Cartesian-direction residual preserves exact DE00 and passes that
-numerical gate. Its bounded native fit improves whole mean/p95 to2.053/4.264,
-but still fails mean and four declared regions; six remain inconclusive. Foliage's
-eight eligible regions already pass while whole HEIF and excluded sunlit foliage
-fail. Neither provides universal global expression. Close these bounded fits
-without iteration/target/floor sweeps. Keep explicit numerical diagnostics and
-route green failures to representation/spatial attribution, foliage to independent
-correspondence/detail attribution, and demonstrated original-cyan expression to
-shared RAW-only prediction. See
-[order and class evidence](../research/2026-10-03-native-objective-order-and-class-expression.md).
-
-### Completed native-opacity and RAW-context checkpoint
-
-The existing native source includes image-dependent Apple denoising. A guarded
-zero-luminance-denoising comparison on green produces invalid native encoded alpha
-before the look, including at a full-float tap. Its grain/brightness comparison is
-invalid; retain default controls. Saved/conditional rendering and calibration now
-share finite/opaque source validation. Invalid source support stops publication;
-valid green HEIF scores are unchanged. This is a reliability repair, not a look gain.
-
-One frozen RAW-context centroid selector retains six bounded fields and uses
-RAW-only brightness/chroma/clipping/gradient features. Matched77-capture fits,
-23 group-excluded checks and nine actual-HEIF controls complete: both models pass
-23/23 and5/9, with no resolved failure. Context worsens held-out equal-image and
-equal-date means. Reject this selector; do not expand it, tune affinity parameters,
-or infer that all image-context learning fails. Next, test the fixed field bank's
-native blending against the demonstrated original-cyan witness before investing
-in another selector. Target-assisted weights measure expression only; successful
-blending proceeds to supervised RAW-guide selection, inadequate numerical evidence
-to solver diagnosis, and reliable residual to bank/native-training investigation.
-See [native opacity and RAW-context evidence](../research/2026-10-03-native-opacity-and-raw-context.md).
-
-## Immediate execution
-
-Continue the plan; photographic acceptance remains open. The original static
-profile passes 173/204 development images. The frozen shared RAW-WB/ISO candidate
-passes 186/204, resolves thirteen whole-image failures and introduces none; eighty
-captures nevertheless have higher mean error. Eighteen whole-image failures,
-original hard-region failures, native detail and independent acceptance remain
-open. No experimental model is promoted. See
-[conditioning evidence](../research/2026-10-02-raw-metadata-conditioning.md).
-
-The training corpus now contains 463 capture-verified pairs on the same 36 assigned
-training dates. The added 201 were selected by materialized-file availability
-before pixel reads; the revised split is explicit and is not an exact recovery of
-the lost temporary manifest. Development dates and the new reserve stay excluded.
-WB/tint substitution, equal-date 262/463 fits, capped source-colour weighting,
-combined WB/ISO/tint and a five-cube colour field failed the fixed nine-control
-screen or removed no failures. Reject those variants;
-do not continue weighting or knot sweeps without a new measured cause.
-
-The native sampler previously erased the original eight-by-eighteen-pixel cyan
-region with its inset. Full scored-region support corrects that omission. A bounded
-six-iteration native field fit now passes the whole image (mean/p95 1.738/4.759),
-face (1.030) and white shirt (0.910), but cyan remains a measured failure at 2.108
-and one reliable grid region fails at 2.043. Five of twenty declared regions fail
-and three remain inconclusive. This target-assisted witness is not inference;
-budget exhaustion is not global incapacity. RAW-only source/preparation audits and
-expanded training results are recorded in
-[source coverage and region support](../research/2026-10-03-source-coverage-and-native-region-support.md).
-
-A matched100-capture native-input pilot corrects reduced-decoder training input
-and a reproduced opacity/sample-support defect. It still passes five of nine:
-no failed case becomes a pass. Keep the consistent native source contract but
-reject the model as a promoted camera match. Close source-scale consistency as a
-sufficient explanation; do not export the entire corpus for that hypothesis.
-The shared-learning gap remains. The native order/class audit and bounded
-RAW-context cycle are completed above. Test fixed-bank native blending for the
-demonstrated original-cyan witness; keep green representation/spatial attribution
-and foliage correspondence/detail attribution open. See
-[shared models and native source](../research/2026-10-03-shared-model-and-native-source-pilot.md).
-
-Next actions and feedback loops:
-
-1. The bounded gradient audit and reproduced small-residual solver repair are
-   complete. Actual cyan HEIF outcomes are unchanged, so close that investigation;
-   do not extend iterations or floor/step sweeps. Residual derivative uncertainty
-   remains a limitation. The bounded region-feasibility fit now passes the original
-   cyan/face/white regions and whole native HEIF within the existing field. One
-   reliable grid colour failure and unknown/sensitive areas remain. Close that
-   original-cyan expression investigation without more sweeps. The shared objective audit and first RAW-context cycle are complete. Test native
-   blending inside the fixed shared field bank before another predictor; retain
-   this target-assisted witness as expression evidence only. All old hard regions, native detail and full204 regression remain
-   gates. See [gradient evidence](../research/2026-10-03-native-objective-gradient-and-curvature.md)
-   and [region feasibility](../research/2026-10-03-native-region-feasibility.md).
-2. Separately attribute daylight tails to colour, fixed correspondence and optical/
-   detail coverage. Publish unregistered results and reliable corresponding-area
-   results together. Unknown geometry stays unknown; deferred lens work cannot be
-   absorbed into the colour recipe or hidden through registration.
-3. Quantify native texture, edge/halo and flat-region noise against separate HEIF
-   targets. Source ranges are association diagnostics, not a reason to alter RAW9.
-   Change detail processing only for a demonstrated defect; re-export derived
-   training data if native development changes.
-4. Successful expression witnesses proceed to shared RAW-only prediction/training,
-   fixed development screens and the full 204-image regression collection. Every
-   old difficult region remains a gate. Add capacity or local processing only when
-   reliable residuals and numerical evidence justify it.
-5. Keep the reserve pixel-untouched until a candidate and measurement contract are
-   frozen. Its seven provisional groups are below ten independently checked shoots.
-   Complete the independence/coverage audit and obtain eligible additional groups;
-   neither date subdivisions nor development results may replace final acceptance.
-
-Historical embedded-camera comparisons and preview-guided recipes remain excluded.
-Private media/provenance remain in the user-authorized ignored persistent corpus;
-see [input audit](../research/2026-10-02-input-provenance-and-local-corpus.md). No
-app integration or custom lens profile work is introduced. Delete this plan only
-after every matching, native-quality, generalization and operation gate succeeds.
+No third-party dependency before an ADR comparing alternatives, licensing,
+training/runtime support, memory and native export. Training tools may differ from
+native inference but their boundary must be explicit. Implementation uses monitored
+script/check.sh and relevant standalone checks; documentation-only work uses the
+lightweight documentation gates. GitHub CI is not an experimental milestone.
+Current authorization replaces the plan only; neural training starts on a later
+implementation instruction. Preserve the committed source checkpoint and other
+user work; do not merge it implicitly with this documentation change.
