@@ -38,7 +38,7 @@ actor MediaTrashCoordinator {
 
     /// A question only the user can answer. Until it is answered the items stay pending
     /// and hidden, and the queue does not retry them.
-    enum Decision: Equatable, Sendable {
+    nonisolated enum Decision: Equatable, Sendable {
         /// The provider definitively refused to download these, so they cannot reach the
         /// Trash. Answers: `deleteImmediately` or `restore`.
         case downloadFailed([MediaAssetID])
@@ -75,7 +75,7 @@ actor MediaTrashCoordinator {
 
     /// What the status bar reports (DES-030/031). `movedCount` counts items moved since
     /// the queue last became non-empty and resets when it drains.
-    struct QueueState: Equatable, Sendable {
+    nonisolated struct QueueState: Equatable, Sendable {
         enum Attention: Equatable, Sendable {
             case waitingForSpace
             case waitingForDownload
@@ -93,14 +93,14 @@ actor MediaTrashCoordinator {
         static let idle = QueueState(pendingCount: 0, movedCount: 0, bytesToDownload: 0, attention: nil)
     }
 
-    enum Event: Equatable, Sendable {
+    nonisolated enum Event: Equatable, Sendable {
         case state(QueueState)
         case decision(Decision)
         /// Items whose move failed after they were local. They have been un-hidden.
         case moveFailed([MediaAssetID])
     }
 
-    struct RetryPolicy: Sendable {
+    nonisolated struct RetryPolicy: Sendable {
         var delays: [Duration]
 
         static let production = RetryPolicy(
