@@ -313,7 +313,7 @@ actor MediaTrashCoordinator {
         guard !isShuttingDown else { return }
         while !undoRequests.isEmpty {
             let (batch, ids, continuation) = undoRequests.removeFirst()
-            continuation.resume(returning: await performUndo(batch: batch, ids: ids))
+            await continuation.resume(returning: performUndo(batch: batch, ids: ids))
         }
         let items = await pendingItems()
         let now = clock.now
@@ -632,7 +632,7 @@ actor MediaTrashCoordinator {
 
     private func performUndo(batch: MediaTrashBatchID, ids: Set<MediaAssetID>) async -> UndoResult {
         var outcome = UndoResult()
-        let pendingIDs = Set(await pendingItems().map(\.item.id)).intersection(ids)
+        let pendingIDs = await Set(pendingItems().map(\.item.id)).intersection(ids)
         if !pendingIDs.isEmpty {
             awaitingDecision.subtract(pendingIDs)
             waitingForSpace.subtract(pendingIDs)
@@ -693,7 +693,9 @@ actor MediaTrashCoordinator {
                     path=\(moved.member.relativePath.rawValue, privacy: .public)
                     """
                 )
-                if moved.member.role == .primary { break }
+                if moved.member.role == .primary {
+                    break
+                }
                 continue
             }
             do {
@@ -704,7 +706,9 @@ actor MediaTrashCoordinator {
                 }
             } catch {
                 logFailure(error, operation: "putBack", member: moved.member)
-                if moved.member.role == .primary { break }
+                if moved.member.role == .primary {
+                    break
+                }
             }
         }
         _ = await store.releaseNamespaceMutationLease(lease)
