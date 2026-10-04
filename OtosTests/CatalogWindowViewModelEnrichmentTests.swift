@@ -111,7 +111,7 @@ struct CatalogWindowViewModelEnrichmentTests {
         model.start()
 
         // The persisted asset enriches purely from the post-load Store query.
-        let asset = try await waitForFirstAsset(store: secondStore, model: model, attempts: 400) { asset in
+        let asset = try await waitForFirstAsset(store: secondStore, model: model) { asset in
             asset.bestCaptureDate == captureDate
         }
         #expect(asset.thumbnailPath == "t.jpg")
@@ -158,12 +158,10 @@ private func completeEnricher(captureDate: Date, thumbnailPath: String = "t.jpg"
 private func waitForFirstAsset(
     store: CatalogStore,
     model: CatalogWindowViewModel,
-    attempts: Int = 200,
     predicate: (MediaAsset) -> Bool
 ) async throws -> MediaAsset {
-    let timeout = attempts > 200 ? Duration.seconds(20) : .seconds(10)
     var lastAsset: MediaAsset?
-    for await state in windowStateStream(model, timeout: timeout) {
+    for await state in windowStateStream(model) {
         guard let id = state.mediaGrid.orderedAssetIDs.first else {
             continue
         }
@@ -178,10 +176,10 @@ private func waitForFirstAsset(
     let need = String(describing: lastAsset?.needsEnrichment(hashRequired: true))
     let cap = String(describing: lastAsset?.bestCaptureDate)
     let size = String(describing: lastAsset?.byteSize)
-    Issue.record("waitForFirstAsset timed out: needsEnrichment=\(need) bestCaptureDate=\(cap) byteSize=\(size)")
-    throw EnrichmentWiringTestError.timedOut
+    Issue.record("waitForFirstAsset stream ended: needsEnrichment=\(need) bestCaptureDate=\(cap) byteSize=\(size)")
+    throw EnrichmentWiringTestError.streamEnded
 }
 
 private enum EnrichmentWiringTestError: Error {
-    case timedOut
+    case streamEnded
 }
