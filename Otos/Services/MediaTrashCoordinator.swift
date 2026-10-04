@@ -168,8 +168,12 @@ actor MediaTrashCoordinator {
         self.trashExecutor = trashExecutor
         self.removeExecutor = removeExecutor
         self.retryPolicy = retryPolicy
-        (events, eventContinuation) = AsyncStream.makeStream(bufferingPolicy: .unbounded)
-        (wakeStream, wakeContinuation) = AsyncStream.makeStream(bufferingPolicy: .bufferingNewest(1))
+        let (events, eventContinuation) = AsyncStream<Event>.makeStream(bufferingPolicy: .unbounded)
+        self.events = events
+        self.eventContinuation = eventContinuation
+        let (wakeStream, wakeContinuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        self.wakeStream = wakeStream
+        self.wakeContinuation = wakeContinuation
     }
 
     // MARK: - Lifecycle

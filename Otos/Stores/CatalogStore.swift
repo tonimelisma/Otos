@@ -959,7 +959,7 @@ extension CatalogStore {
     func pendingTrashItems() async throws -> [PendingTrashItem] {
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
-        let rows = try await dbWriter.read { db in
+        let rows: [(rootID: Int64, relativePath: String, batchMs: Int64)] = try await dbWriter.read { db in
             try Row.fetchAll(
                 db,
                 sql: """
@@ -968,20 +968,21 @@ extension CatalogStore {
                 WHERE pending_trash_batch_unix_ms IS NOT NULL
                 ORDER BY pending_trash_batch_unix_ms, library_root_id, relative_path
                 """
-            )
+            ).map { row in
+                (row["library_root_id"], row["relative_path"], row["pending_trash_batch_unix_ms"])
+            }
         }
         var batches: [MediaAssetID: MediaTrashBatchID] = [:]
         var ordered: [MediaAssetID] = []
         for row in rows {
-            let rootID: Int64 = row["library_root_id"]
-            guard let rootPath = pathsByRowID[rootID] else {
+            guard let rootPath = pathsByRowID[row.rootID] else {
                 continue
             }
             let id = MediaAssetID(
                 libraryRootPath: rootPath,
-                relativePath: MediaRelativePath(rawValue: row["relative_path"])
+                relativePath: MediaRelativePath(rawValue: row.relativePath)
             )
-            batches[id] = MediaTrashBatchID(unixMilliseconds: row["pending_trash_batch_unix_ms"])
+            batches[id] = MediaTrashBatchID(unixMilliseconds: row.batchMs)
             ordered.append(id)
         }
         return try await mediaTrashItems(for: ordered).compactMap { item in
