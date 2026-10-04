@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 @testable import OtosKit
+import SwiftUI
 import Testing
 
 /// The trash status bar (DES-089) and the delete-immediately prompts (Plan 0104 D3/D4)
@@ -73,5 +75,44 @@ struct TrashStatusPresentationTests {
         let merged = MediaTrashCoordinator.Decision.downloadFailed([one]).merging(.downloadFailed([one, two]))
         #expect(merged == .downloadFailed([one, two]))
         #expect(!MediaTrashCoordinator.Decision.downloadFailed([one]).isSameKind(as: .diskFloor([one])))
+    }
+}
+
+/// DES-018/DES-053: the bar keeps one height in every state. Each state is also
+/// rendered in light and dark to `$TMPDIR/OtosDesignEvidence/trash-status-bar/` as the
+/// design check's screenshots (DES-022).
+@MainActor
+struct TrashStatusBarRenderingTests {
+    private static let states: [(String, MediaTrashCoordinator.QueueState)] = [
+        ("working", .init(pendingCount: 11, movedCount: 3, bytesToDownload: 1_200_000_000, attention: nil)),
+        ("working-local", .init(pendingCount: 2, movedCount: 0, bytesToDownload: 0, attention: nil)),
+        ("waiting-space", .init(pendingCount: 14, movedCount: 0, bytesToDownload: 0, attention: .waitingForSpace)),
+        ("waiting-download", .init(pendingCount: 1, movedCount: 0, bytesToDownload: 0, attention: .waitingForDownload)),
+    ]
+
+    @Test func everyStateRendersAtOneHeight() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "OtosDesignEvidence/trash-status-bar", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        var heights: Set<CGFloat> = []
+        for (name, queueState) in Self.states {
+            let presentation = try #require(TrashStatusPresentation.map(queueState))
+            for scheme in [ColorScheme.light, .dark] {
+                let view = TrashStatusBar(presentation: presentation)
+                    .environment(\.colorScheme, scheme)
+                    .frame(width: 900)
+                let host = NSHostingView(rootView: view)
+                heights.insert(host.fittingSize.height)
+                let renderer = ImageRenderer(content: view)
+                renderer.scale = 2
+                if let image = renderer.nsImage,
+                   let tiff = image.tiffRepresentation,
+                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+                {
+                    try png.write(to: directory.appending(path: "trash-bar-\(name)-\(scheme == .dark ? "dark" : "light").png"))
+                }
+            }
+        }
+        #expect(heights.count == 1)
     }
 }
