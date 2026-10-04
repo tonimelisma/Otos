@@ -175,10 +175,12 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice("op=compare.swap")
     }
 
-    /// Structural-apply / descriptor churn for loupe and compare.
+    /// Structural-apply / query churn for loupe and compare. Only a scope change starts
+    /// over at the first item; a filter or sort change keeps the focus or pair members
+    /// that survive and moves a lost one to its nearest survivor.
     func reconcileFocusAfterGridChange(
         previousOrderedIDs: [MediaAssetID],
-        descriptorChanged: Bool
+        scopeChanged: Bool
     ) {
         let ordered = state.mediaGrid.orderedAssetIDs
         if ordered.isEmpty {
@@ -191,7 +193,7 @@ extension CatalogWindowViewModel {
         case .grid:
             return
         case .loupe:
-            if descriptorChanged {
+            if scopeChanged {
                 let first = ordered.first
                 setFocus(first)
                 if let focus = first {
@@ -214,7 +216,7 @@ extension CatalogWindowViewModel {
             }
             refreshPanePreviews()
         case .compare:
-            if descriptorChanged {
+            if scopeChanged {
                 let pair = ComparePairPolicy.entry(selection: .empty, orderedIDs: ordered)
                 lastReplacedComparePane = .right
                 activeComparePane = .right

@@ -3,7 +3,8 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// Content inserted above the viewport must not displace what the user is reading.
+/// Content inserted above the viewport must not displace what the user is reading, and a
+/// filter or sort change must not lose the user's place (APP-033, APP-042).
 ///
 /// `NSScrollView` holds the scroll offset fixed, so items inserted above slide the content
 /// down under a stationary window. During an import that happens on every apply: the order
@@ -18,13 +19,13 @@ struct MediaGridScrollAnchorTests {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 600)
 
-        let before = try #require(controller.captureScrollAnchor(resetScroll: false))
+        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
 
         controller.applyIDs(prepending: 12, to: controller.currentIDs)
         controller.restoreScrollAnchor(before)
 
         let after = try #require(
-            controller.captureScrollAnchor(resetScroll: false),
+            controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []),
             "the restore left the grid at the top, so the anchor was lost entirely"
         )
         #expect(after.id == before.id, "the viewport's top item changed — the user was displaced")
@@ -39,11 +40,11 @@ struct MediaGridScrollAnchorTests {
     @Test func withoutTheRestoreTheSameInsertDoesDisplaceTheUser() {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 600)
-        let before = controller.captureScrollAnchor(resetScroll: false)?.id
+        let before = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
 
         controller.applyIDs(prepending: 12, to: controller.currentIDs)
 
-        let after = controller.captureScrollAnchor(resetScroll: false)?.id
+        let after = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
         #expect(before != after, "negative control: an unanchored insert above must displace")
     }
 
@@ -54,15 +55,15 @@ struct MediaGridScrollAnchorTests {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 0)
 
-        #expect(controller.captureScrollAnchor(resetScroll: false) == nil)
+        #expect(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []) == nil)
     }
 
-    /// A deliberate scroll-to-top must not be fought by the anchor.
-    @Test func aDeliberateScrollResetIsNotAnchored() {
+    /// A new scope starts at the top, and the anchor must not fight that.
+    @Test func aNewScopeIsNotAnchored() {
         let controller = makeAnchorController(itemCount: 200)
         controller.scrollTo(offset: 600)
 
-        #expect(controller.captureScrollAnchor(resetScroll: true) == nil)
+        #expect(controller.captureScrollAnchor(change: .scope, nextOrderedIDs: []) == nil)
     }
 
     /// An anchor whose item this apply removed leaves the scroll alone rather than guessing
@@ -75,7 +76,8 @@ struct MediaGridScrollAnchorTests {
                 libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
                 relativePath: MediaRelativePath(rawValue: "never-existed.jpg")
             ),
-            offsetFromViewportLeadingEdge: 0
+            offsetFromViewportLeadingEdge: 0,
+            source: .leading
         )
         let before = controller.scrollView.contentView.bounds.origin.y
 
@@ -91,12 +93,12 @@ struct MediaGridScrollAnchorTests {
         let controller = makeAnchorController(itemCount: 200, presentation: .strip(tileEdge: 72))
         controller.scrollTo(offset: 900)
 
-        let before = try #require(controller.captureScrollAnchor(resetScroll: false))
+        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
 
         controller.applyIDs(prepending: 12, to: controller.currentIDs)
         controller.restoreScrollAnchor(before)
 
-        let after = try #require(controller.captureScrollAnchor(resetScroll: false))
+        let after = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
         #expect(after.id == before.id, "the strip's leading tile changed — the strip drifted")
         #expect(
             abs(after.offsetFromViewportLeadingEdge - before.offsetFromViewportLeadingEdge) < 1,
@@ -108,11 +110,11 @@ struct MediaGridScrollAnchorTests {
     @Test func withoutTheRestoreTheSameInsertDoesDisplaceTheStrip() {
         let controller = makeAnchorController(itemCount: 200, presentation: .strip(tileEdge: 72))
         controller.scrollTo(offset: 900)
-        let before = controller.captureScrollAnchor(resetScroll: false)?.id
+        let before = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
 
         controller.applyIDs(prepending: 12, to: controller.currentIDs)
 
-        let after = controller.captureScrollAnchor(resetScroll: false)?.id
+        let after = controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: [])?.id
         #expect(before != after, "negative control: an unanchored insert to the left must displace")
     }
 
@@ -125,7 +127,7 @@ struct MediaGridScrollAnchorTests {
         let controller = makeAnchorController(itemCount: 200, presentation: .strip(tileEdge: 72))
         controller.scrollTo(offset: 0)
 
-        let before = try #require(controller.captureScrollAnchor(resetScroll: false))
+        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
         let screenXBefore = try #require(controller.viewportX(of: before.id))
 
         controller.applyIDs(prepending: 12, to: controller.currentIDs)
@@ -134,10 +136,126 @@ struct MediaGridScrollAnchorTests {
         let screenXAfter = try #require(controller.viewportX(of: before.id))
         #expect(abs(screenXAfter - screenXBefore) < 1, "arrivals pushed the leading tile")
     }
+
+    // MARK: - Filter and sort keep the user's place (APP-042)
+
+    /// A filter that keeps the item under the viewport's top edge leaves that item exactly
+    /// where it was on screen — the user's place survives narrowing the collection. The
+    /// assertion is on the item's on-screen offset, not on which item is now leftmost in
+    /// the top row: the filter reflows the rows, so the anchored item can sit mid-row.
+    @Test func aFilterKeepsTheTopItemWhereItWas() throws {
+        let controller = makeAnchorController(itemCount: 200)
+        controller.scrollTo(offset: 600)
+        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
+        let ids = controller.currentIDs
+        let kept = ids.enumerated()
+            .filter { $0.offset.isMultiple(of: 3) || $0.element == before.id }
+            .map(\.element)
+
+        controller.perform(controller.mutationGate.receive(filtered(kept)))
+
+        let after = try #require(
+            controller.onScreenOffset(of: before.id),
+            "the filter moved the item the user was on off screen"
+        )
+        #expect(abs(after - before.offsetFromViewportLeadingEdge) < 1)
+    }
+
+    /// A filter that removes the top item puts its nearest survivor *in the order the user
+    /// was looking at* in its place — the next later survivor, not whatever now sits at the
+    /// same index of the shorter list. Scrolled deep into a large library so the survivor
+    /// is far enough down the filtered grid to be positioned without clamping to the top.
+    @Test func aFilterThatRemovesTheTopItemLandsOnItsNearestSurvivor() throws {
+        let controller = makeAnchorController(itemCount: 600)
+        controller.scrollTo(offset: 3000)
+        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
+        let ids = controller.currentIDs
+        let topIndex = try #require(ids.firstIndex(of: before.id))
+        // Keep every fifth item, but none of the five starting at the top item: the next
+        // later survivor is then the first multiple of five past that run.
+        let kept = ids.indices
+            .filter { $0.isMultiple(of: 5) && !(topIndex ..< topIndex + 5).contains($0) }
+            .map { ids[$0] }
+        let expected = try #require(ids[(topIndex + 1)...].first(where: Set(kept).contains))
+
+        controller.perform(controller.mutationGate.receive(filtered(kept)))
+
+        let after = try #require(
+            controller.onScreenOffset(of: expected),
+            "the nearest survivor is not on screen"
+        )
+        #expect(abs(after - before.offsetFromViewportLeadingEdge) < 1)
+    }
+
+    /// Negative control for the two tests above: the same filtered snapshot without the
+    /// anchor does not leave the user's item where it was.
+    @Test func withoutTheAnchorAFilterDisplacesTheUser() throws {
+        let controller = makeAnchorController(itemCount: 200)
+        controller.scrollTo(offset: 600)
+        let before = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
+        let ids = controller.currentIDs
+        let kept = ids.enumerated()
+            .filter { $0.offset.isMultiple(of: 3) || $0.element == before.id }
+            .map(\.element)
+
+        controller.applyIDs(prepending: 0, to: kept)
+
+        let after = controller.onScreenOffset(of: before.id)
+        #expect(after.map { abs($0 - before.offsetFromViewportLeadingEdge) >= 1 } ?? true)
+    }
+
+    /// A visible selected tile is what the user was working on, so a sort that would carry
+    /// it to the other end of the grid keeps it on screen at the same position instead.
+    @Test func aSortKeepsAVisibleSelectedTileWhereItWas() throws {
+        let controller = makeAnchorController(itemCount: 200)
+        controller.scrollTo(offset: 600)
+        let top = try #require(controller.captureScrollAnchor(change: .unchanged, nextOrderedIDs: []))
+        let ids = controller.currentIDs
+        let selected = try ids[#require(ids.firstIndex(of: top.id)) + 7]
+        controller.selectionHandlers = MediaGridSelectionHandlers(
+            currentSelection: { GridSelection.empty.plainClick(selected) }
+        )
+        let offsetBefore = try #require(controller.onScreenOffset(of: selected))
+
+        controller.perform(controller.mutationGate.receive(sorted(Array(ids.reversed()))))
+
+        let offsetAfter = try #require(
+            controller.onScreenOffset(of: selected),
+            "the selected tile left the viewport"
+        )
+        #expect(abs(offsetAfter - offsetBefore) < 1)
+    }
+
+    /// At the top of the grid a filter with nothing selected stays at the top — there is no
+    /// place to keep other than "the beginning".
+    @Test func aFilterAtTheTopStaysAtTheTop() {
+        let controller = makeAnchorController(itemCount: 200)
+        controller.scrollTo(offset: 0)
+        let kept = controller.currentIDs.enumerated().filter { $0.offset.isMultiple(of: 2) }.map(\.element)
+
+        #expect(controller.captureScrollAnchor(change: .filterOrSort, nextOrderedIDs: kept) == nil)
+        controller.perform(controller.mutationGate.receive(filtered(kept)))
+
+        #expect(controller.scrollView.contentView.bounds.origin.y == 0)
+    }
 }
 
 @MainActor
 private extension MediaGridViewController {
+    /// The item's top edge relative to the viewport's top edge, or nil when off screen.
+    func onScreenOffset(of id: MediaAssetID) -> CGFloat? {
+        guard let indexPath = dataSource.indexPath(for: id),
+              let frame = collectionView.collectionViewLayout?.layoutAttributesForItem(at: indexPath)?.frame
+        else {
+            return nil
+        }
+        let viewport = scrollView.documentVisibleRect
+        guard frame.intersects(viewport) else {
+            return nil
+        }
+        return frame.minY - viewport.minY
+    }
+
     var currentIDs: [MediaAssetID] {
         (0 ..< collectionView.numberOfItems(inSection: 0))
             .compactMap { dataSource.itemIdentifier(for: IndexPath(item: $0, section: 0)) }
@@ -201,5 +319,29 @@ private func makeAnchorController(
     snapshot.appendItems(ids, toSection: .ungrouped)
     controller.dataSource.apply(snapshot, animatingDifferences: false)
     controller.collectionView.layoutSubtreeIfNeeded()
+    // The gate must know what is on screen: a filter's nearest survivor is found in the
+    // order the user was looking at, which is the gate's displayed order.
+    let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
+    _ = controller.mutationGate.receive(grid)
+    _ = controller.mutationGate.completeStructuralApply(applied: grid)
     return controller
+}
+
+/// The same scope under an active filter: a `.filterOrSort` change from the default query.
+private func filtered(_ ids: [MediaAssetID]) -> CatalogMediaGridState {
+    CatalogMediaGridState(
+        descriptor: CatalogQueryDescriptor(scope: .allMedia, filter: MediaFilter(kinds: [.image])),
+        orderedAssetIDs: ids
+    )
+}
+
+/// The same scope under a different sort: a `.filterOrSort` change from the default query.
+private func sorted(_ ids: [MediaAssetID]) -> CatalogMediaGridState {
+    CatalogMediaGridState(
+        descriptor: CatalogQueryDescriptor(
+            scope: .allMedia,
+            sort: MediaSortOrder(field: .bestDate, direction: .ascending)
+        ),
+        orderedAssetIDs: ids
+    )
 }

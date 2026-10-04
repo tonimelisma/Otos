@@ -839,22 +839,20 @@ extension MediaGridViewController {
                 OtosLog.ui.debug(
                     "Media grid pending state replaced=\(replacedExisting, privacy: .public)"
                 )
-            case let .refreshVisible(_, resetScroll, resetSelection):
-                if resetSelection {
-                    // Model was already cleared in ViewModel.applyState; render only.
+            case let .refreshVisible(_, change):
+                if change != .unchanged {
+                    // Model was already cleared or pruned in ViewModel.applyState; render only.
                     renderSelectionFromModel(reason: "descriptorRefresh")
                 }
-                if resetScroll {
+                // Same identities in the same order, so a filter or sort change left every
+                // tile where it was; only a new scope moves the user.
+                if change == .scope {
                     scrollToTop()
                 }
                 _ = requestVisibleDetails(reason: "detailRefresh")
                 reportViewport()
-            case let .apply(grid, descriptorChanged):
-                applyStructure(
-                    grid,
-                    resetScroll: descriptorChanged,
-                    descriptorChanged: descriptorChanged
-                )
+            case let .apply(grid, change):
+                applyStructure(grid, change: change)
             case let .zoomSwap(columnCount):
                 performZoomSwap(to: columnCount)
             }

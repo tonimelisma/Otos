@@ -47,6 +47,17 @@ struct BrowserModePolicyTests {
         #expect(BrowserModePolicy.neighbor(of: nil, in: ids, delta: 1) == ids[0])
     }
 
+    /// A filter's survivors are a different, shorter sequence; the nearest survivor is
+    /// found by walking the order the user was looking at, later first, then earlier.
+    @Test func nearestSurvivorWalksThePreviousOrder() {
+        let ids = makeIDs(8)
+        let surviving: Set = [ids[1], ids[6]]
+        #expect(BrowserModePolicy.nearestSurvivor(of: ids[6], previousOrderedIDs: ids, surviving: surviving) == ids[6])
+        #expect(BrowserModePolicy.nearestSurvivor(of: ids[3], previousOrderedIDs: ids, surviving: surviving) == ids[6])
+        #expect(BrowserModePolicy.nearestSurvivor(of: ids[7], previousOrderedIDs: ids, surviving: surviving) == ids[6])
+        #expect(BrowserModePolicy.nearestSurvivor(of: ids[3], previousOrderedIDs: ids, surviving: []) == nil)
+    }
+
     @Test func pruneFocusKeepsSurvivorOrNearestSlot() {
         let previous = makeIDs(5)
         let removedMiddle = [previous[0], previous[1], previous[3], previous[4]]

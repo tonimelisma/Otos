@@ -674,10 +674,14 @@ extension CatalogWindowViewModel {
 
         state = nextState
 
+        // A new scope is a different collection, so the user's place in the old one means
+        // nothing there. A filter or sort change narrows or reorders the same collection,
+        // so whatever survives stays selected and focused (APP-042).
         let descriptorChanged = previousState.mediaGrid.descriptor != nextState.mediaGrid.descriptor
+        let scopeChanged = previousState.mediaGrid.descriptor.scope != nextState.mediaGrid.descriptor.scope
         let orderChanged = previousState.mediaGrid.orderedAssetIDs != nextState.mediaGrid.orderedAssetIDs
-        if descriptorChanged {
-            clearGridSelection(reason: "descriptorChange")
+        if scopeChanged {
+            clearGridSelection(reason: "scopeChange")
         } else if orderChanged {
             gridSelection = gridSelection.selection.isEmpty
                 ? .empty
@@ -686,7 +690,7 @@ extension CatalogWindowViewModel {
         if descriptorChanged || orderChanged {
             reconcileFocusAfterGridChange(
                 previousOrderedIDs: previousState.mediaGrid.orderedAssetIDs,
-                descriptorChanged: descriptorChanged
+                scopeChanged: scopeChanged
             )
         }
 
