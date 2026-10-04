@@ -237,30 +237,3 @@ struct TrashNavigationContext {
     let comparePane: PanePosition
     let successor: MediaAssetID?
 }
-
-extension MediaTrashCoordinator.Decision {
-    var ids: [MediaAssetID] {
-        switch self {
-        case let .downloadFailed(ids), let .diskFloor(ids): ids
-        }
-    }
-
-    var kindName: String {
-        switch self {
-        case .downloadFailed: "downloadFailed"
-        case .diskFloor: "diskFloor"
-        }
-    }
-
-    func isSameKind(as other: Self) -> Bool {
-        kindName == other.kindName
-    }
-
-    func merging(_ other: Self) -> Self {
-        let merged = ids + other.ids.filter { !ids.contains($0) }
-        switch self {
-        case .downloadFailed: return .downloadFailed(merged)
-        case .diskFloor: return .diskFloor(merged)
-        }
-    }
-}

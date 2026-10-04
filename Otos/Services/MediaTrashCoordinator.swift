@@ -45,6 +45,32 @@ actor MediaTrashCoordinator {
         /// Downloading these would leave less than `FreeSpaceFloor` free. Answers:
         /// `deleteImmediately` or `keepWaitingForSpace`.
         case diskFloor([MediaAssetID])
+
+        var ids: [MediaAssetID] {
+            switch self {
+            case let .downloadFailed(ids), let .diskFloor(ids): ids
+            }
+        }
+
+        var kindName: String {
+            switch self {
+            case .downloadFailed: "downloadFailed"
+            case .diskFloor: "diskFloor"
+            }
+        }
+
+        func isSameKind(as other: Self) -> Bool {
+            kindName == other.kindName
+        }
+
+        /// The union of two same-kind questions, keeping first-asked order.
+        func merging(_ other: Self) -> Self {
+            let merged = ids + other.ids.filter { !ids.contains($0) }
+            switch self {
+            case .downloadFailed: return .downloadFailed(merged)
+            case .diskFloor: return .diskFloor(merged)
+            }
+        }
     }
 
     /// What the status bar reports (DES-030/031). `movedCount` counts items moved since
