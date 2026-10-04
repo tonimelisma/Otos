@@ -1,8 +1,7 @@
 # Active Plans
 
-- [0105 — Accurate Sony rendering pipeline](0105-accurate-sony-rendering-pipeline.md):
-  staged calibration, conditional adaptation, photographic acceptance and native
-  implementation. Active; existing research candidates are not accepted defaults.
+No active RAW-processing plan lives in this repository. The independent library
+owns its plan at [NeuralImageKit](https://github.com/tonimelisma/NeuralImageKit).
 
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
