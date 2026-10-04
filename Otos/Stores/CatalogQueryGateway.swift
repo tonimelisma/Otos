@@ -212,6 +212,7 @@ nonisolated enum CatalogQueryGateway {
             SELECT import_batch_unix_ms AS batch_ms, COUNT(*) AS asset_count
             FROM media_asset
             WHERE import_batch_unix_ms IS NOT NULL
+              AND pending_trash_batch_unix_ms IS NULL
             GROUP BY import_batch_unix_ms
             ORDER BY import_batch_unix_ms DESC
             """
@@ -363,11 +364,14 @@ private nonisolated func scopeClause(
         rootPredicate = "library_root_id IN (\(sqlPlaceholders(count: scope.rootIDs.count)))"
         arguments.append(contentsOf: scope.rootIDs)
     }
+    // Items waiting to move to the Trash are hidden from every user-facing media
+    // query; this scope clause is the one choke point those queries share.
+    let visiblePredicate = "\(rootPredicate)\n  AND pending_trash_batch_unix_ms IS NULL"
     guard let importBatchUnixMs = scope.importBatchUnixMs else {
-        return (rootPredicate, arguments)
+        return (visiblePredicate, arguments)
     }
     arguments.append(importBatchUnixMs)
-    return ("\(rootPredicate)\n  AND import_batch_unix_ms = ?", arguments)
+    return ("\(visiblePredicate)\n  AND import_batch_unix_ms = ?", arguments)
 }
 
 private nonisolated func filterPredicate(

@@ -305,6 +305,18 @@ extension CatalogStore {
                 try db.execute(sql: "ALTER TABLE library_root DROP COLUMN prefers_decomposed_unicode")
             }
         }
+        // A pending Move to Trash is a durable user intent on an existing file: it
+        // lives on the asset's own row (identity is the path, ADR 0008) so the row and
+        // its overlay survive until the file is proven gone, and a scan that sees the
+        // file vanish ends the intent by deleting the row.
+        migrator.registerMigration("v20_pending_trash") { db in
+            try db.execute(sql: "ALTER TABLE media_asset ADD COLUMN pending_trash_batch_unix_ms INTEGER")
+            try db.execute(sql: """
+            CREATE INDEX idx_media_asset_pending_trash
+            ON media_asset(pending_trash_batch_unix_ms, library_root_id, relative_path)
+            WHERE pending_trash_batch_unix_ms IS NOT NULL
+            """)
+        }
         return migrator
     }
 

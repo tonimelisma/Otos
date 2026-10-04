@@ -98,3 +98,11 @@ These shape Plan 0104.
 - HIG: [Alerts](https://developer.apple.com/design/human-interface-guidelines/alerts),
   [Settings](https://developer.apple.com/design/human-interface-guidelines/settings);
   [`NSAlert.showsSuppressionButton`](https://developer.apple.com/documentation/appkit/nsalert/showssuppressionbutton)
+
+## Follow-up, 2026-10-04: `removeItem` on a dataless placeholder
+
+A 5 MB file in the OneDrive root, uploaded and then evicted to `compressed,dataless`,
+was removed by `FileManager.removeItem(at:)` in under 1 ms with no download, and was
+gone from the domain afterwards. Plan 0104's `Delete … Immediately?` answer relies on
+this. Whether OneDrive keeps it in its web recycle bin is the provider's behavior and
+was not asserted.

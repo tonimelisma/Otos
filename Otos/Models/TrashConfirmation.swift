@@ -27,3 +27,35 @@ nonisolated struct TrashConfirmation: Equatable, Sendable {
 
     static let confirmTitle = "Move to Trash"
 }
+
+/// The question the trash queue asks when items cannot reach the Trash (Plan 0104
+/// D3/D4): delete them immediately, or not. The title names the destructive act with
+/// its count (DES-036); the message states why and that it cannot be undone.
+nonisolated struct TrashDecisionPrompt: Equatable, Sendable {
+    let decision: MediaTrashCoordinator.Decision
+
+    var title: String {
+        let ids = decision.ids
+        if ids.count == 1, let only = ids.first {
+            let name = URL(fileURLWithPath: only.relativePath.rawValue).lastPathComponent
+            return "Delete “\(name)” Immediately?"
+        }
+        return "Delete \(ids.count) Items Immediately?"
+    }
+
+    var message: String {
+        let one = decision.ids.count == 1
+        switch decision {
+        case .downloadFailed:
+            return one
+                ? "It couldn’t be downloaded, so it can’t be moved to the Trash. You can’t undo this."
+                : "They couldn’t be downloaded, so they can’t be moved to the Trash. You can’t undo this."
+        case .diskFloor:
+            return one
+                ? "There isn’t enough free space to download it so it can be moved to the Trash. You can’t undo this."
+                : "There isn’t enough free space to download them so they can be moved to the Trash. You can’t undo this."
+        }
+    }
+
+    static let deleteTitle = "Delete"
+}

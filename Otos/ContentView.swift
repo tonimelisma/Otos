@@ -77,6 +77,9 @@ struct ContentView: View {
                         }
                     )
                 }
+                if let trashStatus = TrashStatusPresentation.map(viewModel.trashQueueState) {
+                    TrashStatusBar(presentation: trashStatus)
+                }
             }
         }
         .toolbar {
@@ -186,6 +189,27 @@ struct ContentView: View {
             }
         } message: {
             Text("The affected items remain selected.")
+        }
+        .alert(
+            viewModel.trashDecisions.first.map { TrashDecisionPrompt(decision: $0).title } ?? "",
+            isPresented: Binding(
+                get: { !viewModel.trashDecisions.isEmpty },
+                // Every dismissal goes through a button (Escape triggers Cancel), and
+                // each answers exactly the decision it was shown for; a setter that also
+                // answered would consume the next queued decision.
+                set: { _ in }
+            )
+        ) {
+            Button(TrashDecisionPrompt.deleteTitle, role: .destructive) {
+                viewModel.answerTrashDecisionDelete()
+            }
+            Button("Cancel", role: .cancel) {
+                viewModel.answerTrashDecisionCancel()
+            }
+        } message: {
+            if let decision = viewModel.trashDecisions.first {
+                Text(TrashDecisionPrompt(decision: decision).message)
+            }
         }
         .confirmationDialog(
             viewModel.pendingTrashConfirmation?.title ?? "Move to Trash?",

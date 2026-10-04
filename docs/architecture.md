@@ -64,8 +64,9 @@ compiles it.
         │                                             │
         │                                             └─ one SQLite overlay transaction / exact-path reconciliation
         ▼
-  MediaTrashCoordinator ── per-root namespace lease ──▶ FileManager.trashItem
-        └─ dataless member ──▶ MaterializationCoordinator (command) first
+  CatalogStore (pending_trash_batch_unix_ms, hidden) ──▶ MediaTrashCoordinator (durable queue)
+        ├─ dataless member ──▶ MaterializationCoordinator (command), no lease held
+        └─ all local ── per-root namespace lease ──▶ FileManager.trashItem
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a
@@ -240,8 +241,9 @@ everything expensive happens on an actor off the main thread.
   stay two renderers of one intent. Neutral keeps its keyboard, menu, and VoiceOver
   paths.
 - **Move to Trash**: `CatalogWindowViewModelTrash.swift` resolves the current browser
-  target and owns stale-navigation checks; `MediaTrashCoordinator` owns the serial
-  filesystem lifecycle, materializing dataless members before `trashItem`; `CatalogStore` supplies catalog-proven companions and
+  target and owns stale-navigation checks; `MediaTrashCoordinator` owns the durable
+  queue of pending items (resume on launch, downloads without the lease, retry,
+  free-space floor, delete-immediately decisions) and reports to `TrashStatusBar`; `CatalogStore` supplies catalog-proven companions and
   reconciles only successful paths. The shared typed namespace-mutation lease excludes
   import publication and reorganization on one root.
 - **Pure policy helpers** carry the testable logic beside effectful actors:
