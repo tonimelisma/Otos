@@ -1029,6 +1029,9 @@ extension CatalogStore {
     /// with its catalog-proven members. The durable queue `MediaTrashCoordinator`
     /// drains, including after relaunch.
     func pendingTrashItems() async throws -> [PendingTrashItem] {
+        // Rows map to roots through the loaded registry; before the catalog's one load
+        // the registry is empty and every pending row would be silently skipped.
+        try await loadIfNeeded()
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
         let rows: [(rootID: Int64, relativePath: String, batchMs: Int64)] = try await dbWriter.read { db in

@@ -457,6 +457,41 @@ extension MediaTrashCoordinatorTests {
     }
 }
 
+extension MediaTrashCoordinatorTests {
+    /// Relaunch: a fresh Store on the same catalog file, not yet started by anyone, and a
+    /// coordinator that starts first. The pending intent must still be found and drained.
+    @Test func pendingItemsResumeBeforeTheCatalogIsStartedElsewhere() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(root.appending(path: "a.jpg"), contents: "jpeg")
+        let database = temp.appending(path: "catalog.sqlite")
+
+        let first = CatalogStore(location: .databaseFile(database), scanCadence: .milliseconds(10))
+        try await first.start(scansSavedLibraries: false)
+        try await first.addLibrary(url: root)
+        let scanned = try await waitForCatalogStoreState(first) { !$0.isScanning && $0.testAssets.count == 1 }
+        let id = try #require(scanned.testAssets.first?.id)
+        _ = try await first.markPendingTrash([id], batch: MediaTrashBatchID())
+        await first.shutdown()
+
+        let relaunched = CatalogStore(location: .databaseFile(database), scanCadence: .milliseconds(10))
+        let calls = TrashCallRecorder()
+        let coordinator = MediaTrashCoordinator(
+            store: relaunched,
+            materializationRequester: nil,
+            trashExecutor: { url in
+                calls.append(url.lastPathComponent)
+                return nil
+            }
+        )
+        await coordinator.start()
+        try await waitUntil("resumed after relaunch") { calls.entries == ["a.jpg"] }
+        await coordinator.shutdown()
+        await relaunched.shutdown()
+    }
+}
+
 private struct TrashFixture {
     let store: CatalogStore
     let root: URL
