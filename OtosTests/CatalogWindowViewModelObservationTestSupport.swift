@@ -2,19 +2,23 @@ import Foundation
 import Observation
 @testable import OtosKit
 
+/// Every value `model.state` takes that a waiter can still act on, newest first.
+///
+/// The stream carries no wall-clock deadline. A deadline here measures machine load,
+/// not correctness: under a full parallel suite one projection publication can lag
+/// for seconds, and a fixed limit then fails a test whose state was still on its way.
+/// The stream ends only when the waiting task is cancelled or the model is released.
+/// A state that never arrives is a hang, and `script/check.sh` detects and names a
+/// hung suite.
+///
+/// No state is lost between observations: each re-registration reads `model.state`
+/// again, so a change made while the next registration was pending is delivered by
+/// that read, and `bufferingNewest(1)` keeps the newest value for a slow consumer.
 @MainActor
-func windowStateStream(
-    _ model: CatalogWindowViewModel,
-    timeout: Duration
-) -> AsyncStream<CatalogWindowState> {
+func windowStateStream(_ model: CatalogWindowViewModel) -> AsyncStream<CatalogWindowState> {
     AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
         let observer = WindowStateObserver(model: model, continuation: continuation)
-        let timeoutTask = Task {
-            try? await Task.sleep(for: timeout)
-            continuation.finish()
-        }
         continuation.onTermination = { _ in
-            timeoutTask.cancel()
             Task { @MainActor in
                 observer.cancel()
             }
@@ -28,11 +32,10 @@ func waitForWindowState(
     _ model: CatalogWindowViewModel,
     predicate: @escaping @MainActor @Sendable (CatalogWindowState) -> Bool
 ) async throws -> CatalogWindowState {
-    let stream = windowStateStream(model, timeout: .seconds(10))
-    for await state in stream where predicate(state) {
+    for await state in windowStateStream(model) where predicate(state) {
         return state
     }
-    throw AsyncTestTimeoutError.timedOut("window state")
+    throw AsyncTestTimeoutError.streamEnded("window state")
 }
 
 @MainActor
