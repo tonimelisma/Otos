@@ -33,6 +33,8 @@ import UniformTypeIdentifiers
 actor MediaTrashCoordinator {
     typealias TrashExecutor = @Sendable (URL) throws -> URL?
     typealias RemoveExecutor = @Sendable (URL) throws -> Void
+    /// Moves a file back from the Trash: `(from, to)`. Never overwrites.
+    typealias PutBackExecutor = @Sendable (URL, URL) throws -> Void
     typealias StatusReader = @Sendable (URL) -> FileMaterializationStatus
     typealias CapacityReader = @Sendable (URL) -> Int64?
 
@@ -100,6 +102,13 @@ actor MediaTrashCoordinator {
         case moveFailed([MediaAssetID])
     }
 
+    /// What undo achieved for one Move to Trash: items back in the library, and items
+    /// that could not be put back (no longer in the Trash, or their path is taken).
+    nonisolated struct UndoResult: Equatable, Sendable {
+        var restored: [MediaAssetID] = []
+        var failed: [MediaAssetID] = []
+    }
+
     nonisolated struct RetryPolicy: Sendable {
         var delays: [Duration]
 
@@ -118,6 +127,7 @@ actor MediaTrashCoordinator {
     private let capacity: CapacityReader
     private let trashExecutor: TrashExecutor
     private let removeExecutor: RemoveExecutor
+    private let putBackExecutor: PutBackExecutor
     private let retryPolicy: RetryPolicy
     private let clock = ContinuousClock()
 
@@ -141,6 +151,19 @@ actor MediaTrashCoordinator {
     /// Items the user chose to keep waiting at the floor; not asked again this pause.
     private var waitingForSpace: Set<MediaAssetID> = []
     private var movedInRun = 0
+    /// Items this session moved to the Trash, per command, for undo. In memory like
+    /// every other undo entry; after relaunch only Finder's Put Back remains.
+    private var trashed: [MediaTrashBatchID: [TrashedItem]] = [:]
+    /// Undo requests run inside the drain task, between passes, so an undo never
+    /// interleaves with a move that is part-way through.
+    private var undoRequests: [UndoRequest] = []
+
+    private struct UndoRequest {
+        let batch: MediaTrashBatchID
+        let ids: Set<MediaAssetID>
+        let continuation: CheckedContinuation<UndoResult, Never>
+    }
+
     private var lastState = QueueState.idle
 
     init(
@@ -159,6 +182,9 @@ actor MediaTrashCoordinator {
         removeExecutor: @escaping RemoveExecutor = { url in
             try FileManager.default.removeItem(at: url)
         },
+        putBackExecutor: @escaping PutBackExecutor = { from, to in
+            try FileManager.default.moveItem(at: from, to: to)
+        },
         retryPolicy: RetryPolicy = .production
     ) {
         self.store = store
@@ -167,6 +193,7 @@ actor MediaTrashCoordinator {
         self.capacity = capacity
         self.trashExecutor = trashExecutor
         self.removeExecutor = removeExecutor
+        self.putBackExecutor = putBackExecutor
         self.retryPolicy = retryPolicy
         let (events, eventContinuation) = AsyncStream<Event>.makeStream(bufferingPolicy: .unbounded)
         self.events = events
@@ -201,6 +228,11 @@ actor MediaTrashCoordinator {
             await task.value
         }
         await drainTask?.value
+        let unanswered = undoRequests
+        undoRequests.removeAll()
+        for request in unanswered {
+            request.continuation.resume(returning: UndoResult(failed: Array(request.ids)))
+        }
         eventContinuation.finish()
     }
 
@@ -268,10 +300,25 @@ actor MediaTrashCoordinator {
         return restored
     }
 
+    /// Undoes one Move to Trash: items still pending reappear without any filesystem
+    /// call; items already in the Trash move back to their original paths (never over
+    /// an existing file) and are re-cataloged with their authored overlay.
+    func undo(batch: MediaTrashBatchID, ids: [MediaAssetID]) async -> UndoResult {
+        guard !isShuttingDown else {
+            return UndoResult(failed: ids)
+        }
+        start()
+        return await withCheckedContinuation { continuation in
+            undoRequests.append(UndoRequest(batch: batch, ids: Set(ids), continuation: continuation))
+            kick()
+        }
+    }
+
     // MARK: - Drain
 
     private func drain() async {
         guard !isShuttingDown else { return }
+        await answerUndoRequests()
         let items = await pendingItems()
         let now = clock.now
         var floorBlocked: [MediaAssetID] = []
@@ -284,7 +331,7 @@ actor MediaTrashCoordinator {
             }
             let dataless = datalessMembers(of: item)
             if dataless.isEmpty {
-                await moveToTrash(item)
+                await moveToTrash(item, batch: pending.batch)
                 continue
             }
             if let at = retryAt[item.id], at > now {
@@ -322,6 +369,13 @@ actor MediaTrashCoordinator {
             : clock.now.advanced(by: retryPolicy.delays.last ?? .seconds(300))
         if let next = ([retryAt.values.min(), spaceRecheck].compactMap(\.self)).min() {
             scheduleWake(at: next)
+        }
+    }
+
+    private func answerUndoRequests() async {
+        while !undoRequests.isEmpty {
+            let request = undoRequests.removeFirst()
+            await request.continuation.resume(returning: performUndo(batch: request.batch, ids: request.ids))
         }
     }
 
@@ -469,7 +523,7 @@ actor MediaTrashCoordinator {
 
     /// Moves one item whose members are all local. Rows for moved members are
     /// reconciled; if any member fails, the item is un-hidden and reported.
-    private func moveToTrash(_ item: MediaTrashItem) async {
+    private func moveToTrash(_ item: MediaTrashItem, batch: MediaTrashBatchID) async {
         guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
             for: item.root.path,
             owner: .mediaTrash
@@ -477,7 +531,9 @@ actor MediaTrashCoordinator {
             scheduleWake(after: retryPolicy.delays.first ?? .seconds(15))
             return
         }
+        let overlay = await (try? store.trashedOverlay(for: [item.id]))?[item.id]
         var results: [MediaTrashPathResult] = []
+        var moved: [TrashedMember] = []
         var evicted = false
         for member in item.members.sorted(by: Self.memberOrder) {
             let memberURL = url(of: member, in: item)
@@ -494,8 +550,9 @@ actor MediaTrashCoordinator {
                 break
             }
             do {
-                _ = try trashExecutor(memberURL)
+                let trashURL = try trashExecutor(memberURL)
                 results.append(result(item, member, succeeded: true))
+                moved.append(TrashedMember(member: member, trashURL: trashURL))
             } catch {
                 results.append(result(item, member, succeeded: false))
                 logFailure(error, operation: "trashItem", member: member)
@@ -503,22 +560,40 @@ actor MediaTrashCoordinator {
         }
         _ = await store.releaseNamespaceMutationLease(lease)
         await store.reconcileTrashedPaths(results.filter(\.succeeded))
+        await settleMove(
+            TrashedItem(item: item, members: moved, overlay: overlay),
+            batch: batch,
+            evicted: evicted,
+            allSucceeded: !results.contains { !$0.succeeded }
+        )
+    }
+
+    /// Records the outcome of one move: re-download an item evicted mid-move, re-show a
+    /// failed one, or keep a moved one for undo.
+    private func settleMove(
+        _ trashedItem: TrashedItem,
+        batch: MediaTrashBatchID,
+        evicted: Bool,
+        allSucceeded: Bool
+    ) async {
+        let id = trashedItem.item.id
         if evicted {
             OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "evictedBeforeMove", fields: [
-                "path": item.id.relativePath.rawValue,
+                "path": id.relativePath.rawValue,
             ])
             kick()
             return
         }
-        if results.contains(where: { !$0.succeeded }) {
-            _ = try? await store.clearPendingTrash([item.id])
-            eventContinuation.yield(.moveFailed([item.id]))
+        guard allSucceeded else {
+            _ = try? await store.clearPendingTrash([id])
+            eventContinuation.yield(.moveFailed([id]))
             return
         }
         movedInRun += 1
-        forget([item.id])
+        trashed[batch, default: []].append(trashedItem)
+        forget([id])
         OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "trashed", fields: [
-            "path": item.id.relativePath.rawValue, "members": "\(results.count)",
+            "path": id.relativePath.rawValue, "members": "\(trashedItem.members.count)",
         ])
     }
 
@@ -581,6 +656,97 @@ actor MediaTrashCoordinator {
             path=\(member.relativePath.rawValue, privacy: .public)
             """
         )
+    }
+
+    private func performUndo(batch: MediaTrashBatchID, ids: Set<MediaAssetID>) async -> UndoResult {
+        var outcome = UndoResult()
+        let pendingIDs = await Set(pendingItems().map(\.item.id)).intersection(ids)
+        if !pendingIDs.isEmpty {
+            awaitingDecision.subtract(pendingIDs)
+            waitingForSpace.subtract(pendingIDs)
+            for id in pendingIDs {
+                downloads[id]?.cancel()
+            }
+            forget(pendingIDs)
+            outcome.restored += await (try? store.clearPendingTrash(Array(pendingIDs))) ?? []
+        }
+        var remaining: [TrashedItem] = []
+        for trashedItem in trashed[batch] ?? [] {
+            guard ids.contains(trashedItem.item.id) else {
+                remaining.append(trashedItem)
+                continue
+            }
+            if await putBack(trashedItem) {
+                outcome.restored.append(trashedItem.item.id)
+            } else {
+                outcome.failed.append(trashedItem.item.id)
+            }
+        }
+        trashed[batch] = remaining.isEmpty ? nil : remaining
+        let accounted = Set(outcome.restored + outcome.failed)
+        // Items deleted immediately or vanished on disk have nothing to put back.
+        outcome.failed += ids.subtracting(accounted).sorted { $0.relativePath.rawValue < $1.relativePath.rawValue }
+        OtosLog.catalog.noticeOperation("mediaTrash.undo", phase: "finish", fields: [
+            "batch": "\(batch.unixMilliseconds)",
+            "restored": "\(outcome.restored.count)",
+            "failed": "\(outcome.failed.count)",
+        ])
+        kick()
+        return outcome
+    }
+
+    /// Moves an item's members back from the Trash, primary first, and re-catalogs it.
+    /// Succeeds when the primary is back; a companion that cannot return stays in the
+    /// Trash and is logged.
+    private func putBack(_ trashedItem: TrashedItem) async -> Bool {
+        let item = trashedItem.item
+        guard case let .acquired(lease) = await store.acquireNamespaceMutationLease(
+            for: item.root.path,
+            owner: .mediaTrash
+        ) else {
+            return false
+        }
+        var returned: [TrashedMember] = []
+        var primaryBack = false
+        for moved in trashedItem.members.sorted(by: { Self.memberOrder($1.member, $0.member) }) {
+            let destination = url(of: moved.member, in: item)
+            guard let trashURL = moved.trashURL,
+                  FileManager.default.fileExists(atPath: trashURL.path),
+                  !FileManager.default.fileExists(atPath: destination.path)
+            else {
+                OtosLog.catalog.notice(
+                    """
+                    op=mediaTrash.undo failed reason=notInTrashOrPathTaken \
+                    role=\(String(describing: moved.member.role), privacy: .public) \
+                    path=\(moved.member.relativePath.rawValue, privacy: .public)
+                    """
+                )
+                if moved.member.role == .primary {
+                    break
+                }
+                continue
+            }
+            do {
+                try putBackExecutor(trashURL, destination)
+                returned.append(moved)
+                if moved.member.role == .primary {
+                    primaryBack = true
+                }
+            } catch {
+                logFailure(error, operation: "putBack", member: moved.member)
+                if moved.member.role == .primary {
+                    break
+                }
+            }
+        }
+        _ = await store.releaseNamespaceMutationLease(lease)
+        guard primaryBack else {
+            return false
+        }
+        _ = await store.restoreTrashedItem(
+            TrashedItem(item: item, members: returned, overlay: trashedItem.overlay)
+        )
+        return true
     }
 
     private static func memberOrder(

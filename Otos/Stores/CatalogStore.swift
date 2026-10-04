@@ -953,10 +953,85 @@ extension CatalogStore {
         return changed
     }
 
+    /// The authored overlay of each requested row, read just before the queue moves it
+    /// to the Trash so undo can put it back.
+    func trashedOverlay(for ids: [MediaAssetID]) async throws -> [MediaAssetID: TrashedOverlay] {
+        let rootIDs = roots.rowIDSnapshot()
+        let dbWriter = try database()
+        return try await dbWriter.read { db in
+            var overlays: [MediaAssetID: TrashedOverlay] = [:]
+            for id in ids {
+                guard let rootID = rootIDs[id.libraryRootPath],
+                      let row = try Row.fetchOne(
+                          db,
+                          sql: """
+                          SELECT media_choice, import_batch_unix_ms FROM media_asset
+                          WHERE library_root_id = ? AND relative_path = ?
+                          """,
+                          arguments: [rootID, id.relativePath.rawValue]
+                      )
+                else {
+                    continue
+                }
+                let batchMs: Int64? = row["import_batch_unix_ms"]
+                overlays[id] = TrashedOverlay(
+                    mediaChoice: MediaChoice(rawValue: row["media_choice"]) ?? .default,
+                    importBatch: batchMs.map { ImportBatchID(unixMilliseconds: $0) }
+                )
+            }
+            return overlays
+        }
+    }
+
+    /// Re-catalogs an item undo moved back from the Trash and re-applies its authored
+    /// overlay. The paths are reconciled from the filesystem exactly as a file event
+    /// would (the file is the truth); only then is the overlay written onto the row.
+    func restoreTrashedItem(_ trashed: TrashedItem) async -> Bool {
+        guard let rootRowID = roots[trashed.item.root.path]?.rowID else {
+            return false
+        }
+        let root = trashed.item.root.path
+        var changed = false
+        for restored in trashed.members {
+            let path = restored.member.relativePath
+            recordIndependentNamespaceMutation(root: root, scope: .file(path), fileAction: .upsert)
+            changed = await reconcileUpsertedFile(
+                at: root.url.appending(path: path.rawValue).path(percentEncoded: false),
+                root: root,
+                rootRowID: rootRowID
+            ) || changed
+        }
+        if let overlay = trashed.overlay, let dbWriter = try? database() {
+            let applied = try? await dbWriter.write { db in
+                try db.execute(
+                    sql: """
+                    UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?
+                    WHERE library_root_id = ? AND relative_path = ?
+                    """,
+                    arguments: [
+                        overlay.mediaChoice.rawValue,
+                        overlay.importBatch?.unixMilliseconds,
+                        rootRowID,
+                        trashed.item.id.relativePath.rawValue,
+                    ]
+                )
+                return db.changesCount > 0
+            }
+            changed = applied == true || changed
+        }
+        if changed {
+            notifyCatalogChanged()
+        }
+        return changed
+    }
+
     /// Every item still waiting to move to the Trash, oldest command first, each
     /// with its catalog-proven members. The durable queue `MediaTrashCoordinator`
     /// drains, including after relaunch.
     func pendingTrashItems() async throws -> [PendingTrashItem] {
+        // Rows map to roots through the loaded registry; before the catalog's one load
+        // the registry is empty and every pending row would be silently skipped.
+        try await loadIfNeeded()
         let dbWriter = try database()
         let pathsByRowID = roots.pathsByRowID
         let rows: [(rootID: Int64, relativePath: String, batchMs: Int64)] = try await dbWriter.read { db in

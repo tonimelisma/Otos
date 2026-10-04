@@ -78,11 +78,20 @@ against a root currently being trashed or reorganized.
 
 ## Consequences
 
-Move to Trash is not registered on the app's curation undo stack (APP-039): the
-system Trash's Put Back is its undo, and a second, app-side reversal of a
-filesystem move would be a competing owner of the same fact.
+Move to Trash is registered on the window's one undo stack (APP-039). The queue
+records, per command, the location `trashItem` reported for each member and the
+item's authored overlay (curation choice, import batch) snapshotted before its row
+left the catalog. Undo runs inside the queue's drain task, between passes, so it
+never interleaves with a half-finished move: items still pending are withdrawn with
+no filesystem call; trashed items are moved back primary first under the root
+lease, never over an existing file, then re-cataloged from the filesystem and given
+back their overlay. Redo hides the items again under a new command. Undo records
+are in memory, like every undo entry; after relaunch Finder's Put Back still
+restores the file, without its Otos overlay. Finder's own Put Back is not the undo
+because it is not reachable from Otos's ⌘Z and the catalog had already purged the
+overlay.
 
-- Successful moves have no confirmation or success alert because system Trash is recoverable.
+- Move to Trash has no confirmation or success alert: it is undoable (HIG: no alerts for common, undoable actions).
 - Partial failures retain truthful catalog rows and selected failed identities and expose Show in Finder/Dismiss with bounded counts and no raw paths.
 - Device/MTP media remains outside this filesystem mutation path.
 - Trashing a dataless member downloads it first; the local-disk cost lands in the system Trash until it is emptied. A slow provider holds the root lease and the serial trash command for the duration of the download.

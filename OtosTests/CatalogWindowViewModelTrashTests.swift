@@ -2,75 +2,57 @@ import Foundation
 @testable import OtosKit
 import Testing
 
-/// The Move to Trash confirmation (APP-027): every surface asks first, confirm runs the
-/// move exactly once, cancel runs nothing, and the title names the scope.
+/// Move to Trash acts without asking (Plan 0104 D1) and is undoable from Edit ▸ Undo
+/// (APP-039): undo puts the files back from the system Trash, redo moves them again.
 @MainActor
-struct CatalogWindowViewModelTrashConfirmationTests {
-    @Test func requestAsksAndConfirmRunsOnce() async throws {
+struct CatalogWindowViewModelTrashTests {
+    @Test func moveToTrashActsWithoutAskingAndRegistersUndo() async throws {
         let fixture = try await makeTrashFixture(count: 2)
         defer { fixture.removeRoot() }
         let model = makeTrashModel(store: fixture.store)
         model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
         model.selectAll()
-        #expect(model.pendingTrashConfirmation == nil)
 
-        model.requestMoveTargetedMediaToTrash()
+        model.moveTargetedMediaToTrash()
 
-        let pending = try #require(model.pendingTrashConfirmation)
-        #expect(pending.count == 2)
-        #expect(pending.title == "Move 2 Items to Trash?")
-        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "trash-0.jpg").path))
-
-        model.confirmMoveToTrash()
-        #expect(model.pendingTrashConfirmation == nil)
         try await waitForTrash("files moved") {
-            !FileManager.default.fileExists(atPath: fixture.root.appending(path: "trash-0.jpg").path)
-                && !FileManager.default.fileExists(atPath: fixture.root.appending(path: "trash-1.jpg").path)
+            fixture.ids.allSatisfy { !FileManager.default.fileExists(atPath: fixture.path($0)) }
         }
-        // A second confirm with nothing pending is a no-op.
-        model.confirmMoveToTrash()
-        #expect(model.pendingTrashConfirmation == nil)
+        #expect(model.curationUndoState.canUndo)
+        #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
     }
 
-    @Test func cancelRunsNothing() async throws {
+    @Test func undoPutsItemsBackAndRedoMovesThemAgain() async throws {
         let fixture = try await makeTrashFixture(count: 1)
         defer { fixture.removeRoot() }
         let model = makeTrashModel(store: fixture.store)
         model.applyState(trashWindowState(ids: fixture.ids, root: fixture.rootPath))
         model.selectAll()
+        model.moveTargetedMediaToTrash()
+        let path = fixture.path(fixture.ids[0])
+        try await waitForTrash("file moved") { !FileManager.default.fileExists(atPath: path) }
+        try await waitForTrash("row gone") {
+            await (try? fixture.store.mediaAssets(for: fixture.ids).isEmpty) == true
+        }
 
-        model.requestMoveTargetedMediaToTrash()
-        #expect(model.pendingTrashConfirmation != nil)
-        model.cancelMoveToTrash()
+        model.undoCuration()
+        try await waitForTrash("file put back") { FileManager.default.fileExists(atPath: path) }
+        try await waitForTrash("row back") {
+            await (try? fixture.store.mediaAssets(for: fixture.ids).count) == 1
+        }
+        #expect(model.curationUndoState.redoTitle == "Redo Move to Trash")
+        #expect(model.trashAlertMessage == nil)
 
-        #expect(model.pendingTrashConfirmation == nil)
-        try await Task.sleep(for: .milliseconds(100))
-        #expect(FileManager.default.fileExists(atPath: fixture.root.appending(path: "trash-0.jpg").path))
-        #expect(model.mediaTrashTask == nil)
+        model.redoCuration()
+        try await waitForTrash("file moved again") { !FileManager.default.fileExists(atPath: path) }
+        #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
     }
 
-    @Test func titlesCarryNameOrCount() {
-        let one = TrashConfirmation(ids: [
-            MediaAssetID(
-                libraryRootPath: LibraryRootPath(rawValue: "/Pictures"),
-                relativePath: MediaRelativePath(rawValue: "Trip/IMG_0001.ARW")
-            ),
-        ])
-        #expect(one.title == "Move “IMG_0001.ARW” to Trash?")
-        #expect(one.message == "The item moves to the Trash and can be put back from Finder.")
-
-        let many = TrashConfirmation(ids: (0 ..< 12).map {
-            MediaAssetID(libraryRootPath: LibraryRootPath(rawValue: "/Pictures"), relativePath: MediaRelativePath(rawValue: "\($0).jpg"))
-        })
-        #expect(many.title == "Move 12 Items to Trash?")
-        #expect(many.message == "The items move to the Trash and can be put back from Finder.")
-        #expect(TrashConfirmation.confirmTitle == "Move to Trash")
-    }
-
-    @Test func noTargetAsksNothing() {
+    @Test func noTargetDoesNothing() {
         let model = makeTrashModel(store: CatalogStore(location: .inMemory))
-        model.requestMoveTargetedMediaToTrash()
-        #expect(model.pendingTrashConfirmation == nil)
+        model.moveTargetedMediaToTrash()
+        #expect(model.mediaTrashTask == nil)
+        #expect(!model.curationUndoState.canUndo)
     }
 }
 
@@ -90,6 +72,10 @@ private struct TrashFixture {
     let root: URL
     let rootPath: LibraryRootPath
     let ids: [MediaAssetID]
+
+    func path(_ id: MediaAssetID) -> String {
+        root.appending(path: id.relativePath.rawValue).path
+    }
 
     func removeRoot() {
         try? FileManager.default.removeItem(at: root)

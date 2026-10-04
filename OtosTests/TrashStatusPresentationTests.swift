@@ -103,13 +103,18 @@ struct TrashStatusBarRenderingTests {
                     .frame(width: 900)
                 let host = NSHostingView(rootView: view)
                 heights.insert(host.fittingSize.height)
-                let renderer = ImageRenderer(content: view)
-                renderer.scale = 2
-                if let image = renderer.nsImage,
-                   let tiff = image.tiffRepresentation,
-                   let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
-                {
-                    try png.write(to: directory.appending(path: "trash-bar-\(name)-\(scheme == .dark ? "dark" : "light").png"))
+                // Real AppKit drawing (ImageRenderer cannot draw AppKit-backed controls
+                // such as the progress indicator), at the view's own appearance.
+                host.frame = NSRect(origin: .zero, size: host.fittingSize)
+                host.appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua)
+                host.layoutSubtreeIfNeeded()
+                if let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    if let png = bitmap.representation(using: .png, properties: [:]) {
+                        try png.write(
+                            to: directory.appending(path: "trash-bar-\(name)-\(scheme == .dark ? "dark" : "light").png")
+                        )
+                    }
                 }
             }
         }

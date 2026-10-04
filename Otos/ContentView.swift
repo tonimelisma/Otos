@@ -147,7 +147,7 @@ struct ContentView: View {
                     openWithApplication: viewModel.openTargets(with:),
                     openWithOther: viewModel.openTargetsWithChosenApplication,
                     reveal: viewModel.revealSelectionInFinder,
-                    moveToTrash: viewModel.requestMoveTargetedMediaToTrash
+                    moveToTrash: viewModel.moveTargetedMediaToTrash
                 )
             }
         }
@@ -188,7 +188,7 @@ struct ContentView: View {
                 viewModel.dismissTrashAlert()
             }
         } message: {
-            Text("The affected items remain selected.")
+            Text(viewModel.trashAlertDetail)
         }
         .alert(
             viewModel.trashDecisions.first.map { TrashDecisionPrompt(decision: $0).title } ?? "",
@@ -209,29 +209,6 @@ struct ContentView: View {
         } message: {
             if let decision = viewModel.trashDecisions.first {
                 Text(TrashDecisionPrompt(decision: decision).message)
-            }
-        }
-        .confirmationDialog(
-            viewModel.pendingTrashConfirmation?.title ?? "Move to Trash?",
-            isPresented: Binding(
-                get: { viewModel.pendingTrashConfirmation != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        viewModel.cancelMoveToTrash()
-                    }
-                }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button(TrashConfirmation.confirmTitle, role: .destructive) {
-                viewModel.confirmMoveToTrash()
-            }
-            Button("Cancel", role: .cancel) {
-                viewModel.cancelMoveToTrash()
-            }
-        } message: {
-            if let pending = viewModel.pendingTrashConfirmation {
-                Text(pending.message)
             }
         }
         .confirmationDialog(

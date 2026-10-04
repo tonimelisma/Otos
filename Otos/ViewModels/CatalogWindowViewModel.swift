@@ -253,8 +253,8 @@ final class CatalogWindowViewModel {
     /// Questions the trash queue needs answered, oldest first; the window presents the
     /// first (Plan 0104 D3/D4).
     var trashDecisions: [MediaTrashCoordinator.Decision] = []
-    /// The Move to Trash the user has been asked to confirm (APP-027); nil when none.
-    var pendingTrashConfirmation: TrashConfirmation?
+    /// The failure alert's message line; set with `trashAlertMessage`.
+    var trashAlertDetail = ""
     var identityRemapEpoch: UInt64 = 0
     var identityRemapBatch: CatalogIdentityRemapBatch?
     @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
