@@ -33,12 +33,16 @@ struct MediaTrashCoordinatorTests {
         #expect(item.members.map(\.role) == [.companion, .primary])
 
         let recorder = TrashCallRecorder()
-        let coordinator = MediaTrashCoordinator(store: store, materializationRequester: nil) { url in
-            recorder.append(url.lastPathComponent)
-            if url.pathExtension.lowercased() == "jpg" {
-                throw CocoaError(.fileNoSuchFile)
+        let coordinator = MediaTrashCoordinator(
+            store: store,
+            materializationRequester: nil,
+            trashExecutor: { url in
+                recorder.append(url.lastPathComponent)
+                if url.pathExtension.lowercased() == "jpg" {
+                    throw CocoaError(.fileNoSuchFile)
+                }
             }
-        }
+        )
         let result = await coordinator.moveToTrash(items)
 
         #expect(recorder.paths == ["a.xmp", "a.jpg"])
