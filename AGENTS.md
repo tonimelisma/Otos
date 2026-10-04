@@ -339,6 +339,11 @@ for confirmation before relying on them.
   Xcode 27 build/test proof is local `script/check.sh` evidence. CI may be waived
   only when GitHub reports a billing/quota blocker (paste the evidence); never for
   failures, syntax errors, missing tools, or flakiness.
+- **Opening a PR is not a stopping point.** The agent reads CI status itself
+  (`gh pr checks`), keeps watching pending checks to completion in the same turn
+  (e.g. a background `gh pr checks --watch`, which reports when it exits), and
+  continues straight through merge, cleanup, install, and the DoD report. Never
+  end the turn to wait for a CI notification: a green run may never send one.
 - **Doc-only increments** (the diff touches only documentation — `docs/`,
   `AGENTS.md`, and similar prose; no source, tests, scripts, or config) use a
   lightweight path: skip the last-five-PRs review-comment sweep, skip
