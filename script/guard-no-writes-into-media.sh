@@ -11,6 +11,9 @@ ALLOWLIST=(
   "Otos/Services/CopyfileTransfer.swift" "Otos/Services/ExclusivePublication.swift"
   "Otos/Services/CameraSourceMonitor.swift" "Otos/Services/FileMaterialization.swift"
   "Otos/Stores/CatalogStore.swift" "Otos/Stores/CatalogStorePersistence.swift"
+  # User-commanded Move to Trash: removeItem only after an explicit `Delete … Immediately?`
+  # answer, and moveItem only to put an undone item back from the Trash (ADR 0022).
+  "Otos/Services/MediaTrashCoordinator.swift"
 )
 is_allowlisted() { local p="$1" a; for a in "${ALLOWLIST[@]}"; do [[ "$p" == "$a" ]] && return 0; done; return 1; }
 check_root() {

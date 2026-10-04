@@ -24,10 +24,11 @@ struct TrashStatusPresentationTests {
     }
 
     @Test func workingCountsItemsAndStatesBytesToDownload() throws {
-        let drawn = try #require(TrashStatusPresentation.map(state(pending: 11, moved: 3, bytes: 340_000_000)))
+        let drawn = try #require(TrashStatusPresentation.map(state(pending: 11, moved: 3, bytes: 34_000_000)))
         #expect(drawn.badge == .none)
         #expect(drawn.primaryLine == "Moving 14 items to the Trash")
-        #expect(drawn.secondaryLine == "340 MB to download")
+        // The import bar's byte format: whole MB under 100 MB, then GB with one decimal.
+        #expect(drawn.secondaryLine == "34 MB to download")
         #expect(drawn.progress?.completed == 3)
         #expect(drawn.progress?.total == 14)
     }

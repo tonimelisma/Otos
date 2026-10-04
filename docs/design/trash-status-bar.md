@@ -31,7 +31,7 @@ withdrawing a Move to Trash is ⌘Z.
 
 | State (DES-030) | L1 | L3 | Progress |
 | --- | --- | --- | --- |
-| Working | `Moving 14 items to the Trash` | `340 MB to download`, or nothing when all are local | `3 of 14` |
+| Working | `Moving 14 items to the Trash` | `1.2 GB to download`, or nothing when all are local | `3 of 14` |
 | Needs attention: floor | `Waiting for free space` | `14 items waiting to move to the Trash` | none |
 | Needs attention: provider | `Waiting to download` | `14 items waiting to move to the Trash` | none |
 
