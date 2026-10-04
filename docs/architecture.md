@@ -264,6 +264,7 @@ everything expensive happens on an actor off the main thread.
 | loupe / preview decode | `LoupeView` + `PreviewImageLoader`/`VideoPreviewLoader` + `LoupeVideoPlayerView` (`AVPlayerView` inline) (ADR 0016); mode intents on `CatalogWindowViewModel` |
 | loupe video (click-to-play) | `VideoPreviewLoader` + `LoupeVideoPlayerView` + `LoupeView` poster/AVPlayer swap; compare stays poster-only |
 | compare pair | `ComparePairPolicy` + `CompareView`; pair is capped selection |
+| reopening where the user left off | `BrowserPlace` (versioned preference value) + `CatalogWindowViewModelBrowserPlace` (load at init, restore once after the first matching result, save at quit) (ADR 0031) |
 | curation choice/filter | `MediaChoice` + `CatalogStore.setMediaChoices` (one transaction, reports priors) + `MediaFilter`/`CatalogQueryGateway`; ViewModel owns intents and the curation `UndoManager` (APP-039), views remain passive |
 | drag out of the grid / filmstrip | `MediaGridDragPolicy` (pure rules) + `MediaGridCollectionView` (drag detection, deferred plain click) + `MediaGridViewController.beginDrag` + `MediaGridDragSource`; file URLs only (ADR 0028) |
 | media context menus | `MediaItemMenuModel` (pure, ordered) + `CatalogWindowViewModelMediaItemMenu` (builds the model at open time, maps commands onto the menu-bar intents) + `MediaItemContextMenu` (the one `NSMenu` renderer; `ContextMenuHost` overlays it on SwiftUI panes) + `MediaGridCollectionView.menu(for:)` |

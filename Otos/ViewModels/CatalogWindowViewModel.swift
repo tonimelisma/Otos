@@ -80,7 +80,8 @@ final class CatalogWindowViewModel {
         didSet { refreshOpenWithMenu() }
     }
 
-    /// Session-only browser presentation (grid / loupe / compare). Default `.grid`.
+    /// Browser presentation (grid / loupe / compare). Default `.grid`; restored at launch
+    /// from the browser place (APP-043).
     /// Mutated only through view-mode intents (separate file; Swift `private(set)` is
     /// file-scoped).
     var viewMode: BrowserViewMode = .grid {
@@ -270,6 +271,15 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var queryGeneration = CatalogQueryRequest.initial.generation
     @ObservationIgnored var userHasChosenSource = false
     @ObservationIgnored var hasAppliedInitialDefault = false
+    /// The place Otos quit in (APP-043, ADR 0031), loaded at init and consumed once by
+    /// `restoreBrowserPlaceIfReady()`. Any other query drops it: once the user (or the
+    /// launch default) has gone somewhere else, an old place would be a surprise jump.
+    @ObservationIgnored var pendingPlaceRestore: BrowserPlace?
+    /// The grid's middle visible item from the newest viewport report — what quit saves
+    /// as the grid's place, because the grid centers on it when it comes back.
+    @ObservationIgnored var gridViewportCenterID: MediaAssetID?
+    /// `NSApplication.willTerminateNotification` registration that saves the place.
+    @ObservationIgnored var terminationObserver: (any NSObjectProtocol)?
     @ObservationIgnored let previewLoader: any PreviewLoading
     /// LaunchServices seam for Open / Open With; tests inject a recorder.
     @ObservationIgnored let workspace: any WorkspaceOpening
@@ -388,12 +398,22 @@ final class CatalogWindowViewModel {
         self.mediaChoiceContinuation = mediaChoiceContinuation
         self.viewportStream = viewportStream
         self.viewportContinuation = viewportContinuation
+        // The restored query is the first one Projection sees (APP-043), so launch never
+        // flashes the default collection before the user's own.
+        if let place = Self.loadBrowserPlace(from: preferences) {
+            pendingPlaceRestore = place
+            queryDescriptor = place.descriptor
+            sidebarSelection = place.descriptor.scope
+        }
     }
 
     isolated deinit {
         // Cancel consumers before finishing their producers. Finishing normally
         // drains buffered AsyncStream values; cancellation prevents queued
         // mutations from starting after the ViewModel's ownership has ended.
+        if let terminationObserver {
+            NotificationCenter.default.removeObserver(terminationObserver)
+        }
         stateConsumptionTask?.cancel()
         catalogStartupTask?.cancel()
         queryForwardingTask?.cancel()
@@ -449,6 +469,17 @@ extension CatalogWindowViewModel {
             return
         }
         hasStarted = true
+        // Quit is the one moment the place is written: `willTerminate` runs for every
+        // ordinary quit, and the write is a single small preference value.
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.persistBrowserPlace()
+            }
+        }
 
         let signpost = OtosSignpost.ui.beginInterval("CatalogWindowViewModelStart")
         OtosSignpost.ui.endInterval("CatalogWindowViewModelStart", signpost)
@@ -492,6 +523,10 @@ extension CatalogWindowViewModel {
     /// user intent. Kept here beside those properties so their private setters stay valid.
     func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
         guard queryDescriptor != descriptor else { return }
+        if let pending = pendingPlaceRestore, pending.descriptor != descriptor {
+            pendingPlaceRestore = nil
+            OtosLog.ui.notice("op=browserPlace.restore phase=dropped reason=queryChanged")
+        }
         let scopeChanged = descriptor.scope != queryDescriptor.scope
         queryGeneration &+= 1
         queryDescriptor = descriptor
@@ -509,6 +544,9 @@ extension CatalogWindowViewModel {
     /// The AppKit grid reports its visible identities here as the user scrolls. This is a
     /// pure priority hint for enrichment, so only the newest viewport is kept.
     func viewportChanged(_ orderedAssetIDs: [MediaAssetID]) {
+        if viewMode == .grid, !orderedAssetIDs.isEmpty {
+            gridViewportCenterID = orderedAssetIDs[orderedAssetIDs.count / 2]
+        }
         viewportContinuation.yield(orderedAssetIDs)
     }
 
@@ -693,6 +731,7 @@ extension CatalogWindowViewModel {
                 scopeChanged: scopeChanged
             )
         }
+        restoreBrowserPlaceIfReady()
 
         OtosSignpost.ui.endInterval("CatalogWindowStateApply", signpost)
 
@@ -831,6 +870,20 @@ extension CatalogWindowViewModel {
             return
         }
         hasAppliedInitialDefault = true
+        // A restored scope that still exists is where the user was; it replaces the
+        // launch default (ADR 0031). One that is gone falls back to the default, keeping
+        // the restored filter and sort, and the rest of the place is dropped with it.
+        if pendingPlaceRestore != nil {
+            // All Media is a row only with two or more fixed libraries, so a remembered
+            // All Media in a smaller set is as gone as a removed library.
+            let allMediaHidden = queryDescriptor.scope == .allMedia
+                && !SidebarSelectionPolicy.showsAllMedia(libraries: next.libraries)
+            guard currentSelectionWasRemoved(in: next) || allMediaHidden else {
+                return
+            }
+            pendingPlaceRestore = nil
+            OtosLog.ui.notice("op=browserPlace.restore phase=dropped reason=scopeGone")
+        }
         applyAutomaticSidebarSelection(
             SidebarSelectionPolicy.defaultSelection(
                 libraries: next.libraries,

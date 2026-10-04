@@ -18,7 +18,8 @@ affect membership or order.
 The user-confirmed requirements behind this decision: the titlebar is the only
 library-name surface, no item count is shown, sort/filter live in native toolbar
 and menu commands, best date/kind/format are Store-owned query facts, sort/filter
-are session-only, direct user intents publish immediately, and background work
+are restored across launches with the browser place (ADR 0031), direct user intents
+publish immediately, and background work
 coalesces at roughly one second.
 
 ## MECE Decision Scope

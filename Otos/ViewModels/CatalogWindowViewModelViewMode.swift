@@ -5,7 +5,7 @@ import OSLog
 
 /// Catalog window view-mode intents guide
 ///
-/// Owns session-only `viewMode`, loupe `focusedAssetID`, compare pair, and the
+/// Owns `viewMode`, loupe `focusedAssetID`, compare pair, and the
 /// pane-preview request lifecycle. Every entry/exit/navigation rule is either a pure
 /// `BrowserModePolicy` / `ComparePairPolicy` call or a thin intent that applies that
 /// policy and reconciles pane slots via `refreshPanePreviews()`. Each `PaneSlot` has
