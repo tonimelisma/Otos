@@ -93,7 +93,17 @@ struct MediaGridView: View {
         .navigationTitle(title)
     }
 
+    @ViewBuilder
     private var emptyContent: some View {
+        // Before the first catalog load nothing is known, so nothing is said (APP-044).
+        if emptyState == .loadingCatalog {
+            Color.clear
+        } else {
+            knownEmptyContent
+        }
+    }
+
+    private var knownEmptyContent: some View {
         VStack(spacing: 12) {
             if emptyState.isProgressing {
                 ProgressView()

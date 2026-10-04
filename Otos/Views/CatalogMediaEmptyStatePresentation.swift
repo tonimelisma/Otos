@@ -10,6 +10,9 @@ import Foundation
 extension CatalogMediaEmptyState {
     var title: String {
         switch self {
+        case .loadingCatalog:
+            // Never drawn: `MediaGridView` shows nothing while the catalog loads.
+            ""
         case .noMedia:
             "No Media"
         case .noFilterMatches:
@@ -31,6 +34,8 @@ extension CatalogMediaEmptyState {
 
     var message: String {
         switch self {
+        case .loadingCatalog:
+            ""
         case .noMedia:
             "Add a library with media files to begin."
         case .noFilterMatches:
@@ -55,6 +60,8 @@ extension CatalogMediaEmptyState {
 
     var systemImage: String {
         switch self {
+        case .loadingCatalog:
+            ""
         case .noMedia:
             "photo.on.rectangle"
         case .noFilterMatches:
