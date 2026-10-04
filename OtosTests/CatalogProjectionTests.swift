@@ -192,6 +192,8 @@ struct CatalogProjectionTests {
 
     @Test func publicationLoopRunsOneProjectionAtATimeAndRerunsWhenDirtyDuringRun() async throws {
         let store = CatalogStore(location: .inMemory)
+        // Projection builds only for a loaded catalog (APP-044).
+        try await store.start(scansSavedLibraries: false)
         let probe = ProjectionProbe()
         let projection = CatalogProjection(
             cadence: .milliseconds(10),

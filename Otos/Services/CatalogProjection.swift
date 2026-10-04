@@ -37,6 +37,10 @@ actor CatalogProjection {
     private var immediatePublicationTask: Task<Void, Never>?
     private var publicationStore: CatalogStore?
     private var lastPublishedState: CatalogWindowState?
+    /// The last publication was the pre-load `.loadingCatalog` state. The next store
+    /// change is the load itself (or something after it), so it publishes immediately
+    /// rather than leaving the window blank for a cadence tick (APP-044).
+    private var publishedBeforeCatalogLoad = false
     /// Count of full ordered-asset queries executed by publications. A detail-only
     /// publication skips it; the count is the observable "full-catalog re-sort per
     /// enrichment batch" metric (ADR 0011) and drives the regression test.
@@ -222,7 +226,7 @@ private extension CatalogProjection {
         if case .assetsDetailChanged = change {
             markDetailDirty()
         } else {
-            markDirty()
+            markDirty(wakeImmediately: publishedBeforeCatalogLoad, store: publicationStore)
         }
     }
 
@@ -263,7 +267,27 @@ private extension CatalogProjection {
 
         let publicationStart = Date()
         let storeReadStart = Date()
-        let libraries = await store.currentLibraries()
+        // Before the catalog's first load there is nothing to query and nothing to
+        // claim: publish the loading state instead of an empty catalog (APP-044).
+        guard let libraries = await store.loadedLibraries() else {
+            publishedBeforeCatalogLoad = true
+            var loading = CatalogWindowState.empty
+            loading.mediaGrid = CatalogMediaGridState(descriptor: selectedRequest.descriptor, orderedAssetIDs: [])
+            loading.resolvedSidebarSelection = selectedRequest.descriptor.scope
+            loading.queryGeneration = selectedRequest.generation
+            OtosLog.catalog.notice("op=projection.publish phase=loadingCatalog")
+            if loading != lastPublishedState {
+                yield(loading)
+            }
+            publishing = false
+            // The load can land while this pass awaited the read; its change is
+            // already marked dirty, so publish it now rather than on the cadence.
+            if dirty {
+                markDirty(wakeImmediately: true, store: store)
+            }
+            return
+        }
+        publishedBeforeCatalogLoad = false
         let storeReadMs = DiagnosticsTiming.milliseconds(since: storeReadStart)
 
         let projectionStart = Date()

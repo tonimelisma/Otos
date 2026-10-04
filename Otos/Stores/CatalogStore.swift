@@ -570,6 +570,13 @@ extension CatalogStore {
         roots[rootPath]?.root.kind
     }
 
+    /// The libraries once the initial load has applied, and nil before it: before the
+    /// load the catalog's roots are unknown, which is not the same as having none
+    /// (APP-044).
+    func loadedLibraries() -> [CatalogLibraryState]? {
+        started ? currentLibraries() : nil
+    }
+
     func currentLibraries() -> [CatalogLibraryState] {
         roots.values
             .map { catalogLibraryState(from: $0) }

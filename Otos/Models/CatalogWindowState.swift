@@ -11,6 +11,9 @@ import Foundation
 /// Why the media browser is empty. Projection chooses the reason so the view
 /// can stay declarative and avoid re-deriving catalog state in `body`.
 nonisolated enum CatalogMediaEmptyState: Equatable {
+    /// The catalog's first load has not finished, so whether there is any media is
+    /// not known yet. Nothing is claimed: the grid draws nothing (APP-044).
+    case loadingCatalog
     case noMedia
     case noFilterMatches
     case checkingLibraries
@@ -29,6 +32,8 @@ nonisolated enum CatalogMediaEmptyState: Equatable {
 
     var diagnosticDescription: String {
         switch self {
+        case .loadingCatalog:
+            "loadingCatalog"
         case .noMedia:
             "noMedia"
         case .noFilterMatches:
@@ -72,15 +77,17 @@ nonisolated struct CatalogWindowState: Equatable {
         mediaGrid.descriptor
     }
 
+    /// What the window shows before the catalog has loaded: no title, no sources, no
+    /// items, and no claim about whether media exists (APP-044).
     static let empty = CatalogWindowState(
-        title: "All Media",
+        title: "",
         libraries: [],
         removableSources: [],
         importBatches: [],
         mediaGrid: .empty,
         filterOptions: .empty,
         resolvedSidebarSelection: .allMedia,
-        mediaEmptyState: .noMedia,
+        mediaEmptyState: .loadingCatalog,
         deviceConnectionBanner: nil
     )
 }

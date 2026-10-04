@@ -69,6 +69,15 @@ and schedule an immediate publication attempt. On a publication with pending
 work, Projection asks Store for current root rows plus descriptor-ordered
 asset IDs, derives one `CatalogWindowState`, and yields it.
 
+Before the Store's initial load has applied, its roots are unknown, not absent.
+`CatalogStore.loadedLibraries()` returns nil until then, and Projection publishes a
+loading state for it — no title, no items, and the `.loadingCatalog` empty state,
+which the grid draws as nothing — instead of deriving "No Media" from an empty root
+set. The first Store change after a loading publication is the load itself, so it
+publishes immediately rather than on the background cadence; leaving the window
+blank for a cadence tick after the catalog is already readable was measured at about
+one second of a launch that loads its catalog in 120 ms (APP-044).
+
 When Projection receives `.libraryRemoved(path)` for its selected root, it
 immediately retains `.allMedia` as selection input and marks itself dirty. A
 same-path replacement therefore remains unselected even when no root-absent
