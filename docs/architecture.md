@@ -65,7 +65,7 @@ compiles it.
         │                                             └─ one SQLite overlay transaction / exact-path reconciliation
         ▼
   MediaTrashCoordinator ── per-root namespace lease ──▶ FileManager.trashItem
-        └─ dataless member ──▶ MaterializationCoordinator (interactive) first
+        └─ dataless member ──▶ MaterializationCoordinator (command) first
 ```
 
 Nobody reads "upward": a view never calls the database; the database never knows a

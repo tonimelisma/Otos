@@ -240,6 +240,8 @@ extension FileMaterialization {
             requestRetryInterval: .milliseconds(500)
         )
 
+        /// `command` takes the bounded background persistence: no on-screen demand will
+        /// cancel it, so a clock is the only thing that can end a stuck provider wait.
         static func forPriority(_ priority: MaterializationCoordinator.Priority) -> Persistence {
             priority == .interactive ? .interactive : .background
         }

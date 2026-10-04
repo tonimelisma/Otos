@@ -157,6 +157,58 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// A Move to Trash download must not queue behind the library's enrichment backlog:
+    /// `command` is exempt from the background per-root cap that a background transfer
+    /// already holds, and is selected ahead of queued background work.
+    @Test func commandIsAdmittedPastTheBackgroundRootCap() async throws {
+        let executor = ControlledMaterializationExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0.id.fileURL) }
+        )
+        let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
+        try await executor.waitForStarts(1)
+        let queued = Task { await coordinator.materialize(request("two.jpg", priority: .background)) }
+        try await Task.sleep(for: .milliseconds(20))
+        let trash = Task { await coordinator.materialize(request("trash.jpg", priority: .command)) }
+        try await executor.waitForStarts(2)
+        #expect(await executor.startedNames() == ["one.jpg", "trash.jpg"])
+        await executor.releaseNext()
+        await executor.releaseNext()
+        try await executor.waitForStarts(3)
+        await executor.releaseNext()
+        _ = await (first.value, queued.value, trash.value)
+        await coordinator.shutdown()
+    }
+
+    @Test func commandRunsUnderTheBoundedPersistence() {
+        #expect(FileMaterialization.Persistence.forPriority(.command) == .background)
+        #expect(FileMaterialization.Persistence.forPriority(.interactive) == .interactive)
+    }
+
+    @Test func theLastCommandWaiterLeavingEndsTheTransferAndReleasesAccounting() async throws {
+        let executor = HeldInteractiveExecutor()
+        let coordinator = MaterializationCoordinator(
+            store: CatalogStore(location: .inMemory),
+            executor: { await executor.run($0.id.fileURL) }
+        )
+        await coordinator.start()
+        let waiting = Task { await coordinator.materialize(request("trash.jpg", priority: .command)) }
+        try await executor.waitForStart()
+        #expect(await coordinator.stateSnapshot().inFlight == 1)
+
+        waiting.cancel()
+        _ = await waiting.value
+
+        try await withTestTimeout("command transfer ends after its last waiter leaves") {
+            while await coordinator.stateSnapshot().inFlight != 0 {
+                await Task.yield()
+            }
+        }
+        #expect(await coordinator.stateSnapshot().bytes == 0)
+        await coordinator.shutdown()
+    }
+
     @Test func backgroundFromAnotherRootUsesAvailableCapacity() async throws {
         var policy = MaterializationAdmissionPolicy.production
         policy.globalConcurrency = 3
