@@ -31,9 +31,12 @@ optional "All Media" aggregate. Two problems motivated this decision:
 ## Alternatives
 
 - **Selection default:** (a) always All Media (status quo — ignores the common
-  camera-import intent); (b) remember the last selection across launches (adds
-  durable UI state and surprises on a changed library set); (c) **a pure priority
-  policy computed from current sources** — chosen.
+  camera-import intent); (b) remember the last selection across launches; (c) **a pure
+  priority policy computed from current sources** — chosen for the case where there is
+  nothing to remember. The user later asked for (b) — reopen where they left off — and
+  ADR 0031 adds it on top of (c): a remembered scope that still exists wins, and (c)
+  decides everything else. The "changed library set" risk is handled by checking the
+  remembered scope against the loaded roots instead of trusting it.
 - **Eject removal trigger:** (a) hide on quiesce (status quo — UI diverges from
   reality on failure); (b) **drive removal from the real unmount event, keep the row
   visible with an "ejecting" state until then** — chosen, matching how the prior
@@ -51,9 +54,10 @@ optional "All Media" aggregate. Two problems motivated this decision:
   connected removable/camera source → the single fixed library → All Media. Applied
   once at startup after the first *loaded* state (at least one library or removable
   root), before any explicit user choice (`userHasChosenSource`). An empty pre-load
-  publication must not latch the default. This is the only automatic jump the app
-  makes; a card connected at launch (or already connected when the app starts) is
-  what satisfies the camera-import intent.
+  publication must not latch the default. A remembered scope that still exists
+  (ADR 0031) replaces it at that same latch. This is the only automatic jump the app
+  makes; with nothing remembered, a card connected at launch (or already connected when
+  the app starts) is what satisfies the camera-import intent.
 - **Attach-time selection hijack is deliberately absent**: attaching
   a card *after* the one-time startup default has already applied never moves the
   user, even if they are looking at an unrelated library or All Media. Always

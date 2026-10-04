@@ -2,9 +2,9 @@ import Foundation
 
 /// Browser view-mode guide
 ///
-/// Session-only browser presentation: grid, loupe (large image + filmstrip), or compare
-/// (two images + filmstrip). Default is `.grid`. Mode state lives on
-/// `CatalogWindowViewModel` and is never persisted (same policy as sort/filter, APP-014).
+/// Browser presentation: grid, loupe (large image + filmstrip), or compare (two images +
+/// filmstrip). Default is `.grid`. Mode state lives on `CatalogWindowViewModel`; it is
+/// saved at quit and restored at launch with the rest of the browser place (APP-043).
 ///
 /// Pure policy helpers below own entry focus, arrow navigation, and prune-survivor focus
 /// so the LrC-inspired rules are unit-tested without UI.

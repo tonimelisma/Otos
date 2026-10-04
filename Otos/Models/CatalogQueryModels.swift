@@ -4,7 +4,8 @@ import UniformTypeIdentifiers
 // Query model guide
 //
 // These values describe how the single media browser asks Store for visible
-// identities. They are session state, not persisted user preferences. Keeping
+// identities. The ViewModel saves the current descriptor at quit and restores it at
+// launch as part of `BrowserPlace` (APP-043); nothing else persists it. Keeping
 // scope, filter, and sort in one descriptor gives toolbar buttons, menu commands,
 // Projection, Store SQL, and the AppKit scroll-reset gate one shared contract.
 
