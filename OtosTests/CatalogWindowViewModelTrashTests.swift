@@ -120,7 +120,8 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitUntil { model.gridSelection.selection == [fixture.ids[0]] }
+        try await waitUntil { model.gridSelection.selection != [fixture.ids[1], fixture.ids[2]] }
+        #expect(model.gridSelection.selection == [fixture.ids[0]])
     }
 
     @Test func noTargetDoesNothing() {
