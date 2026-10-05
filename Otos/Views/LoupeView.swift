@@ -39,6 +39,7 @@ struct LoupeView: View {
     /// Info overlay (APP-041); nil when hidden.
     var loupeInfo: LoupeInfoModel?
     var onInfoToggle: () -> Void = {}
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -68,11 +69,20 @@ struct LoupeView: View {
             onChoice: onPreviewMediaChoice
         ) {
             ZStack {
-                Color.black.opacity(0.92)
+                // The pane is content, not chrome (DES-022): one backdrop in every
+                // state, so the thumbnail-to-full-decode swap changes only the image.
+                DesignPalette.content(for: colorScheme)
                 switch display {
                 case let .video(state):
-                    LoupeVideoPlayerView(state: state)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Sized to the picture: AVKit paints its letterbox black, so the
+                    // pane leaves it none and the backdrop stays `content` (DES-022).
+                    if let displaySize = state.displaySize {
+                        LoupeVideoPlayerView(state: state)
+                            .aspectRatio(displaySize, contentMode: .fit)
+                    } else {
+                        LoupeVideoPlayerView(state: state)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 case let .full(image):
                     if let focusedAssetID {
                         LoupeZoomView(

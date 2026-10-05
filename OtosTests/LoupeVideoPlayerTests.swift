@@ -49,4 +49,34 @@ struct LoupeVideoPlayerTests {
         let display = PanePresentation.display(paneID: id, preview: nil)
         #expect(display == .thumbnail(id))
     }
+
+    /// DES-022: the player is sized to the picture so AVKit has no letterbox to
+    /// paint black. A phone portrait clip is stored landscape with a quarter-turn
+    /// transform; its displayed size is portrait.
+    @Test func displaySizeAppliesThePreferredTransform() {
+        let stored = CGSize(width: 1920, height: 1080)
+        #expect(LoupeVideoState.displaySize(naturalSize: stored, preferredTransform: .identity) == stored)
+        let portrait = LoupeVideoState.displaySize(
+            naturalSize: stored,
+            preferredTransform: CGAffineTransform(rotationAngle: .pi / 2)
+        )
+        #expect(portrait.map { $0.width.rounded() } == 1080)
+        #expect(portrait.map { $0.height.rounded() } == 1920)
+        #expect(LoupeVideoState.displaySize(naturalSize: .zero, preferredTransform: .identity) == nil)
+    }
+
+    /// The video pane reports its measured size, so the curation group rides the
+    /// video's own corner (DES-066); an unmeasured video reports none.
+    @Test func videoPaneReportsItsDisplaySize() {
+        let id = MediaAssetID(
+            libraryRootPath: LibraryRootPath(rawValue: "/Library/Root"),
+            relativePath: MediaRelativePath(rawValue: "d.mov")
+        )
+        let measured = LoupeVideoState(
+            id: id, player: AVPlayer(), isPlaying: false, displaySize: CGSize(width: 1080, height: 1920)
+        )
+        #expect(PanePresentation.Display.video(measured).mediaPixelSize == CGSize(width: 1080, height: 1920))
+        let unmeasured = LoupeVideoState(id: id, player: AVPlayer(), isPlaying: false)
+        #expect(PanePresentation.Display.video(unmeasured).mediaPixelSize == nil)
+    }
 }

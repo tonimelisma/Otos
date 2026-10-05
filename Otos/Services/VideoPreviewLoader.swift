@@ -79,16 +79,33 @@ final class VideoPreviewLoader {
             return nil
         }
 
-        let item = AVPlayerItem(url: url)
-        let player = AVPlayer(playerItem: item)
+        let asset = AVURLAsset(url: url)
+        let displaySize = await Self.displaySize(of: asset)
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         player.automaticallyWaitsToMinimizeStalling = true
         player.actionAtItemEnd = .pause
 
-        let state = LoupeVideoState(id: id, player: player, isPlaying: false)
+        let state = LoupeVideoState(id: id, player: player, isPlaying: false, displaySize: displaySize)
         OtosLog.mediaIO.notice(
-            "op=video.decode phase=ok id=\(id.relativePath.rawValue, privacy: .public)"
+            """
+            op=video.decode phase=ok id=\(id.relativePath.rawValue, privacy: .public) \
+            displaySize=\(displaySize.map { "\(Int($0.width))x\(Int($0.height))" } ?? "unknown", privacy: .public)
+            """
         )
         return state
+    }
+
+    /// The first video track's size as displayed — `naturalSize` through its
+    /// `preferredTransform`, so a rotated portrait clip reads portrait. Nil when the
+    /// asset has no readable video track; the pane then gives the player its full
+    /// frame rather than inventing an aspect ratio.
+    private static func displaySize(of asset: AVURLAsset) async -> CGSize? {
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first,
+              let (naturalSize, transform) = try? await track.load(.naturalSize, .preferredTransform)
+        else {
+            return nil
+        }
+        return LoupeVideoState.displaySize(naturalSize: naturalSize, preferredTransform: transform)
     }
 
     /// Synchronous MainActor cleanup helper — caller owns the player.
@@ -110,6 +127,24 @@ struct LoupeVideoState: Equatable {
     nonisolated let id: MediaAssetID
     let player: AVPlayer
     var isPlaying: Bool
+    /// The video's displayed size, so the pane sizes the player to the picture and
+    /// leaves no letterbox for AVKit to paint black (DES-022). Nil when unknown.
+    nonisolated let displaySize: CGSize?
+
+    init(id: MediaAssetID, player: AVPlayer, isPlaying: Bool, displaySize: CGSize? = nil) {
+        self.id = id
+        self.player = player
+        self.isPlaying = isPlaying
+        self.displaySize = displaySize
+    }
+
+    nonisolated static func displaySize(naturalSize: CGSize, preferredTransform: CGAffineTransform) -> CGSize? {
+        let size = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform).size
+        guard size.width > 0, size.height > 0 else {
+            return nil
+        }
+        return size
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.id == rhs.id && lhs.player === rhs.player && lhs.isPlaying == rhs.isPlaying

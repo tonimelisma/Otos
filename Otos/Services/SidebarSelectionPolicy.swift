@@ -29,6 +29,24 @@ nonisolated enum SidebarSelectionPolicy {
         return .allMedia
     }
 
+    /// The source to select because it attached between two projected states: a
+    /// connected removable/camera source whose attachment `previous` did not carry.
+    /// Keyed on the Store's process-local `attachmentGeneration`, which advances only
+    /// on a real attach — so a re-inserted card is selected again, while an
+    /// availability or activity change on a source already attached never re-selects
+    /// it. Several attaching at once resolve to the most recently attached.
+    static func selectionOnAttach(
+        previous: [CatalogLibraryState],
+        next: [CatalogLibraryState]
+    ) -> SidebarSelection? {
+        let attached = next.filter { source in
+            source.attachmentGeneration != 0 && !previous.contains {
+                $0.path == source.path && $0.attachmentGeneration == source.attachmentGeneration
+            }
+        }
+        return mostRecentlyAttachedConnectedSource(in: attached).map { .library($0.path) }
+    }
+
     /// When the currently selected source disappears, fall back to `defaultSelection`.
     static func selectionOnSelectedSourceRemoved(
         libraries: [CatalogLibraryState],

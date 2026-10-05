@@ -141,9 +141,8 @@ extension MediaGridViewController {
             in: mutationGate.displayedOrderedIDs
         )
         let signpost = OtosSignpost.ui.beginInterval("MediaGridCopy")
-        let count = MediaGridClipboard.write(ordered, to: .general)
+        MediaGridClipboard.write(ordered, to: .general)
         OtosSignpost.ui.endInterval("MediaGridCopy", signpost)
-        OtosLog.ui.info("Media grid copy wrote fileURLs count=\(count, privacy: .public)")
     }
 
     /// The live selection as stable identities, read from the collection view's own

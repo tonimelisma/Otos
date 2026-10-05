@@ -96,20 +96,12 @@ extension CatalogWindowViewModel {
         guard mediaTrashTask == nil, !ids.isEmpty else {
             return
         }
-        let orderedIDs = state.mediaGrid.orderedAssetIDs
-        let removed = Set(ids)
-        let successor = ids
-            .compactMap { orderedIDs.firstIndex(of: $0) }
-            .max()
-            .flatMap { index in
-                orderedIDs.dropFirst(index + 1).first { !removed.contains($0) }
-            }
         let context = TrashNavigationContext(
             mode: viewMode,
             descriptor: queryDescriptor,
             comparePair: comparePair,
             comparePane: activeComparePane,
-            successor: successor
+            orderedIDs: state.mediaGrid.orderedAssetIDs
         )
         startMediaTrash()
         let coordinator = mediaTrashCoordinator
@@ -129,7 +121,7 @@ extension CatalogWindowViewModel {
             if !hidden.isEmpty {
                 registerTrashUndo(batch: batch, ids: hidden)
             }
-            navigateAfterHiding(Set(hidden), originalIDs: ids, context: context)
+            navigateAfterHiding(Set(hidden), context: context)
             mediaTrashTask = nil
         }
     }
@@ -264,9 +256,11 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Lands on the nearest survivor of the last hidden item in the order the user saw
+    /// when issuing the command: the next one, or the previous one when the hidden items
+    /// ended the list (`BrowserModePolicy.nearestSurvivor`).
     private func navigateAfterHiding(
         _ hidden: Set<MediaAssetID>,
-        originalIDs: [MediaAssetID],
         context: TrashNavigationContext
     ) {
         guard !hidden.isEmpty,
@@ -276,34 +270,39 @@ extension CatalogWindowViewModel {
             return
         }
         let survivors = state.mediaGrid.orderedAssetIDs.filter { !hidden.contains($0) }
+        let successor = context.orderedIDs.last(where: hidden.contains).flatMap { lastHidden in
+            BrowserModePolicy.nearestSurvivor(
+                of: lastHidden,
+                previousOrderedIDs: context.orderedIDs,
+                surviving: Set(survivors)
+            )
+        }
+        OtosLog.ui.notice(
+            "op=trash.navigate mode=\(context.mode.rawValue, privacy: .public) successor=\(successor?.relativePath.rawValue ?? "none", privacy: .public)"
+        )
         switch context.mode {
         case .grid:
-            if let successor = context.successor, survivors.contains(successor) {
+            if let successor {
                 gridSelection = gridSelection.plainClick(successor)
             } else {
                 clearGridSelection(reason: "trashCompleted")
             }
         case .loupe:
-            setFocus(context.successor.flatMap { survivors.contains($0) ? $0 : survivors.first })
-            if let focusedAssetID {
-                gridSelection = gridSelection.plainClick(focusedAssetID)
+            setFocus(successor)
+            if let successor {
+                gridSelection = gridSelection.plainClick(successor)
             }
-            refreshPanePreviews()
         case .compare:
             guard comparePair == context.comparePair, activeComparePane == context.comparePane else {
                 return
             }
             let next = ComparePairPolicy.prune(
                 pair: context.comparePair,
-                previousOrderedIDs: orderedIDsBeforeTrash(originalIDs: originalIDs),
+                previousOrderedIDs: context.orderedIDs,
                 survivingOrderedIDs: survivors
             )
             applyComparePair(next, orderedIDs: survivors)
         }
-    }
-
-    private func orderedIDsBeforeTrash(originalIDs: [MediaAssetID]) -> [MediaAssetID] {
-        state.mediaGrid.orderedAssetIDs + originalIDs.filter { !state.mediaGrid.orderedAssetIDs.contains($0) }
     }
 
     func showFailedTrashItemsInFinder() {
@@ -325,5 +324,7 @@ struct TrashNavigationContext {
     let descriptor: CatalogQueryDescriptor
     let comparePair: ComparePair
     let comparePane: PanePosition
-    let successor: MediaAssetID?
+    /// The display order when the command was issued: the frame of reference for
+    /// where navigation lands once the targets are hidden.
+    let orderedIDs: [MediaAssetID]
 }

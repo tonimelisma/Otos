@@ -70,7 +70,6 @@ extension CatalogWindowViewModel {
         if viewMode == .loupe, let hit, !shift, !command {
             setFocus(hit)
             gridSelection = gridSelection.plainClick(hit)
-            refreshPanePreviews()
             return gridSelection
         }
         // loupe + modified click falls through: selection semantics apply, focus unchanged
@@ -158,8 +157,7 @@ extension CatalogWindowViewModel {
     func copySelection() {
         let ids = orderedSelectedAssetIDs
         guard !ids.isEmpty else { return }
-        let count = MediaGridClipboard.write(ids, to: .general)
-        OtosLog.ui.notice("op=ui.copy count=\(count, privacy: .public)")
+        MediaGridClipboard.write(ids, to: .general)
     }
 
     /// Reveals selected originals in Finder. Reads no bytes and never materializes
