@@ -2,13 +2,8 @@ import Foundation
 import OSLog
 
 /// Shared materialization request boundary used by preview and enrichment consumers.
-/// `activeRequestCount(under:)` has no default: a conformer that answers 0 without
-/// tracking real demand would make `EnrichmentCoordinator.drainWork` silently
-/// under-report in-flight work at the eject boundary, so every conformer must
-/// answer explicitly (even test doubles with nothing to track).
 nonisolated protocol MaterializationRequesting: Sendable {
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult
-    func activeRequestCount(under rootPath: LibraryRootPath) async -> Int
 }
 
 /// Process-lifetime owner of every deliberate provider or device materialization.
@@ -280,27 +275,6 @@ actor MaterializationCoordinator: MaterializationRequesting {
     /// instead of guessing how long admission takes.
     var isQuiescent: Bool {
         passedWakeGeneration == wakeGeneration
-    }
-
-    /// Answers "has the work `EnrichmentCoordinator` is responsible for under this
-    /// root exited?", not "is any consumer of the shared coordinator active under
-    /// this root": an interactive-only entry (a `PreviewImageLoader` request with no
-    /// device/background waiter) must not stall an eject drain. Each `Waiter` keeps
-    /// its own submission priority even after a join raises the entry's
-    /// `effectivePriority`, so this checks per-waiter priority rather than the
-    /// entry's (which pending-entry promotion overwrites to the max across waiters).
-    func activeRequestCount(under rootPath: LibraryRootPath) -> Int {
-        let pendingMatches = pendingByID.values.count {
-            $0.request.id.libraryRootPath == rootPath && hasEnrichmentOriginWaiter($0.waiters)
-        }
-        let inFlightMatches = inFlightByID.values.count {
-            $0.request.id.libraryRootPath == rootPath && hasEnrichmentOriginWaiter($0.waiters)
-        }
-        return pendingMatches + inFlightMatches
-    }
-
-    private func hasEnrichmentOriginWaiter(_ waiters: [UInt64: Waiter]) -> Bool {
-        waiters.values.contains { $0.priority == .device || $0.priority == .background }
     }
 
     private func register(_ request: Request, token: UInt64, waiter: Waiter) {
@@ -927,10 +901,5 @@ nonisolated struct ClosureMaterializationRequester: MaterializationRequesting {
 
     func materialize(_ request: MaterializationCoordinator.Request) async -> MaterializationResult {
         await operation(request.id.fileURL)
-    }
-
-    func activeRequestCount(under rootPath: LibraryRootPath) async -> Int {
-        _ = rootPath
-        return 0
     }
 }

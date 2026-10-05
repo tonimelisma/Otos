@@ -85,10 +85,13 @@ single `setQueryDescriptor` writer, so automatic and manual selection share one 
 
 **Eject is honest and unmount-driven:**
 
-- `quiesce` pauses the source's work (cancels runtime work, releases enrichment
-  claims) but **does not** flip availability, so the row stays visible. The sidebar
+- `quiesce` pauses the source's work — it cancels runtime work and awaits the
+  cancelled scan, releases enrichment claims, and marks the source quiesced so no
+  new enrichment is claimed there until it resumes — but **does not** flip
+  availability, so the row stays visible. The sidebar
   shows a per-identity "ejecting" spinner while the eject is in flight.
-- The eject drains in-flight enrichment under the root, then calls
+- The eject drains in-flight enrichment under the root — the work already running,
+  however long it takes, since nothing new starts there — then calls
   `NSWorkspace.unmountAndEjectDevice`. Success unmounts the volume, and the row
   disappears because the real `didUnmountNotification` → detach removes it — UI and
   reality never diverge. Failure returns a typed `RemovableEjectOutcome`
