@@ -153,11 +153,13 @@ extension CatalogWindowViewModel {
         setFocus(ids.first)
     }
 
-    /// Copies selected asset file URLs to the pasteboard in display order.
-    func copySelection() {
-        let ids = orderedSelectedAssetIDs
+    /// Edit ▸ Copy, ⌘C and the context menu's Copy: writes the current targets' file
+    /// URLs in display order — the Grid selection, the Loupe focus, or the active
+    /// Compare pane, the same targets every other Photo command acts on.
+    func copyCurrentTargets(to pasteboard: NSPasteboard = .general) {
+        let ids = mediaChoiceTargetIDs(.current)
         guard !ids.isEmpty else { return }
-        MediaGridClipboard.write(ids, to: .general)
+        MediaGridClipboard.write(ids, to: pasteboard)
     }
 
     /// Reveals selected originals in Finder. Reads no bytes and never materializes

@@ -3,10 +3,11 @@ import OSLog
 
 // Media collection selection guide
 //
-// This file contains the AppKit-only selection and copy surface for the media grid.
+// This file contains the AppKit-only selection surface for the media grid.
 // SwiftUI provides the surrounding commands and window state. Selection *truth* lives
 // in `CatalogWindowViewModel` as a pure `GridSelection` value; this controller is a
-// renderer of that value plus the responder-chain copy path.
+// renderer of that value. Copy is a ViewModel intent (`copyCurrentTargets`), not a
+// responder-chain action here.
 //
 // Mouse selection is model-owned. `MediaGridCollectionView.mouseDown(with:)` does
 // **not** call `super.mouseDown`, so AppKit's native mouse-selection tracking loop
@@ -27,12 +28,8 @@ import OSLog
 // Programmatic `selectItems`/`deselectItems` fire `didSelect`/`didDeselect` synchronously.
 // `isApplyingModelSelection` suppresses those echoes so a half-applied live set never
 // stomps the model (and never resets `base`, which would break ⇧-chain contraction).
-//
-// Copy writes original file URLs to the pasteboard in display order. It does not read
-// media bytes, decode thumbnails, or materialize cloud placeholders; it only maps the
-// collection view's selected identities back through `MediaAssetID.fileURL`.
 
-// MARK: - Selection and copy
+// MARK: - Selection
 
 extension MediaGridViewController: NSCollectionViewDelegate {
     /// Reconcile native keyboard selection upward. Programmatic delta writes also land
@@ -118,33 +115,7 @@ extension MediaGridViewController {
     }
 }
 
-extension MediaGridViewController: NSUserInterfaceValidations {
-    /// Edit > Copy and its command-key equivalent are enabled only when something is
-    /// selected. AppKit asks this controller because it is the responder-chain object
-    /// that implements `copy(_:)`.
-    func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == #selector(copy(_:)) {
-            return !collectionView.selectionIndexPaths.isEmpty
-        }
-        return true
-    }
-}
-
 extension MediaGridViewController {
-    /// Copy arrives here through the responder chain: the collection view is first
-    /// responder but does not implement copy:, so the action travels to this
-    /// controller. We write the selected assets' original file URLs to the general
-    /// pasteboard in display order (ADR 0012). No image or video bytes are read.
-    @objc func copy(_: Any?) {
-        let ordered = GridSelection.orderedSelection(
-            selectedIdentities(),
-            in: mutationGate.displayedOrderedIDs
-        )
-        let signpost = OtosSignpost.ui.beginInterval("MediaGridCopy")
-        MediaGridClipboard.write(ordered, to: .general)
-        OtosSignpost.ui.endInterval("MediaGridCopy", signpost)
-    }
-
     /// The live selection as stable identities, read from the collection view's own
     /// selection. This is a *render output* read: used only to compute the minimal write
     /// delta and to reconcile the model after native keyboard selection — never to decide

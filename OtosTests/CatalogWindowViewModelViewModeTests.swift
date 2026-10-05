@@ -225,6 +225,33 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(!model.downloadingSlots.contains(.loupe))
     }
 
+    /// Copy acts on the same targets as every other Photo command: the Grid selection
+    /// in display order, the Loupe focus, and only the active Compare pane.
+    @Test func copyWritesTheCurrentTargetsInEveryMode() {
+        let model = makeViewModeModel(loader: FakePreviewLoader())
+        let ids = makeViewModeIDs(count: 4)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("copy-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        func copied() -> [URL] {
+            model.copyCurrentTargets(to: pasteboard)
+            return (pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL]) ?? []
+        }
+
+        _ = model.applyGridClick(hit: ids[2], modifiers: [], orderedIDs: ids)
+        _ = model.applyGridClick(hit: ids[0], modifiers: [.command], orderedIDs: ids)
+        #expect(copied() == [ids[0].fileURL, ids[2].fileURL])
+
+        model.enterCompare()
+        #expect(model.activeComparePane == .right)
+        #expect(copied() == [ids[2].fileURL])
+        model.activateComparePane(.left)
+        #expect(copied() == [ids[0].fileURL])
+
+        model.openLoupe(id: ids[3])
+        #expect(copied() == [ids[3].fileURL])
+    }
+
     @Test func pairChangeClearsOnlyChangedSlots() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeCGImage(seed: 4)
