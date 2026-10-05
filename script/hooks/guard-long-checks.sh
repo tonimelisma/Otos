@@ -117,7 +117,8 @@ Running verify.sh / test.sh / build.sh directly loses that:
 
   script/check.sh        with run_in_background: true
 then read the tail of its log every 60 s. tests= climbing is healthy; tests=
-unchanged three times running is hung — sample the xctest pid, do not wait it out.
+unchanged three times running is hung — run `xcrun swift-inspect dump-concurrency
+<xctest pid>` to name the parked test; do not wait it out.
 MSG
     exit 2
     ;;

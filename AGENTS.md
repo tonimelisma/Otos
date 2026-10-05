@@ -258,8 +258,10 @@ answers it; `ps -eo pid,etime,command` is the fallback, and note `etime` is
 `[[DD-]hh:]mm:ss` — `09:40:13` is nine *hours*, not nine minutes.
 
 A run at 3× normal is hung, not slow. Diagnose it rather than waiting it out:
-`sample <xctest pid>` for the parked thread, and diff the log's test-name list
-against a complete run's to find which tests never reported. Do not paper over a
+`xcrun swift-inspect dump-concurrency <xctest pid>` prints each parked task's async
+backtrace, which names the stuck test and the await it is parked in; `sample` shows
+only threads, and a parked Swift-concurrency test owns none. `check.sh`'s detector
+prints the OtosTests frames of that dump when it fires. Do not paper over a
 hang with a kill-timeout in shared tooling — a wall-clock limit destroys a
 legitimately slow run, and it hides the bug instead of surfacing it. **A suite that
 hangs has a defect; fix the defect.**

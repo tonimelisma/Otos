@@ -18,19 +18,38 @@ set -uo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HEARTBEAT_SECONDS="${OTOS_CHECK_HEARTBEAT_SECONDS:-60}"
-STARTED_AT="$(date +%s)"
 
 # Killing this script must not strand its children. Terminating the parent alone
 # leaves `test.sh` and `xcodebuild` orphaned at PPID 1, and an orphan competing
 # against the same build/DerivedData is itself a cause of the suite deadlock this
 # heartbeat exists to surface.
-cleanup_children() {
+#
+# Everything this script acts on is found by walking its *own* process tree.
+# `xctest` is a child of `xcodebuild`, so the walk reaches it. A machine-wide
+# `pgrep -f xctest` instead adopts another worktree's run: it counted that run's
+# CPU as this run's liveness, sampled the wrong test host, and killed it on exit.
+descendants() {
   local child
-  for child in $(pgrep -P $$ 2>/dev/null); do
-    pkill -TERM -P "$child" 2>/dev/null || true
-    kill -TERM "$child" 2>/dev/null || true
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    echo "$child"
+    descendants "$child"
   done
-  pkill -TERM -f "Xcode/Agents/xctest" 2>/dev/null || true
+}
+
+# This run's processes whose command line matches an extended regex, one per line.
+own_pids_matching() {
+  local pid
+  for pid in $(descendants $$); do
+    ps -o command= -p "$pid" 2>/dev/null | grep -qE "$1" && echo "$pid"
+  done
+}
+
+cleanup_children() {
+  local pids
+  pids="$(descendants $$)"
+  # shellcheck disable=SC2086
+  [[ -n "$pids" ]] && kill -TERM $pids 2>/dev/null
+  return 0
 }
 trap 'cleanup_children; exit 130' INT TERM
 
@@ -45,17 +64,17 @@ Each heartbeat line reads:
 
   • tests= climbing            → healthy, keep working, look again in 60 s
   • tests= unchanged 3x        → HUNG. Do not wait it out.
-                                 sample <xctest pid>, and diff this log's
-                                 test-name list against a complete run's to
-                                 find which tests never reported.
+                                 xcrun swift-inspect dump-concurrency <xctest
+                                 pid> names the parked test and the await it
+                                 is parked in (it can take ~40 s).
   • no heartbeat at all        → the script itself died; read the tail.
 
 A deadlock detector runs inside this script. It watches CPU *consumed* by the test
 host: a blocked process burns none while its wall clock advances, a slow one burns
 plenty. Only when CPU has not moved for OTOS_CHECK_STALL_SECONDS (default 420) does
-it sample the parked threads, name the last test to report, kill its children and
-exit non-zero. A quiet log is never enough — one long test can log nothing while
-working, and killing on silence is a timeout, not detection.
+it sample the parked threads, dump the parked tests' async backtraces, kill its
+children and exit non-zero. A quiet log is never enough — one long test can log
+nothing while working, and killing on silence is a timeout, not detection.
 
 Normal total is about 7 minutes: ~4 to build, ~3 to run the suite.
 Verification evidence counts ONLY from a run that measured the final tree —
@@ -106,7 +125,7 @@ last_cpu_change_at="$(date +%s)"
 cpu_at_mark=0
 last_cpu=""
 
-# Total CPU seconds consumed by the test host and its children.
+# Total CPU seconds consumed by this run's xcodebuild and test host.
 # macOS `ps -o time=` prints [[dd-]hh:]mm:ss.cc — a *fractional* field. Bash
 # arithmetic is integer-only, so summing it in the shell failed on every sample
 # ("10.09: syntax error"), left this returning a constant, and turned the liveness
@@ -114,7 +133,7 @@ last_cpu=""
 # failure mode measuring CPU exists to avoid. The whole sum stays in awk.
 consumed_cpu() {
   local pids
-  pids="$( { pgrep -f "Xcode/Agents/xctest"; pgrep -f "xcodebuild"; } 2>/dev/null | tr '\n' ' ')"
+  pids="$(own_pids_matching "Xcode/Agents/xctest|/xcodebuild " | tr '\n' ' ')"
   if [[ -z "${pids// /}" ]]; then
     echo 0
     return
@@ -131,19 +150,72 @@ consumed_cpu() {
            END { printf "%d\n", total }'
 }
 
+# The parked tests, by name, with the await each one is parked in. `sample` shows
+# OS threads, and a parked Swift-concurrency test owns none — it is a suspended
+# task on an idle pool, so the threads read as nothing. The task's async backtrace
+# is where the test function and its `waitUntil` appear, and swift-inspect reads it.
+# "Last test to report" is not this: under parallel execution it names whichever
+# unrelated test happened to finish last.
+#
+# The bound below limits only the diagnostic, which runs against a host already
+# measured as parked; it never limits test work. It exists so a wedged inspector
+# cannot turn the stall report itself into the unbounded wait it is reporting on.
+INSPECT_SECONDS="${OTOS_CHECK_INSPECT_SECONDS:-180}"
+report_parked_tests() {
+  local pid="$1" dump inspect_pid waited=0
+  mkdir -p "$ROOT_DIR/logs"
+  dump="$ROOT_DIR/logs/check-$(date -u +%Y%m%dT%H%M%SZ)-p$$-concurrency.log"
+  xcrun swift-inspect dump-concurrency "$pid" > "$dump" 2>&1 &
+  inspect_pid=$!
+  while kill -0 "$inspect_pid" 2>/dev/null && (( waited < INSPECT_SECONDS )); do
+    sleep 1
+    waited=$(( waited + 1 ))
+  done
+  if kill -0 "$inspect_pid" 2>/dev/null; then
+    kill -TERM "$inspect_pid" 2>/dev/null
+    echo "op=check.stall phase=inspect-incomplete pid=$pid waitedSeconds=$waited dump=$dump" >&2
+  fi
+  wait "$inspect_pid" 2>/dev/null
+  echo "--- parked tests in xctest $pid (OtosTests frames, innermost first; full dump: $dump) ---" >&2
+  # One `Task N:` heading per task that has OtosTests frames, then those frames.
+  # Thunks, partial applies and the macro-generated `$s…` entry points restate
+  # the test function they wrap, so they are dropped.
+  awk '
+    /Task [0-9]+ - flags=/ { match($0, /Task [0-9]+/); task = substr($0, RSTART, RLENGTH); shown = 0; next }
+    / in OtosTests$/ && !/resume function:|thunk for|partial apply|implicit closure|\$s[0-9]/ {
+      frame = $0; sub(/^.*async backtrace: /, "", frame); sub(/^[ \t]+/, "", frame)
+      if (!shown) { print task ":"; shown = 1 }
+      print "  " frame; found = 1
+    }
+    END {
+      # Parked with no test task means the host never reached our code — the
+      # pre-test stall in docs/research/2026-09-01-xctest-host-stalls-before-running-tests.md.
+      if (!found) print "none — no OtosTests task is parked; the host is stalled outside test code"
+    }' "$dump" >&2
+}
+
+# script/test.sh prints this, then the log path, before xcodebuild starts.
+TEST_LOG_ANNOUNCEMENT="Capturing test output to "
+# A test case that finished either way. Counting only passes froze tests= at the
+# first failure, which reads like the hang the counter exists to reveal.
+TEST_FINISHED_PATTERN="' (passed|failed) on '"
+
 started_at="$(date +%s)"
 while kill -0 "$verify_pid" 2>/dev/null; do
   sleep "$HEARTBEAT_SECONDS"
   kill -0 "$verify_pid" 2>/dev/null || break
   elapsed=$(( $(date +%s) - started_at ))
-  # Only a log created *after* this run started. `ls -t | head -1` picks the
-  # previous run's finished log while this one is still building, reporting a
-  # frozen count from old work — which reads exactly like the hang this heartbeat
-  # is here to detect.
-  newest_test_log="$(find "$ROOT_DIR/logs" -name '*test*.log' -newermt "@$STARTED_AT" 2>/dev/null | head -1)"
-  if [[ -n "$newest_test_log" ]]; then
+  # The test log is the one test.sh announces on its first line of output, which
+  # lands in VERIFY_LOG. Reading the announcement replaces guessing which file in
+  # logs/ belongs to this run: by mtime it took the previous run's frozen log, and
+  # by `find -newermt "@epoch"` it took nothing at all — BSD find cannot parse that
+  # date, the error went to /dev/null, and every heartbeat of a hung test phase
+  # read `stage=building tests=n/a`.
+  test_log="$(sed -n "s/^${TEST_LOG_ANNOUNCEMENT}//p" "$VERIFY_LOG" 2>/dev/null | head -1)"
+  if [[ -n "$test_log" ]]; then
     stage="testing"
-    tests="$(grep -c 'passed on' "$newest_test_log" 2>/dev/null || echo 0)"
+    tests="$(grep -cE "$TEST_FINISHED_PATTERN" "$test_log" 2>/dev/null)"
+    tests="${tests:-0}"
   else
     stage="building"
     tests="n/a"
@@ -167,15 +239,11 @@ while kill -0 "$verify_pid" 2>/dev/null; do
     last_cpu_change_at="$(date +%s)"
   elif [[ $(( $(date +%s) - last_cpu_change_at )) -ge "$STALL_SECONDS" ]]; then
     echo "op=check.stall phase=detected elapsed=$((elapsed / 60))m stage=$stage tests=$tests cpuSeconds=$cpu blockedFor=$(( ($(date +%s) - last_cpu_change_at) / 60 ))m" >&2
-    xctest_pid="$(pgrep -f 'Xcode/Agents/xctest' | head -1)"
-    if [[ -n "$xctest_pid" ]]; then
-      echo "--- parked thread of xctest $xctest_pid ---" >&2
+    for xctest_pid in $(own_pids_matching "Xcode/Agents/xctest"); do
+      echo "--- parked threads of xctest $xctest_pid ---" >&2
       sample "$xctest_pid" 2 -mayDie 2>/dev/null | grep -m 25 -E "Otos|XCTWaiter|semaphore|Mutex|dispatch" >&2 || true
-    fi
-    if [[ -n "$newest_test_log" ]]; then
-      echo "--- last test to report ---" >&2
-      grep -E "passed on|failed on" "$newest_test_log" 2>/dev/null | tail -1 >&2 || true
-    fi
+      report_parked_tests "$xctest_pid"
+    done
     echo "check: DEADLOCKED — consumed under ${MIN_CPU_SECONDS_PER_MINUTE} CPU-s/min for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2
     cleanup_children
     cat "$VERIFY_LOG" 2>/dev/null
