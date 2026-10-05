@@ -292,7 +292,6 @@ extension CatalogWindowViewModel {
             if let successor {
                 gridSelection = gridSelection.plainClick(successor)
             }
-            refreshPanePreviews()
         case .compare:
             guard comparePair == context.comparePair, activeComparePane == context.comparePane else {
                 return

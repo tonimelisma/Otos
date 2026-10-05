@@ -274,13 +274,15 @@ extension CatalogWindowViewModel {
         guard !batch.remaps.isEmpty else { return }
         let map = Dictionary(uniqueKeysWithValues: batch.remaps.map { ($0.oldID, $0.newID) })
         gridSelection = gridSelection.remapped(by: batch)
-        if let focus = focusedAssetID {
-            let mapped = map[focus] ?? focus
-            if mapped != focus {
-                setFocus(mapped)
-            }
-        }
         comparePair = comparePair.remapped(by: batch)
+        // A pane holding a decode under the old identity must be re-requested under the
+        // new one: `setFocus` reconciles every slot, and a plain reconcile covers a
+        // compare pair that moved while focus did not.
+        if let focus = focusedAssetID, let mapped = map[focus], mapped != focus {
+            setFocus(mapped)
+        } else {
+            refreshPanePreviews()
+        }
         identityRemapBatch = batch
         identityRemapEpoch &+= 1
         let epoch = identityRemapEpoch

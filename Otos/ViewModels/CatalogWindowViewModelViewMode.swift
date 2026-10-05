@@ -8,7 +8,8 @@ import OSLog
 /// Owns `viewMode`, loupe `focusedAssetID`, compare pair, and the
 /// pane-preview request lifecycle. Every entry/exit/navigation rule is either a pure
 /// `BrowserModePolicy` / `ComparePairPolicy` call or a thin intent that applies that
-/// policy and reconciles pane slots via `refreshPanePreviews()`. Each `PaneSlot` has
+/// policy and reconciles pane slots via `refreshPanePreviews()` — `setFocus` runs it
+/// for every focus change; pair and mode changes call it directly. Each `PaneSlot` has
 /// at most one owned `paneRequestTasks` entry (request or downloading retry) at
 /// `.userInitiated`; superseded requests cancel before enqueueing another decode.
 /// Views stay passive.
@@ -26,10 +27,15 @@ extension CatalogWindowViewModel {
     /// `focusedAssetKind` stays consistent with `focusedAssetID` and views never
     /// guess kind. `nil` clears kind; a non-nil ID triggers an
     /// async detail read that updates kind only if focus has not moved.
+    ///
+    /// It also reconciles the pane slots, so no focus change can leave the loupe
+    /// showing — or waiting on — another asset's decode. Set `viewMode` first when
+    /// both change: the reconcile reads it.
     func setFocus(_ id: MediaAssetID?) {
         focusedAssetID = id
         focusedAssetKind = nil
         resetLoupeZoomForFocusChange()
+        refreshPanePreviews()
         guard let id else { return }
         let reader = tileDetailReader
         Task { @MainActor [weak self] in
@@ -75,9 +81,8 @@ extension CatalogWindowViewModel {
         }
         comparePair = .empty
         lastReplacedComparePane = nil
-        setFocus(focus)
         viewMode = .loupe
-        refreshPanePreviews()
+        setFocus(focus)
         OtosLog.ui.notice(
             "op=viewMode.set mode=loupe focus=\(focus.relativePath.rawValue, privacy: .public)"
         )
@@ -199,7 +204,6 @@ extension CatalogWindowViewModel {
                 if let focus = first {
                     gridSelection = gridSelection.plainClick(focus)
                 }
-                refreshPanePreviews()
                 return
             }
             let next = BrowserModePolicy.pruneFocus(
@@ -214,7 +218,6 @@ extension CatalogWindowViewModel {
             if let next {
                 gridSelection = gridSelection.plainClick(next)
             }
-            refreshPanePreviews()
         case .compare:
             if scopeChanged {
                 let pair = ComparePairPolicy.entry(selection: .empty, orderedIDs: ordered)
@@ -266,8 +269,9 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Idempotent reconciliation of all three slots against expectation. Call after
-    /// EVERY focus/pair/mode mutation — this is the only pane-request entry point.
+    /// Idempotent reconciliation of all three slots against expectation. `setFocus`
+    /// runs it for every focus change; call it after every pair/mode mutation — this
+    /// is the only pane-request entry point.
     func refreshPanePreviews() {
         for slot in PaneSlot.allCases {
             let expected = expectedAsset(for: slot)
@@ -307,7 +311,6 @@ extension CatalogWindowViewModel {
         }
         setFocus(next)
         gridSelection = gridSelection.plainClick(next)
-        refreshPanePreviews()
     }
 
     /// `targetLongEdge` defaults to the screen-sized tier; the loupe passes
@@ -349,6 +352,11 @@ extension CatalogWindowViewModel {
                 }
                 // Sole staleness guard: asset identity vs current expectation.
                 guard self.expectedAsset(for: slot) == id else {
+                    OtosLog.ui.debugOperation("pane.preview", phase: "stale", fields: [
+                        "slot": String(describing: slot),
+                        "id": id.relativePath.rawValue,
+                        "expected": self.expectedAsset(for: slot)?.relativePath.rawValue ?? "none",
+                    ])
                     return
                 }
                 // Both outcomes are terminal for this request. The request itself persists

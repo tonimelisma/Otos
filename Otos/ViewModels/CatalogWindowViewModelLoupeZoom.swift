@@ -74,6 +74,7 @@ extension CatalogWindowViewModel {
         loupeZoomReport = nil
         loupeZoomCommand = nil
         fullResolutionRequestedIDs.removeAll()
+        fullResolutionSkipLoggedID = nil
         refreshLoupeInfo()
     }
 
@@ -107,13 +108,34 @@ extension CatalogWindowViewModel {
             decodedLongEdge: decodedLongEdge,
             nativeLongEdge: nativeLongEdge,
             magnification: report.magnification
-        ), !fullResolutionRequestedIDs.contains(id) else { return }
+        ) else {
+            logFullResolutionSufficient(id, decoded: decodedLongEdge, native: nativeLongEdge, report: report)
+            return
+        }
+        guard !fullResolutionRequestedIDs.contains(id) else { return }
         fullResolutionRequestedIDs.insert(id)
         let name = id.relativePath.rawValue
         OtosLog.ui.notice(
             "op=loupe.fullRes id=\(name, privacy: .public) decoded=\(decodedLongEdge, privacy: .public) native=\(nativeLongEdge, privacy: .public)"
         )
         requestPanePreview(id, slot: .loupe, targetLongEdge: PreviewImageLoader.fullResolution)
+    }
+
+    /// Records, once per focus, that the held decode already covers what the pane
+    /// displays — the expected reason a loupe image stays at its screen-sized decode.
+    private func logFullResolutionSufficient(
+        _ id: MediaAssetID,
+        decoded: Int,
+        native: Int,
+        report: LoupeZoomReport
+    ) {
+        guard fullResolutionSkipLoggedID != id else { return }
+        fullResolutionSkipLoggedID = id
+        let displayed = Int((CGFloat(native) * report.magnification).rounded())
+        OtosLog.ui.debugOperation("loupe.fullRes", phase: "skip", fields: [
+            "reason": "decodeSufficient", "id": id.relativePath.rawValue,
+            "decoded": "\(decoded)", "native": "\(native)", "displayed": "\(displayed)",
+        ])
     }
 
     // MARK: - Info overlay

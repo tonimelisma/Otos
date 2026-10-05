@@ -435,9 +435,9 @@ actor MediaTrashCoordinator {
 
     private func startDownload(_ item: MediaTrashItem, members: [MediaTrashMember], bytes: Int64) {
         guard let materializationRequester else {
-            OtosLog.catalog.error(
-                "op=mediaTrash.path failed reason=noMaterializer path=\(item.id.relativePath.rawValue, privacy: .public)"
-            )
+            OtosLog.catalog.errorOperation("mediaTrash.path", phase: "failed", fields: [
+                "reason": "noMaterializer", "path": item.id.relativePath.rawValue,
+            ])
             awaitingDecision.insert(item.id)
             eventContinuation.yield(.decision(.downloadFailed([item.id])))
             return
@@ -546,9 +546,9 @@ actor MediaTrashCoordinator {
             let memberURL = url(of: member, in: item)
             guard await store.ownsNamespaceMutationLease(lease) else {
                 results.append(result(item, member, succeeded: false))
-                OtosLog.catalog.error(
-                    "op=mediaTrash.path failed reason=leaseLost path=\(member.relativePath.rawValue, privacy: .public)"
-                )
+                OtosLog.catalog.errorOperation("mediaTrash.path", phase: "failed", fields: [
+                    "reason": "leaseLost", "path": member.relativePath.rawValue,
+                ])
                 continue
             }
             // A provider may evict between download and move; trashItem would refuse.
@@ -651,18 +651,11 @@ actor MediaTrashCoordinator {
     }
 
     private func logFailure(_ error: any Error, operation: String, member: MediaTrashMember) {
-        let nsError = error as NSError
-        let underlying = (nsError.userInfo[NSUnderlyingErrorKey] as? NSError)
-            .map { "\($0.domain)/\($0.code)" } ?? "none"
-        OtosLog.catalog.error(
-            """
-            op=mediaTrash.path failed reason=\(operation, privacy: .public) \
-            errorDomain=\(nsError.domain, privacy: .public) errorCode=\(nsError.code, privacy: .public) \
-            underlying=\(underlying, privacy: .public) \
-            role=\(String(describing: member.role), privacy: .public) \
-            path=\(member.relativePath.rawValue, privacy: .public)
-            """
-        )
+        var fields = ErrorDiagnostics.fields(for: error)
+        fields["reason"] = operation
+        fields["role"] = String(describing: member.role)
+        fields["path"] = member.relativePath.rawValue
+        OtosLog.catalog.errorOperation("mediaTrash.path", phase: "failed", fields: fields)
     }
 
     private func performUndo(batch: MediaTrashBatchID, ids: Set<MediaAssetID>) async -> UndoResult {
