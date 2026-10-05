@@ -880,9 +880,21 @@ extension CatalogWindowViewModel {
     }
 
     func applySidebarSelectionPolicy(previous: CatalogWindowState, next: CatalogWindowState) {
-        // Attach-time selection hijack is removed (ADR 0014): attaching a card
-        // never moves the user. Launch-time selection of a connected card is
-        // still handled via the initial default below.
+        // Attaching a card or camera takes the user to it, wherever they were (APP-002,
+        // ADR 0014). It needs a loaded previous state to diff against: the first loaded
+        // state is the launch, which the one-time default below owns.
+        if !(previous.libraries.isEmpty && previous.removableSources.isEmpty),
+           let attached = SidebarSelectionPolicy.selectionOnAttach(
+               previous: previous.removableSources,
+               next: next.removableSources
+           )
+        {
+            OtosLog.ui.noticeOperation("sidebar.autoSelect", phase: "attach", fields: [
+                "selection": String(describing: attached),
+            ])
+            applyAutomaticSidebarSelection(attached)
+            return
+        }
 
         // Do not latch the initial default on a pre-load empty world (zero roots of
         // both kinds). That state can publish before `store.start()` finishes; latching

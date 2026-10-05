@@ -37,6 +37,11 @@ optional "All Media" aggregate. Two problems motivated this decision:
   ADR 0031 adds it on top of (c): a remembered scope that still exists wins, and (c)
   decides everything else. The "changed library set" risk is handled by checking the
   remembered scope against the loaded roots instead of trusting it.
+- **What counts as an attach:** (a) a source becoming available — rejected: a card
+  whose availability flaps without being re-mounted would re-jump the user for a
+  transient event they did not cause; (b) never moving the user after launch —
+  rejected: inserting a card is the import intent, and a user on another row had to
+  find the card themselves; (c) **a new Store attachment generation** — chosen.
 - **Eject removal trigger:** (a) hide on quiesce (status quo — UI diverges from
   reality on failure); (b) **drive removal from the real unmount event, keep the row
   visible with an "ejecting" state until then** — chosen, matching how the prior
@@ -55,21 +60,27 @@ optional "All Media" aggregate. Two problems motivated this decision:
   once at startup after the first *loaded* state (at least one library or removable
   root), before any explicit user choice (`userHasChosenSource`). An empty pre-load
   publication must not latch the default. A remembered scope that still exists
-  (ADR 0031) replaces it at that same latch. This is the only automatic jump the app
-  makes; with nothing remembered, a card connected at launch (or already connected when
-  the app starts) is what satisfies the camera-import intent.
-- **Attach-time selection hijack is deliberately absent**: attaching
-  a card *after* the one-time startup default has already applied never moves the
-  user, even if they are looking at an unrelated library or All Media. Always
-  jumping to a newly-available card was tried and rejected — it interrupted a user
-  who had already navigated elsewhere for no benefit once the startup case is
-  covered, and a card that flaps unavailable → available mid-session would re-jump
-  the user repeatedly for a transient filesystem event they didn't cause.
+  (ADR 0031) replaces it at that same latch. With nothing remembered, a card
+  connected at launch is what satisfies the camera-import intent.
+- `selectionOnAttach(previous:next:)` — **attaching a card or camera takes the user
+  to it**, wherever they are, matching Lightroom Classic, which answers a detected
+  memory card by opening Import ("Show import dialog when a memory card is
+  detected", General preferences —
+  https://helpx.adobe.com/lightroom-classic/desktop/import-photos/file-import-formats-settings.html).
+  A source counts as attached when its Store-owned,
+  process-local `attachmentGeneration` is one the previous projected state did not
+  carry. The generation advances only on a real attach, so a re-inserted card is
+  selected again, while an availability or activity change on a source already
+  attached never re-selects it. It applies only once a loaded state exists to diff
+  against; the first loaded state is the launch, which `defaultSelection` owns. A
+  card mounted while
+  the window is still loading therefore lands at launch and loses to a remembered
+  scope (ADR 0031), while one mounted a moment later is an attach and wins.
 - `selectionOnSelectedSourceRemoved(...)` — if the selected source disappears, fall
   back to `defaultSelection` instead of leaving a dead selection.
 
 The user's explicit sidebar click sets `userHasChosenSource`, which suppresses the
-one-time default (but not the always-jump-on-attach). All of these route through the
+one-time default but not selection on attach. All of these route through the
 single `setQueryDescriptor` writer, so automatic and manual selection share one path.
 
 **Eject is honest and unmount-driven:**
