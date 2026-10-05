@@ -247,7 +247,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.focusedAssetID == expected)
     }
 
-    @Test func selectionSurvivesFreshControllerFirstApply() throws {
+    @Test func selectionSurvivesFreshControllerFirstApply() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 4)
         model.applyState(makeWindowState(orderedIDs: ids))
@@ -262,13 +262,13 @@ struct CatalogWindowViewModelSelectionTests {
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         controller.receive(grid)
         // Drive apply to completion: receive starts apply; wait for async completion.
-        try awaitApplyCompletion(controller, expectedIDs: ids)
+        awaitGridApply(controller, expectedIDs: ids)
 
         #expect(model.gridSelection.selection == expected)
         #expect(controller.selectedIdentities() == expected)
     }
 
-    @Test func selectionSurvivesModeRoundTrip() throws {
+    @Test func selectionSurvivesModeRoundTrip() {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 4)
         model.applyState(makeWindowState(orderedIDs: ids))
@@ -281,7 +281,7 @@ struct CatalogWindowViewModelSelectionTests {
         strip.selectionHandlers = .from(model)
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         strip.receive(grid)
-        try awaitApplyCompletion(strip, expectedIDs: ids)
+        awaitGridApply(strip, expectedIDs: ids)
         #expect(model.gridSelection.selection == [ids[2]])
         #expect(strip.selectedIdentities() == [ids[2]])
 
@@ -290,7 +290,7 @@ struct CatalogWindowViewModelSelectionTests {
         _ = gridController.view
         gridController.selectionHandlers = .from(model)
         gridController.receive(grid)
-        try awaitApplyCompletion(gridController, expectedIDs: ids)
+        awaitGridApply(gridController, expectedIDs: ids)
         #expect(model.gridSelection.selection == [ids[2]])
         #expect(gridController.selectedIdentities() == [ids[2]])
     }
@@ -338,23 +338,4 @@ private func makeWindowState(
     )
 }
 
-/// Diffable apply completion is async; poll until the gate has adopted the IDs
-/// (and thus `completeStructuralApply` has rendered selection).
-@MainActor
-private func awaitApplyCompletion(
-    _ controller: MediaGridViewController,
-    expectedIDs: [MediaAssetID]
-) throws {
-    let deadline = Date().addingTimeInterval(2)
-    while Date() < deadline {
-        if controller.mutationGate.displayedOrderedIDs == expectedIDs,
-           controller.mutationGate.inFlight == .none
-        {
-            // One more run-loop pass so the apply completion block has run.
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            return
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-    }
-    Issue.record("Timed out waiting for structural apply completion")
-}
+// Diffable apply completion is async; poll until the gate has adopted the IDs

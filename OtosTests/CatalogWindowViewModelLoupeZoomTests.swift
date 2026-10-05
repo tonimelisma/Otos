@@ -126,12 +126,12 @@ struct CatalogWindowViewModelLoupeZoomTests {
         #expect(model.loupeInfo == nil)
 
         model.toggleLoupeInfo()
-        try await waitForZoom("info shown") { model.loupeInfo != nil }
+        try await waitUntil { model.loupeInfo != nil }
         #expect(model.loupeInfo?.fileName == "asset-0.jpg")
         #expect(model.loupeInfo?.captureDate == LoupeInfoModel.unknown)
 
         model.focusNext()
-        try await waitForZoom("info follows focus") { model.loupeInfo?.fileName == "asset-1.jpg" }
+        try await waitUntil { model.loupeInfo?.fileName == "asset-1.jpg" }
 
         model.toggleLoupeInfo()
         #expect(model.loupeInfo == nil)
@@ -186,16 +186,4 @@ private func makeZoomImage(width: Int, height: Int) -> CGImage {
     context.setFillColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1)
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     return context.makeImage()!
-}
-
-private func waitForZoom(
-    _ label: String,
-    timeout: Duration = .seconds(5),
-    condition: @escaping @MainActor @Sendable () async -> Bool
-) async throws {
-    try await withTestTimeout(label, timeout: timeout) {
-        while await !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
 }

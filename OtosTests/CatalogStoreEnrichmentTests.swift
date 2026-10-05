@@ -398,9 +398,7 @@ struct CatalogStoreEnrichmentTests {
             ),
         ])
 
-        try await withTestTimeout("structural change from cleared timestamp") {
-            _ = await changes.waitForValues { $0.last == .catalogChanged }
-        }
+        _ = await changes.waitForValues { $0.last == .catalogChanged }
         let afterSecond = try #require(try await catalogStoreTestState(store).testAssets.first { $0.id == id })
         #expect(afterSecond.bestCaptureDate == Date(timeIntervalSince1970: 500))
     }

@@ -140,12 +140,9 @@ struct MediaOperationCoordinatorTests {
             }
         }
         await markEnrichmentLookedAtEveryRow(store, root: cardPath)
-        // Wider timeout: this test's whole point is
-        // that `.ready` arrives via the planning-change stream alone, with no
-        // precondition wait possible without defeating that — so it carries
-        // the full round trip from scan-completion through
-        // ImportSourceReadiness under this file's parallel-test contention.
-        _ = try await readyGeneration(coordinator, source: cardPath, timeout: .seconds(30))
+        // `.ready` must arrive via the planning-change stream alone, with no
+        // precondition wait possible without defeating that.
+        _ = try await readyGeneration(coordinator, source: cardPath)
 
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
@@ -201,22 +198,13 @@ struct MediaOperationCoordinatorTests {
         let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
         await coordinator.start()
 
-        let waitingDeadline = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < waitingDeadline {
-            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .waitingForMetadata = presentation.state
-            {
-                break
+        // The source waits for metadata before enrichment.
+        try await waitUntil(every: .milliseconds(25)) {
+            let presentation = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+            if case .waitingForMetadata = presentation?.state {
+                return true
             }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        let waiting = try #require(
-            await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
-        )
-        guard case .waitingForMetadata = waiting.state else {
-            Issue.record("Expected metadata wait before enrichment, got \(waiting.state)")
-            await coordinator.shutdown()
-            return
+            return false
         }
 
         let captureDate = Date(timeIntervalSince1970: 1_767_279_600)
@@ -247,17 +235,14 @@ struct MediaOperationCoordinatorTests {
         )
         #expect(await store.applyEnrichmentBatch([result]) == .applied(count: 1))
 
-        let readyDeadline = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < readyDeadline {
-            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .ready = presentation.state
-            {
-                await coordinator.shutdown()
-                return
+        // Catalog enrichment wakes the waiting import source into a ready plan.
+        try await waitUntil(every: .milliseconds(25)) {
+            let presentation = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+            if case .ready = presentation?.state {
+                return true
             }
-            try await Task.sleep(for: .milliseconds(25))
+            return false
         }
-        Issue.record("Catalog enrichment did not wake the waiting import source")
         await coordinator.shutdown()
     }
 
@@ -308,18 +293,15 @@ struct MediaOperationCoordinatorTests {
         _ = try await readyGeneration(coordinator, source: cardPath)
         await coordinator.queueImport(for: cardPath)
         // Deterministically wait until presentation leaves inventory.
-        let deadline = ContinuousClock().now + .seconds(2)
-        while ContinuousClock().now < deadline {
-            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .inventory = presentation.state
-            {
-                try await Task.sleep(for: .milliseconds(25))
-                continue
+        try await waitUntil(every: .milliseconds(25)) {
+            let presentations = await coordinator.currentPresentations()
+            guard let presentation = presentations.first(where: { $0.sourcePath == cardPath }) else {
+                return false
             }
-            if await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) != nil {
-                break
+            if case .inventory = presentation.state {
+                return false
             }
-            try await Task.sleep(for: .milliseconds(25))
+            return true
         }
 
         let presentations = await coordinator.currentPresentations()
@@ -391,7 +373,7 @@ struct MediaOperationCoordinatorTests {
             _ = await store.bumpPlanRevision(for: fixedPath)
         }
         // Wait deterministically for the coordinator to settle after no-op churn.
-        // If it livelocks, settledReadyGeneration will see generation churn and timeout.
+        // If it livelocks, the generation keeps churning and settledReadyGeneration never returns.
         _ = try await settledReadyGeneration(coordinator, source: cardPath)
 
         let afterChurn = try #require(
@@ -535,24 +517,25 @@ struct MediaOperationCoordinatorTests {
         // plan built for the new destination. The first read is deliberately
         // immediate: the old plan's presentation would appear here if it were
         // still being held.
+        // Waits for the plan built for the new destination, watching every frame on
+        // the way for the previous destination's plan.
         var sawOldPlan = false
-        var newGeneration: UInt64?
-        let deadline = ContinuousClock().now + .seconds(15)
-        while ContinuousClock().now < deadline, newGeneration == nil {
-            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
-                #expect(presentation.destinationPath == secondPath)
-                if case let .ready(_, generation, _, _) = presentation.state {
-                    if generation <= oldGeneration {
-                        sawOldPlan = true
-                    } else {
-                        newGeneration = generation
-                    }
-                }
+        try await waitUntil {
+            let presentations = await coordinator.currentPresentations()
+            guard let presentation = presentations.first(where: { $0.sourcePath == cardPath }) else {
+                return false
             }
-            try await Task.sleep(for: .milliseconds(5))
+            #expect(presentation.destinationPath == secondPath)
+            guard case let .ready(_, generation, _, _) = presentation.state else {
+                return false
+            }
+            if generation <= oldGeneration {
+                sawOldPlan = true
+                return false
+            }
+            return true
         }
         #expect(!sawOldPlan, "the bar presented the plan built for the previous destination after the pick")
-        #expect(newGeneration != nil, "no plan built for the new destination arrived")
         await coordinator.shutdown()
     }
 
@@ -781,11 +764,7 @@ struct MediaOperationCoordinatorTests {
         // Move the last library ("Middle") to the front.
         try await fixture.store.moveLibrary(from: 2, to: 0)
 
-        // moveLibrary's replan (unlike a plain setDestination) goes through a
-        // DB write and a full refreshSources cycle; under full-suite
-        // concurrent load this measured 16.6s against a 15s budget (2026-08-17
-        // verify.sh study), so the budget carries real margin over that.
-        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline, timeout: .seconds(30))
+        _ = try await readyGeneration(coordinator, source: fixture.source, greaterThan: baseline)
         let after = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
@@ -839,15 +818,10 @@ struct MediaOperationCoordinatorTests {
         // The explicitly chosen library ("Middle") goes away. The session
         // falls back to first-available ("Zebra").
         try await fixture.store.removeLibrary(path: fixture.libraries[2])
-        // removeLibrary's replan goes through a DB write, filesystem-watcher
-        // teardown, and a full refreshSources cycle; under full-suite
-        // concurrent load this measured 16.9s against a 15s budget (2026-08-17
-        // verify.sh study), so the budget carries real margin over that.
         _ = try await readyGeneration(
             coordinator,
             source: fixture.source,
-            greaterThan: afterPick,
-            timeout: .seconds(30)
+            greaterThan: afterPick
         )
         let afterFallback = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
@@ -870,17 +844,13 @@ struct MediaOperationCoordinatorTests {
     /// defaulting to `fixedAvailable.first`.
     ///
     /// Routes the reattach's build through `ControlledImportPlanBuilder`
-    /// rather than the live builder: an earlier live-build version of this
-    /// test measured `ReadyPlanTimeout` under full-suite parallel execution
-    /// at whatever budget it was given — 30s, 45s, 90s, 180s, always failing
-    /// right at the configured ceiling — while an isolated run of the same
-    /// test completed in ~2s (2026-08-19 study). That is resource
-    /// contention starving the live build under heavy concurrent load, not
-    /// a bug in the destination-memory logic under test; the controlled
-    /// builder makes the assertion deterministic instead of dependent on
-    /// live scheduling fairness, matching the pattern
-    /// `rapidSamePathReattachOldBuildCannotBecomeReady` already established
-    /// for this exact reattach shape.
+    /// rather than the live builder, so the assertion is about destination
+    /// memory and not live build scheduling — the pattern
+    /// `rapidSamePathReattachOldBuildCannotBecomeReady` uses for this exact
+    /// reattach shape. Under full-suite parallel execution the live build for
+    /// this shape never reached `.ready` within any wait bound tried (30 s to
+    /// 180 s) while an isolated run took ~2 s. A wait that fails at every bound
+    /// is a stall rather than slowness, and that live path is undiagnosed.
     @Test func reattachedSourceGetsRememberedDestination() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
@@ -914,9 +884,9 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(fixture.store) { snap in
             snap.removableSources.contains { $0.path == fixture.source && !$0.isScanning }
         }
-        try await waitForPendingBuilder(builder, source: fixture.source, timeout: .seconds(20))
+        try await waitForPendingBuilder(builder, source: fixture.source)
         await builder.resumePendingBuild(for: fixture.source)
-        _ = try await readyGeneration(coordinator, source: fixture.source, timeout: .seconds(20))
+        _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
@@ -974,73 +944,43 @@ struct MediaOperationCoordinatorTests {
         return DestinationFixture(store: store, libraries: libraries, source: source, identity: identity)
     }
 
-    /// Wait for the source to reach `.ready` (optionally with a generation past
-    /// `minimum`) and return that generation.
+    /// Waits for the source to reach `.ready` (optionally with a generation past
+    /// `minimum`) and returns that generation.
     ///
-    /// Default 15s: `.ready` requires `ImportSourceReadiness == .ready`, i.e. the
-    /// source's *real* filesystem scan reaching `.idle` — not just a plan build
-    /// completing, which can race ahead of it. This suite's tests run unserialized (parallel), so
-    /// under full-class concurrent load the real `CatalogScanner` work for
-    /// several fixtures competes for the same `.utility`-priority thread pool;
-    /// 5s measured as insufficient margin (repeated ReadyPlanTimeout across
-    /// several tests in this file, 2026-08-18 verify.sh study).
+    /// `.ready` requires `ImportSourceReadiness == .ready`, i.e. the source's *real*
+    /// filesystem scan reaching `.idle` — not just a plan build completing, which can
+    /// race ahead of it. The wait follows the coordinator's publication stream, which
+    /// replays the current presentations on subscribe, so it wakes exactly when a
+    /// presentation is published and cannot miss one published before it subscribed.
+    /// It has no deadline (see `waitUntil`).
     private func readyGeneration(
         _ coordinator: MediaOperationCoordinator,
         source: LibraryRootPath,
-        greaterThan minimum: UInt64? = nil,
-        timeout: Duration = .seconds(15)
+        greaterThan minimum: UInt64? = nil
     ) async throws -> UInt64 {
-        // Event-driven, not polled. The previous 25 ms poll loop measured a
-        // *wall-clock* deadline while doing 40 wakeups a second per waiting test — so
-        // under load the deadline expired on wall time even when the coordinator was
-        // progressing, and the polling was itself part of the load. Awaiting the
-        // coordinator's own publication stream wakes exactly when a presentation is
-        // published; the timeout survives only to stop a genuine hang from waiting
-        // forever.
-        if let generation = await currentReadyGeneration(coordinator, source: source),
-           minimum.map({ generation > $0 }) ?? true
-        {
+        for await presentations in await coordinator.presentationsStream() {
+            guard let presentation = presentations.first(where: { $0.sourcePath == source }),
+                  case let .ready(_, generation, _, _) = presentation.state,
+                  minimum.map({ generation > $0 }) ?? true
+            else {
+                continue
+            }
             return generation
         }
-        let stream = await coordinator.presentationsStream()
-        return try await withThrowingTaskGroup(of: UInt64.self) { group in
-            group.addTask {
-                for await presentations in stream {
-                    guard let presentation = presentations.first(where: { $0.sourcePath == source }),
-                          case let .ready(_, generation, _, _) = presentation.state,
-                          minimum.map({ generation > $0 }) ?? true
-                    else {
-                        continue
-                    }
-                    return generation
-                }
-                throw ReadyPlanTimeout()
-            }
-            group.addTask {
-                try await Task.sleep(for: timeout)
-                throw ReadyPlanTimeout()
-            }
-            guard let generation = try await group.next() else {
-                throw ReadyPlanTimeout()
-            }
-            group.cancelAll()
-            return generation
-        }
+        throw AsyncTestTimeoutError.streamEnded("ready plan for \(source.rawValue)")
     }
 
     /// Wait until the source's ready generation stops changing for `settleFor`,
     /// then return it — so a later assertion is not raced by initial planning churn.
-    /// Default widened 8s → 15s alongside `readyGeneration`, same reasoning.
+    /// The settle window is an observation, not a deadline; the wait for it has none.
     private func settledReadyGeneration(
         _ coordinator: MediaOperationCoordinator,
         source: LibraryRootPath,
-        settleFor: Duration = .milliseconds(400),
-        timeout: Duration = .seconds(15)
+        settleFor: Duration = .milliseconds(400)
     ) async throws -> UInt64 {
-        let deadline = ContinuousClock().now + timeout
         var lastGeneration: UInt64?
         var stableSince: ContinuousClock.Instant?
-        while ContinuousClock().now < deadline {
+        while true {
             let generation = await currentReadyGeneration(coordinator, source: source)
             if let generation, generation == lastGeneration {
                 if let stableSince, stableSince.duration(to: .now) >= settleFor {
@@ -1052,7 +992,6 @@ struct MediaOperationCoordinatorTests {
             }
             try await Task.sleep(for: .milliseconds(25))
         }
-        throw ReadyPlanTimeout()
     }
 
     private func currentReadyGeneration(
@@ -1068,8 +1007,6 @@ struct MediaOperationCoordinatorTests {
         return generation
     }
 }
-
-private struct ReadyPlanTimeout: Error {}
 
 struct ImportBatchSidebarPolicyTests {
     @Test func missingBatchFallsBackToDefaultSelection() {

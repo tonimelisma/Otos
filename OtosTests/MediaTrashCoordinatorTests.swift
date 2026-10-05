@@ -125,7 +125,7 @@ struct MediaTrashCoordinatorTests {
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil("item trashed") { try await fixture.store.pendingTrashItems().isEmpty }
+        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         #expect(calls.entries == ["a.xmp", "a.jpg"])
         #expect(try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty)
         #expect(await fixture.store.hasNamespaceMutationLease(for: fixture.rootPath) == false)
@@ -162,7 +162,7 @@ struct MediaTrashCoordinatorTests {
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil("failure reported") { events.moveFailures == [[fixture.id]] }
+        try await waitUntil { events.moveFailures == [[fixture.id]] }
         #expect(try await fixture.store.pendingTrashItems().isEmpty)
         #expect(try await catalogStoreTestState(fixture.store).testAssets.map(\.id) == [fixture.id])
         await coordinator.shutdown()
@@ -194,7 +194,7 @@ struct MediaTrashCoordinatorTests {
         _ = try await store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil("item trashed") { try await store.pendingTrashItems().isEmpty }
+        try await waitUntil { try await store.pendingTrashItems().isEmpty }
         #expect(requester.priorities == [.command, .command])
         #expect(leaseHeldDuringDownload.withLock { $0 } == false)
         #expect(calls.entries == ["a.xmp", "a.jpg"])
@@ -225,7 +225,7 @@ struct MediaTrashCoordinatorTests {
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil("trashed after retry") { try await fixture.store.pendingTrashItems().isEmpty }
+        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         #expect(attempts.withLock { $0 } == 2)
         #expect(events.decisions.isEmpty)
         await coordinator.shutdown()
@@ -250,7 +250,7 @@ struct MediaTrashCoordinatorTests {
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil("decision asked") { events.decisions == [.downloadFailed([fixture.id])] }
+        try await waitUntil { events.decisions == [.downloadFailed([fixture.id])] }
         // Still hidden and untouched while the question is open.
         #expect(try await fixture.store.pendingTrashItems().map(\.item.id) == [fixture.id])
         #expect(removed.entries.isEmpty)
@@ -276,7 +276,7 @@ struct MediaTrashCoordinatorTests {
         let events = EventRecorder(coordinator)
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
-        try await waitUntil("decision asked") { !events.decisions.isEmpty }
+        try await waitUntil { !events.decisions.isEmpty }
 
         await coordinator.restore([fixture.id])
         #expect(try await fixture.store.pendingTrashItems().isEmpty)
@@ -305,17 +305,17 @@ struct MediaTrashCoordinatorTests {
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
 
-        try await waitUntil("floor asked") { events.decisions == [.diskFloor([fixture.id])] }
+        try await waitUntil { events.decisions == [.diskFloor([fixture.id])] }
         #expect(requester.priorities.isEmpty)
         await coordinator.keepWaitingForSpace([fixture.id])
-        try await waitUntil("waiting for space reported") {
+        try await waitUntil {
             events.states.last?.attention == .waitingForSpace
         }
         #expect(events.decisions.count == 1)
 
         free.withLock { $0 = FreeSpaceFloor.bytes * 2 }
         coordinator.kick()
-        try await waitUntil("trashed once room appeared") { try await fixture.store.pendingTrashItems().isEmpty }
+        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         #expect(events.decisions.count == 1)
         await coordinator.shutdown()
     }
@@ -334,7 +334,7 @@ struct MediaTrashCoordinatorTests {
             }
         )
         await coordinator.start()
-        try await waitUntil("resumed and trashed") { try await fixture.store.pendingTrashItems().isEmpty }
+        try await waitUntil { try await fixture.store.pendingTrashItems().isEmpty }
         #expect(calls.entries == ["a.xmp", "a.jpg"])
         await coordinator.shutdown()
     }
@@ -364,7 +364,7 @@ struct MediaTrashCoordinatorTests {
         )
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())
         await coordinator.start()
-        try await waitUntil("download started") { started.withLock { $0 } }
+        try await waitUntil { started.withLock { $0 } }
 
         let restored = await coordinator.withdraw([fixture.id])
         #expect(restored == [fixture.id])
@@ -399,7 +399,7 @@ extension MediaTrashCoordinatorTests {
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
         await coordinator.start()
-        try await waitUntil("trashed") { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
+        try await waitUntil { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
         #expect(!FileManager.default.fileExists(atPath: fixture.root.appending(path: "a.jpg").path))
 
         let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
@@ -446,7 +446,7 @@ extension MediaTrashCoordinatorTests {
         let batch = MediaTrashBatchID()
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: batch)
         await coordinator.start()
-        try await waitUntil("trashed") { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
+        try await waitUntil { try await fixture.store.mediaAssets(for: [fixture.id]).isEmpty }
         try writeCatalogStoreFile(fixture.root.appending(path: "a.jpg"), contents: "newer")
 
         let outcome = await coordinator.undo(batch: batch, ids: [fixture.id])
@@ -486,7 +486,7 @@ extension MediaTrashCoordinatorTests {
             }
         )
         await coordinator.start()
-        try await waitUntil("resumed after relaunch") { calls.entries == ["a.jpg"] }
+        try await waitUntil { calls.entries == ["a.jpg"] }
         await coordinator.shutdown()
         await relaunched.shutdown()
     }
@@ -526,17 +526,5 @@ private struct TrashFixture {
         let items = try await store.mediaTrashItems(for: [id])
         #expect(items.first?.members.map(\.role) == [.companion, .primary])
         return TrashFixture(store: store, root: root, rootPath: id.libraryRootPath, id: id)
-    }
-}
-
-private func waitUntil(
-    _ label: String,
-    timeout: Duration = .seconds(5),
-    _ condition: @escaping @Sendable () async throws -> Bool
-) async throws {
-    try await withTestTimeout(label, timeout: timeout) {
-        while try await !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
     }
 }

@@ -8,7 +8,7 @@ import Testing
 /// mapping onto the menu-bar intents.
 @MainActor
 struct CatalogWindowViewModelMediaItemMenuTests {
-    @Test func contextClickOutsideSelectionSelectsOnlyTheHit() throws {
+    @Test func contextClickOutsideSelectionSelectsOnlyTheHit() {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
         let ids = makeIDs(count: 4)
@@ -18,7 +18,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         controller.selectionHandlers = .from(model)
         controller.contextMenu = model.makeMediaItemContextMenu
         controller.receive(model.state.mediaGrid)
-        try awaitApply(controller, expectedIDs: ids)
+        awaitGridApply(controller, expectedIDs: ids)
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
 
@@ -29,7 +29,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(model.currentTargetFileURLs == [ids[3].fileURL])
     }
 
-    @Test func contextClickInsideSelectionKeepsIt() throws {
+    @Test func contextClickInsideSelectionKeepsIt() {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
         let ids = makeIDs(count: 4)
@@ -39,7 +39,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         controller.selectionHandlers = .from(model)
         controller.contextMenu = model.makeMediaItemContextMenu
         controller.receive(model.state.mediaGrid)
-        try awaitApply(controller, expectedIDs: ids)
+        awaitGridApply(controller, expectedIDs: ids)
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[2], modifiers: [.shift], orderedIDs: ids)
 
@@ -84,10 +84,10 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         _ = model.mediaItemMenuModel()
 
         model.performMediaItemCommand(.open)
-        try await waitForMenu("open") { await workspace.opens.count == 1 }
+        try await waitUntil { await workspace.opens.count == 1 }
         let photos = OpenWithApplication(url: .photos, displayName: "Photos")
         model.performMediaItemCommand(.openWith(photos))
-        try await waitForMenu("open with") { await workspace.opens.count == 2 }
+        try await waitUntil { await workspace.opens.count == 2 }
 
         let opens = await workspace.opens
         #expect(opens[0].application == .preview)
@@ -146,34 +146,6 @@ private func menuWindowState(ids: [MediaAssetID]) -> CatalogWindowState {
         mediaEmptyState: .noMedia,
         deviceConnectionBanner: nil
     )
-}
-
-/// Diffable apply completion is async; poll until the controller shows the IDs.
-@MainActor
-private func awaitApply(_ controller: MediaGridViewController, expectedIDs: [MediaAssetID]) throws {
-    let deadline = Date().addingTimeInterval(2)
-    while Date() < deadline {
-        if controller.mutationGate.displayedOrderedIDs == expectedIDs,
-           controller.mutationGate.inFlight == .none
-        {
-            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-            return
-        }
-        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-    }
-    Issue.record("Timed out waiting for structural apply completion")
-}
-
-private func waitForMenu(
-    _ label: String,
-    timeout: Duration = .seconds(5),
-    condition: @escaping @MainActor @Sendable () async -> Bool
-) async throws {
-    try await withTestTimeout(label, timeout: timeout) {
-        while await !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
 }
 
 private extension URL {

@@ -42,7 +42,7 @@ struct CatalogProjectionEmptyStateTests {
         _ = try await waitForCatalogStoreState(secondStore) { snapshot in
             snapshot.libraries.first?.availability == .unavailable
         }
-        let states = try await recorder.waitForState { states in
+        let states = await recorder.waitForState { states in
             states.contains { state in
                 state.libraries.first?.availability == .unavailable
                     && state.mediaGrid.orderedAssetIDs.isEmpty
@@ -69,12 +69,12 @@ struct CatalogProjectionEmptyStateTests {
             recordingTask.cancel()
         }
 
-        let beforeLoad = try await recorder.waitForState { !$0.isEmpty }
+        let beforeLoad = await recorder.waitForState { !$0.isEmpty }
         #expect(beforeLoad.first?.mediaEmptyState == .loadingCatalog)
         #expect(beforeLoad.first?.title == "")
 
         try await store.start(scansSavedLibraries: false)
-        let states = try await recorder.waitForState { states in
+        let states = await recorder.waitForState { states in
             states.contains { $0.mediaEmptyState == .noMedia }
         }
         let firstClaim = try #require(states.firstIndex { $0.mediaEmptyState != .loadingCatalog })
@@ -112,13 +112,13 @@ struct CatalogProjectionEmptyStateTests {
         defer {
             recordingTask.cancel()
         }
-        _ = try await recorder.waitForState { states in
+        _ = await recorder.waitForState { states in
             states.contains { $0.mediaEmptyState == .loadingCatalog }
         }
 
         try await store.start(scansSavedLibraries: false)
 
-        let states = try await recorder.waitForState { states in
+        let states = await recorder.waitForState { states in
             states.contains { $0.libraries.count == 1 }
         }
         #expect(states.last?.mediaEmptyState != .loadingCatalog)
@@ -131,17 +131,7 @@ private typealias EmptyStateRecorder = AsyncValueRecorder<CatalogWindowState>
 private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForState(
         matching predicate: @escaping @Sendable ([CatalogWindowState]) -> Bool
-    ) async throws -> [CatalogWindowState] {
-        do {
-            return try await withTestTimeout("empty-state projection", timeout: .seconds(10)) {
-                await self.waitForValues(matching: predicate)
-            }
-        } catch {
-            throw CatalogProjectionEmptyStateTestError.timedOut
-        }
+    ) async -> [CatalogWindowState] {
+        await waitForValues(matching: predicate)
     }
-}
-
-private enum CatalogProjectionEmptyStateTestError: Error {
-    case timedOut
 }

@@ -18,7 +18,7 @@ struct CatalogWindowViewModelUndoTests {
 
         model.submitMediaChoice(.liked, origin: .keyboard)
         try await waitForChoices(fixture.store, fixture.ids, [.liked, .liked])
-        try await waitForUndo("registered") { model.curationUndoState.canUndo }
+        try await waitUntil { model.curationUndoState.canUndo }
         #expect(model.curationUndoState.undoTitle == "Undo Like")
         #expect(!model.curationUndoState.canRedo)
 
@@ -54,7 +54,7 @@ struct CatalogWindowViewModelUndoTests {
         model.selectAll()
         model.submitMediaChoice(.notRated, origin: .menu)
         try await waitForChoices(fixture.store, ids, [.notRated, .notRated, .notRated])
-        try await waitForUndo("registered") { model.curationUndoState.undoTitle == "Undo Mark as Not Rated" }
+        try await waitUntil { model.curationUndoState.undoTitle == "Undo Mark as Not Rated" }
 
         model.undoCuration()
         try await waitForChoices(fixture.store, ids, [.liked, .disliked, .notRated])
@@ -88,7 +88,7 @@ struct CatalogWindowViewModelUndoTests {
 
         model.submitMediaChoice(.liked, origin: .keyboard)
         try await waitForChoices(fixture.store, ids, [.liked, .notRated, .notRated])
-        try await waitForUndo("advanced") { model.gridSelection.selection == [ids[1]] }
+        try await waitUntil { model.gridSelection.selection == [ids[1]] }
 
         model.undoCuration()
         try await waitForChoices(fixture.store, ids, [.notRated, .notRated, .notRated])
@@ -154,7 +154,7 @@ private func makeUndoFixture(count: Int) async throws -> UndoFixture {
     }
     let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
     try await store.addLibrary(url: root)
-    try await waitForUndo("catalog rows") {
+    try await waitUntil {
         await (try? store.mediaAssets(for: ids).count) == ids.count
     }
     return UndoFixture(store: store, root: root, ids: ids)
@@ -174,20 +174,8 @@ private func undoWindowState(ids: [MediaAssetID]) -> CatalogWindowState {
 }
 
 private func waitForChoices(_ store: CatalogStore, _ ids: [MediaAssetID], _ expected: [MediaChoice]) async throws {
-    try await waitForUndo("choices \(expected)") {
+    try await waitUntil {
         guard let assets = try? await store.mediaAssets(for: ids) else { return false }
         return ids.map { assets[$0]?.mediaChoice } == expected
-    }
-}
-
-private func waitForUndo(
-    _ label: String,
-    timeout: Duration = .seconds(5),
-    condition: @escaping @MainActor @Sendable () async -> Bool
-) async throws {
-    try await withTestTimeout(label, timeout: timeout) {
-        while await !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
     }
 }

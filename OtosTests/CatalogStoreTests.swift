@@ -22,7 +22,7 @@ struct CatalogStoreTests {
         }
 
         try await store.start(scansSavedLibraries: false)
-        try await recorder.waitForCount(1)
+        await recorder.waitForCount(1)
         #expect(await recorder.snapshot().first == .catalogChanged)
 
         let snapshot = try await catalogStoreTestState(store)
@@ -32,7 +32,7 @@ struct CatalogStoreTests {
         try await store.addLibrary(url: root)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         try await store.removeLibrary(path: rootPath)
-        try await recorder.waitForEvent(.libraryRemoved(rootPath))
+        await recorder.waitForEvent(.libraryRemoved(rootPath))
     }
 
     @Test func incompatibleLegacyDatabaseIsRefusedWithoutErase() async throws {
@@ -462,7 +462,6 @@ private extension CatalogStoreTests {
 }
 
 private enum CatalogStoreTestError: Error {
-    case timedOut
     case expectedOverlap
     case invalidUTF8
 }
@@ -470,19 +469,15 @@ private enum CatalogStoreTestError: Error {
 private typealias ChangeRecorder = AsyncValueRecorder<CatalogStoreChange>
 
 private extension AsyncValueRecorder where Value == CatalogStoreChange {
-    func waitForCount(_ expectedCount: Int) async throws {
-        _ = try await withTestTimeout("catalog change count") {
-            await self.waitForValues { values in
-                values.count >= expectedCount
-            }
+    func waitForCount(_ expectedCount: Int) async {
+        _ = await waitForValues { values in
+            values.count >= expectedCount
         }
     }
 
-    func waitForEvent(_ expectedEvent: CatalogStoreChange) async throws {
-        _ = try await withTestTimeout("catalog change event") {
-            await self.waitForValues { values in
-                values.contains(expectedEvent)
-            }
+    func waitForEvent(_ expectedEvent: CatalogStoreChange) async {
+        _ = await waitForValues { values in
+            values.contains(expectedEvent)
         }
     }
 }
@@ -501,7 +496,6 @@ private func expectOverlap(_ expression: () async throws -> Void) async throws {
 
 func waitForCatalogStoreState(
     _ store: CatalogStore,
-    timeout: Duration = .seconds(10),
     predicate: @escaping @Sendable (CatalogStoreTestState) -> Bool
 ) async throws -> CatalogStoreTestState {
     let changes = await store.changeNotifications()
@@ -510,15 +504,13 @@ func waitForCatalogStoreState(
         return initial
     }
 
-    return try await withTestTimeout("catalog store state", timeout: timeout) {
-        for await _ in changes {
-            let snapshot = try await catalogStoreTestState(store)
-            if predicate(snapshot) {
-                return snapshot
-            }
+    for await _ in changes {
+        let snapshot = try await catalogStoreTestState(store)
+        if predicate(snapshot) {
+            return snapshot
         }
-        throw AsyncTestTimeoutError.streamEnded("catalog store changes")
     }
+    throw AsyncTestTimeoutError.streamEnded("catalog store changes")
 }
 
 func makeCatalogStoreTemporaryDirectory() throws -> URL {

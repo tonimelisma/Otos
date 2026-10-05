@@ -101,13 +101,8 @@ actor FilesystemEventScanInvocationRecorder {
         paths
     }
 
-    func waitForInvocationCount(_ expectedCount: Int) async throws {
-        _ = try await withTestTimeout("scan invocation count") {
-            await self.waitForInvocationCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForInvocationCountUnbounded(_ expectedCount: Int) async -> [LibraryRootPath] {
+    @discardableResult
+    func waitForInvocationCount(_ expectedCount: Int) async -> [LibraryRootPath] {
         if paths.count >= expectedCount {
             return paths
         }
@@ -142,13 +137,7 @@ actor FilesystemScanProbe {
         return invocationCount
     }
 
-    func waitForInvocationCount(_ expectedCount: Int) async throws {
-        try await withTestTimeout("filesystem scan invocation count") {
-            await self.waitForInvocationCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForInvocationCountUnbounded(_ expectedCount: Int) async {
+    func waitForInvocationCount(_ expectedCount: Int) async {
         if invocationCount >= expectedCount {
             return
         }
@@ -200,17 +189,15 @@ func waitForFilesystemRescan(
     ) {
         return
     }
-    try await withTestTimeout("filesystem rescan") {
-        for await _ in changes where try await filesystemRescanFinished(
-            store: store,
-            recorder: recorder,
-            baseline: baseline,
-            expectedAdditional: expectedAdditional
-        ) {
-            return
-        }
-        throw AsyncTestTimeoutError.streamEnded("filesystem rescan")
+    for await _ in changes where try await filesystemRescanFinished(
+        store: store,
+        recorder: recorder,
+        baseline: baseline,
+        expectedAdditional: expectedAdditional
+    ) {
+        return
     }
+    throw AsyncTestTimeoutError.streamEnded("filesystem rescan")
 }
 
 private func filesystemRescanFinished(

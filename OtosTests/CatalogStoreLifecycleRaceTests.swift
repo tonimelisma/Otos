@@ -20,7 +20,7 @@ struct CatalogStoreLifecycleRaceTests {
         let startup = Task {
             try await store.start(scansSavedLibraries: false)
         }
-        try await gate.waitForArrivalCount(1)
+        await gate.waitForArrivalCount(1)
         let mutation = Task {
             try await store.addLibrary(url: root)
         }
@@ -71,7 +71,7 @@ struct CatalogStoreLifecycleRaceTests {
         // The newly added root separately owns its immediate scan.
         try await secondStore.addLibrary(url: addedRoot)
         try await secondStore.start()
-        try await recorder.waitForInvocationCount(2)
+        await recorder.waitForInvocationCount(2)
         _ = try await waitForCatalogStoreState(secondStore) { !$0.isScanning }
 
         let savedPath = try CatalogPath.normalizedDirectoryPath(for: savedRoot)
@@ -111,12 +111,12 @@ struct CatalogStoreLifecycleRaceTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        try await probe.waitForInvocationCount(1)
+        await probe.waitForInvocationCount(1)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
 
         try await store.removeLibrary(path: rootPath)
         try await store.addLibrary(url: root)
-        try await probe.waitForInvocationCount(2)
+        await probe.waitForInvocationCount(2)
 
         await probe.release(1)
         let replacementStillActive = try await catalogStoreTestState(store)
@@ -148,13 +148,7 @@ private actor InitialLoadGate {
         arrivals
     }
 
-    func waitForArrivalCount(_ expectedCount: Int) async throws {
-        try await withTestTimeout("initial load arrival count") {
-            await self.waitForArrivalCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForArrivalCountUnbounded(_ expectedCount: Int) async {
+    func waitForArrivalCount(_ expectedCount: Int) async {
         if arrivals >= expectedCount {
             return
         }
@@ -196,11 +190,9 @@ private extension AsyncValueRecorder where Value == LibraryRootPath {
         snapshot()
     }
 
-    func waitForInvocationCount(_ expectedCount: Int) async throws {
-        _ = try await withTestTimeout("scan invocation count") {
-            await self.waitForValues { paths in
-                paths.count >= expectedCount
-            }
+    func waitForInvocationCount(_ expectedCount: Int) async {
+        _ = await waitForValues { paths in
+            paths.count >= expectedCount
         }
     }
 }
@@ -217,13 +209,7 @@ private actor ControlledScanProbe {
         return invocationCount
     }
 
-    func waitForInvocationCount(_ expectedCount: Int) async throws {
-        try await withTestTimeout("controlled scan invocation count") {
-            await self.waitForInvocationCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForInvocationCountUnbounded(_ expectedCount: Int) async {
+    func waitForInvocationCount(_ expectedCount: Int) async {
         if invocationCount >= expectedCount {
             return
         }
@@ -258,10 +244,6 @@ private actor ControlledScanProbe {
         }
         invocationWaiters = remaining
     }
-}
-
-private enum CatalogLifecycleTestError: Error {
-    case timedOut
 }
 
 private func assertArrivalCountStays(

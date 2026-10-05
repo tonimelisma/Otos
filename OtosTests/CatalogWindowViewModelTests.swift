@@ -39,10 +39,10 @@ struct CatalogWindowViewModelTests {
         weak let weakModel = model
 
         model?.start()
-        try await buildProbe.waitForBuildCount(1)
+        await buildProbe.waitForBuildCount(1)
         model = nil
 
-        try await waitForCondition { weakModel == nil }
+        try await waitUntil { weakModel == nil }
 
         // Shut the store down *before* quiescing. `shutdown()` legitimately emits a
         // final change, which marks the still-alive projection dirty and earns one
@@ -308,9 +308,9 @@ struct CatalogWindowViewModelTests {
         model?.start()
         model?.addLibrary(url: firstURL)
         model?.addLibrary(url: secondURL)
-        try await loadGate.waitUntilPaused()
+        await loadGate.waitUntilPaused()
         model = nil
-        try await waitForCondition { weakModel == nil }
+        try await waitUntil { weakModel == nil }
 
         await loadGate.release()
         try await store.start(scansSavedLibraries: false)
@@ -360,25 +360,6 @@ struct CatalogWindowViewModelTests {
     }
 }
 
-@MainActor
-private func waitForCondition(
-    timeout: Duration = .seconds(10),
-    predicate: () -> Bool
-) async throws {
-    let clock = ContinuousClock()
-    let deadline = clock.now.advanced(by: timeout)
-    while clock.now < deadline {
-        if predicate() {
-            return
-        }
-        await Task.yield()
-    }
-    if predicate() {
-        return
-    }
-    throw CatalogWindowViewModelTestError.timedOut
-}
-
 private func yieldForQueuedMutationCancellation() async {
     for _ in 0 ..< 10 {
         await Task.yield()
@@ -396,10 +377,6 @@ private func writeFile(_ url: URL, contents: String) throws {
     try Data(contents.utf8).write(to: url)
 }
 
-private enum CatalogWindowViewModelTestError: Error {
-    case timedOut
-}
-
 private actor WindowStateBuildProbe {
     private(set) var buildCount = 0
     private var buildWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
@@ -409,13 +386,7 @@ private actor WindowStateBuildProbe {
         resumeBuildWaiters()
     }
 
-    func waitForBuildCount(_ expectedCount: Int) async throws {
-        try await withTestTimeout("window state build count") {
-            await self.waitForBuildCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForBuildCountUnbounded(_ expectedCount: Int) async {
+    func waitForBuildCount(_ expectedCount: Int) async {
         if buildCount >= expectedCount {
             return
         }
@@ -451,13 +422,7 @@ private actor ViewModelInitialLoadGate {
         }
     }
 
-    func waitUntilPaused() async throws {
-        try await withTestTimeout("view model initial load pause") {
-            await self.waitUntilPausedUnbounded()
-        }
-    }
-
-    private func waitUntilPausedUnbounded() async {
+    func waitUntilPaused() async {
         if isPaused {
             return
         }
@@ -493,24 +458,21 @@ private func waitForNoAdditionalBuilds(
     #expect(await probe.buildCount == baseline)
 }
 
-/// Samples until one full `quietDuration` passes with no new build. Bounded only
-/// against a genuine hang (`withTestTimeout`), never by a short wall-clock deadline:
-/// under parallel-suite load one sleep can overshoot such a deadline while the one
-/// expected post-shutdown build lands inside it, and the wait would give up before
-/// taking the sample that proves builds stopped.
+/// Samples until one full `quietDuration` passes with no new build. It has no
+/// deadline (see `waitUntil`): under parallel-suite load one sleep can overshoot any
+/// wall-clock limit while the expected post-shutdown build lands inside it, and the
+/// wait would give up before taking the sample that proves builds stopped.
 private func waitForBuildsToQuiesce(
     _ probe: WindowStateBuildProbe,
     quietDuration: Duration
 ) async throws -> Int {
-    try await withTestTimeout("window state builds to quiesce") {
-        var baseline = await probe.buildCount
-        while true {
-            try await Task.sleep(for: quietDuration)
-            let current = await probe.buildCount
-            if current == baseline {
-                return current
-            }
-            baseline = current
+    var baseline = await probe.buildCount
+    while true {
+        try await Task.sleep(for: quietDuration)
+        let current = await probe.buildCount
+        if current == baseline {
+            return current
         }
+        baseline = current
     }
 }

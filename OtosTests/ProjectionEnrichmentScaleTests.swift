@@ -76,16 +76,12 @@ struct ProjectionEnrichmentScaleTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
-        _ = try await withTestTimeout("initial scan publication", timeout: .seconds(60)) {
-            await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == Self.assetCount }
-        }
-        _ = try await waitForCatalogStoreState(store, timeout: .seconds(60)) {
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.count == Self.assetCount }
+        _ = try await waitForCatalogStoreState(store) {
             !$0.isScanning && $0.testAssets.count == Self.assetCount
         }
-        _ = try await withTestTimeout("library scope resolution", timeout: .seconds(30)) {
-            await recorder.waitForValues { $0.last?.resolvedSidebarSelection == .library(rootPath) }
-        }
-        try await waitForProjectionQuiescence(projection, timeout: .seconds(30))
+        _ = await recorder.waitForValues { $0.last?.resolvedSidebarSelection == .library(rootPath) }
+        try await waitForProjectionQuiescence(projection)
 
         let baselineOrderQueries = await projection.orderQueryCount
         let ids = try #require(await recorder.snapshot().last?.mediaGrid.orderedAssetIDs)
@@ -102,7 +98,7 @@ struct ProjectionEnrichmentScaleTests {
             let end = min(batchStart + 2, detailResults.count)
             _ = await store.applyEnrichmentBatch(Array(detailResults[batchStart ..< end]))
         }
-        try await waitForProjectionQuiescence(projection, timeout: .seconds(30))
+        try await waitForProjectionQuiescence(projection)
 
         let afterStormOrderQueries = await projection.orderQueryCount
         #expect(
@@ -125,10 +121,8 @@ struct ProjectionEnrichmentScaleTests {
                 contentHash: .empty
             ),
         ])
-        _ = try await withTestTimeout("structural reorder publication", timeout: .seconds(30)) {
-            await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.first == reorderTarget }
-        }
-        try await waitForProjectionQuiescence(projection, timeout: .seconds(30))
+        _ = await recorder.waitForValues { $0.last?.mediaGrid.orderedAssetIDs.first == reorderTarget }
+        try await waitForProjectionQuiescence(projection)
         let finalOrderQueries = await projection.orderQueryCount
         #expect(
             finalOrderQueries == afterStormOrderQueries + 1,

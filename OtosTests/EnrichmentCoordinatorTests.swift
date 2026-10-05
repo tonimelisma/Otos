@@ -52,7 +52,7 @@ struct EnrichmentCoordinatorTests {
             admissionPolicy: policy
         )
         await coordinator.start()
-        try await blocker.waitForStartedCount(3)
+        await blocker.waitForStartedCount(3)
 
         #expect(await coordinator.inFlightEnrichVideoCount == 2)
         let started = await blocker.startedRelativePaths()
@@ -112,7 +112,7 @@ struct EnrichmentCoordinatorTests {
             applyFlushInterval: .seconds(60)
         )
         await coordinator.start()
-        try await blocker.waitForStarted()
+        await blocker.waitForStarted()
 
         await blocker.release()
         await coordinator.shutdown()
@@ -395,10 +395,8 @@ struct EnrichmentCoordinatorTests {
         await coordinator.start()
         try await executor.waitForStarts(1)
 
-        try await withTestTimeout("two materializations in flight") {
-            while await coordinator.workStateSnapshot().materializing < 2 {
-                try await Task.sleep(for: .milliseconds(10))
-            }
+        try await waitUntil(every: .milliseconds(10)) {
+            await coordinator.workStateSnapshot().materializing >= 2
         }
 
         let state = await coordinator.workStateSnapshot()
@@ -406,9 +404,7 @@ struct EnrichmentCoordinatorTests {
         #expect(state.materializing == 2)
         #expect(await materializer.stateSnapshot().inFlight == 1)
 
-        try await withTestTimeout("coordinator shutdown") {
-            await coordinator.shutdown()
-        }
+        await coordinator.shutdown()
         #expect(await materializer.stateSnapshot().waiters == 0)
         await materializer.shutdown()
     }
@@ -1076,9 +1072,7 @@ struct EnrichmentCoordinatorTests {
         // Not `needsEnrichment(hashRequired: true)`: the removable asset never gets a
         // hash by design (ADR 0018), so that check would never clear for it. Wait on
         // the enricher-recorded outcome instead.
-        try await withTestTimeout("both roots dispatched to the enricher") {
-            _ = await recorder.waitForBoth()
-        }
+        _ = await recorder.waitForBoth()
         await coordinator.shutdown()
 
         #expect(await recorder.shouldHash(name: "fixed.jpg") == true)
@@ -1174,11 +1168,7 @@ private actor HeldMaterializationExecutor {
     }
 
     func waitForStarts(_ expected: Int) async throws {
-        try await withTestTimeout("held materialization starts") {
-            while await self.startedCount() < expected {
-                await Task.yield()
-            }
-        }
+        try await waitUntil { startedCount() >= expected }
     }
 
     func startedCount() -> Int {
@@ -1199,13 +1189,7 @@ private actor BlockingEnrichment {
         }
     }
 
-    func waitForStarted() async throws {
-        try await withTestTimeout("blocking enrichment started") {
-            await self.waitForStartedUnbounded()
-        }
-    }
-
-    private func waitForStartedUnbounded() async {
+    func waitForStarted() async {
         if started {
             return
         }
@@ -1258,12 +1242,6 @@ private actor CountingBlockingEnrichment {
         }
     }
 
-    func waitForStartedCount(_ expected: Int) async throws {
-        try await withTestTimeout("counting blocking enrichment started") {
-            await self.waitForStartedCountUnbounded(expected)
-        }
-    }
-
     func startedRelativePaths() -> [String] {
         startedPaths
     }
@@ -1282,7 +1260,7 @@ private actor CountingBlockingEnrichment {
         resumeCountWaiters()
     }
 
-    private func waitForStartedCountUnbounded(_ expected: Int) async {
+    func waitForStartedCount(_ expected: Int) async {
         if startedPaths.count >= expected {
             return
         }

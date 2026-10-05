@@ -99,7 +99,7 @@ struct CatalogProjectionOrderingTests {
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: rootURL)
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: rootURL)
-        let selected = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+        let selected = await recorder.waitForState { states in
             states.last { state in
                 state.resolvedSidebarSelection == .library(rootPath)
                     && state.mediaGrid.orderedAssetIDs.count == 1
@@ -108,7 +108,7 @@ struct CatalogProjectionOrderingTests {
         #expect(selected.last?.mediaGrid.orderedAssetIDs.count == 1)
 
         await projection.updateSidebarSelection(.library(rootPath))
-        let filtered = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+        let filtered = await recorder.waitForState { states in
             states.last { state in
                 state.resolvedSidebarSelection == .library(rootPath)
                     && state.mediaGrid.orderedAssetIDs.count == 1
@@ -142,7 +142,7 @@ struct CatalogProjectionOrderingTests {
         _ = try await waitForCatalogStoreState(store) { snapshot in
             !snapshot.isScanning && snapshot.testAssets.map(\.id) == [id]
         }
-        let initialStates = try await recorder.waitForState(timeout: .initialStateTimedOut) { states in
+        let initialStates = await recorder.waitForState { states in
             states.last { state in
                 state.mediaGrid.orderedAssetIDs == [id]
                     && state.libraries.allSatisfy { $0.activity == .idle }
@@ -167,7 +167,7 @@ struct CatalogProjectionOrderingTests {
             contentHash: .empty
         )
         _ = await store.applyEnrichmentBatch([enrichment])
-        let detailState = try await recorder.waitForState(timeout: .detailStateTimedOut) { states in
+        let detailState = await recorder.waitForState { states in
             states.last { state in
                 state.mediaGrid.orderedAssetIDs == [id]
                     && state.mediaGrid.detailRefreshGeneration > initialState.mediaGrid.detailRefreshGeneration
@@ -211,26 +211,14 @@ private func orderingTemporaryDirectory() throws -> URL {
     return url
 }
 
-private enum CatalogProjectionOrderingTestError: Error {
-    case initialStateTimedOut
-    case detailStateTimedOut
-}
-
 private typealias OrderingStateRecorder = AsyncValueRecorder<CatalogWindowState>
 
 private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForState(
-        timeout: CatalogProjectionOrderingTestError,
         matching predicate: @escaping @Sendable ([CatalogWindowState]) -> CatalogWindowState?
-    ) async throws -> [CatalogWindowState] {
-        do {
-            return try await withTestTimeout("ordering state", timeout: .seconds(15)) {
-                await self.waitForValues { states in
-                    predicate(states) != nil
-                }
-            }
-        } catch {
-            throw timeout
+    ) async -> [CatalogWindowState] {
+        await waitForValues { states in
+            predicate(states) != nil
         }
     }
 }

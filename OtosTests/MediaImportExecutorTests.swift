@@ -1258,21 +1258,11 @@ struct ImportExecutionProgressTests {
 
     private func waitForReadyPlan(
         _ coordinator: MediaOperationCoordinator,
-        source: LibraryRootPath,
-        timeout: Duration = .seconds(5)
+        source: LibraryRootPath
     ) async throws -> MediaOperationPlan {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            if let plan = await coordinator.readyPlan(for: source) {
-                return plan
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        throw ReadyPlanUnavailable()
+        try await waitForValue(every: .milliseconds(25)) { await coordinator.readyPlan(for: source) }
     }
 }
-
-private struct ReadyPlanUnavailable: Error {}
 
 private final class ProgressCollector: Sendable {
     private let recorder = TestRecorder<MediaOperationProgress>()

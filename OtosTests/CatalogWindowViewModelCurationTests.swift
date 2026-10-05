@@ -17,7 +17,7 @@ struct CatalogWindowViewModelCurationTests {
         model.submitMediaChoice(.notRated, origin: .keyboard)
         model.submitMediaChoice(.disliked, origin: .keyboard)
 
-        try await waitForCurationCondition {
+        try await waitUntil {
             try await fixture.store.mediaAssets(for: fixture.ids)[fixture.ids[0]]?.mediaChoice == .disliked
         }
         #expect(model.gridSelection.selection == [fixture.ids[0]])
@@ -35,7 +35,7 @@ struct CatalogWindowViewModelCurationTests {
 
         model.submitMediaChoice(.notRated, origin: .keyboard)
 
-        try await waitForCurationCondition {
+        try await waitUntil {
             model.gridSelection.selection == [fixture.ids[1]]
         }
         #expect(try await fixture.store.mediaAssets(for: fixture.ids)[fixture.ids[0]]?.mediaChoice == .notRated)
@@ -53,7 +53,7 @@ struct CatalogWindowViewModelCurationTests {
 
         model.submitMediaChoice(.liked, origin: .keyboard)
 
-        try await waitForCurationCondition {
+        try await waitUntil {
             try await fixture.store.mediaAssets(for: fixture.ids)[fixture.ids[1]]?.mediaChoice == .liked
         }
         #expect(model.gridSelection.selection == [fixture.ids[1]])
@@ -76,23 +76,23 @@ struct CatalogWindowViewModelCurationTests {
         defer { model.mediaChoiceForwardingTask?.cancel() }
 
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
-        try await waitForCurationCondition { model.currentTargetChoice == .notRated }
+        try await waitUntil { model.currentTargetChoice == .notRated }
         #expect(model.currentTargetChoice == .notRated)
 
         model.submitMediaChoice(.liked, origin: .toolbar)
-        try await waitForCurationCondition { model.currentTargetChoice == .liked }
+        try await waitUntil { model.currentTargetChoice == .liked }
         #expect(model.currentTargetChoice == .liked)
 
         // A mixed selection shares no value; a uniform one does.
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
-        try await waitForCurationCondition { model.currentTargetChoice == nil }
+        try await waitUntil { model.currentTargetChoice == nil }
         #expect(model.currentTargetChoice == nil)
         model.submitMediaChoice(.liked, origin: .toolbar)
-        try await waitForCurationCondition { model.currentTargetChoice == .liked }
+        try await waitUntil { model.currentTargetChoice == .liked }
         #expect(model.currentTargetChoice == .liked)
 
         model.deselectAll()
-        try await waitForCurationCondition { model.currentTargetChoice == nil }
+        try await waitUntil { model.currentTargetChoice == nil }
         #expect(model.currentTargetChoice == nil)
     }
 
@@ -145,7 +145,7 @@ private func makeCurationFixture(count: Int) async throws -> CurationFixture {
     let ids = curationIDs(root: rootPath.rawValue, count: count)
     let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
     try await store.addLibrary(url: root)
-    try await waitForCurationCondition {
+    try await waitUntil {
         try await store.mediaAssets(for: ids).count == ids.count
     }
     return CurationFixture(store: store, root: root, ids: ids)
@@ -171,17 +171,4 @@ private func curationIDs(root: String, count: Int) -> [MediaAssetID] {
             relativePath: MediaRelativePath(rawValue: "choice-\(index).jpg")
         )
     }
-}
-
-@MainActor
-private func waitForCurationCondition(
-    _ condition: @escaping @MainActor () async throws -> Bool
-) async throws {
-    for _ in 0 ..< 200 {
-        if try await condition() {
-            return
-        }
-        try await Task.sleep(for: .milliseconds(5))
-    }
-    Issue.record("Timed out waiting for curation state")
 }

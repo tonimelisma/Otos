@@ -8,103 +8,67 @@ extension MaterializationResult {
 }
 
 enum AsyncTestTimeoutError: Error, CustomStringConvertible {
-    case timedOut(String)
     case streamEnded(String)
 
     var description: String {
         switch self {
-        case let .timedOut(label):
-            "Timed out waiting for \(label)"
         case let .streamEnded(label):
             "Stream ended while waiting for \(label)"
         }
     }
 }
 
-func withTestTimeout<Value: Sendable>(
-    _ label: String,
-    timeout: Duration = .seconds(10),
-    operation: @escaping @Sendable () async throws -> Value
+/// Waits until `condition` holds, re-checking it every `interval`.
+///
+/// There is deliberately no deadline. A wall-clock limit on a wait for progress
+/// measures machine load, not correctness: under the full parallel suite the awaited
+/// work can lag for seconds, and the limit then fails a test whose state was still on
+/// its way. A condition that never holds is a hang. The wait sleeps between checks, so
+/// a hung test host consumes almost no CPU and `script/check.sh`'s stall detector
+/// reports it. Never replace the sleep with `Task.yield()`: a spinning wait keeps the
+/// host busy and hides the hang from that detector.
+func waitUntil(
+    every interval: Duration = .milliseconds(5),
+    isolation: isolated (any Actor)? = #isolation,
+    _ condition: () async throws -> Bool
+) async throws {
+    try await waitForValue(every: interval) { try await condition() ? () : nil }
+}
+
+/// Waits until `produce` returns a value, re-asking every `interval`, and returns it.
+/// The same no-deadline rule as `waitUntil` applies.
+func waitForValue<Value>(
+    every interval: Duration = .milliseconds(5),
+    isolation: isolated (any Actor)? = #isolation,
+    _ produce: () async throws -> Value?
 ) async throws -> Value {
-    try await withCheckedThrowingContinuation { continuation in
-        let resolver = AsyncTestTimeoutResolver(continuation: continuation)
-        let operationTask = Task {
-            do {
-                let value = try await operation()
-                await resolver.resolve(returning: value)
-            } catch {
-                await resolver.resolve(throwing: error)
-            }
+    while true {
+        if let value = try await produce() {
+            return value
         }
-        let timeoutTask = Task {
-            try await Task.sleep(for: timeout)
-            operationTask.cancel()
-            await resolver.resolve(throwing: AsyncTestTimeoutError.timedOut(label))
-        }
-        Task {
-            await resolver.setTasks(operationTask: operationTask, timeoutTask: timeoutTask)
-        }
+        try await Task.sleep(for: interval)
     }
+}
+
+/// Turns the main run loop until the grid controller shows `expectedIDs` with no
+/// apply in flight, then turns it once more so the apply's completion block has run.
+/// It is synchronous because diffable apply completion advances only while the run
+/// loop turns. Like `waitUntil`, it has no deadline: each turn parks the thread for
+/// 10 ms, so a hang leaves the host idle for `script/check.sh` to report.
+@MainActor
+func awaitGridApply(_ controller: MediaGridViewController, expectedIDs: [MediaAssetID]) {
+    while controller.mutationGate.displayedOrderedIDs != expectedIDs
+        || controller.mutationGate.inFlight != .none
+    {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    RunLoop.current.run(until: Date().addingTimeInterval(0.01))
 }
 
 /// Waits until the projection has no pending or in-flight publication, so a test can
-/// assert on a settled `orderQueryCount` without guessing a sleep duration. Polls actor
-/// state rather than sleeping a fixed interval — a fixed sleep is either flaky under
-/// parallel-suite load or needlessly slow, and usually both.
-func waitForProjectionQuiescence(
-    _ projection: CatalogProjection,
-    timeout: Duration = .seconds(5)
-) async throws {
-    try await withTestTimeout("projection quiescence", timeout: timeout) {
-        while await !projection.isQuiescent {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
-}
-
-private actor AsyncTestTimeoutResolver<Value: Sendable> {
-    private let continuation: CheckedContinuation<Value, any Error>
-    private var operationTask: Task<Void, Never>?
-    private var timeoutTask: Task<Void, any Error>?
-    private var didResolve = false
-
-    init(continuation: CheckedContinuation<Value, any Error>) {
-        self.continuation = continuation
-    }
-
-    func setTasks(operationTask: Task<Void, Never>, timeoutTask: Task<Void, any Error>) {
-        if didResolve {
-            operationTask.cancel()
-            timeoutTask.cancel()
-        } else {
-            self.operationTask = operationTask
-            self.timeoutTask = timeoutTask
-        }
-    }
-
-    func resolve(returning value: Value) {
-        guard !didResolve else {
-            return
-        }
-        didResolve = true
-        operationTask?.cancel()
-        timeoutTask?.cancel()
-        operationTask = nil
-        timeoutTask = nil
-        continuation.resume(returning: value)
-    }
-
-    func resolve(throwing error: any Error) {
-        guard !didResolve else {
-            return
-        }
-        didResolve = true
-        operationTask?.cancel()
-        timeoutTask?.cancel()
-        operationTask = nil
-        timeoutTask = nil
-        continuation.resume(throwing: error)
-    }
+/// assert on a settled `orderQueryCount` without guessing a sleep duration.
+func waitForProjectionQuiescence(_ projection: CatalogProjection) async throws {
+    try await waitUntil { await projection.isQuiescent }
 }
 
 actor AsyncValueRecorder<Value: Sendable> {
@@ -166,13 +130,7 @@ actor ManualSleepGate {
         }
     }
 
-    func waitForSleepRequestCount(_ expectedCount: Int) async throws {
-        try await withTestTimeout("manual sleep requests") {
-            await self.waitForSleepRequestCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForSleepRequestCountUnbounded(_ expectedCount: Int) async {
+    func waitForSleepRequestCount(_ expectedCount: Int) async {
         if sleepRequestCount >= expectedCount {
             return
         }
