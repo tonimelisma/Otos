@@ -135,6 +135,50 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// A change recorded while a build is suspended is a fact that build never saw, so
+    /// its completion must not erase it: the session re-plans with the new preferences.
+    @Test func aPreferenceChangeDuringABuildIsPlannedAfterIt() async throws {
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 5, count: 1024).write(to: cardURL.appending(path: "a.jpg"))
+
+        let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:prefs-mid-build",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+
+        let builder = ControlledImportPlanBuilder()
+        await builder.suspendNextBuild(for: cardPath)
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: defaults, planBuilder: builder)
+        await coordinator.start()
+        try await waitForPendingBuilder(builder, source: cardPath)
+
+        var changed = ImportPreferences.default
+        changed.importSidecarFiles.toggle()
+        await coordinator.setSessionPreferences(changed, for: cardPath)
+        await builder.resumePendingBuild(for: cardPath)
+        try await waitForCoordinatorQuiescence(coordinator)
+
+        let lastPolicy = await builder.recordedRequests().last?.snapshot.policy
+        #expect(lastPolicy == ImportPolicy.from(changed))
+        await coordinator.shutdown()
+    }
+
     // MARK: - 2. Rapid same-path reattach
 
     @Test func rapidSamePathReattachOldBuildCannotBecomeReady() async throws {
@@ -1763,12 +1807,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
         await queueTask.value
 
-        // The controlled executor is a mock — it never touches the store, so
-        // nothing occupancy-related naturally wakes the coordinator the way a
-        // real settlement would. Simulate that wake directly: once no longer
-        // executing, the next refresh is where a still-default destination
-        // picks the reorder back up.
-        _ = await store.bumpNamespaceRevision(for: cardPath)
+        // Settlement alone applies the reorder held during the run: nothing else
+        // wakes the coordinator here — the controlled executor never touches the
+        // store — so a still-default destination must follow without one.
         _ = try await waitForPresentation(
             coordinator,
             source: cardPath,

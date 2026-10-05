@@ -36,6 +36,9 @@ struct CatalogWindowViewModelTrashTests {
         try await waitUntil {
             await (try? fixture.store.mediaAssets(for: fixture.ids).isEmpty) == true
         }
+        // The queue can move the file before the main actor registers the undo, and
+        // undo with nothing registered does nothing; wait for the registration itself.
+        try await waitUntil { model.curationUndoState.canUndo }
 
         model.undoCuration()
         try await waitUntil { FileManager.default.fileExists(atPath: path) }

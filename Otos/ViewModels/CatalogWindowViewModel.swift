@@ -301,6 +301,8 @@ final class CatalogWindowViewModel {
     /// `NSApplication.willTerminateNotification` registration that saves the place.
     @ObservationIgnored var terminationObserver: (any NSObjectProtocol)?
     @ObservationIgnored let previewLoader: any PreviewLoading
+    /// Distinguishes this view model's diagnostics from another's in a shared log.
+    @ObservationIgnored let diagnosticID = String(UUID().uuidString.prefix(8))
     /// LaunchServices seam for Open / Open With; tests inject a recorder.
     @ObservationIgnored let workspace: any WorkspaceOpening
     /// The one in-flight Open With menu build; a newer target set cancels it.
@@ -554,7 +556,14 @@ extension CatalogWindowViewModel {
     /// only place `queryDescriptor`/`sidebarSelection` (both `private(set)`) change on a
     /// user intent. Kept here beside those properties so their private setters stay valid.
     func setQueryDescriptor(_ descriptor: CatalogQueryDescriptor) {
-        guard queryDescriptor != descriptor else { return }
+        guard queryDescriptor != descriptor else {
+            OtosLog.ui.noticeOperation("ui.intent", phase: "unchanged", fields: [
+                "vm": diagnosticID,
+                "generation": "\(queryGeneration)",
+                "scope": String(describing: descriptor.scope),
+            ])
+            return
+        }
         if let pending = pendingPlaceRestore, pending.descriptor != descriptor {
             pendingPlaceRestore = nil
             OtosLog.ui.notice("op=browserPlace.restore phase=dropped reason=queryChanged")
@@ -563,7 +572,11 @@ extension CatalogWindowViewModel {
         queryGeneration &+= 1
         queryDescriptor = descriptor
         sidebarSelection = descriptor.scope
-        OtosLog.ui.info("Catalog query changed descriptor=\(descriptor.diagnosticDescription, privacy: .public)")
+        let generation = queryGeneration
+        let vm = diagnosticID
+        OtosLog.ui.info(
+            "Catalog query changed vm=\(vm, privacy: .public) generation=\(generation, privacy: .public) descriptor=\(descriptor.diagnosticDescription, privacy: .public)"
+        )
         if scopeChanged {
             stallMonitor.beginIntentToPaint(scope: descriptor.scope)
         }
@@ -784,13 +797,18 @@ extension CatalogWindowViewModel {
         stallMonitor.recordGridHandoff(handoff)
 
         let applyMs = DiagnosticsTiming.milliseconds(since: applyStart)
-        OtosLog.ui.debug(
-            """
-            Catalog window state applied updateID=\(updateID, privacy: .public) \
-            items=\(itemCount, privacy: .public) delta=\(itemCount - previousItemCount, privacy: .public) \
-            libraries=\(nextState.libraries.count, privacy: .public) applyMs=\(applyMs, privacy: .public)
-            """
-        )
+        OtosLog.ui.noticeOperation("ui.state.apply", phase: "finish", fields: [
+            "vm": diagnosticID,
+            "updateID": "\(updateID)",
+            "intentScope": String(describing: queryDescriptor.scope),
+            "stateGeneration": "\(nextState.queryGeneration)",
+            "intentGeneration": "\(queryGeneration)",
+            "scope": String(describing: nextState.resolvedSidebarSelection),
+            "items": "\(itemCount)",
+            "delta": "\(itemCount - previousItemCount)",
+            "libraries": "\(nextState.libraries.count)",
+            "applyMs": "\(applyMs)",
+        ])
     }
 
     func clearEjectingSourceIdentity(_ identity: String) {
@@ -914,6 +932,11 @@ extension CatalogWindowViewModel {
             return
         }
         hasAppliedInitialDefault = true
+        OtosLog.ui.noticeOperation("sidebar.autoSelect", phase: "initialDefault", fields: [
+            "vm": diagnosticID,
+            "libraries": "\(next.libraries.count)",
+            "stateGeneration": "\(next.queryGeneration)",
+        ])
         // A restored scope that still exists is where the user was; it replaces the
         // launch default (ADR 0031). One that is gone falls back to the default, keeping
         // the restored filter and sort, and the rest of the place is dropped with it.

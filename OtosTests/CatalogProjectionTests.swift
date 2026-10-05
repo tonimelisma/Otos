@@ -225,6 +225,44 @@ struct CatalogProjectionTests {
         #expect(await probe.callCount() >= 2)
     }
 
+    @Test func newerIntentDuringPublicationNeverCancelsTheRunningBuild() async throws {
+        let store = CatalogStore(location: .inMemory)
+        try await store.start(scansSavedLibraries: false)
+        let probe = ProjectionProbe()
+        let projection = CatalogProjection(
+            cadence: .seconds(3600),
+            stateBuilder: { libraries, orderedAssetIDs, request in
+                await probe.build(
+                    libraries: libraries,
+                    orderedAssetIDs: orderedAssetIDs,
+                    request: request
+                )
+            }
+        )
+        let recorder = StateRecorder()
+        let stream = await projection.states(store: store, initialDescriptor: .default)
+        let recordingTask = Task {
+            for await state in stream {
+                await recorder.append(state)
+            }
+        }
+        defer {
+            recordingTask.cancel()
+        }
+        let pictures = SidebarSelection.library(LibraryRootPath(rawValue: "/Users/example/Pictures"))
+
+        // The initial publication's build is parked; a sidebar intent arrives under it.
+        await probe.waitUntilInFlight()
+        await projection.updateSidebarSelection(pictures)
+        await probe.releaseBuilds()
+
+        let states = await recorder.waitForCount(1) { states in
+            states.contains { $0.resolvedSidebarSelection == pictures }
+        }
+        #expect(states.contains { $0.resolvedSidebarSelection == pictures })
+        #expect(await probe.cancelledBuildCount() == 0)
+    }
+
     @Test func detailOnlyStoreChangePublishesGridRefreshGeneration() async throws {
         let fixture = try await makeDetailRefreshFixture()
         defer {
@@ -385,6 +423,7 @@ private actor ProjectionProbe {
     private var currentInFlight = 0
     private var maximumInFlightValue = 0
     private var calls = 0
+    private var cancelledBuilds = 0
     private var inFlightWaiters: [CheckedContinuation<Void, Never>] = []
     private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
     private var isReleased = false
@@ -404,6 +443,9 @@ private actor ProjectionProbe {
             }
         }
         currentInFlight -= 1
+        if Task.isCancelled {
+            cancelledBuilds += 1
+        }
 
         return CatalogWindowState(
             title: "Call \(calls)",
@@ -427,6 +469,12 @@ private actor ProjectionProbe {
 
     func callCount() -> Int {
         calls
+    }
+
+    /// Builds that finished inside a cancelled task — whose Store reads would have
+    /// thrown `CancellationError` and produced an empty catalog.
+    func cancelledBuildCount() -> Int {
+        cancelledBuilds
     }
 
     func waitUntilInFlight() async {

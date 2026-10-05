@@ -28,6 +28,8 @@ actor CatalogProjection {
     let stateBuilder: WindowStateBuilder?
 
     private var queryRequest: CatalogQueryRequest = .initial
+    /// Distinguishes one projection's diagnostics from another's in a shared log.
+    private let diagnosticID = String(UUID().uuidString.prefix(8))
     private var dirty = false
     private var dirtyKind: DirtyKind = .none
     private var publishing = false
@@ -35,6 +37,7 @@ actor CatalogProjection {
     private var changeTask: Task<Void, Never>?
     private var publicationTask: Task<Void, Never>?
     private var immediatePublicationTask: Task<Void, Never>?
+    private var immediateWakePending = false
     private var publicationStore: CatalogStore?
     private var lastPublishedState: CatalogWindowState?
     /// The last publication was the pre-load `.loadingCatalog` state. The next store
@@ -112,6 +115,14 @@ actor CatalogProjection {
     }
 
     func updateQueryRequest(_ request: CatalogQueryRequest) {
+        OtosLog.catalog.noticeOperation("projection.intent", phase: "received", fields: [
+            "projection": diagnosticID,
+            "generation": "\(request.generation)",
+            "scope": String(describing: request.descriptor.scope),
+            "changed": "\(queryRequest != request)",
+            "publishing": "\(publishing)",
+            "dirty": "\(dirty)",
+        ])
         guard queryRequest != request else { return }
         queryRequest = request
         scheduleImmediatePublicationAfterIntent()
@@ -186,10 +197,7 @@ private extension CatalogProjection {
         dirty = true
         dirtyKind = .structural
         if wakeImmediately, let store {
-            immediatePublicationTask?.cancel()
-            immediatePublicationTask = Task { [weak self, store] in
-                await self?.publishIfDirty(store: store)
-            }
+            scheduleImmediatePublication(store: store)
         }
     }
 
@@ -201,11 +209,28 @@ private extension CatalogProjection {
             dirtyKind = .detailOnly
         }
         if wakeImmediately, let store {
-            immediatePublicationTask?.cancel()
-            immediatePublicationTask = Task { [weak self, store] in
-                await self?.publishIfDirty(store: store)
-            }
+            scheduleImmediatePublication(store: store)
         }
+    }
+
+    /// Schedules one immediate publication pass unless one is already waiting to run;
+    /// that pass reads `dirty` when it starts, so it covers this wake too. A pass that
+    /// finds a publication in flight returns, and the publication re-wakes itself if
+    /// still dirty. Nothing here cancels a pass: a cancelled build reads nothing — its
+    /// queries throw `CancellationError` — and would publish an empty catalog as fact.
+    private func scheduleImmediatePublication(store: CatalogStore) {
+        guard !immediateWakePending else {
+            return
+        }
+        immediateWakePending = true
+        immediatePublicationTask = Task { [weak self, store] in
+            await self?.runImmediateWake(store: store)
+        }
+    }
+
+    private func runImmediateWake(store: CatalogStore) async {
+        immediateWakePending = false
+        await publishIfDirty(store: store)
     }
 
     func scheduleImmediatePublicationAfterIntent() {
@@ -247,6 +272,11 @@ private extension CatalogProjection {
         dirtyKind = .none
         publishing = true
         let selectedRequest = queryRequest
+        OtosLog.catalog.noticeOperation("projection.publish", phase: "start", fields: [
+            "projection": diagnosticID,
+            "generation": "\(selectedRequest.generation)",
+            "scope": String(describing: selectedRequest.descriptor.scope),
+        ])
 
         // Detail-only dirt reuses the order we last published — but only when the
         // freshly-resolved descriptor still matches the descriptor that order was
@@ -304,6 +334,18 @@ private extension CatalogProjection {
             reuseDescriptor: reuseDescriptor
         )
         OtosSignpost.performance.endInterval("CatalogWindowPublication", signpost)
+
+        // A cancelled pass read nothing — every query threw `CancellationError` — so its
+        // state is not the catalog. Publish nothing and stay dirty for the next pass.
+        guard !Task.isCancelled else {
+            publishing = false
+            dirty = true
+            OtosLog.catalog.noticeOperation("projection.publish", phase: "abandoned", fields: [
+                "projection": diagnosticID,
+                "generation": "\(selectedRequest.generation)",
+            ])
+            return
+        }
 
         // Normalize only the exact input this build used; a newer reentrant user
         // intent stays dirty and wins on the next tick.
@@ -387,6 +429,7 @@ private extension CatalogProjection {
         publicationTask = nil
         immediatePublicationTask?.cancel()
         immediatePublicationTask = nil
+        immediateWakePending = false
         publicationStore = nil
         dirty = false
         dirtyKind = .none
