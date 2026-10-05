@@ -114,7 +114,7 @@ struct CatalogStoreFilesystemEventTests {
             )
         }
 
-        try await debounceGate.waitForSleepRequestCount(5)
+        await debounceGate.waitForSleepRequestCount(5)
         await debounceGate.releaseAll()
         try await waitForFilesystemRescan(store: store, recorder: recorder, baseline: baseline, expectedAdditional: 1)
     }
@@ -143,9 +143,9 @@ struct CatalogStoreFilesystemEventTests {
         let baseline = await recorder.invocations().count
 
         emit(FilesystemEvent(path: root.appending(path: "first.jpg").path, flags: 0))
-        try await debounceGate.waitForSleepRequestCount(1)
+        await debounceGate.waitForSleepRequestCount(1)
         emit(FilesystemEvent(path: root.appending(path: "second.jpg").path, flags: 0))
-        try await debounceGate.waitForSleepRequestCount(2)
+        await debounceGate.waitForSleepRequestCount(2)
 
         await debounceGate.releaseNext()
         #expect(await recorder.invocations().count == baseline)
@@ -183,16 +183,16 @@ struct CatalogStoreFilesystemEventTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
         emit(FilesystemEvent(path: root.appending(path: "trigger-second.jpg").path, flags: 0))
-        try await debounceGate.waitForSleepRequestCount(1)
+        await debounceGate.waitForSleepRequestCount(1)
         await debounceGate.releaseNext()
-        try await probe.waitForInvocationCount(2)
+        await probe.waitForInvocationCount(2)
 
         emit(FilesystemEvent(path: root.appending(path: "during-second.jpg").path, flags: 0))
-        try await debounceGate.waitForSleepRequestCount(2)
+        await debounceGate.waitForSleepRequestCount(2)
         await debounceGate.releaseNext()
 
         await probe.release(2)
-        try await probe.waitForInvocationCount(3)
+        await probe.waitForInvocationCount(3)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
     }
 
@@ -217,7 +217,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        try await probe.waitForInvocationCount(1)
+        await probe.waitForInvocationCount(1)
         // Keep the initial addLibrary scan hanging so a safe file event accumulates
         // as file dirt rather than starting another full-root scan.
         let during = root.appending(path: "during.jpg")
@@ -228,7 +228,7 @@ struct CatalogStoreFilesystemEventTests {
                 flags: UInt32(kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemIsFile)
             )
         )
-        try await debounceGate.waitForSleepRequestCount(1)
+        await debounceGate.waitForSleepRequestCount(1)
         await debounceGate.releaseNext()
 
         await probe.release(1)
@@ -300,7 +300,7 @@ struct CatalogStoreFilesystemEventTests {
 
         try await store.start(scansSavedLibraries: false)
         try await store.addLibrary(url: root)
-        try await probe.waitForInvocationCount(1)
+        await probe.waitForInvocationCount(1)
 
         emit(FilesystemEvent(path: root.appending(path: "early.jpg").path, flags: 0))
         #expect(await recorder.invocations().count == 1)
@@ -309,7 +309,7 @@ struct CatalogStoreFilesystemEventTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
 
         emit(FilesystemEvent(path: root.appending(path: "late.jpg").path, flags: 0))
-        try await probe.waitForInvocationCount(2)
+        await probe.waitForInvocationCount(2)
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
     }
 
@@ -495,9 +495,9 @@ struct CatalogStoreFilesystemEventTests {
 
         // Force a full-root scan of A that hangs and cannot observe later file dirt.
         emit(FilesystemEvent(path: rootA.path, flags: 0))
-        try await debounceGate.waitForSleepRequestCount(1)
+        await debounceGate.waitForSleepRequestCount(1)
         await debounceGate.releaseNext()
-        try await probe.waitForInvocationCount(3)
+        await probe.waitForInvocationCount(3)
 
         try writeCatalogStoreFile(rootA.appending(path: "during.jpg"), contents: "jpeg")
         emit(
@@ -508,7 +508,7 @@ struct CatalogStoreFilesystemEventTests {
         )
         // Queue a full-root scan of B while A still holds the lease.
         emit(FilesystemEvent(path: rootB.path, flags: 0))
-        try await debounceGate.waitForSleepRequestCount(3)
+        await debounceGate.waitForSleepRequestCount(3)
         await debounceGate.releaseAll()
 
         await probe.release(3)

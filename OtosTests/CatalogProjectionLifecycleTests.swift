@@ -36,12 +36,9 @@ struct CatalogProjectionLifecycleTests {
         }
 
         // The loops wake on their cadence; after their next pass each must observe a
-        // nil owner and return, dropping the store with them.
-        let deadline = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadline, weakStore != nil {
-            try await Task.sleep(for: .milliseconds(50))
-        }
-        #expect(weakStore == nil, "a released projection kept its CatalogStore alive")
+        // nil owner and return, dropping the store with them. A released projection
+        // that kept its CatalogStore alive never satisfies this wait.
+        try await waitUntil(every: .milliseconds(50)) { weakStore == nil }
     }
 
     @Test func coalescedRemoveAndSamePathReaddResetsSelection() async throws {
@@ -140,7 +137,7 @@ struct CatalogProjectionLifecycleTests {
         try await store.start(scansSavedLibraries: false)
         _ = try await recorder.waitForLast { $0.resolvedSidebarSelection == .allMedia }
         await projection.updateSidebarSelection(missing)
-        try await gate.waitUntilPaused()
+        await gate.waitUntilPaused()
         await projection.updateSidebarSelection(newer)
         await gate.release()
 
@@ -186,15 +183,10 @@ private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForLast(
         matching predicate: @escaping @Sendable (CatalogWindowState) -> Bool
     ) async throws -> CatalogWindowState {
-        let states = try await withTestTimeout("projection lifecycle state") {
-            await self.waitForValues { states in
-                states.last.map(predicate) ?? false
-            }
+        let states = await waitForValues { states in
+            states.last.map(predicate) ?? false
         }
-        guard let last = states.last else {
-            throw CatalogProjectionLifecycleTestError.timedOut
-        }
-        return last
+        return try #require(states.last)
     }
 }
 
@@ -219,13 +211,7 @@ private actor SelectionBuildGate {
         }
     }
 
-    func waitUntilPaused() async throws {
-        try await withTestTimeout("selection build pause") {
-            await self.waitUntilPausedUnbounded()
-        }
-    }
-
-    private func waitUntilPausedUnbounded() async {
+    func waitUntilPaused() async {
         if isPaused {
             return
         }
@@ -250,10 +236,6 @@ private actor SelectionBuildGate {
             waiter.resume()
         }
     }
-}
-
-private enum CatalogProjectionLifecycleTestError: Error {
-    case timedOut
 }
 
 private func makeProjectionLifecycleTemporaryDirectory() throws -> URL {

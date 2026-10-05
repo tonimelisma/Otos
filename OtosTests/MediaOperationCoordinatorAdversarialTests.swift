@@ -20,11 +20,9 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     private func waitForReady(
         _ coordinator: MediaOperationCoordinator,
-        source: LibraryRootPath,
-        timeout: Duration = .seconds(8)
+        source: LibraryRootPath
     ) async throws -> MediaOperationPlan {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
+        try await waitForValue(every: .milliseconds(20)) {
             if let plan = await coordinator.readyPlan(for: source) {
                 return plan
             }
@@ -36,27 +34,18 @@ struct MediaOperationCoordinatorAdversarialTests {
                     break
                 }
             }
-            try await Task.sleep(for: .milliseconds(20))
+            return nil
         }
-        throw TestError.timeout("waitForReady \(source.rawValue)")
     }
 
     private func waitForPresentation(
         _ coordinator: MediaOperationCoordinator,
         source: LibraryRootPath,
-        predicate: (MediaOperationSourcePresentation) -> Bool,
-        timeout: Duration = .seconds(8)
+        predicate: (MediaOperationSourcePresentation) -> Bool
     ) async throws -> MediaOperationSourcePresentation {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == source }),
-               predicate(pres)
-            {
-                return pres
-            }
-            try await Task.sleep(for: .milliseconds(20))
+        try await waitForValue(every: .milliseconds(20)) {
+            await coordinator.currentPresentations().first { $0.sourcePath == source && predicate($0) }
         }
-        throw TestError.timeout("waitForPresentation \(source.rawValue)")
     }
 
     // `waitForPendingBuilder` and `waitForPendingBuilderCount` are the shared gates in
@@ -68,42 +57,24 @@ struct MediaOperationCoordinatorAdversarialTests {
 
     private func waitForPendingExecution(
         _ control: ControlledExecutionControl,
-        source: LibraryRootPath,
-        timeout: Duration = .seconds(5)
+        source: LibraryRootPath
     ) async throws {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            let pending = await control.pendingSources()
-            if pending.contains(source) {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        throw TestError.timeout("execution pending \(source.rawValue)")
+        try await waitUntil(every: .milliseconds(20)) { await control.pendingSources().contains(source) }
     }
 
     private func waitUntilNoPresentation(
         _ coordinator: MediaOperationCoordinator,
-        source: LibraryRootPath,
-        timeout: Duration = .seconds(5)
+        source: LibraryRootPath
     ) async throws {
-        let deadline = ContinuousClock().now + timeout
-        while ContinuousClock().now < deadline {
-            let has = await coordinator.currentPresentations().contains(where: { $0.sourcePath == source })
-            if !has {
-                return
-            }
-            try await Task.sleep(for: .milliseconds(20))
+        try await waitUntil(every: .milliseconds(20)) {
+            await !coordinator.currentPresentations().contains { $0.sourcePath == source }
         }
-        throw TestError.timeout("still has presentation \(source.rawValue)")
     }
 
     private enum TestError: Error, CustomStringConvertible {
-        case timeout(String)
         case planFailed(MediaOperationSourceState)
         var description: String {
             switch self {
-            case let .timeout(detail): "timeout: \(detail)"
             case let .planFailed(st): "plan failed state: \(st)"
             }
         }
@@ -483,21 +454,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.retryPlanning(for: cardBPath)
         log("STEP waitForReady B after")
         // Poll until B's plan shows base name, since waitForReady may return old suffix immediately.
-        var planBAfter: MediaOperationPlan?
-        let deadlineB = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadlineB {
-            if let plan = await coordinator.readyPlan(for: cardBPath),
-               plan.entries.first?.finalDestination.rawValue == "shared.jpg"
-            {
-                planBAfter = plan
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
+        // After A's cancel, B should reclaim base name.
+        try await waitUntil(every: .milliseconds(50)) {
+            await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue == "shared.jpg"
         }
-        #expect(
-            planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg",
-            "After A's cancel, B should reclaim base name"
-        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -581,21 +541,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         log("STEP retryPlanning")
         await coordinator.retryPlanning(for: cardBPath)
         log("STEP waitForReady B after")
-        var planBAfter: MediaOperationPlan?
-        let deadlineB2 = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadlineB2 {
-            if let plan = await coordinator.readyPlan(for: cardBPath),
-               plan.entries.first?.finalDestination.rawValue == "shared.jpg"
-            {
-                planBAfter = plan
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
+        // After failure, B should reclaim base name.
+        try await waitUntil(every: .milliseconds(50)) {
+            await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue == "shared.jpg"
         }
-        #expect(
-            planBAfter?.entries.first?.finalDestination.rawValue == "shared.jpg",
-            "After failure, B should reclaim base name"
-        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -690,7 +639,9 @@ struct MediaOperationCoordinatorAdversarialTests {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
         try Data(repeating: 13, count: 1024).write(to: cardAURL.appending(path: "shared.jpg"))
-        try Data(repeating: 14, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
+        // B's file shares A's name but not its size, so it is a different file: the
+        // planner must not skip it as already imported, and must name around A's.
+        try Data(repeating: 14, count: 2048).write(to: cardBURL.appending(path: "shared.jpg"))
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
@@ -720,16 +671,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(planA.entries.first?.finalDestination.rawValue == "shared.jpg")
         await coordinator.queueImport(for: cardAPath)
         // Wait for import to complete and file to appear
-        let deadline = ContinuousClock().now + .seconds(8)
-        var published = false
-        while ContinuousClock().now < deadline {
-            if FileManager.default.fileExists(atPath: destURL.appending(path: "shared.jpg").path) {
-                published = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil(every: .milliseconds(50)) {
+            FileManager.default.fileExists(atPath: destURL.appending(path: "shared.jpg").path)
         }
-        #expect(published, "A's file should be published")
 
         // Attach B only after A has published. This keeps the test about settlement
         // against the real destination file rather than racing two initial claims.
@@ -749,22 +693,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.retryPlanning(for: cardBPath)
         // Poll until B's plan shows suffix (real file), since attachment may first
         // deliver a transient plan before the explicit retry settles.
-        var planB: MediaOperationPlan?
-        let deadlineB3 = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadlineB3 {
-            if let plan = await coordinator.readyPlan(for: cardBPath),
-               plan.entries.first?.finalDestination.rawValue != "shared.jpg",
-               plan.entries.first?.finalDestination.rawValue.contains("shared") == true
-            {
-                planB = plan
-                break
-            }
-            try await Task.sleep(for: .milliseconds(50))
+        // B should still have a suffix due to the real file, even after A's claim dies.
+        try await waitUntil(every: .milliseconds(50)) {
+            let destination = await coordinator.readyPlan(for: cardBPath)?.entries.first?.finalDestination.rawValue
+            return destination != "shared.jpg" && destination?.contains("shared") == true
         }
-        #expect(
-            planB?.entries.first?.finalDestination.rawValue != "shared.jpg",
-            "B should still have suffix due to real file, even after A's claim dies"
-        )
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -906,19 +839,9 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
         await queueTask.value
 
-        let deadline = ContinuousClock().now + Duration.seconds(5)
-        var sawCompletion = false
-        while ContinuousClock().now < deadline {
-            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               pres.copiedJustNow != nil
-            {
-                #expect(pres.copiedJustNow == 1)
-                sawCompletion = true
-                break
-            }
-            try await Task.sleep(for: .milliseconds(20))
-        }
-        #expect(sawCompletion, "Expected lastCompletion to be recorded after the executor result settled")
+        // lastCompletion is recorded once the executor result settles.
+        let settled = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
+        #expect(settled.copiedJustNow == 1)
         // A second, independent snapshot read finds the same value without
         // having observed the transition that set it — state, not an event.
         let again = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
@@ -1017,18 +940,16 @@ struct MediaOperationCoordinatorAdversarialTests {
                 incompleteItems: []
             )
         )
-        let outcome = try await withTestTimeout("completed frame observed", timeout: .seconds(5)) {
-            () async throws -> (summary: MediaOperationPlanTotals, skippedForeignCount: Int, failedCount: Int) in
-            var iterator = stream.makeAsyncIterator()
-            while let values = await iterator.next() {
-                if let pres = values.first(where: { $0.sourcePath == cardPath }),
-                   case let .completed(summary, skippedForeignCount, failedCount, _) = pres.state
-                {
-                    return (summary, skippedForeignCount, failedCount)
-                }
+        var completed: (summary: MediaOperationPlanTotals, skippedForeignCount: Int, failedCount: Int)?
+        for await values in stream {
+            if let pres = values.first(where: { $0.sourcePath == cardPath }),
+               case let .completed(summary, skippedForeignCount, failedCount, _) = pres.state
+            {
+                completed = (summary, skippedForeignCount, failedCount)
+                break
             }
-            throw AsyncTestTimeoutError.streamEnded("completed frame for \(cardPath.rawValue)")
         }
+        let outcome = try #require(completed, "presentation stream ended before a completed frame")
         await queueTask.value
         #expect(outcome.summary.copyCount == 1)
         #expect(outcome.skippedForeignCount == 1)
@@ -1164,16 +1085,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         }
         // Let the post-settlement rebuild land — it does, and the plan is Ready
         // underneath — and the presentation is still Failed.
-        var rebuilt: MediaOperationPlan?
-        let deadline = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadline {
-            if let plan = await coordinator.readyPlan(for: cardPath) {
-                rebuilt = plan
-                break
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        #expect(rebuilt != nil, "the rebuild after settlement still runs")
+        // The rebuild after settlement still runs.
+        try await waitUntil(every: .milliseconds(25)) { await coordinator.readyPlan(for: cardPath) != nil }
         let after = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         guard case let .failed(reason, _) = after.state else {
             Issue.record("Expected the failure to survive the rebuild, got \(after.state)")
@@ -1300,8 +1213,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.retryPlanning(for: cardPath)
         var sawBlockedPlan = false
         var sawProvenPlan = false
-        let deadline = ContinuousClock().now + .seconds(2)
-        while ContinuousClock().now < deadline {
+        try await waitUntil {
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
                case let .ready(summary, _, _, attention) = pres.state
             {
@@ -1312,10 +1224,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                     sawProvenPlan = true
                 }
             }
-            if await builder.builds >= 4 {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(5))
+            return await builder.builds >= 4
         }
         #expect(!sawBlockedPlan, "a plan built on an unread folder is never presented")
         #expect(sawProvenPlan, "the last proven plan keeps presenting across the deferral")
@@ -1448,10 +1357,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         // re-planning is observable instead of a few hundred milliseconds wide.
         await builder.suspendNextBuild(for: cardPath)
         await coordinator.queueImport(for: cardPath)
-        let deadline = ContinuousClock().now + .seconds(8)
-        while ContinuousClock().now < deadline, await builder.pendingCount(for: cardPath) == 0 {
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        try await waitUntil(every: .milliseconds(10)) { await builder.pendingCount(for: cardPath) != 0 }
         #expect(await builder.pendingCount(for: cardPath) == 1, "the post-settlement rebuild is in flight")
         let during = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         guard case let .completed(summary, _, _, _) = during.state else {
@@ -1521,13 +1427,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         )
         await coordinator.start()
         await coordinator.setDestination(firstPath, for: cardPath)
-        _ = try await waitForReady(coordinator, source: cardPath, timeout: .seconds(15))
+        _ = try await waitForReady(coordinator, source: cardPath)
         await coordinator.queueImport(for: cardPath)
         let settled = try await waitForPresentation(
             coordinator,
             source: cardPath,
-            predicate: { $0.copiedJustNow == 1 },
-            timeout: .seconds(15)
+            predicate: { $0.copiedJustNow == 1 }
         )
         #expect(settled.isFullyClean == true)
 
@@ -1537,7 +1442,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 return true
             }
             return false
-        }, timeout: .seconds(15))
+        })
         #expect(elsewhere.copiedJustNow == nil)
         #expect(elsewhere.isFullyClean == nil)
 
@@ -1547,7 +1452,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 return true
             }
             return false
-        }, timeout: .seconds(15))
+        })
         #expect(back.copiedJustNow == 1)
         #expect(back.isFullyClean == true)
         log("END")
@@ -1865,16 +1770,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         // executing, the next refresh is where a still-default destination
         // picks the reorder back up.
         _ = await store.bumpNamespaceRevision(for: cardPath)
-        // Waits on the same moveLibrary-triggered refreshSources cycle as
-        // MediaOperationCoordinatorTests' readyGeneration waits; under
-        // full-suite concurrent load this measured 8.393s against the 8s
-        // default (2026-08-17 verify.sh study), so the explicit budget here
-        // carries real margin over that.
         _ = try await waitForPresentation(
             coordinator,
             source: cardPath,
-            predicate: { $0.destinationPath == secondDest },
-            timeout: .seconds(20)
+            predicate: { $0.destinationPath == secondDest }
         )
         log("END")
         await coordinator.shutdown()
@@ -2393,23 +2292,17 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.queueImport(for: cardPath)
         // For zero-copy with delete, the executor should run and delete source.
         // Poll for source file deletion or for completed state.
-        let deadline = ContinuousClock().now + .seconds(5)
-        var deleted = false
-        var completed = false
-        while ContinuousClock().now < deadline {
-            deleted = !FileManager.default.fileExists(atPath: srcFile.path)
-            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }),
-               case .completed = pres.state
-            {
-                completed = true
-                if deleted {
-                    break
-                }
+        // Zero-copy with delete deletes the source file and settles as completed.
+        try await waitUntil(every: .milliseconds(50)) {
+            guard !FileManager.default.fileExists(atPath: srcFile.path) else {
+                return false
             }
-            try await Task.sleep(for: .milliseconds(50))
+            let pres = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+            if case .completed = pres?.state {
+                return true
+            }
+            return false
         }
-        #expect(deleted, "Source file should be deleted for zero-copy with delete")
-        #expect(completed, "Zero-copy with delete should settle as completed")
         log("END")
         await coordinator.shutdown()
     }
@@ -2465,16 +2358,10 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Without the D2 fix, the coordinator would sit forever on the stale
         // empty plan from before device inventory landed.
-        let deadline = ContinuousClock().now + .seconds(8)
-        var replannedCopyCount: Int?
-        while ContinuousClock().now < deadline {
-            if let plan = await coordinator.readyPlan(for: rootPath), plan.totals.copyCount == 1 {
-                replannedCopyCount = plan.totals.copyCount
-                break
-            }
-            try await Task.sleep(for: .milliseconds(20))
+        // The coordinator replans once device inventory lands after attach.
+        try await waitUntil(every: .milliseconds(20)) {
+            await coordinator.readyPlan(for: rootPath)?.totals.copyCount == 1
         }
-        #expect(replannedCopyCount == 1, "Coordinator should replan once device inventory lands after attach")
         log("END")
         log("END")
         await coordinator.shutdown()
@@ -2529,15 +2416,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         // The internal plan now has the item (proves it built while still
         // enumerating) but the bar must hold state A the entire time —
         // never offering a plan built from a not-yet-stable inventory.
-        let deadline = ContinuousClock().now + .seconds(8)
-        var sawNonEmptyInternalPlan = false
-        while ContinuousClock().now < deadline, !sawNonEmptyInternalPlan {
-            if let plan = await coordinator.readyPlan(for: rootPath), plan.totals.copyCount == 1 {
-                sawNonEmptyInternalPlan = true
-            }
-            try await Task.sleep(for: .milliseconds(20))
+        // The internal plan builds from the batch even while still enumerating.
+        try await waitUntil(every: .milliseconds(20)) {
+            await coordinator.readyPlan(for: rootPath)?.totals.copyCount == 1
         }
-        #expect(sawNonEmptyInternalPlan, "Internal plan should build from the batch even while still enumerating")
         let stillPreparing = await coordinator.currentPresentations().first(where: { $0.sourcePath == rootPath })
         var isPreparing = false
         if case .inventory = stillPreparing?.state {

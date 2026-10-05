@@ -28,7 +28,7 @@ struct CatalogWindowViewModelOpenWithTests {
 
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[2], modifiers: [.shift], orderedIDs: ids)
-        try await waitUntil("menu built") { model.openWithMenu.targetCount == 3 }
+        try await waitUntil { model.openWithMenu.targetCount == 3 }
 
         #expect(model.openWithMenu.openTitle == "Open in Preview")
         #expect(model.openWithMenu.applications.map(\.displayName) == ["Preview", "Photos"])
@@ -49,11 +49,11 @@ struct CatalogWindowViewModelOpenWithTests {
         let ids = [jpgs[0], mov, jpgs[1]]
         model.applyState(openWithWindowState(ids: ids))
         model.selectAll()
-        try await waitUntil("menu built") { model.openWithMenu.targetCount == 3 }
+        try await waitUntil { model.openWithMenu.targetCount == 3 }
         #expect(model.openWithMenu.openTitle == "Open")
 
         model.openTargetsInDefaultApplication()
-        try await waitUntil("two opens") { await workspace.opens.count == 2 }
+        try await waitUntil { await workspace.opens.count == 2 }
 
         let opens = await workspace.opens
         #expect(opens[0].application == .preview)
@@ -68,11 +68,11 @@ struct CatalogWindowViewModelOpenWithTests {
         let ids = makeIDs(count: 3)
         model.applyState(openWithWindowState(ids: ids))
         model.selectAll()
-        try await waitUntil("menu built") { model.openWithMenu.targetCount == 3 }
+        try await waitUntil { model.openWithMenu.targetCount == 3 }
 
         let photos = try #require(model.openWithMenu.applications.last)
         model.openTargets(with: photos)
-        try await waitUntil("one open") { await workspace.opens.count == 1 }
+        try await waitUntil { await workspace.opens.count == 1 }
 
         let open = try #require(await workspace.opens.first)
         #expect(open.application == .photos)
@@ -85,10 +85,10 @@ struct CatalogWindowViewModelOpenWithTests {
         let ids = makeIDs(count: 3)
         model.applyState(openWithWindowState(ids: ids))
         model.openLoupe(id: ids[1])
-        try await waitUntil("menu built") { model.openWithMenu.targetCount == 1 }
+        try await waitUntil { model.openWithMenu.targetCount == 1 }
 
         model.openTargetsInDefaultApplication()
-        try await waitUntil("one open") { await workspace.opens.count == 1 }
+        try await waitUntil { await workspace.opens.count == 1 }
 
         #expect(await workspace.opens.first?.targets == [ids[1].fileURL])
     }
@@ -112,7 +112,7 @@ struct CatalogWindowViewModelOpenWithTests {
         _ = model.applyGridClick(hit: jpg, modifiers: [], orderedIDs: ids)
         try await Task.sleep(for: .milliseconds(10))
         _ = model.applyGridClick(hit: mov, modifiers: [], orderedIDs: ids)
-        try await waitUntil("menu built for the mov") {
+        try await waitUntil {
             model.openWithMenu.targetCount == 1 && model.openWithMenu.defaultApplication != nil
         }
         try await Task.sleep(for: .milliseconds(120))
@@ -131,10 +131,10 @@ struct CatalogWindowViewModelOpenWithTests {
         let ids = makeIDs(count: 1)
         model.applyState(openWithWindowState(ids: ids))
         model.selectAll()
-        try await waitUntil("menu built") { model.openWithMenu.targetCount == 1 }
+        try await waitUntil { model.openWithMenu.targetCount == 1 }
 
         model.openTargetsInDefaultApplication()
-        try await waitUntil("one open") { await workspace.opens.count == 1 }
+        try await waitUntil { await workspace.opens.count == 1 }
 
         #expect(await workspace.opens.first?.targets == [URL(fileURLWithPath: "/Pictures/asset-0.jpg")])
     }
@@ -172,18 +172,6 @@ private func openWithWindowState(ids: [MediaAssetID]) -> CatalogWindowState {
         mediaEmptyState: .noMedia,
         deviceConnectionBanner: nil
     )
-}
-
-private func waitUntil(
-    _ label: String,
-    timeout: Duration = .seconds(5),
-    condition: @escaping @MainActor @Sendable () async -> Bool
-) async throws {
-    try await withTestTimeout(label, timeout: timeout) {
-        while await !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
 }
 
 private extension URL {

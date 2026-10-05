@@ -55,16 +55,7 @@ struct ImportPlanningNamingFactsTests {
             )?.sourceMedia.first
         }
 
-        var scanned: PlanningFileFacts?
-        let deadline = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadline {
-            if let facts = try await snapshotFacts() {
-                scanned = facts
-                break
-            }
-            try await Task.sleep(for: .milliseconds(25))
-        }
-        let beforeEnrichment = try #require(scanned)
+        let beforeEnrichment = try await waitForValue(every: .milliseconds(25)) { try await snapshotFacts() }
         #expect(beforeEnrichment.namingFactState == .pending)
         #expect(!beforeEnrichment.hasAnyDate)
 
@@ -154,21 +145,14 @@ struct ImportPlanningNamingFactsTests {
         )
 
         let policy = ImportPolicy.from(.default)
-        var scanned: PlanningFileFacts?
-        let deadline = ContinuousClock().now + .seconds(5)
-        while ContinuousClock().now < deadline {
-            if let facts = try await store.importPlanningSnapshot(
+        let facts = try await waitForValue(every: .milliseconds(25)) {
+            try await store.importPlanningSnapshot(
                 source: cardPath,
                 destination: destinationPath,
                 policy: policy,
                 generation: 1
-            )?.sourceMedia.first {
-                scanned = facts
-                break
-            }
-            try await Task.sleep(for: .milliseconds(25))
+            )?.sourceMedia.first
         }
-        let facts = try #require(scanned)
         #expect(facts.namingFactState == .pending)
         #expect(facts.captureWallCompact == nil)
         // The mtime is right there and unchanged — what is missing is not a date but

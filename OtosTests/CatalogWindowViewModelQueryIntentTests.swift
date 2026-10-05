@@ -10,14 +10,14 @@ struct CatalogWindowViewModelQueryIntentTests {
         let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
-        try await gate.waitForBuildCount(1)
+        await gate.waitForBuildCount(1)
         model.setSortOrder(.dateNewest)
         await gate.releaseAll()
         _ = try await waitForWindowState(model) { state in
             state.title == "Build 1"
         }
 
-        let requests = try await waitForRequestsReleasingBuilds(gate, "no-op query generation") { requests in
+        let requests = await waitForRequestsReleasingBuilds(gate) { requests in
             requests.count >= 1
         }
 
@@ -32,21 +32,21 @@ struct CatalogWindowViewModelQueryIntentTests {
         let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
-        try await gate.waitForBuildCount(1)
+        await gate.waitForBuildCount(1)
         model.setSortOrder(.filenameAscending)
         await gate.releaseNext()
 
         _ = try await waitForWindowState(model) { state in
             state.title == "Build 1"
         }
-        try await gate.waitForBuildCount(2)
+        await gate.waitForBuildCount(2)
         #expect(model.queryDescriptor.sort.field == .name)
 
         model.setMediaFilter(MediaFilter(kinds: [.image]))
         #expect(model.queryDescriptor.sort.field == .name)
         #expect(model.queryDescriptor.filter.kinds == [.image])
 
-        let requests = try await waitForRequestsReleasingBuilds(gate, "target query descriptor") { requests in
+        let requests = await waitForRequestsReleasingBuilds(gate) { requests in
             requests.contains { request in
                 request.descriptor == CatalogQueryDescriptor(
                     scope: .allMedia,
@@ -66,14 +66,14 @@ struct CatalogWindowViewModelQueryIntentTests {
         let (model, gate) = makeQueryIntentModel(temp: temp)
 
         model.start()
-        try await gate.waitForBuildCount(1)
+        await gate.waitForBuildCount(1)
         model.setSortOrder(.filenameAscending)
         await gate.releaseNext()
 
         _ = try await waitForWindowState(model) { state in
             state.title == "Build 1"
         }
-        try await gate.waitForBuildCount(2)
+        await gate.waitForBuildCount(2)
 
         model.setSortOrder(.dateNewest)
         #expect(model.queryDescriptor == .default)
@@ -93,7 +93,7 @@ struct CatalogWindowViewModelQueryIntentTests {
         )
         #expect(model.queryDescriptor == expectedDescriptor)
 
-        let requests = try await waitForRequestsReleasingBuilds(gate, "toggled-back query descriptor") { requests in
+        let requests = await waitForRequestsReleasingBuilds(gate) { requests in
             requests.contains { request in
                 request.descriptor == expectedDescriptor
                     && request.generation > staleGeneration
@@ -106,9 +106,8 @@ struct CatalogWindowViewModelQueryIntentTests {
 
 private func waitForRequestsReleasingBuilds(
     _ gate: WindowStateBuildGate,
-    _ description: String,
     matching predicate: @escaping @Sendable ([CatalogQueryRequest]) -> Bool
-) async throws -> [CatalogQueryRequest] {
+) async -> [CatalogQueryRequest] {
     let releaseTask = Task {
         while !Task.isCancelled {
             await gate.releaseAll()
@@ -117,9 +116,7 @@ private func waitForRequestsReleasingBuilds(
     }
     defer { releaseTask.cancel() }
 
-    return try await withTestTimeout(description) {
-        await gate.waitForRequests(matching: predicate)
-    }
+    return await gate.waitForRequests(matching: predicate)
 }
 
 @MainActor
@@ -185,13 +182,7 @@ private actor WindowStateBuildGate {
         return buildNumber
     }
 
-    func waitForBuildCount(_ expectedCount: Int) async throws {
-        try await withTestTimeout("window state gated build count") {
-            await self.waitForBuildCountUnbounded(expectedCount)
-        }
-    }
-
-    private func waitForBuildCountUnbounded(_ expectedCount: Int) async {
+    func waitForBuildCount(_ expectedCount: Int) async {
         if requests.count >= expectedCount {
             return
         }

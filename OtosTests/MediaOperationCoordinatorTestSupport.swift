@@ -121,39 +121,24 @@ actor ControlledImportPlanBuilder {
 
 func waitForPendingBuilder(
     _ builder: ControlledImportPlanBuilder,
-    source: LibraryRootPath,
-    timeout: Duration = .seconds(5)
+    source: LibraryRootPath
 ) async throws {
-    try await withTestTimeout("builder pending \(source.rawValue)", timeout: timeout) {
-        while await !builder.pendingSources().contains(source) {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
+    try await waitUntil(every: .milliseconds(10)) { await builder.pendingSources().contains(source) }
 }
 
 func waitForPendingBuilderCount(
     _ builder: ControlledImportPlanBuilder,
     source: LibraryRootPath,
-    count: Int,
-    timeout: Duration = .seconds(5)
+    count: Int
 ) async throws {
-    try await withTestTimeout("builder pending count \(count) for \(source.rawValue)", timeout: timeout) {
-        while await builder.pendingCount(for: source) < count {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
+    try await waitUntil(every: .milliseconds(10)) { await builder.pendingCount(for: source) >= count }
 }
 
 func waitForRecordedCancellation(
     _ builder: ControlledImportPlanBuilder,
-    source: LibraryRootPath,
-    timeout: Duration = .seconds(5)
+    source: LibraryRootPath
 ) async throws {
-    try await withTestTimeout("builder recorded cancellation \(source.rawValue)", timeout: timeout) {
-        while await !builder.recordedCancelled().contains(source) {
-            try await Task.sleep(for: .milliseconds(10))
-        }
-    }
+    try await waitUntil(every: .milliseconds(10)) { await builder.recordedCancelled().contains(source) }
 }
 
 /// Cancellation has two effects: the source is recorded, and the suspended
@@ -161,18 +146,12 @@ func waitForRecordedCancellation(
 /// first alone leaves the second racing with the assertion that reads it.
 func waitForCancellationSettled(
     _ builder: ControlledImportPlanBuilder,
-    source: LibraryRootPath,
-    timeout: Duration = .seconds(5)
+    source: LibraryRootPath
 ) async throws {
-    try await withTestTimeout("builder cancellation settled \(source.rawValue)", timeout: timeout) {
-        while true {
-            let cancelled = await builder.recordedCancelled().contains(source)
-            let pending = await builder.pendingSources().contains(source)
-            if cancelled, !pending {
-                break
-            }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+    try await waitUntil(every: .milliseconds(10)) {
+        let cancelled = await builder.recordedCancelled().contains(source)
+        let pending = await builder.pendingSources().contains(source)
+        return cancelled && !pending
     }
 }
 

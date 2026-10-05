@@ -15,7 +15,7 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("files moved") {
+        try await waitUntil {
             fixture.ids.allSatisfy { !FileManager.default.fileExists(atPath: fixture.path($0)) }
         }
         #expect(model.curationUndoState.canUndo)
@@ -30,21 +30,21 @@ struct CatalogWindowViewModelTrashTests {
         model.selectAll()
         model.moveTargetedMediaToTrash()
         let path = fixture.path(fixture.ids[0])
-        try await waitForTrash("file moved") { !FileManager.default.fileExists(atPath: path) }
-        try await waitForTrash("row gone") {
+        try await waitUntil { !FileManager.default.fileExists(atPath: path) }
+        try await waitUntil {
             await (try? fixture.store.mediaAssets(for: fixture.ids).isEmpty) == true
         }
 
         model.undoCuration()
-        try await waitForTrash("file put back") { FileManager.default.fileExists(atPath: path) }
-        try await waitForTrash("row back") {
+        try await waitUntil { FileManager.default.fileExists(atPath: path) }
+        try await waitUntil {
             await (try? fixture.store.mediaAssets(for: fixture.ids).count) == 1
         }
         #expect(model.curationUndoState.redoTitle == "Redo Move to Trash")
         #expect(model.trashAlertMessage == nil)
 
         model.redoCuration()
-        try await waitForTrash("file moved again") { !FileManager.default.fileExists(atPath: path) }
+        try await waitUntil { !FileManager.default.fileExists(atPath: path) }
         #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
     }
 
@@ -80,7 +80,7 @@ struct CatalogWindowViewModelTrashTests {
         model.moveTargetedMediaToTrash()
 
         let path = fixture.path(fixture.ids[0])
-        try await waitForTrash("file moved") { !FileManager.default.fileExists(atPath: path) }
+        try await waitUntil { !FileManager.default.fileExists(atPath: path) }
         #expect(model.largeTrashDownloadPrompt == nil)
     }
 
@@ -93,7 +93,7 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("focus moved") { model.focusedAssetID != fixture.ids[2] }
+        try await waitUntil { model.focusedAssetID != fixture.ids[2] }
         #expect(model.focusedAssetID == fixture.ids[1])
         #expect(model.gridSelection.selection == [fixture.ids[1]])
     }
@@ -107,7 +107,7 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("focus moved") { model.focusedAssetID != fixture.ids[1] }
+        try await waitUntil { model.focusedAssetID != fixture.ids[1] }
         #expect(model.focusedAssetID == fixture.ids[2])
     }
 
@@ -120,7 +120,8 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("selection moved") { model.gridSelection.selection == [fixture.ids[0]] }
+        try await waitUntil { model.gridSelection.selection != [fixture.ids[1], fixture.ids[2]] }
+        #expect(model.gridSelection.selection == [fixture.ids[0]])
     }
 
     @Test func noTargetDoesNothing() {
@@ -172,7 +173,7 @@ private func makeTrashFixture(count: Int) async throws -> TrashFixture {
     }
     let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(5))
     try await store.addLibrary(url: root)
-    try await waitForTrash("catalog rows") {
+    try await waitUntil {
         await (try? store.mediaAssets(for: ids).count) == ids.count
     }
     return TrashFixture(store: store, root: root, rootPath: libraryRootPath, ids: ids)
@@ -192,16 +193,4 @@ private func trashWindowState(ids: [MediaAssetID], root: LibraryRootPath) -> Cat
         mediaEmptyState: .noMedia,
         deviceConnectionBanner: nil
     )
-}
-
-private func waitForTrash(
-    _ label: String,
-    timeout: Duration = .seconds(5),
-    condition: @escaping @MainActor @Sendable () async -> Bool
-) async throws {
-    try await withTestTimeout(label, timeout: timeout) {
-        while await !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
-    }
 }

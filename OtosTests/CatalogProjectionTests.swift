@@ -183,7 +183,7 @@ struct CatalogProjectionTests {
         let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
         await projection.updateSidebarSelection(.library(rootPath))
 
-        let states = try await recorder.waitForCount(1) { states in
+        let states = await recorder.waitForCount(1) { states in
             states.contains { $0.resolvedSidebarSelection == .library(rootPath) }
         }
 
@@ -216,11 +216,11 @@ struct CatalogProjectionTests {
             recordingTask.cancel()
         }
 
-        try await probe.waitUntilInFlight()
+        await probe.waitUntilInFlight()
         await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
         await probe.releaseBuilds()
 
-        _ = try await recorder.waitForCount(2)
+        _ = await recorder.waitForCount(2)
         #expect(await probe.maximumInFlight() == 1)
         #expect(await probe.callCount() >= 2)
     }
@@ -248,10 +248,7 @@ struct CatalogProjectionTests {
         ])
         #expect(outcome == .applied(count: 1))
 
-        let refreshedStates = try await fixture.recorder.waitForCount(
-            fixture.startingCount + 1,
-            attempts: 100
-        ) { states in
+        let refreshedStates = await fixture.recorder.waitForCount(fixture.startingCount + 1) { states in
             states.contains { state in
                 state.mediaGrid.orderedAssetIDs == [fixture.id]
                     && state.mediaGrid.detailRefreshGeneration > fixture.startingGeneration
@@ -283,7 +280,7 @@ struct CatalogProjectionTests {
         }
 
         try await store.start(scansSavedLibraries: false)
-        _ = try await recorder.waitForCount(1)
+        _ = await recorder.waitForCount(1)
         await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
         try await assertStateCountStays(recorder, expectedCount: 1, duration: .milliseconds(80))
 
@@ -375,14 +372,10 @@ private typealias StateRecorder = AsyncValueRecorder<CatalogWindowState>
 private extension AsyncValueRecorder where Value == CatalogWindowState {
     func waitForCount(
         _ count: Int,
-        attempts: Int = 100,
         matching predicate: @escaping @Sendable ([CatalogWindowState]) -> Bool = { _ in true }
-    ) async throws -> [CatalogWindowState] {
-        let timeout = attempts > 100 ? Duration.seconds(20) : .seconds(10)
-        return try await withTestTimeout("projection state count", timeout: timeout) {
-            await self.waitForValues { states in
-                states.count >= count && predicate(states)
-            }
+    ) async -> [CatalogWindowState] {
+        await waitForValues { states in
+            states.count >= count && predicate(states)
         }
     }
 }
@@ -435,13 +428,7 @@ private actor ProjectionProbe {
         calls
     }
 
-    func waitUntilInFlight() async throws {
-        try await withTestTimeout("projection in-flight build") {
-            await self.waitUntilInFlightUnbounded()
-        }
-    }
-
-    private func waitUntilInFlightUnbounded() async {
+    func waitUntilInFlight() async {
         if currentInFlight > 0 {
             return
         }
@@ -503,7 +490,7 @@ private func makeDetailRefreshFixture() async throws -> DetailRefreshFixture {
     try await store.addLibrary(url: root)
     let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
     let id = MediaAssetID(libraryRootPath: rootPath, relativePath: MediaRelativePath(rawValue: "one.jpg"))
-    let initialStates = try await recorder.waitForCount(1) { states in
+    let initialStates = await recorder.waitForCount(1) { states in
         states.contains { state in
             state.libraries.first?.activity == .idle && state.mediaGrid.orderedAssetIDs == [id]
         }
@@ -546,23 +533,12 @@ extension CatalogProjection {
     }
 }
 
-private enum CatalogProjectionTestError: Error {
-    case timedOut
-}
-
 private func waitForDiagnostics(
     _ url: URL,
     matching predicate: @escaping @Sendable (String) -> Bool
 ) async throws -> String {
-    try await withTestTimeout("projection diagnostics") {
-        while !Task.isCancelled {
-            let contents = readableDiagnostics(at: url)
-            if let contents, predicate(contents) {
-                return contents
-            }
-            await Task.yield()
-        }
-        throw CancellationError()
+    try await waitForValue {
+        readableDiagnostics(at: url).flatMap { predicate($0) ? $0 : nil }
     }
 }
 

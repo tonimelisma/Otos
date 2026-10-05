@@ -64,9 +64,7 @@ struct ProjectionEnrichmentCoalescingTests {
         _ = await store.applyEnrichmentBatch([
             detailEnrichment(for: asset),
         ])
-        try await withTestTimeout("detail change") {
-            _ = await changes.waitForValues { $0.last == .assetsDetailChanged }
-        }
+        _ = await changes.waitForValues { $0.last == .assetsDetailChanged }
 
         // Structural: a newer capture date changes best_capture.
         _ = await store.applyEnrichmentBatch([
@@ -75,9 +73,7 @@ struct ProjectionEnrichmentCoalescingTests {
                 captureDate: Self.baseDate.addingTimeInterval(1_000_000)
             ),
         ])
-        try await withTestTimeout("structural change") {
-            _ = await changes.waitForValues { $0.last == .catalogChanged }
-        }
+        _ = await changes.waitForValues { $0.last == .catalogChanged }
     }
 
     /// End-to-end: M detail-only enrichment batches must not re-run the full order query,

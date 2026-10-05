@@ -260,13 +260,11 @@ private func waitForSelectedRelativePaths(
     if initial == expected {
         return initial
     }
-    return try await withTestTimeout("selected removable assets") {
-        for await _ in changes {
-            let paths = try await selectedRelativePaths(store, rootPath: rootPath)
-            if paths == expected {
-                return paths
-            }
+    for await _ in changes {
+        let paths = try await selectedRelativePaths(store, rootPath: rootPath)
+        if paths == expected {
+            return paths
         }
-        throw AsyncTestTimeoutError.streamEnded("selected removable assets")
     }
+    throw AsyncTestTimeoutError.streamEnded("selected removable assets")
 }
