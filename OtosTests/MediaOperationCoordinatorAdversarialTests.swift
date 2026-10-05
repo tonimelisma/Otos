@@ -2095,6 +2095,85 @@ struct MediaOperationCoordinatorAdversarialTests {
         await coordinator.shutdown()
     }
 
+    /// J4 after an import: the card gains a file whose naming facts are pending. The
+    /// settled run describes the card before that file, so holding it through the
+    /// metadata wait drew Done — and the sidebar row its eject button — between
+    /// Preparing frames. Every frame of the wait must carry the count.
+    @Test func aCardThatGainsFilesAfterAnImportShowsOnlyTheCountWhileItWaits() async throws {
+        let temp = try makeTempRoot()
+        let destURL = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardURL = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: destURL, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardURL, withIntermediateDirectories: true)
+        try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "first.jpg"))
+
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(20)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: destURL)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+        try await store.attachRemovableVolume(
+            mountURL: cardURL,
+            identity: "volume:gains-files-after-import",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardURL)
+        _ = try await waitForCatalogStoreState(store) { snap in
+            snap.removableSources.contains { $0.path == cardPath && !$0.isScanning }
+        }
+
+        let defaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(
+            store: store,
+            preferencesDomain: defaults,
+            makeExecutor: { _ in LiveImportExecutor(store: store) }
+        )
+        await coordinator.start()
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+        _ = try await waitForReady(coordinator, source: cardPath)
+        await coordinator.queueImport(for: cardPath)
+        _ = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
+            if case let .ready(summary, _, _, _) = pres.state {
+                return summary.copyCount == 0 && pres.copiedJustNow == 1
+            }
+            return false
+        })
+
+        let second = cardURL.appending(path: "second.jpg")
+        try Data(repeating: 4, count: 2048).write(to: second)
+        emit(FilesystemEvent(path: second.path(percentEncoded: false), flags: 0))
+        _ = try await waitForPresentation(coordinator, source: cardPath, predicate: { pres in
+            if case .waitingForMetadata = pres.state {
+                return true
+            }
+            return false
+        })
+
+        await coordinator.retryPlanning(for: cardPath)
+        var interrupted: MediaOperationSourceState?
+        var sawCount = false
+        let deadline = ContinuousClock().now + .seconds(2)
+        while ContinuousClock().now < deadline {
+            if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
+                if case .waitingForMetadata = pres.state {
+                    sawCount = true
+                } else {
+                    interrupted = pres.state
+                }
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(interrupted == nil, "the metadata wait was interrupted by \(String(describing: interrupted))")
+        #expect(sawCount, "the card must keep reporting its naming count while it waits")
+        await coordinator.shutdown()
+    }
+
     @Test func catalogChangeWakesWaitingForMetadataSourceDeterministic() async throws {
         log("START catalogChangeWakesWaitingForMetadataSourceDeterministic")
         let temp = try makeTempRoot()
