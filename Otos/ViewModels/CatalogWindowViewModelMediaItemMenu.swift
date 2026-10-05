@@ -61,7 +61,7 @@ extension CatalogWindowViewModel {
         case .openWithOther:
             openTargetsWithChosenApplication()
         case .copy:
-            copySelection()
+            copyCurrentTargets()
         case .share:
             shareCurrentTargets(origin: .contextMenu)
         case .revealInFinder:

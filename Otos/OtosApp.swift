@@ -185,10 +185,10 @@ public struct OtosApp: App {
             }
             CommandGroup(replacing: .pasteboard) {
                 Button("Copy") {
-                    catalogViewModel.copySelection()
+                    catalogViewModel.copyCurrentTargets()
                 }
                 .keyboardShortcut("c", modifiers: .command)
-                .disabled(catalogViewModel.selectedAssetIDs.isEmpty)
+                .disabled(!catalogViewModel.hasMediaChoiceTarget)
                 Divider()
                 Button("Select All") {
                     catalogViewModel.selectAll()

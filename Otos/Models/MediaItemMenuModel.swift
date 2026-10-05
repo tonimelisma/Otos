@@ -88,7 +88,7 @@ nonisolated struct MediaItemMenuModel: Equatable, Sendable {
         [
             .command(.open, title: openTitle, enabled: canOpen),
             .openWith(applications: openWithApplications, enabled: canOpenWith),
-            .command(.copy, title: "Copy", enabled: canReveal),
+            .command(.copy, title: "Copy", enabled: !shareItems.isEmpty),
             .command(.share, title: "Share…", enabled: !shareItems.isEmpty),
             .separator,
             .command(.revealInFinder, title: "Reveal in Finder", enabled: canReveal),
