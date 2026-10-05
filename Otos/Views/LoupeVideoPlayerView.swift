@@ -6,9 +6,8 @@ import SwiftUI
 ///
 /// Passive `NSViewRepresentable` wrapper around `AVPlayerView` (AppKit). The
 /// SwiftUI loupe pane owns *when* video appears; this view owns *how* it
-/// looks: `controlsStyle=.inline` bar along the bottom edge matching the
-/// loupe's black backdrop, QuickTime parity without custom `AVPlayerLayer`
-/// reimplementation. No catalog or materialization knowledge.
+/// looks: `controlsStyle=.inline` bar along the bottom edge, QuickTime parity
+/// without custom `AVPlayerLayer` reimplementation. No catalog or materialization knowledge.
 struct LoupeVideoPlayerView: NSViewRepresentable {
     let state: LoupeVideoState
 

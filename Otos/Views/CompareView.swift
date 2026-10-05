@@ -36,6 +36,7 @@ struct CompareView: View {
     /// Context menu for the active pane's asset (pane) and the clicked tile (strip).
     /// A pane context click activates that pane first, so the menu describes it.
     var contextMenu: () -> NSMenu? = { nil }
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 0) {
@@ -85,7 +86,7 @@ struct CompareView: View {
             },
             content: {
                 ZStack {
-                    Color.black.opacity(0.92)
+                    DesignPalette.content(for: colorScheme)
                     switch display {
                     case let .full(image):
                         Image(decorative: image, scale: 1)

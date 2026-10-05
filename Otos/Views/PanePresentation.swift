@@ -11,14 +11,16 @@ nonisolated enum PanePresentation {
 
         /// The media's pixel size when this display carries one, for placing the
         /// curation group on the image rather than in the pane's letterbox
-        /// (DES-066). `.thumbnail` and `.video` do not carry a size here, so they
-        /// answer nil and the group falls back to the pane's own corner rather
-        /// than guessing a frame the media may not occupy.
+        /// (DES-066). A video answers its measured display size; `.thumbnail`
+        /// and a video whose size is unknown answer nil, and the group falls back
+        /// to the pane's own corner rather than guessing a frame the media may not
+        /// occupy.
         var mediaPixelSize: CGSize? {
-            guard case let .full(image) = self else {
-                return nil
+            switch self {
+            case let .full(image): CGSize(width: image.width, height: image.height)
+            case let .video(state): state.displaySize
+            case .thumbnail, .empty: nil
             }
-            return CGSize(width: image.width, height: image.height)
         }
 
         static func == (lhs: Self, rhs: Self) -> Bool {
