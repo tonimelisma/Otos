@@ -41,7 +41,6 @@ struct MediaOperationCoordinatorTests {
         _ = try await readyGeneration(coordinator, source: source)
 
         async let first: Void = coordinator.queueImport(for: source)
-        try await Task.sleep(for: .milliseconds(20))
         async let second: Void = coordinator.queueImport(for: source)
         _ = await store.bumpNamespaceRevision(for: destination)
         _ = await (first, second)
@@ -448,9 +447,10 @@ struct MediaOperationCoordinatorTests {
         // Whatever the coordinator is doing internally, what the user is shown must
         // never regress from a proven plan to "we know nothing".
         _ = await store.bumpNamespaceRevision(for: cardPath)
+        // Sample every frame until the rebuild has returned.
         var sawNonReady = false
-        let deadline = ContinuousClock().now + .seconds(3)
-        while ContinuousClock().now < deadline {
+        try await waitUntil(every: .milliseconds(10)) {
+            let quiescent = await coordinator.isQuiescent
             if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
                 switch presentation.state {
                 case .ready, .executionUnavailable:
@@ -459,7 +459,7 @@ struct MediaOperationCoordinatorTests {
                     sawNonReady = true
                 }
             }
-            try await Task.sleep(for: .milliseconds(10))
+            return quiescent
         }
         #expect(!sawNonReady, "the bar fell back to a non-ready state during a rebuild")
 
@@ -532,8 +532,9 @@ struct MediaOperationCoordinatorTests {
         await coordinator.retryPlanning(for: cardPath)
         var sawReady = false
         var sawCount = false
-        let deadline = ContinuousClock().now + .seconds(2)
-        while ContinuousClock().now < deadline {
+        // Sample every frame until the rebuild has returned.
+        try await waitUntil(every: .milliseconds(10)) {
+            let quiescent = await coordinator.isQuiescent
             if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
                 switch presentation.state {
                 case .ready, .executionUnavailable:
@@ -544,7 +545,7 @@ struct MediaOperationCoordinatorTests {
                     break
                 }
             }
-            try await Task.sleep(for: .milliseconds(10))
+            return quiescent
         }
         #expect(!sawReady, "the plan proven before the pending row was held through the metadata wait")
         #expect(sawCount, "the source must keep reporting its naming count while it waits")
@@ -873,7 +874,7 @@ struct MediaOperationCoordinatorTests {
 
         // Reorder without touching the explicitly chosen library at all.
         try await fixture.store.moveLibrary(from: 2, to: 0)
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitForCoordinatorQuiescence(coordinator)
 
         let after = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
@@ -913,7 +914,7 @@ struct MediaOperationCoordinatorTests {
 
         // Reordering now must move the (no-longer-explicit) destination too.
         try await fixture.store.moveLibrary(from: 0, to: 1)
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitForCoordinatorQuiescence(coordinator)
         let afterReorder = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }
         )
@@ -945,7 +946,7 @@ struct MediaOperationCoordinatorTests {
         _ = try await waitForCatalogStoreState(fixture.store) { snap in
             !snap.removableSources.contains { $0.path == fixture.source && $0.availability == .available }
         }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForCoordinatorQuiescence(coordinator)
 
         try await fixture.store.attachRemovableVolume(
             mountURL: URL(fileURLWithPath: fixture.source.rawValue),
@@ -1037,27 +1038,18 @@ struct MediaOperationCoordinatorTests {
         throw AsyncTestTimeoutError.streamEnded("ready plan for \(source.rawValue)")
     }
 
-    /// Wait until the source's ready generation stops changing for `settleFor`,
-    /// then return it — so a later assertion is not raced by initial planning churn.
-    /// The settle window is an observation, not a deadline; the wait for it has none.
+    /// Waits until the coordinator has handled every change and returned every build,
+    /// then returns the source's ready generation — so a later assertion is not raced
+    /// by planning churn. A coordinator that keeps rebuilding never gets here.
     private func settledReadyGeneration(
         _ coordinator: MediaOperationCoordinator,
-        source: LibraryRootPath,
-        settleFor: Duration = .milliseconds(400)
+        source: LibraryRootPath
     ) async throws -> UInt64 {
-        var lastGeneration: UInt64?
-        var stableSince: ContinuousClock.Instant?
-        while true {
-            let generation = await currentReadyGeneration(coordinator, source: source)
-            if let generation, generation == lastGeneration {
-                if let stableSince, stableSince.duration(to: .now) >= settleFor {
-                    return generation
-                }
-            } else {
-                lastGeneration = generation
-                stableSince = generation == nil ? nil : ContinuousClock().now
+        try await waitForValue {
+            guard await coordinator.isQuiescent else {
+                return nil
             }
-            try await Task.sleep(for: .milliseconds(25))
+            return await currentReadyGeneration(coordinator, source: source)
         }
     }
 

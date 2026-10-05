@@ -1,6 +1,7 @@
 import Foundation
 import GRDB
 import OSLog
+import Synchronization
 
 /// Store notifications remain cheap invalidation signals. Most changes carry no
 /// payload; root removal carries its typed path because a remove followed by a
@@ -231,6 +232,8 @@ actor CatalogStore {
     private var roots = RootRegistry()
     private var changeContinuations: [UUID: AsyncStream<CatalogStoreChange>.Continuation] = [:]
     private var planningChangeContinuations: [UUID: AsyncStream<RootPlanningChange>.Continuation] = [:]
+    private var changeDeliveries: [UUID: DeliveryCount] = [:]
+    private var planningChangeDeliveries: [UUID: DeliveryCount] = [:]
     private var scanLeases = ScanLeaseController()
     private var currentScanTask: Task<Void, Never>?
     private var filesystemWatchingStarted = false
@@ -311,7 +314,22 @@ actor CatalogStore {
 }
 
 extension CatalogStore {
-    func changeNotifications() -> AsyncStream<CatalogStoreChange> {
+    /// Counts the changes the Store has yielded to one subscriber, recorded in the same
+    /// step as each yield. A subscriber that counts what it has handled can compare the
+    /// two and know it has acted on every change, which the stream alone cannot say.
+    final nonisolated class DeliveryCount: Sendable {
+        private let count = Mutex<UInt64>(0)
+
+        var delivered: UInt64 {
+            count.withLock { $0 }
+        }
+
+        func recordDelivery() {
+            count.withLock { $0 += 1 }
+        }
+    }
+
+    func changeNotifications(deliveries: DeliveryCount? = nil) -> AsyncStream<CatalogStoreChange> {
         let (stream, continuation) = AsyncStream<CatalogStoreChange>.makeStream(
             // Root-removal signals cannot be dropped: a same-path add may follow
             // before Projection gets another executor turn. Events are tiny and
@@ -320,6 +338,7 @@ extension CatalogStore {
         )
         let id = UUID()
         changeContinuations[id] = continuation
+        changeDeliveries[id] = deliveries
         continuation.onTermination = { [weak self] _ in
             // AsyncStream termination is synchronous, while the continuations
             // dictionary is actor state. This short task is the required actor
@@ -333,12 +352,13 @@ extension CatalogStore {
 
     /// Lossless planning-input revision stream (ARC-046). Separate from
     /// coarse `CatalogStoreChange` so thumbnail-only mutations do not replan.
-    func planningChangeNotifications() -> AsyncStream<RootPlanningChange> {
+    func planningChangeNotifications(deliveries: DeliveryCount? = nil) -> AsyncStream<RootPlanningChange> {
         let (stream, continuation) = AsyncStream<RootPlanningChange>.makeStream(
             bufferingPolicy: .unbounded
         )
         let id = UUID()
         planningChangeContinuations[id] = continuation
+        planningChangeDeliveries[id] = deliveries
         continuation.onTermination = { [weak self] _ in
             Task {
                 await self?.removePlanningChangeContinuation(id)
@@ -3325,8 +3345,9 @@ private extension CatalogStore {
         defer {
             OtosSignpost.catalog.endInterval("CatalogChangeNotify", state)
         }
-        for continuation in changeContinuations.values {
+        for (id, continuation) in changeContinuations {
             continuation.yield(change)
+            changeDeliveries[id]?.recordDelivery()
         }
     }
 
@@ -3350,17 +3371,20 @@ private extension CatalogStore {
                 "listeners": "\(listenerCount)",
             ]
         )
-        for continuation in planningChangeContinuations.values {
+        for (id, continuation) in planningChangeContinuations {
             continuation.yield(change)
+            planningChangeDeliveries[id]?.recordDelivery()
         }
     }
 
     private func removeChangeContinuation(_ id: UUID) {
         changeContinuations.removeValue(forKey: id)
+        changeDeliveries.removeValue(forKey: id)
     }
 
     private func removePlanningChangeContinuation(_ id: UUID) {
         planningChangeContinuations.removeValue(forKey: id)
+        planningChangeDeliveries.removeValue(forKey: id)
     }
 
     private func rootIsAvailable(_ path: LibraryRootPath) -> Bool {

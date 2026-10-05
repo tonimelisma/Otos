@@ -293,6 +293,24 @@ actor MediaOperationCoordinator {
     private var isStarted = false
     private var consumerTask: Task<Void, Never>?
     private var catalogChangeTask: Task<Void, Never>?
+    /// Changes the Store delivered, changes handled, and builds still running. Builds
+    /// include stale ones, which keep running after their session moves on and are
+    /// discarded when they return.
+    private let planningChangeDeliveries = CatalogStore.DeliveryCount()
+    private let catalogChangeDeliveries = CatalogStore.DeliveryCount()
+    private var handledPlanningChanges: UInt64 = 0
+    private var handledCatalogChanges: UInt64 = 0
+    private var runningBuildCount = 0
+
+    /// True once every planning and catalog change the Store delivered has been
+    /// handled and every build the coordinator started has returned. A caller can
+    /// then assert what a change did — including that it published nothing — instead
+    /// of guessing how long the coordinator takes.
+    var isQuiescent: Bool {
+        handledPlanningChanges == planningChangeDeliveries.delivered
+            && handledCatalogChanges == catalogChangeDeliveries.delivered
+            && runningBuildCount == 0
+    }
 
     private func attachmentGeneration(for source: CatalogLibraryState) -> AttachmentGeneration {
         if source.attachmentGeneration != 0 {
@@ -376,21 +394,21 @@ actor MediaOperationCoordinator {
             materializationRequester: materializationRequester
         )
         await executor.recoverJournal()
+        // Subscribe before the first refresh: a change emitted while the refresh reads
+        // the Store is then buffered and handled afterwards, never lost between the two.
+        let changes = await store.planningChangeNotifications(deliveries: planningChangeDeliveries)
+        let catalogChanges = await store.changeNotifications(deliveries: catalogChangeDeliveries)
         await refreshSources(reason: "start")
-        let changes = await store.planningChangeNotifications()
         consumerTask = Task { [weak self] in
             for await change in changes {
                 guard let self else { return }
                 await handlePlanningChange(change)
             }
         }
-        let catalogChanges = await store.changeNotifications()
         catalogChangeTask = Task { [weak self] in
             for await _ in catalogChanges {
                 guard let self else { return }
-                await handleCatalogChangeForMetadataGate()
-                await confirmExecutingBatchAssetCounts()
-                await refreshSources(reason: "catalogChange")
+                await handleCatalogChange()
             }
         }
         let subscribed = consumerTask != nil
@@ -1170,7 +1188,15 @@ actor MediaOperationCoordinator {
         )
     }
 
+    private func handleCatalogChange() async {
+        defer { handledCatalogChanges += 1 }
+        await handleCatalogChangeForMetadataGate()
+        await confirmExecutingBatchAssetCounts()
+        await refreshSources(reason: "catalogChange")
+    }
+
     private func handlePlanningChange(_ change: RootPlanningChange) async {
+        defer { handledPlanningChanges += 1 }
         let previous = lastSeenRevisions[change.rootPath]
         let namespaceChanged = previous?.namespaceRevision != change.namespaceRevision
         let namingChanged = previous?.namingRevision != change.namingRevision
@@ -1501,6 +1527,7 @@ actor MediaOperationCoordinator {
             publish()
             return true
         }
+        runningBuildCount += 1
         let task = Task { [weak self] in
             guard let self else { return }
             await runBuild(
@@ -1509,12 +1536,17 @@ actor MediaOperationCoordinator {
                 generation: buildGen.rawValue,
                 attachment: attachmentGen
             )
+            await buildDidReturn()
         }
         session.activeRunID = runID
         session.phase = .building(BuildContext(generation: buildGen, runID: runID, task: task))
         sourceSessions[source] = session
         publish()
         return true
+    }
+
+    private func buildDidReturn() {
+        runningBuildCount -= 1
     }
 
     private func runBuild(
