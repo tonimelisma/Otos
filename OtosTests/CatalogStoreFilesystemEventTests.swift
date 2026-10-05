@@ -65,10 +65,11 @@ struct CatalogStoreFilesystemEventTests {
         _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
         let baseline = await recorder.invocations().count
 
+        let handled = await store.handledFilesystemEventCount
         let stagingURL = root.appending(path: ".08ADC04C-98C9.otos-import-staging")
         try Data("staging".utf8).write(to: stagingURL)
         emit(FilesystemEvent(path: stagingURL.path, flags: 0))
-        try await assertInvocationCountStays(recorder, baseline: baseline, duration: .milliseconds(300))
+        try await expectNoRescan(store: store, recorder: recorder, baseline: baseline, handledEvents: handled + 1)
 
         // Control: a real media-file event for the same root still reconciles.
         let mediaURL = root.appending(path: "real.jpg")
@@ -334,9 +335,9 @@ struct CatalogStoreFilesystemEventTests {
         let baseline = await recorder.invocations().count
 
         try await store.removeLibrary(path: rootPath)
+        let handled = await store.handledFilesystemEventCount
         emit(FilesystemEvent(path: root.appending(path: "after-remove.jpg").path, flags: 0))
-        try await assertInvocationCountStays(recorder, baseline: baseline, duration: .milliseconds(80))
-        #expect(await recorder.invocations().count == baseline)
+        try await expectNoRescan(store: store, recorder: recorder, baseline: baseline, handledEvents: handled + 1)
     }
 
     @Test func targetedFileEventReconcilesWithoutFullScan() async throws {

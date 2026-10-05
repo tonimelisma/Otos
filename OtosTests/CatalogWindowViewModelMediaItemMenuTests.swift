@@ -8,7 +8,7 @@ import Testing
 /// mapping onto the menu-bar intents.
 @MainActor
 struct CatalogWindowViewModelMediaItemMenuTests {
-    @Test func contextClickOutsideSelectionSelectsOnlyTheHit() {
+    @Test func contextClickOutsideSelectionSelectsOnlyTheHit() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
         let ids = makeIDs(count: 4)
@@ -18,7 +18,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         controller.selectionHandlers = .from(model)
         controller.contextMenu = model.makeMediaItemContextMenu
         controller.receive(model.state.mediaGrid)
-        awaitGridApply(controller, expectedIDs: ids)
+        try await awaitGridApply(controller, expectedIDs: ids)
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
 
@@ -29,7 +29,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         #expect(model.currentTargetFileURLs == [ids[3].fileURL])
     }
 
-    @Test func contextClickInsideSelectionKeepsIt() {
+    @Test func contextClickInsideSelectionKeepsIt() async throws {
         let workspace = MenuRecordingWorkspace()
         let model = makeMenuModel(workspace: workspace)
         let ids = makeIDs(count: 4)
@@ -39,7 +39,7 @@ struct CatalogWindowViewModelMediaItemMenuTests {
         controller.selectionHandlers = .from(model)
         controller.contextMenu = model.makeMediaItemContextMenu
         controller.receive(model.state.mediaGrid)
-        awaitGridApply(controller, expectedIDs: ids)
+        try await awaitGridApply(controller, expectedIDs: ids)
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[2], modifiers: [.shift], orderedIDs: ids)
 

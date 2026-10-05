@@ -47,6 +47,12 @@ final class GridPostLayoutWorkQueue {
         return .ranNow
     }
 
+    /// True from `runDeferredWork` until its main-queue turn has run, so a caller can
+    /// observe the turn's outcome instead of guessing when the main queue drains.
+    var hasDeferredTurnScheduled: Bool {
+        deferredTurnScheduled
+    }
+
     func runDeferredWork() {
         guard !pending.isEmpty, !deferredTurnScheduled else { return }
         deferredTurnScheduled = true

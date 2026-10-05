@@ -7,7 +7,7 @@ struct CatalogWindowViewModelTests {
     @Test func activeStateSubscriptionDoesNotRetainViewModel() async throws {
         let store = CatalogStore(location: .inMemory)
         let buildProbe = WindowStateBuildProbe()
-        let projection = CatalogProjection(
+        var projection: CatalogProjection? = CatalogProjection(
             cadence: .milliseconds(10),
             stateBuilder: { libraries, _, request in
                 await buildProbe.recordBuild()
@@ -28,14 +28,16 @@ struct CatalogWindowViewModelTests {
             }
         )
         let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
-        var model: CatalogWindowViewModel? = CatalogWindowViewModel(
+        weak let weakProjection = projection
+        var model: CatalogWindowViewModel? = try CatalogWindowViewModel(
             catalogStore: store,
-            catalogProjection: projection,
+            catalogProjection: #require(projection),
             startsStallMonitor: false,
             startsEnrichment: false,
             startsSourceMonitoring: false,
             preferencesDomain: tempDefaults
         )
+        projection = nil
         weak let weakModel = model
 
         model?.start()
@@ -44,19 +46,12 @@ struct CatalogWindowViewModelTests {
 
         try await waitUntil { weakModel == nil }
 
-        // Shut the store down *before* quiescing. `shutdown()` legitimately emits a
-        // final change, which marks the still-alive projection dirty and earns one
-        // more build; quiescing first and then asserting stability across shutdown
-        // raced that build against a 40 ms quiet window on a 10 ms cadence, and failed
-        // intermittently. The invariant worth pinning is that work *ends* — once the
-        // model is released and the store is down, builds stop and stay stopped.
+        // Builds end with the projection: every loop it runs holds it weakly and exits
+        // once it is gone, so a deallocated projection can never build again. The store
+        // is shut down first because `shutdown()` legitimately emits a final change
+        // that earns the still-alive projection one more build.
         await store.shutdown()
-        let buildCountAfterTermination = try await waitForBuildsToQuiesce(
-            buildProbe,
-            quietDuration: .milliseconds(40)
-        )
-        try await waitForNoAdditionalBuilds(buildProbe, duration: .milliseconds(40))
-        #expect(await buildProbe.buildCount == buildCountAfterTermination)
+        try await waitUntil { weakProjection == nil }
     }
 
     @MainActor
@@ -446,33 +441,5 @@ private actor ViewModelInitialLoadGate {
         for waiter in waiters {
             waiter.resume()
         }
-    }
-}
-
-private func waitForNoAdditionalBuilds(
-    _ probe: WindowStateBuildProbe,
-    duration: Duration
-) async throws {
-    let baseline = await probe.buildCount
-    try await Task.sleep(for: duration)
-    #expect(await probe.buildCount == baseline)
-}
-
-/// Samples until one full `quietDuration` passes with no new build. It has no
-/// deadline (see `waitUntil`): under parallel-suite load one sleep can overshoot any
-/// wall-clock limit while the expected post-shutdown build lands inside it, and the
-/// wait would give up before taking the sample that proves builds stopped.
-private func waitForBuildsToQuiesce(
-    _ probe: WindowStateBuildProbe,
-    quietDuration: Duration
-) async throws -> Int {
-    var baseline = await probe.buildCount
-    while true {
-        try await Task.sleep(for: quietDuration)
-        let current = await probe.buildCount
-        if current == baseline {
-            return current
-        }
-        baseline = current
     }
 }

@@ -275,6 +275,10 @@ final class CatalogWindowViewModel {
     @ObservationIgnored private var queryForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var mutationForwardingTask: Task<Void, Never>?
     @ObservationIgnored var mediaChoiceForwardingTask: Task<Void, Never>?
+    /// Choices sent to the forwarding consumer, and choices it has finished with —
+    /// accepted, refused or failed. Equal means every choice's outcome has been applied.
+    @ObservationIgnored var submittedMediaChoiceCount = 0
+    @ObservationIgnored var handledMediaChoiceCount = 0
     @ObservationIgnored var mediaTrashTask: Task<Void, Never>?
     @ObservationIgnored private var viewportForwardingTask: Task<Void, Never>?
     @ObservationIgnored private var enrichmentStartTask: Task<Void, Never>?
@@ -301,6 +305,8 @@ final class CatalogWindowViewModel {
     @ObservationIgnored let workspace: any WorkspaceOpening
     /// The one in-flight Open With menu build; a newer target set cancels it.
     @ObservationIgnored var openWithMenuTask: Task<Void, Never>?
+    /// The newest hand-off of targets to LaunchServices (see `open(_:with:origin:)`).
+    @ObservationIgnored var openTask: Task<Void, Never>?
     @ObservationIgnored let videoLoader: VideoPreviewLoader
     var loupeVideoState: LoupeVideoState?
     /// The one in-flight loupe video preparation (materialize + build player). Named so

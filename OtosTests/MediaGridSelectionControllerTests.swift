@@ -371,9 +371,6 @@ private final class GridSelectionTestHarness {
         window = orderedInTestWindow(width: 800, height: 600, contentView: controller.view)
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
-        // Run a run-loop pass so AppKit completes layout and the data source reflects
-        // the applied snapshot for hit-testing.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
         installSelectionHandlers()
     }

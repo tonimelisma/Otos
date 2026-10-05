@@ -28,9 +28,9 @@ struct CatalogProjectionLifecycleTests {
             let recordingTask = Task {
                 for await _ in stream {}
             }
-            // Let the publication loop take at least one turn, so it is genuinely
-            // running and not merely scheduled.
-            try await Task.sleep(for: .milliseconds(60))
+            // The loops hold the store from the moment they are created; the first
+            // publication shows the projection is live before it is released.
+            try await waitUntil { await projection.publicationCount >= 1 }
             recordingTask.cancel()
             _ = projection
         }

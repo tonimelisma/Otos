@@ -211,11 +211,15 @@ private func filesystemRescanFinished(
     return !snapshot.isScanning && count == baseline + expectedAdditional
 }
 
-func assertInvocationCountStays(
-    _ recorder: FilesystemEventScanInvocationRecorder,
+/// Waits until the Store has handled `handledEvents` filesystem events in total and
+/// acted on all of them, then expects that no scan ran beyond `baseline`.
+func expectNoRescan(
+    store: CatalogStore,
+    recorder: FilesystemEventScanInvocationRecorder,
     baseline: Int,
-    duration: Duration
+    handledEvents: Int
 ) async throws {
-    try await Task.sleep(for: duration)
+    try await waitUntil { await store.handledFilesystemEventCount >= handledEvents }
+    try await waitUntil { await store.isFilesystemQuiescent }
     #expect(await recorder.invocations().count == baseline)
 }

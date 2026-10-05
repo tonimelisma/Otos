@@ -247,7 +247,7 @@ struct CatalogWindowViewModelSelectionTests {
         #expect(model.focusedAssetID == expected)
     }
 
-    @Test func selectionSurvivesFreshControllerFirstApply() {
+    @Test func selectionSurvivesFreshControllerFirstApply() async throws {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 4)
         model.applyState(makeWindowState(orderedIDs: ids))
@@ -262,13 +262,13 @@ struct CatalogWindowViewModelSelectionTests {
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         controller.receive(grid)
         // Drive apply to completion: receive starts apply; wait for async completion.
-        awaitGridApply(controller, expectedIDs: ids)
+        try await awaitGridApply(controller, expectedIDs: ids)
 
         #expect(model.gridSelection.selection == expected)
         #expect(controller.selectedIdentities() == expected)
     }
 
-    @Test func selectionSurvivesModeRoundTrip() {
+    @Test func selectionSurvivesModeRoundTrip() async throws {
         let model = makeSelectionViewModel()
         let ids = makeIDs(count: 4)
         model.applyState(makeWindowState(orderedIDs: ids))
@@ -281,7 +281,7 @@ struct CatalogWindowViewModelSelectionTests {
         strip.selectionHandlers = .from(model)
         let grid = CatalogMediaGridState(scope: .allMedia, orderedAssetIDs: ids)
         strip.receive(grid)
-        awaitGridApply(strip, expectedIDs: ids)
+        try await awaitGridApply(strip, expectedIDs: ids)
         #expect(model.gridSelection.selection == [ids[2]])
         #expect(strip.selectedIdentities() == [ids[2]])
 
@@ -290,7 +290,7 @@ struct CatalogWindowViewModelSelectionTests {
         _ = gridController.view
         gridController.selectionHandlers = .from(model)
         gridController.receive(grid)
-        awaitGridApply(gridController, expectedIDs: ids)
+        try await awaitGridApply(gridController, expectedIDs: ids)
         #expect(model.gridSelection.selection == [ids[2]])
         #expect(gridController.selectedIdentities() == [ids[2]])
     }

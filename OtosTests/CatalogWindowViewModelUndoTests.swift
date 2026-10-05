@@ -70,7 +70,7 @@ struct CatalogWindowViewModelUndoTests {
         model.selectAll()
 
         model.submitMediaChoice(.notRated, origin: .keyboard)
-        try await Task.sleep(for: .milliseconds(150))
+        try await waitUntil { model.hasSettledMediaChoices }
 
         #expect(!model.curationUndoState.canUndo)
     }
@@ -92,7 +92,7 @@ struct CatalogWindowViewModelUndoTests {
 
         model.undoCuration()
         try await waitForChoices(fixture.store, ids, [.notRated, .notRated, .notRated])
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { model.hasSettledMediaChoices }
         #expect(model.gridSelection.selection == [ids[1]])
     }
 

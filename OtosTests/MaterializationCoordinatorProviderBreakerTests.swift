@@ -28,7 +28,7 @@ struct MaterializationCoordinatorProviderBreakerTests {
         )
     }
 
-    @Test func twoConsecutiveProviderUnavailableOpensBreakerAndSuppressesNextFile() async {
+    @Test func twoConsecutiveProviderUnavailableOpensBreakerAndSuppressesNextFile() async throws {
         // Production policy: backgroundPerRootCap=1, globalConcurrency=16, so without
         // the breaker the third file would dispatch immediately. With the breaker it
         // must not dispatch until the cooldown fires.
@@ -57,9 +57,8 @@ struct MaterializationCoordinatorProviderBreakerTests {
                 priority: .background
             )
         )
+        // `finishOperation` records the breaker outcome before it resumes a waiter.
         _ = await (r1, r2)
-        // Give finishOperation → recordProviderBreakerOutcome a turn.
-        try? await Task.sleep(for: .milliseconds(50))
 
         // Third file on the same root: should be pending but never dispatched while breaker is open.
         let thirdTask = Task {
@@ -72,7 +71,8 @@ struct MaterializationCoordinatorProviderBreakerTests {
                 )
             )
         }
-        try? await Task.sleep(for: .milliseconds(100))
+        try await waitUntil { await coordinator.stateSnapshot().pending == 1 }
+        try await waitUntil { await coordinator.isQuiescent }
         let snapshot = await coordinator.stateSnapshot()
         // Breaker-open: third file stays pending (not inFlight), no additional executor call yet.
         #expect(executorCalls.value == 2, "breaker should have suppressed the third dispatch")
@@ -83,7 +83,7 @@ struct MaterializationCoordinatorProviderBreakerTests {
         await coordinator.shutdown()
     }
 
-    @Test func mixedOutcomeResetsStreakAndDoesNotOpenBreaker() async {
+    @Test func mixedOutcomeResetsStreakAndDoesNotOpenBreaker() async throws {
         let root = "/Library/RootA"
         let callCount = AtomicCounter()
         let coordinator = makeCoordinator { _ in
@@ -103,7 +103,6 @@ struct MaterializationCoordinatorProviderBreakerTests {
                 priority: .background
             )
         )
-        try? await Task.sleep(for: .milliseconds(50))
         _ = await coordinator.materialize(
             MaterializationCoordinator.Request(
                 id: id(root: root, file: "b.jpg"),
@@ -112,9 +111,9 @@ struct MaterializationCoordinatorProviderBreakerTests {
                 priority: .background
             )
         )
-        try? await Task.sleep(for: .milliseconds(50))
 
-        // Success clears the streak: a later providerUnavailable is streak 1 again, not 2.
+        // Success clears the streak: a later providerUnavailable is streak 1 again, not 2,
+        // so the third file dispatches rather than waiting out a breaker cooldown.
         let thirdTask = Task {
             await coordinator.materialize(
                 MaterializationCoordinator.Request(
@@ -125,20 +124,14 @@ struct MaterializationCoordinatorProviderBreakerTests {
                 )
             )
         }
-        try? await Task.sleep(for: .milliseconds(100))
-        // Without breaker, the third file should have dispatched (executor called for it).
-        // Allow timing slop: at least two calls already done; third may be pending or dispatched.
-        // The key assertion: breaker did not suppress it — it eventually runs.
-        let snap = await coordinator.stateSnapshot()
-        // If breaker had opened, pending would stay 1 forever; without it, the singleton
-        // background slot is free and the third file dispatches.
-        #expect(snap.pending + snap.inFlight <= 1)
+        try await waitForDispatchedOrHeld(coordinator) { callCount.value == 3 }
+        #expect(callCount.value == 3, "an open breaker held the third file")
         thirdTask.cancel()
         _ = await thirdTask.value
         await coordinator.shutdown()
     }
 
-    @Test func breakerIsPerRoot() async {
+    @Test func breakerIsPerRoot() async throws {
         // providerUnavailable on root A must not block root B.
         let callsByRoot = Mutex<[String: Int]>([:])
         let coordinator = makeCoordinator { request in
@@ -169,19 +162,44 @@ struct MaterializationCoordinatorProviderBreakerTests {
             )
         )
         _ = await (a1, a2)
-        try? await Task.sleep(for: .milliseconds(50))
 
         // Root B file should still dispatch despite Root A breaker being open.
-        let bResult = await coordinator.materialize(
-            MaterializationCoordinator.Request(
-                id: id(root: "/Library/RootB", file: "c.jpg"),
-                sourceSize: 1024,
-                isVideo: false,
-                priority: .background
+        let bTask = Task {
+            await coordinator.materialize(
+                MaterializationCoordinator.Request(
+                    id: id(root: "/Library/RootB", file: "c.jpg"),
+                    sourceSize: 1024,
+                    isVideo: false,
+                    priority: .background
+                )
             )
+        }
+        try await waitForDispatchedOrHeld(coordinator) {
+            callsByRoot.withLock { $0.keys.contains { $0.contains("RootB") } }
+        }
+        #expect(
+            callsByRoot.withLock { $0.keys.contains { $0.contains("RootB") } },
+            "root A's breaker held root B's file"
         )
-        #expect(bResult.outcome == .materialized)
+        #expect(await bTask.value.outcome == .materialized)
         await coordinator.shutdown()
+    }
+
+    /// Waits until the newest request has either dispatched or been held by admission.
+    /// A held request would still dispatch once a breaker cooldown ends, so waiting for
+    /// the dispatch alone could not tell a correct coordinator from a held one.
+    private func waitForDispatchedOrHeld(
+        _ coordinator: MaterializationCoordinator,
+        dispatched: () -> Bool
+    ) async throws {
+        try await waitUntil {
+            if dispatched() {
+                return true
+            }
+            let held = await coordinator.stateSnapshot().pending == 1
+            let quiescent = await coordinator.isQuiescent
+            return held && quiescent
+        }
     }
 
     private final class AtomicCounter: Sendable {

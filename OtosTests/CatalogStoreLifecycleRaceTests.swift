@@ -25,10 +25,10 @@ struct CatalogStoreLifecycleRaceTests {
             try await store.addLibrary(url: root)
         }
 
-        // The mutation enters while the first load is deliberately suspended.
-        // One arrival proves it joined that load rather than starting a second
-        // database read that could later replace the mutation's memory state.
-        try await assertArrivalCountStays(gate, expectedCount: 1, duration: .milliseconds(50))
+        // The mutation enters while the first load is deliberately suspended and
+        // joins it, rather than starting a second database read that could later
+        // replace the mutation's memory state.
+        try await waitUntil { await store.joinedInitialLoadCount == 1 }
         let arrivalCount = await gate.arrivalCount()
         #expect(arrivalCount == 1)
         await gate.releaseAll()
@@ -244,13 +244,4 @@ private actor ControlledScanProbe {
         }
         invocationWaiters = remaining
     }
-}
-
-private func assertArrivalCountStays(
-    _ gate: InitialLoadGate,
-    expectedCount: Int,
-    duration: Duration
-) async throws {
-    try await Task.sleep(for: duration)
-    #expect(await gate.arrivalCount() == expectedCount)
 }

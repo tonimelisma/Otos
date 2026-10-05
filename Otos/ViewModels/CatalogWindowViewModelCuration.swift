@@ -175,7 +175,15 @@ extension CatalogWindowViewModel {
             advanceTo: advanceTo,
             origin: origin
         )
+        submittedMediaChoiceCount += 1
         mediaChoiceContinuation.yield(command)
+    }
+
+    /// True once every submitted choice has been persisted or refused and its outcome
+    /// applied, so a caller can assert what a choice did — including that it changed
+    /// nothing — without guessing how long persistence takes.
+    var hasSettledMediaChoices: Bool {
+        handledMediaChoiceCount == submittedMediaChoiceCount
     }
 
     func mediaChoiceTargetIDs(_ target: MediaChoiceTarget) -> [MediaAssetID] {
@@ -209,6 +217,7 @@ extension CatalogWindowViewModel {
     func startMediaChoiceForwarding(store: CatalogStore) {
         mediaChoiceForwardingTask = Task { [weak self, mediaChoiceStream, store] in
             for await command in mediaChoiceStream {
+                defer { self?.handledMediaChoiceCount += 1 }
                 guard !Task.isCancelled else {
                     break
                 }
