@@ -51,10 +51,7 @@ extension MediaGridViewController {
         let stallMonitor = stallMonitor
         let applyCallStart = Date()
         let animationSuppressed = summary.animatingDifferences
-            && (MediaGridAnimation.prefersReducedMotion
-                || MediaGridAnimation.suppressesApplyAnimation(
-                    lastScrollTickAge: Date().timeIntervalSince(lastScrollTickAt)
-                ))
+            && suppressesApplyAnimation(anchor: scrollAnchor, nextOrderedIDs: grid.orderedAssetIDs)
         let context = StructuralApplyCompletionContext(
             grid: grid,
             change: change,
@@ -91,6 +88,27 @@ extension MediaGridViewController {
             animationSuppressed: animationSuppressed,
             scrollAnchor: scrollAnchor,
             completion: completion
+        )
+    }
+
+    /// An animated apply keeps its true-diff path but runs with a zero duration when the
+    /// motion would be unwanted (Reduce Motion), invisible (live scrolling), or false (a
+    /// strip restore that scrolls by exactly the distance the survivors would travel).
+    private func suppressesApplyAnimation(anchor: ScrollAnchor?, nextOrderedIDs: [MediaAssetID]) -> Bool {
+        if MediaGridAnimation.prefersReducedMotion
+            || MediaGridAnimation.suppressesApplyAnimation(
+                lastScrollTickAge: Date().timeIntervalSince(lastScrollTickAt)
+            )
+        {
+            return true
+        }
+        guard presentation.isStrip, let anchor else {
+            return false
+        }
+        return MediaGridAnimation.suppressesAnchoredStripAnimation(
+            anchorID: anchor.id,
+            previousOrderedIDs: mutationGate.displayedOrderedIDs,
+            nextOrderedIDs: nextOrderedIDs
         )
     }
 
@@ -248,11 +266,13 @@ extension MediaGridViewController {
 
     /// Puts the anchored item back where it was on screen.
     ///
-    /// Called immediately after the apply rather than from its completion: an animated
-    /// apply updates the layout synchronously and only *animates* items to the new frames,
-    /// so correcting the offset in the same run-loop turn cancels the displacement before
-    /// it is ever drawn. Correcting it from the completion would instead show the slide and
-    /// then snap it back, which is the same defect with an extra step.
+    /// Called immediately after the apply rather than from its completion: the apply
+    /// updates the layout synchronously, so correcting the offset in the same run-loop
+    /// turn moves the viewport before it is drawn. Correcting it from the completion would
+    /// instead show the slide and then snap it back. An animated apply still moves the item
+    /// *views* from their old frames to the new ones under the corrected viewport, which is
+    /// why a strip apply this restore scrolls runs with a zero duration
+    /// (`MediaGridAnimation.suppressesAnchoredStripAnimation`).
     ///
     /// A vanished anchor (its item removed by this very apply) leaves the scroll alone
     /// rather than guessing at a replacement.

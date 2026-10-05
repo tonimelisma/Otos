@@ -29,6 +29,28 @@ nonisolated enum MediaGridAnimation {
         lastScrollTickAge < applyAnimationScrollQuietThreshold
     }
 
+    /// An anchored strip apply that moves the anchored tile along the order is one the
+    /// anchor restore cancels by scrolling the strip the same distance (APP-033). Every
+    /// visible survivor then ends where it started on screen, so a move animation could
+    /// only draw the displacement the restore removed: the views slide from their old
+    /// frames to the new ones under an already-corrected viewport, which reads as the
+    /// strip lurching and settling back on every import arrival. Apply instantly instead.
+    ///
+    /// Strip only: it is one row, so an index change is exactly a viewport move. In the
+    /// grid an index change is usually a reflow within the row — real motion worth
+    /// animating — and the restore moves the viewport only when the anchor crosses a row.
+    /// An anchor this apply removed leaves the scroll alone, so its apply animates.
+    nonisolated static func suppressesAnchoredStripAnimation(
+        anchorID: MediaAssetID,
+        previousOrderedIDs: [MediaAssetID],
+        nextOrderedIDs: [MediaAssetID]
+    ) -> Bool {
+        guard let nextIndex = nextOrderedIDs.firstIndex(of: anchorID) else {
+            return false
+        }
+        return previousOrderedIDs.firstIndex(of: anchorID) != nextIndex
+    }
+
     /// Ease-out with a mild overshoot. AppKit's `NSAnimationContext` has no spring
     /// API (verified against the Xcode 27 beta macOS SDK: `NSAnimationContext.h`
     /// exposes only `duration` and a `CAMediaTimingFunction`); the overshoot is
