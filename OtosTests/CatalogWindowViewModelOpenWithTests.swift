@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 /// Intent-level coverage for File ▸ Open / Open With (APP-035): targets resolve through
@@ -94,10 +95,14 @@ struct CatalogWindowViewModelOpenWithTests {
     }
 
     @Test func staleMenuBuildIsDiscarded() async throws {
+        // The JPEG build is held inside its LaunchServices query until the target has
+        // moved to the MOV and the MOV's menu has landed, so the stale build is
+        // provably in flight across the change and provably finishes after it.
+        let gate = QueryGate(pathExtension: "jpg")
         let workspace = RecordingWorkspace(
             defaults: ["jpg": .preview, "mov": .quickTime],
             applications: ["jpg": [.preview], "mov": [.quickTime]],
-            queryDelay: 0.08
+            gate: gate
         )
         let model = makeOpenWithModel(workspace: workspace)
         let jpg = makeIDs(count: 1)[0]
@@ -108,14 +113,17 @@ struct CatalogWindowViewModelOpenWithTests {
         let ids = [jpg, mov]
         model.applyState(openWithWindowState(ids: ids))
 
-        // First build (JPEG) is slow; before it lands the target moves to the MOV.
         _ = model.applyGridClick(hit: jpg, modifiers: [], orderedIDs: ids)
-        try await Task.sleep(for: .milliseconds(10))
+        try await waitUntil { gate.hasEntered }
         _ = model.applyGridClick(hit: mov, modifiers: [], orderedIDs: ids)
-        try await waitUntil {
-            model.openWithMenu.targetCount == 1 && model.openWithMenu.defaultApplication != nil
-        }
-        try await Task.sleep(for: .milliseconds(120))
+        try await waitUntil { model.openWithMenu.defaultsByTarget[mov.fileURL] == .quickTime }
+
+        gate.release()
+        try await waitUntil { gate.hasReturned }
+        // Give the stale build room to land. This bound can only let a regression
+        // pass unseen under load, never fail a correct build: the positive facts
+        // above are all awaited, not timed.
+        try await Task.sleep(for: .milliseconds(50))
 
         #expect(model.openWithMenu.openTitle == "Open in QuickTime Player")
         #expect(model.openWithMenu.defaultsByTarget[mov.fileURL] == .quickTime)
@@ -191,16 +199,47 @@ private actor OpenLog {
     }
 }
 
+/// Holds one extension's application query on its (non-main) calling thread until the
+/// test releases it, and reports when the query was entered and when it returned.
+private final class QueryGate: Sendable {
+    let pathExtension: String
+    private let entered = Mutex(false)
+    private let returned = Mutex(false)
+    private let released = DispatchSemaphore(value: 0)
+
+    init(pathExtension: String) {
+        self.pathExtension = pathExtension
+    }
+
+    var hasEntered: Bool {
+        entered.withLock { $0 }
+    }
+
+    var hasReturned: Bool {
+        returned.withLock { $0 }
+    }
+
+    func release() {
+        released.signal()
+    }
+
+    func pass() {
+        entered.withLock { $0 = true }
+        released.wait()
+        returned.withLock { $0 = true }
+    }
+}
+
 private struct RecordingWorkspace: WorkspaceOpening {
     let defaults: [String: URL]
     let applications: [String: [URL]]
-    let queryDelay: TimeInterval?
+    let gate: QueryGate?
     private let log = OpenLog()
 
-    init(defaults: [String: URL], applications: [String: [URL]], queryDelay: TimeInterval? = nil) {
+    init(defaults: [String: URL], applications: [String: [URL]], gate: QueryGate? = nil) {
         self.defaults = defaults
         self.applications = applications
-        self.queryDelay = queryDelay
+        self.gate = gate
     }
 
     var opens: [(application: URL, targets: [URL])] {
@@ -208,10 +247,10 @@ private struct RecordingWorkspace: WorkspaceOpening {
     }
 
     func applicationURLs(toOpen url: URL) -> [URL] {
-        if let queryDelay {
+        if let gate, gate.pathExtension == url.pathExtension.lowercased() {
             // LaunchServices is synchronous; a slow answer is modelled by blocking the
             // calling (non-main) thread, exactly as a cold LaunchServices query would.
-            Thread.sleep(forTimeInterval: queryDelay)
+            gate.pass()
         }
         return applications[url.pathExtension.lowercased()] ?? []
     }
