@@ -50,13 +50,16 @@ final class LoupeZoomScrollView: NSScrollView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        drawsBackground = false
         allowsMagnification = true
         hasHorizontalScroller = true
         hasVerticalScroller = true
         autohidesScrollers = true
         usesPredominantAxisScrolling = false
         contentView = LoupeCenteringClipView()
+        // After the clip-view swap: `drawsBackground` forwards to the clip view
+        // installed at the time, and a fresh NSClipView paints an opaque default.
+        // The SwiftUI pane owns the backdrop (DES-022); this view draws none.
+        drawsBackground = false
         documentView = document
         contentView.postsBoundsChangedNotifications = true
         document.onDoubleClick = { [weak self] point in
