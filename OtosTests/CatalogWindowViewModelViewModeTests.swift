@@ -74,30 +74,14 @@ final class FakePreviewLoader: PreviewLoading {
         state.withLock { $0.pending.count }
     }
 
-    /// A held request that never arrives must fail the test, not fall through: a
-    /// release issued before the request is pending leaves that request held forever
-    /// and the test awaiting it hangs the whole suite. The deadline is generous because
-    /// the parallel suite can make the store's first read slow.
-    func waitUntilPending(atLeast count: Int) async {
-        let deadline = Date().addingTimeInterval(15)
-        while Date() < deadline {
-            if state.withLock({ $0.pending.count >= count }) {
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        Issue.record("FakePreviewLoader: fewer than \(count) requests became pending within 15 s")
+    /// A release issued before the request is pending would leave that request held
+    /// forever, so every release waits for its request to arrive first.
+    func waitUntilPending(atLeast count: Int) async throws {
+        try await waitUntil { state.withLock { $0.pending.count >= count } }
     }
 
-    func waitUntilPending(id: MediaAssetID) async {
-        let deadline = Date().addingTimeInterval(15)
-        while Date() < deadline {
-            if state.withLock({ $0.pending.contains { $0.id == id } }) {
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(5))
-        }
-        Issue.record("FakePreviewLoader: \(id.relativePath.rawValue) never became pending within 15 s")
+    func waitUntilPending(id: MediaAssetID) async throws {
+        try await waitUntil { state.withLock { $0.pending.contains { $0.id == id } } }
     }
 
     func preview(for request: PreviewImageLoader.Request) async -> PreviewImageLoader.Outcome {
@@ -117,7 +101,7 @@ final class FakePreviewLoader: PreviewLoading {
 
 @MainActor
 struct CatalogWindowViewModelViewModeTests {
-    @Test func staleDecodeDiscardedByIdentity() async {
+    @Test func staleDecodeDiscardedByIdentity() async throws {
         let fake = FakePreviewLoader()
         await fake.setHold(true)
         let model = makeViewModeModel(loader: fake)
@@ -125,12 +109,12 @@ struct CatalogWindowViewModelViewModeTests {
         model.applyState(makeViewModeState(orderedIDs: ids))
         model.openLoupe(id: ids[0])
         #expect(model.focusedAssetID == ids[0])
-        await fake.waitUntilPending(atLeast: 1)
+        try await fake.waitUntilPending(atLeast: 1)
 
         // Move focus before the first decode completes; owned slot task cancels.
         model.focusNext()
         #expect(model.focusedAssetID == ids[1])
-        await fake.waitUntilPending(atLeast: 2)
+        try await fake.waitUntilPending(atLeast: 2)
 
         let imageX = makeViewModeCGImage(seed: 1)
         await fake.release(id: ids[0], with: .image(imageX, nativePixelSize: nil))
@@ -168,7 +152,7 @@ struct CatalogWindowViewModelViewModeTests {
     /// A failed Move to Trash re-selects the item after the hide already moved focus to
     /// its neighbor. The loupe must decode the restored item, and the neighbor's decode
     /// landing late must not leave the pane on a spinner that nothing will clear.
-    @Test func failedTrashRestoresTheLoupePreviewForTheReselectedItem() async {
+    @Test func failedTrashRestoresTheLoupePreviewForTheReselectedItem() async throws {
         let fake = FakePreviewLoader()
         await fake.setDefaultOutcome(.image(makeViewModeCGImage(seed: 6), nativePixelSize: nil))
         let model = makeViewModeModel(loader: fake)
@@ -180,11 +164,11 @@ struct CatalogWindowViewModelViewModeTests {
 
         await fake.setHold(true)
         model.focusNext()
-        await fake.waitUntilPending(id: ids[1])
+        try await fake.waitUntilPending(id: ids[1])
 
         model.applyMediaTrashEvent(.moveFailed([ids[0]]))
         #expect(model.focusedAssetID == ids[0])
-        await fake.waitUntilPending(id: ids[0])
+        try await fake.waitUntilPending(id: ids[0])
 
         await fake.release(id: ids[1], with: .image(makeViewModeCGImage(seed: 7), nativePixelSize: nil))
         let loupeTask = model.paneRequestTasks[.loupe]
@@ -283,7 +267,7 @@ struct CatalogWindowViewModelViewModeTests {
     /// re-requested every 500 ms and the spinner meant "an attempt failed, another is
     /// coming". The spinner now means "a request is outstanding" (APP-023), so the same
     /// outcome must clear it.
-    @Test func oneResolvedPaneDoesNotDisturbItsSibling() async {
+    @Test func oneResolvedPaneDoesNotDisturbItsSibling() async throws {
         let fake = FakePreviewLoader()
         await fake.setHold(true)
         let model = makeViewModeModel(loader: fake)
@@ -292,7 +276,7 @@ struct CatalogWindowViewModelViewModeTests {
         _ = model.applyGridClick(hit: ids[0], modifiers: [], orderedIDs: ids)
         _ = model.applyGridClick(hit: ids[1], modifiers: [.command], orderedIDs: ids)
         model.enterCompare()
-        await fake.waitUntilPending(atLeast: 2)
+        try await fake.waitUntilPending(atLeast: 2)
 
         let rightTask = model.paneRequestTasks[.compareRight]
         let rightImage = makeViewModeCGImage(seed: 5)
@@ -408,7 +392,7 @@ struct CatalogWindowViewModelViewModeTests {
         let ids = makeViewModeIDs(count: 8)
         model.applyState(makeViewModeState(orderedIDs: ids))
         model.openLoupe(id: ids[0])
-        await fake.waitUntilPending(atLeast: 1)
+        try await fake.waitUntilPending(atLeast: 1)
 
         var publishedWrong = false
         for _ in 0 ..< 20 {
@@ -421,7 +405,7 @@ struct CatalogWindowViewModelViewModeTests {
         }
         let finalFocus = try #require(model.focusedAssetID)
         #expect(finalFocus == ids[7] || finalFocus == ids.last)
-        await fake.waitUntilPending(id: finalFocus)
+        try await fake.waitUntilPending(id: finalFocus)
 
         let finalTask = model.paneRequestTasks[.loupe]
         let image = makeViewModeCGImage(seed: 9)

@@ -1,5 +1,6 @@
 import Foundation
 @testable import OtosKit
+import Synchronization
 
 extension MaterializationResult {
     static var testMaterialized: MaterializationResult {
@@ -50,19 +51,37 @@ func waitForValue<Value>(
     }
 }
 
-/// Turns the main run loop until the grid controller shows `expectedIDs` with no
-/// apply in flight, then turns it once more so the apply's completion block has run.
-/// It is synchronous because diffable apply completion advances only while the run
-/// loop turns. Like `waitUntil`, it has no deadline: each turn parks the thread for
-/// 10 ms, so a hang leaves the host idle for `script/check.sh` to report.
+/// Suspends until everything already enqueued on the main queue has run: it enqueues
+/// a marker and resumes when the marker runs, and the main queue is FIFO. Deferred
+/// AppKit work (a post-layout retry, a diffable apply's completion) lands this way.
+/// It suspends rather than turning a nested run loop: a test runs as a main-queue
+/// job, and the main queue does not drain re-entrantly beneath one.
 @MainActor
-func awaitGridApply(_ controller: MediaGridViewController, expectedIDs: [MediaAssetID]) {
-    while controller.mutationGate.displayedOrderedIDs != expectedIDs
-        || controller.mutationGate.inFlight != .none
-    {
-        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+func drainMainQueue() async {
+    await withCheckedContinuation { continuation in
+        DispatchQueue.main.async { continuation.resume() }
     }
-    RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+}
+
+/// Waits until the grid controller shows `expectedIDs` with no apply in flight, then
+/// drains the main queue so the apply's completion block has run.
+@MainActor
+func awaitGridApply(_ controller: MediaGridViewController, expectedIDs: [MediaAssetID]) async throws {
+    try await waitUntil {
+        controller.mutationGate.displayedOrderedIDs == expectedIDs && controller.mutationGate.inFlight == .none
+    }
+    await drainMainQueue()
+}
+
+/// Suspends until the calling task is cancelled. A fake uses it for work that never
+/// finishes on its own, so nothing about the fake depends on how long a test runs.
+func suspendUntilCancelled() async {
+    let (stream, continuation) = AsyncStream<Never>.makeStream()
+    await withTaskCancellationHandler {
+        for await _ in stream {}
+    } onCancel: {
+        continuation.finish()
+    }
 }
 
 /// Waits until the projection has no pending or in-flight publication, so a test can

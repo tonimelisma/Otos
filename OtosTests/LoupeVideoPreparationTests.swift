@@ -73,11 +73,8 @@ struct LoupeVideoPreparationTests {
 
     /// Polls because preparation is started by `setFocus`'s detail read — an unnamed
     /// task by design (kind resolution), so there is no handle to await.
-    private func waitForVideoState(_ model: CatalogWindowViewModel) async {
-        let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline, model.loupeVideoState == nil {
-            try? await Task.sleep(for: .milliseconds(10))
-        }
+    private func waitForVideoState(_ model: CatalogWindowViewModel) async throws {
+        try await waitUntil { model.loupeVideoState != nil }
     }
 
     @Test func focusingAVideoPreparesItPausedWithoutAClick() async throws {
@@ -86,7 +83,7 @@ struct LoupeVideoPreparationTests {
         model.applyState(makeLoupeVideoState(orderedIDs: [id]))
 
         model.openLoupe(id: id)
-        await waitForVideoState(model)
+        try await waitForVideoState(model)
 
         // No onPlayVideo call anywhere in this test: opening was enough.
         let state = try #require(model.loupeVideoState)
@@ -103,7 +100,7 @@ struct LoupeVideoPreparationTests {
         model.applyState(makeLoupeVideoState(orderedIDs: [id]))
 
         model.openLoupe(id: id)
-        await waitForVideoState(model)
+        try await waitForVideoState(model)
         await model.paneRequestTasks[.loupe]?.value
 
         #expect(model.downloadingSlots.isEmpty)
@@ -114,7 +111,7 @@ struct LoupeVideoPreparationTests {
         let model = await makeModel(store: store, previewOutcome: .unavailable)
         model.applyState(makeLoupeVideoState(orderedIDs: [id]))
         model.openLoupe(id: id)
-        await waitForVideoState(model)
+        try await waitForVideoState(model)
 
         model.exitToGrid()
 

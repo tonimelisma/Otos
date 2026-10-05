@@ -352,12 +352,8 @@ struct MediaTrashCoordinatorTests {
         let trashed = TrashCallRecorder()
         let requester = FakeRequester { _ in
             started.withLock { $0 = true }
-            do {
-                try await Task.sleep(for: .seconds(60))
-            } catch {
-                return .cancelled
-            }
-            return result(.materialized)
+            await suspendUntilCancelled()
+            return .cancelled
         }
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
@@ -425,8 +421,8 @@ extension MediaTrashCoordinatorTests {
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: FakeRequester { _ in
-                do { try await Task.sleep(for: .seconds(60)) } catch { return .cancelled }
-                return result(.materialized)
+                await suspendUntilCancelled()
+                return .cancelled
             },
             status: { local.status($0) },
             trashExecutor: { _ in nil }

@@ -281,10 +281,11 @@ struct CatalogProjectionTests {
 
         try await store.start(scansSavedLibraries: false)
         _ = await recorder.waitForCount(1)
+        let published = await projection.publicationCount
         await projection.updateSidebarSelection(.library(LibraryRootPath(rawValue: "/Users/example/Pictures")))
-        try await assertStateCountStays(recorder, expectedCount: 1, duration: .milliseconds(80))
+        try await waitForProjectionQuiescence(projection)
 
-        #expect(await recorder.count() == 1)
+        #expect(await projection.publicationCount == published)
     }
 }
 
@@ -540,15 +541,6 @@ private func waitForDiagnostics(
     try await waitForValue {
         readableDiagnostics(at: url).flatMap { predicate($0) ? $0 : nil }
     }
-}
-
-private func assertStateCountStays(
-    _ recorder: StateRecorder,
-    expectedCount: Int,
-    duration: Duration
-) async throws {
-    try await Task.sleep(for: duration)
-    #expect(await recorder.count() == expectedCount)
 }
 
 private func readableDiagnostics(at url: URL) -> String? {

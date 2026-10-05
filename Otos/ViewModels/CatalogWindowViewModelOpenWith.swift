@@ -118,10 +118,14 @@ extension CatalogWindowViewModel {
         }
     }
 
+    /// Hands targets to LaunchServices off main. Hand-offs run in submission order:
+    /// each waits for the one before it, so `openTask` is the newest and awaiting it
+    /// awaits them all.
     private func open(_ targets: [URL], with applicationURL: URL, origin: String) {
         let workspace = workspace
         let appID = Bundle(url: applicationURL)?.bundleIdentifier ?? applicationURL.lastPathComponent
-        Task {
+        openTask = Task { [previous = openTask] in
+            await previous?.value
             do {
                 try await workspace.open(targets, withApplicationAt: applicationURL)
                 OtosLog.ui.notice(

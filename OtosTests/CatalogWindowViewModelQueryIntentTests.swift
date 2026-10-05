@@ -108,15 +108,10 @@ private func waitForRequestsReleasingBuilds(
     _ gate: WindowStateBuildGate,
     matching predicate: @escaping @Sendable ([CatalogQueryRequest]) -> Bool
 ) async -> [CatalogQueryRequest] {
-    let releaseTask = Task {
-        while !Task.isCancelled {
-            await gate.releaseAll()
-            try? await Task.sleep(for: .milliseconds(1))
-        }
-    }
-    defer { releaseTask.cancel() }
-
-    return await gate.waitForRequests(matching: predicate)
+    await gate.open()
+    let requests = await gate.waitForRequests(matching: predicate)
+    await gate.close()
+    return requests
 }
 
 @MainActor
@@ -167,6 +162,7 @@ private func testWindowState(
 private actor WindowStateBuildGate {
     private var requests: [CatalogQueryRequest] = []
     private var pausedBuilds: [CheckedContinuation<Void, Never>] = []
+    private var isOpen = false
     private var countWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var requestWaiters: [
         (@Sendable ([CatalogQueryRequest]) -> Bool, CheckedContinuation<[CatalogQueryRequest], Never>)
@@ -176,6 +172,9 @@ private actor WindowStateBuildGate {
         requests.append(request)
         resumeWaiters()
         let buildNumber = requests.count
+        guard !isOpen else {
+            return buildNumber
+        }
         await withCheckedContinuation { continuation in
             pausedBuilds.append(continuation)
         }
@@ -209,6 +208,16 @@ private actor WindowStateBuildGate {
             return
         }
         pausedBuilds.removeFirst().resume()
+    }
+
+    /// Lets every held and later build through until `close()`.
+    func open() {
+        isOpen = true
+        releaseAll()
+    }
+
+    func close() {
+        isOpen = false
     }
 
     func releaseAll() {

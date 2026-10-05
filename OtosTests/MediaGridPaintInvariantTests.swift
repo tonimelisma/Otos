@@ -151,7 +151,6 @@ private final class PaintInvariantHarness {
         window = orderedInTestWindow(width: 800, height: 600, contentView: controller.view)
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
-        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
 
     /// Closes the window deterministically: `makeKeyAndOrderFront` adds it to

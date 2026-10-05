@@ -1072,7 +1072,7 @@ struct EnrichmentCoordinatorTests {
         // Not `needsEnrichment(hashRequired: true)`: the removable asset never gets a
         // hash by design (ADR 0018), so that check would never clear for it. Wait on
         // the enricher-recorded outcome instead.
-        _ = await recorder.waitForBoth()
+        try await recorder.waitForBoth()
         await coordinator.shutdown()
 
         #expect(await recorder.shouldHash(name: "fixed.jpg") == true)
@@ -1091,10 +1091,8 @@ private actor ShouldHashRecorder {
         valuesByName[name]
     }
 
-    func waitForBoth() async {
-        while valuesByName["fixed.jpg"] == nil || valuesByName["card.jpg"] == nil {
-            try? await Task.sleep(for: .milliseconds(20))
-        }
+    func waitForBoth() async throws {
+        try await waitUntil { valuesByName["fixed.jpg"] != nil && valuesByName["card.jpg"] != nil }
     }
 }
 
@@ -1159,12 +1157,8 @@ private actor HeldMaterializationExecutor {
     func run(_ url: URL) async -> MaterializationResult {
         _ = url
         starts += 1
-        do {
-            try await Task.sleep(for: .seconds(60))
-            return .testMaterialized
-        } catch {
-            return .cancelled
-        }
+        await suspendUntilCancelled()
+        return .cancelled
     }
 
     func waitForStarts(_ expected: Int) async throws {

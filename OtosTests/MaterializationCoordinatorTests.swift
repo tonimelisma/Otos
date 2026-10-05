@@ -18,7 +18,7 @@ struct MaterializationCoordinatorTests {
                 request("shared.jpg", priority: .interactive)
             )
         }
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForAdmission(coordinator) { await coordinator.stateSnapshot().waiters == 2 }
         #expect(await executor.startedNames() == ["shared.jpg"])
         try await executor.releaseNext()
         #expect(await (first.value).isMaterialized)
@@ -87,7 +87,7 @@ struct MaterializationCoordinatorTests {
         let first = Task { await coordinator.materialize(request("first.arw", priority: .device)) }
         try await executor.waitForStarts(1)
         let second = Task { await coordinator.materialize(request("second.arw", priority: .device)) }
-        try await Task.sleep(for: .milliseconds(30))
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
 
         #expect(
             await executor.startedNames() == ["first.arw"],
@@ -144,7 +144,7 @@ struct MaterializationCoordinatorTests {
         let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
         try await executor.waitForStarts(1)
         let second = Task { await coordinator.materialize(request("two.jpg", priority: .background)) }
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
         #expect(await executor.startedNames() == ["one.jpg"])
         try await executor.releaseNext()
         try await executor.waitForStarts(2)
@@ -166,7 +166,7 @@ struct MaterializationCoordinatorTests {
         let first = Task { await coordinator.materialize(request("one.jpg", priority: .background)) }
         try await executor.waitForStarts(1)
         let queued = Task { await coordinator.materialize(request("two.jpg", priority: .background)) }
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
         let trash = Task { await coordinator.materialize(request("trash.jpg", priority: .command)) }
         try await executor.waitForStarts(2)
         #expect(await executor.startedNames() == ["one.jpg", "trash.jpg"])
@@ -280,7 +280,7 @@ struct MaterializationCoordinatorTests {
         let active = Task { await coordinator.materialize(request("active.jpg", priority: .interactive)) }
         try await executor.waitForStarts(1)
         let queued = Task { await coordinator.materialize(request("queued.jpg", priority: .interactive)) }
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
         #expect(diagnostics.blockedCount() == 1)
         try await executor.releaseNext()
         try await executor.waitForStarts(2)
@@ -310,7 +310,7 @@ struct MaterializationCoordinatorTests {
         let device = Task {
             await coordinator.materialize(request("device.jpg", priority: .device))
         }
-        try await Task.sleep(for: .milliseconds(30))
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() == 1 }
         #expect(await executor.startedNames() == ["active.jpg"])
 
         interactive.cancel()
@@ -350,7 +350,8 @@ struct MaterializationCoordinatorTests {
         #expect(await !(interactive.value).isMaterialized)
 
         try await executor.releaseNext()
-        try await Task.sleep(for: .milliseconds(30))
+        try await executor.waitForStarts(2)
+        try await waitUntil { await coordinator.isQuiescent }
         #expect(await executor.startedNames().count == 2)
 
         try await executor.releaseNext()
@@ -385,8 +386,7 @@ struct MaterializationCoordinatorTests {
         let queued = Task {
             await coordinator.materialize(request("queued.jpg", root: "/other-library", priority: .background))
         }
-        try await waitUntil(every: .milliseconds(10)) { await coordinator.queuedRequestCount() >= 1 }
-        try await Task.sleep(for: .milliseconds(30))
+        try await waitForAdmission(coordinator) { await coordinator.queuedRequestCount() >= 1 }
         #expect(diagnostics.blockedCount() >= 1)
         #expect(diagnostics.unblockedCount() == 0)
 
@@ -531,12 +531,8 @@ private actor HeldInteractiveExecutor {
         started = true
         waiters.forEach { $0.resume() }
         waiters.removeAll()
-        do {
-            try await Task.sleep(for: .seconds(60))
-            return .testMaterialized
-        } catch {
-            return .cancelled
-        }
+        await suspendUntilCancelled()
+        return .cancelled
     }
 
     func waitForStart() async throws {
@@ -546,4 +542,14 @@ private actor HeldInteractiveExecutor {
     func hasStarted() -> Bool {
         started
     }
+}
+
+/// Waits until `registered` holds and admission has run since, so what admission
+/// decided about the request — including that it started nothing — is final.
+private func waitForAdmission(
+    _ coordinator: MaterializationCoordinator,
+    after registered: () async -> Bool
+) async throws {
+    try await waitUntil { await registered() }
+    try await waitUntil { await coordinator.isQuiescent }
 }

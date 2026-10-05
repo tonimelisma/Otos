@@ -105,7 +105,7 @@ struct CatalogWindowViewModelCurationTests {
         model.startMediaChoiceForwarding(store: model.catalogStore)
 
         model.submitMediaChoice(.liked, origin: .keyboard)
-        try await Task.sleep(for: .milliseconds(50))
+        try await waitUntil { model.hasSettledMediaChoices }
 
         #expect(model.gridSelection.selection == [ids[0]])
         model.mediaChoiceForwardingTask?.cancel()

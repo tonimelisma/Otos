@@ -239,7 +239,31 @@ actor CatalogStore {
     private var isRevisitingDirtyRoots = false
     private var filesystemWatchingArmed: Set<LibraryRootPath> = []
     private var filesystemDebounceTasks: [LibraryRootPath: Task<Void, Never>] = [:]
+    /// Which debounce task is current per root, so a finished task clears its entry
+    /// only when no newer event has replaced it.
+    private var filesystemDebounceGenerations: [LibraryRootPath: UInt64] = [:]
     private var filesystemEventBatches: [LibraryRootPath: [FilesystemEvent]] = [:]
+    /// Filesystem events this Store has handled — dropped, deferred or batched. With
+    /// `isFilesystemQuiescent` it says what the Store did with an event, so a caller
+    /// never has to guess how long event delivery and reconciliation take.
+    private(set) var handledFilesystemEventCount = 0
+    /// Callers that found the initial load already running and awaited it instead of
+    /// starting their own database read.
+    private(set) var joinedInitialLoadCount = 0
+
+    /// True when no filesystem event is waiting out its debounce or unprocessed in a
+    /// batch, no scan is active or queued, and no dirty scope is retained: everything
+    /// the Store was told about the filesystem has been acted on.
+    var isFilesystemQuiescent: Bool {
+        filesystemDebounceTasks.isEmpty
+            && filesystemEventBatches.isEmpty
+            && scanLeases.activeScan == nil
+            && scanLeases.pendingScanPaths.isEmpty
+            && scanLeases.rescanAfterCurrentScan.isEmpty
+            && filesystemDirty.isEmpty
+            && !isRevisitingDirtyRoots
+    }
+
     /// Per-root typed dirty-scope accumulator. Events that arrive while a lease
     /// owns the root retain file/subtree/root granularity here instead of being
     /// collapsed into an unconditional full-root rescan.
@@ -1470,6 +1494,7 @@ extension CatalogStore {
             return
         }
         if let startupTask {
+            joinedInitialLoadCount += 1
             OtosLog.persistence.debug("Catalog startup joined existing load")
             OtosLog.catalog.noticeOperation("catalog.start", phase: "coalesced")
             try await startupTask.value
@@ -3403,6 +3428,7 @@ private extension CatalogStore {
     private func handleFilesystemEvent(_ event: FilesystemEvent) {
         let signpost = OtosSignpost.catalog.beginInterval("FilesystemEventDebounce")
         defer {
+            handledFilesystemEventCount += 1
             OtosSignpost.catalog.endInterval("FilesystemEventDebounce", signpost)
         }
 
@@ -3471,12 +3497,17 @@ private extension CatalogStore {
         filesystemDebounceTasks[root]?.cancel()
         let debounce = filesystemEventDebounce
         let sleep = filesystemEventSleep
+        let generation = (filesystemDebounceGenerations[root] ?? 0) &+ 1
+        filesystemDebounceGenerations[root] = generation
         filesystemDebounceTasks[root] = Task { [root, sleep] in
             await sleep(debounce)
             guard !Task.isCancelled else {
                 return
             }
             await processFilesystemEventBatch(for: root)
+            if filesystemDebounceGenerations[root] == generation {
+                filesystemDebounceTasks.removeValue(forKey: root)
+            }
         }
     }
 
@@ -4027,6 +4058,7 @@ private extension CatalogStore {
     private func cancelFilesystemDebounce(for root: LibraryRootPath) {
         filesystemDebounceTasks[root]?.cancel()
         filesystemDebounceTasks.removeValue(forKey: root)
+        filesystemDebounceGenerations.removeValue(forKey: root)
         filesystemEventBatches.removeValue(forKey: root)
         filesystemDirty.removeValue(forKey: root)
     }

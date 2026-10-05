@@ -45,6 +45,9 @@ actor CatalogProjection {
     /// publication skips it; the count is the observable "full-catalog re-sort per
     /// enrichment batch" metric (ADR 0011) and drives the regression test.
     private(set) var orderQueryCount: UInt64 = 0
+    /// Window states published so far. Read with `isQuiescent`, it says whether a change
+    /// published anything, without depending on when a subscriber receives it.
+    private(set) var publicationCount: UInt64 = 0
     var detailRefreshGeneration: UInt64 = 0
 
     /// True when no change is pending and no publication is in flight. Lets a test
@@ -367,6 +370,7 @@ private extension CatalogProjection {
 
     private func yield(_ state: CatalogWindowState) {
         lastPublishedState = state
+        publicationCount += 1
         for continuation in continuations.values {
             continuation.yield(state)
         }

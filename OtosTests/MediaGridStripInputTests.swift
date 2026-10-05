@@ -46,7 +46,7 @@ struct MediaGridStripInputTests {
         #expect(controller.pendingFocusTargetID == target)
     }
 
-    @Test func focusTargetParkedBeforeWindowScrollsOnViewDidAppear() {
+    @Test func focusTargetParkedBeforeWindowScrollsOnViewDidAppear() async {
         let controller = MediaGridViewController(
             presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
         )
@@ -65,7 +65,7 @@ struct MediaGridStripInputTests {
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
         // Flush the deferred viewDidLayout focus retry (scroll mid-layout is a no-op).
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        await drainMainQueue()
         if controller.pendingFocusTargetID != nil {
             controller.viewDidAppear()
         }
@@ -74,7 +74,7 @@ struct MediaGridStripInputTests {
         assertStripFocusCentered(controller, target: target)
     }
 
-    @Test func focusTargetRetryOnRedeliveredSameID() {
+    @Test func focusTargetRetryOnRedeliveredSameID() async {
         let controller = MediaGridViewController(
             presentation: .strip(tileEdge: MediaGridPresentation.defaultStripTileEdge)
         )
@@ -93,7 +93,7 @@ struct MediaGridStripInputTests {
         controller.collectionView.layoutSubtreeIfNeeded()
         // Flush deferred layout retry so the park is cleared before redelivery,
         // or still pending if layout attributes were not ready yet.
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+        await drainMainQueue()
 
         // Same id redelivery must retry a parked target (belt-and-braces for
         // update-pass ordering where appear has not yet run).

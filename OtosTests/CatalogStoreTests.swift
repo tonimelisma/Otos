@@ -414,10 +414,8 @@ struct CatalogStoreTests {
         }
 
         let hangingScanner = CatalogScanner { _, _, _ in
-            while true {
-                try Task.checkCancellation()
-                try await Task.sleep(for: .seconds(1))
-            }
+            await suspendUntilCancelled()
+            throw CancellationError()
         }
         let secondStore = CatalogStore(
             location: .databaseFile(databaseURL),

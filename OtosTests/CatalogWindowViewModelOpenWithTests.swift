@@ -9,14 +9,14 @@ import Testing
 /// else, and the menu model is rebuilt newest-wins.
 @MainActor
 struct CatalogWindowViewModelOpenWithTests {
-    @Test func noTargetsLeavesMenuEmptyAndOpensNothing() async throws {
+    @Test func noTargetsLeavesMenuEmptyAndOpensNothing() async {
         let workspace = RecordingWorkspace(defaults: ["jpg": .preview], applications: ["jpg": [.preview]])
         let model = makeOpenWithModel(workspace: workspace)
         model.applyState(openWithWindowState(ids: makeIDs(count: 2)))
 
         model.openTargetsInDefaultApplication()
-        try await Task.sleep(for: .milliseconds(30))
 
+        #expect(model.openTask == nil)
         #expect(model.openWithMenu == .empty)
         #expect(await workspace.opens.isEmpty)
     }
@@ -115,15 +115,13 @@ struct CatalogWindowViewModelOpenWithTests {
 
         _ = model.applyGridClick(hit: jpg, modifiers: [], orderedIDs: ids)
         try await waitUntil { gate.hasEntered }
+        let staleBuild = try #require(model.openWithMenuTask)
         _ = model.applyGridClick(hit: mov, modifiers: [], orderedIDs: ids)
         try await waitUntil { model.openWithMenu.defaultsByTarget[mov.fileURL] == .quickTime }
 
         gate.release()
-        try await waitUntil { gate.hasReturned }
-        // Give the stale build room to land. This bound can only let a regression
-        // pass unseen under load, never fail a correct build: the positive facts
-        // above are all awaited, not timed.
-        try await Task.sleep(for: .milliseconds(50))
+        // The stale build has returned and either applied or discarded its menu.
+        await staleBuild.value
 
         #expect(model.openWithMenu.openTitle == "Open in QuickTime Player")
         #expect(model.openWithMenu.defaultsByTarget[mov.fileURL] == .quickTime)

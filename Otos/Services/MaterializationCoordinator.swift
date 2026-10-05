@@ -109,6 +109,11 @@ actor MaterializationCoordinator: MaterializationRequesting {
     private let clock = ContinuousClock()
     private let wakeStream: AsyncStream<Void>
     private let wakeContinuation: AsyncStream<Void>.Continuation
+    /// Wakes sent, and the newest one a scheduling pass has covered. The wake stream
+    /// keeps only the newest value, so the counts — not the stream — say whether every
+    /// registration, release and cancellation so far has been through admission.
+    private var wakeGeneration: UInt64 = 0
+    private var passedWakeGeneration: UInt64 = 0
 
     private var pendingByID: [MediaAssetID: PendingEntry] = [:]
     private var interactiveQueue: [MediaAssetID] = []
@@ -268,6 +273,13 @@ actor MaterializationCoordinator: MaterializationRequesting {
 
     func queuedRequestCount() -> Int {
         pendingByID.count
+    }
+
+    /// True once every wake sent so far has been handled by a scheduling pass, so a
+    /// caller can assert what admission decided — including that it started nothing —
+    /// instead of guessing how long admission takes.
+    var isQuiescent: Bool {
+        passedWakeGeneration == wakeGeneration
     }
 
     /// Answers "has the work `EnrichmentCoordinator` is responsible for under this
@@ -434,6 +446,9 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard !isShuttingDown else {
             return
         }
+        // A pass sees every state change made before it starts; a wake raised during
+        // the pass gets a later pass.
+        passedWakeGeneration = wakeGeneration
         var admitted = 0
         var rejections: [MaterializationAdmissionPolicy.Rejection: Int] = [:]
         let selectedPriority = selectedPendingPriority()
@@ -829,6 +844,7 @@ actor MaterializationCoordinator: MaterializationRequesting {
         guard !isShuttingDown else {
             return
         }
+        wakeGeneration &+= 1
         wakeContinuation.yield()
     }
 

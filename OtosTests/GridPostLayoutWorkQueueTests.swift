@@ -28,7 +28,7 @@ struct GridPostLayoutWorkQueueTests {
         queue.runDeferredWork()
         queue.runDeferredWork()
         ready = true
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitUntil { !queue.hasDeferredTurnScheduled }
 
         #expect(runs == ["newest"])
     }
@@ -41,7 +41,7 @@ struct GridPostLayoutWorkQueueTests {
         _ = queue.submit(.detailAndPreheat, reason: "details") { runs += 1 }
         queue.runDeferredWork()
         ready = true
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitUntil { !queue.hasDeferredTurnScheduled }
         #expect(runs == 2)
     }
 
@@ -51,11 +51,11 @@ struct GridPostLayoutWorkQueueTests {
         let queue = GridPostLayoutWorkQueue(isReady: { ready }, flushLayout: {})
         _ = queue.submit(.focusScroll, reason: "focus") { runs += 1 }
         queue.runDeferredWork()
-        try await Task.sleep(for: .milliseconds(10))
+        try await waitUntil { !queue.hasDeferredTurnScheduled }
         #expect(runs == 0)
         ready = true
         queue.runDeferredWork()
-        try await Task.sleep(for: .milliseconds(20))
+        try await waitUntil { !queue.hasDeferredTurnScheduled }
         #expect(runs == 1)
     }
 }
