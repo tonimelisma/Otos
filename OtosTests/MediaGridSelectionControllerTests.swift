@@ -368,19 +368,7 @@ private final class GridSelectionTestHarness {
         // A real window (off-screen) is required for layout, hit-testing, and first
         // responder. `indexPathForItem(at:)` and `layoutAttributesForItem(at:)` only
         // return non-nil after the collection view has been laid out in a window.
-        window = NSWindow(
-            contentRect: NSRect(x: -4000, y: -4000, width: 800, height: 600),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        // Swift owns this window through a strong reference, so AppKit must not
-        // also release it on close — the default `true` makes `close()` an extra
-        // release on top of ARC's, which is an over-release, and `objc_release`
-        // crashes during suite runs are already on record for these harnesses.
-        window.isReleasedWhenClosed = false
-        window.contentView = controller.view
-        window.makeKeyAndOrderFront(nil)
+        window = orderedInTestWindow(width: 800, height: 600, contentView: controller.view)
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
         // Run a run-loop pass so AppKit completes layout and the data source reflects

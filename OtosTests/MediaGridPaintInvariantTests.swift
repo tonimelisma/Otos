@@ -148,19 +148,7 @@ private final class PaintInvariantHarness {
         _ = controller.mutationGate.receive(grid)
         _ = controller.mutationGate.completeStructuralApply(applied: grid)
 
-        window = NSWindow(
-            contentRect: NSRect(x: -4000, y: -4000, width: 800, height: 600),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        // Swift owns this window through a strong reference, so AppKit must not
-        // also release it on close — the default `true` makes `close()` an extra
-        // release on top of ARC's, which is an over-release, and `objc_release`
-        // crashes during suite runs are already on record for these harnesses.
-        window.isReleasedWhenClosed = false
-        window.contentView = controller.view
-        window.makeKeyAndOrderFront(nil)
+        window = orderedInTestWindow(width: 800, height: 600, contentView: controller.view)
         controller.view.layoutSubtreeIfNeeded()
         controller.collectionView.layoutSubtreeIfNeeded()
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
