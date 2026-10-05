@@ -93,7 +93,7 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("focus moved") { model.focusedAssetID != fixture.ids[2] }
+        try await waitUntil { model.focusedAssetID != fixture.ids[2] }
         #expect(model.focusedAssetID == fixture.ids[1])
         #expect(model.gridSelection.selection == [fixture.ids[1]])
     }
@@ -107,7 +107,7 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("focus moved") { model.focusedAssetID != fixture.ids[1] }
+        try await waitUntil { model.focusedAssetID != fixture.ids[1] }
         #expect(model.focusedAssetID == fixture.ids[2])
     }
 
@@ -120,7 +120,7 @@ struct CatalogWindowViewModelTrashTests {
 
         model.moveTargetedMediaToTrash()
 
-        try await waitForTrash("selection moved") { model.gridSelection.selection == [fixture.ids[0]] }
+        try await waitUntil { model.gridSelection.selection == [fixture.ids[0]] }
     }
 
     @Test func noTargetDoesNothing() {

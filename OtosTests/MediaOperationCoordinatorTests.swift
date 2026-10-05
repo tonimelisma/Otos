@@ -519,17 +519,13 @@ struct MediaOperationCoordinatorTests {
         let second = cardRoot.appending(path: "second.jpg")
         try writeCatalogStoreFile(second, contents: "more-jpeg-bytes")
         emit(FilesystemEvent(path: second.path(percentEncoded: false), flags: 0))
-        var waiting = false
-        let waitDeadline = ContinuousClock().now + .seconds(8)
-        while !waiting, ContinuousClock().now < waitDeadline {
+        try await waitUntil(every: .milliseconds(10)) {
             let presentation = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
             if case .waitingForMetadata = presentation?.state {
-                waiting = true
-            } else {
-                try await Task.sleep(for: .milliseconds(10))
+                return true
             }
+            return false
         }
-        try #require(waiting, "the new pending row never put the card into the metadata wait")
 
         // A rebuild over the still-pending set must keep reporting the count, never
         // the plan proven before the new row existed.
