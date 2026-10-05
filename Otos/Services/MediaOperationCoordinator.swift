@@ -227,8 +227,9 @@ actor MediaOperationCoordinator {
         /// published. Scoped to the attachment, so a new card starts from nothing.
         var lastNamingProgress: NamingProgress?
         /// The most recent settled `.completed` execution's outcome. Set in the
-        /// same transaction as `phase = .completed`; only meaningful while
-        /// `phase` is `.completed`.
+        /// same transaction as `phase = .completed`; presented while `phase` is
+        /// `.completed` and through the re-plan that follows. Cleared when the card
+        /// enters `.waitingForMetadata`, whose pending rows the run never saw.
         var settledOutcome: SettledOutcome?
         /// The most recent plan this attachment actually proved, kept across the
         /// rebuilds that follow it. A re-plan overwrites `phase` with `.building`, so
@@ -1879,8 +1880,12 @@ actor MediaOperationCoordinator {
         // so it no longer describes the card. Holding it across the rebuilds that follow
         // drew it as Ready — and the sidebar row as its eject button — between every pair
         // of Preparing frames, once a second for the whole metadata wait (2026-10-04: a
-        // 75-item plan alternating with `waitingForMetadata(done:, total: 930)`).
+        // 75-item plan alternating with `waitingForMetadata(done:, total: 930)`). A settled
+        // run is dropped for the same reason: it describes the card before these rows,
+        // and holding it drew Done between Preparing frames after a card gained files.
+        // What the run copied stays in `lastCompletion`.
         session.lastReadyContext = nil
+        session.settledOutcome = nil
         sourceSessions[source] = session
         publish()
         return true
@@ -1952,7 +1957,7 @@ actor MediaOperationCoordinator {
         // its own fact so the mapper disables Import (`import-bar.md` row 7).
         let state: MediaOperationSourceState = switch session.phase {
         case .inventory:
-            heldPlanState(for: session) ?? settlementState(for: session) ?? .inventory
+            interimState(for: session) ?? .inventory
         // Deliberately *not* held across `.waitingForMetadata`. `.building` and
         // `.inventory` re-derive a plan over a set whose naming facts are already
         // proven, so the old answer stays true until the new one lands. Waiting for
@@ -1963,19 +1968,10 @@ actor MediaOperationCoordinator {
         // progress is the honest thing to draw.
         case let .waitingForMetadata(done, total):
             .waitingForMetadata(done: done, total: total)
-        // A rebuild that has no proven plan to fall back on still has a proven *count*.
-        // `.planning` draws neither, so it is the last resort rather than the default: it
-        // is correct only before this attachment has reported any naming progress at all.
+        // `.planning` draws neither a plan nor a count, so it is the last resort: it is
+        // correct only before this attachment has proven anything at all.
         case .building:
-            if let held = heldPlanState(for: session) {
-                held
-            } else if let settlement = settlementState(for: session) {
-                settlement
-            } else if let progress = session.lastNamingProgress {
-                .waitingForMetadata(done: progress.done, total: progress.total)
-            } else {
-                .planning
-            }
+            interimState(for: session) ?? .planning
         case let .ready(ctx):
             readyState(for: session, ctx: ctx)
         case .executing:
@@ -2002,6 +1998,18 @@ actor MediaOperationCoordinator {
             }
         }
         return makePresentation(session: session, state: state)
+    }
+
+    /// What a session between proofs shows while a newer plan is coming: the last
+    /// thing this attachment proved — a plan, then a settled run, then a naming count.
+    /// Shared by `.inventory` and `.building` so a stale build and a rebuild draw the
+    /// same answer. Entering `.waitingForMetadata` drops the plan and the settlement,
+    /// so during a metadata wait the count is the only answer left, and every frame
+    /// between two counts is a count too.
+    private func interimState(for session: SourceSession) -> MediaOperationSourceState? {
+        heldPlanState(for: session)
+            ?? settlementState(for: session)
+            ?? session.lastNamingProgress.map { .waitingForMetadata(done: $0.done, total: $0.total) }
     }
 
     /// `runExecution` sets `lastProgress` in the same transaction it sets
