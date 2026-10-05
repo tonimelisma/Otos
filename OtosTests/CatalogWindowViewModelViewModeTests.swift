@@ -165,6 +165,66 @@ struct CatalogWindowViewModelViewModeTests {
         #expect(requested.contains(ids[2]))
     }
 
+    /// A failed Move to Trash re-selects the item after the hide already moved focus to
+    /// its neighbor. The loupe must decode the restored item, and the neighbor's decode
+    /// landing late must not leave the pane on a spinner that nothing will clear.
+    @Test func failedTrashRestoresTheLoupePreviewForTheReselectedItem() async {
+        let fake = FakePreviewLoader()
+        await fake.setDefaultOutcome(.image(makeViewModeCGImage(seed: 6), nativePixelSize: nil))
+        let model = makeViewModeModel(loader: fake)
+        let ids = makeViewModeIDs(count: 3)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        model.openLoupe(id: ids[0])
+        await model.paneRequestTasks[.loupe]?.value
+        #expect(model.panePreviews[.loupe]?.id == ids[0])
+
+        await fake.setHold(true)
+        model.focusNext()
+        await fake.waitUntilPending(id: ids[1])
+
+        model.applyMediaTrashEvent(.moveFailed([ids[0]]))
+        #expect(model.focusedAssetID == ids[0])
+        await fake.waitUntilPending(id: ids[0])
+
+        await fake.release(id: ids[1], with: .image(makeViewModeCGImage(seed: 7), nativePixelSize: nil))
+        let loupeTask = model.paneRequestTasks[.loupe]
+        await fake.release(id: ids[0], with: .image(makeViewModeCGImage(seed: 8), nativePixelSize: nil))
+        await loupeTask?.value
+
+        #expect(model.panePreviews[.loupe]?.id == ids[0])
+        #expect(!model.downloadingSlots.contains(.loupe))
+    }
+
+    /// A reorganization rename moves the focused asset to a new identity; the loupe
+    /// must decode it under that identity rather than hold the old one's slot.
+    @Test func identityRemapReRequestsTheLoupePreviewUnderTheNewIdentity() async {
+        let fake = FakePreviewLoader()
+        await fake.setDefaultOutcome(.image(makeViewModeCGImage(seed: 9), nativePixelSize: nil))
+        let model = makeViewModeModel(loader: fake)
+        let ids = makeViewModeIDs(count: 2)
+        model.applyState(makeViewModeState(orderedIDs: ids))
+        model.openLoupe(id: ids[0])
+        await model.paneRequestTasks[.loupe]?.value
+        #expect(model.panePreviews[.loupe]?.id == ids[0])
+
+        let renamed = MediaAssetID(
+            libraryRootPath: ids[0].libraryRootPath,
+            relativePath: MediaRelativePath(rawValue: "renamed.jpg")
+        )
+        model.applyIdentityRemapBatch(
+            CatalogIdentityRemapBatch(
+                libraryRootPath: ids[0].libraryRootPath,
+                remaps: [CatalogIdentityRemap(oldID: ids[0], newID: renamed)],
+                rootRevision: 1
+            )
+        )
+        await model.paneRequestTasks[.loupe]?.value
+
+        #expect(model.focusedAssetID == renamed)
+        #expect(model.panePreviews[.loupe]?.id == renamed)
+        #expect(!model.downloadingSlots.contains(.loupe))
+    }
+
     @Test func pairChangeClearsOnlyChangedSlots() async {
         let fake = FakePreviewLoader()
         let image = makeViewModeCGImage(seed: 4)

@@ -334,7 +334,6 @@ extension CatalogWindowViewModel {
             guard focusedAssetID == command.ids.first else { return }
             gridSelection = gridSelection.plainClick(advanceTo)
             setFocus(advanceTo)
-            refreshPanePreviews()
         case .compare:
             guard comparePair == command.comparePair,
                   activeComparePane == command.comparePane

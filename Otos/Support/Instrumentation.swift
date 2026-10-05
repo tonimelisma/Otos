@@ -113,6 +113,10 @@ nonisolated enum ErrorDiagnostics {
             prefix: nsError.domain,
             "\(prefix)Code": "\(nsError.code)",
             "\(prefix)Description": nsError.localizedDescription,
+            // Which keys the error carried at all: an empty list says the in-process
+            // error holds nothing more and the cause is outside it (e.g. a TCC refusal
+            // that only the kernel's sandbox log names).
+            "\(prefix)UserInfoKeys": nsError.userInfo.keys.sorted().joined(separator: ","),
         ]
         if let path = nsError.userInfo[NSFilePathErrorKey] as? String {
             out["\(prefix)Path"] = path

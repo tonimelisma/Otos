@@ -140,6 +140,9 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var loupeZoomGeneration: UInt64 = 0
     /// Focused assets whose full-resolution decode has been requested this focus.
     @ObservationIgnored var fullResolutionRequestedIDs: Set<MediaAssetID> = []
+    /// The focused asset whose "decode already sufficient" outcome has been logged, so
+    /// the per-report re-evaluation records it once per focus.
+    @ObservationIgnored var fullResolutionSkipLoggedID: MediaAssetID?
     /// Loupe info overlay (APP-041): session-only toggle and the facts it shows.
     var showsLoupeInfo = false
     var loupeInfo: LoupeInfoModel?
