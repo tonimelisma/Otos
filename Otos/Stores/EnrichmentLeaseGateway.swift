@@ -48,14 +48,14 @@ nonisolated enum EnrichmentLeaseGateway {
         ids: [MediaAssetID],
         assetsByID: [MediaAssetID: MediaAsset],
         rootIDsByPath: [LibraryRootPath: Int64],
-        isRootAvailable: (LibraryRootPath) -> Bool,
+        isRootEnrichable: (LibraryRootPath) -> Bool,
         isHashRequired: (LibraryRootPath) -> Bool
     ) -> [(asset: MediaAsset, rootID: Int64, hashRequired: Bool)] {
         var eligibleClaims: [(asset: MediaAsset, rootID: Int64, hashRequired: Bool)] = []
         eligibleClaims.reserveCapacity(ids.count)
         for id in ids {
             guard let asset = assetsByID[id],
-                  isRootAvailable(asset.libraryRootPath),
+                  isRootEnrichable(asset.libraryRootPath),
                   let rootID = rootIDsByPath[asset.libraryRootPath]
             else {
                 continue

@@ -402,12 +402,6 @@ struct MaterializationCoordinatorTests {
         await coordinator.shutdown()
     }
 
-    @Test func closureMaterializationRequesterReportsNoActiveRequests() async {
-        let requester = ClosureMaterializationRequester(operation: { _ in .testMaterialized })
-        let count = await requester.activeRequestCount(under: LibraryRootPath(rawValue: "/library"))
-        #expect(count == 0)
-    }
-
     private func request(
         _ name: String,
         root: String = "/library",

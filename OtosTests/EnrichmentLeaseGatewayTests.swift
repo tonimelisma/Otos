@@ -73,7 +73,7 @@ struct EnrichmentLeaseGatewayTests {
             ids: [id, currentAsset.id],
             assetsByID: assetsByID,
             rootIDsByPath: rootIDsByPath,
-            isRootAvailable: { $0 == rootPath },
+            isRootEnrichable: { $0 == rootPath },
             isHashRequired: { _ in true }
         )
 

@@ -168,6 +168,9 @@ actor EnrichmentCoordinator {
     var readyClaims: [MediaAssetID: ClaimedWorkRecord] = [:]
     var materializationDemands: [MediaAssetID: DownloadWork] = [:]
     var materializingIDs: Set<MediaAssetID> = []
+    /// Callers of `drainWork(under:)` waiting for a root's work to end, resumed by
+    /// `resumeDrainedWaiters()` whenever a piece of work finishes.
+    var drainWaiters: [UUID: (rootPath: LibraryRootPath, continuation: CheckedContinuation<Void, Never>)] = [:]
     var materializationClaimIDs: Set<MediaAssetID> = []
     var pendingApplyClaimIDs: Set<MediaAssetID> = []
     var deviceRootPaths: Set<LibraryRootPath> = []
@@ -343,6 +346,7 @@ extension EnrichmentCoordinator {
         diagnosedThumbnailLifecycleIDs.removeAll()
         freshly.removeAll()
         signalContinuation.finish()
+        resumeDrainedWaiters()
     }
 
     func updateViewport(_ ids: [MediaAssetID]) {
@@ -449,23 +453,86 @@ extension EnrichmentCoordinator {
         )
     }
 
-    /// Waits until no enrichment/download work remains under `rootPath`, or until
-    /// `timeout`. Returns `true` when drained, `false` when work was still in flight
-    /// at the deadline (callers log the timeout; eject still proceeds and may fail busy).
-    @discardableResult
-    func drainWork(under rootPath: LibraryRootPath, timeout: Duration = .seconds(5)) async -> Bool {
-        let deadline = Date().addingTimeInterval(Double(timeout.components.seconds))
-        while await hasInFlightWork(under: rootPath), Date() < deadline {
-            do {
-                try await Task.sleep(for: .milliseconds(100))
-            } catch {
-                return await !hasInFlightWork(under: rootPath)
+    /// Stops starting work under `rootPath` and waits until none it started is still
+    /// running. Eject calls it after quiescing the source: the Store then offers no new
+    /// claims there, and the work this drops was never started, so what remains is
+    /// finite and the wait ends when the last piece finishes, not after a guessed
+    /// interval. The shared materialization
+    /// coordinator needs no separate check: every request this coordinator submits is in
+    /// `materializingIDs` from submission until its result comes back, so a root with no
+    /// local work has no enrichment-origin transfer either (interactive previews never
+    /// counted). A cancelled caller stops waiting at once.
+    func drainWork(under rootPath: LibraryRootPath) async {
+        let dropped = dropQueuedWork(under: rootPath)
+        let running = runningWorkCount(under: rootPath)
+        OtosLog.metadata.notice(
+            "op=enrichment.drain phase=start rootPath=\(rootPath.rawValue, privacy: .public) dropped=\(dropped, privacy: .public) running=\(running, privacy: .public)"
+        )
+        let id = UUID()
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard hasInFlightWork(under: rootPath), !Task.isCancelled else {
+                    continuation.resume()
+                    return
+                }
+                drainWaiters[id] = (rootPath, continuation)
             }
+        } onCancel: {
+            Task { await self.resumeDrainWaiter(id) }
         }
-        return await !hasInFlightWork(under: rootPath)
     }
 
-    private func hasInFlightWork(under rootPath: LibraryRootPath) async -> Bool {
+    /// Drops the work claimed under `rootPath` but not started: queued enrichment,
+    /// downloads not yet submitted, and device-staging seeds. The Store released those
+    /// claims when it quiesced the source, so nothing is owed for them.
+    /// Returns how many pieces of work it dropped.
+    private func dropQueuedWork(under rootPath: LibraryRootPath) -> Int {
+        var dropped = 0
+        for (id, record) in readyClaims where id.libraryRootPath == rootPath {
+            if case .queuedEnrichment = record.state {
+                readyClaims[id] = nil
+                dropped += 1
+            }
+        }
+        for id in materializationDemands.keys where id.libraryRootPath == rootPath && !materializingIDs.contains(id) {
+            materializationDemands[id] = nil
+            materializationClaimIDs.remove(id)
+            dropped += 1
+        }
+        let seedsBefore = pendingDeviceSeeds.count
+        pendingDeviceSeeds.removeAll { $0.id.libraryRootPath == rootPath }
+        return dropped + seedsBefore - pendingDeviceSeeds.count
+    }
+
+    private func runningWorkCount(under rootPath: LibraryRootPath) -> Int {
+        let enriching = readyClaims.count { id, record in
+            guard id.libraryRootPath == rootPath, case .enriching = record.state else { return false }
+            return true
+        }
+        return enriching + materializingIDs.count { $0.libraryRootPath == rootPath }
+    }
+
+    /// Resumes every drain waiter whose root has no work left. Called whenever a piece
+    /// of work finishes and at shutdown.
+    func resumeDrainedWaiters() {
+        for (id, waiter) in drainWaiters where isShuttingDown || !hasInFlightWork(under: waiter.rootPath) {
+            drainWaiters.removeValue(forKey: id)?.continuation.resume()
+            OtosLog.metadata.notice(
+                "op=enrichment.drain phase=finish rootPath=\(waiter.rootPath.rawValue, privacy: .public) shutdown=\(self.isShuttingDown, privacy: .public)"
+            )
+        }
+    }
+
+    /// Callers currently waiting in `drainWork(under:)`.
+    var drainWaiterCount: Int {
+        drainWaiters.count
+    }
+
+    private func resumeDrainWaiter(_ id: UUID) {
+        drainWaiters.removeValue(forKey: id)?.continuation.resume()
+    }
+
+    private func hasInFlightWork(under rootPath: LibraryRootPath) -> Bool {
         let local = readyClaims.contains { id, record in
             guard id.libraryRootPath == rootPath else { return false }
             if case .enriching = record.state {
@@ -473,9 +540,8 @@ extension EnrichmentCoordinator {
             }
             return false
         }
-        let sharedActive = await materializationRequester.activeRequestCount(under: rootPath)
         let localMaterialization = materializingIDs.contains { id in id.libraryRootPath == rootPath }
-        return local || localMaterialization || sharedActive > 0
+        return local || localMaterialization
     }
 
     func workStateSnapshot() -> WorkStateSnapshot {

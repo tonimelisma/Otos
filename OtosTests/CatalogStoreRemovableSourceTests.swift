@@ -18,6 +18,32 @@ struct CatalogStoreRemovableSourceTests {
         #expect(quiesced.removableSources.first?.availability == .available)
     }
 
+    /// An ejecting card stays available for the sidebar but offers enrichment nothing
+    /// new to claim — from the claim query or as a viewport priority — until it
+    /// resumes, so the eject drain waits on finite work.
+    @Test func quiescedSourceOffersNoEnrichmentClaimsUntilResumed() async throws {
+        let fixture = try await makeRemountFixture()
+        let store = fixture.store
+
+        try await store.attachRemovableVolume(
+            mountURL: fixture.firstMount,
+            identity: "volume:test-card",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: fixture.firstMount)
+        _ = try await waitForSelectedRelativePaths(store, rootPath: cardPath, expected: ["card.jpg"])
+        let cardID = MediaAssetID(libraryRootPath: cardPath, relativePath: MediaRelativePath(rawValue: "card.jpg"))
+
+        try await store.quiesceRemovableSource(identity: "volume:test-card")
+        let whileQuiesced = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        #expect(!whileQuiesced.contains { $0.asset.id.libraryRootPath == cardPath })
+
+        try await store.resumeRemovableSource(identity: "volume:test-card")
+        let afterResume = try await store.enrichmentCandidates(prioritizing: [cardID], limit: 10)
+        #expect(afterResume.contains { $0.asset.id == cardID })
+    }
+
     @Test func removableVolumeRemountsByIdentityAndStaysOutOfAllMedia() async throws {
         let fixture = try await makeRemountFixture()
         let store = fixture.store

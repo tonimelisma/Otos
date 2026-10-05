@@ -126,10 +126,10 @@ nonisolated struct RootRegistry {
         }.sorted()
     }
 
-    func availableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {
+    func enrichableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {
         var removable: [Int64] = []
         var fixed: [Int64] = []
-        for state in statesByPath.values where state.availability == .available {
+        for state in statesByPath.values where state.isEnrichable {
             if state.root.isRemovableSource {
                 removable.append(state.rowID)
             } else {
@@ -139,16 +139,16 @@ nonisolated struct RootRegistry {
         return (removable.sorted(), fixed.sorted())
     }
 
-    /// Partitions available roots by whether enrichment on them ever produces a
+    /// Partitions enrichable roots by whether enrichment on them ever produces a
     /// content hash (ADR 0018): every kind except `.removableVolume`, which is read
     /// in place and would otherwise force a full read of the whole volume merely to
-    /// checksum it. Orthogonal to `availableRootIDsByRemovablePriority`, which
+    /// checksum it. Orthogonal to `enrichableRootIDsByRemovablePriority`, which
     /// partitions by claim *priority* — `.deviceMTP` is removable-priority but still
     /// hash-required, so the two partitions do not coincide.
-    func availableRootIDsByHashRequirement() -> (hashRequired: Set<Int64>, hashNotRequired: Set<Int64>) {
+    func enrichableRootIDsByHashRequirement() -> (hashRequired: Set<Int64>, hashNotRequired: Set<Int64>) {
         var hashRequired: Set<Int64> = []
         var hashNotRequired: Set<Int64> = []
-        for state in statesByPath.values where state.availability == .available {
+        for state in statesByPath.values where state.isEnrichable {
             if state.root.isContentHashRequired {
                 hashRequired.insert(state.rowID)
             } else {
