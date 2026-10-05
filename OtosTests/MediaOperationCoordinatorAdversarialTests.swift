@@ -639,7 +639,9 @@ struct MediaOperationCoordinatorAdversarialTests {
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         }
         try Data(repeating: 13, count: 1024).write(to: cardAURL.appending(path: "shared.jpg"))
-        try Data(repeating: 14, count: 1024).write(to: cardBURL.appending(path: "shared.jpg"))
+        // B's file shares A's name but not its size, so it is a different file: the
+        // planner must not skip it as already imported, and must name around A's.
+        try Data(repeating: 14, count: 2048).write(to: cardBURL.appending(path: "shared.jpg"))
 
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
         try await store.start(scansSavedLibraries: false)
