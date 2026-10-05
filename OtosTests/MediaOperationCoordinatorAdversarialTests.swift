@@ -122,13 +122,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
-        // Give coordinator time to process detach via planning stream.
-        try await Task.sleep(for: .milliseconds(100))
         try await waitUntilNoPresentation(coordinator, source: cardPath)
 
         // Resume old builder — should be stale and produce no presentation.
         await builder.resumePendingBuild(for: cardPath)
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitForCoordinatorQuiescence(coordinator)
         let stillHas = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
         #expect(!stillHas, "Stale build after detach must not publish presentation")
         #expect(await coordinator.readyPlan(for: cardPath) == nil)
@@ -179,7 +177,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForCoordinatorQuiescence(coordinator)
         // Reattach at same mount path with new identity, suspend its build too.
         try Data(repeating: 3, count: 1024).write(to: cardURL.appending(path: "c.jpg"))
         await builder.suspendNextBuild(for: cardPath)
@@ -250,7 +248,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForCoordinatorQuiescence(coordinator)
         await builder.suspendNextBuild(for: cardPath)
         try await store.attachRemovableVolume(
             mountURL: cardURL,
@@ -267,10 +265,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardPath && $0.availability == .available }
         }
-        try await Task.sleep(for: .milliseconds(100))
+        try await waitForCoordinatorQuiescence(coordinator)
         // Resume the now-stale B build — must not publish.
         await builder.resumePendingBuild(for: cardPath)
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitForCoordinatorQuiescence(coordinator)
         let has = await coordinator.currentPresentations().contains(where: { $0.sourcePath == cardPath })
         #expect(!has, "Detached B's stale build must not publish")
         let cancelled = await builder.recordedCancelled()
@@ -321,7 +319,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForCatalogStoreState(store) { snap in
             !snap.removableSources.contains { $0.path == cardAPath && $0.availability == .available }
         }
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitForCoordinatorQuiescence(coordinator)
 
         // Attach B with same filename
         let cardBURL = temp.appending(path: "CardB", directoryHint: .isDirectory)
@@ -445,8 +443,8 @@ struct MediaOperationCoordinatorAdversarialTests {
                 failedCount: 0
             )
         )
-        log("STEP sleep 300")
-        try await Task.sleep(for: .milliseconds(300))
+        // Settlement schedules A's rebuild, which the builder holds.
+        try await waitForPendingBuilder(builder, source: cardAPath)
         await queueTask.value
         // After cancel, A's claim should be released. B should be able to reclaim base name on rebuild.
         // Trigger rebuild for B.
@@ -536,7 +534,8 @@ struct MediaOperationCoordinatorAdversarialTests {
         try await waitForPendingExecution(execControl, source: cardAPath)
         await builder2.suspendNextBuild(for: cardAPath)
         await execControl.resumePending(for: cardAPath, with: .failed(reason: .unexpected(detail: "injectedFailure")))
-        try await Task.sleep(for: .milliseconds(300))
+        // Settlement schedules A's rebuild, which the builder holds.
+        try await waitForPendingBuilder(builder2, source: cardAPath)
         await queueTask2.value
         log("STEP retryPlanning")
         await coordinator.retryPlanning(for: cardBPath)
@@ -1747,7 +1746,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Reorder while the execution is in flight.
         try await store.moveLibrary(from: 0, to: 1)
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitForCoordinatorQuiescence(coordinator)
         let stillExecuting = try #require(await coordinator.currentPresentations().first { $0.sourcePath == cardPath })
         #expect(stillExecuting.destinationPath == firstDest, "Destination must not move mid-execution")
 
@@ -1850,9 +1849,10 @@ struct MediaOperationCoordinatorAdversarialTests {
         #expect(!hasA && !hasB, "Shutdown should clear presentations")
 
         // Resume old builds — they should be stale and not publish after shutdown.
+        // `shutdown()` cancelled and awaited both builds, so these resumes find
+        // nothing to release and nothing can publish afterwards.
         await builder.resumePendingBuild(for: cardAPath)
         await builder.resumePendingBuild(for: cardBPath)
-        try await Task.sleep(for: .milliseconds(200))
         let stillEmpty = await coordinator.currentPresentations().isEmpty
         #expect(stillEmpty, "No publication after shutdown even if old builds resume")
     }
@@ -1894,12 +1894,12 @@ struct MediaOperationCoordinatorAdversarialTests {
         _ = try await waitForReady(coordinator, source: cardPath)
 
         async let first: Void = coordinator.queueImport(for: cardPath)
-        try await Task.sleep(for: .milliseconds(20))
         async let second: Void = coordinator.queueImport(for: cardPath)
         _ = await (first, second)
 
-        // Wait for execution to settle
-        try await Task.sleep(for: .milliseconds(800))
+        // Wait for the execution to settle.
+        _ = try await waitForPresentation(coordinator, source: cardPath) { $0.copiedJustNow != nil }
+        try await waitForCoordinatorQuiescence(coordinator)
         let batches = try await store.importBatches()
         #expect(batches.count == 1, "Repeated import should start exactly one batch")
         #expect(batches.first?.assetCount == 4)
@@ -1974,10 +1974,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         // needs — the defect was that *any* rebuild dropped the count.
         await coordinator.retryPlanning(for: cardPath)
 
-        let deadline = ContinuousClock().now.advanced(by: .seconds(2))
+        // Sample every frame until the rebuild has returned.
         var sawPlanning = false
         var sawCount = false
-        while ContinuousClock().now < deadline {
+        try await waitUntil(every: .milliseconds(10)) {
+            let quiescent = await coordinator.isQuiescent
             for pres in await coordinator.currentPresentations() where pres.sourcePath == cardPath {
                 switch pres.state {
                 case .planning: sawPlanning = true
@@ -1985,7 +1986,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                 default: break
                 }
             }
-            try await Task.sleep(for: .milliseconds(50))
+            return quiescent
         }
 
         #expect(!sawPlanning, "a rebuild dropped the proven count back to an indeterminate Preparing")
@@ -2055,10 +2056,11 @@ struct MediaOperationCoordinatorAdversarialTests {
         })
 
         await coordinator.retryPlanning(for: cardPath)
+        // Sample every frame until the rebuild has returned.
         var interrupted: MediaOperationSourceState?
         var sawCount = false
-        let deadline = ContinuousClock().now + .seconds(2)
-        while ContinuousClock().now < deadline {
+        try await waitUntil(every: .milliseconds(10)) {
+            let quiescent = await coordinator.isQuiescent
             if let pres = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
                 if case .waitingForMetadata = pres.state {
                     sawCount = true
@@ -2066,7 +2068,7 @@ struct MediaOperationCoordinatorAdversarialTests {
                     interrupted = pres.state
                 }
             }
-            try await Task.sleep(for: .milliseconds(10))
+            return quiescent
         }
         #expect(interrupted == nil, "the metadata wait was interrupted by \(String(describing: interrupted))")
         #expect(sawCount, "the card must keep reporting its naming count while it waits")
@@ -2221,7 +2223,7 @@ struct MediaOperationCoordinatorAdversarialTests {
         let plan = try await waitForReady(coordinator, source: cardPath)
         #expect(plan.totals.copyCount == 0, "Should be zero-copy")
         await coordinator.queueImport(for: cardPath)
-        try await Task.sleep(for: .milliseconds(400))
+        try await waitForCoordinatorQuiescence(coordinator)
         // Should remain Ready, not executing/completed, and no executor invocation.
         let pres = try await waitForPresentation(coordinator, source: cardPath, predicate: { presentation in
             if case .ready = presentation.state {
@@ -2429,7 +2431,7 @@ struct MediaOperationCoordinatorAdversarialTests {
 
         // Pressing Import while still enumerating must not execute.
         await coordinator.queueImport(for: rootPath)
-        try await Task.sleep(for: .milliseconds(300))
+        try await waitForCoordinatorQuiescence(coordinator)
         let afterQueue = await coordinator.currentPresentations().first(where: { $0.sourcePath == rootPath })
         if case .executing = afterQueue?.state {
             Issue.record("Import executed while the device was still enumerating")

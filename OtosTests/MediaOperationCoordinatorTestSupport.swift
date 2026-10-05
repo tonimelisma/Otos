@@ -224,3 +224,10 @@ func markEnrichmentLookedAtEveryRow(_ store: CatalogStore, root: LibraryRootPath
     }
     _ = await store.applyEnrichmentBatch(results)
 }
+
+/// Waits until the coordinator has handled every change the Store delivered to it and
+/// every build it started — stale ones included — has returned, so what a change did,
+/// including publishing nothing, is final.
+func waitForCoordinatorQuiescence(_ coordinator: MediaOperationCoordinator) async throws {
+    try await waitUntil { await coordinator.isQuiescent }
+}
