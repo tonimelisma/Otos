@@ -699,6 +699,15 @@ extension CatalogStore {
     ) async throws -> (ids: [MediaAssetID], dayBuckets: [Date?]) {
         let scope = scopePredicate(selection: descriptor.scope, availableLibraryPaths: availableLibraryPaths)
         guard !scope.selectsNothing else {
+            var fields = [
+                "scope": String(describing: descriptor.scope),
+                "availablePaths": "\(availableLibraryPaths.count)",
+            ]
+            if case let .library(path) = descriptor.scope {
+                fields["pathAvailable"] = "\(availableLibraryPaths.contains(path))"
+                fields["pathRegistered"] = "\(roots[path] != nil)"
+            }
+            OtosLog.catalog.noticeOperation("catalog.store.query.order", phase: "selectsNothing", fields: fields)
             return ([], [])
         }
 
@@ -3857,13 +3866,15 @@ private extension CatalogStore {
         guard integrityScanTask == nil else {
             return
         }
+        // The loop holds the Store weakly across each 15-minute wait and ends once the
+        // Store is gone, rather than outliving it as an idle sleeper.
         integrityScanTask = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: CatalogStore.integrityScanPollInterval)
-                guard !Task.isCancelled else {
+                guard !Task.isCancelled, let self else {
                     return
                 }
-                await self?.scheduleOverdueIntegrityScans()
+                await scheduleOverdueIntegrityScans()
             }
         }
     }

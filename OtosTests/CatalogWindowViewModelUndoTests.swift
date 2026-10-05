@@ -89,6 +89,9 @@ struct CatalogWindowViewModelUndoTests {
         model.submitMediaChoice(.liked, origin: .keyboard)
         try await waitForChoices(fixture.store, ids, [.liked, .notRated, .notRated])
         try await waitUntil { model.gridSelection.selection == [ids[1]] }
+        // The undo is registered after the Store write lands, so the write being
+        // visible does not mean undo is available yet.
+        try await waitUntil { model.curationUndoState.canUndo }
 
         model.undoCuration()
         try await waitForChoices(fixture.store, ids, [.notRated, .notRated, .notRated])

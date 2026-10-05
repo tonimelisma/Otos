@@ -282,6 +282,8 @@ actor MediaOperationCoordinator {
     /// call, so `presentation(for:)` can resolve the destination's display name
     /// synchronously instead of adding an actor hop to every publish.
     private var librariesByPath: [LibraryRootPath: CatalogLibraryState] = [:]
+    /// Available fixed libraries in the user's order, as of the last refresh.
+    private var fixedAvailableLibraries: [CatalogLibraryState] = []
 
     /// Persistent per-source destination mapping, retained even after detach for
     /// Settings display (includes unavailable sources). Mirrors `session.destination`
@@ -967,6 +969,9 @@ actor MediaOperationCoordinator {
             phase: "finished",
             fields: ["rootPath": source.rawValue, "run": session.activeRunID ?? "missing"]
         )
+        // A run holds its destination while it executes; settlement is when a change
+        // held during the run applies, so resolve it before the re-plan below.
+        reconcileDestination(for: source, fixedAvailable: fixedAvailableLibraries)
         // Terminal settlement releases this source's claims with its phase, so
         // re-plan it against the namespace the run just changed.
         if var current = sourceSessions[source] {
@@ -1326,10 +1331,65 @@ actor MediaOperationCoordinator {
         suppressedRefreshes = 0
     }
 
+    /// The one rule for a source's destination. A default destination tracks the first
+    /// available library; an explicit pick holds until that library becomes
+    /// unavailable. A running import holds its destination, so a change that arrives
+    /// mid-run is applied when the run settles (`finishExecution`), from the library
+    /// order the last refresh recorded — no await, so nothing can interleave.
+    private func reconcileDestination(for source: LibraryRootPath, fixedAvailable: [CatalogLibraryState]) {
+        // Never touch the destination of a session that is actively
+        // executing: its ExecutionContext (claims, namespace lease)
+        // already committed to a specific destination, and rewriting
+        // `session.destination` out from under a live copy would
+        // desync it from the ledger it's actually writing into.
+        let isExecuting = if case .executing = sourceSessions[source]?.phase {
+            true
+        } else {
+            false
+        }
+        let currentDestination = sourceSessions[source]?.destination
+        let isExplicit = sourceSessions[source]?.isDestinationExplicit ?? false
+        // A default destination keeps tracking the first available
+        // library on every refresh, including a Settings → Libraries
+        // reorder while attached. An explicit pop-up pick instead
+        // survives an ordinary refresh until it actually becomes
+        // unavailable, at which point it reverts to tracking the
+        // default again rather than staying pinned to the fallback.
+        var newDestination = currentDestination
+        var explicitAfterUpdate = isExplicit
+        if !isExecuting {
+            if isExplicit {
+                let isCurrentValid = currentDestination
+                    .map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
+                if !isCurrentValid {
+                    newDestination = fixedAvailable.first?.path
+                    explicitAfterUpdate = false
+                }
+            } else {
+                newDestination = fixedAvailable.first?.path
+            }
+        }
+        if newDestination != currentDestination || explicitAfterUpdate != isExplicit {
+            sourceSessions[source]?.destination = newDestination
+            sourceSessions[source]?.isDestinationExplicit = explicitAfterUpdate
+            if destinationBySource[source] != newDestination {
+                if let newDestination {
+                    destinationBySource[source] = newDestination
+                } else {
+                    destinationBySource.removeValue(forKey: source)
+                }
+                persistDestinationMappings()
+            }
+            sourceSessions[source]?.isDirty = true
+            scheduleBuildIfNeeded(source)
+        }
+    }
+
     private func refreshSources(reason: String) async {
         let libraries = await store.currentLibraries()
         librariesByPath = CatalogWindowPolicy.rootsByPath(from: libraries)
         let fixedAvailable = libraries.filter { $0.root.kind == .library && $0.availability == .available }
+        fixedAvailableLibraries = fixedAvailable
         let removable = libraries.filter { $0.root.kind != .library && $0.availability == .available }
         var seen = Set<LibraryRootPath>()
         for source in removable {
@@ -1419,52 +1479,7 @@ actor MediaOperationCoordinator {
                         scheduleBuildIfNeeded(source.path)
                     }
                 }
-                // Never touch the destination of a session that is actively
-                // executing: its ExecutionContext (claims, namespace lease)
-                // already committed to a specific destination, and rewriting
-                // `session.destination` out from under a live copy would
-                // desync it from the ledger it's actually writing into.
-                let isExecuting = if case .executing = sourceSessions[source.path]?.phase {
-                    true
-                } else {
-                    false
-                }
-                let currentDestination = sourceSessions[source.path]?.destination
-                let isExplicit = sourceSessions[source.path]?.isDestinationExplicit ?? false
-                // A default destination keeps tracking the first available
-                // library on every refresh, including a Settings → Libraries
-                // reorder while attached. An explicit pop-up pick instead
-                // survives an ordinary refresh until it actually becomes
-                // unavailable, at which point it reverts to tracking the
-                // default again rather than staying pinned to the fallback.
-                var newDestination = currentDestination
-                var explicitAfterUpdate = isExplicit
-                if !isExecuting {
-                    if isExplicit {
-                        let isCurrentValid = currentDestination
-                            .map { dest in fixedAvailable.contains(where: { $0.path == dest }) } ?? false
-                        if !isCurrentValid {
-                            newDestination = fixedAvailable.first?.path
-                            explicitAfterUpdate = false
-                        }
-                    } else {
-                        newDestination = fixedAvailable.first?.path
-                    }
-                }
-                if newDestination != currentDestination || explicitAfterUpdate != isExplicit {
-                    sourceSessions[source.path]?.destination = newDestination
-                    sourceSessions[source.path]?.isDestinationExplicit = explicitAfterUpdate
-                    if destinationBySource[source.path] != newDestination {
-                        if let newDestination {
-                            destinationBySource[source.path] = newDestination
-                        } else {
-                            destinationBySource.removeValue(forKey: source.path)
-                        }
-                        persistDestinationMappings()
-                    }
-                    sourceSessions[source.path]?.isDirty = true
-                    scheduleBuildIfNeeded(source.path)
-                }
+                reconcileDestination(for: source.path, fixedAvailable: fixedAvailable)
                 // Readiness can turn `.ready` (enumeration/scan activity flips
                 // idle) via this cheap catalog-change refresh alone, without an
                 // occupancy change of its own — device enumeration's final
@@ -1547,6 +1562,25 @@ actor MediaOperationCoordinator {
 
     private func buildDidReturn() {
         runningBuildCount -= 1
+    }
+
+    /// The session this build still owns, read now. A build re-reads it after every
+    /// await and writes only what it re-read, so a fact another handler recorded
+    /// while the build was suspended — the dirty mark of a scan batch landing
+    /// mid-build — is never overwritten by a copy taken before the suspension.
+    private func sessionOwnedByBuild(
+        source: LibraryRootPath,
+        attachment: AttachmentGeneration,
+        generation: UInt64
+    ) -> SourceSession? {
+        guard let session = sourceSessions[source],
+              session.attachmentGeneration == attachment,
+              case let .building(ctx) = session.phase,
+              ctx.generation.rawValue == generation
+        else {
+            return nil
+        }
+        return session
     }
 
     private func runBuild(
@@ -1638,7 +1672,10 @@ actor MediaOperationCoordinator {
                 destination: destination,
                 availableRoots: CatalogWindowPolicy.availablePaths(from: libraries)
             )
-            var updated = session
+            guard var updated = sessionOwnedByBuild(source: source, attachment: attachment, generation: generation) else {
+                OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=staleAfterSnapshot source=\(source.rawValue, privacy: .public)")
+                return
+            }
             updated.phase = .planningFailed(reason: reason)
             sourceSessions[source] = updated
             publish()
@@ -1677,11 +1714,14 @@ actor MediaOperationCoordinator {
             namingSettledCount: snapshot.sourceMedia.count { $0.namingFactState != .pending },
             result: build
         )
-        guard let current = sourceSessions[source],
-              current.attachmentGeneration == attachment,
-              case let .building(currentCtx) = current.phase,
-              currentCtx.generation.rawValue == generation
-        else {
+        // Every store read this completion needs happens here, before `current` is
+        // read: a copy taken before an await would overwrite whatever another handler
+        // recorded during it. Each revision pair is sampled in one actor hop so the
+        // halves cannot straddle a suspension.
+        let sourceRevisions = await store.planningRevisions(for: source)
+        let destinationNamespace = await store.namespaceRevision(for: destination)
+        let skipped = await store.skippedPackageCount(for: source)
+        guard let current = sessionOwnedByBuild(source: source, attachment: attachment, generation: generation) else {
             OtosLog.catalog.notice("op=import.coordinator phase=staleCompletion reason=staleAfterBuild source=\(source.rawValue, privacy: .public)")
             return
         }
@@ -1703,10 +1743,7 @@ actor MediaOperationCoordinator {
             return
         }
         // Revalidate per role, matching `handlePlanningChange`: the source's
-        // namespace *and* naming, the destination's namespace only. Each pair is
-        // sampled in one actor hop so the halves cannot straddle a suspension.
-        let sourceRevisions = await store.planningRevisions(for: source)
-        let destinationNamespace = await store.namespaceRevision(for: destination)
+        // namespace *and* naming, the destination's namespace only.
         guard sourceRevisions?.namespaceRevision == snapshot.sourceNamespaceRevision,
               sourceRevisions?.namingRevision == snapshot.sourceNamingRevision,
               destinationNamespace == snapshot.destinationNamespaceRevision
@@ -1742,7 +1779,6 @@ actor MediaOperationCoordinator {
             scheduleBuildIfNeeded(source)
             return
         }
-        let skipped = await store.skippedPackageCount(for: source)
         let readyCtx = ReadyContext(
             plan: plan,
             skippedPackageCount: skipped,
@@ -1754,7 +1790,8 @@ actor MediaOperationCoordinator {
         updated.lastReadyContext = readyCtx
         updated.unreadableRetry?.task.cancel()
         updated.unreadableRetry = nil
-        updated.isDirty = false
+        // `isDirty` is left as found: `scheduleBuildIfNeeded` cleared it when this
+        // build took the session up, so a mark now is a fact this plan never saw.
         if updated.attachToReadyMs == nil {
             let elapsed = updated.attachStartedAt.duration(to: ContinuousClock().now)
             updated.attachToReadyMs = DiagnosticsTiming.milliseconds(elapsed)
@@ -1869,10 +1906,7 @@ actor MediaOperationCoordinator {
         else {
             return false
         }
-        guard var session = sourceSessions[source],
-              session.attachmentGeneration == attachment,
-              case let .building(ctx) = session.phase, ctx.generation.rawValue == generation
-        else {
+        guard sessionOwnedByBuild(source: source, attachment: attachment, generation: generation) != nil else {
             return false
         }
         // Revalidate the fact this decision rests on, against live rows rather than the
@@ -1888,6 +1922,11 @@ actor MediaOperationCoordinator {
         // changing `capture_wall_compact`, so `namingRevision` stays put while the
         // gate's answer flips.
         let liveMedia = await store.planningMedia(for: source) ?? []
+        guard var session = sessionOwnedByBuild(source: source, attachment: attachment, generation: generation) else {
+            // A newer build or attachment took the session while this read ran; this
+            // build is stale and ends here.
+            return true
+        }
         if !liveMedia.isEmpty,
            !liveMedia.contains(where: { $0.namingFactState == .pending && !$0.isSourceUnreadable })
         {
@@ -1920,6 +1959,8 @@ actor MediaOperationCoordinator {
         session.settledOutcome = nil
         sourceSessions[source] = session
         publish()
+        // A mark recorded while this build ran is a fact its count never saw.
+        scheduleBuildIfNeeded(source)
         return true
     }
 
