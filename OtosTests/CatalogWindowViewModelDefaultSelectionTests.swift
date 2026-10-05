@@ -93,6 +93,33 @@ struct ViewModelDefaultSelectionTests {
         #expect(model.sidebarSelection == .library(card.path))
     }
 
+    /// Inserting a card takes the user to it even after they chose another row
+    /// (APP-002): the one-time startup default is not the only automatic jump.
+    @MainActor
+    @Test func insertingACardAfterTheUserChoseALibrarySelectsTheCard() {
+        let model = makePolicyTestViewModel()
+        let library = CatalogLibraryState(
+            root: LibraryRoot(path: LibraryRootPath(rawValue: "/Users/example/Pictures")),
+            availability: .available,
+            activity: .idle
+        )
+        let loaded = windowState(libraries: [library])
+        model.applySidebarSelectionPolicy(previous: .empty, next: loaded)
+        model.selectSidebar(.library(library.path))
+
+        let card = removableSource(
+            path: "/Volumes/CARD", identity: "volume:card", availability: .available, attachmentGeneration: 1
+        )
+        let withCard = windowState(libraries: [library], removableSources: [card])
+        model.applySidebarSelectionPolicy(previous: loaded, next: withCard)
+        #expect(model.sidebarSelection == .library(card.path))
+
+        // Navigating away and seeing the same attachment again is not a new insertion.
+        model.selectSidebar(.library(library.path))
+        model.applySidebarSelectionPolicy(previous: withCard, next: withCard)
+        #expect(model.sidebarSelection == .library(library.path))
+    }
+
     @MainActor
     private func makePolicyTestViewModel() -> CatalogWindowViewModel {
         let store = CatalogStore(location: .inMemory, scanCadence: .milliseconds(10))
@@ -126,7 +153,8 @@ struct ViewModelDefaultSelectionTests {
     private func removableSource(
         path: String,
         identity: String,
-        availability: LibraryAvailability
+        availability: LibraryAvailability,
+        attachmentGeneration: UInt64 = 0
     ) -> CatalogLibraryState {
         CatalogLibraryState(
             root: LibraryRoot(
@@ -138,7 +166,8 @@ struct ViewModelDefaultSelectionTests {
             ),
             availability: availability,
             activity: .idle,
-            isEjectable: true
+            isEjectable: true,
+            attachmentGeneration: attachmentGeneration
         )
     }
 }

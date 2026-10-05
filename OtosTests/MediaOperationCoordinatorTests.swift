@@ -486,6 +486,93 @@ struct MediaOperationCoordinatorTests {
         await coordinator.shutdown()
     }
 
+    /// The held plan is the answer for a *refresh*, never for rows it did not see. A
+    /// card enumerates in pieces, so a plan can be proven over the first few files and
+    /// then the card gains rows whose naming facts are pending. Holding that plan across
+    /// the rebuilds of the metadata wait drew it as Ready — and the sidebar row as its
+    /// eject button — between every pair of Preparing frames (2026-10-04: a 75-item plan
+    /// alternating with `waitingForMetadata(done:, total: 930)` once a second).
+    @Test func aPlanProvenBeforeNewPendingRowsIsNotHeldThroughTheMetadataWait() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let fixedRoot = temp.appending(path: "Pictures", directoryHint: .isDirectory)
+        let cardRoot = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: fixedRoot, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: cardRoot, withIntermediateDirectories: true)
+        try writeCatalogStoreFile(cardRoot.appending(path: "first.jpg"), contents: "jpeg-bytes")
+
+        let (watcher, emit) = CatalogFilesystemWatcher.testing()
+        let store = CatalogStore(
+            location: .inMemory,
+            filesystemWatcher: watcher,
+            scanCadence: .milliseconds(10),
+            filesystemEventDebounce: .milliseconds(20)
+        )
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: fixedRoot)
+        let fixedPath = try CatalogPath.normalizedDirectoryPath(for: fixedRoot)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning }
+
+        try await store.attachRemovableVolume(
+            mountURL: cardRoot,
+            identity: "volume:held-plan-metadata-wait",
+            displayName: "Card",
+            isEjectable: true
+        )
+        let cardPath = try CatalogPath.normalizedDirectoryPath(for: cardRoot)
+        _ = try await waitForCatalogStoreState(store) { snapshot in
+            snapshot.removableSources.contains {
+                $0.path == cardPath && $0.availability == .available && !$0.isScanning
+            }
+        }
+
+        let tempDefaults = PreferencesDomain.suite(UUID().uuidString)
+        let coordinator = MediaOperationCoordinator(store: store, preferencesDomain: tempDefaults)
+        await coordinator.start()
+        await markEnrichmentLookedAtEveryRow(store, root: cardPath)
+        await coordinator.setDestination(fixedPath, for: cardPath)
+        _ = try await settledReadyGeneration(coordinator, source: cardPath)
+
+        // The card gains a row enrichment has not read: the coordinator must park in
+        // the metadata wait rather than offer the one-file plan.
+        let second = cardRoot.appending(path: "second.jpg")
+        try writeCatalogStoreFile(second, contents: "more-jpeg-bytes")
+        emit(FilesystemEvent(path: second.path(percentEncoded: false), flags: 0))
+        var waiting = false
+        let waitDeadline = ContinuousClock().now + .seconds(8)
+        while !waiting, ContinuousClock().now < waitDeadline {
+            let presentation = await coordinator.currentPresentations().first { $0.sourcePath == cardPath }
+            if case .waitingForMetadata = presentation?.state {
+                waiting = true
+            } else {
+                try await Task.sleep(for: .milliseconds(10))
+            }
+        }
+        try #require(waiting, "the new pending row never put the card into the metadata wait")
+
+        // A rebuild over the still-pending set must keep reporting the count, never
+        // the plan proven before the new row existed.
+        await coordinator.retryPlanning(for: cardPath)
+        var sawReady = false
+        var sawCount = false
+        let deadline = ContinuousClock().now + .seconds(2)
+        while ContinuousClock().now < deadline {
+            if let presentation = await coordinator.currentPresentations().first(where: { $0.sourcePath == cardPath }) {
+                switch presentation.state {
+                case .ready, .executionUnavailable:
+                    sawReady = true
+                case .waitingForMetadata:
+                    sawCount = true
+                default:
+                    break
+                }
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(!sawReady, "the plan proven before the pending row was held through the metadata wait")
+        #expect(sawCount, "the source must keep reporting its naming count while it waits")
+        await coordinator.shutdown()
+    }
+
     /// A destination change is the rebuild whose inputs changed: the held plan's
     /// counts were measured against the previous library, so holding it across
     /// the rebuild (`aRebuildKeepsShowingThePlanItIsReplacing`) would draw those

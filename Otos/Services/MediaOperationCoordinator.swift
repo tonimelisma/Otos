@@ -239,7 +239,9 @@ actor MediaOperationCoordinator {
         /// has ever existed for this attachment*; a refresh is not a first check.
         ///
         /// Written in the same transaction as `phase = .ready`, like
-        /// `lastCompletion`/`lastProgress`, and cleared by nothing — a new
+        /// `lastCompletion`/`lastProgress`. Cleared whenever the plan stops being true
+        /// of the card: a run settling, stopping or failing, a destination change, and entering
+        /// `.waitingForMetadata`, whose pending rows the plan never saw. A new
         /// `AttachmentGeneration` builds a fresh `SourceSession`, which is what makes
         /// ejecting and re-inserting a card forget the old plan.
         var lastReadyContext: ReadyContext?
@@ -1873,6 +1875,12 @@ actor MediaOperationCoordinator {
         OtosLog.catalog.notice("\(message, privacy: .public)")
         session.phase = .waitingForMetadata(done: settled, total: max(total, 1))
         session.lastNamingProgress = NamingProgress(done: settled, total: max(total, 1))
+        // The held plan was proven over a set that did not contain these pending rows,
+        // so it no longer describes the card. Holding it across the rebuilds that follow
+        // drew it as Ready — and the sidebar row as its eject button — between every pair
+        // of Preparing frames, once a second for the whole metadata wait (2026-10-04: a
+        // 75-item plan alternating with `waitingForMetadata(done:, total: 930)`).
+        session.lastReadyContext = nil
         sourceSessions[source] = session
         publish()
         return true

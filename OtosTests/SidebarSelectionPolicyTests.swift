@@ -80,10 +80,59 @@ struct SidebarSelectionPolicyTests {
         #expect(visible == [available])
     }
 
+    // MARK: - Selection on attach (APP-002)
+
+    @Test func selectionOnAttachSelectsANewlyAttachedCard() {
+        let card = removableSource(path: "/Volumes/CARD", identity: "volume:card", attachmentGeneration: 1)
+        #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [card]) == .library(card.path))
+    }
+
+    @Test func selectionOnAttachSelectsAReinsertedCardAgain() {
+        let detached = removableSource(
+            path: "/Volumes/CARD", identity: "volume:card", availability: .unavailable, attachmentGeneration: 1
+        )
+        let reinserted = removableSource(path: "/Volumes/CARD", identity: "volume:card", attachmentGeneration: 2)
+        let selection = SidebarSelectionPolicy.selectionOnAttach(previous: [detached], next: [reinserted])
+        #expect(selection == .library(reinserted.path))
+    }
+
+    /// An availability or activity change is not an attach: the generation is the
+    /// Store's proof that a mount happened, so a flap never moves the user again.
+    @Test func selectionOnAttachIgnoresASourceWhoseAttachmentIsUnchanged() {
+        let flapped = removableSource(
+            path: "/Volumes/CARD", identity: "volume:card", availability: .unavailable, attachmentGeneration: 1
+        )
+        let card = removableSource(path: "/Volumes/CARD", identity: "volume:card", attachmentGeneration: 1)
+        #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [card], next: [card]) == nil)
+        #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [flapped], next: [card]) == nil)
+    }
+
+    @Test func selectionOnAttachIgnoresSourcesThatAreNotConnectedOrNeverAttached() {
+        let unattached = removableSource(path: "/Volumes/OLD", identity: "volume:old")
+        let unavailable = removableSource(
+            path: "/Volumes/GONE", identity: "volume:gone", availability: .unavailable, attachmentGeneration: 3
+        )
+        #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [unattached, unavailable]) == nil)
+    }
+
+    @Test func selectionOnAttachPrefersTheMostRecentlyAttached() {
+        let older = removableSource(
+            path: "/Volumes/OLD", identity: "volume:old", lastSeenAt: Date(timeIntervalSince1970: 1),
+            attachmentGeneration: 1
+        )
+        let newer = removableSource(
+            path: "/Volumes/NEW", identity: "volume:new", lastSeenAt: Date(timeIntervalSince1970: 2),
+            attachmentGeneration: 1
+        )
+        #expect(SidebarSelectionPolicy.selectionOnAttach(previous: [], next: [older, newer]) == .library(newer.path))
+    }
+
     private func removableSource(
         path: String,
         identity: String,
-        lastSeenAt: Date = Date()
+        lastSeenAt: Date = Date(),
+        availability: LibraryAvailability = .available,
+        attachmentGeneration: UInt64 = 0
     ) -> CatalogLibraryState {
         CatalogLibraryState(
             root: LibraryRoot(
@@ -93,9 +142,10 @@ struct SidebarSelectionPolicyTests {
                 displayName: URL(fileURLWithPath: path).lastPathComponent,
                 lastSeenAt: lastSeenAt
             ),
-            availability: .available,
+            availability: availability,
             activity: .idle,
-            isEjectable: true
+            isEjectable: true,
+            attachmentGeneration: attachmentGeneration
         )
     }
 
