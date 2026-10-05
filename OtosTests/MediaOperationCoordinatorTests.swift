@@ -926,26 +926,16 @@ struct MediaOperationCoordinatorTests {
     /// re-attached source resumes at its remembered destination rather than
     /// defaulting to `fixedAvailable.first`.
     ///
-    /// Routes the reattach's build through `ControlledImportPlanBuilder`
-    /// rather than the live builder, so the assertion is about destination
-    /// memory and not live build scheduling — the pattern
-    /// `rapidSamePathReattachOldBuildCannotBecomeReady` uses for this exact
-    /// reattach shape. Under full-suite parallel execution the live build for
-    /// this shape never reached `.ready` within any wait bound tried (30 s to
-    /// 180 s) while an isolated run took ~2 s. A wait that fails at every bound
-    /// is a stall rather than slowness, and that live path is undiagnosed.
+    /// Runs the reattach through the live `ImportPlanBuilding` path, the one
+    /// production takes, so a reattach that never reaches `.ready` parks this
+    /// test instead of hiding behind a controlled builder.
     @Test func reattachedSourceGetsRememberedDestination() async throws {
         let fixture = try await makeDestinationFixture(
             libraryNames: ["Zebra", "Alpha", "Middle"],
             identity: "volume:reattach-remembers"
         )
-        let builder = ControlledImportPlanBuilder()
         let defaults = PreferencesDomain.suite(UUID().uuidString)
-        let coordinator = MediaOperationCoordinator(
-            store: fixture.store,
-            preferencesDomain: defaults,
-            planBuilder: builder
-        )
+        let coordinator = MediaOperationCoordinator(store: fixture.store, preferencesDomain: defaults)
         await coordinator.start()
         let baseline = try await readyGeneration(coordinator, source: fixture.source)
         await coordinator.setDestination(fixture.libraries[2], for: fixture.source)
@@ -957,18 +947,12 @@ struct MediaOperationCoordinatorTests {
         }
         try await Task.sleep(for: .milliseconds(100))
 
-        await builder.suspendNextBuild(for: fixture.source)
         try await fixture.store.attachRemovableVolume(
             mountURL: URL(fileURLWithPath: fixture.source.rawValue),
             identity: fixture.identity,
             displayName: "Card",
             isEjectable: true
         )
-        _ = try await waitForCatalogStoreState(fixture.store) { snap in
-            snap.removableSources.contains { $0.path == fixture.source && !$0.isScanning }
-        }
-        try await waitForPendingBuilder(builder, source: fixture.source)
-        await builder.resumePendingBuild(for: fixture.source)
         _ = try await readyGeneration(coordinator, source: fixture.source)
         let presentation = try #require(
             await coordinator.currentPresentations().first { $0.sourcePath == fixture.source }

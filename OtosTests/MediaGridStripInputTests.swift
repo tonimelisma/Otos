@@ -58,19 +58,7 @@ struct MediaGridStripInputTests {
         #expect(controller.pendingFocusTargetID == target)
         #expect(controller.view.window == nil)
 
-        let window = NSWindow(
-            contentRect: NSRect(x: -4000, y: -4000, width: 320, height: 120),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        // Swift owns this window through a strong reference, so AppKit must not
-        // also release it on close — the default `true` makes `close()` an extra
-        // release on top of ARC's, which is an over-release, and `objc_release`
-        // crashes during suite runs are already on record for these harnesses.
-        window.isReleasedWhenClosed = false
-        window.contentView = controller.view
-        window.makeKeyAndOrderFront(nil)
+        let window = orderedInTestWindow(width: 320, height: 120, contentView: controller.view)
         // AppKit's window list retains an ordered-in window, so a local binding
         // going out of scope is not enough to release it.
         defer { window.close() }
@@ -97,19 +85,7 @@ struct MediaGridStripInputTests {
         controller.receiveFocusTarget(target)
         #expect(controller.pendingFocusTargetID == target)
 
-        let window = NSWindow(
-            contentRect: NSRect(x: -4000, y: -4000, width: 320, height: 120),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        // Swift owns this window through a strong reference, so AppKit must not
-        // also release it on close — the default `true` makes `close()` an extra
-        // release on top of ARC's, which is an over-release, and `objc_release`
-        // crashes during suite runs are already on record for these harnesses.
-        window.isReleasedWhenClosed = false
-        window.contentView = controller.view
-        window.makeKeyAndOrderFront(nil)
+        let window = orderedInTestWindow(width: 320, height: 120, contentView: controller.view)
         // AppKit's window list retains an ordered-in window, so a local binding
         // going out of scope is not enough to release it.
         defer { window.close() }
@@ -179,19 +155,7 @@ private final class StripHarness {
         ids = (0 ..< itemCount).map { makeStripAssetID(path: "strip-\($0).jpg") }
         adoptStripGrid(controller, ids: ids)
 
-        window = NSWindow(
-            contentRect: NSRect(x: -4000, y: -4000, width: windowWidth, height: 120),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        // Swift owns this window through a strong reference, so AppKit must not
-        // also release it on close — the default `true` makes `close()` an extra
-        // release on top of ARC's, which is an over-release, and `objc_release`
-        // crashes during suite runs are already on record for these harnesses.
-        window.isReleasedWhenClosed = false
-        window.contentView = controller.view
-        window.makeKeyAndOrderFront(nil)
+        window = orderedInTestWindow(width: windowWidth, height: 120, contentView: controller.view)
         layout()
         _ = controller.mutationGate.endScrollHold()
     }

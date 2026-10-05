@@ -266,6 +266,15 @@ hang with a kill-timeout in shared tooling — a wall-clock limit destroys a
 legitimately slow run, and it hides the bug instead of surfacing it. **A suite that
 hangs has a defect; fix the defect.**
 
+**Checks run in parallel.** Several agents in several worktrees run `check.sh` at once,
+often while Otos is running; that is the normal case, not a contention to wait out.
+Each worktree builds into its own `build/DerivedData`, `check.sh` watches and kills
+only its own descendants, and tests run in a standalone `xctest` host, never inside
+Otos.app. Do not wait for an idle machine before starting a check. A test that fails
+or hangs only under that load has a defect — a wall-clock bound, an order between two
+async facts it does not own, or a leaked thread or file in shared machine state —
+and the fix is to that test or its harness, never to serialize the runs.
+
 Kill the **tree**, never the parent alone — killing `verify.sh` leaves its `test.sh`
 and `xcodebuild` children orphaned (`PPID 1`), and an orphan competing against the
 same `build/DerivedData` is itself a cause of the deadlock above. Confirm with `ps`

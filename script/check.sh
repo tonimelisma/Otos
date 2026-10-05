@@ -240,8 +240,14 @@ while kill -0 "$verify_pid" 2>/dev/null; do
   elif [[ $(( $(date +%s) - last_cpu_change_at )) -ge "$STALL_SECONDS" ]]; then
     echo "op=check.stall phase=detected elapsed=$((elapsed / 60))m stage=$stage tests=$tests cpuSeconds=$cpu blockedFor=$(( ($(date +%s) - last_cpu_change_at) / 60 ))m" >&2
     for xctest_pid in $(own_pids_matching "Xcode/Agents/xctest"); do
-      echo "--- parked threads of xctest $xctest_pid ---" >&2
-      sample "$xctest_pid" 2 -mayDie 2>/dev/null | grep -m 25 -E "Otos|XCTWaiter|semaphore|Mutex|dispatch" >&2 || true
+      # The excerpt is for reading here; the whole sample is kept because the thread
+      # that matters (the main thread draining MainActor jobs, or not) is often not
+      # among the matching lines.
+      mkdir -p "$ROOT_DIR/logs"
+      sample_log="$ROOT_DIR/logs/check-$(date -u +%Y%m%dT%H%M%SZ)-p$$-sample.log"
+      sample "$xctest_pid" 2 -mayDie > "$sample_log" 2>/dev/null || true
+      echo "--- parked threads of xctest $xctest_pid (full sample: $sample_log) ---" >&2
+      grep -m 25 -E "Otos|XCTWaiter|semaphore|Mutex|dispatch" "$sample_log" >&2 || true
       report_parked_tests "$xctest_pid"
     done
     echo "check: DEADLOCKED — consumed under ${MIN_CPU_SECONDS_PER_MINUTE} CPU-s/min for ${STALL_SECONDS}s while still running. Killed so this reports instead of hanging." >&2

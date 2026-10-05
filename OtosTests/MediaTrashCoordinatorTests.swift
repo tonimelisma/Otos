@@ -114,12 +114,18 @@ struct MediaTrashCoordinatorTests {
     @Test func pendingItemsAreTrashedCompanionFirstAndTheirRowsLeave() async throws {
         let fixture = try await TrashFixture.make()
         let calls = TrashCallRecorder()
+        // The rows leave because the files left: the fake moves each member out of the
+        // root, as the Trash does, so the store's reconcile of these paths agrees with
+        // the deletion instead of re-cataloging a file that is still there.
+        let trash = try makeCatalogStoreTemporaryDirectory()
         let coordinator = MediaTrashCoordinator(
             store: fixture.store,
             materializationRequester: nil,
             trashExecutor: { url in
                 calls.append(url.lastPathComponent)
-                return nil
+                let destination = trash.appending(path: url.lastPathComponent)
+                try FileManager.default.moveItem(at: url, to: destination)
+                return destination
             }
         )
         _ = try await fixture.store.markPendingTrash([fixture.id], batch: MediaTrashBatchID())

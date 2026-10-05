@@ -18,7 +18,9 @@ struct CatalogWindowViewModelTrashTests {
         try await waitUntil {
             fixture.ids.allSatisfy { !FileManager.default.fileExists(atPath: fixture.path($0)) }
         }
-        #expect(model.curationUndoState.canUndo)
+        // Undo is registered once the items are hidden, which is not ordered against
+        // the queue moving the files; wait for the registration itself.
+        try await waitUntil { model.curationUndoState.canUndo }
         #expect(model.curationUndoState.undoTitle == "Undo Move to Trash")
     }
 
