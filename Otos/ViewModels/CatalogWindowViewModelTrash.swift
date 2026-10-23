@@ -70,6 +70,14 @@ extension CatalogWindowViewModel {
             let bytes = await coordinator.downloadBytes(for: ids)
             guard let self else { return }
             mediaTrashTask = nil
+            guard let bytes else {
+                // The catalog could not size the download, so there is no number to put in
+                // a prompt. The move goes ahead on its own safeguards: the free-space floor
+                // and a failed download both stop and ask the user.
+                OtosLog.ui.notice("op=mediaTrash.prompt phase=sizeUnknown count=\(ids.count, privacy: .public)")
+                performMoveToTrash(ids)
+                return
+            }
             if LargeTrashDownloadPrompt.asks(bytes: bytes, preference: asksBeforeLargeTrashDownload) {
                 largeTrashDownloadPrompt = LargeTrashDownloadPrompt(ids: ids, bytes: bytes)
                 OtosLog.ui.notice(

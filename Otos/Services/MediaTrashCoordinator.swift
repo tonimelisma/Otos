@@ -27,8 +27,19 @@ import UniformTypeIdentifiers
 /// the volume below `FreeSpaceFloor` is not started and publishes `.diskFloor` once per
 /// pause; declining keeps the items pending until a later pass finds room.
 ///
-/// The injected status, requester, capacity, and executors are the test boundary for
-/// fault injection; production uses system Trash, `FileManager.removeItem`, and the
+/// A failed Store read is not a fact. A pass whose pending-item read fails publishes
+/// nothing — the queue state the user last saw stands — and retries on a timer; a move whose
+/// overlay read fails waits rather than trashing an item whose authored choice undo could
+/// then not restore.
+///
+/// A pass works from a snapshot of the pending items taken before its awaits, and the
+/// user can answer a prompt or undo while it runs. Every such answer records the items it
+/// withdrew in `revoked` *before* it touches the Store, and the pass checks that set before
+/// it acts on each item and again once it holds the root lease, so an item the user took
+/// back is never moved afterwards.
+///
+/// The injected status, requester, capacity, executors and Store reads are the test boundary
+/// for fault injection; production uses system Trash, `FileManager.removeItem`, and the
 /// volume's important-usage capacity.
 actor MediaTrashCoordinator {
     typealias TrashExecutor = @Sendable (URL) throws -> URL?
@@ -37,6 +48,21 @@ actor MediaTrashCoordinator {
     typealias PutBackExecutor = @Sendable (URL, URL) throws -> Void
     typealias StatusReader = @Sendable (URL) -> FileMaterializationStatus
     typealias CapacityReader = @Sendable (URL) -> Int64?
+
+    /// The Store reads the queue depends on, injectable so a test can make one fail.
+    nonisolated struct StoreReads: Sendable {
+        var pendingItems: @Sendable () async throws -> [PendingTrashItem]
+        var trashedOverlay: @Sendable ([MediaAssetID]) async throws -> [MediaAssetID: TrashedOverlay]
+        var trashItems: @Sendable ([MediaAssetID]) async throws -> [MediaTrashItem]
+
+        static func live(_ store: CatalogStore) -> StoreReads {
+            StoreReads(
+                pendingItems: { try await store.pendingTrashItems() },
+                trashedOverlay: { try await store.trashedOverlay(for: $0) },
+                trashItems: { try await store.mediaTrashItems(for: $0) }
+            )
+        }
+    }
 
     /// A question only the user can answer. Until it is answered the items stay pending
     /// and hidden, and the queue does not retry them.
@@ -122,6 +148,10 @@ actor MediaTrashCoordinator {
     }
 
     private let store: CatalogStore
+    private let reads: StoreReads
+    /// Awaited before each pending item is handled in a pass; a test uses it to deliver an
+    /// answer at exactly the suspension a real user answer could land in.
+    private let willHandleItem: (@Sendable (MediaAssetID) async -> Void)?
     private let materializationRequester: (any MaterializationRequesting)?
     private let status: StatusReader
     private let capacity: CapacityReader
@@ -151,6 +181,10 @@ actor MediaTrashCoordinator {
     /// Items the user chose to keep waiting at the floor; not asked again this pause.
     private var waitingForSpace: Set<MediaAssetID> = []
     private var movedInRun = 0
+    /// Items the user took back (restore, withdraw, immediate delete, undo of a pending
+    /// request) while a pass may still hold them in its snapshot. Added before the Store is
+    /// touched, dropped once a read no longer lists the item.
+    private var revoked: Set<MediaAssetID> = []
     /// Items this session moved to the Trash, per command, for undo. In memory like
     /// every other undo entry; after relaunch only Finder's Put Back remains.
     private var trashed: [MediaTrashBatchID: [TrashedItem]] = [:]
@@ -185,9 +219,13 @@ actor MediaTrashCoordinator {
         putBackExecutor: @escaping PutBackExecutor = { from, to in
             try FileManager.default.moveItem(at: from, to: to)
         },
-        retryPolicy: RetryPolicy = .production
+        retryPolicy: RetryPolicy = .production,
+        reads: StoreReads? = nil,
+        willHandleItem: (@Sendable (MediaAssetID) async -> Void)? = nil
     ) {
         self.store = store
+        self.reads = reads ?? .live(store)
+        self.willHandleItem = willHandleItem
         self.materializationRequester = materializationRequester
         self.status = status
         self.capacity = capacity
@@ -249,7 +287,17 @@ actor MediaTrashCoordinator {
         let set = Set(ids)
         awaitingDecision.subtract(set)
         waitingForSpace.subtract(set)
-        let items = await pendingItems().filter { set.contains($0.item.id) }
+        revoked.formUnion(set)
+        let items: [PendingTrashItem]
+        do {
+            items = try await pendingItems().filter { set.contains($0.item.id) }
+        } catch {
+            // Nothing was deleted: the items stay pending and the user can answer again.
+            logReadFailure(error, read: "deleteImmediately")
+            revoked.subtract(set)
+            kick()
+            return
+        }
         var deleted = 0
         for pending in items {
             downloads[pending.item.id]?.cancel()
@@ -268,7 +316,8 @@ actor MediaTrashCoordinator {
         let set = Set(ids)
         awaitingDecision.subtract(set)
         forget(set)
-        let restored = await (try? store.clearPendingTrash(ids)) ?? []
+        revoked.formUnion(set)
+        let restored = await clearPending(ids, operation: "restore")
         OtosLog.catalog.noticeOperation("mediaTrash.queue", phase: "restored", fields: [
             "requested": "\(ids.count)", "restored": "\(restored.count)",
         ])
@@ -291,11 +340,12 @@ actor MediaTrashCoordinator {
         let set = Set(ids)
         awaitingDecision.subtract(set)
         waitingForSpace.subtract(set)
+        revoked.formUnion(set)
         for id in set {
             downloads[id]?.cancel()
         }
         forget(set)
-        let restored = await (try? store.clearPendingTrash(ids)) ?? []
+        let restored = await clearPending(ids, operation: "withdraw")
         kick()
         return restored
     }
@@ -315,10 +365,16 @@ actor MediaTrashCoordinator {
     }
 
     /// Bytes the requested items still need downloaded before they can be trashed:
-    /// catalog sizes of members that are cloud-only right now. Reads no file bytes.
-    func downloadBytes(for ids: [MediaAssetID]) async -> Int64 {
-        let items = await (try? store.mediaTrashItems(for: ids)) ?? []
-        return items.reduce(Int64(0)) { $0 + datalessBytes(of: $1) }
+    /// catalog sizes of members that are cloud-only right now. Reads no file bytes. `nil`
+    /// means the catalog could not be read — unknown, not zero.
+    func downloadBytes(for ids: [MediaAssetID]) async -> Int64? {
+        do {
+            let items = try await reads.trashItems(ids)
+            return items.reduce(Int64(0)) { $0 + datalessBytes(of: $1) }
+        } catch {
+            logReadFailure(error, read: "downloadBytes")
+            return nil
+        }
     }
 
     // MARK: - Drain
@@ -326,14 +382,25 @@ actor MediaTrashCoordinator {
     private func drain() async {
         guard !isShuttingDown else { return }
         await answerUndoRequests()
-        let items = await pendingItems()
+        let items: [PendingTrashItem]
+        do {
+            items = try await pendingItems()
+        } catch {
+            // Not a fact about the queue: publish nothing, keep the state the user last saw,
+            // and look again shortly.
+            logReadFailure(error, read: "drain")
+            scheduleWake(after: retryPolicy.delays.first ?? .seconds(15))
+            return
+        }
+        revoked.formIntersection(Set(items.map(\.item.id)))
         let now = clock.now
         var floorBlocked: [MediaAssetID] = []
         var waitingOnRetry = false
 
         for pending in items {
             let item = pending.item
-            if awaitingDecision.contains(item.id) || downloads[item.id] != nil {
+            await willHandleItem?(item.id)
+            if awaitingDecision.contains(item.id) || downloads[item.id] != nil || revoked.contains(item.id) {
                 continue
             }
             let dataless = datalessMembers(of: item)
@@ -387,7 +454,14 @@ actor MediaTrashCoordinator {
     }
 
     private func publishState(attention: QueueState.Attention?) async {
-        let remaining = await pendingItems()
+        let remaining: [PendingTrashItem]
+        do {
+            remaining = try await pendingItems()
+        } catch {
+            logReadFailure(error, read: "publishState")
+            scheduleWake(after: retryPolicy.delays.first ?? .seconds(15))
+            return
+        }
         if remaining.isEmpty {
             movedInRun = 0
         }
@@ -402,13 +476,24 @@ actor MediaTrashCoordinator {
         eventContinuation.yield(.state(state))
     }
 
-    private func pendingItems() async -> [PendingTrashItem] {
+    private func pendingItems() async throws -> [PendingTrashItem] {
+        try await reads.pendingItems()
+    }
+
+    private func logReadFailure(_ error: any Error, read: String) {
+        OtosLog.catalog.errorOperation("mediaTrash.queue", phase: "readFailed", fields: [
+            "read": read, "error": String(describing: error),
+        ])
+    }
+
+    /// Un-hides items in the Store. A failure leaves them hidden and pending, which the
+    /// caller reports as nothing restored, and lets the queue handle them again.
+    private func clearPending(_ ids: [MediaAssetID], operation: String) async -> [MediaAssetID] {
         do {
-            return try await store.pendingTrashItems()
+            return try await store.clearPendingTrash(ids)
         } catch {
-            OtosLog.catalog.error(
-                "op=mediaTrash.queue phase=readFailed error=\(String(describing: error), privacy: .public)"
-            )
+            logReadFailure(error, read: operation)
+            revoked.subtract(ids)
             return []
         }
     }
@@ -538,7 +623,26 @@ actor MediaTrashCoordinator {
             scheduleWake(after: retryPolicy.delays.first ?? .seconds(15))
             return
         }
-        let overlay = await (try? store.trashedOverlay(for: [item.id]))?[item.id]
+        // The user may have taken the item back while this pass waited for the lease.
+        guard !revoked.contains(item.id) else {
+            _ = await store.releaseNamespaceMutationLease(lease)
+            return
+        }
+        // The overlay is what undo puts back. Moving the item without it would lose the
+        // user's authored choice for good, so an unreadable overlay defers the move.
+        let overlay: TrashedOverlay?
+        do {
+            overlay = try await reads.trashedOverlay([item.id])[item.id]
+        } catch {
+            logReadFailure(error, read: "trashedOverlay")
+            _ = await store.releaseNamespaceMutationLease(lease)
+            scheduleWake(after: retryPolicy.delays.first ?? .seconds(15))
+            return
+        }
+        guard !revoked.contains(item.id) else {
+            _ = await store.releaseNamespaceMutationLease(lease)
+            return
+        }
         var results: [MediaTrashPathResult] = []
         var moved: [TrashedMember] = []
         var evicted = false
@@ -660,15 +764,23 @@ actor MediaTrashCoordinator {
 
     private func performUndo(batch: MediaTrashBatchID, ids: Set<MediaAssetID>) async -> UndoResult {
         var outcome = UndoResult()
-        let pendingIDs = await Set(pendingItems().map(\.item.id)).intersection(ids)
+        // If pending items cannot be listed, they are not claimed restored: they fall into
+        // `failed` below, which is what the user is told — nothing was put back.
+        var pendingIDs: Set<MediaAssetID> = []
+        do {
+            pendingIDs = try await Set(pendingItems().map(\.item.id)).intersection(ids)
+        } catch {
+            logReadFailure(error, read: "undoPending")
+        }
         if !pendingIDs.isEmpty {
             awaitingDecision.subtract(pendingIDs)
             waitingForSpace.subtract(pendingIDs)
+            revoked.formUnion(pendingIDs)
             for id in pendingIDs {
                 downloads[id]?.cancel()
             }
             forget(pendingIDs)
-            outcome.restored += await (try? store.clearPendingTrash(Array(pendingIDs))) ?? []
+            outcome.restored += await clearPending(Array(pendingIDs), operation: "undo")
         }
         var remaining: [TrashedItem] = []
         for trashedItem in trashed[batch] ?? [] {
