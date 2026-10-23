@@ -145,14 +145,29 @@ and let instrumentation prove a real bottleneck before optimizing it.
   indefinite waits, upgrades only for the smallest completed-value scope, and exits
   when that upgrade fails — a loop that only skips a beat keeps whatever its closure
   captured alive forever.
-- Repeated synchronous UI intents that start async work define their delivery
-  semantics explicitly (newest-value coalescing, lossless serial, or intentional
-  concurrency). Constructive/destructive commands must not use a dropping buffer
-  without a rejection surface.
-- When an actor suspends mid-operation, coalesce duplicate work through one owner
-  and revalidate the operation's current typed ownership facts after every await
-  before applying results. Prefer existing domain/persistence identity over a
-  generated token.
+- Owner state follows ADR 0032, because an actor is reentrant and every `await` is a place
+  another event can arrive:
+  1. **State changes only in synchronous code.** An async operation takes its inputs as
+     values, awaits without touching owner state, and returns an event that is applied
+     synchronously after checking it still belongs to the identity it started for. Never
+     hold a copy of owner state across an `await`.
+  2. **A request is a revision counter** (`requested &+= 1`; work covers the value it
+     started from; start again while `requested != covered`), never a boolean a finishing
+     operation clears.
+  3. **One loop per owner, woken by a doorbell** (`.bufferingNewest(1)`). Newer work never
+     cancels published work; cancel only for teardown. A cancelled result is never published.
+  4. **An error is not a fact.** A failed read publishes nothing, leaves the request
+     outstanding and is logged; never substitute `[]`, `0`, `.empty` or `nil` for a value a
+     user sees.
+  5. **Intents travel in one ordered stream with one consumer** (`.unbounded` for commands,
+     `.bufferingNewest(1)` for newest-wins state), never one `Task {}` per call. An intent
+     that starts long work returns when it is applied.
+  6. **Blocking work leaves the actor by a named mechanism** (`@concurrent`,
+     `Task.detached`, a task-group child, a dedicated queue): this target compiles with
+     `NonisolatedNonsendingByDefault`, so a `nonisolated async` call runs on its caller's
+     actor.
+  Test an interleaving by delivering the competing event at that exact suspension, never
+  with time.
 - Main-actor work stays below Apple's 100 ms hang threshold; scrolling/grid/
   animation/pointer paths well below it. Changes touching jank, responsiveness,
   concurrency, media I/O, or rendering include profiler/log evidence.
@@ -189,6 +204,8 @@ Two lenses on every PR:
   useful; bug-fixes reproduce then verify; invariants get an adversarial "can I
   construct a violation?" pass. Diff against the plan, check blast radius, run
   every agent-owned check, then invert every "this is fine."
+  For each `await` in the diff: what can change here, and is it re-read before being
+  written?
 - **(B) Architecture.** Is this the simplest correct design? One owner per
   question? Would a blank-slate build arrive here, or is this a patch around a
   wrong boundary?
