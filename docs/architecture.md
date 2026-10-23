@@ -97,7 +97,7 @@ exists only for a live attachment: on detach the session's outcome is logged
 (`op=import.outcome phase=settled`) and discarded, because the import bar is drawn only
 on the card's own row. A reattached card at the same path starts a fresh session and
 cannot inherit the previous run's outcome.
-| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), owned per-slot pane-request tasks, lossless serial mutation delivery, monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
+| `CatalogWindowViewModel` | `@MainActor` | final SwiftUI state assignment, sidebar selection, grid selection model (`GridSelection`), view mode / loupe focus (`loupeVideoState` single owner), owned per-slot pane-request tasks, lossless serial delivery of catalog mutations, import intents and trash undo/redo/prompt answers (one stream and one consumer each, so the user's order is the delivery order), monitor/task lifetimes, import presentation bridge | touches SwiftUI state; deliberately a thin bridge — heavy work belongs down a layer; `await` materialize suspends without blocking main thread |
 
 Rule of thumb: the main thread only assigns final UI state and starts work;
 everything expensive happens on an actor off the main thread.

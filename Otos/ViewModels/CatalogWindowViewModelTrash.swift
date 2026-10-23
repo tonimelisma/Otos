@@ -24,6 +24,16 @@ import OSLog
 /// The queue reports back through one event stream consumed here: its state feeds the
 /// bottom status bar, its decisions queue as prompts (D3/D4 of Plan 0104), and a move
 /// that failed after download re-shows the failure alert.
+/// A user act aimed at the trash queue after the original Move to Trash. They share one
+/// lossless stream so the queue sees them in the order the user acted.
+nonisolated enum TrashIntent: Sendable {
+    case undo(batch: MediaTrashBatchID, ids: [MediaAssetID])
+    case redo(batch: MediaTrashBatchID, ids: [MediaAssetID])
+    case deleteImmediately([MediaAssetID])
+    case restore([MediaAssetID])
+    case keepWaitingForSpace([MediaAssetID])
+}
+
 extension CatalogWindowViewModel {
     var canMoveTargetedMediaToTrash: Bool {
         guard mediaTrashTask == nil else {
@@ -54,6 +64,8 @@ extension CatalogWindowViewModel {
         // Sizing reads member status off the MainActor; `mediaTrashTask` keeps a second
         // command from starting until this one has either asked or moved.
         let coordinator = mediaTrashCoordinator
+        // Single in flight by construction (`mediaTrashTask` gates every start), so there is
+        // nothing to order: a read-only sizing question, answered once.
         mediaTrashTask = Task { [weak self, coordinator] in
             let bytes = await coordinator.downloadBytes(for: ids)
             guard let self else { return }
@@ -106,6 +118,8 @@ extension CatalogWindowViewModel {
         startMediaTrash()
         let coordinator = mediaTrashCoordinator
         OtosLog.ui.notice("op=trash.move phase=start count=\(ids.count, privacy: .public)")
+        // Single in flight by construction (`mediaTrashTask` gates every start): a second
+        // Move to Trash waits for this Store mark rather than racing it.
         mediaTrashTask = Task { [weak self, store = catalogStore, coordinator] in
             let batch = MediaTrashBatchID()
             let hidden = await (try? store.markPendingTrash(ids, batch: batch)) ?? []
@@ -148,24 +162,24 @@ extension CatalogWindowViewModel {
             model.redoMoveToTrash(ids: ids)
         }
         curationUndoManager.setActionName(Self.moveToTrashActionName)
-        let coordinator = mediaTrashCoordinator
         OtosLog.ui.notice("op=trash.undo phase=start count=\(ids.count, privacy: .public)")
-        Task { [weak self] in
-            let outcome = await coordinator.undo(batch: batch, ids: ids)
-            guard let self else { return }
-            OtosLog.ui.notice(
-                """
-                op=trash.undo phase=finish restored=\(outcome.restored.count, privacy: .public) \
-                failed=\(outcome.failed.count, privacy: .public)
-                """
-            )
-            if !outcome.failed.isEmpty {
-                trashFailedIDs = outcome.failed
-                trashAlertDetail = TrashAlertCopy.putBackDetail
-                trashAlertMessage = outcome.failed.count == 1
-                    ? TrashAlertCopy.putBackFailedOne
-                    : TrashAlertCopy.putBackFailedMany
-            }
+        // Command: ordered with a following redo, which re-marks the same items.
+        submitTrashIntent(.undo(batch: batch, ids: ids))
+    }
+
+    private func finishTrashUndo(_ outcome: MediaTrashCoordinator.UndoResult) {
+        OtosLog.ui.notice(
+            """
+            op=trash.undo phase=finish restored=\(outcome.restored.count, privacy: .public) \
+            failed=\(outcome.failed.count, privacy: .public)
+            """
+        )
+        if !outcome.failed.isEmpty {
+            trashFailedIDs = outcome.failed
+            trashAlertDetail = TrashAlertCopy.putBackDetail
+            trashAlertMessage = outcome.failed.count == 1
+                ? TrashAlertCopy.putBackFailedOne
+                : TrashAlertCopy.putBackFailedMany
         }
     }
 
@@ -177,11 +191,54 @@ extension CatalogWindowViewModel {
             model.undoMoveToTrash(batch: batch, ids: ids)
         }
         curationUndoManager.setActionName(Self.moveToTrashActionName)
-        let coordinator = mediaTrashCoordinator
         OtosLog.ui.notice("op=trash.redo phase=start count=\(ids.count, privacy: .public)")
-        Task { [store = catalogStore] in
-            _ = try? await store.markPendingTrash(ids, batch: batch)
-            coordinator.kick()
+        // Command: ordered after the undo it follows.
+        submitTrashIntent(.redo(batch: batch, ids: ids))
+    }
+
+    private func submitTrashIntent(_ intent: TrashIntent) {
+        switch mediaTrashIntentContinuation.yield(intent) {
+        case .enqueued:
+            return
+        case .dropped:
+            assertionFailure("Unbounded trash intent stream dropped an intent")
+            OtosLog.ui.error("Trash intent was unexpectedly dropped")
+        case .terminated:
+            assertionFailure("Trash intent submitted after stream termination")
+            OtosLog.ui.error("Trash intent submitted after termination")
+        @unknown default:
+            assertionFailure("Unknown trash intent stream yield result")
+            OtosLog.ui.error("Trash intent returned an unknown yield result")
+        }
+    }
+
+    /// The one consumer of trash intents, in submission order. Holds the view model weakly
+    /// across each wait and ends with the stream.
+    private func startTrashIntentConsumer() {
+        guard mediaTrashIntentTask == nil else { return }
+        let intents = mediaTrashIntentStream
+        let coordinator = mediaTrashCoordinator
+        let store = catalogStore
+        mediaTrashIntentTask = Task { [weak self, coordinator, store] in
+            for await intent in intents {
+                switch intent {
+                case let .undo(batch, ids):
+                    let outcome = await coordinator.undo(batch: batch, ids: ids)
+                    self?.finishTrashUndo(outcome)
+                case let .redo(batch, ids):
+                    _ = try? await store.markPendingTrash(ids, batch: batch)
+                    coordinator.kick()
+                case let .deleteImmediately(ids):
+                    await coordinator.deleteImmediately(ids)
+                case let .restore(ids):
+                    await coordinator.restore(ids)
+                case let .keepWaitingForSpace(ids):
+                    await coordinator.keepWaitingForSpace(ids)
+                }
+                if self == nil {
+                    return
+                }
+            }
         }
     }
 
@@ -198,6 +255,8 @@ extension CatalogWindowViewModel {
                 }
             }
         }
+        startTrashIntentConsumer()
+        // Lifecycle, not a user act: `start()` is idempotent and nothing orders against it.
         Task { await coordinator.start() }
     }
 
@@ -235,8 +294,8 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice(
             "op=trash.decision phase=delete kind=\(decision.kindName, privacy: .public) count=\(decision.ids.count, privacy: .public)"
         )
-        let coordinator = mediaTrashCoordinator
-        Task { await coordinator.deleteImmediately(decision.ids) }
+        // Command: ordered with the other prompt answers and with undo/redo.
+        submitTrashIntent(.deleteImmediately(decision.ids))
     }
 
     /// The user chose Cancel: a failed download's items reappear; items blocked by the
@@ -247,12 +306,12 @@ extension CatalogWindowViewModel {
         OtosLog.ui.notice(
             "op=trash.decision phase=cancel kind=\(decision.kindName, privacy: .public) count=\(decision.ids.count, privacy: .public)"
         )
-        let coordinator = mediaTrashCoordinator
+        // Command: ordered with the other prompt answers and with undo/redo.
         switch decision {
         case let .downloadFailed(ids):
-            Task { await coordinator.restore(ids) }
+            submitTrashIntent(.restore(ids))
         case let .diskFloor(ids):
-            Task { await coordinator.keepWaitingForSpace(ids) }
+            submitTrashIntent(.keepWaitingForSpace(ids))
         }
     }
 

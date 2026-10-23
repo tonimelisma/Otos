@@ -236,6 +236,12 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var deviceCatalogTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var mediaOperationCoordinator: MediaOperationCoordinator?
     @ObservationIgnored var importPresentationTask: Task<Void, Never>?
+    /// Import intents travel in one lossless, ordered stream with one consumer, so "change
+    /// the destination, then Import" reaches the coordinator in that order. Started with
+    /// the coordinator (`startImportIntentConsumer`); an intent made before then waits.
+    @ObservationIgnored let importIntentStream: AsyncStream<ImportIntent>
+    @ObservationIgnored let importIntentContinuation: AsyncStream<ImportIntent>.Continuation
+    @ObservationIgnored var importIntentTask: Task<Void, Never>?
     @ObservationIgnored var mediaOperationStartTask: Task<Void, Never>?
 
     /// Per-source import plan summaries for the footer (scalar only; no full plan map).
@@ -273,6 +279,12 @@ final class CatalogWindowViewModel {
     @ObservationIgnored var reorganizationRunner: LibraryReorganizationRunner?
     @ObservationIgnored let mediaTrashCoordinator: MediaTrashCoordinator
     @ObservationIgnored var mediaTrashEventTask: Task<Void, Never>?
+    /// Undo, redo and the answers to trash prompts travel in one lossless ordered stream:
+    /// "undo, then redo" must reach the queue as that pair, never as redo's Store mark
+    /// overtaking undo's put-back. Started by `startMediaTrash`.
+    @ObservationIgnored let mediaTrashIntentStream: AsyncStream<TrashIntent>
+    @ObservationIgnored let mediaTrashIntentContinuation: AsyncStream<TrashIntent>.Continuation
+    @ObservationIgnored var mediaTrashIntentTask: Task<Void, Never>?
 
     @ObservationIgnored private var stateConsumptionTask: Task<Void, Never>?
     @ObservationIgnored private var catalogStartupTask: Task<Void, Never>?
@@ -342,6 +354,12 @@ final class CatalogWindowViewModel {
         // Selection may discard obsolete pending values, but every accepted
         // add/remove command must survive until the serial consumer handles it.
         let (mutationStream, mutationContinuation) = AsyncStream<CatalogMutationIntent>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        let (importIntentStream, importIntentContinuation) = AsyncStream<ImportIntent>.makeStream(
+            bufferingPolicy: .unbounded
+        )
+        let (mediaTrashIntentStream, mediaTrashIntentContinuation) = AsyncStream<TrashIntent>.makeStream(
             bufferingPolicy: .unbounded
         )
         let (mediaChoiceStream, mediaChoiceContinuation) = AsyncStream<MediaChoiceCommand>.makeStream(
@@ -428,6 +446,10 @@ final class CatalogWindowViewModel {
         self.queryContinuation = queryContinuation
         self.mutationStream = mutationStream
         self.mutationContinuation = mutationContinuation
+        self.importIntentStream = importIntentStream
+        self.importIntentContinuation = importIntentContinuation
+        self.mediaTrashIntentStream = mediaTrashIntentStream
+        self.mediaTrashIntentContinuation = mediaTrashIntentContinuation
         self.mediaChoiceStream = mediaChoiceStream
         self.mediaChoiceContinuation = mediaChoiceContinuation
         self.viewportStream = viewportStream
@@ -455,6 +477,7 @@ final class CatalogWindowViewModel {
         mediaChoiceForwardingTask?.cancel()
         mediaTrashTask?.cancel()
         mediaTrashEventTask?.cancel()
+        mediaTrashIntentTask?.cancel()
         openWithMenuTask?.cancel()
         loupeInfoTask?.cancel()
         currentTargetChoiceTask?.cancel()
@@ -462,6 +485,7 @@ final class CatalogWindowViewModel {
         enrichmentStartTask?.cancel()
         deviceStagingSweepTask?.cancel()
         importPresentationTask?.cancel()
+        importIntentTask?.cancel()
         mediaOperationStartTask?.cancel()
         removableVolumeMonitor?.stop()
         cameraSourceMonitor?.stop()
@@ -476,6 +500,8 @@ final class CatalogWindowViewModel {
         paneRequestTasks.removeAll()
         queryContinuation.finish()
         mutationContinuation.finish()
+        importIntentContinuation.finish()
+        mediaTrashIntentContinuation.finish()
         mediaChoiceContinuation.finish()
         viewportContinuation.finish()
         if let mediaOps = mediaOperationCoordinator {
