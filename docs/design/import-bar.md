@@ -315,7 +315,7 @@ ejects when it's done` beneath at L3. Action: `Cancel`, no confirmation (DES-032
 ### F · Done
 
 Done is **not terminal**, and it is **not two states**. `MediaOperationCoordinator`
-marks the session dirty after settlement and rebuilds the plan, so a card left in the
+requests a plan after settlement and rebuilds it, so a card left in the
 reader returns to a zero-copy plan. The bar reflects that plan.
 
 There is one post-import state, and it is drawn in one place: the card's own row
@@ -502,10 +502,15 @@ Consequences that shape the journeys:
   not the batch the assets land in, it changes on every re-plan, and using it would
   select a row that never exists.
 
-**Selection behavior: an import never moves the selection.** Pressing Import leaves the
-user on the card's row, where the bar shows the run's progress and its Cancel. The new
-batch row appears in the sidebar carrying its own progress indicator (*Ownership of
-status*), and the user can click it to watch items arrive. Nothing selects it for them.
+**Selection behavior: an import follows its batch, once.** Pressing Import leaves the
+user on the card's row, where the bar shows the run's progress and its Cancel, until
+the batch row exists. The coordinator exposes the batch only once its first item has
+landed, and at that moment the selection moves from the card's row to the batch, so the
+user watches items arrive. The batch row then carries its own progress indicator
+(*Ownership of status*), and the bar waits on the card's row, with Cancel, for as long
+as the card is attached. The move happens once per run and only from the card's own
+row: a user who is anywhere else when the batch appears stays there, and a user who
+returns to the card is not pulled back.
 
 **Where a forced re-resolution lands.** When the selected row itself stops existing —
 the user ejected or pulled the card they were standing on — the policy must resolve
@@ -526,9 +531,9 @@ coordinator's plan, never by a remembered UI flag.
 | 2 | `.library(card)` | **A** `Checking the card…`, indeterminate, L3 empty | Enumerating; no honest total yet |
 | 3 | `.library(card)` | **A** + `112 of 181 items`, determinate | Total is now real |
 | 4 | `.library(card)` | **C** `42 new items · 68 MB` / `139 already in Summer Photos` | `Copy into: Summer Photos`, eject checked from preference. Primary `Import` |
-| 5 | `.library(card)` | **E** | Import pressed; `ImportBatchID()` minted. The selection stays on the card |
-| 6 | `.library(card)` | **E** `Importing 12 of 42` / `19 MB of 68 MB · about 40 seconds left` | The batch row appears under **Imports** once its first item lands. Neither row shows an indicator — the bar owns status |
-| 7 | default selection | bar leaves with the card | Verified, then ejected. The card's row is gone, so the selection resolves through the ordinary default; the batch row holds what was imported |
+| 5 | `.library(card)` | **E** | Import pressed; `ImportBatchID()` minted. The selection stays on the card until the batch row exists |
+| 6 | `.library(card)` → `.importBatch(new)` | **E** `Importing 12 of 42` / `19 MB of 68 MB · about 40 seconds left`, then the bar leaves with the card's row | The batch row appears under **Imports** once its first item lands and the selection moves to it. The batch row carries the progress indicator; the bar waits on the card's row |
+| 7 | `.importBatch(new)` | — | Verified, then ejected. The card's row is gone; the user is already on the batch row, which holds what was imported. A user who went back to the card resolves through the ordinary default |
 
 ### J2 · The same import, eject unchecked
 
@@ -605,7 +610,7 @@ Where: `.library(card)` — the bar, and its Cancel, live on the card's row.
 
 ### J10 · Looking away mid-import
 
-1. From `.library(card)` in **E**, the user clicks a library — `.library(other)` — or the new batch.
+1. From `.library(card)` in **E**, the user clicks a library — `.library(other)` — or, without clicking, the selection follows the run to the new batch when its first item lands.
 2. The bar leaves with the card's row. The **batch row** now shows a 32 pt determinate bar, and that is the *only* place status appears (DES-040).
 3. Returning to `.library(card)` brings the full bar back at its current state.
 

@@ -45,7 +45,7 @@ settled attachment's copied count / clean flag / incomplete-item identities.
 `ImportBarPresentation.map` is a pure function of that presentation; it owns no facts
 of its own.
 
-A presentation lives exactly as long as its `SourceSession`, which does not outlive
+A presentation lives exactly as long as its `SourceSession` (held by `ImportSessionMachine`), which does not outlive
 its source. The bar is drawn only on the card's own sidebar row (`import-bar.md`
 "Where the user is standing"), so once the card is gone there is no surface for its
 outcome: the coordinator logs it (`op=import.outcome phase=settled`) and discards it.

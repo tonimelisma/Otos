@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted. Implemented in `MediaOperationCoordinator` (`SourceSession`, `ImportExecuting`, `ImportPlanBuilder`) and `MediaTransferPlanner`.
+Accepted. Implemented in `MediaOperationCoordinator` (`ImportSessionMachine`'s `SourceSession`, `ImportExecuting`, `ImportPlanBuilder`) and `MediaTransferPlanner`.
 Invariants R1–R5 are proven by adversarial coordinator tests — see Consequences → *Verification*.
 
 ## Context
@@ -119,7 +119,7 @@ deduplication until something proves the simple path insufficient.
 
 While any execution targets destination D, destination-driven rebuilds are suppressed
 for every source mapped to D. Dirtiness is retained, not dropped. After the last
-execution for D finishes, one rebuild is scheduled per still-dirty source.
+execution for D finishes, one rebuild is taken up per source that still owes a plan.
 
 Suppression and flush both emit `op=import.coordinator phase=suppressRebuild` /
 `phase=flushRebuild`, so the fix is provable from a log capture rather than by

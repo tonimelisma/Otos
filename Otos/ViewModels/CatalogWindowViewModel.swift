@@ -56,6 +56,10 @@ final class CatalogWindowViewModel {
     /// Last drawn signature per source, so the apply log records what changed on screen
     /// rather than a timer's sample of it (B4).
     var lastDrawnSignature: [LibraryRootPath: String] = [:]
+    /// Batches this window has already moved the user into (or declined to, because the
+    /// user was elsewhere when the batch row first existed). A run moves the selection
+    /// once; a user who goes back to the card is not pulled to the batch again.
+    var followedImportBatches: Set<ImportBatchID> = []
     var state: CatalogWindowState = .empty
     /// User-adjustable grid density (APP-006), 3–9. `private(set)` so the only way to
     /// change it is the `setGridColumnCount(_:)` intent below — the one clamp/persist/publish

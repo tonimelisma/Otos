@@ -106,6 +106,7 @@ extension CatalogWindowViewModel {
             ])
         }
         importPresentations = presentations
+        followRunsIntoTheirBatches(presentations)
         if !cancellingImportSources.isEmpty {
             let stillExecuting = Set(presentations.compactMap { presentation -> LibraryRootPath? in
                 guard case .executing = presentation.state else { return nil }
@@ -115,6 +116,25 @@ extension CatalogWindowViewModel {
         }
         Task {
             await refreshRemovableDestinations()
+        }
+    }
+
+    /// Moves the user from a card's own row to the batch its run is copying into, once,
+    /// the first time that batch exists. The coordinator exposes `batchID` only after the
+    /// batch's first item has durably landed, so the sidebar row the selection names is
+    /// there to select. A user who is anywhere else when the batch first appears stays
+    /// there, and one who returns to the card afterwards is not pulled back — the card's
+    /// row keeps the bar, Cancel and Eject. Same path as a sidebar click (`selectSidebar`).
+    private func followRunsIntoTheirBatches(_ presentations: [MediaOperationSourcePresentation]) {
+        for presentation in presentations {
+            guard let batchID = presentation.batchID,
+                  case .executing = presentation.state,
+                  followedImportBatches.insert(batchID).inserted,
+                  sidebarSelection == .library(presentation.sourcePath)
+            else {
+                continue
+            }
+            selectSidebar(.importBatch(batchID))
         }
     }
 
