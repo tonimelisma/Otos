@@ -66,7 +66,7 @@ actor CatalogProjection {
     /// Count of full ordered-asset queries executed by publications. A detail-only
     /// publication skips it; the count is the observable "full-catalog re-sort per
     /// enrichment batch" metric (ADR 0011) and drives the regression test.
-    private(set) var orderQueryCount: UInt64 = 0
+    var orderQueryCount: UInt64 = 0
     /// Window states published so far. Read with `isQuiescent`, it says whether a change
     /// published anything, without depending on when a subscriber receives it.
     private(set) var publicationCount: UInt64 = 0
@@ -222,7 +222,11 @@ private extension CatalogProjection {
             }
         }
 
-        cadenceTask = Task { [weak self] in
+        // The cadence task is the one that notices the owner is gone, so it also ends the
+        // doorbell on every exit: `loopTask` waits on the doorbell indefinitely, and a
+        // wait nothing can end keeps `store` alive through its closure.
+        cadenceTask = Task { [weak self, continuation] in
+            defer { continuation.finish() }
             while !Task.isCancelled {
                 do {
                     try await Task.sleep(for: cadence)
