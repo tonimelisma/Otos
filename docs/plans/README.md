@@ -3,6 +3,26 @@
 Completed plans are removed after their implementation, documentation,
 verification, and merge closure.
 
+Plan 0107 (owner state changes synchronously, and requests are never lost) is complete
+across seven increments and was removed at closure. It opened 2026-10-05, when the hangs
+plan 0106's deadline removals exposed traced to owners holding state across an `await`
+rather than to slow machines. Its decisions live in ADR 0032 (seven rules: synchronous
+state changes, a request is a revision counter, one doorbell loop per owner, an error is
+not a fact, ordered intents, blocking work leaves the actor by a named mechanism,
+deterministic interleaving tests), ARC-019 and ADR 0005 (`CatalogProjection` as one
+revision-counted loop whose failed read publishes nothing), ARC-047 and ADRs 0017, 0019,
+0021 and 0024 (`ImportSessionMachine`, with the coordinator as its shell; ordered import and
+trash intents; per-run progress stream), ARC-058 and APP-040 (the audit's trash-queue and
+preview-loader findings), and `docs/research/2026-10-23-actor-hold-during-blocking-work.md`
+(the coordinator held 284–324 ms per plan build and the store up to 995 ms per subtree
+rescan, before `@concurrent` and a detached walk). The same increment 2 changed behavior:
+the window now follows a run into its batch once the batch's first item lands
+(`import-bar.md`, APP-002). One lint rule landed
+(`projection_catch_substitutes_value`); the matching rule for `@concurrent` on `Live*`
+async functions was left out because a regex cannot tell an actor method from a
+`nonisolated` one, and review carries it (AGENTS.md, Code Review lens A). Plan 0106
+resumes at its increment 3.
+
 Plan 0104 (recoverable Move to Trash for cloud-only media, with undo) is complete
 across four increments and was removed at closure. It opened 2026-10-04 when Move
 to Trash failed for every cloud-only OneDrive item (`trashItem` refuses a dataless

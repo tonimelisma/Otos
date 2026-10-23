@@ -19,7 +19,7 @@ appears in code only when nothing can report the fact:
 
 A rate limit (a cadence or a debounce) states that work is not worth doing more
 often. That is a performance claim: it stands on a recorded measurement, or the
-work is coalesced through its owner with dirty and in-flight flags instead.
+work is coalesced through its owner with a revision counter (ADR 0032) instead.
 
 No allowlist and no exceptions: the guard lands only when nothing violates it.
 

@@ -71,4 +71,11 @@ custom_rules:
     message: "Emit op=/phase= lines through noticeOperation/errorOperation/debugOperation, never a hand-rolled .debug(\"op=…\") string — level then becomes a deliberate choice instead of an accident."
     severity: error
 
+  projection_catch_substitutes_value:
+    name: "A projection read error must not become a value"
+    included: 'Otos/Services/CatalogProjection[A-Za-z]*\.swift'
+    regex: 'catch\b[^{}]*\{[^{}]*(=\s*(\[\]|\.empty\b|0\b)|return\s+(\[\]|\.empty\b|0\b))'
+    message: "A failed Store read publishes nothing (ADR 0032, rule 4): throw it to the pass instead of assigning or returning [], .empty or 0 in a catch."
+    severity: error
+
 reporter: xcode
