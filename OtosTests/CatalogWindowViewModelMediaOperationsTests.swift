@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 /// APP-029, `import-bar.md` "Where the user is standing": the import bar is
-/// drawn only on a removable source's own row, and an import never moves the
-/// sidebar selection. These tests exercise the ViewModel's public
+/// drawn only on a removable source's own row, and an import moves the selection
+/// to its batch once, when the batch's row first exists. These tests exercise the ViewModel's public
 /// `applyImportPresentations`/`applyState` entry points.
 @MainActor
 struct CatalogWindowViewModelMediaOperationsTests {
@@ -78,15 +78,63 @@ struct CatalogWindowViewModelMediaOperationsTests {
         )
     }
 
-    // MARK: - An import never moves the selection
+    // MARK: - An import moves the user to its batch, once
 
-    @Test func pressingImportLeavesTheUserOnTheCardRow() {
+    /// `import-bar.md` row 6: the selection leaves the card's row for the batch the run
+    /// is copying into as soon as that batch's row exists — the presentation carries
+    /// `batchID` only after its first item landed.
+    @Test func pressingImportMovesTheUserToTheBatchOnceItExists() {
+        let model = makeModel()
+        model.applyState(Self.attachedState(model, importBatches: []))
+        model.selectSidebar(.library(Self.cardPath))
+
+        // Preparing and the first frames of the run have no batch row yet.
+        model.applyImportPresentations([Self.presentation(batchID: nil)])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        #expect(model.sidebarSelection == .importBatch(Self.batchID))
+        #expect(model.selectedImportPresentation == nil)
+    }
+
+    @Test func aUserWhoReturnsToTheCardIsNotPulledBackToTheBatch() {
         let model = makeModel()
         model.applyState(Self.attachedState(model, importBatches: []))
         model.selectSidebar(.library(Self.cardPath))
         model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        model.selectSidebar(.library(Self.cardPath))
+
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+
         #expect(model.sidebarSelection == .library(Self.cardPath))
         #expect(model.selectedImportPresentation?.batchID == Self.batchID)
+    }
+
+    @Test func aUserElsewhereWhenTheBatchAppearsStaysThereAndIsNeverPulledLater() {
+        let model = makeModel()
+        model.applyState(Self.attachedState(model, importBatches: []))
+        model.selectSidebar(.library(Self.libraryPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        #expect(model.sidebarSelection == .library(Self.libraryPath))
+
+        model.selectSidebar(.library(Self.cardPath))
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID)])
+        #expect(model.sidebarSelection == .library(Self.cardPath))
+    }
+
+    @Test func aRunThatIsNotCopyingDoesNotMoveTheUser() {
+        let model = makeModel()
+        model.applyState(Self.attachedState(model, importBatches: []))
+        model.selectSidebar(.library(Self.cardPath))
+
+        model.applyImportPresentations([Self.presentation(batchID: Self.batchID, state: .completed(
+            summary: Self.stoppedTotals,
+            skippedForeignCount: 0,
+            failedCount: 0,
+            incompleteItems: []
+        ))])
+
+        #expect(model.sidebarSelection == .library(Self.cardPath))
     }
 
     @Test func anExecutingImportDoesNotMoveTheUserFromAllImports() {

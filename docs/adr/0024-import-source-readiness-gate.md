@@ -37,7 +37,7 @@ existed to gate the *offer* — the coordinator conflated "a plan was built" wit
   and gating execution start (`beginExecutionIfPossible`). It does not gate
   session creation or plan building — those stay eager, matching ADR 0019's
   attach-to-ready latency goal; only the *offer* is withheld.
-- The empty-card proof (`!session.isDirty`) that closes the residual race
+- The empty-card proof (`!session.needsPlan`) that closes the residual race
   where readiness and a fresh occupancy bump land in the same beat.
 
 **References but does not own:**
@@ -107,7 +107,7 @@ occupancy. For a **non-empty** plan this is harmless — the numbers are simply
 one beat stale and the next rebuild corrects them visibly. For the **empty**
 case it is not: showing "This card is empty" for even one frame is a
 fabricated proof of absence (exactly D1's failure shape). The fix checks
-`!session.isDirty` — the coordinator's own accounting of whether it owes a
+`!session.needsPlan` — the coordinator's own accounting of whether it owes a
 rebuild against a staleness signal it has already received — rather than
 comparing `lastSeenOccupancy` against the plan's `sourceOccupancyRevision`
 directly. The first implementation used that direct comparison and failed
@@ -115,8 +115,9 @@ under test load: a source whose inventory never changes again after settling
 (an empty card that never gains a file) never earns a *further* occupancy
 bump to reconcile two independently-sampled values, so an equality check
 between them can permanently disagree with no future event able to fix it.
-The dirty bit has no such failure mode — it is cleared by the same rebuild
-that would fire regardless.
+The owed-plan counters have no such failure mode — `planCovered` catches up to
+`planRequested` in the same transition that takes up the rebuild that would fire
+regardless.
 
 ### Single presentation writer
 
@@ -167,7 +168,7 @@ Cons: for a source whose occupancy stops changing after it settles, this
 comparison has no future event able to correct a stale mismatch — a
 permanent-stall failure mode, confirmed empirically (§Decision).
 
-**Rejected**, replaced by the `!session.isDirty` check.
+**Rejected**, replaced by the `!session.needsPlan` check.
 
 ### C. Gate session/plan creation itself, not just the offer
 

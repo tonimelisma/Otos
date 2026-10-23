@@ -71,14 +71,22 @@ was promoted to a plan that read `0 new items · Import 0 Items` over 368 items
 already in the library. Suffix exhaustion is a separate, per-item reason
 (`.noFreeDestinationName`).
 
-**Plan building is an owned per-source child task.** `scheduleBuildIfNeeded` is
-synchronous: it flips the `dirty`/`building` pair and starts a task held in
-`buildTasks`. The planning-change consumer never awaits a build, so the coordinator
-keeps servicing attach, detach, and Import intents while one is in flight. The
-enumeration and planning pass run off the actor in a nonisolated async helper; because
-that is a suspension point, every completion revalidates its source and destination
-occupancy revisions on the actor before publishing, and a build that lost the race
-re-dirties instead of applying. A detached source cancels its build.
+**Plan building is an owned per-source child task, and its result is an event.**
+Session state lives in `ImportSessionMachine`, which changes only in the synchronous
+`handle(_:)`. Taking a build up is a transition: it sets `planCovered = planRequested`
+and returns a `startBuild` effect that the coordinator shell runs as a task held in
+`buildTasks`. A request (a revision, destination or preference change, a scan batch) is
+`planRequested &+= 1` and nothing ever decrements it, so one made while a build runs is
+still owed when that build finishes. The planning-change consumer never awaits a build,
+so the coordinator keeps servicing attach, detach, and Import intents while one is in
+flight. The build task reads the Store and runs the planner, touching no session state;
+it reports back `buildFinished(BuildID, outcome)`. Because that is a suspension point,
+the machine judges the outcome against the session as it is *now* — the typed
+`BuildID` (source, attachment, build generation), the destination, and the source and
+destination occupancy revisions — and a build that lost the race requests another plan
+instead of applying. A detached source cancels its build, and a stale result is dropped
+by identity. The enumeration and planning pass are intended to run off the coordinator
+actor; plan 0107 increment 4 makes that explicit with `@concurrent`.
 
 **Planning is instrumented at the boundary that owns it.** `op=import.plan` emits
 `phase=start`, `phase=finish` (folder count, namespace entry count, `enumerateMs`,
@@ -122,7 +130,7 @@ are precisely the foreign files that must force a suffix.
 Stale replay looked like a cause of the observed backlog. It was a symptom: the
 consumer was blocked, not oversubscribed. The stream is documented as a lossless
 revision log, the coordinator already suppresses unchanged occupancy revisions, and
-`dirty`/`building` already coalesce redundant builds. With the consumer no longer
+the revision counters and the one-build-at-a-time rule already coalesce redundant builds. With the consumer no longer
 blocking, the backlog drains immediately. Changing the buffering policy would reverse
 a deliberate decision to fix a problem that no longer exists.
 
