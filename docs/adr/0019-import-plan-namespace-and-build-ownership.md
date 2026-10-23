@@ -85,8 +85,11 @@ the machine judges the outcome against the session as it is *now* — the typed
 `BuildID` (source, attachment, build generation), the destination, and the source and
 destination occupancy revisions — and a build that lost the race requests another plan
 instead of applying. A detached source cancels its build, and a stale result is dropped
-by identity. The enumeration and planning pass are intended to run off the coordinator
-actor; plan 0107 increment 4 makes that explicit with `@concurrent`.
+by identity. The enumeration and planning pass run off the coordinator actor because
+`LiveImportPlanBuilder.build` is `@concurrent`: this target compiles with
+`NonisolatedNonsendingByDefault`, under which a plain `nonisolated async` call stays on its
+caller's actor and measured 285–324 ms of the coordinator being unreachable per build
+(`docs/research/2026-10-23-actor-hold-during-blocking-work.md`).
 
 **Planning is instrumented at the boundary that owns it.** `op=import.plan` emits
 `phase=start`, `phase=finish` (folder count, namespace entry count, `enumerateMs`,

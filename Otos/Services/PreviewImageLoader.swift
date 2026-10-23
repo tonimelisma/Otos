@@ -147,7 +147,7 @@ actor PreviewImageLoader: PreviewLoading {
         let isMovie = request.detail?.bestKind == .video
             || UTType(filenameExtension: url.pathExtension)?.conforms(to: .movie) == true
 
-        // Decode off the actor so two panes can decode concurrently and bookkeeping
+        // Decode in a `Task.detached` (off this actor) so two panes can decode concurrently and bookkeeping
         // stays responsive. Dataless/materialize gates above already ran in order.
         // ImageIO thumbnail creation waits on Default-QoS internal workers; matching
         // that QoS avoids the Thread Performance Checker priority-inversion hang risk

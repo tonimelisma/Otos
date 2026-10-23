@@ -49,8 +49,7 @@ nonisolated enum FileMaterialization {
     private static let datalessFlag: UInt32 = 0x4000_0000
 
     /// Reports the point-in-time materialization status of `url` without reading its
-    /// bytes. Pure inode metadata, so it is safe to call off the main actor on any
-    /// thread and never forces a cloud download. The result is transient and must
+    /// bytes. Pure inode metadata, so it is safe to call from any thread and never forces a cloud download. The result is transient and must
     /// not be persisted.
     static func status(of url: URL) -> FileMaterializationStatus {
         var info = stat()

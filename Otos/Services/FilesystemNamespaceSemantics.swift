@@ -3,7 +3,7 @@ import OSLog
 
 /// Filesystem namespace semantics guide
 ///
-/// Off-main, volume-aware occupancy and name observations for import planning and
+/// Volume-aware occupancy and name observations for import planning and
 /// reorganization. Never trusts the catalog alone for destination freeness —
 /// symlinks, packages, and foreign files are invisible to media queries.
 ///

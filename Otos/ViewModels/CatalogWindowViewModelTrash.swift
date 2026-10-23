@@ -51,7 +51,7 @@ extension CatalogWindowViewModel {
             performMoveToTrash(ids)
             return
         }
-        // Sizing reads member status off the MainActor; `mediaTrashTask` keeps a second
+        // Sizing runs on `MediaTrashCoordinator`, an actor, not the MainActor; `mediaTrashTask` keeps a second
         // command from starting until this one has either asked or moved.
         let coordinator = mediaTrashCoordinator
         mediaTrashTask = Task { [weak self, coordinator] in

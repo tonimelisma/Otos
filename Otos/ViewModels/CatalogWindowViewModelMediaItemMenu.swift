@@ -11,7 +11,7 @@ import OSLog
 /// corresponding menu-bar item already calls.
 ///
 /// The model is built synchronously because the menu is opening now. A right-click
-/// on an unselected tile has just changed the selection, so the off-main Open With
+/// on an unselected tile has just changed the selection, so the `@concurrent` Open With
 /// build may not have landed; in that case the LaunchServices query runs here, on the
 /// MainActor, once, under a signpost — a context-menu open is a one-off user action,
 /// not layout, and Finder pays the same cost on every right-click.

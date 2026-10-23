@@ -13,7 +13,7 @@ nonisolated struct OpenWithApplication: Hashable, Sendable, Identifiable {
 /// Open With menu model guide
 ///
 /// The pure answer to "what can open the current targets": computed once per target
-/// change off the MainActor, rendered by the File menu without touching LaunchServices
+/// change by a `@concurrent` function off the MainActor, rendered by the File menu without touching LaunchServices
 /// during layout. Targets are grouped by file extension so a five-hundred-item
 /// selection costs one LaunchServices query per distinct type, not per file.
 ///

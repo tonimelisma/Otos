@@ -10,7 +10,7 @@ private struct PreheatImageContext {
 //
 // AppKit prefetch callbacks and the scroll-driven look-ahead share one path:
 // fault a burst of details by identity, merge it into the sticky detail map, and
-// decode thumbnails off the main actor straight into `TileContentStore`. Bursts
+// decode thumbnails in a `Task.detached` straight into `TileContentStore`. Bursts
 // are newest-value work: obsolete look-ahead is cancelled instead of queued
 // because only the next viewport is useful, while partial AppKit cancellation
 // narrows the active ID set without throwing away still-useful IDs.

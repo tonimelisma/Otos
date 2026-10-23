@@ -55,7 +55,8 @@ nonisolated enum CameraMetadataReader {
     /// consumer that knows its transport can supply.
     static let chunkSize = 128 * 1024
 
-    /// Parses one camera item from ranged reads, off the main actor and off the pool.
+    /// Parses one camera item from ranged reads on this type's dedicated serial queue, which
+    /// is neither the main actor nor the cooperative pool.
     ///
     /// `readCost` on the result is what proves the cache is working: a parse that reports
     /// 138 read operations is reaching the transport for every one of them.

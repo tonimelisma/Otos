@@ -21,7 +21,7 @@ import UniformTypeIdentifiers
 /// `stage` normalizes QuickLook output to an opaque 8-bit sRGB JPEG without making
 /// it visible to the grid. `CatalogStore` promotes that staged file only after the
 /// matching SQLite row validates, so stale enrichment work cannot overwrite the last
-/// good thumbnail. `load` decodes off the main actor and returns an immutable
+/// good thumbnail. `load` decodes synchronously on its caller's thread (callers run it from a `Task.detached`) and returns an immutable
 /// `CGImage`; the caller only assigns that already-decoded bitmap on the main actor.
 /// `delete`/`deleteAll` are the purge side for proven deletion and library removal.
 /// `deleteStagedTemporaryFiles` is startup hygiene for
@@ -188,7 +188,8 @@ nonisolated enum ThumbnailStore {
         try? FileManager.default.removeItem(at: url(for: thumbnail.stagedRelativePath, in: directory))
     }
 
-    /// Loads and decodes a thumbnail off the main actor. `nil` if the file is missing or
+    /// Loads and decodes a thumbnail synchronously on the calling thread; callers run it from a
+    /// `Task.detached`. `nil` if the file is missing or
     /// unreadable (the tile then shows its placeholder).
     static func load(_ relativeName: String, in directory: URL) -> CGImage? {
         let signpost = OtosSignpost.thumbnails.beginInterval("ThumbnailLoad")

@@ -3793,14 +3793,19 @@ private extension CatalogStore {
             ]
         )
 
-        currentScanTask = Task { [scanner, scanCadence] in
+        // The directory walk must not run on this actor: a stored scanner closure and
+        // `LiveCatalogScanner.scan` are `nonisolated async`, which under
+        // `NonisolatedNonsendingByDefault` runs on the caller's actor. A detached task is the
+        // same mechanism a full scan uses; every Store mutation below hops back through an
+        // actor method that revalidates the scan lease first.
+        currentScanTask = Task.detached(priority: .utility) { [scanner, scanCadence] in
             do {
                 var totalObserved = 0
                 var totalDeleted = 0
                 var catalogChanged = false
                 for subtree in dirt.subtrees.sorted(by: { $0.rawValue < $1.rawValue }) {
                     try Task.checkCancellation()
-                    guard self.owns(scan) else {
+                    guard await self.owns(scan) else {
                         return
                     }
                     let observation = try await scanner.scanSubtree(root, subtree, scanCadence) { batch in
@@ -3822,30 +3827,70 @@ private extension CatalogStore {
                         catalogChanged = true
                     }
                 }
-                guard self.owns(scan) else {
-                    return
-                }
-                if !dirt.files.isEmpty {
-                    await self.reconcileFileDirt(root: root, files: dirt.files)
-                }
-                if catalogChanged {
-                    self.bumpNamespaceRevision(for: root)
-                } else {
-                    self.bumpPlanRevision(for: root)
-                }
-                OtosLog.catalog.notice(
-                    "op=catalog.reconcile phase=finish mode=subtree rootPath=\(root.rawValue, privacy: .public) observed=\(totalObserved, privacy: .public) deleted=\(totalDeleted, privacy: .public)"
+                await self.completeScopedReconcile(
+                    scan: scan,
+                    root: root,
+                    dirt: dirt,
+                    summary: ScopedReconcileSummary(
+                        observed: totalObserved,
+                        deleted: totalDeleted,
+                        catalogChanged: catalogChanged
+                    )
                 )
-                self.scopedReconcileFinished(scan: scan)
             } catch is CancellationError {
-                self.restoreScopedDirt(root: root, dirt: dirt)
-                await self.scanCancelled(scan: scan)
+                await self.endScopedReconcile(scan: scan, root: root, dirt: dirt, failure: nil)
             } catch {
-                // Incomplete enumeration must not drop taken scopes: escalate to
-                // root so the next lease drains conservatively.
-                self.restoreScopedDirt(root: root, dirt: dirt, escalateToRoot: true)
-                await self.scanFailed(scan: scan, error: error)
+                await self.endScopedReconcile(scan: scan, root: root, dirt: dirt, failure: error)
             }
+        }
+    }
+
+    private struct ScopedReconcileSummary {
+        let observed: Int
+        let deleted: Int
+        let catalogChanged: Bool
+    }
+
+    /// The post-walk half of a scoped reconcile, as one actor method so the lease check, the
+    /// revision bump and the lease release cannot be interleaved by another message.
+    private func completeScopedReconcile(
+        scan: ActiveScan,
+        root: LibraryRootPath,
+        dirt: FilesystemDirtyAccumulator,
+        summary: ScopedReconcileSummary
+    ) async {
+        guard owns(scan) else {
+            return
+        }
+        if !dirt.files.isEmpty {
+            await reconcileFileDirt(root: root, files: dirt.files)
+        }
+        if summary.catalogChanged {
+            bumpNamespaceRevision(for: root)
+        } else {
+            bumpPlanRevision(for: root)
+        }
+        OtosLog.catalog.notice(
+            "op=catalog.reconcile phase=finish mode=subtree rootPath=\(root.rawValue, privacy: .public) observed=\(summary.observed, privacy: .public) deleted=\(summary.deleted, privacy: .public)"
+        )
+        scopedReconcileFinished(scan: scan)
+    }
+
+    /// A scoped reconcile that did not finish. Cancellation hands the taken scopes back as
+    /// they were; any other failure is an incomplete enumeration, which must not drop them:
+    /// it escalates to the root so the next lease drains conservatively.
+    private func endScopedReconcile(
+        scan: ActiveScan,
+        root: LibraryRootPath,
+        dirt: FilesystemDirtyAccumulator,
+        failure: Error?
+    ) async {
+        if let failure {
+            restoreScopedDirt(root: root, dirt: dirt, escalateToRoot: true)
+            await scanFailed(scan: scan, error: failure)
+        } else {
+            restoreScopedDirt(root: root, dirt: dirt)
+            await scanCancelled(scan: scan)
         }
     }
 

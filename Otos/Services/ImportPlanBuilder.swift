@@ -12,12 +12,16 @@ nonisolated struct ImportPlanBuildResult: Sendable {
 
 /// The real substitution boundary between lifecycle ownership and expensive plan
 /// construction. The coordinator owns lifecycle; the builder
-/// owns enumeration and pure planning. The live builder runs off the coordinator
-/// actor; the controlled test builder suspends on a continuation.
+/// owns enumeration and pure planning. The live builder is `@concurrent`, so it leaves
+/// the coordinator actor that calls it; the controlled test builder suspends on a continuation.
 ///
 /// This is a real boundary because plan construction is already an independently
 /// owned asynchronous operation — not a test-only branch.
 nonisolated protocol ImportPlanBuilding: Sendable {
+    /// `@concurrent`: this target compiles with `NonisolatedNonsendingByDefault`, under which a
+    /// `nonisolated async` function runs on its caller's actor. The coordinator awaits this,
+    /// so without the attribute the destination walk would hold the coordinator actor.
+    @concurrent
     func build(
         snapshot: ImportPlanningSnapshot,
         additionalReserved: Set<MediaRelativePath>
@@ -30,6 +34,7 @@ nonisolated protocol ImportPlanBuilding: Sendable {
 /// `op=plan.namespace.enumerate` split so I/O cost remains attributable without
 /// needing a side experiment.
 nonisolated struct LiveImportPlanBuilder: ImportPlanBuilding {
+    @concurrent
     func build(
         snapshot: ImportPlanningSnapshot,
         additionalReserved: Set<MediaRelativePath>
