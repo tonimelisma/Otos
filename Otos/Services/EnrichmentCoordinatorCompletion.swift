@@ -12,6 +12,7 @@ extension EnrichmentCoordinator {
     private nonisolated static let diagnosticTimestampFormatter = Mutex(ISO8601DateFormatter())
 
     func finishEnrich(_ work: EnrichWork, _ outcome: EnrichmentOutcome) async {
+        defer { resumeDrainedWaiters() }
         let id = work.id
         guard !isShuttingDown else {
             return
@@ -65,6 +66,7 @@ extension EnrichmentCoordinator {
     /// enricher would produce for unreadable media and flush through the normal
     /// apply path (ENR-007 self-heals if real bytes appear later).
     func finishEmptySource(_ work: EnrichWork) async {
+        defer { resumeDrainedWaiters() }
         let id = work.id
         guard !isShuttingDown else {
             return
@@ -101,6 +103,7 @@ extension EnrichmentCoordinator {
         result: MaterializationResult,
         attemptMs: Int
     ) async {
+        defer { resumeDrainedWaiters() }
         let id = work.id
         guard !isShuttingDown else {
             return

@@ -347,14 +347,22 @@ for confirmation before relying on them.
   applicable). Do not bypass with a parallel patch or hide a thread.
 - Remote CI is a fast gate (checkout sanity, workflow YAML, text hygiene, script
   inventory, macOS lint); it does not run Xcode 27 build/test until a runner exists.
-  Xcode 27 build/test proof is local `script/check.sh` evidence. CI may be waived
-  only when GitHub reports a billing/quota blocker (paste the evidence); never for
-  failures, syntax errors, missing tools, or flakiness.
+  Xcode 27 build/test proof is local `script/check.sh` evidence. A CI job that
+  ran and failed always blocks: never waive failures, syntax errors, missing
+  tools, or flakiness.
+- **A stuck GitHub never blocks a merge.** A job GitHub cannot run is not a
+  failure. Such a job is either queued with no runner while githubstatus.com
+  reports Actions not `operational`, or blocked by a billing/quota limit. For
+  it, run that job's exact commands from `.github/workflows/ci.yml` locally on
+  the PR head. Post on the PR the outage evidence and each command's result, and
+  merge. When Actions recovers, the push run on `main` verifies the merge; a red
+  result there is fixed first (red-`main` rule above).
 - **Opening a PR is not a stopping point.** The agent reads CI status itself
-  (`gh pr checks`), keeps watching pending checks to completion in the same turn
-  (e.g. a background `gh pr checks --watch`, which reports when it exits), and
-  continues straight through merge, cleanup, install, and the DoD report. Never
-  end the turn to wait for a CI notification: a green run may never send one.
+  (`gh pr checks`) and continues straight through merge, cleanup, install, and
+  the DoD report in the same turn. A CI watcher exits on every terminal fact:
+  all checks done, a check failed, or GitHub degraded (the rule above). A
+  watcher that can only exit on success waits forever on an outage. Never end
+  the turn to wait for a CI notification: a green run may never send one.
 - **Doc-only increments** (the diff touches only documentation — `docs/`,
   `AGENTS.md`, and similar prose; no source, tests, scripts, or config) use a
   lightweight path: skip the last-five-PRs review-comment sweep, skip

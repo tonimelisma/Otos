@@ -1362,7 +1362,7 @@ extension CatalogStore {
             ids: ids,
             assetsByID: priorityAssetsByID,
             rootIDsByPath: rootIDsByPathBeforeWrite,
-            isRootAvailable: { [roots] path in roots[path]?.availability == .available },
+            isRootEnrichable: { [roots] path in roots[path]?.isEnrichable == true },
             isHashRequired: { [roots] path in roots[path]?.root.isContentHashRequired == true }
         )
         guard !eligibleClaims.isEmpty else {
@@ -1413,8 +1413,8 @@ extension CatalogStore {
         -> DatabaseTimedValue<[ClaimedEnrichmentCandidate]>
     {
         let claimedUntil = EnrichmentLeaseGateway.claimedUntil()
-        let prioritizedRootIDs = availableRootIDsByRemovablePriority()
-        let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.availableRootIDsByHashRequirement()
+        let prioritizedRootIDs = roots.enrichableRootIDsByRemovablePriority()
+        let (hashRequiredRootIDs, hashNotRequiredRootIDs) = roots.enrichableRootIDsByHashRequirement()
         let dbWriter = try database()
         let timedStoredAssets = try await timedWrite(dbWriter) { db in
             var storedAssets: [(asset: StoredAsset, hashRequired: Bool)] = []
@@ -1951,16 +1951,22 @@ extension CatalogStore {
             || identity.hasPrefix("camera:transient:")
     }
 
-    private func cancelRuntimeWork(for path: LibraryRootPath) {
+    /// Returns the scan task it cancelled, if the root's scan was running, so a caller
+    /// that must know the root's files are no longer being read can await its exit.
+    @discardableResult
+    private func cancelRuntimeWork(for path: LibraryRootPath) -> Task<Void, Never>? {
         unrequestedLoadedRootPaths.removeAll { $0 == path }
         cancelFilesystemDebounce(for: path)
         filesystemDirty.removeValue(forKey: path)
         lastSuccessfulFullRootScanAt.removeValue(forKey: path)
         knownMaterializationSuppression.removeAll(under: path)
-        if scanLeases.cancelWork(for: path) {
-            currentScanTask?.cancel()
-            currentScanTask = nil
+        guard scanLeases.cancelWork(for: path) else {
+            return nil
         }
+        let cancelledScan = currentScanTask
+        cancelledScan?.cancel()
+        currentScanTask = nil
+        return cancelledScan
     }
 
     private func releaseEnrichmentClaimsForRoot(_ rootRowID: Int64) async {
@@ -2288,11 +2294,15 @@ extension CatalogStore {
         else {
             return
         }
-        cancelRuntimeWork(for: root.path)
+        let cancelledScan = cancelRuntimeWork(for: root.path)
         if var state = roots[root.path] {
             state.activity = .idle
+            state.isQuiesced = true
             upsert(state)
         }
+        // The eject that follows needs the card's files closed: wait for the cancelled
+        // scan to stop reading rather than assume it has.
+        await cancelledScan?.value
         await releaseEnrichmentClaimsForRoot(rootRowID)
         forgetUnreadableSources(under: root.path)
         OtosLog.catalog.notice(
@@ -2306,6 +2316,10 @@ extension CatalogStore {
               root.kind != .library
         else {
             return
+        }
+        if var state = roots[root.path], state.isQuiesced {
+            state.isQuiesced = false
+            upsert(state)
         }
         let changed = setAvailability(.available, for: root.path)
         if changed {
@@ -2888,10 +2902,6 @@ private extension CatalogStore {
         availableLibraryPaths: Set<LibraryRootPath>
     ) -> CatalogScopePredicate {
         roots.scopePredicate(selection: selection, availableLibraryPaths: availableLibraryPaths)
-    }
-
-    private func availableRootIDsByRemovablePriority() -> (removable: [Int64], fixed: [Int64]) {
-        roots.availableRootIDsByRemovablePriority()
     }
 
     private func validateNoOverlap(_ path: LibraryRootPath, ignoring existingRootRowID: Int64? = nil) throws {

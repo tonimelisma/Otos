@@ -65,9 +65,19 @@ nonisolated struct RootRuntimeState: Equatable {
     /// independent namespace mutation advances this value and retains typed dirty
     /// work, so an older observation may upsert facts but cannot delete rows.
     var namespaceMutationEpoch: UInt64
+    /// Process-local: an eject has quiesced this source. It stays available — the
+    /// sidebar keeps the row until the unmount — but no new enrichment is claimed on
+    /// it, so the work an eject drains is finite. Resume clears it; a new attachment
+    /// starts from a fresh state.
+    var isQuiesced = false
 
     var path: LibraryRootPath {
         root.path
+    }
+
+    /// Available and not quiesced: enrichment may claim this root's assets.
+    var isEnrichable: Bool {
+        availability == .available && !isQuiesced
     }
 
     init(

@@ -198,12 +198,15 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// How long a busy volume is given before the eject is reported as busy.
-    /// Otos's own readers on a card — a thumbnail or metadata pass that was in
-    /// flight when the erase sweep finished — close within a few seconds; a
-    /// bounded retry outlasts them without hiding a volume that is genuinely
-    /// held by something else. On 2026-09-13 the first attempt came 120 ms
-    /// after the erase sweep released the card and failed `fBsyErr`.
+    /// Backoff after the system refuses an unmount as busy. Scanning and enrichment on
+    /// the card have ended before the first attempt: quiesce awaits the cancelled scan
+    /// and stops new claims, and the drain waits for the enrichment that was running.
+    /// A busy refusal can still come from an interactive preview decode, which the
+    /// drain deliberately does not wait for, or from a process outside Otos. On
+    /// 2026-09-13 an attempt 120 ms after the erase sweep released the card was refused
+    /// this way; what held it was not identified.
+    /// Retrying a few times outlasts a short-lived holder without hiding a volume that
+    /// stays held.
     nonisolated static let ejectBusyRetryDelays: [Duration] = [
         .milliseconds(500), .seconds(1), .seconds(2), .seconds(4),
     ]
@@ -221,12 +224,7 @@ extension CatalogWindowViewModel {
         do {
             try await store.quiesceRemovableSource(identity: identity)
             if let coordinator {
-                let drained = await coordinator.drainWork(under: root.path)
-                if !drained {
-                    OtosLog.catalog.error(
-                        "op=removableEject drainTimedOut rootPath=\(root.path.rawValue, privacy: .public)"
-                    )
-                }
+                await coordinator.drainWork(under: root.path)
             }
         } catch {
             return await ejectFailed(root: root, error: error)

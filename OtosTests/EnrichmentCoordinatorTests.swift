@@ -1,5 +1,6 @@
 import Foundation
 @testable import OtosKit
+import Synchronization
 import Testing
 
 struct EnrichmentCoordinatorTests {
@@ -120,6 +121,50 @@ struct EnrichmentCoordinatorTests {
 
         #expect(Set(reclaimed.map(\.asset.relativePath.rawValue)) == Set(relativeNames))
         try await store.releaseEnrichmentClaims(reclaimed.map(\.asset.id))
+    }
+
+    /// The eject drain drops work that was claimed but not started, and returns when the
+    /// work that was running finishes — not after an interval.
+    @Test func drainDropsQueuedWorkAndReturnsWhenRunningWorkFinishes() async throws {
+        let temp = try makeCatalogStoreTemporaryDirectory()
+        let root = temp.appending(path: "Card", directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let relativeNames = ["a.jpg", "b.jpg", "c.jpg"]
+        let store = CatalogStore(location: .inMemory, scanner: fixedScanner(relativeNames))
+        try await store.start(scansSavedLibraries: false)
+        try await store.addLibrary(url: root)
+        _ = try await waitForCatalogStoreState(store) { !$0.isScanning && $0.testAssets.count == 3 }
+        let rootPath = try CatalogPath.normalizedDirectoryPath(for: root)
+
+        let enrichment = CountingBlockingEnrichment()
+        let coordinator = EnrichmentCoordinator(
+            store: store,
+            enricher: enrichment.enricher(),
+            materialize: { _ in .testMaterialized },
+            readinessChecker: TestEnrichmentReadinessChecker(result: .materialized),
+            enrichConcurrency: 1,
+            claimBatchSize: 3,
+            applyFlushInterval: .seconds(60)
+        )
+        await coordinator.start()
+        await enrichment.waitForStartedCount(1)
+        let running = try #require(await enrichment.startedRelativePaths().first)
+
+        let returned = Mutex(false)
+        let drain = Task {
+            await coordinator.drainWork(under: rootPath)
+            returned.withLock { $0 = true }
+        }
+        try await waitUntil { await coordinator.drainWaiterCount == 1 }
+        #expect(!returned.withLock { $0 }, "the drain returned while enrichment was still running")
+
+        await enrichment.release()
+        await drain.value
+        #expect(
+            await Set(enrichment.startedRelativePaths()) == [running],
+            "work the drain dropped started anyway"
+        )
+        await coordinator.shutdown()
     }
 
     @Test func visibleThumbnailLifecycleEnrichesViewportPriorityAssets() async throws {
@@ -989,11 +1034,9 @@ struct EnrichmentCoordinatorTests {
             readinessChecker: TestEnrichmentReadinessChecker(result: .dataless)
         )
 
-        let drained = await coordinator.drainWork(under: rootPath, timeout: .milliseconds(300))
-        #expect(drained)
-        // Load-independent check: drain returned while the interactive request is still held.
-        // If drain had incorrectly waited on interactive traffic, it would have timed out
-        // and returned false, or the materializer would have no in-flight work.
+        // The drain returns while the interactive request is still held: had it waited on
+        // interactive traffic, it would not return until that request ended.
+        await coordinator.drainWork(under: rootPath)
         #expect(await executor.startedCount() == 1)
         #expect(await materializer.stateSnapshot().inFlight == 1)
 

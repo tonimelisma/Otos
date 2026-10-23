@@ -254,11 +254,12 @@ Adjacent decisions requiring separate ADRs or specs:
 
    Shutdown stops new work, cancels enrichment's materializer waiters promptly, drains
    owned workers, and releases every remaining claim before the materializer itself
-   shuts down. Root drain also queries requests already handed to the shared
-   materializer, scoped to the ones this coordinator is actually responsible for
-   (entries with at least one device- or background-priority waiter): an unrelated
-   interactive preview request under the same root from another consumer of the
-   shared coordinator must not stall an eject. `FileMaterialization` remains
+   shuts down. Root drain (eject) drops work claimed but not started under the root
+   and waits, with no time limit, until the work this coordinator started there has
+   finished. A download it handed to the shared materializer counts as running until
+   its result comes back, so the drain needs no separate query of the shared
+   coordinator, and an unrelated interactive preview request under the same root
+   from another consumer never stalls an eject. `FileMaterialization` remains
    the one-URL mechanism: it checks `SF_DATALESS`, requests asynchronously, polls
    without reading bytes, and re-requests once per second inside the same timeout.
 

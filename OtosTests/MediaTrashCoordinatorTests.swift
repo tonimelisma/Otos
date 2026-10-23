@@ -94,11 +94,6 @@ private final class FakeRequester: MaterializationRequesting, Sendable {
         return await handler(request)
     }
 
-    func activeRequestCount(under rootPath: LibraryRootPath) async -> Int {
-        _ = rootPath
-        return 0
-    }
-
     var priorities: [MaterializationCoordinator.Priority] {
         priorityStorage.withLock { $0 }
     }

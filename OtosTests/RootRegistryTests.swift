@@ -114,24 +114,38 @@ struct RootRegistryTests {
         #expect(batch.selectsNothing == false)
     }
 
-    @Test func availableRootIDsByRemovablePrioritySplitsKinds() {
+    @Test func enrichableRootIDsByRemovablePrioritySplitsKinds() {
         var registry = RootRegistry()
         registry.upsert(libraryState(path: libraryPath, rowID: 1))
         registry.upsert(volumeState(rowID: 2))
         registry.upsert(libraryState(path: otherPath, rowID: 3, availability: .unavailable))
 
-        let prioritized = registry.availableRootIDsByRemovablePriority()
+        let prioritized = registry.enrichableRootIDsByRemovablePriority()
         #expect(prioritized.removable == [2])
         #expect(prioritized.fixed == [1])
     }
 
-    @Test func availableRootIDsByHashRequirementSplitsKinds() {
+    /// An ejecting source stays available for the sidebar, but enrichment claims
+    /// nothing new on it, so the eject drain waits on finite work.
+    @Test func aQuiescedSourceIsNotEnrichable() {
+        var registry = RootRegistry()
+        registry.upsert(libraryState(path: libraryPath, rowID: 1))
+        var volume = volumeState(rowID: 2)
+        volume.isQuiesced = true
+        registry.upsert(volume)
+
+        #expect(registry.enrichableRootIDsByRemovablePriority().removable.isEmpty)
+        #expect(registry.enrichableRootIDsByHashRequirement().hashNotRequired.isEmpty)
+        #expect(registry.enrichableRootIDsByRemovablePriority().fixed == [1])
+    }
+
+    @Test func enrichableRootIDsByHashRequirementSplitsKinds() {
         var registry = RootRegistry()
         registry.upsert(libraryState(path: libraryPath, rowID: 1))
         registry.upsert(volumeState(rowID: 2))
         registry.upsert(libraryState(path: otherPath, rowID: 3, availability: .unavailable))
 
-        let partitioned = registry.availableRootIDsByHashRequirement()
+        let partitioned = registry.enrichableRootIDsByHashRequirement()
         #expect(partitioned.hashRequired == [1])
         #expect(partitioned.hashNotRequired == [2])
     }
