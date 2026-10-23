@@ -63,7 +63,15 @@ actor PreviewImageLoader: PreviewLoading {
     private var cache: [MediaAssetID: CacheEntry] = [:]
     private var cacheOrder: [MediaAssetID] = []
     private var cacheBytes = 0
-    private var inFlight: [MediaAssetID: Task<Outcome, Never>] = [:]
+    /// One decode per asset in flight, remembered with the size it was asked for. A second
+    /// request shares it only when that decode is at least as large as the one it needs;
+    /// otherwise it would be handed a smaller image than it asked for.
+    private struct InFlightDecode {
+        let longEdge: Int
+        let task: Task<Outcome, Never>
+    }
+
+    private var inFlight: [MediaAssetID: InFlightDecode] = [:]
 
     init(
         maxCacheBytes: Int = 256 * 1024 * 1024,
@@ -83,15 +91,19 @@ actor PreviewImageLoader: PreviewLoading {
             touch(request.id)
             return .image(cached.image, nativePixelSize: cached.nativePixelSize)
         }
-        if let existing = inFlight[request.id] {
-            return await existing.value
+        if let existing = inFlight[request.id], existing.longEdge >= request.targetLongEdge {
+            return await existing.task.value
         }
         let task = Task(priority: .userInitiated) {
             await self.decode(request)
         }
-        inFlight[request.id] = task
+        // A larger request replaces a smaller decode's entry; the smaller one finishes for
+        // its own caller, and each caller removes only the entry it owns.
+        inFlight[request.id] = InFlightDecode(longEdge: request.targetLongEdge, task: task)
         let outcome = await task.value
-        inFlight[request.id] = nil
+        if inFlight[request.id]?.longEdge == request.targetLongEdge {
+            inFlight[request.id] = nil
+        }
         if case let .image(image, nativePixelSize) = outcome {
             insert(image, for: request.id, longEdge: request.targetLongEdge, nativePixelSize: nativePixelSize)
         }
@@ -265,6 +277,11 @@ actor PreviewImageLoader: PreviewLoading {
     }
 
     private func insert(_ image: CGImage, for id: MediaAssetID, longEdge: Int, nativePixelSize: CGSize?) {
+        // A smaller decode that finishes after a larger one must not replace it.
+        if let existing = cache[id], existing.longEdge >= longEdge {
+            touch(id)
+            return
+        }
         let cost = image.height * image.bytesPerRow
         if let existing = cache[id] {
             cacheBytes -= existing.byteCost

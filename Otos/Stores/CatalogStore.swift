@@ -1054,23 +1054,32 @@ extension CatalogStore {
                 rootRowID: rootRowID
             ) || changed
         }
-        if let overlay = trashed.overlay, let dbWriter = try? database() {
-            let applied = try? await dbWriter.write { db in
-                try db.execute(
-                    sql: """
-                    UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?
-                    WHERE library_root_id = ? AND relative_path = ?
-                    """,
-                    arguments: [
-                        overlay.mediaChoice.rawValue,
-                        overlay.importBatch?.unixMilliseconds,
-                        rootRowID,
-                        trashed.item.id.relativePath.rawValue,
-                    ]
-                )
-                return db.changesCount > 0
+        if let overlay = trashed.overlay {
+            // A failed write leaves the file back on disk without the choice and batch it
+            // had; that loss is logged rather than swallowed, so it can be found.
+            do {
+                let applied = try await database().write { db in
+                    try db.execute(
+                        sql: """
+                        UPDATE media_asset SET media_choice = ?, import_batch_unix_ms = ?
+                        WHERE library_root_id = ? AND relative_path = ?
+                        """,
+                        arguments: [
+                            overlay.mediaChoice.rawValue,
+                            overlay.importBatch?.unixMilliseconds,
+                            rootRowID,
+                            trashed.item.id.relativePath.rawValue,
+                        ]
+                    )
+                    return db.changesCount > 0
+                }
+                changed = applied || changed
+            } catch {
+                OtosLog.catalog.errorOperation("mediaTrash.undo", phase: "overlayRestoreFailed", fields: [
+                    "path": trashed.item.id.relativePath.rawValue,
+                    "error": String(describing: error),
+                ])
             }
-            changed = applied == true || changed
         }
         if changed {
             notifyCatalogChanged()
