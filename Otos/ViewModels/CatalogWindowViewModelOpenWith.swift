@@ -11,7 +11,7 @@ import UniformTypeIdentifiers
 /// Trash use: the grid's ordered selection, the loupe's focused asset, compare's
 /// active pane.
 ///
-/// The menu model is recomputed off the MainActor whenever a target writer changes
+/// The menu model is recomputed by a `@concurrent` function, off the MainActor, whenever a target writer changes
 /// (`gridSelection`, `focusedAssetID`, `viewMode`, `comparePair`, `activeComparePane`
 /// each call `refreshOpenWithMenu()` from `didSet`), newest-value coalesced: a newer
 /// target set cancels the previous build, and a finished build is applied only if the
@@ -28,7 +28,7 @@ extension CatalogWindowViewModel {
     }
 
     /// Resolves the targets once per writer change into `currentTargetFileURLs` (read
-    /// synchronously by Share and the toolbar) and rebuilds the Open With model off main.
+    /// synchronously by Share and the toolbar) and rebuilds the Open With model in a `@concurrent` function.
     func refreshOpenWithMenu() {
         let targets = resolveCurrentTargetFileURLs()
         let changed = currentTargetFileURLs != targets
@@ -58,7 +58,7 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// The one writer of `openWithMenu` and its icons, for the off-main build and the
+    /// The one writer of `openWithMenu` and its icons, for the `@concurrent` build and the
     /// context menu's synchronous build alike. Icon Services caches by path; resolving
     /// once per model change keeps the menu bodies free of lookups.
     func applyOpenWithMenu(_ model: OpenWithMenuModel) {
@@ -118,7 +118,8 @@ extension CatalogWindowViewModel {
         }
     }
 
-    /// Hands targets to LaunchServices off main. Hand-offs run in submission order:
+    /// Hands targets to LaunchServices from a `Task` that awaits the `NSWorkspace` call (the
+    /// workspace wrapper is not main-actor isolated). Hand-offs run in submission order:
     /// each waits for the one before it, so `openTask` is the newest and awaiting it
     /// awaits them all.
     private func open(_ targets: [URL], with applicationURL: URL, origin: String) {

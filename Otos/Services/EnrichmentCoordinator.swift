@@ -583,7 +583,7 @@ extension EnrichmentCoordinator {
 
     /// One owned task drives both pools. Each yielded signal is a wake: it tops both
     /// pools up to their caps through bounded Store queries and flushes the apply buffer.
-    /// The worker child tasks run the heavy work off-actor and hop back through `finish*`,
+    /// The worker child tasks (task-group children) run the heavy work and hop back through `finish*`,
     /// each yielding another signal; cancelling the supervisor finishes the stream, so the
     /// `for await` returns and the group drains.
     ///

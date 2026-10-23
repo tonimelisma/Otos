@@ -98,7 +98,7 @@ struct PaneThumbnailView: View {
                 image = hit
                 return
             }
-            // Miss: decode off-main, exactly as MediaGridBridge.swift:938 does.
+            // Miss: decode in a `Task.detached`, exactly as MediaGridBridge does.
             // The previous shape called the synchronous `loadImage` directly inside
             // this MainActor `.task`, decoding a full JPEG on the main thread on every
             // loupe entry and every arrow key.

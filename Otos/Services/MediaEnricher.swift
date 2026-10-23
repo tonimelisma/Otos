@@ -12,7 +12,8 @@ import UniformTypeIdentifiers
 /// (QuickLook). It is a small `Sendable` value with one injectable closure, mirroring
 /// `CatalogScanner`, so the coordinator and tests can substitute a fake.
 ///
-/// It runs entirely off the main actor inside the coordinator's worker task. The first
+/// It runs entirely off the main actor in a task-group child of the coordinator's worker
+/// pass (`EnrichmentCoordinator`). The first
 /// thing it does is re-check materialization immediately before any byte read (ADR 0008):
 /// the coordinator routed this id as materialized, but a provider can evict between the
 /// routing check and this read, so the safety gate lives here, right before the read.

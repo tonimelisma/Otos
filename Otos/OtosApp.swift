@@ -22,7 +22,7 @@ import SwiftUI
 /// clean quit on 2026-08-30 while a 101 MB test case did not — the small case fit inside
 /// the window and hid the defect. `.terminateLater` gives an unbounded one.
 ///
-/// The delete runs off the main thread so the window paints and the app does not beachball,
+/// The delete runs in a `Task.detached` so the window paints and the app does not beachball,
 /// and `reply(toApplicationShouldTerminate:)` is called on both the success and failure
 /// paths — a failed delete must never trap the user in an app that will not quit. The
 /// launch sweep is the backstop for that case, as it already is for a crash.

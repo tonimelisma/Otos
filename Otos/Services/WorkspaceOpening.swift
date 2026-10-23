@@ -24,7 +24,7 @@ nonisolated protocol WorkspaceOpening: Sendable {
 }
 
 /// The production conformer over `NSWorkspace.shared`. Its query methods are
-/// thread-safe per AppKit and are called off the MainActor from the menu builder.
+/// thread-safe per AppKit and are called from the menu builder's `@concurrent` function, off the MainActor.
 nonisolated struct LaunchServicesWorkspace: WorkspaceOpening {
     func applicationURLs(toOpen url: URL) -> [URL] {
         NSWorkspace.shared.urlsForApplications(toOpen: url)
